@@ -19,7 +19,7 @@ public sealed class DatabaseChangesTests
     [Test]
     public async Task A_write_after_cursor_now_streams_with_its_document_and_its_id_resumes_after_it()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var before = DocumentApi.NewId();
         (await api.PutAsync(before, new { name = Fake.Name.FirstName() })).Status.ShouldBe(HttpStatusCode.Created);
         var name = Fake.Name.FirstName();
@@ -55,7 +55,7 @@ public sealed class DatabaseChangesTests
     [Test]
     public async Task Without_a_cursor_the_feed_replays_retention_in_order_and_the_filter_keeps_only_its_collections()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         (await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "other" })).Status.ShouldBe(HttpStatusCode.Created);
         var ids = Enumerable.Range(0, 5).Select(_ => DocumentApi.NewId()).ToArray();
         foreach (var id in ids)
@@ -86,7 +86,7 @@ public sealed class DatabaseChangesTests
     [Test]
     public async Task A_cursor_below_retention_is_410_cursor_expired_and_one_at_the_floor_resumes()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
         var first = DocumentApi.NewId();
         var second = DocumentApi.NewId();
@@ -116,7 +116,7 @@ public sealed class DatabaseChangesTests
     [Test]
     public async Task A_cursor_issued_in_the_future_counts_as_issued_now()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
         var future = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc>(), FeedCursor.At(DateTimeOffset.UtcNow + TimeSpan.FromDays(30))), ChangeCursor.Scope(await api.TenantOfAsync(), null));
         var joined = await PutStampAsync(store);
@@ -131,7 +131,7 @@ public sealed class DatabaseChangesTests
     [Arguments(2)]
     public async Task A_cursor_that_does_not_decode_is_410(int origins)
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         byte[] old = [0, .. Enumerable.Range(1, origins).SelectMany(origin => Origin((ulong)origin, (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16))];
         var text = Convert.ToBase64String(old).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         var changes = $"{api.DatabasePath()}/changes";
@@ -145,7 +145,7 @@ public sealed class DatabaseChangesTests
     [Test]
     public async Task Undecodable_cursors_are_410_invalid_filters_400_a_missing_scope_403_and_an_unknown_database_404()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var changes = $"{api.DatabasePath()}/changes";
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{changes}?cursor=AQ-not-a-cursor", UriKind.Relative)),
             HttpStatusCode.Gone, "cursor_expired", "the cursor cannot be resumed; start again with cursor=now and re-read");
@@ -179,7 +179,7 @@ public sealed class DatabaseChangesTests
     [Test]
     public async Task A_database_bounds_streams_per_machine_and_a_closed_one_frees_its_place()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "pro");
         var changes = $"{api.DatabasePath()}/changes?cursor=now";
         var streams = new List<Sse>();

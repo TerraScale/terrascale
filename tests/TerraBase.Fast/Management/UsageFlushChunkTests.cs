@@ -19,7 +19,7 @@ public sealed class UsageFlushChunkTests
     public async Task A_flush_saves_at_most_a_chunk_of_databases_per_transaction_and_keeps_every_count()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         string[] names = [.. Enumerable.Range(0, UsageMeter.FlushDatabases + 4).Select(i => $"usage{i}")];
         List<string> databases = [];

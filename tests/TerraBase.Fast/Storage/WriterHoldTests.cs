@@ -19,7 +19,7 @@ public sealed class WriterHoldTests
     [Test]
     public async Task Writes_across_databases_hold_no_writer_long_while_system_writes_run()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         using var holds = new WriterHolds(api.Server);
         string[] names = [DocumentApi.Database, .. Enumerable.Range(0, 7).Select(i => $"hold{i}")];

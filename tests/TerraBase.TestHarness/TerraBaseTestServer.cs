@@ -85,11 +85,11 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
     public static async Task<TerraBaseTestServer> StartAsync(
         Action<Dictionary<string, string>>? settings = null, Action<IServiceCollection>? services = null, string environmentName = "Development",
-        CancellationToken? cancellationToken = null, Action<Task>? failedStartCleanup = null)
+        CancellationToken? cancellationToken = null, Action<Task>? failedStartCleanup = null, CancellationToken? lifetimeCancellationToken = null)
     {
         InitializeProcessTimers();
         var dataDirectory = Directory.CreateTempSubdirectory("terrabase-test-").FullName;
-        var testToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var testToken = lifetimeCancellationToken ?? TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var linkedCancellation = cancellationToken is { } callerCancellation
             ? CancellationTokenSource.CreateLinkedTokenSource(testToken, callerCancellation)
             : null;

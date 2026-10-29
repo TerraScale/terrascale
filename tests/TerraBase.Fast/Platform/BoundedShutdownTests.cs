@@ -184,7 +184,7 @@ public sealed class BoundedShutdownTests
     public async Task A_changes_producer_cancelled_before_the_linked_stream_token_ends_the_response_cleanly()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var lifetime = api.Server.Services.GetRequiredService<IHostApplicationLifetime>();
         var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         var store = (await engine.OpenDatabaseAsync(await api.TenantOfAsync(), token))!;

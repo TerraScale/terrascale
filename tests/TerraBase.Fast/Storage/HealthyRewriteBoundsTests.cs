@@ -18,7 +18,7 @@ public sealed class HealthyRewriteBoundsTests
     public async Task Updates_deletes_and_collection_create_drop_during_copy_are_verified_and_kept()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         var database = await api.TenantOfAsync();
         var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(database, token))!;

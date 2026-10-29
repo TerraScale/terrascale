@@ -279,7 +279,7 @@ public sealed class ShapeMetricsTests
     [Test]
     public async Task Point_reads_count_a_storage_miss_and_skip_a_cache_hit()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var stored = DocumentApi.NewId();
         var absent = DocumentApi.NewId();
         await Assert.That((await api.PutAsync(stored, new { a = 1 })).Status).IsEqualTo(HttpStatusCode.Created);
@@ -298,7 +298,7 @@ public sealed class ShapeMetricsTests
     [Arguments(true)]
     public async Task Repeated_writes_in_one_transaction_count_the_stored_body_read_only_once(bool ownerRules)
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         if (ownerRules)
         {
             await CollectionAccessRulesTests.DeclareAsync(api, CollectionAccessRulesTests.OwnerRules());
@@ -331,7 +331,7 @@ public sealed class ShapeMetricsTests
     [Test]
     public async Task Pending_feed_proofs_use_current_collection_metadata()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var original = CollectionAccessRulesTests.OwnerRules();
         await CollectionAccessRulesTests.DeclareAsync(api, original);
         var id = DocumentApi.NewId();
@@ -362,7 +362,7 @@ public sealed class ShapeMetricsTests
     [Arguments(true)]
     public async Task Pending_collection_schema_is_enforced_after_a_schema_change_or_recreation(bool recreate)
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         if (recreate)
         {
             await Assert.That((await api.SendAsync(HttpMethod.Delete, $"{api.Collections}/{DocumentApi.Collection}")).Status)
@@ -386,7 +386,7 @@ public sealed class ShapeMetricsTests
     [Test]
     public async Task A_collection_metadata_body_without_its_state_refuses_document_writes()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var token = TestContext.Current!.Execution.CancellationToken;
         var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), token))!;
         await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(await api.DatabaseFileAsync())))
@@ -407,7 +407,7 @@ public sealed class ShapeMetricsTests
     [Test]
     public async Task Shape_seals_chunk_reads_and_floors_count_backend_reads_on_the_shape_path()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var token = TestContext.Current!.Execution.CancellationToken;
         await Assert.That((await api.PutAsync(DocumentApi.NewId(), new { n = new Faker().Random.Int() })).Status)
             .IsEqualTo(HttpStatusCode.Created);

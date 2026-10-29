@@ -69,7 +69,7 @@ public sealed class EntityIdTests
     [Arguments("01JC9XQ1T3V5X7Z9B2D4F7HJ2\"")]
     public async Task Invalid_collection_entity_ids_cannot_commit(string id)
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         var store = (await engine.OpenDatabaseAsync(await api.TenantOfAsync(), token))!;
@@ -89,7 +89,7 @@ public sealed class EntityIdTests
     [Arguments('\u2028')]
     public async Task Removing_duplicate_identity_keeps_near_limit_raw_documents_within_the_storage_byte_limit(char character)
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var id = DocumentApi.NewId();
         var value = new string(character, (DocumentJson.MaxBytes - 128) / Encoding.UTF8.GetByteCount(character.ToString()));
         var plain = await api.SendRawAsync(HttpMethod.Put, api.Document(DocumentApi.NewId()),
@@ -106,7 +106,7 @@ public sealed class EntityIdTests
     [Test]
     public async Task Patch_validates_the_complete_value_count_before_removing_duplicate_identity()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var id = DocumentApi.NewId();
         var created = await api.PutAsync(id, new { values = new int[4094] });
         await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
@@ -120,7 +120,7 @@ public sealed class EntityIdTests
     [Test]
     public async Task Patch_of_a_deep_stored_document_returns_validation_and_can_remove_its_deep_subtree()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var id = DocumentApi.NewId();
         var created = await api.PutAsync(id, new { value = 0 });
         var deep = "{\"deep\":" + string.Concat(Enumerable.Repeat("{\"a\":", 80)) + "1" + new string('}', 80) + "}";
@@ -154,7 +154,7 @@ public sealed class EntityIdTests
     [Test]
     public async Task Catalog_collections_and_credentials_store_ULIDs_without_duplicate_payload_ids()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await Assert.That(EntityIds.IsValid(api.Tenant.OrganizationId)).IsTrue();
         await Assert.That(EntityIds.IsValid(api.Tenant.ProjectId)).IsTrue();
         var database = await api.TenantOfAsync("db");

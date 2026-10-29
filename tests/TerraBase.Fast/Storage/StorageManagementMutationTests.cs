@@ -13,7 +13,7 @@ public sealed class StorageManagementMutationTests
     [Arguments("drop-index")]
     public async Task Read_transactions_refuse_management_mutations(string mutation)
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var id = DocumentApi.NewId();
         await api.PutAsync(id, new { n = 1 });
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
@@ -57,7 +57,7 @@ public sealed class StorageManagementMutationTests
     [Test]
     public async Task A_failed_prefix_delete_cannot_commit_the_documents_deleted_before_its_collection_failure()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         var store = await engine.OpenSystemDatabaseAsync(CancellationToken.None);
         var collection = $"prefix_{Guid.NewGuid():N}";

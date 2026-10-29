@@ -505,7 +505,7 @@ public sealed class StorageTransactionTests
     [Test]
     public async Task Retirement_subscribers_can_enter_an_unrelated_database_lifecycle()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var database = await api.TenantOfAsync();
         (await api.SendAsync(HttpMethod.Put, api.DatabasePath("probe"))).Status.ShouldBe(System.Net.HttpStatusCode.Created);
         var probe = await api.TenantOfAsync("probe");

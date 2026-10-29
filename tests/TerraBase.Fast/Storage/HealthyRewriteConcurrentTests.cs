@@ -17,7 +17,7 @@ public sealed class HealthyRewriteConcurrentTests
     public async Task A_system_rewrite_preserves_catalog_and_housekeeping_commits_including_an_existing_uncaptured_writer()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         var system = (TursoDatabaseStore)await engine.OpenSystemDatabaseAsync(token);
         var database = await api.TenantOfAsync();

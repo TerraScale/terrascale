@@ -51,7 +51,8 @@ public sealed class ManagementApi : IAsyncDisposable
     /// </summary>
     public static async Task<ManagementApi> StartAsync(
         Action<Dictionary<string, string>>? configure = null, Action<IServiceCollection>? services = null, TimeProvider? time = null,
-        CancellationToken? cancellationToken = null, Action<Task>? failedStartCleanup = null, string? userId = null)
+        CancellationToken? cancellationToken = null, Action<Task>? failedStartCleanup = null, string? userId = null,
+        CancellationToken? lifetimeCancellationToken = null)
     {
         var tls = new ClientTls();
         var issuer = new TestIssuer();
@@ -76,7 +77,7 @@ public sealed class ManagementApi : IAsyncDisposable
                 // runtime pause (another parallel test's GC) can't spend a plan's wall-clock deadline (Hobby: 1 s) on a
                 // query that does almost no work; work, scan and byte budgets still apply.
                 collection.TryAddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
-            }, cancellationToken: cancellationToken, failedStartCleanup: task => failedCleanup = task);
+            }, cancellationToken: cancellationToken, failedStartCleanup: task => failedCleanup = task, lifetimeCancellationToken: lifetimeCancellationToken);
             // Startup waited for the issuer's keys, so tokens work from the first request.
             return new ManagementApi(server, tls, issuer, userId ?? EntityIds.New().ToString());
         }

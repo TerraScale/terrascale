@@ -393,7 +393,7 @@ public sealed class ShapeEndToEndTests
     [Test]
     public async Task Readers_of_a_closed_chunk_one_after_another_share_one_payload_read()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
         var client = new ShapeClient(api, query: null);
         await client.SyncAsync();
@@ -449,7 +449,7 @@ public sealed class ShapeEndToEndTests
     [Test]
     public async Task A_reader_fan_out_after_a_catalog_commit_reads_the_catalog_once_instead_of_once_per_reader()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
         var client = new ShapeClient(api, query: null);

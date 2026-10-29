@@ -169,7 +169,7 @@ public sealed class StorageHistoryTests
     public async Task Storage_refuses_an_empty_document_id()
     {
         // List pages resume strictly after an id; the empty id would have none before it, so no writer may store it.
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api);
         await using var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None);
         await Assert.ThrowsAsync<InvalidDataException>(() => writer.PutAsync(DocumentApi.Collection, "", Encoding.UTF8.GetBytes("{}"), CancellationToken.None).AsTask());
@@ -180,7 +180,7 @@ public sealed class StorageHistoryTests
     public async Task A_write_below_the_documents_api_creates_missing_collection_metadata()
     {
         // Engine callers may write to a collection they never created: its metadata is created with the write.
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api);
         var id = DocumentApi.NewId();
         await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
@@ -199,7 +199,7 @@ public sealed class StorageHistoryTests
     {
         // Clients cannot name _system, so its writes (API keys, Management) carry no per-commit client limits;
         // Management cleanup may delete more than 1024 entries in one transaction.
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         var system = await engine.OpenSystemDatabaseAsync(CancellationToken.None);
         await using (var writer = await system.BeginTransactionAsync(write: true, CancellationToken.None))
@@ -219,7 +219,7 @@ public sealed class StorageHistoryTests
     [Test]
     public async Task Assertion_only_transactions_do_not_notify_commit_waiters()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api);
         var sequence = store.CommitSequence;
         using var cancelled = new CancellationTokenSource();
@@ -240,7 +240,7 @@ public sealed class StorageHistoryTests
     [Arguments(true)]
     public async Task Storage_commit_limits_bound_distinct_states_and_count_repeated_writes_with_framing(bool repeated)
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api);
         var ids = Enumerable.Range(0, 7).Select(_ => DocumentApi.NewId()).ToArray();
         var document = Encoding.UTF8.GetBytes("{\"v\":\"" + new string('x', (1 << 20) - 8) + "\"}");
@@ -290,7 +290,7 @@ public sealed class StorageHistoryTests
     [Test]
     public async Task Storage_write_count_and_document_size_failures_cannot_commit()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api);
         var id = DocumentApi.NewId();
         var small = Encoding.UTF8.GetBytes("{}");
@@ -321,7 +321,7 @@ public sealed class StorageHistoryTests
     [Test]
     public async Task Invalid_utf8_is_rejected_before_lossy_expansion_and_cannot_commit()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api);
         var id = DocumentApi.NewId();
         var invalid = new byte[1 << 20];

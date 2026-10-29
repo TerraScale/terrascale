@@ -31,7 +31,7 @@ internal sealed record ApiResponse(HttpStatusCode Status, JsonElement Json, stri
 }
 
 /// <summary>
-/// One test's own server with a tenant (an organization with one project), a key of that organization, database
+/// One test's own tenant (an organization with one project), a key of that organization, database
 /// <c>db</c> and collection <c>items</c>, plus helpers that send JSON and read whole responses.
 /// </summary>
 internal sealed class DocumentApi : IAsyncDisposable
@@ -39,10 +39,13 @@ internal sealed class DocumentApi : IAsyncDisposable
     public const string Database = "db";
     public const string Collection = "items";
 
-    private DocumentApi(ManagementApi management, Tenant tenant)
+    private readonly bool _ownsServer;
+
+    private DocumentApi(ManagementApi management, Tenant tenant, bool ownsServer)
     {
         Management = management;
         Tenant = tenant;
+        _ownsServer = ownsServer;
     }
 
     public ManagementApi Management { get; }
@@ -74,19 +77,29 @@ internal sealed class DocumentApi : IAsyncDisposable
 
     public string Transactions => $"{DatabasePath()}/transactions";
 
-    /// <summary>Starts a server and creates <c>db</c> and <c>items</c> in a new tenant, with a read and write key.</summary>
-    public static async Task<DocumentApi> StartAsync(
+    /// <summary>Creates <c>db</c> and <c>items</c> in a new tenant on the assembly's server; customized hosts remain test-owned.</summary>
+    public static Task<DocumentApi> StartAsync(
         Action<Dictionary<string, string>>? configure = null, Action<IServiceCollection>? services = null,
-        TimeProvider? time = null, CancellationToken cancellationToken = default)
+        TimeProvider? time = null, CancellationToken cancellationToken = default) =>
+        StartCoreAsync(configure, services, time, ownsServer: configure is not null || services is not null || time is not null, cancellationToken);
+
+    /// <summary>Owns a separate host for tests that stop it, mutate system storage or measure host-wide state.</summary>
+    public static Task<DocumentApi> StartIsolatedAsync() => StartCoreAsync(null, null, null, ownsServer: true, CancellationToken.None);
+
+    private static async Task<DocumentApi> StartCoreAsync(
+        Action<Dictionary<string, string>>? configure, Action<IServiceCollection>? services,
+        TimeProvider? time, bool ownsServer, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var management = await ManagementApi.StartAsync(configure, services, time);
+        var management = ownsServer
+            ? await ManagementApi.StartAsync(configure, services, time)
+            : await SharedDocumentServer.GetAsync(cancellationToken);
         Tenant? tenant = null;
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
             tenant = await management.CreateTenantAsync("documents:read", "documents:write");
-            var api = new DocumentApi(management, tenant);
+            var api = new DocumentApi(management, tenant, ownsServer);
             (await api.SendAsync(HttpMethod.Put, api.DatabasePath(), cancellationToken: cancellationToken)).Status.ShouldBe(HttpStatusCode.Created);
             (await api.SendAsync(HttpMethod.Post, $"{api.DatabasePath()}/collections", new { name = Collection }, cancellationToken: cancellationToken)).Status.ShouldBe(HttpStatusCode.Created);
             return api;
@@ -95,7 +108,10 @@ internal sealed class DocumentApi : IAsyncDisposable
         {
             // The tenant's client is not the management API's to dispose.
             tenant?.Dispose();
-            await management.DisposeAsync();
+            if (ownsServer)
+            {
+                await management.DisposeAsync();
+            }
             throw;
         }
     }
@@ -227,7 +243,10 @@ internal sealed class DocumentApi : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         Tenant.Dispose();
-        await Management.DisposeAsync();
+        if (_ownsServer)
+        {
+            await Management.DisposeAsync();
+        }
     }
 }
 

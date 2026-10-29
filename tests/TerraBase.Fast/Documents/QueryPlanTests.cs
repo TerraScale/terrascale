@@ -94,7 +94,7 @@ public sealed class QueryPlanTests
     [Test]
     public async Task Search_candidates_seek_text_ids_for_queries_counts_and_sort_admission()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { body = "native" })).Status.ShouldBe(System.Net.HttpStatusCode.Created);
         var databaseFile = await api.DatabaseFileAsync();
@@ -124,7 +124,7 @@ public sealed class QueryPlanTests
     [Test]
     public async Task Listing_seeks_live_rows_past_a_tombstone_prefix()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var ids = Enumerable.Range(0, 128).Select(i => $"{i:D26}").ToList();
         (await api.TransactAsync([.. ids.Select(id => new { op = "create", collection = "items", id, document = new { n = 1 } })]))
             .Status.ShouldBe(System.Net.HttpStatusCode.OK);

@@ -135,7 +135,7 @@ public sealed class GroupCommitTests
     [Test]
     public async Task Writes_queued_together_commit_in_one_transaction_and_failures_roll_back_alone()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var existing = DocumentApi.NewId();
         var original = await api.PutAsync(existing, new { n = 0 });
@@ -185,7 +185,7 @@ public sealed class GroupCommitTests
     [Test]
     public async Task A_batch_queues_about_one_call_per_write_on_the_write_thread_and_runs_the_rest_there()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         _ = await api.PutAsync(DocumentApi.NewId(), new { n = 0 });
         var store = await StoreAsync(api);
@@ -273,7 +273,7 @@ public sealed class GroupCommitTests
     [Test]
     public async Task A_rolled_back_write_keeps_what_an_earlier_write_of_its_batch_wrote()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var existing = DocumentApi.NewId();
         await api.PutAsync(existing, new { n = 0 });
@@ -316,7 +316,7 @@ public sealed class GroupCommitTests
     [Test]
     public async Task A_read_its_work_budget_stops_inside_a_batch_is_too_expensive_and_the_writer_keeps_working()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         foreach (var _ in Enumerable.Range(0, 4))
         {
@@ -343,7 +343,7 @@ public sealed class GroupCommitTests
     [Test]
     public async Task A_write_whose_failure_rolls_back_the_whole_batch_fails_alone_and_the_others_commit_again()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var store = await StoreAsync(api);
         var failingId = DocumentApi.NewId();
@@ -441,7 +441,7 @@ public sealed class GroupCommitTests
     [Arguments(false)]
     public async Task A_failure_after_a_catalog_group_commit_still_fails_the_write(bool insideCommit)
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         var system = (TursoDatabaseStore)await engine.OpenSystemDatabaseAsync(CancellationToken.None);
         static void Fail()
@@ -478,7 +478,7 @@ public sealed class GroupCommitTests
     [Test]
     public async Task A_writer_close_that_fails_after_a_commit_still_releases_the_writer_and_the_admission()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api);
         var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         await store.WithWriterAsync(writer =>
@@ -524,7 +524,7 @@ public sealed class GroupCommitTests
     [Test]
     public async Task A_failure_right_after_the_commit_still_wakes_what_waits_for_commits()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api);
         var sequence = store.CommitSequence;
         var committed = store.WaitForCommitAsync(sequence, CancellationToken.None);
@@ -558,7 +558,7 @@ public sealed class GroupCommitTests
     [Test]
     public async Task A_failure_right_after_creating_a_collection_still_serves_the_new_collection()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api);
         var id = DocumentApi.NewId();
         await Assert.That((await api.GetAsync(id)).Code).IsEqualTo("not_found");
@@ -575,7 +575,7 @@ public sealed class GroupCommitTests
     [Test]
     public async Task A_failure_right_after_an_index_build_still_moves_the_statistics_generation()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api);
         var generation = store.Statistics;
         var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
