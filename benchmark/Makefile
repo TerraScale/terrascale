@@ -25,7 +25,8 @@ test-fast:
 test-slow:
 	go test -race -count=1 -tags slow -run '^TestSlow' -timeout=10m ./clients/go
 test: test-fast test-slow
-check fast:
+fast: fmt-check build test-fast
+check:
 	@test -z "$$(gofmt -l cmd internal)" || { gofmt -l cmd internal; exit 1; }
 	go vet ./...
 	$(MAKE) build

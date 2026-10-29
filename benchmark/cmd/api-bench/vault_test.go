@@ -13,7 +13,7 @@ const fakeProject = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
 
 var fakeAPIKey = "0" + strings.Repeat("0", 25) + "_" + strings.Repeat("a", 52)
 
-// useKeyFile writes content to a 0600 file in a test dir and points TS_BENCH_KEY_FILE at it.
+// useKeyFile writes content to a 0600 file in a test-owned directory.
 func useKeyFile(t *testing.T, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "bench-key.json")
