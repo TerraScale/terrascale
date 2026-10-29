@@ -1,0 +1,15 @@
+{
+  "collection": "items",
+  "documents": 2,
+  "sampledDocuments": 2,
+  "fields": [
+    {
+      "path": "title",
+      "present": 2,
+      "types": {
+        "string": 2
+      }
+    }
+  ],
+  "uniqueConstraints": []
+}

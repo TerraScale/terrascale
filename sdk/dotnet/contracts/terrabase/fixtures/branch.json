@@ -1,0 +1,14 @@
+{
+  "id": "01JA0000000000000000000005",
+  "projectId": "01JA0000000000000000000001",
+  "name": "copy",
+  "branchedFrom": "01JA0000000000000000000004",
+  "createdAt": "2026-10-12T00:00:00+00:00",
+  "region": "sjc",
+  "homeRegion": "gru",
+  "replicaRegions": [
+    "sjc",
+    "fra"
+  ],
+  "allRegions": false
+}

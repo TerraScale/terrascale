@@ -1,0 +1,21 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <LangVersion>preview</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RepositoryCommit Condition="'$(RepositoryCommit)' == '' and '$(SourceRevisionId)' != ''">$(SourceRevisionId)</RepositoryCommit>
+
+    <AnalysisLevel>latest</AnalysisLevel>
+    <Authors>TerraScale</Authors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="5.0.0-1.25277.114" PrivateAssets="all" IncludeAssets="runtime; build; native; contentfiles; analyzers" />
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Link="BannedSymbols.txt" />
+  </ItemGroup>
+</Project>

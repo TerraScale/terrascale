@@ -1,0 +1,50 @@
+{
+  "create_invitation": {
+    "request": {
+      "email": "invitee@example.test",
+      "role": "viewer",
+      "project_id": "{project}"
+    },
+    "response": {
+      "invitation": {
+        "id": "{invitation}",
+        "email": "invitee@example.test",
+        "role": "viewer",
+        "project_id": "{project}",
+        "invited_by": "{user}",
+        "created_at": "2026-10-13T00:00:00+00:00",
+        "expires_at": "2026-10-20T00:00:00+00:00",
+        "status": "pending"
+      },
+      "token": "tsi_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "lookup_invitation": {
+    "request": {
+      "token": "tsi_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "response": {
+      "organization": {
+        "id": "{organization}",
+        "name": "Synthetic project"
+      },
+      "project": {
+        "id": "{project}",
+        "name": "Synthetic project"
+      },
+      "email": "invitee@example.test",
+      "role": "viewer",
+      "expires_at": "2026-10-20T00:00:00+00:00"
+    }
+  },
+  "accept_invitation": {
+    "request": {
+      "token": "tsi_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "response": {
+      "organization_id": "{organization}",
+      "project_id": "{project}",
+      "role": "viewer"
+    }
+  }
+}

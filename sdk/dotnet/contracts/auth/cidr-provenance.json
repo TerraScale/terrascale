@@ -1,0 +1,17 @@
+{
+  "repository": "https://github.com/TerraScale/terrascale",
+  "revision": "a3cbf8b1c73d304189a489fa8033d41f3b508de3",
+  "sources_sha256": {
+    "src/TerraScale.Authentication/Features/Platform/PlatformEndpoints.cs": "847c737c4b614e845d64910d7d2038cd94a75f730da5caabd0b61212749adde3",
+    "src/TerraScale.Authentication/Features/Platform/PlatformDirectory.cs": "537ccff7a106269305268d075e733cc076d58c892d512c392c3f71f0a4a99862",
+    "src/TerraScale.Authentication/Features/Platform/ApiKeyEndpoints.cs": "15bbed925cb72d200047b674a9679bdff3a3301e904f30479952248726e0ba51",
+    "src/TerraScale.Authentication/Features/Platform/ApiKeys.cs": "fa5545b08a71dab828a8ad448bfea9723aa305ce8524d5da1c24ea0f8d71b0e2"
+  },
+  "operations": ["set_project_allowed_cidrs", "set_project_api_key_allowed_cidrs", "set_organization_api_key_allowed_cidrs"],
+  "dto_fields": {"AllowedCidrsRequest.allowed_cidrs": "required list; null rejected", "CreateApiKeyRequest.allowed_cidrs": "optional nullable list; null/absent/empty unrestricted", "ProjectBody.allowed_cidrs": "required non-null string list", "ApiKeyBody.allowed_cidrs": "required non-null string list"},
+  "wire": "application/json; PUT returns 200; errors 400/401/403/404/503; platform sign-in bearer; none paginated or retried",
+  "authorization": {"set_project_allowed_cidrs": "project admin", "set_project_api_key_allowed_cidrs": "project member", "set_organization_api_key_allowed_cidrs": "organization admin"},
+  "semantics": "Replaces the allowlist, at most 32 normalized distinct IPv4/IPv6 CIDRs or addresses; [] clears. Project and key restrictions both apply to tokens issued afterwards, within 60 seconds. Producer validates, canonicalizes and enforces tenant/role scope.",
+  "manifests": ["routes.json", "dtos.json", "fixtures/platform-headless.json"],
+  "qualification": "Source-derived HTTP contracts; live allow/deny qualification remains parent-owned."
+}

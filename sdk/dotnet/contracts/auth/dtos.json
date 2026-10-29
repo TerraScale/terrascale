@@ -1,0 +1,827 @@
+{
+  "producer_revision": "e30ffdc287530551b161b0130220be53d3c0475e",
+  "cidr_producer": "cidr-provenance.json",
+  "mfa_policy_producer": "mfa-policy-provenance.json",
+  "dtos": {
+    "EndUserTokenRequest": {"sdk_type": "EndUserTokenMintRequest", "contract": "end-user-tokens.json", "fields": [{"name": "user_id", "type": "string", "nullable": false, "default": null}, {"name": "claims", "type": "EndUserTokenClaims?", "nullable": true, "default": null}]},
+    "EndUserTokenClaims": {"sdk_type": "EndUserTokenMintClaims", "contract": "end-user-tokens.json", "fields": [{"name": "roles", "type": "IReadOnlyList<string>?", "nullable": true, "default": null}]},
+    "EndUserTokenBody": {"sdk_type": "TerraScaleAuthEndUserToken", "contract": "end-user-tokens.json", "fields": [{"name": "access_token", "type": "string", "nullable": false, "default": null}, {"name": "token_type", "type": "string", "nullable": false, "default": null}, {"name": "expires_in", "type": "long", "nullable": false, "default": null}]},
+    "MfaPolicyRequest": {"sdk_type": "TerraScaleAuthPlatformMfaPolicy", "fields": [{"name": "require_mfa", "type": "bool", "nullable": false, "default": null}]},
+    "AccountMfaBody": {"sdk_type": "TerraScaleAuthPlatformAccountMfa", "fields": [{"name": "enabled", "type": "bool", "nullable": false, "default": null}, {"name": "recovery_codes_remaining", "type": "int", "nullable": false, "default": null}, {"name": "manage_url", "type": "string", "nullable": false, "default": null}]},
+    "StepUpGrantBody": {"sdk_type": "TerraScaleAuthStepUpGrant", "provenance": "step-up-provenance.json", "fields": [
+      {"name": "operation_grant", "type": "string", "nullable": false, "default": null}]},
+    "StepUpRequest": {"sdk_type": "TerraScaleAuthStepUpRequest", "provenance": "step-up-provenance.json", "fields": [
+      {"name": "purpose", "type": "string", "nullable": false, "default": null},
+      {"name": "audience", "type": "string", "nullable": false, "default": null},
+      {"name": "return_uri", "type": "string", "nullable": false, "default": null}]},
+    "StepUpBody": {"sdk_type": "TerraScaleAuthStepUp", "provenance": "step-up-provenance.json", "fields": [
+      {"name": "proof", "type": "string", "nullable": false, "default": null},
+      {"name": "step_up_url", "type": "string", "nullable": false, "default": null},
+      {"name": "expires_at", "type": "date-time", "nullable": false, "default": null}]},
+    "ConsumeStepUpRequest": {"sdk_type": "TerraScaleAuthStepUpConsume", "provenance": "step-up-provenance.json", "fields": [
+      {"name": "proof", "type": "string", "nullable": false, "default": null},
+      {"name": "purpose", "type": "string", "nullable": false, "default": null},
+      {"name": "audience", "type": "string", "nullable": false, "default": null},
+      {"name": "operation_receipt", "type": "string", "nullable": true, "default": null}]},
+    "NameRequest": {
+      "sdk_type": "TerraScaleAuthPlatformName",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        }
+      ]
+    },
+    "RoleRequest": {
+      "sdk_type": "TerraScaleAuthPlatformRole",
+      "fields": [
+        {
+          "name": "role",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        }
+      ]
+    },
+    "OrganizationBody": {
+      "sdk_type": "TerraScaleAuthPlatformOrganization",
+      "fields": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "created_by",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "created_at",
+          "type": "DateTimeOffset",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "role",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        },
+        {"name": "require_mfa", "type": "bool", "nullable": false, "default": null}
+      ]
+    },
+    "OrganizationPageBody": {
+      "sdk_type": "TerraScaleAuthPlatformPage<TerraScaleAuthPlatformOrganization>",
+      "fields": [
+        {
+          "name": "items",
+          "type": "IReadOnlyList<OrganizationBody>",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "next",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        }
+      ]
+    },
+    "MemberBody": {
+      "sdk_type": "TerraScaleAuthPlatformMember",
+      "fields": [
+        {
+          "name": "user_id",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "email",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "role",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "joined_at",
+          "type": "DateTimeOffset",
+          "nullable": false,
+          "default": null
+        }
+      ]
+    },
+    "MemberPageBody": {
+      "sdk_type": "TerraScaleAuthPlatformPage<TerraScaleAuthPlatformMember>",
+      "fields": [
+        {
+          "name": "items",
+          "type": "IReadOnlyList<MemberBody>",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "next",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        }
+      ]
+    },
+    "ProjectBody": {
+      "sdk_type": "TerraScaleAuthPlatformProject",
+      "fields": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "organization_id",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "issuer",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        },
+        {
+          "name": "created_by",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "created_at",
+          "type": "DateTimeOffset",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "role",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "allowed_cidrs",
+          "type": "IReadOnlyList<string>",
+          "nullable": false,
+          "default": null
+        }
+      ]
+    },
+    "ProjectPageBody": {
+      "sdk_type": "TerraScaleAuthPlatformPage<TerraScaleAuthPlatformProject>",
+      "fields": [
+        {
+          "name": "items",
+          "type": "IReadOnlyList<ProjectBody>",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "next",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        }
+      ]
+    },
+    "ProjectMemberBody": {
+      "sdk_type": "TerraScaleAuthPlatformProjectMember",
+      "fields": [
+        {
+          "name": "user_id",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "email",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "role",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "granted_at",
+          "type": "DateTimeOffset",
+          "nullable": false,
+          "default": null
+        }
+      ]
+    },
+    "ProjectMemberPageBody": {
+      "sdk_type": "TerraScaleAuthPlatformPage<TerraScaleAuthPlatformProjectMember>",
+      "fields": [
+        {
+          "name": "items",
+          "type": "IReadOnlyList<ProjectMemberBody>",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "next",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        }
+      ]
+    },
+    "CreateApiKeyRequest": {
+      "sdk_type": "TerraScaleAuthPlatformCreateApiKey", "provenance": "step-up-provenance.json",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        },
+        {
+          "name": "scopes",
+          "type": "IReadOnlyList<string>?",
+          "nullable": true,
+          "default": null
+        },
+        {
+          "name": "database",
+          "type": "string?",
+          "nullable": true,
+          "default": "null"
+        },
+        {
+          "name": "expires_at",
+          "type": "DateTimeOffset?",
+          "nullable": true,
+          "default": "null"
+        },
+        {
+          "name": "allowed_cidrs",
+          "type": "IReadOnlyList<string>?",
+          "nullable": true,
+          "default": "null"
+        }
+      ]
+    },
+    "RotateApiKeyRequest": {
+      "sdk_type": "TerraScaleAuthPlatformRotateApiKey",
+      "fields": [
+        {
+          "name": "previous_secret_ttl",
+          "type": "int?",
+          "nullable": true,
+          "default": "null"
+        }
+      ]
+    },
+    "ApiKeyBody": {
+      "sdk_type": "TerraScaleAuthPlatformApiKey", "provenance": "step-up-provenance.json",
+      "fields": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "organization_id",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "project_id",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        },
+        {
+          "name": "database",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        },
+        {
+          "name": "scopes",
+          "type": "IReadOnlyList<string>",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "created_by",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "created_at",
+          "type": "DateTimeOffset",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "expires_at",
+          "type": "DateTimeOffset?",
+          "nullable": true,
+          "default": null
+        },
+        {
+          "name": "previous_secret_expires_at",
+          "type": "DateTimeOffset?",
+          "nullable": true,
+          "default": null
+        },
+        {
+          "name": "last_used_at",
+          "type": "DateTimeOffset?",
+          "nullable": true,
+          "default": "null"
+        },
+        {
+          "name": "allowed_cidrs",
+          "type": "IReadOnlyList<string>",
+          "nullable": false,
+          "default": null
+        }
+      ]
+    },
+    "ApiKeySecretBody": {
+      "sdk_type": "TerraScaleAuthPlatformApiKeySecret",
+      "fields": [
+        {
+          "name": "api_key",
+          "type": "ApiKeyBody",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "key",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        }
+      ]
+    },
+    "ApiKeyPageBody": {
+      "sdk_type": "TerraScaleAuthPlatformPage<TerraScaleAuthPlatformApiKey>",
+      "fields": [
+        {
+          "name": "items",
+          "type": "IReadOnlyList<ApiKeyBody>",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "next",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        }
+      ]
+    },
+    "TokenBody": {
+      "sdk_type": "TerraScaleAuthTokenResponse",
+      "fields": [
+        {
+          "name": "access_token",
+          "type": "string",
+          "nullable": false,
+          "optional_on_wire": false
+        },
+        {
+          "name": "token_type",
+          "type": "string",
+          "nullable": false,
+          "optional_on_wire": false
+        },
+        {
+          "name": "expires_in",
+          "type": "long",
+          "nullable": false,
+          "optional_on_wire": false
+        },
+        {
+          "name": "scope",
+          "type": "string?",
+          "nullable": true,
+          "optional_on_wire": true
+        },
+        {
+          "name": "id_token",
+          "type": "string?",
+          "nullable": true,
+          "optional_on_wire": true
+        },
+        {
+          "name": "refresh_token",
+          "type": "string?",
+          "nullable": true,
+          "optional_on_wire": true
+        }
+      ],
+      "protocol_extension": {
+        "issued_token_type": "optional RFC8693 token type string"
+      }
+    },
+    "UserInfoBody": {
+      "sdk_type": "TerraScaleAuthUserInfo",
+      "fields": [
+        {
+          "name": "sub",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "email",
+          "type": "string?",
+          "nullable": true
+        },
+        {
+          "name": "email_verified",
+          "type": "bool?",
+          "nullable": true
+        }
+      ]
+    },
+    "ErrorBody": {
+      "fields": [
+        {
+          "name": "error",
+          "type": "ErrorDetail",
+          "nullable": false
+        }
+      ]
+    },
+    "ErrorDetail": {
+      "fields": [
+        {
+          "name": "code",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "nullable": false
+        }
+      ]
+    },
+    "OAuthErrorBody": {
+      "fields": [
+        {
+          "name": "error",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "error_description",
+          "type": "string?",
+          "nullable": true
+        }
+      ]
+    },
+    "CreateInvitationRequest": {
+      "sdk_type": "TerraScaleAuthPlatformCreateInvitation",
+      "fields": [
+        {
+          "name": "email",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        },
+        {
+          "name": "role",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        },
+        {
+          "name": "project_id",
+          "type": "string?",
+          "nullable": true,
+          "default": "null"
+        }
+      ]
+    },
+    "InvitationTokenRequest": {
+      "sdk_type": "TerraScaleAuthPlatformInvitationToken",
+      "fields": [
+        {
+          "name": "token",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        }
+      ]
+    },
+    "StartTransferRequest": {
+      "sdk_type": "TerraScaleAuthPlatformStartOwnershipTransfer",
+      "fields": [
+        {
+          "name": "user_id",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        }
+      ]
+    },
+    "InvitationBody": {
+      "sdk_type": "TerraScaleAuthPlatformInvitation",
+      "fields": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "email",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "role",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "project_id",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        },
+        {
+          "name": "invited_by",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "created_at",
+          "type": "DateTimeOffset",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "expires_at",
+          "type": "DateTimeOffset",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        }
+      ]
+    },
+    "InvitationCreatedBody": {
+      "sdk_type": "TerraScaleAuthPlatformCreatedInvitation",
+      "fields": [
+        {
+          "name": "invitation",
+          "type": "InvitationBody",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "token",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        }
+      ]
+    },
+    "InvitationPageBody": {
+      "sdk_type": "TerraScaleAuthPlatformPage<TerraScaleAuthPlatformInvitation>",
+      "fields": [
+        {
+          "name": "items",
+          "type": "IReadOnlyList<InvitationBody>",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "next",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        }
+      ]
+    },
+    "NamedBody": {
+      "sdk_type": "TerraScaleAuthPlatformNamed",
+      "fields": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        }
+      ]
+    },
+    "InvitationLookupBody": {
+      "sdk_type": "TerraScaleAuthPlatformInvitationLookup",
+      "fields": [
+        {
+          "name": "organization",
+          "type": "NamedBody",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "project",
+          "type": "NamedBody?",
+          "nullable": true,
+          "default": null
+        },
+        {
+          "name": "email",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "role",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "expires_at",
+          "type": "DateTimeOffset",
+          "nullable": false,
+          "default": null
+        }
+      ]
+    },
+    "AcceptedInvitationBody": {
+      "sdk_type": "TerraScaleAuthPlatformAcceptedInvitation",
+      "fields": [
+        {
+          "name": "organization_id",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "project_id",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        },
+        {
+          "name": "role",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        }
+      ]
+    },
+    "OwnershipTransferBody": {
+      "sdk_type": "TerraScaleAuthPlatformOwnershipTransfer",
+      "fields": [
+        {
+          "name": "from_user_id",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "to_user_id",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "created_at",
+          "type": "DateTimeOffset",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "expires_at",
+          "type": "DateTimeOffset",
+          "nullable": false,
+          "default": null
+        }
+      ]
+    },
+    "AuditEventBody": {
+      "sdk_type": "TerraScaleAuthPlatformAuditEvent",
+      "fields": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "actor",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "action",
+          "type": "string",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "target",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        },
+        {
+          "name": "detail",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        },
+        {
+          "name": "occurred_at",
+          "type": "DateTimeOffset",
+          "nullable": false,
+          "default": null
+        }
+      ]
+    },
+    "AuditEventPageBody": {
+      "sdk_type": "TerraScaleAuthPlatformPage<TerraScaleAuthPlatformAuditEvent>",
+      "fields": [
+        {
+          "name": "items",
+          "type": "IReadOnlyList<AuditEventBody>",
+          "nullable": false,
+          "default": null
+        },
+        {
+          "name": "next",
+          "type": "string?",
+          "nullable": true,
+          "default": null
+        }
+      ]
+    },
+    "AllowedCidrsRequest": {
+      "sdk_type": "TerraScaleAuthPlatformAllowedCidrs",
+      "fields": [
+        {
+          "name": "allowed_cidrs",
+          "type": "IReadOnlyList<string>?",
+          "nullable": true,
+          "default": null
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "producer": "TerraScale/terrascale",
+  "revision": "1d823d8534fc5035859a47e263691d0c7cb7b744",
+  "inputs": {
+    "src/TerraBase/Features/Management/Backups/GetExportScheduleEndpoint.cs": "2dace07b13727276e4d61ecbc532cb7988872dd2196d8cdabbe60ab2d92b699f",
+    "src/TerraBase/Features/Management/Backups/SetExportScheduleEndpoint.cs": "5dba757d5f24aebe0081dd1682d63123da2fc998280aa32ec75810cc5ab6b846",
+    "src/TerraBase/Features/Management/Backups/ScheduledExports.cs": "741df4e4c39f57c9f7be3630258b890214a4acfeebea29f1bbb33151ea2b1ee9"
+  },
+  "operations": [
+    {
+      "operation": "getExportSchedule",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/export-schedule",
+      "scope": "databases:read",
+      "mediaType": "application/json",
+      "success": 200,
+      "errors": [
+        401,
+        403,
+        404,
+        503
+      ],
+      "retry": "none",
+      "pagination": "none"
+    },
+    {
+      "operation": "setExportSchedule",
+      "method": "PUT",
+      "path": "/v1/projects/{project}/databases/{database}/export-schedule",
+      "scope": "databases:write",
+      "mediaType": "application/json",
+      "success": 200,
+      "errors": [
+        400,
+        401,
+        403,
+        404,
+        409,
+        503
+      ],
+      "retry": "none",
+      "pagination": "none"
+    }
+  ],
+  "responseFields": {
+    "cron": "string|null",
+    "updatedAt": "RFC3339|null",
+    "lastRun": "ExportRun|null"
+  },
+  "runFields": {
+    "startedAt": "RFC3339",
+    "finishedAt": "RFC3339",
+    "status": "string",
+    "key": "string|null",
+    "documents": "int64",
+    "bytes": "int64",
+    "error": "string|null"
+  },
+  "request": {
+    "cron": "string|null; empty/whitespace clears; five-field UTC otherwise"
+  },
+  "destination": "project backup destination required for a nonempty schedule; 409 otherwise",
+  "idempotency": "No replay; save timestamp changes on each PUT"
+}

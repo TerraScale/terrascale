@@ -1,0 +1,12 @@
+{
+  "items": [
+    {
+      "name": "items_title",
+      "collection": "items",
+      "fields": [
+        "title"
+      ],
+      "state": "active"
+    }
+  ]
+}

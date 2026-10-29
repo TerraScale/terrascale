@@ -1,0 +1,35 @@
+{
+  "producer": "TerraScale/terrascale",
+  "revision": "1d823d8534fc5035859a47e263691d0c7cb7b744",
+  "inputs": {
+    "src/TerraBase/Features/Documents/GetCollectionRulesEndpoint.cs": "b70abbcf46d60123bbde92ab630d805f9381ea20cdb5124b72a272bc2d266052",
+    "src/TerraBase/Features/Documents/PutCollectionRulesEndpoint.cs": "6e4312a2d0be06b4f46feccfe12cb2b3d0a2c550bd0776a689e36339dde75ee2",
+    "src/TerraBase/Features/Documents/CollectionRulesRoute.cs": "556f55cad4cc67fb0e0eebc88796547d4a75546eb2dd3434539074e201ba92a7",
+    "src/TerraBase/Features/Documents/DocumentService.Rules.cs": "c28d7b692ba21c455fa0c78a7a8c1cdd366ba0b269b1e44d4aa52fd0950aa382",
+    "src/TerraBase/Engine/CollectionAccessRules.cs": "e46fa7b5bd130ebae73c35485ba476a064f4c60e7da41975a2ced20657d2a4d5"
+  },
+  "operations": [
+    {
+      "operation": "getCollectionRules",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/rules",
+      "scope": "documents:read",
+      "security": "project credential; end-user and anonymous refused",
+      "success": 200,
+      "mediaType": "application/json",
+      "response": "{rules: CollectionAccessRules | null}",
+      "retry": "none"
+    },
+    {
+      "operation": "putCollectionRules",
+      "method": "PUT",
+      "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/rules",
+      "scope": "documents:write",
+      "security": "project credential; end-user and anonymous refused",
+      "success": 200,
+      "mediaType": "application/json",
+      "response": "{rules: CollectionAccessRules | null}",
+      "retry": "none"
+    }
+  ]
+}

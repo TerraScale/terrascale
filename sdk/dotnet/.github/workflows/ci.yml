@@ -1,0 +1,57 @@
+# Every main push and release runs the SDK tests with HTTP fakes.
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+  workflow_call:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Superseded PR runs cancel; main runs finish.
+concurrency:
+  group: ${{ github.workflow }}-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Draft PRs run nothing; marking the PR ready runs it.
+    if: ${{ !github.event.pull_request.draft }}
+    timeout-minutes: 20
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        id: nuget
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('global.json', '**/*packages.lock.json') }}
+      # The pinned .NET 11 SDK builds both targets; .NET 10 installs its matching runtime.
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          global-json-file: global.json
+          dotnet-version: 10.0.401
+      - name: Run release build and tests
+        run: |
+          bash scripts/check-release.sh
+      - name: Qualify release package without registry credentials
+        run: python3 scripts/pack-reproducible.py "$RUNNER_TEMP/qualified-package"
+      - name: SDK validation passed
+        run: echo 'Build, whitespace, security audit, both target-framework suites, and reproducible package qualification passed.'
+      - uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.nuget.outputs.cache-hit != 'true'
+        with:
+          path: ~/.nuget/packages
+          key: ${{ steps.nuget.outputs.cache-primary-key }}

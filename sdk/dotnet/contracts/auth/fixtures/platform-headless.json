@@ -1,0 +1,540 @@
+{
+  "mintEndUserToken": {"request": {"user_id": "{user}", "claims": {"roles": ["reader"]}}, "response": {"access_token": "fixture-sensitive-token-canary", "token_type": "Bearer", "expires_in": 900}},
+  "get_account_mfa": {"request": null, "response": {"enabled": true, "recovery_codes_remaining": 8, "manage_url": "https://auth.example.test/ui/terrascale/security"}},
+  "set_organization_mfa_policy": {"request": {"require_mfa": true}, "response": {"id": "{organization}", "name": "Synthetic organization", "created_by": "{user}", "created_at": "2026-10-13T00:00:00+00:00", "role": "owner", "require_mfa": true}},
+  "request_step_up": {
+    "request": {"purpose":"create_pat","audience":"ts-dashboard","return_uri":"https://dashboard.example.test/auth/step-up/callback"},
+    "response": {"proof":"fixture-proof-canary","step_up_url":"https://auth.example.test/ui/terrascale/step-up/01JA0000000000000000000005","expires_at":"2026-10-26T12:05:00Z"}
+  },
+  "consume_step_up": {
+    "request": {"proof":"fixture-proof-canary","purpose":"create_pat","audience":"ts-dashboard","operation_receipt":null},
+    "response": null
+  },
+  "consume_step_up_delete": {
+    "request": {"proof":"fixture-proof-canary","purpose":"delete_account","audience":"ts-dashboard","operation_receipt":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+    "response": {"operation_grant":"fixture-operation-grant-canary"}
+  },
+  "create_organization": {
+    "request": {
+      "name": "Synthetic project"
+    },
+    "response": {
+      "id": "{organization}",
+      "name": "Synthetic project",
+      "created_by": "{user}",
+      "created_at": "2026-10-13T00:00:00+00:00",
+      "role": "owner",
+      "require_mfa": false
+    }
+  },
+  "list_organizations": {
+    "request": null,
+    "response": {
+      "items": [
+        {
+          "id": "{organization}",
+          "name": "Synthetic project",
+          "created_by": "{user}",
+          "created_at": "2026-10-13T00:00:00+00:00",
+          "role": "member",
+          "require_mfa": false
+        }
+      ],
+      "next": "opaque+/cursor="
+    }
+  },
+  "get_organization": {
+    "request": null,
+    "response": {
+      "id": "{organization}",
+      "name": "Synthetic project",
+      "created_by": "{user}",
+      "created_at": "2026-10-13T00:00:00+00:00",
+      "role": "member",
+      "require_mfa": false
+    }
+  },
+  "rename_organization": {
+    "request": {
+      "name": "Synthetic project"
+    },
+    "response": {
+      "id": "{organization}",
+      "name": "Synthetic project",
+      "created_by": "{user}",
+      "created_at": "2026-10-13T00:00:00+00:00",
+      "role": "admin",
+      "require_mfa": false
+    }
+  },
+  "delete_organization": {
+    "request": null,
+    "response": null
+  },
+  "list_members": {
+    "request": null,
+    "response": {
+      "items": [
+        {
+          "user_id": "{user}",
+          "email": "synthetic@example.test",
+          "role": "member",
+          "joined_at": "2026-10-13T00:00:00+00:00"
+        }
+      ],
+      "next": "opaque+/cursor="
+    }
+  },
+  "change_member_role": {
+    "request": {
+      "role": "member"
+    },
+    "response": {
+      "user_id": "{user}",
+      "email": "synthetic@example.test",
+      "role": "member",
+      "joined_at": "2026-10-13T00:00:00+00:00"
+    }
+  },
+  "remove_member": {
+    "request": null,
+    "response": null
+  },
+  "leave_organization": {
+    "request": null,
+    "response": null
+  },
+  "sign_out_everywhere": {
+    "request": null,
+    "response": null
+  },
+  "account_deletion_status": {
+    "request": null,
+    "response": null
+  },
+  "delete_account": {
+    "request": null,
+    "response": null
+  },
+  "create_project": {
+    "request": {
+      "name": "Synthetic project"
+    },
+    "response": {
+      "id": "{project}",
+      "organization_id": "{organization}",
+      "name": "Synthetic project",
+      "issuer": "https://auth.example.test/{project}",
+      "created_by": "{user}",
+      "created_at": "2026-10-13T00:00:00+00:00",
+      "role": "admin",
+      "allowed_cidrs": []
+    }
+  },
+  "list_projects": {
+    "request": null,
+    "response": {
+      "items": [
+        {
+          "id": "{project}",
+          "organization_id": "{organization}",
+          "name": "Synthetic project",
+          "issuer": "https://auth.example.test/{project}",
+          "created_by": "{user}",
+          "created_at": "2026-10-13T00:00:00+00:00",
+          "role": "member",
+          "allowed_cidrs": []
+        }
+      ],
+      "next": "opaque+/cursor="
+    }
+  },
+  "get_project": {
+    "request": null,
+    "response": {
+      "id": "{project}",
+      "organization_id": "{organization}",
+      "name": "Synthetic project",
+      "issuer": "https://auth.example.test/{project}",
+      "created_by": "{user}",
+      "created_at": "2026-10-13T00:00:00+00:00",
+      "role": "member",
+      "allowed_cidrs": []
+    }
+  },
+  "rename_project": {
+    "request": {
+      "name": "Synthetic project"
+    },
+    "response": {
+      "id": "{project}",
+      "organization_id": "{organization}",
+      "name": "Synthetic project",
+      "issuer": "https://auth.example.test/{project}",
+      "created_by": "{user}",
+      "created_at": "2026-10-13T00:00:00+00:00",
+      "role": "admin",
+      "allowed_cidrs": []
+    }
+  },
+  "delete_project": {
+    "request": null,
+    "response": null
+  },
+  "list_project_members": {
+    "request": null,
+    "response": {
+      "items": [
+        {
+          "user_id": "{user}",
+          "email": "synthetic@example.test",
+          "role": "member",
+          "granted_at": "2026-10-13T00:00:00+00:00"
+        }
+      ],
+      "next": "opaque+/cursor="
+    }
+  },
+  "set_project_member_role": {
+    "request": {
+      "role": "member"
+    },
+    "response": {
+      "user_id": "{user}",
+      "email": "synthetic@example.test",
+      "role": "member",
+      "granted_at": "2026-10-13T00:00:00+00:00"
+    }
+  },
+  "remove_project_member": {
+    "request": null,
+    "response": null
+  },
+  "create_organization_api_key": {
+    "request": {
+      "name": "Synthetic project",
+      "scopes": [
+        "documents:read"
+      ],
+      "database": null,
+      "expires_at": null,
+      "allowed_cidrs": null
+    },
+    "response": {
+      "api_key": {
+        "id": "{key}",
+        "name": "Synthetic project",
+        "organization_id": "{organization}",
+        "project_id": null,
+        "database": null,
+        "scopes": [
+          "documents:read"
+        ],
+        "created_by": "{user}",
+        "created_at": "2026-10-13T00:00:00+00:00",
+        "expires_at": null,
+        "previous_secret_expires_at": null,
+        "last_used_at": null,
+        "allowed_cidrs": []
+      },
+      "key": "{key}_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "list_organization_api_keys": {
+    "request": null,
+    "response": {
+      "items": [
+        {
+          "id": "{key}",
+          "name": "Synthetic project",
+          "organization_id": "{organization}",
+          "project_id": null,
+          "database": null,
+          "scopes": [
+            "documents:read"
+          ],
+          "created_by": "{user}",
+          "created_at": "2026-10-13T00:00:00+00:00",
+          "expires_at": null,
+          "previous_secret_expires_at": null,
+          "last_used_at": null,
+          "allowed_cidrs": []
+        }
+      ],
+      "next": "opaque+/cursor="
+    }
+  },
+  "get_organization_api_key": {
+    "request": null,
+    "response": {
+      "id": "{key}",
+      "name": "Synthetic project",
+      "organization_id": "{organization}",
+      "project_id": null,
+      "database": null,
+      "scopes": [
+        "documents:read"
+      ],
+      "created_by": "{user}",
+      "created_at": "2026-10-13T00:00:00+00:00",
+      "expires_at": null,
+      "previous_secret_expires_at": null,
+      "last_used_at": "2026-10-13T00:00:30+00:00",
+      "allowed_cidrs": []
+    }
+  },
+  "revoke_organization_api_key": {
+    "request": null,
+    "response": null
+  },
+  "rotate_organization_api_key": {
+    "request": {
+      "previous_secret_ttl": 60
+    },
+    "response": {
+      "api_key": {
+        "id": "{key}",
+        "name": "Synthetic project",
+        "organization_id": "{organization}",
+        "project_id": null,
+        "database": null,
+        "scopes": [
+          "documents:read"
+        ],
+        "created_by": "{user}",
+        "created_at": "2026-10-13T00:00:00+00:00",
+        "expires_at": null,
+        "previous_secret_expires_at": "2026-10-13T00:01:00+00:00",
+        "last_used_at": null,
+        "allowed_cidrs": []
+      },
+      "key": "{key}_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "create_project_api_key": {
+    "request": {
+      "name": "Synthetic project",
+      "scopes": [
+        "documents:read"
+      ],
+      "database": "example-db",
+      "expires_at": null,
+      "allowed_cidrs": null
+    },
+    "response": {
+      "api_key": {
+        "id": "{key}",
+        "name": "Synthetic project",
+        "organization_id": "{organization}",
+        "project_id": "{project}",
+        "database": "example-db",
+        "scopes": [
+          "documents:read"
+        ],
+        "created_by": "{user}",
+        "created_at": "2026-10-13T00:00:00+00:00",
+        "expires_at": null,
+        "previous_secret_expires_at": null,
+        "last_used_at": null,
+        "allowed_cidrs": []
+      },
+      "key": "{key}_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "list_project_api_keys": {
+    "request": null,
+    "response": {
+      "items": [
+        {
+          "id": "{key}",
+          "name": "Synthetic project",
+          "organization_id": "{organization}",
+          "project_id": "{project}",
+          "database": "example-db",
+          "scopes": [
+            "documents:read"
+          ],
+          "created_by": "{user}",
+          "created_at": "2026-10-13T00:00:00+00:00",
+          "expires_at": null,
+          "previous_secret_expires_at": null,
+          "last_used_at": null,
+          "allowed_cidrs": []
+        }
+      ],
+      "next": "opaque+/cursor="
+    }
+  },
+  "get_project_api_key": {
+    "request": null,
+    "response": {
+      "id": "{key}",
+      "name": "Synthetic project",
+      "organization_id": "{organization}",
+      "project_id": "{project}",
+      "database": "example-db",
+      "scopes": [
+        "documents:read"
+      ],
+      "created_by": "{user}",
+      "created_at": "2026-10-13T00:00:00+00:00",
+      "expires_at": null,
+      "previous_secret_expires_at": null,
+      "last_used_at": "2026-10-13T00:00:30+00:00",
+      "allowed_cidrs": []
+    }
+  },
+  "revoke_project_api_key": {
+    "request": null,
+    "response": null
+  },
+  "rotate_project_api_key": {
+    "request": {
+      "previous_secret_ttl": 60
+    },
+    "response": {
+      "api_key": {
+        "id": "{key}",
+        "name": "Synthetic project",
+        "organization_id": "{organization}",
+        "project_id": "{project}",
+        "database": "example-db",
+        "scopes": [
+          "documents:read"
+        ],
+        "created_by": "{user}",
+        "created_at": "2026-10-13T00:00:00+00:00",
+        "expires_at": null,
+        "previous_secret_expires_at": "2026-10-13T00:01:00+00:00",
+        "last_used_at": null,
+        "allowed_cidrs": []
+      },
+      "key": "{key}_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "create_invitation": {
+    "request": {
+      "email": "invitee@example.test",
+      "role": "member",
+      "project_id": null
+    },
+    "response": {
+      "invitation": {
+        "id": "{invitation}",
+        "email": "invitee@example.test",
+        "role": "member",
+        "project_id": null,
+        "invited_by": "{user}",
+        "created_at": "2026-10-13T00:00:00+00:00",
+        "expires_at": "2026-10-20T00:00:00+00:00",
+        "status": "pending"
+      },
+      "token": "tsi_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "list_invitations": {
+    "request": null,
+    "response": {
+      "items": [
+        {
+          "id": "{invitation}",
+          "email": "invitee@example.test",
+          "role": "member",
+          "project_id": null,
+          "invited_by": "{user}",
+          "created_at": "2026-10-13T00:00:00+00:00",
+          "expires_at": "2026-10-20T00:00:00+00:00",
+          "status": "pending"
+        }
+      ],
+      "next": "opaque+/cursor="
+    }
+  },
+  "revoke_invitation": {
+    "request": null,
+    "response": null
+  },
+  "lookup_invitation": {
+    "request": {
+      "token": "tsi_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "response": {
+      "organization": {
+        "id": "{organization}",
+        "name": "Synthetic project"
+      },
+      "project": null,
+      "email": "invitee@example.test",
+      "role": "member",
+      "expires_at": "2026-10-20T00:00:00+00:00"
+    }
+  },
+  "accept_invitation": {
+    "request": {
+      "token": "tsi_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "response": {
+      "organization_id": "{organization}",
+      "project_id": null,
+      "role": "member"
+    }
+  },
+  "decline_invitation": {
+    "request": {
+      "token": "tsi_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "response": null
+  },
+  "start_ownership_transfer": {
+    "request": {
+      "user_id": "{nominee}"
+    },
+    "response": {
+      "from_user_id": "{user}",
+      "to_user_id": "{nominee}",
+      "created_at": "2026-10-13T00:00:00+00:00",
+      "expires_at": "2026-10-20T00:00:00+00:00"
+    }
+  },
+  "get_ownership_transfer": {
+    "request": null,
+    "response": {
+      "from_user_id": "{user}",
+      "to_user_id": "{nominee}",
+      "created_at": "2026-10-13T00:00:00+00:00",
+      "expires_at": "2026-10-20T00:00:00+00:00"
+    }
+  },
+  "cancel_ownership_transfer": {
+    "request": null,
+    "response": null
+  },
+  "confirm_ownership_transfer": {
+    "request": null,
+    "response": {
+      "user_id": "{nominee}",
+      "email": "invitee@example.test",
+      "role": "owner",
+      "joined_at": "2026-10-13T00:00:00+00:00"
+    }
+  },
+  "list_audit_events": {
+    "request": null,
+    "response": {
+      "items": [
+        {
+          "id": "{event}",
+          "actor": "{user}",
+          "action": "api_key.created",
+          "target": "{key}",
+          "detail": "documents:read",
+          "occurred_at": "2026-10-13T00:00:00+00:00"
+        }
+      ],
+      "next": "opaque+/cursor="
+    }
+  },
+  "set_project_allowed_cidrs": {"request": {"allowed_cidrs": ["192.0.2.0/24", "2001:db8::/32"]}, "response": {"id": "{project}", "organization_id": "{organization}", "name": "Synthetic project", "issuer": "https://auth.example.test/{project}", "created_by": "{user}", "created_at": "2026-10-13T00:00:00+00:00", "role": "admin", "allowed_cidrs": ["192.0.2.0/24", "2001:db8::/32"]}},
+  "set_project_api_key_allowed_cidrs": {"request": {"allowed_cidrs": ["192.0.2.0/24", "2001:db8::/32"]}, "response": {"id": "{key}", "name": "Synthetic project", "organization_id": "{organization}", "project_id": "{project}", "database": "example-db", "scopes": ["documents:read"], "created_by": "{user}", "created_at": "2026-10-13T00:00:00+00:00", "expires_at": null, "previous_secret_expires_at": null, "last_used_at": "2026-10-13T00:00:30+00:00", "allowed_cidrs": ["192.0.2.0/24", "2001:db8::/32"]}},
+  "set_organization_api_key_allowed_cidrs": {"request": {"allowed_cidrs": []}, "response": {"id": "{key}", "name": "Synthetic project", "organization_id": "{organization}", "project_id": null, "database": null, "scopes": ["documents:read"], "created_by": "{user}", "created_at": "2026-10-13T00:00:00+00:00", "expires_at": null, "previous_secret_expires_at": null, "last_used_at": "2026-10-13T00:00:30+00:00", "allowed_cidrs": []}}
+}

@@ -1,0 +1,78 @@
+{
+  "get_settings": {
+    "method": "GET", "path": "/v1/{project}/settings", "status": 200,
+    "request": null,
+    "response": {"project_id": "{project}", "issuer": "https://auth.terrascale.tech/{project}", "discovery_url": "https://auth.terrascale.tech/{project}/.well-known/openid-configuration", "sign_in_url": "https://auth.terrascale.tech/ui/{project}/sign-in", "methods": {"passcode": true, "password": true, "sign_up": true}, "branding": {"name": null, "logo_url": null, "theme_color": null}, "counts": {"users": 1, "clients": 1}, "providers": [{"provider": "google", "configured": false, "client_id": null, "issuer": null, "team_id": null, "key_id": null, "callback_url": "https://auth.terrascale.tech/ui/{project}/social/google/callback"}, {"provider": "github", "configured": false, "client_id": null, "issuer": null, "team_id": null, "key_id": null, "callback_url": "https://auth.terrascale.tech/ui/{project}/social/github/callback"}, {"provider": "apple", "configured": false, "client_id": null, "issuer": null, "team_id": null, "key_id": null, "callback_url": "https://auth.terrascale.tech/ui/{project}/social/apple/callback"}, {"provider": "oidc", "configured": false, "client_id": null, "issuer": null, "team_id": null, "key_id": null, "callback_url": "https://auth.terrascale.tech/ui/{project}/social/oidc/callback"}]}
+  },
+  "update_settings": {
+    "method": "PUT", "path": "/v1/{project}/settings", "status": 200,
+    "request": {"methods": {"passcode": true, "password": false, "sign_up": false}, "branding": {"name": "Synthetic app", "logo_url": "https://example.test/logo.png", "theme_color": "#112233"}},
+    "response": {"project_id": "{project}", "issuer": "https://auth.terrascale.tech/{project}", "discovery_url": "https://auth.terrascale.tech/{project}/.well-known/openid-configuration", "sign_in_url": "https://auth.terrascale.tech/ui/{project}/sign-in", "methods": {"passcode": true, "password": false, "sign_up": false}, "branding": {"name": "Synthetic app", "logo_url": "https://example.test/logo.png", "theme_color": "#112233"}, "counts": {"users": 1, "clients": 1}, "providers": [{"provider": "google", "configured": false, "client_id": null, "issuer": null, "team_id": null, "key_id": null, "callback_url": "https://auth.terrascale.tech/ui/{project}/social/google/callback"}, {"provider": "github", "configured": false, "client_id": null, "issuer": null, "team_id": null, "key_id": null, "callback_url": "https://auth.terrascale.tech/ui/{project}/social/github/callback"}, {"provider": "apple", "configured": false, "client_id": null, "issuer": null, "team_id": null, "key_id": null, "callback_url": "https://auth.terrascale.tech/ui/{project}/social/apple/callback"}, {"provider": "oidc", "configured": false, "client_id": null, "issuer": null, "team_id": null, "key_id": null, "callback_url": "https://auth.terrascale.tech/ui/{project}/social/oidc/callback"}]}
+  },
+  "set_provider": {
+    "method": "PUT", "path": "/v1/{project}/providers/google", "status": 200,
+    "request": {"client_id": "123.apps.example.test", "client_secret": "synthetic-secret"},
+    "response": {"project_id": "{project}", "issuer": "https://auth.terrascale.tech/{project}", "discovery_url": "https://auth.terrascale.tech/{project}/.well-known/openid-configuration", "sign_in_url": "https://auth.terrascale.tech/ui/{project}/sign-in", "methods": {"passcode": true, "password": true, "sign_up": true}, "branding": {"name": null, "logo_url": null, "theme_color": null}, "counts": {"users": 1, "clients": 1}, "providers": [{"provider": "google", "configured": true, "client_id": "123.apps.example.test", "issuer": null, "team_id": null, "key_id": null, "callback_url": "https://auth.terrascale.tech/ui/{project}/social/google/callback"}, {"provider": "github", "configured": false, "client_id": null, "issuer": null, "team_id": null, "key_id": null, "callback_url": "https://auth.terrascale.tech/ui/{project}/social/github/callback"}, {"provider": "apple", "configured": false, "client_id": null, "issuer": null, "team_id": null, "key_id": null, "callback_url": "https://auth.terrascale.tech/ui/{project}/social/apple/callback"}, {"provider": "oidc", "configured": false, "client_id": null, "issuer": null, "team_id": null, "key_id": null, "callback_url": "https://auth.terrascale.tech/ui/{project}/social/oidc/callback"}]}
+  },
+  "delete_provider": {
+    "method": "DELETE", "path": "/v1/{project}/providers/google", "status": 200,
+    "request": null,
+    "response": {"project_id": "{project}", "issuer": "https://auth.terrascale.tech/{project}", "discovery_url": "https://auth.terrascale.tech/{project}/.well-known/openid-configuration", "sign_in_url": "https://auth.terrascale.tech/ui/{project}/sign-in", "methods": {"passcode": true, "password": true, "sign_up": true}, "branding": {"name": null, "logo_url": null, "theme_color": null}, "counts": {"users": 1, "clients": 1}, "providers": [{"provider": "google", "configured": false, "client_id": null, "issuer": null, "team_id": null, "key_id": null, "callback_url": "https://auth.terrascale.tech/ui/{project}/social/google/callback"}, {"provider": "github", "configured": false, "client_id": null, "issuer": null, "team_id": null, "key_id": null, "callback_url": "https://auth.terrascale.tech/ui/{project}/social/github/callback"}, {"provider": "apple", "configured": false, "client_id": null, "issuer": null, "team_id": null, "key_id": null, "callback_url": "https://auth.terrascale.tech/ui/{project}/social/apple/callback"}, {"provider": "oidc", "configured": false, "client_id": null, "issuer": null, "team_id": null, "key_id": null, "callback_url": "https://auth.terrascale.tech/ui/{project}/social/oidc/callback"}]}
+  },
+  "list_users": {
+    "method": "GET", "path": "/v1/{project}/users?q=synthetic%40example&limit=2&after=opaque%2B%2Fcursor%3D", "status": 200,
+    "request": null,
+    "response": {"items": [{"id": "{user}", "email": "synthetic@example.test", "created_at": "2026-10-13T00:00:00+00:00", "disabled": false}], "next": "opaque+/cursor="}
+  },
+  "export_users": {
+    "method": "GET", "path": "/v1/{project}/users/export?limit=2&after=opaque%2B%2Fcursor%3D", "status": 200,
+    "request": null,
+    "response": {"items": [{"id": "{user}", "email": "synthetic@example.test", "email_verified": true, "created_at": "2026-10-13T00:00:00+00:00", "disabled": true, "linked_providers": [{"provider": "github", "client_id": "synthetic-public-client", "subject": "synthetic-subject"}]}], "next": "next+/cursor=", "created_before": "2026-10-25T00:00:00+00:00"}
+  },
+  "get_user": {
+    "method": "GET", "path": "/v1/{project}/users/{user}", "status": 200,
+    "request": null,
+    "response": {"id": "{user}", "email": "synthetic@example.test", "created_at": "2026-10-13T00:00:00+00:00", "disabled": false}
+  },
+  "disable_user": {
+    "method": "POST", "path": "/v1/{project}/users/{user}/disable", "status": 200,
+    "request": null,
+    "response": {"id": "{user}", "email": "synthetic@example.test", "created_at": "2026-10-13T00:00:00+00:00", "disabled": true}
+  },
+  "enable_user": {
+    "method": "POST", "path": "/v1/{project}/users/{user}/enable", "status": 200,
+    "request": null,
+    "response": {"id": "{user}", "email": "synthetic@example.test", "created_at": "2026-10-13T00:00:00+00:00", "disabled": false}
+  },
+  "delete_user": {
+    "method": "DELETE", "path": "/v1/{project}/users/{user}", "status": 204,
+    "request": null,
+    "response": null
+  },
+  "list_sessions": {
+    "method": "GET", "path": "/v1/{project}/sessions?user={user}&limit=2&after=opaque%2B%2Fcursor%3D", "status": 200,
+    "request": null,
+    "response": {"items": [{"id": "{session}", "user_id": "{user}", "email": "synthetic@example.test", "created_at": "2026-10-13T00:00:00+00:00", "expires_at": "2026-10-20T00:00:00+00:00"}], "next": null}
+  },
+  "revoke_session": {
+    "method": "DELETE", "path": "/v1/{project}/sessions/{session}", "status": 204,
+    "request": null,
+    "response": null
+  },
+  "list_clients": {
+    "method": "GET", "path": "/v1/{project}/clients", "status": 200,
+    "request": null,
+    "response": {"items": [{"client_id": "{client}", "name": "Synthetic app", "type": "public", "redirect_uris": ["https://example.test/callback"], "created_at": "2026-10-13T00:00:00+00:00"}], "next": null}
+  },
+  "create_client": {
+    "method": "POST", "path": "/v1/{project}/clients", "status": 201,
+    "step_up": {"header": "X-TerraScale-Step-Up-Proof", "purpose": "create_oauth_client", "audience": "ts-auth", "required": true, "provenance": "step-up-provenance.json"},
+    "request": {"name": "Synthetic app", "type": "confidential", "redirect_uris": ["http://localhost:3000/callback"]},
+    "response": {"client_id": "{client}", "name": "Synthetic app", "type": "confidential", "redirect_uris": ["http://localhost:3000/callback"], "created_at": "2026-10-13T00:00:00+00:00", "client_secret": "fixture-client-secret"}
+  },
+  "delete_client": {
+    "method": "DELETE", "path": "/v1/{project}/clients/{client}", "status": 204,
+    "request": null,
+    "response": null
+  }
+}
