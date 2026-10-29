@@ -3,17 +3,19 @@ name: CI
 # One required check: "test".
 
 on:
+  push:
+    branches: [main]
+  workflow_call:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  merge_group:
-  # Main only warms the shared cache; the PR already ran the checks.
+  # Weekly maintenance keeps caches and advisory checks current.
   schedule:
     - cron: '41 3 * * 1'
   workflow_dispatch:
 
-# Main cache maintenance finishes; superseded PR runs are cancelled.
+# Main validation finishes; superseded PR runs are cancelled.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -39,12 +41,9 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == schedule || "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
             echo 'check=false' >> "$GITHUB_OUTPUT"
             echo "cache=$([[ "$GITHUB_REF" == refs/heads/main ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          elif [[ "$GITHUB_EVENT_NAME" != merge_group ]] && git diff --quiet HEAD^ HEAD -- '*.go' '*.json' go.mod go.sum .go-version .goreleaser.yaml 'scripts/**' '.github/workflows/**'; then
-            echo 'check=false' >> "$GITHUB_OUTPUT"
-            echo 'cache=false' >> "$GITHUB_OUTPUT"
           else
             echo 'check=true' >> "$GITHUB_OUTPUT"
-            echo 'cache=false' >> "$GITHUB_OUTPUT"
+            echo "cache=$([[ "$GITHUB_REF" == refs/heads/main ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           fi
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         id: go
@@ -90,8 +89,8 @@ jobs:
       # -count=1: the build cache stays warm, but tests always run on the current head (no cached passes).
       - if: steps.changes.outputs.check == 'true'
         run: go test -race -count=1 ./...
-      - name: Warm main cache without repeating tests
-        if: steps.changes.outputs.cache == 'true'
+      - name: Warm main cache during maintenance
+        if: steps.changes.outputs.cache == 'true' && steps.changes.outputs.check != 'true'
         run: |
           go mod download
           go build -race ./...

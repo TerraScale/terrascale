@@ -12,7 +12,11 @@ permissions:
 env:
   GOTOOLCHAIN: local
 jobs:
+  tests:
+    uses: ./.github/workflows/ci.yml
+
   package:
+    needs: tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
