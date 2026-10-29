@@ -3,7 +3,6 @@ using System.Text;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Data;
-using TerraScale.Dashboard.Features.Databases;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases
 {

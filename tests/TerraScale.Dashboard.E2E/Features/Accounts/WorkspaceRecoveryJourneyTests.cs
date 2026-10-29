@@ -1,12 +1,7 @@
 using System.Net;
-using System.Net.Http.Json;
 using System.Text.Json;
-using Microsoft.AspNetCore.Http;
 using TerraScale.Dashboard.E2E.Features.Databases;
-using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Platform.Persistence;
-using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Accounts
 {
