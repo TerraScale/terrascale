@@ -984,5 +984,75 @@
   "themes": [
     "light",
     "dark"
+  ],
+  "revisions": [
+    {
+      "head": "93c6fd508b4facf5c75b8005635cf6fc49f579a4"
+    },
+    {
+      "head": "b29d9a65cc7d1a2bc3b864f7da11e1d21a5beedd",
+      "updatedRoutes": [
+        "ar/blog/reads-are-free.html",
+        "ar/guides/errors.html",
+        "ar/legal/support.html",
+        "blog/reads-are-free.html",
+        "de/blog/reads-are-free.html",
+        "de/guides/errors.html",
+        "de/legal/support.html",
+        "es/blog/reads-are-free.html",
+        "es/guides/errors.html",
+        "es/legal/support.html",
+        "fr/blog/reads-are-free.html",
+        "fr/guides/errors.html",
+        "fr/legal/support.html",
+        "guides/errors.html",
+        "hi/blog/reads-are-free.html",
+        "hi/guides/errors.html",
+        "hi/legal/support.html",
+        "ja/blog/reads-are-free.html",
+        "ja/guides/errors.html",
+        "ja/legal/support.html",
+        "legal/support.html",
+        "pt-br/blog/reads-are-free.html",
+        "pt-br/guides/errors.html",
+        "pt-br/legal/support.html",
+        "ru/blog/reads-are-free.html",
+        "ru/guides/errors.html",
+        "ru/legal/support.html",
+        "zh-cn/blog/reads-are-free.html",
+        "zh-cn/guides/errors.html",
+        "zh-cn/legal/support.html"
+      ],
+      "sheets": [
+        "r2-pages-001-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-004-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-008-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-009-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-010-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-013-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-018-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-021-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-026-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-027-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-029-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-034-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-036-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-040-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-043-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-047-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-048-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-051-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-055-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-057-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-060-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-064-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-065-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-068-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-073-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-074-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-077-before-after-desktop-mobile-light-dark.png",
+        "r2-pages-081-before-after-desktop-mobile-light-dark.png"
+      ]
+    }
   ]
 }
