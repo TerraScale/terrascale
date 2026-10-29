@@ -64,6 +64,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Update="THIRD-PARTY-NOTICES" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Checked-in, versioned inter-node contract (wire-compatible with terrabase-rust/proto). -->
     <Protobuf Include="Features/Replication/Protos/**/*.proto" ProtoRoot="Features/Replication/Protos" GrpcServices="Both" />
   </ItemGroup>
