@@ -16,7 +16,9 @@ case "$1:$2" in
     done
     make -o restore -o terrabase-build terrabase-check CONFIGURATION=Release
     dotnet format whitespace src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj --verify-no-changes --no-restore
-    dotnet publish src/TerraBase --configuration Release --runtime linux-x64 --self-contained --no-restore --output "$RUNNER_TEMP/terrabase-publish"
+    # Prove single-file packaging here. The production image build also checks ReadyToRun; recompiling framework
+    # dependencies for that startup optimization does not contribute to Fast bundle/native-loading coverage.
+    dotnet publish src/TerraBase --configuration Release --runtime linux-x64 --self-contained --no-restore -p:PublishReadyToRun=false --output "$RUNNER_TEMP/terrabase-publish"
     scripts/vendor/test-turso-native-singlefile.sh
     [[ $1 == build ]] && exit 0
     make -o restore terrabase-test-fast CONFIGURATION=Release
