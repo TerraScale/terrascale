@@ -247,10 +247,25 @@ public sealed class SqlNativeHardeningTests
     {
         const string Short = "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x + 1 FROM n WHERE x < 2000) SELECT sum(x) FROM n";
         await using var db = await StartAsync();
-        await using (var racing = await db.Postgres.OpenConnectionAsync())
+        var racing = await db.Postgres.OpenConnectionAsync();
+        try
         {
             for (var i = 0; i < 200; i++)
             {
+                if (racing.State != System.Data.ConnectionState.Open)
+                {
+                    await racing.DisposeAsync();
+                    try
+                    {
+                        racing = await db.Postgres.OpenConnectionAsync();
+                    }
+                    catch (PostgresException error) when (error.SqlState == "53300")
+                    {
+                        racing = db.Postgres.CreateConnection();
+                        continue;
+                    }
+                }
+
                 using var cancel = new CancellationTokenSource(TimeSpan.FromTicks(Faker.Random.Long(0, 30_000)));
                 await using var command = new NpgsqlCommand(Short, racing);
                 try
@@ -265,15 +280,19 @@ public sealed class SqlNativeHardeningTests
                 }
             }
         }
+        finally
+        {
+            await racing.DisposeAsync();
+        }
 
-        await using var plain = await db.Postgres.OpenConnectionAsync();
         var answers = new List<long>();
         for (var i = 0; i < 50; i++)
         {
-            await TerraBaseTestServer.EventuallyAsync(async _ =>
+            await TerraBaseTestServer.EventuallyAsync(async token =>
             {
                 try
                 {
+                    await using var plain = await db.Postgres.OpenConnectionAsync(token);
                     answers.Add(await ScalarAsync(plain, "SELECT 1"));
                     return true;
                 }
