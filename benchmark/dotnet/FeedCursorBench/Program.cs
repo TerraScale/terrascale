@@ -1,4 +1,3 @@
-// Measures the real engine's cross-machine cursor validation, excluding HTTP, startup and fixture generation.
 using System.Diagnostics;
 using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
@@ -7,12 +6,6 @@ using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Tenancy;
 using Turso.Data.Sqlite;
-
-if (args.Length > 0 && args[0] is "anti-entropy" or "anti-entropy-pull")
-{
-    await AntiEntropyDigestBench.RunAsync(args).ConfigureAwait(false);
-    return;
-}
 
 if (args.Length > 0 && args[0] == "readers")
 {
@@ -86,7 +79,7 @@ var now = FeedCursor.At(DateTimeOffset.UtcNow);
 var build = Stopwatch.StartNew();
 var proof = await read.ReadFeedAsync(new FeedCursor(head, now), null, 256, 4 * 1024 * 1024, CancellationToken.None).ConfigureAwait(false);
 build.Stop();
-var cursor = new FeedCursor(proof.Scanned, now) { Issuer = new ReplicaId(54321), Prefixes = proof.Prefixes };
+var cursor = new FeedCursor(proof.Scanned, now) { Issuer = proof.Issuer, Prefixes = proof.Prefixes };
 Console.WriteLine(FormattableString.Invariant($"proof_build_ms={build.Elapsed.TotalMilliseconds:F3}"));
 Console.WriteLine("| iteration | validation ms | allocated MiB | peak RSS MiB |");
 Console.WriteLine("| ---: | ---: | ---: | ---: |");

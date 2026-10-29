@@ -9,7 +9,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using TerraBase.Configuration;
 using TerraBase.Engine;
-using TerraBase.Engine.Cluster;
 using TerraBase.Features.Documents;
 using TerraBase.Tenancy;
 
@@ -47,7 +46,7 @@ internal static class FeedReadersBenchmark
             using var lifetime = new Lifetime();
             var options = new TerraBaseOptions { DataDirectory = Path.Combine(root, Ulid.NewUlid().ToString()), MemoryBudget = 128 * 1024 * 1024, StorageThreads = 2, StorageQueue = 1024 };
             await using var services = new ServiceCollection().AddSingleton(TimeProvider.System).AddSingleton<IHostApplicationLifetime>(lifetime)
-                .AddTerraBaseEngine(options).AddTerraBaseCluster(options).AddTerraBaseDocuments().BuildServiceProvider();
+                .AddTerraBaseEngine(options).AddTerraBaseDocuments().BuildServiceProvider();
             var engine = services.GetRequiredService<IStorageEngine>();
             var tenant = new TenantContext(Ulid.NewUlid().ToString(), PlanTier.Hobby, Ulid.NewUlid().ToString(), Ulid.NewUlid().ToString());
             if (!await engine.CreateDatabaseAsync(tenant, token).ConfigureAwait(false)) { throw new InvalidOperationException("Database creation failed."); }

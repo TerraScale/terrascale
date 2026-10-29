@@ -1,10 +1,3 @@
-// Command ann-bench measures vector-index (kind vector) build time, near-query latency and recall@k against exact
-// nearest neighbours, on real embeddings, through one region's HTTP API, and writes a Markdown table.
-//
-//	ann-bench --targets cluster.json --data DIR --docs 100000 --queries 200 --repeats 3 --out bench/2026-10-24-ann.md
-//
-// DIR holds corpus.f32 and queries.f32: little-endian float32 rows of --dims values (see README.md for the dataset).
-// The collection is loaded once; each repeat drops and rebuilds the index, then runs every query once.
 package main
 
 import (
@@ -26,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"terrascale.tech/ts-benchmark/internal/replbench"
+	"terrascale.tech/ts-benchmark/internal/benchclient"
 )
 
 type row struct {
@@ -55,18 +48,18 @@ func main() {
 	flag.Parse()
 
 	corpus := must(readVectors(filepath.Join(*data, "corpus.f32"), *dims, *docs))
-	// Each pass has its own query vectors: a repeated identical query answers from the query result cache.
+
 	probes := must(readVectors(filepath.Join(*data, "queries.f32"), *dims, *offset+*repeats**queries))[*offset:]
-	var t replbench.Targets
+	var t benchclient.Targets
 	var credentials *apiKey
 	if *keyFile != "" {
 		credentials = must(readKey(*keyFile))
-		t = replbench.Targets{Kind: "remote", Project: credentials.Project, Database: credentials.Database,
-			Regions: map[string]replbench.RegionTarget{"api": {URL: credentials.API, Token: must(credentials.token())}}}
+		t = benchclient.Targets{Kind: "remote", Project: credentials.Project, Database: credentials.Database,
+			Regions: map[string]benchclient.RegionTarget{"api": {URL: credentials.API, Token: must(credentials.token())}}}
 	} else {
-		t = must(replbench.LoadTargets(*targets))
+		t = must(benchclient.LoadTargets(*targets))
 	}
-	var region *replbench.Region
+	var region *benchclient.Region
 	for _, name := range slices.Sorted(func(yield func(string) bool) {
 		for name := range t.Regions {
 			if !yield(name) {
@@ -74,7 +67,7 @@ func main() {
 			}
 		}
 	}) {
-		region = must(replbench.NewRegion(name, t, 8))
+		region = must(benchclient.NewRegion(name, t, 8))
 		if credentials != nil {
 			region.Pin = "gru"
 		}
@@ -82,7 +75,7 @@ func main() {
 	}
 	ctx := context.Background()
 	if credentials != nil {
-		// API-key access tokens live 60 seconds.
+
 		go func() {
 			for range time.Tick(30 * time.Second) {
 				if token, err := credentials.token(); err == nil {
@@ -143,14 +136,13 @@ func main() {
 	must(0, os.WriteFile(*out, []byte(report(rows, *docs, *dims, *queries, *limit, region.Name, *note, *rebuildEach)), 0o644))
 }
 
-// buildIndex drops and creates the vector index, and waits until it lists as active.
-func buildIndex(ctx context.Context, region *replbench.Region, name string, dims int) time.Duration {
+func buildIndex(ctx context.Context, region *benchclient.Region, name string, dims int) time.Duration {
 	_, _ = call(ctx, region, "DELETE", "/indexes/"+name+"_vec", nil)
 	started := time.Now()
 	must(call(ctx, region, "POST", "/indexes", map[string]any{
 		"name": name + "_vec", "collection": name, "kind": "vector", "fields": []string{"embedding"}, "dimensions": dims,
 	}))
-	// The index answers "building" until the background build has added every loaded document.
+
 	for {
 		body := must(call(ctx, region, "GET", "/indexes?collection="+name, nil))
 		var list struct {
@@ -166,7 +158,6 @@ func buildIndex(ctx context.Context, region *replbench.Region, name string, dims
 	}
 }
 
-// Ids are ULID-shaped: 26 Crockford base32 digits.
 type apiKey struct {
 	API      string `json:"api"`
 	Issuer   string `json:"issuer"`
@@ -196,7 +187,6 @@ func readKey(path string) (*apiKey, error) {
 	return &key, nil
 }
 
-// token exchanges the key for a short-lived access token (client credentials).
 func (k *apiKey) token() (string, error) {
 	response, err := http.PostForm(k.Issuer+"/oauth/token", url.Values{
 		"grant_type": {"client_credentials"}, "client_id": {k.KeyID}, "client_secret": {k.Key}, "project": {k.Project}, "scope": {k.Scope},
@@ -216,8 +206,7 @@ func (k *apiKey) token() (string, error) {
 
 func id(n int) string { return fmt.Sprintf("%026d", n+1) }
 
-// load writes the corpus in transactions of 100 documents, four at a time; puts are idempotent, so a failed batch retries.
-func load(ctx context.Context, r *replbench.Region, collection string, corpus [][]float32) {
+func load(ctx context.Context, r *benchclient.Region, collection string, corpus [][]float32) {
 	const batch = 100
 	work := make(chan int)
 	var wg sync.WaitGroup
@@ -251,7 +240,6 @@ func load(ctx context.Context, r *replbench.Region, collection string, corpus []
 	wg.Wait()
 }
 
-// exact returns each query's k nearest document ids by cosine distance over float32 values, ties by id, like the server.
 func exact(corpus, queries [][]float32, k int) [][]string {
 	norms := make([]float64, len(corpus))
 	for i, v := range corpus {
@@ -310,7 +298,7 @@ func readVectors(path string, dims, count int) ([][]float32, error) {
 	return vectors, nil
 }
 
-func call(ctx context.Context, r *replbench.Region, method, path string, value any) ([]byte, error) {
+func call(ctx context.Context, r *benchclient.Region, method, path string, value any) ([]byte, error) {
 	var body []byte
 	if value != nil {
 		var err error
@@ -323,7 +311,7 @@ func call(ctx context.Context, r *replbench.Region, method, path string, value a
 		return nil, err
 	}
 	if response.Status >= 300 && !(method == http.MethodDelete && response.Status == http.StatusNotFound) {
-		// The status only: a response body may echo private request content.
+
 		return nil, fmt.Errorf("%s %s: HTTP %d", method, path, response.Status)
 	}
 	return response.Body, nil

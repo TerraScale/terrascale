@@ -189,7 +189,6 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(ProjectUsage))]
 [JsonSerializable(typeof(AllowanceUsagePage))]
 [JsonSerializable(typeof(ProjectAnalytics))]
-[JsonSerializable(typeof(ProjectReplication))]
 [JsonSerializable(typeof(QueryFieldUsage))]
 [JsonSerializable(typeof(QueryShapeListBody))]
 [JsonSerializable(typeof(QueryShapeRecord))]

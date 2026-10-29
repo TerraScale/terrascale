@@ -17,45 +17,38 @@ import (
 
 	"github.com/HdrHistogram/hdrhistogram-go"
 	"github.com/oklog/ulid/v2"
-	"terrascale.tech/ts-benchmark/internal/replbench"
+	"terrascale.tech/ts-benchmark/internal/benchclient"
 )
 
-// One live-load step on a shared wall clock (seconds from its start): readers open over the ramp and repeat refusals
-// until admitBy; the writer starts there; the window opens after warmup; deliveries count through grace; the after
-// scrape follows a settle.
 const (
 	rampS, admitByS, windowS, graceS, settleS = 60, 70, 30, 5, 6
 	stepS                                     = 120
 )
 
-// nodeStep is one TerraBase node's counters over a step (shard 0 scrapes them).
 type nodeStep struct {
 	Node     string           `json:"node"`
-	Reads    map[string]int64 `json:"storage_reads"` // terrabase.storage.reads delta by path
-	Sealed   int64            `json:"sealed"`        // terrabase.shape.seals delta: chunks and snapshot pages published
-	Mirrored int64            `json:"mirrored"`      // terrabase.shape.mirror.lag count delta: objects mirrored to Tigris
-	Parked   int64            `json:"parked"`        // terrabase.shape.requests.waiting at window start
-	CPUPct   float64          `json:"cpu_pct"`       // dotnet.process.cpu.time over the window
-	RSSMB    float64          `json:"rss_mb"`        // dotnet.process.memory.working_set at window end
-	Raw      [2]string        `json:"raw"`           // metric lines before and after the step
+	Reads    map[string]int64 `json:"storage_reads"`
+	Sealed   int64            `json:"sealed"`
+	Mirrored int64            `json:"mirrored"`
+	Parked   int64            `json:"parked"`
+	CPUPct   float64          `json:"cpu_pct"`
+	RSSMB    float64          `json:"rss_mb"`
+	Raw      [2]string        `json:"raw"`
 }
 
-// shardStep is one load process's record of one step.
 type shardStep struct {
 	N, Readers                                                       int
 	Admitted, Unresolved, Delivered, Refused, Retries, QoS, Failures int64
 	Bytes                                                            int64
 	Codes                                                            map[int]int64
-	Reasons                                                          map[string]int64 // refusals by status, code and message
-	Error                                                            string           `json:",omitempty"`
+	Reasons                                                          map[string]int64
+	Error                                                            string `json:",omitempty"`
 	Hist                                                             *hdrhistogram.Snapshot
 	LoadCPU, LoadRSSMB                                               float64
-	Writes                                                           int64      `json:",omitzero"` // shard 0 only
+	Writes                                                           int64      `json:",omitzero"`
 	Nodes                                                            []nodeStep `json:",omitempty"`
 }
 
-// load is the V3 live load (README "Live load"): one shard of readers on one shape, and on shard 0 the writer and the
-// per-node scrapes. It runs one shard against the local two-node host and merges the report itself.
 func load(args []string) error {
 	fs := flag.NewFlagSet("load", flag.ContinueOnError)
 	project, database := fs.String("project", "", "project id"), fs.String("database", "", "database id")
@@ -97,8 +90,8 @@ func load(args []string) error {
 	if *project == "" || *database == "" || *collection == "" || token == "" || *start == 0 {
 		return fmt.Errorf("load needs -project, -database, -collection, -start and TS_BENCH_API_KEY")
 	}
-	t := replbench.Targets{Project: *project, Database: *database, Regions: map[string]replbench.RegionTarget{reg: {URL: origin, Token: token}}}
-	w, err := replbench.NewRegion(reg, t, writeRate*4)
+	t := benchclient.Targets{Project: *project, Database: *database, Regions: map[string]benchclient.RegionTarget{reg: {URL: origin, Token: token}}}
+	w, err := benchclient.NewRegion(reg, t, writeRate*4)
 	if err != nil {
 		return err
 	}
@@ -123,7 +116,6 @@ func load(args []string) error {
 	return mergeReport(*out, [][]shardStep{rec})
 }
 
-// runLoadStep runs this shard's share of n readers through one step starting at at.
 func runLoadStep(ctx context.Context, b *bench, at time.Time, n, shard, shards int, nodes []string) shardStep {
 	share := n / shards
 	if shard < n%shards {
@@ -156,7 +148,7 @@ func runLoadStep(ctx context.Context, b *bench, at time.Time, n, shard, shards i
 	}
 	sleep(ctx, time.Until(m.start))
 	scrapes = append(scrapes, scrapeAll(ctx, nodes))
-	sampler := replbench.StartLocalSampler(os.Getpid(), nil)
+	sampler := benchclient.StartLocalSampler(os.Getpid(), nil)
 	sleep(ctx, time.Until(m.end))
 	scrapes = append(scrapes, scrapeAll(ctx, nodes))
 	res := sampler.Stop().Nodes["all nodes (one process)"]
@@ -169,7 +161,7 @@ func runLoadStep(ctx context.Context, b *bench, at time.Time, n, shard, shards i
 	wg.Wait()
 	sleep(ctx, settleS*time.Second)
 	scrapes = append(scrapes, scrapeAll(ctx, nodes))
-	// Unresolved readers never answered: neither admitted nor refused past admitBy, nor failed before admission.
+
 	s.Unresolved = int64(share - len(outcomes))
 	for range len(outcomes) {
 		if <-outcomes == "admitted" {
@@ -199,7 +191,6 @@ func runLoadStep(ctx context.Context, b *bench, at time.Time, n, shard, shards i
 	return s
 }
 
-// scrapeAll reads every node's metrics; a failed scrape is an empty body, which nodeDelta reports.
 func scrapeAll(ctx context.Context, nodes []string) []string {
 	out := make([]string, len(nodes))
 	for i, u := range nodes {
@@ -208,7 +199,6 @@ func scrapeAll(ctx context.Context, nodes []string) []string {
 	return out
 }
 
-// nodeDelta is one node's step from its scrapes before the step, at window start and end, and after the settle.
 func nodeDelta(node, before, start, end, after string) (nodeStep, error) {
 	nd := nodeStep{Node: node, Reads: map[string]int64{}, Raw: [2]string{rawSamples(before), rawSamples(after)}}
 	if before == "" || start == "" || end == "" || after == "" {
@@ -237,7 +227,6 @@ func nodeDelta(node, before, start, end, after string) (nodeStep, error) {
 	return nd, nil
 }
 
-// promSum adds every sample of metric base (all label sets).
 func promSum(body, base string) float64 {
 	var sum float64
 	for _, line := range promLines(body, base) {
@@ -247,8 +236,6 @@ func promSum(body, base string) float64 {
 	return sum
 }
 
-// overBound names each node whose shape storage reads (paths shape and shape_body) exceed one per sealed object per
-// cache location: the node itself, plus Tigris for each object mirrored there.
 func overBound(nodes []nodeStep) []string {
 	var out []string
 	for _, nd := range nodes {
@@ -260,7 +247,6 @@ func overBound(nodes []nodeStep) []string {
 	return out
 }
 
-// mergeCmd merges shard records: shape-bench merge -out <base> <shard.json>...
 func mergeCmd(args []string) error {
 	fs := flag.NewFlagSet("merge", flag.ContinueOnError)
 	out := fs.String("out", "", "report base path (writes .md and .json)")
@@ -270,7 +256,7 @@ func mergeCmd(args []string) error {
 	var shards [][]shardStep
 	for _, f := range fs.Args() {
 		var rec []shardStep
-		if err := replbench.ReadJSON(f, &rec); err != nil {
+		if err := benchclient.ReadJSON(f, &rec); err != nil {
 			return err
 		}
 		shards = append(shards, rec)
@@ -278,7 +264,6 @@ func mergeCmd(args []string) error {
 	return mergeReport(*out, shards)
 }
 
-// v3Row is one merged step of the report.
 type v3Row struct {
 	N                                               int
 	Admitted, Unresolved, Writes, Delivered, Missed int64
@@ -291,8 +276,6 @@ type v3Row struct {
 	Errors, Over                                    []string
 }
 
-// mergeReport writes <out>.json and <out>.md from every shard's steps (shard 0 first) and fails when a step breaks the
-// bound or a shard recorded an error.
 func mergeReport(out string, shards [][]shardStep) error {
 	var rows []v3Row
 	var failed []string
@@ -338,7 +321,7 @@ func mergeReport(out string, shards [][]shardStep) error {
 	if out == "" {
 		out = fmt.Sprintf("%s/%s-v3-%s", reportDir, time.Now().UTC().Format(time.DateOnly), ulid.Make())
 	}
-	if err := replbench.WriteJSON(out+".json", map[string]any{"steps": rows, "violations": failed}); err != nil {
+	if err := benchclient.WriteJSON(out+".json", map[string]any{"steps": rows, "violations": failed}); err != nil {
 		return err
 	}
 	if err := os.WriteFile(out+".md", []byte(v3Table(rows)), 0o644); err != nil {
@@ -351,7 +334,6 @@ func mergeReport(out string, shards [][]shardStep) error {
 	return nil
 }
 
-// v3Table is the report table: one row per step and node.
 func v3Table(rows []v3Row) string {
 	var b strings.Builder
 	b.WriteString("| N | admitted | unresolved | writes | delivered | missed | p50 ms | p99 ms | 304 ratio | statuses | refused / retries / tenant_busy / failures | load CPU % / RSS MB | node | parked | sealed | mirrored | reads shape / shape_body / point | reads per object per location | node CPU % / RSS MB | verdict |\n")

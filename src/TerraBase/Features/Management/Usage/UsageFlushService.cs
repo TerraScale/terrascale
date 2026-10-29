@@ -2,35 +2,25 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Logs;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Tenancy;
 using ZLogger;
 
 namespace TerraBase.Features.Management.Usage;
 
-/// <summary>
-/// Flushes <see cref="UsageMeter"/>, <see cref="QueryFieldRecorder"/> and <see cref="QueryShapeRecorder"/> every 10 seconds and once more on shutdown,
-/// into this machine's catalog.
-/// </summary>
 internal sealed class UsageFlushService(
     UsageMeter meter, QueryFieldRecorder recorder, QueryShapeRecorder shapes, TimeProvider time, TerraBaseOptions options, ILogger<UsageFlushService> logger,
-    IStorageEngine engine, IReplicationStatus replication, IRequestLogs logs) : BackgroundService
+    IStorageEngine engine, IRequestLogs logs) : BackgroundService
 {
-    // Storage is sampled once per minute bucket, so an idle node neither lists databases nor writes usage every tick.
     private const int MaxSamplesPerMinute = 128;
     private long _sampledMinute = -1;
-    // The owner of the last database sampled: each minute samples the next MaxSamplesPerMinute owners in ordinal order after it,
-    // wrapping, so every database is sampled in turn whatever order the engine lists them in.
     private string? _cursor;
-    // Databases already sampled in _samplingMinute, so a pass retried after a failure records none of them twice. At most the cap.
     private readonly HashSet<string> _sampled = [with(StringComparer.Ordinal)];
     private long _samplingMinute = -1;
     private readonly SemaphoreSlim _sampling = new(1, 1);
 
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(10);
 
-    // A clean shutdown saves what is pending, within the host's shutdown timeout. What this flush cannot save is lost
-    // and logged: usage counts are best-effort dashboard figures, so they never fail or extend a shutdown.
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         await base.StopAsync(cancellationToken).ConfigureAwait(false);
@@ -52,7 +42,6 @@ internal sealed class UsageFlushService(
         }
     }
 
-    // Storage sampling lists every database, so it runs on its own loop: a slow volume never delays usage delivery.
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
         Task.WhenAll(LoopAsync(FlushAsync, stoppingToken), LoopAsync(SampleStorageAsync, stoppingToken), LoopAsync(RefreshMonthsAsync, stoppingToken));
 
@@ -61,15 +50,11 @@ internal sealed class UsageFlushService(
         using var timer = new PeriodicTimer(Interval, time);
         while (await NextTickAsync(timer, stoppingToken).ConfigureAwait(false))
         {
-            // The tick resumes this loop on the clock's callback thread. Leave it, as the pressure samplers do (TS-517): a
-            // flush reads the clock and the catalog, and a test clock advanced by days would otherwise flush inline.
             await Task.Yield();
             try
             {
                 await work(stoppingToken).ConfigureAwait(false);
             }
-            // FlushAsync stops catching once shutdown begins, so any failure would otherwise fault this task and the host's
-            // shutdown. StopAsync's flush saves what is still pending and logs what it cannot save.
             catch (Exception) when (stoppingToken.IsCancellationRequested)
             {
                 return;
@@ -77,7 +62,6 @@ internal sealed class UsageFlushService(
         }
     }
 
-    // A loop idle at shutdown ends cleanly, like one stopped mid-work.
     private static async Task<bool> NextTickAsync(PeriodicTimer timer, CancellationToken stoppingToken)
     {
         try
@@ -90,7 +74,6 @@ internal sealed class UsageFlushService(
         }
     }
 
-    // One storage sampling pass at a time; a failed one is logged and retried on the next tick.
     internal async Task SampleStorageAsync(CancellationToken cancellationToken)
     {
         await _sampling.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -108,10 +91,9 @@ internal sealed class UsageFlushService(
         }
     }
 
-    // Each flush runs on its own; a failed one keeps its counts pending for the next and never stops the process.
     internal async Task FlushAsync(CancellationToken cancellationToken)
     {
-        foreach (var flush in new Func<CancellationToken, ValueTask>[] { ReportActive, RecordPeers }.Concat(Flushes))
+        foreach (var flush in new Func<CancellationToken, ValueTask>[] { ReportActive }.Concat(Flushes))
         {
             try
             {
@@ -124,7 +106,6 @@ internal sealed class UsageFlushService(
         }
     }
 
-    // Monthly allowance counts read every region's saved usage here, on their own loop.
     private async Task RefreshMonthsAsync(CancellationToken cancellationToken)
     {
         try
@@ -145,31 +126,6 @@ internal sealed class UsageFlushService(
         return ValueTask.CompletedTask;
     }
 
-    private ValueTask RecordPeers(CancellationToken cancellationToken)
-    {
-        if (!UsageMeter.ValidRegion(options.Region))
-        {
-            return ValueTask.CompletedTask;
-        }
-
-        var status = replication.Snapshot();
-        if (status.Initialized)
-        {
-            // The catalog's own replication (ChangeGroups.System) belongs to no tenant's usage.
-            foreach (var group in status.Peers.SelectMany(peer => peer.Databases.Select(database => (peer.Region, Database: database)))
-                .Where(observation => observation.Database.OrganizationId != ChangeGroups.System.OrganizationId)
-                .GroupBy(observation => (observation.Database.OrganizationId, observation.Database.ProjectId, observation.Database.DatabaseId, observation.Region)))
-            {
-                var (organization, project, database, region) = group.Key;
-                meter.RecordPeerState(new(organization, PlanTier.Hobby, project, database), region,
-                    group.Max(observation => observation.Database.DurableLag), group.Max(observation => observation.Database.CatchupSeconds) * 1000,
-                    group.Any(observation => observation.Database.Diverged), group.Max(observation => observation.Database.ConvergenceSeconds) * 1000);
-            }
-        }
-
-        return ValueTask.CompletedTask;
-    }
-
     private async ValueTask SampleAsync(CancellationToken cancellationToken)
     {
         if (!UsageMeter.ValidRegion(options.Region))
@@ -177,7 +133,6 @@ internal sealed class UsageFlushService(
             return;
         }
 
-        // Every sample of a pass belongs to the minute it started in, however long sizing takes.
         var sampledAt = time.GetUtcNow();
         var minute = sampledAt.ToUnixTimeSeconds() / 60;
         if (minute == _sampledMinute)
@@ -191,7 +146,6 @@ internal sealed class UsageFlushService(
             _sampled.Clear();
         }
 
-        // The smallest owners after the cursor, then from the start: two bounded selections over one listing.
         var after = new SortedDictionary<string, TenantContext>(StringComparer.Ordinal);
         var wrapped = new SortedDictionary<string, TenantContext>(StringComparer.Ordinal);
         await foreach (var database in engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
@@ -219,11 +173,9 @@ internal sealed class UsageFlushService(
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
-                // One database's failure, such as its file vanishing while sized, costs only its own sample.
             }
         }
 
-        // Only a complete pass marks its minute sampled and moves the cursor; a listing failure leaves both to the next tick.
         _sampledMinute = minute;
         _cursor = last ?? _cursor;
     }

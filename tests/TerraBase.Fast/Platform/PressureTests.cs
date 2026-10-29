@@ -20,7 +20,7 @@ public sealed class PressureTests
     private static readonly Uri Metrics = new("/metrics", UriKind.Relative);
 
     [Test]
-    public async Task Machine_pressure_keeps_local_readiness_separate_from_member_readiness()
+    public async Task Machine_pressure_reports_local_readiness()
     {
         await using var server = await TerraBaseTestServer.StartAsync(settings => settings["node-name"] = "d894655b3ed118");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
@@ -36,8 +36,6 @@ public sealed class PressureTests
         await Assert.That(snapshot.GetProperty("node").GetString()).IsEqualTo("d894655b3ed118");
         await Assert.That(snapshot.TryGetProperty("instance_id", out _)).IsFalse();
         await Assert.That(snapshot.GetProperty("state").GetString()).IsEqualTo("unknown");
-        await Assert.That(snapshot.GetProperty("sender_durable_lag_seq").GetInt64()).IsEqualTo(0);
-        await Assert.That(snapshot.GetProperty("load").GetProperty("replication_lag_seq").ValueKind).IsEqualTo(JsonValueKind.Null);
         await Assert.That(snapshot.GetProperty("load").GetProperty("storage_bytes").ValueKind).IsEqualTo(JsonValueKind.Null);
         await Assert.That(snapshot.GetProperty("disk_iops").ValueKind).IsEqualTo(JsonValueKind.Null);
         await Assert.That(snapshot.GetProperty("io_queue_depth").ValueKind).IsEqualTo(JsonValueKind.Null);
@@ -87,7 +85,6 @@ public sealed class PressureTests
             await File.WriteAllBytesAsync(Path.Combine(project.FullName, EntityIds.New() + ".db"), faker.Random.Bytes(4096), deadline.Token);
             Directory.Move(server.DataDirectory, original);
             Directory.CreateSymbolicLink(server.DataDirectory, external);
-            // Sample only after the link exists; the temporary missing root must not satisfy the assertion.
             clock.SampleStorage();
 
             JsonElement snapshot;
@@ -208,7 +205,7 @@ public sealed class PressureTests
         }
 
         var metrics = await api.Server.Client.GetStringAsync(Metrics, deadline.Token);
-        foreach (var signal in new[] { "disk_iops", "io_queue_depth", "storage_bytes", "replication_lag_seq" })
+        foreach (var signal in new[] { "disk_iops", "io_queue_depth", "storage_bytes" })
         {
             await Assert.That(MetricValues(metrics, "terrabase_pressure_" + signal)).IsEmpty();
             await Assert.That(MetricValues(metrics, "terrabase_pressure_available", $"signal=\"{signal}\""))
@@ -248,11 +245,9 @@ public sealed class PressureTests
         using var time = new TickClock();
         await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton<TimeProvider>(time));
         var start = time.GetUtcNow();
-        // The storage loop reads the clock right after creating its timer.
         await time.ProcessTimerCreated.Task.WaitAsync(TimeSpan.FromSeconds(25));
         await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(time.StorageReads > 0), TimeSpan.FromSeconds(25));
 
-        // Ticks fire on the caller of Advance; a sample that ran there would read the clock inside the callback.
         for (var second = 0; second < 20; second++)
         {
             time.Advance(TimeSpan.FromSeconds(1));
@@ -263,8 +258,6 @@ public sealed class PressureTests
         await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(time.LastStorageRead >= start.AddSeconds(10)), TimeSpan.FromSeconds(25));
         await Assert.That(time.ReadsInCallbacks).IsEqualTo(0);
 
-        // With both samplers held mid-sample, two days of ticks leave one pending tick each: after the release each
-        // samples at most once more, plus once per tick of the final ten seconds.
         int process;
         int storage;
         DateTimeOffset end;
@@ -323,7 +316,6 @@ public sealed class PressureTests
         foreach (var sample in samples)
         {
             await AssertSnapshotAsync(sample.First());
-            // One sampling instant must identify one immutable snapshot, including cumulative counters.
             await Assert.That(sample.Select(snapshot => snapshot.GetRawText()).Distinct(StringComparer.Ordinal).Count()).IsEqualTo(1);
         }
     }
@@ -389,8 +381,8 @@ public sealed class PressureTests
         await Assert.That(MetricValues(metrics, "terrabase_pressure_connections").Any(value => value > 0)).IsTrue();
         await Assert.That(snapshot.GetProperty("top_organizations").EnumerateArray()
             .Single(tenant => tenant.GetProperty("org").GetString() == api.Tenant.OrganizationId).GetProperty("plan").GetString()).IsEqualTo("hobby");
-        await Assert.That(Listener(snapshot, "admin").GetProperty("requests_total").GetInt64())
-            .IsGreaterThan(Listener(before, "admin").GetProperty("requests_total").GetInt64());
+        await Assert.That(Listener(snapshot, "internal").GetProperty("requests_total").GetInt64())
+            .IsGreaterThan(Listener(before, "internal").GetProperty("requests_total").GetInt64());
         await Assert.That(snapshot.GetProperty("data_bytes").GetInt64()).IsGreaterThanOrEqualTo(
             snapshot.GetProperty("top_organizations_by_storage").EnumerateArray()
                 .Single(tenant => tenant.GetProperty("org").GetString() == api.Tenant.OrganizationId).GetProperty("bytes").GetInt64());
@@ -410,7 +402,7 @@ public sealed class PressureTests
             }
         }
 
-        foreach (var listener in new[] { "admin", "client", "peer" })
+        foreach (var listener in new[] { "metrics", "client", "internal" })
         {
             foreach (var name in new[] { "request_rate", "p95_latency_ms", "requests_total" })
             {
@@ -432,9 +424,9 @@ public sealed class PressureTests
         }
 
         await Assert.That(MetricValues(metrics, "terrabase_pressure_info")).IsEquivalentTo([1d]);
-        await Assert.That(MetricValues(metrics, "terrabase_pressure_available").Length).IsEqualTo(13);
+        await Assert.That(MetricValues(metrics, "terrabase_pressure_available").Length).IsEqualTo(11);
         foreach (var signal in new[] { "cpu_util", "mem_util", "disk", "data_bytes", "disk_iops", "io_queue_depth",
-            "io_admitted_count", "connections", "storage_bytes", "replication_lag_seq", "tenant_cpu_share", "sender_durable_lag_seq", "local_ready" })
+            "io_admitted_count", "connections", "storage_bytes", "tenant_cpu_share", "local_ready" })
         {
             await Assert.That(MetricValues(metrics, "terrabase_pressure_available", $"signal=\"{signal}\"").Length).IsEqualTo(1);
         }
@@ -463,9 +455,6 @@ public sealed class PressureTests
             && (label is null || line.Contains(label, StringComparison.Ordinal)))
             .Select(line => double.Parse(line.Split(' ', StringSplitOptions.RemoveEmptyEntries)[1], CultureInfo.InvariantCulture))];
 
-    // A fake clock that counts the pressure samplers' clock reads by sampler (one per process sample, one per storage
-    // sample), can hold them mid-sample, and counts the reads made inside a 1- or 10-second timer callback (the
-    // samplers' periods; usage flushes also tick every 10 seconds).
     private sealed class TickClock() : FakeTimeProvider(DateTimeOffset.UtcNow), IDisposable
     {
         [ThreadStatic]
@@ -494,8 +483,6 @@ public sealed class PressureTests
 
         public DateTimeOffset LastStorageRead => new(Volatile.Read(ref _lastStorageRead), TimeSpan.Zero);
 
-        // Holds the next sampler reads until Release (call both in one try/finally); a read inside a timer callback
-        // is never held.
         public void Hold() => _released.Reset();
 
         public void Release() => _released.Set();
@@ -519,9 +506,7 @@ public sealed class PressureTests
             Interlocked.Increment(ref process ? ref _processReads : ref _storageReads);
             if (!t_inCallback && !_released.IsSet)
             {
-                // This worker blocks next; publish the signal on a worker that can run its awaiters.
                 _ = ThreadPool.QueueUserWorkItem(static held => held.TrySetResult(), process ? ProcessHeld : StorageHeld, preferLocal: false);
-                // Until the test's finally releases it: a hold that expired would let the sampler run ticks early.
                 _released.Wait();
             }
 
@@ -561,7 +546,6 @@ public sealed class PressureTests
 
     private sealed class SamplingClock(bool pauseProcess = false) : TimeProvider
     {
-        // Usage flushes also tick every 10 seconds, and which timer is created last is a race, so every one is kept.
         private readonly ConcurrentQueue<ITimer> _storageTimers = new();
         private ITimer? _processTimer;
 
@@ -588,7 +572,6 @@ public sealed class PressureTests
             return timer;
         }
 
-        // Firing a usage flush too is harmless.
         public void SampleStorage()
         {
             foreach (var timer in _storageTimers)
@@ -644,7 +627,7 @@ public sealed class PressureTests
             await Assert.That(snapshot.GetProperty(name).ValueKind).IsEqualTo(JsonValueKind.Null);
         }
 
-        foreach (var name in new[] { "storage_bytes", "replication_lag_seq" })
+        foreach (var name in new[] { "storage_bytes" })
         {
             await Assert.That(snapshot.GetProperty("load").GetProperty(name).ValueKind).IsEqualTo(JsonValueKind.Null);
         }
@@ -657,7 +640,7 @@ public sealed class PressureTests
         var listeners = snapshot.GetProperty("listeners");
         await Assert.That(listeners.GetArrayLength()).IsEqualTo(3);
         await Assert.That(listeners.EnumerateArray().Select(listener => listener.GetProperty("listener").GetString()!))
-            .IsEquivalentTo(["admin", "client", "peer"]);
+            .IsEquivalentTo(["metrics", "client", "internal"]);
         foreach (var listener in listeners.EnumerateArray())
         {
             await Assert.That(listener.GetProperty("requests_total").GetInt64()).IsGreaterThanOrEqualTo(0);

@@ -1,9 +1,3 @@
-// Command vector-bench measures brute-force near-sort query latency (POST …/query with sort [{"near":…}]) at growing
-// collection sizes on one region of a TerraBase database, and writes a Markdown table.
-//
-//	vector-bench --targets cluster.json --sizes 10000,100000 --dims 128 --repeats 3 --out bench/2026-10-23-vector-near.md
-//
-// The targets file comes from the local cluster host (benchmark/scripts/vector-local.sh).
 package main
 
 import (
@@ -20,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"terrascale.tech/ts-benchmark/internal/replbench"
+	"terrascale.tech/ts-benchmark/internal/benchclient"
 )
 
 const batch = 250
@@ -34,13 +28,13 @@ func main() {
 	out := flag.String("out", "", "Markdown output file")
 	flag.Parse()
 
-	t, err := replbench.LoadTargets(*targets)
+	t, err := benchclient.LoadTargets(*targets)
 	if err != nil {
 		log.Fatal(err)
 	}
-	var region *replbench.Region
+	var region *benchclient.Region
 	for name := range t.Regions {
-		if region, err = replbench.NewRegion(name, t, 4); err != nil {
+		if region, err = benchclient.NewRegion(name, t, 4); err != nil {
 			log.Fatal(err)
 		}
 		break
@@ -73,7 +67,7 @@ func main() {
 			for ; loaded < size && len(ops) < batch; loaded++ {
 				ops = append(ops, map[string]any{"op": "put", "collection": collection, "id": fmt.Sprintf("v%07d", loaded), "document": map[string]any{"n": loaded, "embedding": vector()}})
 			}
-			// Puts are idempotent: retry an unknown outcome.
+
 			for attempt := 1; ; attempt++ {
 				if err := call(ctx, region, "/transactions", map[string]any{"ops": ops}); err == nil || attempt == 5 {
 					must(err)
@@ -85,7 +79,7 @@ func main() {
 		log.Printf("%d documents loaded", loaded)
 		for _, metric := range []string{"cosine", "l2"} {
 			for r := 1; r <= *repeats; r++ {
-				// A new vector each time: a repeated query would answer from the query result cache.
+
 				query := vector()
 				started := time.Now()
 				status, body, err := callStatus(ctx, region, "/collections/"+collection+"/query", map[string]any{
@@ -107,7 +101,7 @@ func main() {
 	}
 
 	var md bytes.Buffer
-	fmt.Fprintf(&md, "# Brute-force near-sort query latency\n\nDate: %s. Region %s of a local two-region TerraBase cluster (tests/TerraBase.E2E BenchmarkClusterHost, Release), "+
+	fmt.Fprintf(&md, "# Brute-force near-sort query latency\n\nDate: %s. Region %s of a local single-region TerraBase host (LocalBenchmarkHost, Release), "+
 		"client on the same host. Random float32 vectors, limit %d, no filter, end-to-end HTTP latency per query, a new query vector each repeat (no result-cache hit).\n\n", time.Now().UTC().Format(time.RFC3339), region.Name, *limit)
 	md.WriteString("| Documents | Dims | Metric | Repeat | Latency ms | Result |\n| ---: | ---: | --- | ---: | ---: | --- |\n")
 	md.WriteString(strings.Join(rows, "\n") + "\n")
@@ -116,7 +110,7 @@ func main() {
 	}
 }
 
-func call(ctx context.Context, region *replbench.Region, path string, body any) error {
+func call(ctx context.Context, region *benchclient.Region, path string, body any) error {
 	status, resp, err := callStatus(ctx, region, path, body)
 	if err == nil && status >= 300 {
 		err = fmt.Errorf("POST %s: %d %s", path, status, resp)
@@ -124,7 +118,7 @@ func call(ctx context.Context, region *replbench.Region, path string, body any) 
 	return err
 }
 
-func callStatus(ctx context.Context, region *replbench.Region, path string, body any) (int, []byte, error) {
+func callStatus(ctx context.Context, region *benchclient.Region, path string, body any) (int, []byte, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return 0, nil, err

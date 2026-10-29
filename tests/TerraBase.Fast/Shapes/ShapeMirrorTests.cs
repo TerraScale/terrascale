@@ -12,7 +12,6 @@ using TerraBase.Engine.Turso;
 using TerraBase.Errors;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
-using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
 using TerraBase.Fast.Documents;
 using TerraBase.Primitives;
@@ -21,11 +20,6 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Shapes;
 
-/// <summary>
-/// The shape mirror (FR-22): closed chunks sealed by the real engine are uploaded encrypted to the platform bucket, and the
-/// manifest route lists each uploaded object's presigned URL only after the upload succeeded. The server, store,
-/// sealer, mirror and endpoint are production code; only the object store, the lineage, and the chunk and page lookups are replaced.
-/// </summary>
 public sealed class ShapeMirrorTests
 {
     private static readonly string[] ExpectedMetadata = ["x-amz-meta-owner", "x-amz-meta-object-hash", "x-amz-meta-sha256", "x-amz-meta-epoch", "x-amz-meta-key-id", "x-amz-meta-sealed-at", "x-amz-meta-floor-offset"];
@@ -42,8 +36,6 @@ public sealed class ShapeMirrorTests
         _ = await harness.Db.SealWithMirrorAsync(harness.Shape, start);
         var chunk = await harness.SealAsync(start);
         await harness.MirroredAsync(1);
-
-        // Background mirroring leaves plaintext origin delivery available.
         using (var origin = await harness.GetShapeAsync(start))
         {
             await Assert.That(origin.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -60,8 +52,6 @@ public sealed class ShapeMirrorTests
         var manifest = await harness.ManifestAsync(start);
         var entry = manifest.Objects.Single();
         await Assert.That(harness.Puts.Values.Sum()).IsEqualTo(1).Because("the duplicate queue must not upload the object again");
-
-        // The manifest is the one transport: it names the presigned URL, which the platform serves with the stored ciphertext.
         using var listed = await harness.GetManifestAsync(start);
         await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await CacheControlAssert.EqualAsync(listed.Headers.CacheControl?.ToString());
@@ -87,8 +77,6 @@ public sealed class ShapeMirrorTests
         await Assert.That(harness.Mirror.Queue(harness.Tenant, harness.Shape.ShapeId, harness.Shape.Handle, Text(start), Text(chunk.EndOffset),
             chunk.EndOffset, chunk.ValuesAt, chunk.Body, harness.Time.GetUtcNow())).IsTrue();
         await harness.AttemptAsync();
-
-        // Nothing was stored, so the manifest lists no object and the origin keeps serving the chunk.
         var manifest = await harness.ManifestAsync(start);
         await Assert.That(manifest.Objects.Count).IsEqualTo(0);
         using var origin = await harness.GetShapeAsync(start);
@@ -101,7 +89,6 @@ public sealed class ShapeMirrorTests
     public async Task A_stalled_upload_is_tried_again_and_its_object_is_listed()
     {
         await using var harness = await Harness.StartAsync();
-        // The first upload hangs until its attempt's deadline, as a bucket that never answered (#838); the next one lands.
         var stalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         harness.S3.BeforePut = async (key, cancellationToken) =>
         {
@@ -117,7 +104,6 @@ public sealed class ShapeMirrorTests
         await Assert.That(harness.Queue(chunk)).IsTrue();
         await stalled.Task.WaitAsync(TimeSpan.FromSeconds(30), harness.Cancellation);
         harness.Time.Advance(TimeSpan.FromSeconds(30));
-        // The pause before the next attempt starts once the stalled one has unwound.
         await TerraBaseTestServer.EventuallyAsync(_ =>
         {
             harness.Time.Advance(ShapeMirror.RetryDelay);
@@ -147,8 +133,6 @@ public sealed class ShapeMirrorTests
             await Assert.That(harness.Mirror.Queue(harness.Tenant, harness.Shape.ShapeId, harness.Shape.Handle, Text(chunk.Offset), Text(chunk.EndOffset),
                 chunk.EndOffset, chunk.ValuesAt, chunk.Body, harness.Time.GetUtcNow())).IsTrue();
         }
-
-        // Nine objects are listed; the manifest shows the first eight of the chain.
         await harness.MirroredAsync(chunks.Length);
         var manifest = await harness.ManifestAsync(start);
         var objects = manifest.Objects;
@@ -181,7 +165,6 @@ public sealed class ShapeMirrorTests
     {
         await using var harness = await Harness.StartAsync(new FakeTimeProvider(DateTimeOffset.UtcNow));
         var start = await harness.Db.HeadAsync();
-        // Two chunks upload in the first epoch; after the clock moves a full epoch, the third upload is sealed under the next one.
         for (var commit = 0; commit < 3; commit++)
         {
             _ = await harness.CommitLargeAsync();
@@ -204,13 +187,11 @@ public sealed class ShapeMirrorTests
         await Assert.That(before[0].Epoch).IsEqualTo(before[1].Epoch);
         await Assert.That(before[2].Epoch).IsNotEqualTo(before[0].Epoch).Because("the third object was encrypted after the clock moved an epoch");
 
-
         var deleted = await harness.Mirror.TrimAsync(harness.Tenant, harness.Shape.Handle, chunks[2].Offset, harness.Cancellation);
         await Assert.That(deleted).IsEqualTo(2);
         await Assert.That(harness.S3.Objects.ContainsKey(before[0].Object)).IsFalse();
         await Assert.That(harness.S3.Objects.ContainsKey(before[1].Object)).IsFalse();
         await Assert.That(harness.S3.Objects.ContainsKey(before[2].Object)).IsTrue();
-
 
         var retained = await harness.ManifestAsync(chunks[2].Offset);
         await Assert.That(retained.Objects.Select(entry => entry.Offset).ToArray()).IsEquivalentTo([before[2].Offset],
@@ -229,7 +210,6 @@ public sealed class ShapeMirrorTests
     [Test]
     public async Task On_an_R2_bucket_objects_are_linked_by_CDN_path_and_a_trimmed_object_is_purged_from_the_CDN()
     {
-        // Disposed after the server, which stops sending purges first.
         using var cloudflare = new FakeCloudflare();
         await using var harness = await Harness.StartAsync(cloudflare: cloudflare);
         var start = await harness.Db.HeadAsync();
@@ -265,7 +245,6 @@ public sealed class ShapeMirrorTests
     [Test]
     public async Task On_an_R2_bucket_Cloudflare_analytics_become_CDN_request_counters_window_after_window()
     {
-        // Disposed after the server, which stops querying first.
         using var cloudflare = new FakeCloudflare { Analytics = [("hit", 990), ("miss", 10), ("dynamic", 3)] };
         await using var harness = await Harness.StartAsync(cloudflare: cloudflare);
         var server = harness.Server;
@@ -370,8 +349,6 @@ public sealed class ShapeMirrorTests
             using var repeat = await platform.GetAsync(url);
             await Assert.That((await repeat.Content.ReadAsByteArrayAsync()).SequenceEqual(bytes)).IsTrue().Because("the same signed URL serves the same ciphertext");
         }
-
-        // The signed window ends no later than the manifest's expiry.
         var signedAt = DateTimeOffset.ParseExact(Query(url, "X-Amz-Date")!, "yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal);
         var lifetime = long.Parse(Query(url, "X-Amz-Expires")!, CultureInfo.InvariantCulture);
         await Assert.That(signedAt).IsEqualTo(DateTimeOffset.FromUnixTimeSeconds(harness.Time.GetUtcNow().ToUnixTimeSeconds()));
@@ -389,8 +366,6 @@ public sealed class ShapeMirrorTests
         {
             await Assert.That(path.StatusCode).IsEqualTo(HttpStatusCode.Forbidden).Because("a changed object path is outside the signed request");
         }
-
-        // Past the expiry the platform refuses the same URL, although it was valid when issued.
         harness.Time.Advance(expiresAt - harness.Time.GetUtcNow() + TimeSpan.FromSeconds(1));
         using var expired = await platform.GetAsync(url);
         await Assert.That(expired.StatusCode).IsEqualTo(HttpStatusCode.Forbidden).Because("the signed window has ended");
@@ -407,8 +382,6 @@ public sealed class ShapeMirrorTests
         await harness.MirroredAsync(1);
         var before = (await harness.ManifestAsync(start)).Objects.Single();
         var cipher = harness.S3.Objects[before.Object].ToArray();
-
-        // A second mirror over the same engine, storage and object store stands in for the process after a restart.
         using var restarted = harness.NewMirror(harness.Time);
         await restarted.StartAsync(harness.Cancellation);
         try
@@ -502,8 +475,6 @@ public sealed class ShapeMirrorTests
         await Assert.That(harness.Queue(chunk)).IsTrue();
         await harness.MirroredAsync(1);
         var stored = (await harness.ManifestAsync(start)).Objects.Single();
-
-        // The mirror runs on its own clock and is never started, so no expiry sweep can race this trim.
         var aged = new FakeTimeProvider(harness.Time.GetUtcNow());
         using var mirror = harness.NewMirror(aged);
         aged.Advance(FeedCursor.Retention + TimeSpan.FromSeconds(1));
@@ -522,14 +493,11 @@ public sealed class ShapeMirrorTests
     public async Task A_sealed_snapshot_page_chain_is_mirrored_and_its_manifest_lists_each_page_for_direct_fetch()
     {
         await using var harness = await Harness.StartAsync();
-        // Each 600 KiB document fills a snapshot page on its own, so the seal writes three pages.
         var written = await harness.WriteLargeDocumentsAsync(3);
         await Assert.That(written.Status).IsEqualTo(HttpStatusCode.OK);
 
         var snapshot = await harness.SealSnapshotAsync();
         var first = ShapeSnapshots.PageOffset(snapshot.Offset, null);
-
-        // Each stored page is queued under its own offset; the chain follows the pages' continuation ids.
         var offset = first;
         string? after = null;
         var queued = 0;
@@ -561,8 +529,6 @@ public sealed class ShapeMirrorTests
             await Assert.That(objects[index].GetProperty("offset").GetString()).IsEqualTo(objects[index - 1].GetProperty("next_offset").GetString())
                 .Because("the pages form one contiguous chain");
         }
-
-        // Each listed URL serves the stored ciphertext, whose digest and size the manifest names.
         using var platform = harness.PlatformClient();
         for (var index = 0; index < objects.GetArrayLength(); index++)
         {
@@ -602,8 +568,6 @@ public sealed class ShapeMirrorTests
         {
             await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
-
-        // The next queue item settles after the earlier warm item's missing HEAD has been cached.
         await Assert.That(harness.Queue(chunks[1])).IsTrue();
         await harness.MirroredAsync(1);
         var missingKey = ShapeObjectStore.Key(harness.Shape.ShapeId, harness.Shape.Handle, Text(start));
@@ -647,15 +611,11 @@ public sealed class ShapeMirrorTests
     }
 
     private static string Text(long value) => value.ToString(CultureInfo.InvariantCulture);
-
-    // The decoded value of one query parameter, or null when the URL does not carry it.
     private static string? Query(string url, string name) => new Uri(url).Query.TrimStart('?').Split('&')
         .Select(part => part.Split('=', 2))
         .Where(parts => Uri.UnescapeDataString(parts[0]) == name && parts.Length == 2)
         .Select(parts => Uri.UnescapeDataString(parts[1]))
         .SingleOrDefault();
-
-    // One hex character changed: the same length and alphabet, so the request is well formed but no longer what was signed.
     private static string Flip(string value) => value[..^1] + (value[^1] == '0' ? '1' : '0');
 
     private static async Task<string?> MustRefetchCode(HttpResponseMessage response)
@@ -664,13 +624,10 @@ public sealed class ShapeMirrorTests
         return document.RootElement.GetProperty("error").GetProperty("code").GetString();
     }
 
-    /// <summary>One production server with the mirror, a fake platform bucket, and one shape of the items collection.</summary>
     private sealed class Harness : IAsyncDisposable
     {
         private readonly DocumentApi _api;
-        // Released by the upload lag metric after a winning PUT is cached; adoption emits no release.
         private readonly SemaphoreSlim _mirrored;
-        // Released by the platform for each PUT attempt, whether or not the platform accepts it.
         private readonly SemaphoreSlim _attempts;
 
         private Harness(DocumentApi api, SemaphoreSlim mirrored, SemaphoreSlim attempts, FakeS3 s3, FakeTimeProvider time,
@@ -691,8 +648,6 @@ public sealed class ShapeMirrorTests
         public FakeS3 S3 { get; }
 
         public FakeTimeProvider Time { get; }
-
-        /// <summary>Platform PUTs by key; a retried upload counts again.</summary>
         public ConcurrentDictionary<string, int> Puts { get; }
 
         public Database Db { get; }
@@ -700,8 +655,6 @@ public sealed class ShapeMirrorTests
         public TenantContext Tenant { get; }
 
         public ShapeSealDefinition Shape { get; }
-
-        /// <summary>The production snapshot store over this server's engine, used to seal and to read stored pages.</summary>
         public ShapeSnapshots Snapshots { get; }
 
         public IShapeMirror Mirror => _api.Server.Services.GetRequiredService<IShapeMirror>();
@@ -714,8 +667,6 @@ public sealed class ShapeMirrorTests
             .DeleteDatabaseAsync(Tenant, Cancellation).AsTask();
 
         public CancellationToken Cancellation { get; } = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-
-        /// <summary>With <paramref name="cloudflare"/>, the bucket is an R2 one whose CDN copies that fake purges.</summary>
         public static async Task<Harness> StartAsync(FakeTimeProvider? time = null, FakeCloudflare? cloudflare = null)
         {
             time ??= new FakeTimeProvider(DateTimeOffset.UtcNow);
@@ -739,11 +690,9 @@ public sealed class ShapeMirrorTests
                 ManualBackupHosting.Configure(services);
                 services.AddSingleton<TimeProvider>(time);
                 services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, time);
-                // These retention scenarios serve one manually sealed lineage; ShapeMirrorHttpTests covers the real HTTP adapters.
                 services.AddSingleton<IShapeLineages>(lineage);
                 services.AddSingleton<IShapeChunks>(provider => new StoredChunks(provider));
                 services.AddSingleton<IShapeSnapshots>(provider => new StoredSnapshots(provider));
-                // The mirror reports lag only after it lists an uploaded object, so this is the completion event.
                 services.AddSingleton<IShapeMetrics>(provider => new MirrorSignal(ActivatorUtilities.CreateInstance<ShapeMetrics>(provider), mirrored));
             });
             try
@@ -762,8 +711,6 @@ public sealed class ShapeMirrorTests
         }
 
         public async ValueTask DisposeAsync() => await _api.DisposeAsync();
-
-        /// <summary>Commits one document of about 600 KB: two such commits pass 1 MiB, so each commit closes its own chunk.</summary>
         public Task<long> CommitLargeAsync() => Db.CommitAsync(async transaction =>
             _ = await transaction.PutAsync(Collection, DocumentApi.NewId(), Json(new { pad = new string('x', LargeBody) }), CancellationToken.None));
 
@@ -786,27 +733,19 @@ public sealed class ShapeMirrorTests
 
         public Task<HttpResponseMessage> GetManifestAsync(string offset) =>
             _api.Client.GetAsync(new Uri($"{_api.Collections}/{Collection}/shape/manifest?offset={offset}&handle={Shape.Handle}", UriKind.Relative));
-
-        /// <summary>Writes <paramref name="count"/> documents of about 600 KB over HTTP in one transaction.</summary>
         public Task<ApiResponse> WriteLargeDocumentsAsync(int count) => _api.TransactAsync(
             [.. Enumerable.Range(0, count).Select(_ => (object)new { op = "put", collection = Collection, id = DocumentApi.NewId(), document = new { pad = new string('x', LargeBody) } })],
             Cancellation);
-
-        /// <summary>Seals a snapshot of the shape's collection at the feed head, through the production snapshot store.</summary>
         public ValueTask<ShapeSnapshot> SealSnapshotAsync() => Snapshots.SealIfDueAsync(Db.Store,
             new ShapeSnapshotDefinition(Shape.Handle, Shape.ShapeId, Shape.Collection, Shape.CollectionGeneration, Shape.ResumeScope,
                 Shape.Incarnation), Cancellation);
 
         public Task<HttpResponseMessage> GetKeyAsync(string epoch, string keyId) =>
             _api.Client.GetAsync(new Uri($"{_api.Collections}/{Collection}/shape/keys?handle={Shape.Handle}&epoch={epoch}&key_id={keyId}", UriKind.Relative));
-
-        /// <summary>The platform's own client: the presigned URL goes straight to the platform handler, as the SDK sends it.</summary>
         public HttpClient PlatformClient() => _api.Server.Services.GetRequiredService<IHttpClientFactory>().CreateClient("backup-s3");
 
         public Task<ShapeMirrorManifest> ManifestAsync(long floor) =>
             Mirror.ManifestAsync(Tenant, Shape.ShapeId, Shape.Handle, Text(floor), floor, Cancellation).AsTask();
-
-        /// <summary>Waits until <paramref name="count"/> more objects are listed by the mirror; the test's own cancellation bounds the wait.</summary>
         public async Task MirroredAsync(int count)
         {
             for (var index = 0; index < count; index++)
@@ -814,18 +753,9 @@ public sealed class ShapeMirrorTests
                 await _mirrored.WaitAsync(Cancellation).WaitAsync(TimeSpan.FromSeconds(30), Cancellation);
             }
         }
-
-        /// <summary>Waits for one PUT attempt to the platform, successful or refused.</summary>
         public Task AttemptAsync() => _attempts.WaitAsync(Cancellation).WaitAsync(TimeSpan.FromSeconds(30), Cancellation);
-
-        /// <summary>Queues a sealed chunk under its own offsets, valued at its sealing head, on the server's mirror or the given one.</summary>
         public bool Queue(Sealed chunk, IShapeMirror? mirror = null) => (mirror ?? Mirror).Queue(Tenant, Shape.ShapeId, Shape.Handle,
             Text(chunk.Offset), Text(chunk.EndOffset), chunk.EndOffset, chunk.ValuesAt, chunk.Body, Time.GetUtcNow());
-
-        /// <summary>
-        /// A second production mirror over this server's engine, shape storage, metrics, memory, crypto and object store, on the given
-        /// clock. It is not hosted: the caller starts it only when it needs the queue worker.
-        /// </summary>
         public ShapeMirror NewMirror(TimeProvider time)
         {
             var services = _api.Server.Services;
@@ -852,7 +782,6 @@ public sealed class ShapeMirrorTests
         }
     }
 
-    /// <summary>The production shape metrics, with the mirror's completion reported to the test.</summary>
     private sealed class MirrorSignal(IShapeMetrics inner, SemaphoreSlim mirrored) : IShapeMetrics
     {
         public void RecordRead() => inner.RecordRead();
@@ -874,7 +803,6 @@ public sealed class ShapeMirrorTests
         public IMemoryReservation? TryReserve(long bytes, TenantContext? tenant) => inner.TryReserve(bytes, tenant);
     }
 
-    /// <summary>The one lineage this server serves, set once the collection exists.</summary>
     private sealed class CurrentLineage : IShapeLineages
     {
         public ShapeSealDefinition? Shape { get; set; }
@@ -895,7 +823,6 @@ public sealed class ShapeMirrorTests
         }
     }
 
-    /// <summary>Serves the sealed bytes the real sealer stored for the offset.</summary>
     private sealed class StoredChunks(IServiceProvider services) : IShapeChunks
     {
         public async ValueTask<ShapeRead> ReadAsync(ShapeScope scope, ShapeLineage lineage, long offset, CancellationToken cancellationToken)
@@ -914,7 +841,6 @@ public sealed class ShapeMirrorTests
         private static IShapeSealer Sealer(IServiceProvider services) => services.GetRequiredService<IShapeSealer>();
     }
 
-    /// <summary>Serves the snapshot pages the production store wrote; a page that was never stored is refetched, not invented.</summary>
     private sealed class StoredSnapshots(IServiceProvider services) : IShapeSnapshots
     {
         private readonly ShapeSnapshots _snapshots = SnapshotStore(services);
@@ -931,26 +857,19 @@ public sealed class ShapeMirrorTests
             {
                 return new MustRefetch("no snapshot page is stored at this offset");
             }
-
-            // The last page continues at the snapshot's own offset, as the stored body says.
             var next = page.NextId is { } id ? ShapeSnapshots.PageOffset(snapshot, id) : snapshot.ToString(CultureInfo.InvariantCulture);
             return new ShapeBody(page.Body.ToArray(), next, false);
         }
     }
 
-    /// <summary>The production snapshot store over the server's memory budget, time and Turso engine.</summary>
     private static ShapeSnapshots SnapshotStore(IServiceProvider services) => (ShapeSnapshots)services.GetRequiredService<IShapeSnapshotSealer>();
-
-    /// <summary>One sealed chunk, copied out of its reservation.</summary>
     private sealed record Sealed(long Offset, long EndOffset, long ValuesAt, byte[] Body);
-
-    /// <summary>One database of a server: its production store, its Turso store for direct reads, and a sealer.</summary>
     private sealed class Database(TerraBaseTestServer server, IDatabaseStore store, TursoDatabaseStore turso)
     {
         public IDatabaseStore Store { get; } = store;
 
         public ShapeSealer Sealer => new(server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<ShapeSealer>.Instance,
-            new TursoShapeStorage(server.Services.GetRequiredService<TursoStorageEngine>()), server.Services.GetRequiredService<IRemoteDurability>());
+            new TursoShapeStorage(server.Services.GetRequiredService<TursoStorageEngine>()));
 
         public static async Task<Database> OpenAsync(TerraBaseTestServer server, TenantContext tenant)
         {
@@ -972,8 +891,6 @@ public sealed class ShapeMirrorTests
                 ?? throw new InvalidOperationException($"no chunk is sealed at {offset}");
             return new Sealed(chunk.Offset, chunk.EndOffset, chunk.ValuesAt, chunk.Body.ToArray());
         }
-
-        // The chain of closed chunks from `from` to `to`, each starting where the previous one ended.
         public async Task<Sealed[]> ChunksAsync(string handle, long from, long to)
         {
             List<Sealed> chunks = [];
@@ -986,8 +903,6 @@ public sealed class ShapeMirrorTests
 
             return [.. chunks];
         }
-
-        // Commits one transaction through the production store and returns its commit boundary.
         public async Task<long> CommitAsync(Func<IStorageTransaction, Task> work)
         {
             await using (var transaction = await Store.BeginTransactionAsync(write: true, CancellationToken.None))

@@ -9,10 +9,6 @@ namespace TerraBase.Fast.Documents;
 public sealed class QueryPlanTests
 {
     private static readonly Faker Faker = new();
-
-    // The plans Turso reports (docs/turso-query-plans.md). Every statement seeks a key: a rowid, or the unique index of a
-    // primary key (rowid tables only), except the first page of collections and the collection counts and sizes, which
-    // walk the collections key in order, and the index catalog reads, which scan the small schema table.
     private static readonly Dictionary<string, string> Expected = new(StringComparer.Ordinal)
     {
         ["DocumentBytes"] = "SEARCH d USING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?) | SEARCH c USING INDEX sqlite_autoindex__tb_unique_conflicts_1 (collection=? AND id=?) LEFT-JOIN",
@@ -39,7 +35,6 @@ public sealed class QueryPlanTests
         ["DeleteCollectionDocuments"] = "SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection>=? AND collection<?)",
         ["DeleteCollectionNames"] = "SEARCH collections USING COVERING INDEX sqlite_autoindex_collections_1 (name>=? AND name<?)",
         ["DeleteCollectionStates"] = "SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection>=? AND collection<?)",
-        // The system database's documents and states, by (collection, id); inserts have no plan.
         ["SystemGetStateBytes"] = "SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?) | SEARCH d USING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?) LEFT-JOIN",
         ["SystemGetState"] = "SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?) | SEARCH d USING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?) LEFT-JOIN",
         ["SystemUpdateRow"] = "SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?)",
@@ -47,13 +42,10 @@ public sealed class QueryPlanTests
         ["SystemDeleteRow"] = "SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?)",
         ["ListIndexes"] = "SCAN sqlite_schema",
         ["IndexExists"] = "SCAN sqlite_schema",
-        // Client databases (docs/terrabase/multi-region-replication.md): states and documents by key.
         ["GetStateBytes"] = "SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?) | SEARCH d USING INDEX sqlite_autoindex_items_1 (id=?) LEFT-JOIN | SEARCH c USING INDEX sqlite_autoindex__tb_unique_conflicts_1 (collection=? AND id=?) LEFT-JOIN",
         ["GetState"] = "SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?) | SEARCH d USING INDEX sqlite_autoindex_items_1 (id=?) LEFT-JOIN | SEARCH c USING INDEX sqlite_autoindex__tb_unique_conflicts_1 (collection=? AND id=?) LEFT-JOIN",
         ["UpdateState"] = "SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
         ["InsertState"] = "",
-        ["UpdateApplied"] = "SEARCH _tb_peers USING INTEGER PRIMARY KEY (rowid=?)",
-        ["InsertApplied"] = "",
         ["UpdateCollection"] = "SEARCH collections USING COVERING INDEX sqlite_autoindex_collections_1 (name=?)",
         ["ClientDocumentBytes"] = "SCALAR SUBQUERY 1 | SEARCH _tb_unique_conflicts USING INDEX sqlite_autoindex__tb_unique_conflicts_1 (collection=? AND id=?) | SCALAR SUBQUERY 2 | SEARCH items USING INDEX sqlite_autoindex_items_1 (id=?) | SCAN CONSTANT ROW",
         ["ClientListFirst"] = "SCAN items AS d USING INDEX sqlite_autoindex_items_1 | CORRELATED SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
@@ -82,11 +74,8 @@ public sealed class QueryPlanTests
         (await tenant.Data.PutAsJsonAsync(
             tenant.Database("plans", $"/collections/items/documents/by-key?id={EntityIds.New()}"),
             new { title = Faker.Commerce.ProductName() })).EnsureSuccessStatusCode();
-        // Every statement the engine runs must have a recorded plan.
         await Assert.That(TursoStatements.Shared.Keys.Concat(TursoStatements.ClientOnly.Keys).Concat(TursoStatements.SystemOnly.Keys))
             .IsEquivalentTo(Expected.Keys);
-        // _system (created by issuing the key) holds API keys and Management documents with the shared statements and its
-        // own. Plans depend on the schema, not on the rows, so an almost empty file is enough.
         foreach (var (database, path, statements) in new[]
         {
             ("plans", Path.Combine(api.Server.DataDirectory, tenant.OrganizationId, tenant.ProjectId, plans + ".db"), TursoStatements.ClientOnly),
@@ -95,7 +84,6 @@ public sealed class QueryPlanTests
         {
             foreach (var (name, sql) in TursoStatements.Shared.Concat(statements))
             {
-                // A client statement over one collection's table names it as {0}.
                 var plan = await QueryPlan.ExplainAsync(
                     path, statements == TursoStatements.ClientOnly ? string.Format(System.Globalization.CultureInfo.InvariantCulture, sql, "\"items\"") : sql);
                 await Assert.That($"{database} {name}: {plan}").IsEqualTo($"{database} {name}: {Expected[name]}").Because(plan);
@@ -154,7 +142,6 @@ public sealed class QueryPlanTests
         var sql = new TursoQueryCompiler(command.Parameters, RowSource.Client("items")).Compile(new TerraBase.Engine.DocumentQuery(
             "items", null, [], null, 1, 1024));
         var plan = await QueryPlan.ExplainAsync(databaseFile, sql);
-        // The collection's table holds live documents only: its id key leads straight to the live one.
         await Assert.That(plan).IsEqualTo("SCAN items USING INDEX sqlite_autoindex_items_1 | CORRELATED SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)");
         foreach (var descending in new[] { false, true })
         {

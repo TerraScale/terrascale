@@ -3,26 +3,24 @@ using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Regions;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary><c>POST …/projects/{project}/databases</c>: creates an empty database in a project.</summary>
-public sealed class CreateManagedDatabaseEndpoint(IManagementService management, IProjectCatalog catalog, TerraBaseOptions options, IRemoteDurability durability, IRegionCatalog regions)
+public sealed class CreateManagedDatabaseEndpoint(IManagementService management, IProjectCatalog catalog, TerraBaseOptions options, IRegionCatalog regions)
     : Endpoint<DatabaseRegionsRequest, IResult>
 {
     internal const string OperationName = "createDatabase";
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(ProjectApiRoute.Databases);
         Name(OperationName);
         Summary("Creates a database in a project");
-        Description("name: a lowercase letter, then lowercase letters, digits, _ or -, at most 63 characters; unique within the project. storageName addresses the database in the data API. homeRegion (optional, the called region by default) is the region the database is created and managed in: send the request to that region, any other answers 421 wrong_region with X-TerraBase-Database-Home. replicaRegions lists the other regions that hold a full copy and serve it too (docs/cross-region.md); each must register the project under the same ids. homeRegion and replicaRegions name regions of GET /v1/regions (400 invalid_request naming them otherwise). A database is placed in at least two regions (decision 0013): without replicaRegions it is placed in every other serving region (503 remote_region_unavailable when none serves), and an empty list answers 400 placement_needs_two_regions. allRegions: true (instead of replicaRegions, 400 placement_conflict with both) places a full copy in every serving region, including regions that join later; it is valid while one region serves." + " " + ProjectApiRoute.IdentityDescription);
+        Description("Creates a database in its home region. Replicas and all-region placement are unavailable until the replacement sync engine is ready. " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -35,7 +33,6 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(DatabaseRegionsRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -48,11 +45,11 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
 
     private async ValueTask<IResult> CreateAsync(DatabaseRegionsRequest request, string name, CancellationToken cancellationToken)
     {
-        var all = request.AllRegions == true;
-        if (all && request.ReplicaRegions is not null)
+        if (request.AllRegions == true || request.ReplicaRegions is { Count: > 0 })
         {
-            return ErrorResponse.From(DatabaseRegions.AllOrListed);
+            return ErrorResponse.From(new Validation("databases serve only in their home region until replicas are available", "replicas_unavailable"));
         }
+        const bool all = false;
 
         var home = request.HomeRegion ?? options.Region;
         var serving = await regions.ServingAsync(cancellationToken).ConfigureAwait(false);
@@ -61,7 +58,7 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
             return ErrorResponse.From(unservedHome);
         }
 
-        IReadOnlyList<string> replicas = all ? [] : request.ReplicaRegions ?? await durability.OtherRegionsAsync(cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<string> replicas = all ? [] : request.ReplicaRegions ?? [];
         if (home != options.Region)
         {
             return TerraBaseOptions.IsRegion(home)
@@ -69,15 +66,9 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
                 : ErrorResponse.From(new Validation("homeRegion must name a region"));
         }
 
-        // Every region, now and later: valid with one region, and writes are confirmed once another serves (decision 0013a).
         if (!all)
         {
-            if (request.ReplicaRegions is null && replicas.Count == 0 && durability.Confirms)
-            {
-                return ErrorResponse.From(DatabaseRegions.NoOtherRegion);
-            }
-
-            var checkedRegions = DatabaseRegions.Check(home, replicas, durability.Confirms);
+            var checkedRegions = DatabaseRegions.Check(home, replicas, false);
             if (checkedRegions is Validation invalid)
             {
                 return ErrorResponse.From(invalid);
@@ -108,7 +99,6 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
 
         var actor = ManagementRoute.UserId(HttpContext);
         var project = ManagementRoute.Value(HttpContext, "project");
-        // The billing identity: ts-auth signs the project's organization, and usage, plans and allowances key on it.
         var owner = HttpContext.User.FindFirst("org_id")?.Value;
         if (owner is null)
         {

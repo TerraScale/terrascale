@@ -9,7 +9,6 @@ using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Documents;
-using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
 using TerraBase.Tenancy;
 
@@ -50,8 +49,6 @@ public sealed partial class ShapeResumeTests
         var replay = await ResumeAsync(api.Client, path, belowProof);
         await Assert.That(replay.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
         await Assert.That(replay.Location).IsEqualTo($"{path}?handle={synced.Handle}&offset=0");
-
-        // A write after the cursor is uncovered: the target is the boundary before it, and the client converges from there.
         var written = DocumentApi.NewId();
         _ = await api.PutAsync(written, new { index = 3 });
         var resumed = await ResumeAsync(api.Client, path, synced.Cursor);
@@ -59,8 +56,6 @@ public sealed partial class ShapeResumeTests
         _ = await FollowAsync(api.Client, path, resumed.Location!, state);
         await Assert.That(state.Keys).Contains(written);
         await AssertSameAsync(state, await FreshAsync(api.Client, path));
-
-        // Another issuer with the same prefix is proven; a different prefix, an old cursor, a stamp ahead or another scope is not.
         var other = Forge(synced.Cursor, cursor => cursor with { Issuer = new ReplicaId(cursor.Issuer.Value ^ 1) });
         await Assert.That((await ResumeAsync(api.Client, path, other)).Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
         foreach (var refused in new[]
@@ -79,25 +74,6 @@ public sealed partial class ShapeResumeTests
     }
 
     [Test]
-    public async Task A_resume_in_a_cell_is_capped_at_the_remote_durable_frontier_not_the_local_head()
-    {
-        var durability = new SwitchedDurability();
-        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<IRemoteDurability>(durability));
-        var path = $"{api.Collections}/{DocumentApi.Collection}/shape";
-        _ = await api.PutAsync(DocumentApi.NewId(), new { index = 0 });
-        var synced = await SyncAsync(api.Client, path, null, []);
-        await Assert.That(long.Parse(synced.Offset, CultureInfo.InvariantCulture)).IsGreaterThan(0);
-
-        // Rule 4: once the machine confirms, nothing it holds is remote durable (no peer ever proved a commit), so the
-        // frontier stays 0 and the target is 0, not the local head the cursor covers.
-        durability.Confirms = true;
-        var capped = await ResumeAsync(api.Client, path, synced.Cursor);
-        await Assert.That(capped.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect).Because(capped.Message ?? "no refusal message");
-        await CacheControlAssert.EqualAsync(capped.CacheControl);
-        await Assert.That(capped.Location).IsEqualTo($"{path}?handle={synced.Handle}&offset=0");
-    }
-
-    [Test]
     public async Task A_cross_machine_resume_proves_a_chunk_cursor_issued_above_a_feed_retention_baseline()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -106,7 +82,6 @@ public sealed partial class ShapeResumeTests
         _ = await api.PutAsync(DocumentApi.NewId(), new { index = 1 });
         var token = TestContext.Current!.Execution.CancellationToken;
         var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), token))!;
-        // Retention deletes only the oldest event: its chain hash becomes the origin's persisted baseline.
         await using (var transaction = await store.BeginTransactionAsync(write: true, token))
         {
             await Assert.That(await transaction.TrimFeedAsync(new Hlc(ulong.MaxValue >> 1), 1, token)).IsEqualTo(1);
@@ -127,58 +102,6 @@ public sealed partial class ShapeResumeTests
     }
 
     [Test]
-    public async Task A_chunk_cursor_stops_an_origin_below_its_late_uncovered_row_so_a_resume_delivers_it()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        var path = $"{api.Collections}/{DocumentApi.Collection}/shape";
-        var token = TestContext.Current!.Execution.CancellationToken;
-        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), token))!;
-        var origin = ReplicaId.Of(4518, 23, 1);
-        var now = DateTimeOffset.UtcNow;
-        Hlc Stamp(TimeSpan ago)
-        {
-            return new((ulong)(now - ago).ToUnixTimeMilliseconds() << 16);
-        }
-        async Task JoinAsync(string id, Hlc stamp, int pad)
-        {
-            using var body = JsonDocument.Parse(JsonSerializer.Serialize(new { pad = new string('x', pad) }));
-            var at = new EntryVersion(stamp, origin);
-            await using var write = await store.BeginTransactionAsync(write: true, token);
-            _ = await write.JoinAsync(DocumentApi.Collection, id, DocumentState.Bottom.Put(at, body.RootElement), at, token);
-            _ = await write.CommitAsync(token);
-        }
-
-        var (first, covered, late) = (DocumentApi.NewId(), DocumentApi.NewId(), DocumentApi.NewId());
-        await JoinAsync(first, Stamp(TimeSpan.FromMinutes(3)), 1);
-        Dictionary<string, string> state = [];
-        var synced = await SyncAsync(api.Client, path, null, state);
-        // The same origin's late row joins below the covered row's stamp but after it; together they pass the 1 MiB body
-        // bound, so the next chunk is sealed with the late row present and ends before it.
-        await JoinAsync(covered, Stamp(TimeSpan.FromMinutes(1)), 600_000);
-        await JoinAsync(late, Stamp(TimeSpan.FromMinutes(2)), 600_000);
-        string issued;
-        using (var response = await api.Client.GetAsync(new Uri($"{path}?handle={synced.Handle}&offset={synced.Offset}", UriKind.Relative), token))
-        {
-            var chunk = JsonElement.Parse(await response.Content.ReadAsStringAsync(token));
-            await Assert.That(chunk.GetProperty("up_to_date").GetBoolean()).IsFalse();
-            var ids = chunk.GetProperty("changes").EnumerateArray().SelectMany(change => change.GetProperty("ops").EnumerateArray()).Select(op => op.GetProperty("id").GetString());
-            await Assert.That(ids.SequenceEqual([covered])).IsTrue();
-            issued = chunk.GetProperty("cursor_resume").GetString()!;
-        }
-
-        // The minted stamp stops below the late row: naming the covered row's stamp would claim the late row too.
-        var cursor = ChangeCursor.Decode(Base64Url.EncodeToString(Base64Url.DecodeFromChars(issued).AsSpan(17)))!;
-        await Assert.That(cursor.Stamps[origin]).IsEqualTo(Stamp(TimeSpan.FromMinutes(3)));
-        var resumed = await ResumeAsync(api.Client, path, issued);
-        await Assert.That(resumed.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect).Because(resumed.Message ?? "no refusal message");
-        await Assert.That(resumed.Location).IsEqualTo($"{path}?handle={synced.Handle}&offset={synced.Offset}");
-        List<string> applied = [];
-        _ = await FollowAsync(api.Client, path, resumed.Location!, state, applied);
-        await Assert.That(applied.SequenceEqual([covered, late])).IsTrue().Because(string.Join(',', applied));
-        await AssertSameAsync(state, await FreshAsync(api.Client, path));
-    }
-
-    [Test]
     public async Task A_resume_target_below_the_retention_floor_is_409()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -196,21 +119,6 @@ public sealed partial class ShapeResumeTests
         await AssertRefetchAsync(await ResumeAsync(api.Client, path, synced.Cursor), synced.Handle);
     }
 
-    // A cell of one; the test turns on Confirms after syncing.
-    private sealed class SwitchedDurability : IRemoteDurability
-    {
-        private readonly LocalDurability _local = new();
-
-        public bool Confirms { get; set; }
-
-        public ValueTask<IReadOnlyList<string>> OtherRegionsAsync(CancellationToken cancellationToken) => _local.OtherRegionsAsync(cancellationToken);
-
-        public ValueTask<RemoteAdmission> AdmitAsync(TenantContext database, CancellationToken cancellationToken) => _local.AdmitAsync(database, cancellationToken);
-
-        public ValueTask<bool> WaitAsync(TenantContext database, CommitMarker marker, CancellationToken cancellationToken) =>
-            _local.WaitAsync(database, marker, cancellationToken);
-    }
-
     private sealed record Synced(string Handle, string Offset, string Cursor);
 
     private sealed record Reply(HttpStatusCode Status, string? Location, string? CacheControl, string? Handle, string? Code, string? Message);
@@ -222,7 +130,6 @@ public sealed partial class ShapeResumeTests
         return await FollowAsync(http, path, bootstrap.Location!, state);
     }
 
-    // Reads from a redirect target until up to date, applying each whole response (section 7 rules 1 and 2); `applied` gets each op's id in order.
     private static async Task<Synced> FollowAsync(HttpClient http, string path, string target, Dictionary<string, string> state, List<string>? applied = null)
     {
         var token = TestContext.Current!.Execution.CancellationToken;
@@ -255,7 +162,6 @@ public sealed partial class ShapeResumeTests
         }
     }
 
-    // The bootstrap at -1, with the resume cursor in the query or in TB-Shape-Resume when one is given.
     private static async Task<Reply> ResumeAsync(HttpClient http, string path, string? cursor, bool header = false)
     {
         var separator = path.Contains('?', StringComparison.Ordinal) ? '&' : '?';
@@ -299,7 +205,6 @@ public sealed partial class ShapeResumeTests
         await CacheControlAssert.EqualAsync(reply.CacheControl);
     }
 
-    // Re-encodes the envelope's R8 cursor after `change`, keeping its marker and scope bytes.
     private static string Forge(string token, Func<FeedCursor, FeedCursor> change)
     {
         var bytes = Base64Url.DecodeFromChars(token);
@@ -313,5 +218,4 @@ public sealed partial class ShapeResumeTests
         hash[0] ^= 1;
         return new FeedPrefix(pair.Value.Floor, hash);
     });
-
 }

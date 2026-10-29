@@ -16,11 +16,6 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Shapes;
 
-/// <summary>
-/// Shape reads v1 end to end over real HTTP (shape-reads.md sections 3 to 8 and 11): a client syncs a collection through
-/// snapshot pages, closed chunks and a live tail, applies every response as section 7 says, and must converge on what the
-/// collection holds. Documents are written through the Document API and the stock server answers, with no fixtures.
-/// </summary>
 public sealed class ShapeEndToEndTests
 {
     private const string Where = """{"eq":["/status","open"]}""";
@@ -60,7 +55,6 @@ public sealed class ShapeEndToEndTests
     [Arguments(18, 60 * 1024)]
     public async Task A_production_size_machine_syncs_a_hobby_shape_instead_of_answering_shape_busy(int documents, int bytes)
     {
-        // Model a 120,231,936-byte node memory budget; Hobby admits 1/16 of it.
         await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = "120231936");
         var faker = new Faker();
         HashSet<string> ids = [with(StringComparer.Ordinal)];
@@ -102,7 +96,6 @@ public sealed class ShapeEndToEndTests
                 .Because(vector.GetProperty("id").GetString()!);
             await Assert.That(JsonNode.DeepEquals(JsonNode.Parse(answer.Json.GetRawText()),
                 JsonNode.Parse(expected.GetProperty("body").GetRawText()))).IsTrue();
-            // FR-24 supersedes the legacy vectors' origin cache policy; bodies and statuses stay exact.
             await CacheControlAssert.EqualAsync(answer.CacheControl);
         }
     }
@@ -127,8 +120,6 @@ public sealed class ShapeEndToEndTests
         await Assert.That(chunk.UpToDate).IsEqualTo("false");
         await Assert.That(Ops(chunk).Select(op => op.GetProperty("id").GetString())).Contains(chunkId);
         await AssertConvergedAsync(api, client, query: null);
-
-        // A live request parks at the sealed head; only the commit below can answer it with changes.
         var parked = client.LiveAsync(client.NextOffset);
         await ParkedAsync(api, readers: 1);
         var written = DocumentApi.NewId();
@@ -161,8 +152,6 @@ public sealed class ShapeEndToEndTests
         var client = new ShapeClient(api, Where);
         await client.SyncAsync();
         await AssertConvergedAsync(api, client, Where);
-
-        // Leaving the filter is a delete for the client, and the id stays out of its state.
         var parked = client.LiveAsync(client.NextOffset);
         await ParkedAsync(api, readers: 1);
         await Assert.That((await PutAsync(api, moving, new { status = "closed" }, DocumentApi.IfMatch(version))).Status).IsEqualTo(HttpStatusCode.OK);
@@ -194,8 +183,6 @@ public sealed class ShapeEndToEndTests
 
         var cached = await client.Get(page.Uri!, ("If-None-Match", page.ETag!));
         await AssertNotModifiedAsync(cached, page);
-
-        // A closed chunk: the commit below moves the sealed head past offset H1, so the chunk at H1 is sealed and immutable.
         await client.SyncAsync();
         var closedAt = client.NextOffset;
         await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
@@ -204,8 +191,6 @@ public sealed class ShapeEndToEndTests
         await AssertWireBodyAsync(chunk);
         var chunkCached = await client.Get(chunk.Uri!, ("If-None-Match", chunk.ETag!));
         await AssertNotModifiedAsync(chunkCached, chunk);
-
-        // Later writes do not change a sealed chunk: the same URL keeps its bytes, its ETag and its 304.
         await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
         var again = await client.Get(chunk.Uri!);
         await Assert.That(again.Status).IsEqualTo(HttpStatusCode.OK);
@@ -255,7 +240,6 @@ public sealed class ShapeEndToEndTests
         await AssertWireBodyAsync(at);
         await Assert.That(at.UpToDate).IsEqualTo("true");
         await Assert.That(at.NextOffset).IsEqualTo(synced.NextOffset);
-        // Envelope: marker 0x01, 16 scope bytes, then the R8 changes cursor (shape-reads.md section 9).
         var envelope = Base64UrlDecode(at.Json.GetProperty("cursor_resume").GetString()!);
         await Assert.That(envelope[0]).IsEqualTo((byte)1);
         var tenant = await api.TenantOfAsync();
@@ -268,11 +252,9 @@ public sealed class ShapeEndToEndTests
             .Because("the HTTP resume scope binds the tenant, collection generation, filter and wire version exactly");
         var reached = ChangeCursor.Decode(System.Buffers.Text.Base64Url.EncodeToString(envelope.AsSpan(17)));
         await Assert.That(reached).IsNotNull();
-        // The R8 names every origin's stamp at the covered offset: the same stamps the collection's feed reports at its head.
         var head = await FeedHeadAsync(api);
         await Assert.That(reached!.Stamps.Count).IsGreaterThan(0);
         await Assert.That(reached.Stamps).IsEquivalentTo(head.Stamps);
-        // Plaintext origin bytes: the body is JSON, never a TBS1 envelope.
         await Assert.That(at.Body[0]).IsEqualTo((byte)'{');
         await Assert.That(at.ContentType).IsEqualTo("application/json");
     }
@@ -393,16 +375,12 @@ public sealed class ShapeEndToEndTests
     public async Task Parked_live_readers_share_one_seal_and_one_payload_read()
     {
         await using var api = await DocumentApi.StartAsync();
-        // Enterprise has no request-rate plan limit, so the wave's polls measure flights, not QoS.
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
         var client = new ShapeClient(api, query: null);
         var synced = await client.SyncAsync();
         var token = TestContext.Current!.Execution.CancellationToken;
-
-        // The first wave sets the baseline cost of one shared wake; the second wave repeats the same shape of work.
         var first = await WaveAsync(api, client, synced.NextOffset!, readers: 1, token);
-        // More readers than an organization's flight share, each on its own live cursor: the cursor never splits a flight.
         var second = await WaveAsync(api, client, first.NextOffset, readers: 64, token);
 
         await Assert.That(first.Seals).IsEqualTo(1d).Because("one commit wakes one shared flight");
@@ -425,8 +403,6 @@ public sealed class ShapeEndToEndTests
         var token = TestContext.Current!.Execution.CancellationToken;
         var first = await client.Get(client.Uri(closedAt, live: false));
         await Assert.That(first.Status).IsEqualTo(HttpStatusCode.OK);
-
-        // Each reader starts after the previous answered, so no flight is shared: the immutable bytes are.
         var before = await Scrape(api.Server, token);
         for (var reader = 0; reader < 8; reader++)
         {
@@ -452,8 +428,6 @@ public sealed class ShapeEndToEndTests
         var page = bootstrap.Location!.OriginalString;
         var token = TestContext.Current!.Execution.CancellationToken;
         var before = await Scrape(api.Server, token);
-
-        // Four readers fit every plan's request concurrency; the flight's page read is held until all four joined it.
         gate.Arm(readers: 4);
         Task<Reply>[] readers = [.. Enumerable.Range(0, 4).Select(_ => client.Get(page))];
         var joinedFirst = await Task.WhenAny(gate.Joined, Task.WhenAny(readers)) == gate.Joined;
@@ -485,9 +459,6 @@ public sealed class ShapeEndToEndTests
         await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
         await Assert.That((await client.Get(client.Uri(closedAt, live: false))).Status).IsEqualTo(HttpStatusCode.OK);
         var token = TestContext.Current!.Execution.CancellationToken;
-
-        // Any catalog commit invalidates every cached plan and database lookup; 64 readers (an organization's most joined
-        // shape requesters, ShapeFlights.MaxRequestersPerOrganization: more answer 429 shape_busy) then miss together.
         _ = await api.Management.CreateOrganizationAsync("Invalidate the catalog caches");
         var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
         var before = await Scrape(api.Server, token);
@@ -497,8 +468,6 @@ public sealed class ShapeEndToEndTests
         var after = await Scrape(api.Server, token);
 
         await Assert.That(answers.All(answer => answer.Status == HttpStatusCode.OK)).IsTrue();
-        // One plan read is three point reads; one per reader would be 192 per round. Every background catalog commit during
-        // the fan-out (usage and query-field flushes) invalidates the caches again and costs one more shared round.
         var reads = Delta(before, after, "terrabase_storage_reads_total", "path=\"point\"");
         TestContext.Current!.OutputWriter.WriteLine($"point_reads={reads} catalog_commits={commits}");
         await Assert.That(reads).IsLessThan(60d + (20d * commits));
@@ -532,7 +501,6 @@ public sealed class ShapeEndToEndTests
         await Assert.That(storage).DoesNotContain("otel_metric_overflow");
     }
 
-    // Converges the client on the collection's own answer (section 7 rule 1), reading the collection through the Document API.
     private static async Task AssertConvergedAsync(DocumentApi api, ShapeClient client, string? query)
     {
         var truth = await Truth(api, query);
@@ -598,7 +566,6 @@ public sealed class ShapeEndToEndTests
         List<Task<Reply>> waiting = [];
         for (var index = 0; index < readers; index++)
         {
-            // Admit one at a time; every admitted reader remains concurrent until the shared write wakes them all.
             waiting.Add(client.Get($"{readersAt}&cursor={index}"));
             await TerraBaseTestServer.EventuallyAsync(async ct =>
                 waiting.Any(task => task.IsCompleted) || Sample(await Scrape(server, ct), "terrabase_shape_requests_waiting") >= waiting.Count);
@@ -624,7 +591,6 @@ public sealed class ShapeEndToEndTests
             Delta(before, after, "terrabase_storage_reads_total", "path=\"shape_body\""));
     }
 
-    // Wraps the stock flights and snapshot sealer, so the test sees each join and can hold the shared page read.
     private static void Gate(IServiceCollection services, PageGate gate)
     {
         services.AddSingleton<IShapeFlights<ShapeRead>>(provider => new JoiningFlights(new ShapeFlights<ShapeRead>(
@@ -633,11 +599,10 @@ public sealed class ShapeEndToEndTests
             provider.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(), provider.GetRequiredService<IShapeMetrics>()), gate));
         services.AddSingleton<IShapeSnapshotSealer>(provider => new HeldPages(new ShapeSnapshots(
             provider.GetRequiredService<TerraBase.Features.Memory.IMemoryBudget>(), provider.GetRequiredService<TimeProvider>(),
-            provider.GetRequiredService<IShapeSnapshotTransactions>(), provider.GetRequiredService<TerraBase.Features.Replication.IRemoteDurability>(),
+            provider.GetRequiredService<IShapeSnapshotTransactions>(),
             provider.GetRequiredService<IShapeMetrics>()), gate));
     }
 
-    // Live requests park at the sealed head until a commit; the server's waiting gauge says when every reader is parked.
     private static Task ParkedAsync(DocumentApi api, int readers) =>
         TerraBaseTestServer.EventuallyAsync(async ct => Sample(await Scrape(api.Server, ct), "terrabase_shape_requests_waiting") >= readers);
 
@@ -662,8 +627,6 @@ public sealed class ShapeEndToEndTests
     private sealed record PutResult(HttpStatusCode Status, string Version);
 
     private sealed record Wave(string[] Bodies, string NextOffset, double Seals, double PayloadReads);
-
-    /// <summary>Once armed, counts non-live flight joins and holds page reads until the armed number of readers joined.</summary>
     private sealed class PageGate
     {
         private readonly TaskCompletionSource _joined = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -687,8 +650,6 @@ public sealed class ShapeEndToEndTests
                 _joined.TrySetResult();
             }
         }
-
-        // A second page read means the readers did not share a flight; releasing lets the assertions say so instead of hanging.
         public Task HoldAsync(CancellationToken cancellationToken)
         {
             if (Interlocked.Increment(ref _pageReads) > 1)
@@ -731,7 +692,6 @@ public sealed class ShapeEndToEndTests
         }
     }
 
-    /// <summary>A response read to the end, with the raw wire values the shape tests compare.</summary>
     private sealed record Reply(HttpStatusCode Status, byte[] Body, JsonElement Json, string? Handle, string? ETag, string? CacheControl,
         string? Vary, string? NextOffset, string? UpToDate, string? ContentType, Uri? Location, Uri? Uri)
     {
@@ -740,10 +700,6 @@ public sealed class ShapeEndToEndTests
             : null;
     }
 
-    /// <summary>
-    /// A section 7 client over the wire: bootstraps at -1, follows the 307, pages snapshots, then applies chunks in order.
-    /// Its state and offset move only when a whole response applies.
-    /// </summary>
     private sealed class ShapeClient(DocumentApi api, string? query)
     {
         private readonly HttpClient _http = api.Client;
@@ -761,18 +717,13 @@ public sealed class ShapeEndToEndTests
             {
                 throw new InvalidOperationException($"bootstrap answered {bootstrap.Status}");
             }
-
-            // The 307 names the newest snapshot's first page and this machine's handle (section 3.2).
             Handle = bootstrap.Handle;
             var page = await Get(bootstrap.Location!.OriginalString);
             Apply(page);
-            // Snapshot pages until the last one's next_offset is the decimal snapshot offset (section 3.2).
             while (NextOffset.StartsWith("snap.", StringComparison.Ordinal))
             {
                 Apply(await Get(Uri(NextOffset, live: false)));
             }
-
-            // Closed chunks until the sealed head reports up to date (section 3.3).
             Reply chunk;
             do
             {
@@ -789,8 +740,6 @@ public sealed class ShapeEndToEndTests
             Apply(reply);
             return reply;
         }
-
-        // A parked live request answers with the commit's changes, or with an idle timeout that carries none.
         public async Task<Reply> LiveAsync(string offset)
         {
             var reply = await Get(Uri(offset, live: true));
@@ -828,8 +777,6 @@ public sealed class ShapeEndToEndTests
                 Header(response, "Vary"), Header(response, "TB-Shape-Next-Offset"), Header(response, "TB-Shape-Up-To-Date"),
                 response.Content.Headers.ContentType?.MediaType, response.Headers.Location, target);
         }
-
-        // Applies one whole response atomically (section 7 rules 1 and 2): changes in order, then offset and handle.
         private void Apply(Reply reply)
         {
             if (reply.Status != HttpStatusCode.OK)

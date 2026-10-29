@@ -4,10 +4,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Usage;
 
-/// <summary>Project-token scoped analytics for a project.</summary>
 public sealed class GetProjectAnalyticsEndpoint(IUsageAnalytics analytics, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(AnalyticsRoute.Project + "/analytics");
@@ -23,7 +21,6 @@ public sealed class GetProjectAnalyticsEndpoint(IUsageAnalytics analytics, TimeP
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
     }
 
-    /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        AnalyticsRoute.ReadAsync(HttpContext, analytics, time, replication: false, cancellationToken);
+    AnalyticsRoute.ReadAsync(HttpContext, analytics, time, cancellationToken);
 }

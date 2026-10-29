@@ -10,10 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"terrascale.tech/ts-benchmark/internal/replbench"
+	"terrascale.tech/ts-benchmark/internal/benchclient"
 )
 
-// qosBusyFirst refuses the first n requests with the plan's 429 tenant_busy, then serves them with next.
 func qosBusyFirst(n int32, next http.HandlerFunc) http.HandlerFunc {
 	var seen atomic.Int32
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -48,9 +47,6 @@ func TestQosWait(t *testing.T) {
 	}
 }
 
-// The plan's budget refuses a follower before admission and after it. Each refusal is repeated and counted in qosBusy,
-// never rejected: the bootstrap, the redirect target and the first page are each refused once, the page's 200 admits the
-// follower, and its first live poll is refused once more before the poll is answered.
 func TestFollowShapeRepeatsQoSBusy(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -93,7 +89,6 @@ func TestFollowShapeRepeatsQoSBusy(t *testing.T) {
 	}
 }
 
-// A feed open refused by the plan's budget is repeated, and the stream is admitted on its first cursor.
 func TestFollowChangesRepeatsQoSBusy(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -125,7 +120,6 @@ func TestFollowChangesRepeatsQoSBusy(t *testing.T) {
 	}
 }
 
-// A write refused by the plan's budget is repeated with its first body, counted, and answered by its second attempt.
 func TestPutRepeatsQoSBusy(t *testing.T) {
 	t.Parallel()
 	const doc = `{"t":1,"pad":"x"}`
@@ -136,7 +130,7 @@ func TestPutRepeatsQoSBusy(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	}))
 	defer srv.Close()
-	w, err := replbench.NewRegion("gru", replbench.Targets{Project: "p", Database: "d", Regions: map[string]replbench.RegionTarget{
+	w, err := benchclient.NewRegion("gru", benchclient.Targets{Project: "p", Database: "d", Regions: map[string]benchclient.RegionTarget{
 		"gru": {URL: srv.URL, Token: "t"},
 	}}, 1)
 	if err != nil {
@@ -144,7 +138,7 @@ func TestPutRepeatsQoSBusy(t *testing.T) {
 	}
 	b := &bench{writer: w}
 	var qos atomic.Int64
-	resp, err := b.put(t.Context(), replbench.DocPath("c", "01A"), []byte(doc), &qos)
+	resp, err := b.put(t.Context(), benchclient.DocPath("c", "01A"), []byte(doc), &qos)
 	if err != nil || resp.Status != http.StatusCreated || qos.Load() != 2 {
 		t.Fatalf("status %d, err %v, qos busy %d; want 201, no error, 2", resp.Status, err, qos.Load())
 	}

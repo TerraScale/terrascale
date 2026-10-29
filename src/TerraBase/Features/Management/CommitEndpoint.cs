@@ -6,7 +6,7 @@ using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Qos;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -14,18 +14,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>A commit: its id and operations (docs/management-commits.md). Its schema documents the request; the endpoint reads it itself.</summary>
-/// <param name="Id">Client-chosen canonical uppercase ULID, the same on every retry of one logical update.</param>
-/// <param name="Ops">
-/// 1 to 1024 operations: Management operations as described here, and document operations, which have a <c>collection</c>
-/// member and the members of a Documents API transaction operation (<see cref="TransactionOpRequest"/>).
-/// </param>
 public sealed record CommitRequest(string? Id, IReadOnlyList<ManagementOpRequest>? Ops);
 
-/// <summary><c>POST /v1/management/commits</c>: applies Management and dashboard document operations atomically.</summary>
 public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time, IManagementService management, IQosAdmission qos, IDocumentCacheQuota cacheQuota, ICatalogGate gate) : EndpointWithoutRequest<IResult>
 {
-    /// <summary>Set on a response answered from the record of an earlier, identical commit.</summary>
     public const string ReplayedHeader = "TerraBase-Commit-Replayed";
 
     private const int MaxOps = 1024;
@@ -34,7 +26,6 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
     private const int MaxLimits = 16;
     private const int MaxLimit = 1_000_000;
 
-    // Every Management operation and the members it takes; required ones first, then "?"-suffixed optional ones.
     private static readonly Dictionary<string, string[]> Members = new(StringComparer.Ordinal)
     {
         ["create_organization"] = ["name", "id?"],
@@ -65,7 +56,6 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
         ["limit"] = ["organization", "databases?", "members?", "active_members?"],
     };
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(ManagementRoute.Commits);
@@ -90,7 +80,6 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
         Metadata(ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         await DocumentRoute.CheckBodyAsync(HttpContext, DocumentRoute.MaxRequestBytes, "invalid_request", cancellationToken, DocumentRoute.JsonMediaType) switch
         {
@@ -126,7 +115,6 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
     private async ValueTask<IResult> ApplyAsync(string userId, byte[] body, ParsedCommit commit, CancellationToken cancellationToken)
     {
         Tenancy.TenantContext? charged = null;
-        // Attribute every existing organization named by this multi-organization route after membership validation.
         foreach (var id in commit.Operations.OfType<ManagementCommitOperation>().Select(op => op.Request.Organization)
             .Where(id => id is not null).Distinct(StringComparer.Ordinal))
         {
@@ -165,7 +153,6 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
         using var scope = QosContext.Enter(charged);
         if (charged is not null)
         {
-            // The envelope was decoded under process admission; organization admission precedes applying its work.
             QosContext.ReserveResult(body.LongLength * 3);
         }
 
@@ -207,7 +194,6 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
         return TypedResults.Bytes(outcome.Body, DocumentRoute.JsonMediaType);
     }
 
-    // {"id":"<ULID>","ops":[…]} exactly, every operation valid; the first invalid one is named by its index.
     private static ParsedRequest Parse(JsonElement envelope, bool service, TimeProvider time)
     {
         if (envelope.ValueKind != JsonValueKind.Object)
@@ -285,7 +271,6 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
             _ => operation,
         };
 
-    // One validated document or Management operation.
     private static ValidOperation Operation(JsonElement json, TimeProvider time)
     {
         if (json.ValueKind != JsonValueKind.Object)
@@ -339,7 +324,6 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
         };
     }
 
-    // The rule a Management operation breaks, beyond those the REST validators in Normalize check.
     private static Valid<ManagementOpRequest> CheckMembers(ManagementOpRequest op) =>
         op.Op == "fence" && (op.Organization is null) == (op.Account != true) ? new Validation("a fence names either an organization or account: true")
         : op.Op == "limit" && new[] { op.Databases, op.Members, op.ActiveMembers }.Count(bound => bound is not null) != 1
@@ -360,7 +344,6 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
         : op.ActiveMembers is < 0 or > MaxLimit ? new Validation("active_members must be between 0 and 1000000")
         : op;
 
-    // Validates the remaining members as the REST routes do and returns them trimmed.
     private static Valid<ManagementOpRequest> Normalize(ManagementOpRequest op) =>
         (op.User is null ? new Valid<string>(string.Empty) : ManagementRoute.CheckUserId(op.User, "user"),
         op.Name is null ? new Valid<string>(string.Empty)
@@ -383,25 +366,17 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
             },
         };
 
-    // Resource ids are opaque here, as in route segments: an unknown one is simply not found.
     private static bool IsIdentifier(string? id) => id is null || EntityIds.IsValid(id);
 
     private static bool IsNewId(string id) => EntityIds.IsValid(id);
 }
 
-/// <summary>A commit request read and validated: its id and operations.</summary>
-/// <param name="Id">The commit id.</param>
-/// <param name="Operations">The operations.</param>
 internal sealed record ParsedCommit(string Id, IReadOnlyList<CommitOperation> Operations);
 
-/// <summary>A commit request, or the rule it breaks (with the index of the operation that breaks it).</summary>
 internal readonly union ParsedRequest(ParsedCommit, CommitRejected);
 
-/// <summary>One commit operation read from the request, or the input rule it breaks.</summary>
 internal readonly union ValidOperation(DocumentCommitOperation, ManagementCommitOperation, Validation);
 
-/// <summary>A commit operation within the batch bounds, or why it cannot run.</summary>
 internal readonly union BoundedOperation(CommitOperation, Validation, Forbidden);
 
-/// <summary>A checked commit operation, or its rejection with the failing index.</summary>
 internal readonly union ParsedOperation(CommitOperation, CommitRejected);

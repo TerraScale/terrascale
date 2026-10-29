@@ -12,8 +12,6 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Configuration;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Management.Backups;
-using TerraBase.Engine.Cluster;
-using TerraBase.Features.Replication;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Backup;
@@ -82,7 +80,7 @@ public sealed class BackupKeyRotationTests
             using var written = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "after")), new { text = after }, cancellationToken);
             written.EnsureSuccessStatusCode();
             await backup.RunOnceAsync(cancellationToken);
-            await Assert.That(s3.GeneratedKeys).IsEqualTo(generated + 2); // Project and system keys rotate independently.
+            await Assert.That(s3.GeneratedKeys).IsEqualTo(generated + 2);
             time.Advance(TimeSpan.FromSeconds(1));
 
             using var restored = await api.Client.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/restore"), new { pointInTime, name = "restored" }, cancellationToken);
@@ -134,7 +132,6 @@ public sealed class BackupKeyRotationTests
         var text = new Faker().Lorem.Sentence(12);
         try
         {
-            // SeedAsync stops the source with a pro plan, keeping this point inside its seven-day restore window.
             var (database, user) = await SeedAsync(s3, time, directory, text);
             var pointInTime = time.GetUtcNow();
             var keys = Keys(database);
@@ -163,7 +160,6 @@ public sealed class BackupKeyRotationTests
 
             await using var cold = await StartAsync(s3, time, coldDirectory);
             var backup = cold.Server.Services.GetRequiredService<IContinuousBackup>();
-            // Manual hosting makes this pass own the blocked PUT and its completion.
             var pass = backup.RunOnceAsync(cancellationToken);
             Exception? primaryFailure = null;
             try
@@ -193,7 +189,6 @@ public sealed class BackupKeyRotationTests
             }
             finally
             {
-                // Release before disposing the server, even when the restore times out under the old scope gate.
                 release.TrySetResult();
                 try
                 {
@@ -243,9 +238,6 @@ public sealed class BackupKeyRotationTests
             string newKey;
             string walPrefix;
             DateTimeOffset pointInTime;
-
-            // The persisted ULID is already 23 hours old. This restart takes a snapshot near key expiry, so the
-            // rotation happens less than a day after the snapshot and cannot be hidden by a daily replacement.
             time.Advance(TimeSpan.FromHours(23));
             await using (var api = await StartAsync(s3, time, directory))
             {
@@ -290,13 +282,9 @@ public sealed class BackupKeyRotationTests
                     await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(FilePrefix(database) + "/wal/" + generation + "/", StringComparison.Ordinal))).IsFalse();
 
                     s3.FailPut = _ => false;
-                    // Exceed the shipper's maximum backoff without approaching the next daily snapshot.
                     time.Advance(TimeSpan.FromMinutes(6));
                     await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
                 }
-
-                // Each acknowledged write is shipped before the next: at least eight consecutive segments use the
-                // rotated key, enough to fill the restore reader's prefetch window without a replacement snapshot.
                 foreach (var (name, text) in extraDocuments)
                 {
                     using var written = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", name)), new { text });
@@ -323,8 +311,6 @@ public sealed class BackupKeyRotationTests
                 await Assert.That(s3.Objects.Where(item => item.Key.StartsWith(FilePrefix(database) + "/", StringComparison.Ordinal))
                     .All(item => s3.Objects.ContainsKey(keys + KeyId(item.Value)) && !rejected.ContainsKey(keys + KeyId(item.Value)))).IsTrue();
             }
-
-            // Copy only the stopped node's catalog and layout marker: no source documents or key cache reach this node.
             CopyCatalog(directory, coldDirectory);
             time.Advance(TimeSpan.FromSeconds(1));
             var generated = s3.GeneratedKeys;
@@ -341,7 +327,6 @@ public sealed class BackupKeyRotationTests
 
                 if (key == newKey)
                 {
-                    // Keep the first historical key retrieval in flight while the entire WAL prefetch window starts.
                     await prefetched.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
                 }
             };
@@ -365,8 +350,6 @@ public sealed class BackupKeyRotationTests
                 await Assert.That(requests.Gets).IsEqualTo(1);
                 await Assert.That(requests.Unwraps).IsEqualTo(1);
             }
-
-            // A cold shipper taking over the restored file reuses the newest persisted project key.
             time.Advance(TimeSpan.FromSeconds(10));
             await cold.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var restoredPrefix = $"v1/{database.Organization}/{database.Project}/{restoredDatabase.GetProperty("id").GetString()}/snapshots/";
@@ -389,18 +372,15 @@ public sealed class BackupKeyRotationTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task A_live_node_refreshes_its_unexpired_current_key_after_a_peer_rotates_it(bool discoverPeerAfterStartup)
+    public async Task A_live_node_refreshes_its_unexpired_current_key_after_another_node_rotates_it()
     {
         var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var directory = Directory.CreateTempSubdirectory("terrabase-key-current-").FullName;
         var peerDirectory = Directory.CreateTempSubdirectory("terrabase-key-peer-").FullName;
-        var members = new FakeMemberStore();
         try
         {
-            var (database, _) = await SeedAsync(s3, time, directory, new Faker().Lorem.Sentence(8), rotation: "", members);
+            var (database, _) = await SeedAsync(s3, time, directory, new Faker().Lorem.Sentence(8), rotation: "");
             CopyCatalog(directory, peerDirectory);
             var peerFile = DatabaseFile(peerDirectory, database);
             Directory.CreateDirectory(Path.GetDirectoryName(peerFile)!);
@@ -410,7 +390,7 @@ public sealed class BackupKeyRotationTests
             var oldKey = s3.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal));
             var oldRequests = s3.ObserveKey(oldKey);
             s3.ObservedListPrefix = keys;
-            await using var live = await StartAsync(s3, time, directory, rotation: "", members);
+            await using var live = await StartAsync(s3, time, directory, rotation: "");
             await Assert.That(live.Server.Services.GetRequiredService<TerraBaseOptions>().Backup!.KeyRotationDays).IsEqualTo(90);
             var backup = live.Server.Services.GetRequiredService<IContinuousBackup>();
             await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
@@ -419,8 +399,6 @@ public sealed class BackupKeyRotationTests
             await Assert.That(s3.LastListStartAfter).IsEqualTo("");
             await Assert.That(oldRequests.Gets).IsEqualTo(1);
             await Assert.That(oldRequests.Unwraps).IsEqualTo(1);
-
-            // Keep this an active scope: an idle day would expire the cache and require a cold prefix scan.
             using var data = await live.CreateClientAsync(database.Organization, "documents:read", "documents:write");
             time.Advance(TimeSpan.FromHours(23));
             using var warm = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "keep-warm")), new { text = new Faker().Lorem.Sentence(8) });
@@ -431,10 +409,6 @@ public sealed class BackupKeyRotationTests
             await Assert.That(oldRequests.Gets).IsEqualTo(1);
             await Assert.That(oldRequests.Unwraps).IsEqualTo(1);
             lists = s3.ListRequests;
-
-            // The default 90-day key stays valid locally. The daily snapshot refreshes the warm selection before
-            // the peer verifies its copied catalog against the live node before rotating its backup key.
-            members.Join(new ClusterMember(Path.GetFileName(directory), live.Server.BaseAddress.ToString(), "local", ""));
             time.Advance(TimeSpan.FromHours(1) + TimeSpan.FromSeconds(1));
             await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             await Assert.That(s3.Objects.Keys.Count(key => key.StartsWith(keys, StringComparison.Ordinal))).IsEqualTo(1);
@@ -444,25 +418,9 @@ public sealed class BackupKeyRotationTests
             await Assert.That(oldRequests.Unwraps).IsEqualTo(1);
             var priorSegments = s3.Objects.Keys.Where(key => key.StartsWith(FilePrefix(database) + "/wal/", StringComparison.Ordinal)).ToHashSet(StringComparer.Ordinal);
             await Assert.That(priorSegments.All(key => KeyId(s3.Objects[key]) == oldKey[keys.Length..])).IsTrue();
-            // Advance only the live node during refresh assertions; an unrelated peer pass must not enter its LIST totals.
             var peerTime = new FakeTimeProvider(time.GetUtcNow());
-            var liveMember = new ClusterMember(Path.GetFileName(directory), live.Server.BaseAddress.ToString(), "local", "");
-            if (discoverPeerAfterStartup)
-            {
-                members.Leave(liveMember.Name);
-            }
+            await using var peer = await StartAsync(s3, peerTime, peerDirectory);
 
-            await using var peer = await StartAsync(s3, peerTime, peerDirectory, members: members);
-            var gate = (CatalogGate)peer.Server.Services.GetRequiredService<ICatalogGate>();
-            if (discoverPeerAfterStartup)
-            {
-                await Assert.That(gate.IsOpen).IsFalse();
-                members.Join(liveMember);
-            }
-
-            // A frozen clock cannot trigger the retry when startup finishes closed. Complete the real trusted-peer pass
-            // before expecting backup work, including when discovery becomes available only after startup.
-            await Assert.That(await gate.VerifyAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken)).IsTrue().Because(string.Join(", ", gate.Waiting));
             await peer.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var newest = s3.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal) && key != oldKey);
             var newRequests = s3.ObserveKey(newest);
@@ -482,8 +440,6 @@ public sealed class BackupKeyRotationTests
             await Assert.That(s3.LastListStartAfter).IsEqualTo(oldKey);
             await Assert.That(newRequests.Gets).IsEqualTo(1);
             await Assert.That(newRequests.Unwraps).IsEqualTo(1);
-
-            // A later warm refresh starts after the adopted peer key and keeps using its already unwrapped bytes.
             lists = s3.ListRequests;
             time.Advance(TimeSpan.FromSeconds(61));
             using var unchanged = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "after-refresh")), new { text = new Faker().Lorem.Sentence(8) });
@@ -528,48 +484,31 @@ public sealed class BackupKeyRotationTests
         await Assert.That(s3.GeneratedKeys).IsEqualTo(0);
     }
 
-    private static async Task<ManagementApi> StartAsync(FakeS3 s3, FakeTimeProvider time, string directory, string rotation = "1", FakeMemberStore? members = null)
+    private static async Task<ManagementApi> StartAsync(FakeS3 s3, FakeTimeProvider time, string directory, string rotation = "1")
     {
         var api = await ManagementApi.StartAsync(settings =>
         {
             s3.Configure(settings);
             settings["data-directory"] = directory;
             settings["backup-key-rotation-days"] = rotation;
-            if (members is not null)
-            {
-                settings["node-name"] = Path.GetFileName(directory);
-            }
+
         }, services =>
         {
             s3.Route(services);
-            if (members is not null)
-            {
-                // This key-cache fixture uses local durability; its peer is present only to verify the copied catalog.
-                services.AddSingleton<IRemoteDurability, LocalDurability>();
-                services.AddSingleton<IMembership>(provider => new StaticMembership(provider.GetRequiredService<TerraBaseOptions>()));
-                services.AddSingleton<IMemberDirectory>(members);
-            }
             ManualBackupHosting.Configure(services);
-            // Advancing key age must not concurrently copy cron backups into the files this fixture ships.
             var scheduler = services.Single(service => service.ServiceType == typeof(IHostedService)
                 && service.ImplementationType == typeof(BackupScheduler));
             services[services.IndexOf(scheduler)] = ServiceDescriptor.Singleton<IHostedService>(provider =>
                 ActivatorUtilities.CreateInstance<BackupScheduler>(provider, new FakeTimeProvider(time.GetUtcNow())));
         }, time);
 
-        if (members is not null)
-        {
-            // The test directory publishes self after startup; a frozen clock cannot trigger the gate's retry.
-            _ = await ((CatalogGate)api.Server.Services.GetRequiredService<ICatalogGate>()).VerifyAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        }
-
         return api;
     }
 
     private static async Task<(ManagedDatabaseRef Database, string User)> SeedAsync(
-        FakeS3 s3, FakeTimeProvider time, string directory, string text, string rotation = "1", FakeMemberStore? members = null)
+        FakeS3 s3, FakeTimeProvider time, string directory, string text, string rotation = "1")
     {
-        await using var api = await StartAsync(s3, time, directory, rotation, members);
+        await using var api = await StartAsync(s3, time, directory, rotation);
         return await SeedAsync(api, time, text);
     }
 

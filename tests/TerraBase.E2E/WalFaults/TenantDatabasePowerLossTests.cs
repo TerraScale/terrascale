@@ -9,7 +9,6 @@ using Turso.Data.Sqlite;
 
 namespace TerraBase.E2E.WalFaults;
 
-/// <summary>Decision 0013 B1 on the tenant WAL: sync before acknowledgement, recovery past a torn unsynced tail.</summary>
 public sealed class TenantDatabasePowerLossTests
 {
     [Test]
@@ -101,7 +100,6 @@ public sealed class TenantDatabasePowerLossTests
         }
         catch (HttpRequestException exception) when (exception.StatusCode is null)
         {
-            // The shim killed the process at the tenant commit's sync, after writing its frames.
         }
 
         var written = await File.ReadAllBytesAsync(wal);
@@ -119,8 +117,6 @@ public sealed class TenantDatabasePowerLossTests
             await Assert.That(databaseSize > 0).IsEqualTo(offset + frameSize == written.Length)
                 .Because("only the final unsynced frame commits the interrupted transaction");
         }
-
-        // Keep all but the last frame of the interrupted transaction, then tear its final (commit) frame.
         var retained = unsynced - frameSize + tornBytes;
         await node.PowerLossAsync();
         await Assert.That((await File.ReadAllBytesAsync(wal[..^4])).SequenceEqual(main)).IsTrue().Because("the acknowledged prefix must be recovered from synced WAL frames, not checkpointed main-database pages");
@@ -174,7 +170,7 @@ public sealed class TenantDatabasePowerLossTests
             ["ops"] = new JsonArray(
                 new JsonObject { ["op"] = "create_organization", ["id"] = organization, ["name"] = $"power-{organization}" },
                 new JsonObject { ["op"] = "create_project", ["organization"] = organization, ["id"] = project, ["name"] = "power" },
-                new JsonObject { ["op"] = "create_database", ["organization"] = organization, ["project"] = project, ["name"] = "canary", ["id"] = database, ["replica_regions"] = new JsonArray(Cluster.Sjc) }),
+                new JsonObject { ["op"] = "create_database", ["organization"] = organization, ["project"] = project, ["name"] = "canary", ["id"] = database, ["replica_regions"] = new JsonArray() }),
         });
         var path = $"/v1/projects/{project}/databases/canary";
         await Cluster.CreateCollectionAsync(new(StringComparer.Ordinal) { [Cluster.Gru] = node.Client }, path, "items");
@@ -200,8 +196,6 @@ public sealed class TenantDatabasePowerLossTests
 
     private static Uri Document(string path, string id) => new($"{path}/collections/items/documents/by-key?id={id}", UriKind.Relative);
 }
-
-/// <summary>A standalone node for the WAL proof; when requested, primes NORMAL frames before the HTTP FULL barrier.</summary>
 [Category("tenant-power-loss-host")]
 public sealed class TenantPowerLossHost
 {
@@ -237,8 +231,6 @@ public sealed class TenantPowerLossHost
             command.CommandText = string.Create(CultureInfo.InvariantCulture, $"INSERT INTO _b3_normal_frames VALUES ({row})");
             _ = await command.ExecuteNonQueryAsync(cancellationToken);
         }
-
-        // Keep this connection alive: closing it could checkpoint away the frames the test must prove FULL syncs.
         var ready = Path.Combine(root, "normal-ready");
         await File.WriteAllTextAsync(ready + ".partial", new FileInfo(database + "-wal").Length.ToString(CultureInfo.InvariantCulture), cancellationToken);
         File.Move(ready + ".partial", ready, overwrite: true);

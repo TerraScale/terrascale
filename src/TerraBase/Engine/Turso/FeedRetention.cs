@@ -1,12 +1,10 @@
+using TerraBase.Engine.Lattices;
+using TerraBase.Features.Catalog;
 using ZLogger;
 
 namespace TerraBase.Engine.Turso;
 
-/// <summary>
-/// Changes feed retention (docs/terrabase/multi-region-replication.md section 11): every hour, each client database's feed
-/// events stamped more than 7 days ago go, in batches, and their origins' floors rise, so an older cursor gets 410.
-/// </summary>
-internal sealed class FeedRetention(TursoStorageEngine engine, ILogger<FeedRetention> logger) : BackgroundService
+internal sealed class FeedRetention(TursoStorageEngine engine, ILogger<FeedRetention> logger, ICatalogGate? gate = null) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromHours(1);
     private const int Batch = 1024;
@@ -20,38 +18,53 @@ internal sealed class FeedRetention(TursoStorageEngine engine, ILogger<FeedReten
         }
     }
 
-    // shortcut: opens every database file each hour, as the CDC source's pass does; keep a set of databases with feed rows
-    // once machines hold many databases.
     internal async Task TrimAsync(CancellationToken cancellationToken)
     {
+        if (gate is { IsOpen: false })
+        {
+            return;
+        }
+
         var before = FeedCursor.At(engine.HostTime.GetUtcNow() - FeedCursor.Retention);
+        if (engine.SystemDatabaseExists)
+        {
+            try
+            {
+                var system = (TursoDatabaseStore)await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
+                await TrimStoreAsync(system, before, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                logger.ZLogWarning(error, $"Local catalog history retention failed; the next pass retries");
+            }
+        }
         await foreach (var database in engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
             try
             {
-                if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not TursoDatabaseStore store)
+                if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is TursoDatabaseStore store)
                 {
-                    continue;
+                    await TrimStoreAsync(store, before, cancellationToken).ConfigureAwait(false);
                 }
-
-                int deleted;
-                do
-                {
-                    var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
-                    await using (transaction.ConfigureAwait(false))
-                    {
-                        deleted = await transaction.TrimFeedAsync(before, Batch, cancellationToken).ConfigureAwait(false);
-                        _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-                    }
-                }
-                while (deleted == Batch);
             }
             catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
-                // A deleted, busy or closing database: the next pass tries again; one that keeps failing grows its feed.
-                // A concurrent database deletion can surface after shutdown starts; only cancellation ends the pass.
-                logger.ZLogWarning(error, $"Changes feed retention of a database failed; the next pass retries");
+                logger.ZLogWarning(error, $"Local history retention failed; the next pass retries");
             }
         }
+    }
+
+    private static async Task TrimStoreAsync(TursoDatabaseStore store, Hlc before, CancellationToken cancellationToken)
+    {
+        int collected;
+        int trimmed;
+        do
+        {
+            await using var transaction = (TursoStorageTransaction)await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+            collected = await transaction.CollectHistoryAsync(before, cancellationToken).ConfigureAwait(false);
+            trimmed = store.IsSystem ? 0 : await transaction.TrimFeedAsync(before, Batch, cancellationToken).ConfigureAwait(false);
+            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        while (collected == Batch || trimmed == Batch);
     }
 }

@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"terrascale.tech/ts-benchmark/internal/replbench"
+	"terrascale.tech/ts-benchmark/internal/benchclient"
 )
 
 func TestCorpusAndRankOracle(t *testing.T) {
@@ -78,7 +78,7 @@ func TestFailureDiagnosticsDoNotExposePrivateResponseFields(t *testing.T) {
 				fmt.Fprintf(w, `{"error":{"code":%q,"message":"private-message","machine":"private-machine"}}`, code)
 			}))
 			t.Cleanup(server.Close)
-			region, err := replbench.NewRegion("gru", replbench.Targets{Project: "project", Database: "database", Regions: map[string]replbench.RegionTarget{"gru": {URL: server.URL, Token: "private-token"}}}, 1)
+			region, err := benchclient.NewRegion("gru", benchclient.Targets{Project: "project", Database: "database", Regions: map[string]benchclient.RegionTarget{"gru": {URL: server.URL, Token: "private-token"}}}, 1)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -9,7 +9,6 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Cluster;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
@@ -242,7 +241,7 @@ public sealed class ExplainSqlBoundaryTests
             settings => settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture), services =>
             {
                 hook.Install(services);
-                // Only the endpoint's own deadline on the test clock ends the stalled upload, not Kestrel's data rate.
+
                 services.Configure<KestrelServerOptions>(options => options.Limits.MinRequestBodyDataRate = null);
                 if (catalogLookup == 0)
                 {
@@ -252,7 +251,7 @@ public sealed class ExplainSqlBoundaryTests
         var database = await CreateDatabaseAsync(api);
         using var client = ProjectClient(api, database.Project);
         await RequestLogMemoryFixture.DrainAsync(api.Server);
-        // Draining commits the catalog; rewarm placement's commit-tagged lookup so only the endpoint's own lookups are counted.
+
         _ = await api.Server.Services.GetRequiredService<IManagementService>()
             .FindDatabaseRecordAsync(database.Organization, database.Project, database.Name, token);
         var reserved = ReservedBytes(api);
@@ -276,7 +275,7 @@ public sealed class ExplainSqlBoundaryTests
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(TimeSpan.FromSeconds(60));
-        // A chunked upload that sends "{" and stalls; HttpClient's HTTP/1.1 would not read a response before its body ends.
+
         var address = api.Server.ClientAddress!;
         using var socket = new TcpClient();
         await socket.ConnectAsync(address.Host, address.Port, deadline.Token);
@@ -325,7 +324,7 @@ public sealed class ExplainSqlBoundaryTests
         }
         finally
         {
-            // The upload stays unfinished through the response, memory checks, and recovery request.
+
             await deadline.CancelAsync();
         }
     }
@@ -364,7 +363,7 @@ public sealed class ExplainSqlBoundaryTests
         await Assert.That(response).StartsWith("HTTP/1.1 408 ");
         await Assert.That(response).Contains("Content-Type: application/json");
         await Assert.That(response).Contains("\"code\":\"request_timeout\"");
-        // The endpoint clock never advanced: this response came from Kestrel's transport deadline.
+
         await Assert.That(time.GetUtcNow()).IsEqualTo(started);
         await AssertMemoryReleasedAsync(api, reserved);
         await AssertRecoveryAsync(client, database);
@@ -386,8 +385,7 @@ public sealed class ExplainSqlBoundaryTests
             var localIdentity = new TenantContext(local.Organization, PlanTier.Hobby, local.Project, local.Id);
             await Assert.That(await tenants.RegisteredAsync(localIdentity, token) is true).IsTrue();
             await Assert.That(await tenants.ReplicatesAsync(localIdentity, token) is true).IsTrue();
-            // Seed real catalog state from another home, without replacing tenant or query services.
-            // The existing local file represents a retained replica after its region leaves placement.
+
             var database = catalogOnly ? local with { Id = EntityIds.New().ToString(), Name = "remote" } : local;
             await SeedRemotePlacementAsync(api, database, token);
             var remoteIdentity = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
@@ -447,8 +445,7 @@ public sealed class ExplainSqlBoundaryTests
             {
                 if (collection == $"projects/{database.Project}/database_names" && id == database.Name)
                 {
-                    // The first resolver already captured the local id. Its placement remains local,
-                    // but the second resolver now sees a different id with a retained remote replica.
+
                     hook.AfterGet = null;
                     await SeedRemotePlacementAsync(api, replacement, token);
                 }
@@ -542,7 +539,7 @@ public sealed class ExplainSqlBoundaryTests
                 if (collection == $"projects/{database.Project}/databases" && id == database.Id
                     && Interlocked.Increment(ref reads) == capturedRead)
                 {
-                    // Keep the name and identity intact; only the captured placement becomes stale.
+
                     hook.AfterGet = null;
                     await SeedRemotePlacementAsync(api, database, token);
                 }
@@ -583,7 +580,7 @@ public sealed class ExplainSqlBoundaryTests
             var hook = new UsageCommitHook();
             await using var api = await StartWanAsync(directory, hook);
             var database = await CreateDatabaseAsync(api);
-            // Seed the document through the storage engine: the API write waits on the remote replica, which this fixture does not run.
+
             var tenant = new TenantContext(database.Organization, PlanTier.Enterprise, database.Project, database.Id);
             var store = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant, token)
                 ?? throw new InvalidOperationException("the fixture database is missing");
@@ -640,17 +637,13 @@ public sealed class ExplainSqlBoundaryTests
     {
         var credentials = System.IO.Path.Combine(directory, "user.creds");
         await File.WriteAllTextAsync(credentials, "-----BEGIN NATS USER JWT-----\neyJ0.e30.x\n------END NATS USER JWT------\n-----BEGIN USER NKEY SEED-----\nSUAEXAMPLE\n------END USER NKEY SEED------\n");
-        // These boundary checks retain deliberately staged catalog state until the request has revalidated it.
+
         return await RequestLogMemoryFixture.StartAsync(settings =>
         {
             settings["region"] = "gru-1";
             settings["node-name"] = "gru-member";
         }, services =>
         {
-            // A cell places a new database in every other serving region (decision 0013): sfo-1 serves too.
-            var members = new FakeMemberStore();
-            members.Join(new ClusterMember("sfo-member", string.Empty, "sfo-1", string.Empty));
-            services.AddSingleton<IMemberDirectory>(members);
             hook?.Install(services);
         }, time: new FakeTimeProvider(TimeProvider.System.GetUtcNow()));
     }
@@ -695,7 +688,6 @@ public sealed class ExplainSqlBoundaryTests
         await Assert.That(ReservedBytes(api)).IsEqualTo(baseline);
     }
 
-    // Everything the server sent before it closed the connection; Kestrel resets one whose request body it never read.
     private static async Task<string> ReadUntilClosedAsync(Stream stream, CancellationToken cancellationToken)
     {
         var received = new MemoryStream();
@@ -779,7 +771,7 @@ public sealed class ExplainSqlBoundaryTests
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, observer) =>
         {
-            // Observe only this test's server while the suite runs in parallel.
+
             if (instrument.Name == "terrabase.memory.reserved" && ReferenceEquals(instrument.Meter, meter))
             {
                 observer.EnableMeasurementEvents(instrument);
@@ -811,7 +803,6 @@ public sealed class ExplainSqlBoundaryTests
         await transaction.CommitAsync(token);
     }
 
-    // Send headers promising a body, but no body bytes: a response proves rejection precedes binding/read.
     private static async Task<List<string>> SendHeadersOnlyAsync(ManagementApi api, HttpClient client, ManagedDatabaseRef database)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
@@ -822,7 +813,7 @@ public sealed class ExplainSqlBoundaryTests
         await using var tls = socket.GetStream();
         var headers = $"POST {Path(database)} HTTP/1.1\r\nHost: {address.Authority}\r\nAuthorization: {client.DefaultRequestHeaders.Authorization}\r\nContent-Type: application/json\r\nContent-Length: 1\r\nConnection: close\r\n\r\n";
         await tls.WriteAsync(Encoding.ASCII.GetBytes(headers), deadline.Token);
-        // Read through connection close before checking that request reservations were released.
+
         var response = await ReadUntilClosedAsync(tls, deadline.Token);
         var headerEnd = response.IndexOf("\r\n\r\n", StringComparison.Ordinal);
         await Assert.That(headerEnd).IsGreaterThan(0);

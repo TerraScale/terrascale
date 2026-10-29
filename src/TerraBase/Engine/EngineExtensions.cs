@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Catalog;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Shapes;
 using TerraBase.Hosting;
@@ -51,7 +52,7 @@ public static class EngineExtensions
         services.AddSingleton<IHealthyRewrite>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton<IStorageCopyFaults>(provider => provider.GetRequiredService<TursoStorageEngine>().Ledger);
         services.AddSingleton(provider => provider.GetRequiredService<TursoStorageEngine>().Member);
-        services.AddSingleton(provider => new FeedRetention(provider.GetRequiredService<TursoStorageEngine>(), provider.GetRequiredService<ILogger<FeedRetention>>()));
+        services.AddSingleton(provider => new FeedRetention(provider.GetRequiredService<TursoStorageEngine>(), provider.GetRequiredService<ILogger<FeedRetention>>(), provider.GetRequiredService<ICatalogGate>()));
         services.AddHostedService(provider => provider.GetRequiredService<FeedRetention>());
         services.AddSingleton<IShapeStorage>(provider => new TursoShapeStorage(provider.GetRequiredService<TursoStorageEngine>()));
         services.AddSingleton<IShapeSnapshotTransactions>(provider => new TursoShapeSnapshotTransactions(provider.GetRequiredService<TursoStorageEngine>()));

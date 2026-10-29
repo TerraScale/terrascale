@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Net;
-using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Turso.Data.Sqlite;
@@ -12,10 +11,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Fast.Documents;
 
-/// <summary>
-/// Changes feed retention (docs/terrabase/multi-region-replication.md section 11) racing a database deletion, as backup
-/// retention expiring a snapshot does: the closed store fails its own trim alone, and no pass skips or moves another trim.
-/// </summary>
 public sealed class FeedRetentionDeletionTests
 {
     private const string Survivor = "survivor";
@@ -27,6 +22,8 @@ public sealed class FeedRetentionDeletionTests
         TursoDatabaseStore? victim = null;
         var paused = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var resume = new ManualResetEventSlim();
+        var now = DateTimeOffset.UtcNow + FeedCursor.Retention + TimeSpan.FromDays(1);
+        var clock = new RetentionClock(now - FeedCursor.Retention - TimeSpan.FromDays(1));
         await using var api = await DocumentApi.StartAsync(services: services =>
             services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) =>
             {
@@ -35,15 +32,13 @@ public sealed class FeedRetentionDeletionTests
                 {
                     return;
                 }
-
-                // Retention's first batch committed and still holds the writer: one of the victim's 1025 events is left.
                 using var command = writer.Connection.CreateCommand();
                 command.CommandText = "SELECT count(*) FROM _tb_feed;";
                 if ((long)command.ExecuteScalar()! == 1 && paused.TrySetResult())
                 {
                     resume.Wait(token);
                 }
-            }));
+            }), time: clock);
         (await api.SendAsync(HttpMethod.Put, api.DatabasePath(Survivor), cancellationToken: token)).Status.ShouldBe(HttpStatusCode.Created);
         (await api.SendAsync(HttpMethod.Post, $"{api.DatabasePath(Survivor)}/collections", new { name = DocumentApi.Collection }, cancellationToken: token))
             .Status.ShouldBe(HttpStatusCode.Created);
@@ -51,13 +46,13 @@ public sealed class FeedRetentionDeletionTests
         var turso = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         var victimDatabase = await api.TenantOfAsync(cancellationToken: token);
         var survivorDatabase = await api.TenantOfAsync(Survivor, token);
-        var now = DateTimeOffset.UtcNow;
-        var aged = ReplicaId.Of(4518, 41, 1);
-        var fresh = ReplicaId.Of(4518, 42, 1);
-        // More than one retention batch (1024) on the victim, so its trim begins a second transaction after the deletion.
-        _ = await JoinAsync(engine, victimDatabase, aged, now - FeedCursor.Retention - TimeSpan.FromDays(1), 1025);
-        var floor = await JoinAsync(engine, survivorDatabase, aged, now - FeedCursor.Retention - TimeSpan.FromDays(1), 3);
-        _ = await JoinAsync(engine, survivorDatabase, fresh, now, 1);
+        var survivorFile = await api.DatabaseFileAsync(Survivor);
+        _ = await PutAsync(engine, victimDatabase, 1025, token);
+        var floor = await PutAsync(engine, survivorDatabase, 3, token);
+        clock.SetUtcNow(now - FeedCursor.Retention + TimeSpan.FromMinutes(30));
+        var later = await PutAsync(engine, survivorDatabase, 1, token);
+        clock.SetUtcNow(now);
+        _ = await PutAsync(engine, survivorDatabase, 1, token);
         var store = (TursoDatabaseStore)(await turso.OpenDatabaseAsync(victimDatabase, token))!;
         var warnings = new Warnings();
         var retention = new FeedRetention(turso, warnings);
@@ -67,20 +62,15 @@ public sealed class FeedRetentionDeletionTests
         try
         {
             await Assert.That(await Task.WhenAny(paused.Task, pass).WaitAsync(token)).IsSameReferenceAs(paused.Task);
-            // What backup retention's sweep runs for an expired snapshot.
             await Assert.That(await turso.DeleteDatabaseAsync(victimDatabase, token)).IsTrue();
         }
         finally
         {
             resume.Set();
-            // Join our manually driven pass before the server disposes its engine, including on assertion failure.
             await pass;
         }
-
-        // Only the deleted database failed, once, on its closed store; whichever came first, the survivor was trimmed.
         await Assert.That(warnings.Errors.Single()).IsTypeOf<ObjectDisposedException>();
-        await AssertTrimmedAsync(api, aged, floor, fresh);
-        // The closed store kept no connection, no operation intent, and did not fail the node closed.
+        await AssertTrimmedAsync(survivorFile, floor, remaining: 2);
         await Assert.That(store.IsClosed).IsTrue();
         await Assert.That(store.CurrentWriter()).IsNull();
         await Assert.That(turso.Pool.IdleCountOf(store)).IsEqualTo(0);
@@ -94,51 +84,49 @@ public sealed class FeedRetentionDeletionTests
             return command.ExecuteScalar() is not null;
         }, "checking the deleted store's intent", token);
         await Assert.That(intent).IsFalse();
-
-        // The next pass trims an event that aged since, and still keeps the fresh one.
-        var later = await JoinAsync(engine, survivorDatabase, aged, now - FeedCursor.Retention - TimeSpan.FromHours(1), 1);
+        clock.SetUtcNow(now + TimeSpan.FromHours(1));
         await retention.TrimAsync(token);
         await Assert.That(warnings.Errors.Count).IsEqualTo(1);
-        await AssertTrimmedAsync(api, aged, later, fresh);
+        await AssertTrimmedAsync(survivorFile, later, remaining: 1);
     }
 
-    // The survivor holds no event of `aged`, whose floor is `floor`, and still holds the one event of `fresh`.
-    private static async Task AssertTrimmedAsync(DocumentApi api, ReplicaId aged, Hlc floor, ReplicaId fresh)
+    private static async Task AssertTrimmedAsync(string file, Hlc floor, int remaining)
     {
-        await using var connection = new SqliteConnection(DocumentApi.ConnectionString(await api.DatabaseFileAsync(Survivor), readOnly: true));
+        await using var connection = new SqliteConnection(DocumentApi.ConnectionString(file, readOnly: true));
         await connection.OpenAsync();
-        async Task<long> ScalarAsync(string sql, ReplicaId origin)
-        {
-            await using var command = connection.CreateCommand();
-            command.CommandText = sql;
-            command.Parameters.AddWithValue("$origin", unchecked((long)origin.Value));
-            return (long)(await command.ExecuteScalarAsync())!;
-        }
-
-        await Assert.That(await ScalarAsync("SELECT count(*) FROM _tb_feed WHERE origin = $origin;", aged)).IsEqualTo(0);
-        await Assert.That(await ScalarAsync("SELECT stamp FROM _tb_feed_floor WHERE origin = $origin;", aged)).IsEqualTo((long)floor.Value);
-        await Assert.That(await ScalarAsync("SELECT count(*) FROM _tb_feed WHERE origin = $origin;", fresh)).IsEqualTo(1);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT count(*) FROM _tb_feed;";
+        await Assert.That((long)(await command.ExecuteScalarAsync())!).IsEqualTo(remaining);
+        command.CommandText = "SELECT stamp FROM _tb_feed_floor;";
+        await Assert.That((long)(await command.ExecuteScalarAsync())!).IsEqualTo((long)floor.Value);
+        command.CommandText = "SELECT min(stamp) FROM _tb_feed;";
+        await Assert.That((long)(await command.ExecuteScalarAsync())!).IsGreaterThan((long)floor.Value);
     }
 
-    // Joins `count` documents written by `origin` from `at` on in one transaction, as a peer stream does; returns the last stamp.
-    private static async Task<Hlc> JoinAsync(IStorageEngine engine, TenantContext database, ReplicaId origin, DateTimeOffset at, int count)
+    private static async Task<Hlc> PutAsync(IStorageEngine engine, TenantContext database, int count, CancellationToken token)
     {
-        var store = (await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
-        using var body = JsonDocument.Parse("""{"joined":true}""");
-        var stamp = default(Hlc);
-        await using var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
-        for (var i = 0; i < count; i++)
+        var store = (await engine.OpenDatabaseAsync(database, token))!;
+        for (var offset = 0; offset < count; offset += 512)
         {
-            stamp = new Hlc(((ulong)at.ToUnixTimeMilliseconds() << 16) + (ulong)i);
-            var version = new EntryVersion(stamp, origin);
-            _ = await transaction.JoinAsync(DocumentApi.Collection, DocumentApi.NewId(), DocumentState.Bottom.Put(version, body.RootElement).DeltaAt(stamp), version, CancellationToken.None);
+            await using var transaction = await store.BeginTransactionAsync(write: true, token);
+            for (var i = offset; i < Math.Min(count, offset + 512); i++)
+            {
+                _ = await transaction.PutAsync(DocumentApi.Collection, DocumentApi.NewId(), """{"local":true}"""u8.ToArray(), token);
+            }
+            _ = await transaction.CommitAsync(token);
         }
 
-        _ = await transaction.CommitAsync(CancellationToken.None);
-        return stamp;
+        await using var read = await store.BeginTransactionAsync(write: false, token);
+        return (await read.GetFeedHeadAsync(token)).Single().Value;
     }
 
-    /// <summary>The exceptions of the warnings retention logged.</summary>
+    private sealed class RetentionClock(DateTimeOffset now) : TimeProvider
+    {
+        private long _milliseconds = now.ToUnixTimeMilliseconds();
+        public void SetUtcNow(DateTimeOffset value) => Volatile.Write(ref _milliseconds, value.ToUnixTimeMilliseconds());
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.FromUnixTimeMilliseconds(Volatile.Read(ref _milliseconds));
+    }
+
     private sealed class Warnings : ILogger<FeedRetention>
     {
         public ConcurrentQueue<Exception?> Errors { get; } = new();

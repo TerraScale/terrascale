@@ -1,8 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- The end-to-end replication suite: leaderless writes between gru, sjc and fra over the public HTTP API.
-       Environment-selected clusters run locally by default; TERRABASE_E2E_ORCH_NODES selects ts-orch.
-       Explicit local fixtures always own their in-process nodes or separate operating-system processes.
-       Test references and conventions come from Directory.Build.targets. -->
   <PropertyGroup>
     <RootNamespace>TerraBase.E2E</RootNamespace>
     <OutputType>Exe</OutputType>
@@ -11,8 +7,8 @@
   <ItemGroup>
     <PackageReference Include="Npgsql" />
     <ProjectReference Include="$(TsDotnetRoot)/src/TerraScale.DotNet/TerraScale.DotNet.csproj" />
-    <!-- The vs-Turso benchmark lives with the benchmarks; it compiles here because it boots local nodes with this harness. -->
     <Compile Include="../../benchmark/dotnet/VsTurso/*.cs" Link="Benchmarks/%(Filename)%(Extension)" />
+    <Compile Include="../../benchmark/dotnet/LocalBenchmarkHost.cs" Link="Benchmarks/LocalBenchmarkHost.cs" />
     <!-- Built at test time by WalFaults/WalSyncFaults.cs with the host's C compiler. -->
     <None Include="WalFaults/walfaults.c" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

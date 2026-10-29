@@ -18,44 +18,23 @@ import (
 
 	"github.com/HdrHistogram/hdrhistogram-go"
 	"github.com/oklog/ulid/v2"
-	"terrascale.tech/ts-benchmark/internal/replbench"
+	"terrascale.tech/ts-benchmark/internal/benchclient"
 )
 
-// WriteConfig is one invocation of a write phase.
-//
-// Exactly-once rests on server preconditions, not on reads: every op is conditional (create: the document must not be
-// live; put and delete: if_match the version the ledger recorded for the previous phase that touched it; the re-create
-// put: if_match the tombstone's recorded version), and a transaction is atomic. So at most one attempt of a batch can
-// ever apply, however late an earlier timed-out attempt reaches the database, and a retry is the identical request.
-// A batch becomes terminal only with proof: a 200 answer (its versions), or a 412 after which every document reads
-// back as exactly the state the batch writes, at a version other than its precondition (a tombstone proven by the
-// 404's ETag). Anything else stays unresolved in the ledger: never counted as written, failed or absent.
-//
-// One hazard crosses phases: create only requires the document not to be live (src/TerraBase/Features/Documents/
-// ETags.cs), so a load attempt that reached the server after d1 deleted its document would re-create it. Elapsed time
-// proves nothing about when a sent request commits, so phases are fenced by the server instead: every transaction
-// asserts that fences/closed-<its phase> is absent (assertions run before any write of the transaction and reject it
-// whole, src/TerraBase/Features/Documents/DocumentService.cs), and a phase is closed by creating that document only
-// once every batch is proven. A late attempt then reaches the database either before the fence, where its
-// precondition fails (create needs a non-live document, put and delete a version that no longer exists), or after it,
-// where the assertion rejects it. A phase with an unresolved batch can never be fenced, so the next phase and every
-// exact cut over it refuse to start.
 type WriteConfig struct {
 	Phase        string
 	Writers      int
-	DocsPerSec   float64       // 0: unthrottled
-	MaxBatches   int64         // 0: the whole phase; otherwise stop after this many batches reach a terminal event
-	MinFreeBytes uint64        // stop when the run directory's filesystem has less free space
-	MaxAttempts  int           // per batch per invocation; 0 means 50
-	Timeout      time.Duration // per request; 0 means 2 minutes
-	// hook, for tests only, is called at named points; an error simulates a crash of this process right there.
+	DocsPerSec   float64
+	MaxBatches   int64
+	MinFreeBytes uint64
+	MaxAttempts  int
+	Timeout      time.Duration
+
 	hook func(point string, batch int64) error
-	// client, for tests only, replaces the node's client: a fault proxy in front of the node's internal listener.
+
 	client *Client
 }
 
-// WriteStats are the counters of one invocation. Attempted counts batches sent at least once; Acked and Present are
-// distinct batches (never attempts), so retries cannot inflate them.
 type WriteStats struct {
 	Phase      string  `json:"phase"`
 	Batches    int64   `json:"batches_in_phase"`
@@ -76,25 +55,24 @@ type WriteStats struct {
 	MaxMs      float64 `json:"batch_max_ms"`
 	StoppedFor string  `json:"stopped_for,omitempty"`
 	Invocation string  `json:"invocation"`
-	Fenced     bool    `json:"fenced"` // the phase was complete and this invocation proved its fence
+	Fenced     bool    `json:"fenced"`
 	FirstAckMs int64   `json:"first_terminal_ms"`
 	LastAckMs  int64   `json:"last_terminal_ms"`
 }
 
-// errCrash is a simulated crash from a test hook: the writer stops at once, writing nothing more.
 var errCrash = errors.New("simulated crash")
 
 type writer struct {
-	inv      string // this invocation's id, on every start event
+	inv      string
 	r        *Run
 	cfg      WriteConfig
 	phase    Phase
-	members  []int64 // mutation phases only
+	members  []int64
 	slots    int64
 	ledger   *Ledger
 	versions *Versions
-	prior    *Oracle              // the phases before this one, for preconditions
-	priorV   map[string]*Versions // their version files
+	prior    *Oracle
+	priorV   map[string]*Versions
 	client   *Client
 	stats    WriteStats
 	hist     *hdrhistogram.Histogram
@@ -119,8 +97,6 @@ func (w *writer) at(point string, b int64) error {
 	return w.cfg.hook(point, b)
 }
 
-// Write runs (or resumes) a write phase. Every earlier phase must be complete: its versions are this phase's
-// preconditions.
 func Write(ctx context.Context, r *Run, cfg WriteConfig) (WriteStats, error) {
 	phase, err := r.Phase(cfg.Phase)
 	if err != nil {
@@ -142,10 +118,7 @@ func Write(ctx context.Context, r *Run, cfg WriteConfig) (WriteStats, error) {
 	if err := requireReconciled(r); err != nil {
 		return WriteStats{}, err
 	}
-	if err := SingleNode(ctx, w.client); err != nil {
-		return WriteStats{}, err
-	}
-	// Runs set up before phase fences lack the collection; an assertion on a missing collection answers 404.
+
 	if err := created(w.client.JSON(ctx, http.MethodPost, r.DatabasePath(r.Database)+"/collections", map[string]string{"name": "fences"}, nil)); err != nil {
 		return WriteStats{}, fmt.Errorf("fences collection: %w", err)
 	}
@@ -224,8 +197,7 @@ func Write(ctx context.Context, r *Run, cfg WriteConfig) (WriteStats, error) {
 	errs := make(chan error, writers)
 	for s := range writers {
 		wg.Go(func() {
-			// Stream s owns batches s, s+W, s+2W, ... and keeps one in flight: per stream, the acknowledged batches are
-			// a prefix, which is what an unquiesced cut's restore is checked against.
+
 			for b := int64(s); b < batches; b += int64(writers) {
 				if ctx.Err() != nil {
 					return
@@ -261,7 +233,7 @@ func Write(ctx context.Context, r *Run, cfg WriteConfig) (WriteStats, error) {
 	}
 	var all []error
 	if parent.Err() != nil {
-		// A signal (the G1 monitor, an operator): the phase is not done, whatever the batches in flight did.
+
 		w.stats.StoppedFor = "interrupted"
 		all = append(all, fmt.Errorf("interrupted: %w", parent.Err()))
 	}
@@ -278,11 +250,8 @@ func Write(ctx context.Context, r *Run, cfg WriteConfig) (WriteStats, error) {
 	return w.stats, errors.Join(all...)
 }
 
-// fenceID is the document of collection fences that closes a phase.
 func fenceID(phase string) string { return "closed-" + phase }
 
-// Fenced reports whether a phase's fence exists: a 200 for fences/closed-<phase>. Anything but a 200 or a 404 without
-// a version is an error, a deleted fence included.
 func Fenced(ctx context.Context, c *Client, r *Run, phase string) (bool, error) {
 	resp, err := c.Do(ctx, http.MethodGet, r.DatabasePath(r.Database)+"/collections/fences/documents/by-key?id="+fenceID(phase), nil)
 	switch {
@@ -296,7 +265,6 @@ func Fenced(ctx context.Context, c *Client, r *Run, phase string) (bool, error) 
 	return false, fmt.Errorf("fence of %s: HTTP %d (ETag %q) %s", phase, resp.Status, resp.ETag, truncate(resp.Body, 200))
 }
 
-// RequireFenced fails unless every phase is complete (every batch proven) and fenced.
 func RequireFenced(ctx context.Context, c *Client, r *Run, phases []string) error {
 	for _, name := range phases {
 		p, err := r.Phase(name)
@@ -317,10 +285,6 @@ func RequireFenced(ctx context.Context, c *Client, r *Run, phases []string) erro
 	return nil
 }
 
-// CloseFence closes a complete phase: a conditional create of fences/closed-<phase>, proven by its 200 or by a 412
-// followed by a read of the fence. An ambiguous attempt (no answer, 5xx) may have applied, so it is retried as the
-// identical conditional create, which applies at most once: the retry's 412 plus the read proves it. Anything else
-// leaves the phase open (rerun to prove it).
 func CloseFence(ctx context.Context, c *Client, r *Run, phase string) error {
 	p, err := r.Phase(phase)
 	if err != nil {
@@ -331,9 +295,6 @@ func CloseFence(ctx context.Context, c *Client, r *Run, phase string) error {
 	}
 	if err := requireReconciled(r); err != nil {
 		return fmt.Errorf("phase %s cannot be fenced: %w", phase, err)
-	}
-	if err := SingleNode(ctx, c); err != nil {
-		return err
 	}
 	body := mustJSON(map[string]any{"ops": []any{map[string]any{"op": "create", "collection": "fences", "id": fenceID(phase),
 		"document": map[string]any{"phase": phase, "closedMs": time.Now().UnixMilli()}}}})
@@ -367,7 +328,6 @@ func CloseFence(ctx context.Context, c *Client, r *Run, phase string) error {
 	}
 }
 
-// phaseComplete reports an error, naming the unresolved batches, unless every batch of p has a terminal, proven outcome.
 func phaseComplete(r *Run, p Phase) error {
 	states, err := ReadLedger(r, p.Name)
 	if err != nil {
@@ -395,10 +355,8 @@ func phaseComplete(r *Run, p Phase) error {
 	return nil
 }
 
-// batch sends one batch until it has a proven outcome. A cancelled context leaves the outcome unknown in the ledger;
-// the next invocation resends the identical, conditional request. sentBefore: an earlier invocation sent it.
 func (w *writer) batch(ctx context.Context, stream int, b, first, last int64, sentBefore bool) error {
-	// ambiguous: an earlier attempt may have applied (or still apply), so no rejection of a later one proves anything.
+
 	ambiguous := sentBefore
 	body, priors, err := w.body(first, last)
 	if err != nil {
@@ -423,7 +381,7 @@ func (w *writer) batch(ctx context.Context, stream int, b, first, last int64, se
 		}
 		t0 := time.Now()
 		resp, err := w.client.Do(ctx, http.MethodPost, path, body)
-		rx := time.Now().UnixMilli() // an acknowledgement's time is its receipt, not the later ledger write
+		rx := time.Now().UnixMilli()
 		w.record(time.Since(t0))
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -442,7 +400,7 @@ func (w *writer) batch(ctx context.Context, stream int, b, first, last int64, se
 			atomic.AddInt64(&w.stats.Throttled, 1)
 			sleepCtx(ctx, max(resp.RetryAfter, 200*time.Millisecond))
 		case err == nil && (resp.Status == http.StatusPreconditionFailed || resp.Status == http.StatusNotFound):
-			// A precondition no longer holds. Only proof that this batch's exact writes are in place ends it.
+
 			versions, why, err := w.prove(ctx, first, last, priors)
 			if err != nil {
 				return err
@@ -455,7 +413,7 @@ func (w *writer) batch(ctx context.Context, stream int, b, first, last int64, se
 			}
 			return w.finishBatch(stream, b, attempt, EvPresent, resp.Status, "", first, versions, time.Now().UnixMilli())
 		case err == nil && resp.Status/100 == 4 && ambiguous:
-			// This attempt applied nothing, but an earlier one may have: unresolved, never a terminal rejection.
+
 			atomic.AddInt64(&w.stats.Unresolved, 1)
 			note := fmt.Sprintf("HTTP %d after an ambiguous attempt: %s", resp.Status, truncate(resp.Body, 200))
 			_ = w.ledger.Append(Event{Phase: w.phase.Name, Batch: b, Stream: stream, Attempt: attempt, Ev: EvUnresolved, Ms: time.Now().UnixMilli(), Status: resp.Status, Note: note})
@@ -464,8 +422,7 @@ func (w *writer) batch(ctx context.Context, stream int, b, first, last int64, se
 			_ = w.ledger.Append(Event{Phase: w.phase.Name, Batch: b, Stream: stream, Attempt: attempt, Ev: EvRejected, Ms: time.Now().UnixMilli(), Status: resp.Status, Note: truncate(resp.Body, 300)})
 			return fmt.Errorf("rejected: HTTP %d %s", resp.Status, truncate(resp.Body, 300))
 		default:
-			// Transport error, timeout or 5xx: it may apply now, later or never. The retry is the same conditional
-			// request, so whichever attempt applies first is the only one that can.
+
 			atomic.AddInt64(&w.stats.Ambiguous, 1)
 			ambiguous = true
 			note := fmt.Sprint(err)
@@ -480,8 +437,6 @@ func (w *writer) batch(ctx context.Context, stream int, b, first, last int64, se
 	}
 }
 
-// finishBatch records versions, fsyncs them, then appends the terminal ledger event at time at: a crash between the two
-// leaves the batch unknown, and the resent request proves it again.
 func (w *writer) finishBatch(stream int, b int64, attempt int, ev string, status int, offset string, first int64, versions []string, at int64) error {
 	if err := w.versions.Put(first, versions); err != nil {
 		return err
@@ -506,7 +461,6 @@ func (w *writer) finishBatch(stream int, b int64, attempt int, ev string, status
 	return nil
 }
 
-// body is the conditional transaction of slots [first, last) and each op's precondition version ("" for a create).
 func (w *writer) body(first, last int64) ([]byte, []string, error) {
 	var sb strings.Builder
 	sb.Grow(int(last-first) * 560)
@@ -529,7 +483,7 @@ func (w *writer) body(first, last int64) ([]byte, []string, error) {
 			}
 			prior = v
 			if e.Deleted && op == "create" {
-				op = "put" // re-create exactly over the recorded tombstone: a missed delete fails, it cannot be hidden
+				op = "put"
 			}
 		}
 		priors = append(priors, prior)
@@ -543,12 +497,11 @@ func (w *writer) body(first, last int64) ([]byte, []string, error) {
 		}
 		sb.WriteByte('}')
 	}
-	// The phase fence: once fences/closed-<phase> exists, no attempt of this phase applies anything.
+
 	sb.WriteString(`,{"op":"assert","collection":"fences","id":"` + fenceID(w.phase.Name) + `","absent":true}]}`)
 	return []byte(sb.String()), priors, nil
 }
 
-// parse checks a transaction answer op by op and returns its versions in op order.
 func (w *writer) parse(body []byte, first, last int64) ([]string, string, error) {
 	var resp struct {
 		Offset  string `json:"offset"`
@@ -564,7 +517,7 @@ func (w *writer) parse(body []byte, first, last int64) ([]string, string, error)
 	if int64(len(resp.Results)) != last-first+1 {
 		return nil, "", fmt.Errorf("transaction answered %d results for %d ops and the fence assertion", len(resp.Results), last-first)
 	}
-	// An assertion answers {"asserted":true} (src/TerraBase/Features/Documents/TransactionEndpoint.cs).
+
 	if f := resp.Results[last-first]; !f.Asserted || f.ID != "" || f.Version != "" {
 		return nil, "", fmt.Errorf("the fence assertion answered %+v, want asserted", f)
 	}
@@ -578,9 +531,6 @@ func (w *writer) parse(body []byte, first, last int64) ([]string, string, error)
 	return versions, resp.Offset, nil
 }
 
-// prove reads every document of a batch after a failed precondition. It returns their versions only when each is
-// exactly what the batch writes (the body at its revision, or a tombstone shown by a 404 carrying a version) at a
-// version other than the op's precondition; otherwise nil and why. Mixed results are an atomicity violation.
 func (w *writer) prove(ctx context.Context, first, last int64, priors []string) ([]string, string, error) {
 	versions := make([]string, 0, last-first)
 	written := 0
@@ -609,7 +559,6 @@ func (w *writer) prove(ctx context.Context, first, last int64, priors []string) 
 	}
 }
 
-// written reports whether a read shows document i exactly as this phase writes it.
 func (w *writer) written(i int64, resp Response, prior string) (bool, string, string) {
 	if w.phase.Op == "delete" {
 		switch {
@@ -632,7 +581,7 @@ func (w *writer) written(i int64, resp Response, prior string) (bool, string, st
 	if err := json.Unmarshal(resp.Body, &doc); err != nil {
 		return false, "", err.Error()
 	}
-	canonical, err := replbench.Canonical(doc.Document)
+	canonical, err := benchclient.Canonical(doc.Document)
 	if err != nil {
 		return false, "", err.Error()
 	}
@@ -694,7 +643,6 @@ func (w *writer) progress(ctx context.Context, start time.Time) {
 	}
 }
 
-// rateLimiter paces documents per second across all streams.
 type rateLimiter struct {
 	mu    sync.Mutex
 	rate  float64
@@ -724,7 +672,6 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 	}
 }
 
-// FreeBytes is the free space of the filesystem holding path.
 func FreeBytes(path string) (uint64, error) {
 	var st syscall.Statfs_t
 	if err := syscall.Statfs(path, &st); err != nil {

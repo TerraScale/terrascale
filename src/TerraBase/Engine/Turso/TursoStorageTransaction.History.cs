@@ -4,6 +4,18 @@ namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoStorageTransaction
 {
+    internal ValueTask<int> CollectHistoryAsync(Hlc before, CancellationToken cancellationToken) =>
+        RunAsync(() =>
+        {
+            var command = Command("""
+                DELETE FROM _tb_state WHERE rowid IN (
+                    SELECT rowid FROM _tb_state WHERE live = 0 AND stamp < $before ORDER BY stamp LIMIT 1024
+                );
+                """);
+            command.Parameters.AddWithValue("$before", Version(before));
+            return command.ExecuteNonQuery();
+        }, cancellationToken, mutation: true);
+
     public ValueTask<bool> HoldsHistoryAtOrBelowAsync(Hlc cut, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {

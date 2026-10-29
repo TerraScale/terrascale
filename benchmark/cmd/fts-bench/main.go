@@ -1,4 +1,3 @@
-// Command fts-bench measures text-index backfill and uncached ranked HTTP queries on a local test cluster.
 package main
 
 import (
@@ -16,10 +15,10 @@ import (
 	"strings"
 	"time"
 
-	"terrascale.tech/ts-benchmark/internal/replbench"
+	"terrascale.tech/ts-benchmark/internal/benchclient"
 )
 
-const groups = 129 // The last term warms the query path without caching any measured query.
+const groups = 129
 const queries = groups - 1
 
 type item struct {
@@ -55,15 +54,15 @@ func main() {
 }
 
 func run(targets, sizes, out string) error {
-	t, err := replbench.LoadTargets(targets)
+	t, err := benchclient.LoadTargets(targets)
 	if err != nil {
 		return err
 	}
-	// This command owns temporary fixtures; it must never write to production.
+
 	if t.Kind != "local" || t.Regions["gru"].URL == "" {
 		return fmt.Errorf("requires the local test cluster with gru")
 	}
-	r, err := replbench.NewRegion("gru", t, 1)
+	r, err := benchclient.NewRegion("gru", t, 1)
 	if err != nil {
 		return err
 	}
@@ -112,7 +111,7 @@ func query(group, limit int, count bool) map[string]any {
 	}
 }
 
-func measure(ctx context.Context, r *replbench.Region, size, repeat int) (result, error) {
+func measure(ctx context.Context, r *benchclient.Region, size, repeat int) (result, error) {
 	row := result{size: size, repeat: repeat}
 	collection := "fts" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	if _, err := call(ctx, r, "POST", "/collections", map[string]any{"name": collection}); err != nil {
@@ -167,7 +166,7 @@ func measure(ctx context.Context, r *replbench.Region, size, repeat int) (result
 		return row, fmt.Errorf("index list must confirm one text index")
 	}
 	path := "/collections/" + collection + "/query"
-	// Verify every match for a disjoint warmup term, including both frequency classes.
+
 	body, err = call(ctx, r, "POST", path, query(groups-1, 1000, true))
 	if err != nil {
 		return row, err
@@ -229,7 +228,7 @@ func verify(body []byte, size, group, limit int, count bool) error {
 	return nil
 }
 
-func call(ctx context.Context, r *replbench.Region, method, path string, value any) ([]byte, error) {
+func call(ctx context.Context, r *benchclient.Region, method, path string, value any) ([]byte, error) {
 	body, err := json.Marshal(value)
 	if err != nil {
 		return nil, err
@@ -239,7 +238,7 @@ func call(ctx context.Context, r *replbench.Region, method, path string, value a
 		return nil, err
 	}
 	if response.Status >= 300 {
-		// Only recognized public codes may leave the private response body.
+
 		var failure struct {
 			Error struct {
 				Code string `json:"code"`
@@ -261,7 +260,7 @@ func report(rows []result) string {
 	host, _ := os.Hostname()
 	sha, _ := exec.Command("git", "rev-parse", "HEAD").Output()
 	fmt.Fprintf(&b, "# Full-text index build and ranked HTTP queries\n\nMeasured: %s. Host: %s (%s, %d logical CPUs). Go: %s. Commit: `%s`.\n\n", time.Now().UTC().Format(time.RFC3339), host, runtime.GOARCH, runtime.NumCPU(), runtime.Version(), strings.TrimSpace(string(sha)))
-	b.WriteString("Local two-region test cluster (gru/sjc), Release, client and server on one host; requests target gru. Test-only issuer and temporary database; no production credentials. HTTP serialization, network, server query and response reads are included. This is local API evidence, not OCI capacity. The existing host freezes query deadlines; production timeouts are not measured.\n\n")
+	b.WriteString("Local single-region test host (gru), Release, client and server on one host; requests target gru. Test-only issuer and temporary database; no production credentials. HTTP serialization, network, server query and response reads are included. This is local API evidence, not OCI capacity. The existing host freezes query deadlines; production timeouts are not measured.\n\n")
 	b.WriteString("Each size has three independent fresh collections, populated before timing index creation (`kind:text`, `fields:[article.body]`). Documents contain integer `n` and nested `article.body`: 32 words, 129 evenly distributed alphabetic topic tokens, one or four topic occurrences (alternating groups), and orchard filler. Bytes are the summed uncompressed UTF-8 document JSON sizes; HTTP envelopes and index storage are excluded.\n\n")
 	b.WriteString("One unmeasured disjoint-term query verifies the complete matching ID set and strict frequency ranking. Each repeat measures 128 different search terms exactly once, limit 10, sorted by `$score` descending; no measured query is served from a previous identical query result. Every response must contain only expected distinct IDs and finite descending item scores, with high-frequency matches first. Throughput is sequential closed-loop successful queries / elapsed time, including client correctness checks; it is not maximum concurrent throughput. Latencies exclude those checks. No request retries.\n\n")
 	b.WriteString("Only completed repeats appear below. A successful command must produce repeats 1–3 for every requested size.\n\n| Documents | JSON bytes | Repeat | Build ms | Docs/build s | Queries | Query p50 ms | p95 ms | p99 ms | Queries/s |\n| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")

@@ -6,16 +6,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Usage;
 
-/// <summary>
-/// <c>GET /v1/usage/projects/{project}/analytics</c>: the public project analytics for the dashboard. Served only on the internal
-/// listener, which requires the shared peer credential, as <c>GET /v1/usage/allowances</c> is.
-/// </summary>
 public sealed class GetDashboardProjectAnalyticsEndpoint(IProjectCatalog catalog, IUsageAnalytics analytics, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
-    /// <summary>The acting service of a synthesized project grant; reads only, never recorded as a member.</summary>
     internal const string Actor = "ts-dashboard";
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/v1/usage/projects/{project}/analytics");
@@ -30,7 +24,6 @@ public sealed class GetDashboardProjectAnalyticsEndpoint(IProjectCatalog catalog
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var (project, organization, error) = await OrganizationAsync(HttpContext, catalog, cancellationToken).ConfigureAwait(false);
@@ -43,13 +36,12 @@ public sealed class GetDashboardProjectAnalyticsEndpoint(IProjectCatalog catalog
         HttpContext.Features.Set(access);
         IResult? result = null;
         await ProjectAccess.RunAsync(access, async () =>
-            result = await AnalyticsRoute.ReadAsync(HttpContext, analytics, time, replication: false, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+            result = await AnalyticsRoute.ReadAsync(HttpContext, analytics, time, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
         return result!;
     }
 
-    /// <summary>The route's project and the organization the catalog verified for it, or the error response.</summary>
     internal static async ValueTask<(string Project, string? Organization, IResult? Error)> OrganizationAsync(
-        HttpContext context, IProjectCatalog catalog, CancellationToken cancellationToken)
+    HttpContext context, IProjectCatalog catalog, CancellationToken cancellationToken)
     {
         context.Response.Headers.CacheControl = "no-store";
         var project = context.Request.RouteValues["project"] as string ?? "";

@@ -27,14 +27,11 @@ public sealed class DatabaseIdentityDeletionTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task Replicated_and_all_regions_deletion_records_purge_without_mutating_placement(bool allRegions)
+    public async Task Local_deletion_records_purge_without_mutating_placement()
     {
         var placementChanges = 0;
         await using var api = await ManagementApi.StartAsync(services: services =>
         {
-            new OtherRegions("sjc", "fra").Register(services);
             var registration = services.Single(service => service.ServiceType == typeof(IManagementService));
             services.Remove(registration);
             services.AddSingleton(provider => UsageApiTests.SlowManagement.Wrap(
@@ -46,20 +43,14 @@ public sealed class DatabaseIdentityDeletionTests
                     }
                 }));
         });
-        var organization = await api.CreateOrganizationAsync("Replicated deletion");
+        var organization = await api.CreateOrganizationAsync("Local deletion");
         var project = await api.CreateProjectAsync(organization, "Project");
         await api.VerifyProjectBindingAsync(organization, project);
         using var client = ProjectClient(api, project);
-        object placement = allRegions ? new { name = "main", allRegions = true }
-            : new { name = "main", replicaRegions = new[] { "sjc", "fra" } };
-        using var created = await client.PostAsJsonAsync(Uri($"/v1/projects/{project}/databases"), placement);
+        using var created = await client.PostAsJsonAsync(Uri($"/v1/projects/{project}/databases"), new { name = "main" });
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
         var body = await created.Content.ReadFromJsonAsync<JsonElement>();
-        await Assert.That(body.GetProperty("allRegions").GetBoolean()).IsEqualTo(allRegions);
-        if (!allRegions)
-        {
-            await Assert.That(body.GetProperty("replicaRegions").GetArrayLength()).IsEqualTo(2);
-        }
+        await Assert.That(body.GetProperty("replicaRegions").GetArrayLength()).IsEqualTo(0);
 
         var database = new ManagedDatabaseRef(organization, project, body.GetProperty("id").GetString()!, "main");
         await ErrorAssert.ErrorAsync(client.DeleteAsync(Uri(database.Data + "/if-id/" + EntityIds.New())), HttpStatusCode.Conflict, "database_identity_mismatch", "the database identity does not match expectedId");
@@ -211,7 +202,6 @@ public sealed class DatabaseIdentityDeletionTests
             await Assert.That(response.StatusCode).IsEqualTo(status);
         }
 
-        // A matching ID from another database is a conflict, never authority to delete that database.
         await ErrorAssert.ErrorAsync(allowed.DeleteAsync(Uri(database.Data + "/if-id/" + second.Id)), HttpStatusCode.Conflict, "database_identity_mismatch", "the database identity does not match expectedId");
         using var secondStillExists = await allowed.GetAsync(Uri(second.Data));
         await Assert.That(secondStillExists.StatusCode).IsEqualTo(HttpStatusCode.OK);

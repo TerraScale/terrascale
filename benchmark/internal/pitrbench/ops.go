@@ -18,9 +18,6 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// Setup creates the run's tenant on its node as the operator: an organization on the enterprise plan (no QoS limits,
-// 30-day backup retention, so nothing of the run is trimmed or throttled), a project, the database, the collection and
-// an index on acct (so restores also prove index rebuild). IDs are this run's own ULIDs, recorded in run.json.
 func Setup(ctx context.Context, r *Run) error {
 	if r.Organization == "" {
 		r.Owner, r.Organization, r.Project, r.DatabaseID = ulid.Make().String(), ulid.Make().String(), ulid.Make().String(), ulid.Make().String()
@@ -37,8 +34,6 @@ func Setup(ctx context.Context, r *Run) error {
 	return createTenant(ctx, c, r)
 }
 
-// Adopt registers the run's tenant, with its recorded ids, on the node of r.NodeDir: a fresh, isolated node whose
-// backup settings name a copy of the source's bucket objects can then restore the source database from them alone.
 func Adopt(ctx context.Context, r *Run) error {
 	c, err := r.Client(time.Minute)
 	if err != nil {
@@ -47,11 +42,8 @@ func Adopt(ctx context.Context, r *Run) error {
 	return createTenant(ctx, c, r)
 }
 
-// createTenant registers the run's organization, project and database (with their recorded ids) on c's node. On a
-// fresh target node this makes the source database's backup prefix (v1/<org>/<project>/<database id>/) restorable
-// there, without copying any local file.
 func createTenant(ctx context.Context, c *Client, r *Run) error {
-	// The same id and byte-identical body replay the recorded answer (CommitEndpoint.cs), so setup can be rerun.
+
 	commit := map[string]any{
 		"id": r.SetupCommit,
 		"ops": []any{
@@ -65,7 +57,7 @@ func createTenant(ctx context.Context, c *Client, r *Run) error {
 		return fmt.Errorf("tenant: %w", err)
 	}
 	db := r.DatabasePath(r.Database)
-	// Never drop events, markers or fences: the oracle, the cuts and the phase fences rest on them.
+
 	for _, name := range []string{r.Collection, "markers", "fences", "nudges"} {
 		if err := created(c.JSON(ctx, http.MethodPost, db+"/collections", map[string]string{"name": name}, nil)); err != nil {
 			return fmt.Errorf("collection %s: %w", name, err)
@@ -78,8 +70,6 @@ func createTenant(ctx context.Context, c *Client, r *Run) error {
 	return nil
 }
 
-// created accepts a create that a previous setup of this run already made (409 name_taken or index_exists): the run's
-// database is its own, so the existing collection or index can only be this run's.
 func created(resp Response, err error) error {
 	if err != nil && resp.Status == http.StatusConflict && (bytes.Contains(resp.Body, []byte(`"name_taken"`)) || bytes.Contains(resp.Body, []byte(`"index_exists"`))) {
 		return nil
@@ -87,23 +77,6 @@ func created(resp Response, err error) error {
 	return err
 }
 
-// TakeCut records a restore point. A bounded cut is taken while partial is being written and records only the time.
-//
-// An exact cut requires quiescence, and enforces it: every applied phase is complete and fenced (the fence comes first,
-// then the marker), no other phase has a ledger line, and no ledger changes while the cut is taken (any change means a
-// writer ran). One second after the last acknowledgement it creates a marker document (collection markers, id = cut
-// name) and proves it shipped without comparing clocks: LastShippedAt changes only when a backup pass finishes, and a
-// pass may have begun before the marker committed. V0 is the value at the first poll after the marker PUT returned; a
-// nudge (collection nudges, never verified) gives the shipper data; V1 != V0 is a pass that ended after that poll;
-// another nudge; V2 != V1 with nothing pending or lagging is a later pass, which began after the V1 pass ended, so
-// after the marker committed: it read the marker and every applied batch. The cut then records the next whole second
-// (AtMs: a time with no fraction for the product's 1 s commit times to round) and holds until 1.1 s past it, so
-// nothing written later can fall at or before it. Whatever a restore at AtMs answers is recorded, never assumed. Last, the restore window must reach AtMs: it ends at
-// LastShippedAt, which empty passes never advance, so a post-cut nudge (committed after AtMs+1.1 s, never inside a
-// restore at AtMs) must change it. Every wait is bounded by wait and fails on timeout.
-//
-// An unshipped cut (a node without backup) is an exact cut without the backup waits: it verifies the source against
-// the oracle and is NOT a PITR cut; Restore refuses it.
 func TakeCut(ctx context.Context, r *Run, name string, applied []string, partial string, unshipped bool, wait time.Duration) (Cut, error) {
 	if _, err := r.Cut(name); err == nil {
 		return Cut{}, fmt.Errorf("cut %q exists", name)
@@ -125,9 +98,6 @@ func TakeCut(ctx context.Context, r *Run, name string, applied []string, partial
 		return cut, r.AddCut(cut)
 	}
 	if err := requireReconciled(r); err != nil {
-		return Cut{}, err
-	}
-	if err := SingleNode(ctx, c); err != nil {
 		return Cut{}, err
 	}
 	isApplied := map[string]bool{}
@@ -161,8 +131,7 @@ func TakeCut(ctx context.Context, r *Run, name string, applied []string, partial
 	deadline := time.Now().Add(wait)
 	sleepCtx(ctx, time.Until(time.UnixMilli(cut.LastAckMs+1000)))
 	marker := time.Now().UnixMilli()
-	// A conditional create: no attempt can rewrite the marker after the cut. A 412 is accepted only when the marker
-	// reads back (an earlier, unrecorded attempt of this cut wrote it before now).
+
 	resp, err := c.Do(ctx, http.MethodPost, db+"/transactions", mustJSON(map[string]any{"ops": []any{map[string]any{
 		"op": "create", "collection": "markers", "id": name, "document": map[string]any{"cut": name, "writtenMs": marker}}}}))
 	switch {
@@ -235,7 +204,6 @@ func TakeCut(ctx context.Context, r *Run, name string, applied []string, partial
 	return cut, r.AddCut(cut)
 }
 
-// nudge writes a new document to the nudges collection: data for the shipper's next pass. Nudges are never verified.
 func nudge(ctx context.Context, c *Client, r *Run, cut, why string) error {
 	path := r.DatabasePath(r.Database) + "/collections/nudges/documents/by-key?id=" + ulid.Make().String()
 	if _, err := c.JSON(ctx, http.MethodPut, path, map[string]any{"cut": cut, "why": why, "writtenMs": time.Now().UnixMilli()}, nil); err != nil {
@@ -244,12 +212,10 @@ func nudge(ctx context.Context, c *Client, r *Run, cut, why string) error {
 	return nil
 }
 
-// changed reports a LastShippedAt present and different from before: a pass finished since before was read.
 func changed(f BackupFile, before time.Time) bool {
 	return f.LastShippedAt != nil && !f.LastShippedAt.Equal(before)
 }
 
-// lastShipped is the database file's LastShippedAt (zero before its first pass), once the node lists the file.
 func lastShipped(ctx context.Context, c *Client, r *Run, deadline time.Time) (time.Time, error) {
 	f, err := waitShipped(ctx, c, r, deadline, "list the database", func(BackupFile) bool { return true })
 	if err != nil || f.LastShippedAt == nil {
@@ -265,8 +231,6 @@ func shippedMs(f BackupFile) int64 {
 	return f.LastShippedAt.UnixMilli()
 }
 
-// waitShipped polls /v1/backup every 250 ms until ok holds for the run's database file, or fails at deadline. A file
-// not listed yet is waited for too: the backup discovers new database files every 10 s (ContinuousBackup.cs:58).
 func waitShipped(ctx context.Context, c *Client, r *Run, deadline time.Time, what string, ok func(BackupFile) bool) (BackupFile, error) {
 	for {
 		f, listed, err := c.BackupStatus(ctx, r.DatabaseID)
@@ -289,21 +253,6 @@ func waitShipped(ctx context.Context, c *Client, r *Run, deadline time.Time, wha
 	}
 }
 
-// SingleNode fails unless the node reports no replication peers (GET /replication): the phase fence argument assumes
-// one writer per database file, which peers would break.
-func SingleNode(ctx context.Context, c *Client) error {
-	var status struct {
-		Peers *[]json.RawMessage `json:"peers"`
-	}
-	if _, err := c.JSON(ctx, http.MethodGet, "/replication", nil, &status); err != nil {
-		return fmt.Errorf("single-node check: %w", err)
-	}
-	if status.Peers == nil || len(*status.Peers) > 0 {
-		return fmt.Errorf("single-node check: the node reports replication peers (or none at all): the phase fence assumes one writer per database")
-	}
-	return nil
-}
-
 func expectedBatches(r *Run, p Phase) int64 {
 	n := p.hi - p.lo
 	if !p.Load() {
@@ -319,23 +268,16 @@ func deref(s *string) string {
 	return *s
 }
 
-// RefusalUnproven is the 409 code the A-7 fix is expected to answer for a time it cannot place in commit order (the
-// restore owner's contract may still rename it: change it here only).
 const RefusalUnproven = "restore_point_unproven"
 
-// typedRefusals are the 409 error codes with which a restore refuses instead of restoring: history not provably
-// contiguous up to T (D6), T not provably placed (A-7), or an object failing authentication or its integrity check.
 var typedRefusals = []string{"backup_history_incomplete", RefusalUnproven, "backup_unreadable"}
 
-// Restore outcomes: restored (201), refused:<code> (a typed refusal: neither a pass nor a loss), failed (anything else).
 const (
 	OutcomeRestored = "restored"
 	OutcomeRefused  = "refused:"
 	OutcomeFailed   = "failed"
 )
 
-// WindowLatest is the restore window's latest time on c's node, in ms. Read from the bucket it is the disaster-recovery
-// latest point: the whole second at or before the start of the newest backup read marked in the newest segments.
 func WindowLatest(ctx context.Context, r *Run, c *Client) (int64, error) {
 	var window struct {
 		Latest time.Time `json:"latest"`
@@ -346,7 +288,6 @@ func WindowLatest(ctx context.Context, r *Run, c *Client) (int64, error) {
 	return window.Latest.UnixMilli(), nil
 }
 
-// RestoreResult is the evidence of one restore request.
 type RestoreResult struct {
 	Outcome     string          `json:"outcome"`
 	Cut         string          `json:"cut"`
@@ -362,9 +303,6 @@ type RestoreResult struct {
 	Node        string          `json:"node"`
 }
 
-// Restore asks c's node to restore the run's database as of atMs into a new database called name, and records the
-// window, the plan preview, the answer and its outcome under evidence/restore-<name>.json. A typed refusal is no error
-// here (whether T had to restore is the caller's contract); any other answer than 201 is.
 func Restore(ctx context.Context, r *Run, c *Client, cut string, atMs int64, name, node string) (RestoreResult, error) {
 	if c, err := r.Cut(cut); err != nil {
 		return RestoreResult{}, err
@@ -429,7 +367,6 @@ func rawOrString(b []byte) json.RawMessage {
 	return q
 }
 
-// Evidence writes evidence/<name> as indented JSON.
 func (r *Run) Evidence(name string, v any) error {
 	dir := filepath.Join(r.Dir, "evidence")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -438,7 +375,6 @@ func (r *Run) Evidence(name string, v any) error {
 	return writeJSON(filepath.Join(dir, name), v)
 }
 
-// FileSHA256 hashes a file.
 func FileSHA256(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {

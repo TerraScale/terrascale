@@ -19,8 +19,6 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
 
-// Each test changes the database file behind the server's back (DocumentFiles): a read that still returns
-// the old value was a cache hit, a read that returns the file's value was a miss.
 public sealed class DocumentCacheTests
 {
     [Test]
@@ -39,21 +37,15 @@ public sealed class DocumentCacheTests
                 new { name = "first", padding }, deadline.Token);
             written.EnsureSuccessStatusCode();
         }
-
-        // The tier holds three of these bodies. No writes run after it warms, so all entries are clean.
         foreach (var id in new[] { "a", "b", "c" })
         {
             await Assert.That((await GetAsync(tenant, "clock", "items", id, deadline.Token)).Name).IsEqualTo("first");
         }
-
-        // Only a miss can see this disk edit; it bypasses the application's write invalidation.
         await StorageFixture.ExecuteAsync(await tenant.FileAsync(management.Server, "clock", deadline.Token),
             """UPDATE "items" SET doc = json_set(doc, '$.name', 'disk');""");
         await GetAsync(tenant, "clock", "items", "d", deadline.Token);
         await Assert.That((await GetAsync(tenant, "clock", "items", "b", deadline.Token)).Name).IsEqualTo("first");
         await GetAsync(tenant, "clock", "items", "e", deadline.Token);
-
-        // B earned a second chance from a cache hit; C stayed cold and yields its slot.
         await Assert.That((await GetAsync(tenant, "clock", "items", "b", deadline.Token)).Name).IsEqualTo("first");
         await Assert.That((await GetAsync(tenant, "clock", "items", "c", deadline.Token)).Name).IsEqualTo("disk");
         await Assert.That((await GetAsync(tenant, "clock", "items", "a", deadline.Token)).Name).IsEqualTo("disk");
@@ -85,7 +77,6 @@ public sealed class DocumentCacheTests
             await entered.Task.WaitAsync(deadline.Token);
             await PutAsync(tenant, "race", "items", "hot", "new", deadline.Token);
             await VerifyAsync("new");
-            // A cache miss would now expose this value; the warmed entry must survive the late snapshot.
             await StorageFixture.ExecuteAsync(await tenant.FileAsync(management.Server, "race", deadline.Token),
                 """UPDATE "items" SET doc = '{"name":"disk"}';""");
             release.SetResult();
@@ -162,8 +153,6 @@ public sealed class DocumentCacheTests
         await Assert.That(await GetAsync(second, "shop", "items", "same")).IsEqualTo((secondVersion, "second"));
         await Assert.That(await ListAsync(first, "shop", "items")).IsEquivalentTo([$"{StorageFixture.Id("same")}:first"]);
         await Assert.That(await ListAsync(second, "shop", "items")).IsEquivalentTo([$"{StorageFixture.Id("same")}:second"]);
-        // Stamp stripes may conservatively invalidate unrelated entries. Restore the second file before
-        // writing the first tenant so this verifies data isolation without requiring collision-free stamps.
         await StorageFixture.ReplaceBodiesAsync(secondFile, "items", """{"name":"second"}""");
         var updated = await PutAsync(first, "shop", "items", "same", "updated");
         await Assert.That(await GetAsync(first, "shop", "items", "same")).IsEqualTo((updated, "updated"));
@@ -248,9 +237,6 @@ public sealed class DocumentCacheTests
         var documents = server.Services.GetRequiredService<IDocumentService>();
         using var cancelled = new CancellationTokenSource();
         await cancelled.CancelAsync();
-
-        // The listener warmed the real registered service; only direct invocation can supply a
-        // deterministically pre-cancelled token without the HTTP client cancelling before dispatch.
         if (list)
         {
             await Assert.ThrowsAsync<OperationCanceledException>(() => documents.QueryAsync(
@@ -274,7 +260,6 @@ public sealed class DocumentCacheTests
         using var operationTimeout = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         const long Budget = 4 * 1024 * 1024;
         var completed = new CompletedCacheRead();
-        // This reservation check owns telemetry flushing; hosted ticks must not retain new observations.
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         await using var management = await RequestLogMemoryFixture.StartAsync(settings =>
         {
@@ -335,20 +320,12 @@ public sealed class DocumentCacheTests
             using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(operationTimeout.Token));
             var document = list ? json.RootElement.GetProperty("items")[0] : json.RootElement;
             await Assert.That(document.GetProperty("document").GetProperty("name").GetString()).IsEqualTo("first");
-
-            // Reading the body does not await the server's middleware cleanup or final usage observation.
             await completed.Completion.Task.WaitAsync(operationTimeout.Token);
-
-            // Authentication also cached an API-key document; disposal must release it synchronously,
-            // and the completed storage read must retain no reservation.
-            // Persist observations so their pending reservations do not mask a cache leak.
             await RequestLogMemoryFixture.DrainAsync(server, operationTimeout.Token);
             var budget = server.Services.GetRequiredService<IMemoryBudget>();
             using var recoveredBudget = budget.TryReserve(MemoryLane.Foreground, Budget);
             await Assert.That(recoveredBudget).IsNotNull();
             recoveredBudget!.Dispose();
-
-            // Further requests bypass the disposed cache as well.
             using var subsequent = await client.GetAsync(new Uri(path, UriKind.Relative), operationTimeout.Token);
             subsequent.EnsureSuccessStatusCode();
         }
@@ -390,7 +367,6 @@ public sealed class DocumentCacheTests
 
         await Assert.That(miss).IsEqualTo((initial, "first"));
         await Assert.That(hit).IsEqualTo((initial, "first"));
-        // ETags hash the stored body, so the disk edit also changes the uncached document's version.
         await Assert.That(neverRead.Name).IsEqualTo("disk");
         await Assert.That(neverRead.Version).IsNotEqualTo(other);
         await Assert.That(written).IsNotEqualTo(initial);
@@ -400,7 +376,6 @@ public sealed class DocumentCacheTests
         await Assert.That(afterDelete.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
 
-    // The entry bound counts each entry as 4 KiB of the byte bound: a hot set of more than 4,096 small documents stays cached.
     [Test]
     public async Task A_hot_set_of_small_documents_larger_than_4096_entries_stays_cached()
     {
@@ -427,12 +402,10 @@ public sealed class DocumentCacheTests
 
         await ReadAllAsync();
         await Assert.That(reads).IsEqualTo(keys.Count);
-        // Nothing wrote since: every document comes back from the cache, none from storage.
         await ReadAllAsync();
         await Assert.That(reads).IsEqualTo(keys.Count);
     }
 
-    // A cache hit skips the storage read and the refusal check after it, never the one before the lookup.
     [Test]
     public async Task A_faulted_copy_refuses_a_document_it_has_cached()
     {
@@ -447,8 +420,8 @@ public sealed class DocumentCacheTests
         await Assert.That(await documents.GetAsync(key, deadline.Token) is StoredDocument).IsTrue();
 
         var store = (await management.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
-        await management.Server.Services.GetRequiredService<IReplicaCopyFaults>().RecordAsync(database, store.Incarnation, "a test fault", deadline.Token);
-        await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () => await documents.GetAsync(key, deadline.Token));
+        await management.Server.Services.GetRequiredService<TursoStorageEngine>().Ledger.RecordAsync(database, store.Incarnation, "a test fault", deadline.Token);
+        await Assert.ThrowsAsync<StorageCopyFaultedException>(async () => await documents.GetAsync(key, deadline.Token));
     }
 
     [Test]
@@ -465,7 +438,6 @@ public sealed class DocumentCacheTests
         var miss = await ListAsync(tenant, "shop", "items");
         await StorageFixture.ReplaceBodiesAsync(file, "items", """{"name":"disk"}""");
         var hit = await ListAsync(tenant, "shop", "items");
-        // A write to another document of the collection invalidates every page of it.
         await PutAsync(tenant, "shop", "items", "c", "first");
         var afterWrite = await ListAsync(tenant, "shop", "items");
         using var deleted = await client.DeleteAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/items/documents/by-key?id={StorageFixture.Id("b")}", UriKind.Relative));
@@ -492,8 +464,6 @@ public sealed class DocumentCacheTests
         await ListAsync(tenant, "shop", "people", operationTimeout.Token);
         var engine = server.Services.GetRequiredService<IStorageEngine>();
         var shop = await tenant.ContextAsync(management.Server, "shop", operationTimeout.Token);
-
-        // Replication applies remote writes through an engine transaction, as this does.
         var store = (await engine.OpenDatabaseAsync(shop, operationTimeout.Token))!;
         var transaction = await store.BeginTransactionAsync(write: true, operationTimeout.Token);
         long committed;
@@ -505,7 +475,6 @@ public sealed class DocumentCacheTests
 
         var applied = await GetAsync(tenant, "shop", "people", "p1", operationTimeout.Token);
         var appliedPage = await ListAsync(tenant, "shop", "people", operationTimeout.Token);
-        // A deleted and recreated database starts empty.
         await engine.DeleteDatabaseAsync(shop, operationTimeout.Token);
         await Assert.That(await engine.CreateDatabaseAsync(shop, operationTimeout.Token)).IsTrue();
         using var recreated = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/people/documents/by-key?id={StorageFixture.Id("p1")}", UriKind.Relative), operationTimeout.Token);
@@ -540,13 +509,10 @@ public sealed class DocumentCacheTests
             {
                 committed = await transaction.PutAsync("items", StorageFixture.Id("hot"), json, operationTimeout.Token);
             }
-
-            // Cache the committed old value while the write is in flight.
             await Assert.That(await GetAsync(tenant, "shop", "items", "hot", operationTimeout.Token)).IsEqualTo((initial, "first"));
             await ListAsync(tenant, "shop", "items", operationTimeout.Token);
             var before = stamps.Collection(shop, "items");
             await transaction.CommitAsync(operationTimeout.Token);
-            // Tracking is by touched stripe, independent of repeated write count.
             await Assert.That(stamps.Collection(shop, "items") - before).IsEqualTo(1);
         }
 
@@ -578,8 +544,6 @@ public sealed class DocumentCacheTests
             Exception? primaryFailure = null;
             try
             {
-                // Not awaited one by one: every write must still be tracked for the post-commit stamp move,
-                // while readers cache the old values in between.
                 foreach (var id in ids)
                 {
                     pending.Add(transaction.PutAsync("items", StorageFixture.Id(id), Encoding.UTF8.GetBytes("""{"name":"applied"}"""), operationTimeout.Token).AsTask());
@@ -616,7 +580,6 @@ public sealed class DocumentCacheTests
         const int Documents = 48;
         const int DocumentBytes = 64 * 1024;
         const long Budget = 4 * 1024 * 1024;
-        // A 4 MiB budget leaves the cache 1 MiB: at most 16 of these 48 documents.
         await using var management = await RequestLogMemoryFixture.StartAsync(settings =>
         {
             settings["memory-budget"] = Budget.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -644,9 +607,6 @@ public sealed class DocumentCacheTests
         {
             await GetAsync(tenant, "big", "blobs", $"b{i}");
         }
-
-        // Measured through the budget: capacity eviction releases reservations synchronously and the
-        // tier holds at most its quarter immediately after the last read.
         await RequestLogMemoryFixture.DrainAsync(server);
         var budget = server.Services.GetRequiredService<IMemoryBudget>();
         using (var everything = budget.TryReserve(MemoryLane.Foreground, Budget))
@@ -666,7 +626,6 @@ public sealed class DocumentCacheTests
         const long Budget = 4 * 1024 * 1024;
         const int CacheBytes = (int)(Budget / 4);
         ObservedMemoryBudget? observed = null;
-        // Periodic catalog writes can share an invalidation stripe with the cached entry.
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         await using var management = await RequestLogMemoryFixture.StartAsync(settings =>
         {
@@ -689,8 +648,6 @@ public sealed class DocumentCacheTests
 
         var client = tenant.Data;
         var file = await tenant.FileAsync(server, "oversized");
-        // Leave HTTP/catalog admission, pending usage observation and up to 16 pending 4 KiB request-log records of headroom
-        // alongside a page's transient result and this useful cached entry. Each test warms either a point read or a list page.
         using (var response = await client.PutAsJsonAsync(
             new Uri($"/v1/projects/{tenant.ProjectId}/databases/oversized/collections/small/documents/by-key?id={StorageFixture.Id("a")}", UriKind.Relative),
             new { name = "first", padding = new string('x', 896 * 1024) }))
@@ -699,7 +656,6 @@ public sealed class DocumentCacheTests
         }
 
         string[] ids = list ? ["a", "b"] : ["a"];
-        // A legal document's JSON plus cache overhead exceeds 1 MiB; a page exceeds it in aggregate.
         var padding = new string('x', list ? CacheBytes / 2 - 64 : CacheBytes - 64);
         foreach (var id in ids)
         {
@@ -708,8 +664,6 @@ public sealed class DocumentCacheTests
                 new { name = "first", padding });
             response.EnsureSuccessStatusCode();
         }
-
-        // Persist setup observations before warming; no catalog writes may invalidate the useful entry afterwards.
         await RequestLogMemoryFixture.DrainAsync(server);
         async Task<List<string>> ReadAsync(string collection)
         {
@@ -728,7 +682,6 @@ public sealed class DocumentCacheTests
             await StorageFixture.ExecuteAsync(file,
                 $"UPDATE \"large\" SET doc = json_set(doc, '$.name', 'disk{i}');");
             await Assert.That(await ReadAsync("large")).IsEquivalentTo(ids.Select(id => $"{StorageFixture.Id(id)}:disk{i}"));
-            // Cache-only admission observation catches an oversized retention attempt synchronously.
             await Assert.That(budget.OversizedAttempts).IsEqualTo(0);
             await Assert.That(await ReadAsync("small")).IsEquivalentTo([$"{StorageFixture.Id("a")}:first"]);
         }
@@ -743,8 +696,6 @@ public sealed class DocumentCacheTests
         var server = management.Server;
         using var tenant = await CreateTenantAsync(management, "race", enterprise: true, cancellationToken: deadline.Token);
         var client = tenant.Data;
-        // Each write's own token, by the name its body carries; every read pair is checked against them afterwards, because a
-        // read can observe a write before its PUT answers.
         var written = new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.Ordinal);
         written["1"] = await PutAsync(tenant, "race", "items", "hot", "1", deadline.Token);
         long acknowledged = 1;
@@ -778,7 +729,6 @@ public sealed class DocumentCacheTests
             for (var i = 1; i < Writes; i++)
             {
                 var name = (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
-                // Each writer wave owns six overlapping reads; scheduling cannot create an unbounded read flood.
                 readers = [.. Enumerable.Range(0, 6).Select(reader => ReadAsync(list: reader % 3 == 0, deadline.Token))];
                 written[name] = await PutAsync(tenant, "race", "items", "hot", name, deadline.Token);
                 Volatile.Write(ref acknowledged, i + 1);
@@ -802,7 +752,6 @@ public sealed class DocumentCacheTests
         await Assert.That(acknowledged).IsEqualTo(Writes);
         await Assert.That(reads).IsEqualTo(6 * Writes);
         await Assert.That(stale).IsEqualTo(0);
-        // Every body read came with the token its write answered.
         await Assert.That(observed.Where(read => written[read.Name] != read.Version).ToList()).IsEmpty();
     }
 
@@ -860,7 +809,6 @@ public sealed class DocumentCacheTests
         return (document.RootElement.GetProperty("version").GetString()!, document.RootElement.GetProperty("document").GetProperty("name").GetString()!);
     }
 
-    // Each document as "id:name".
     private static async Task<List<string>> ListAsync(
         Tenant tenant, string database, string collection, CancellationToken cancellationToken = default)
     {

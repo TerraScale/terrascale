@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Run only through the parent's coordinated ts-heavy-any job, after the native and Release test-host builds.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d) # 0700: temporary test tokens stay outside git and reports.
@@ -26,9 +25,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-TERRABASE_BENCH_TARGETS="$targets" TERRABASE_BENCH_REGIONS=gru,sjc \
+TERRABASE_BENCH_TARGETS="$targets" \
   dotnet run --project "$root/tests/TerraBase.E2E" --configuration Release --no-build -- \
-  --treenode-filter '/*/*/BenchmarkClusterHost/*' >"$work/host.log" 2>&1 &
+  --treenode-filter '/*/*/LocalBenchmarkHost/*' >"$work/host.log" 2>&1 &
 host=$!
 for _ in {1..180}; do
   [[ -f "$targets" ]] && break

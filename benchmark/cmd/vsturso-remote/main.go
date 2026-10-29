@@ -1,7 +1,3 @@
-// Command vsturso-remote runs the vs-Turso workloads (benchmark/dotnet/VsTurso) against one region of a live cell over
-// its public API: replace, point read and 80/20 mixes of 256 B and 4 KiB documents at concurrency 1 and 16. It prints
-// one JSON line per cell in the .NET harness's format, so both feed the same report (benchmark/bench/2026-10-23-rt2-vs-turso.md).
-// The key comes from the targets file or TS_BENCH_API_KEY.
 package main
 
 import (
@@ -20,7 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"terrascale.tech/ts-benchmark/internal/replbench"
+	"terrascale.tech/ts-benchmark/internal/benchclient"
 )
 
 type cell struct {
@@ -44,9 +40,9 @@ type size struct {
 
 func main() {
 	var (
-		targetsPath = flag.String("targets", "", "targets JSON (replbench format, required)")
+		targetsPath = flag.String("targets", "", "targets JSON (required)")
 		region      = flag.String("region", "sjc", "region whose client API is driven")
-		lane        = flag.String("lane", "api-3live", "lane name in the output")
+		lane        = flag.String("lane", "api-live", "lane name in the output")
 		collection  = flag.String("collection", "vsturso", "collection the documents live in (created if absent)")
 		keys        = flag.Int("keys", 2000, "keys per size, all written before any cell")
 		seconds     = flag.Int("seconds", 5, "measured seconds per cell, after a 1 s warm-up")
@@ -57,11 +53,11 @@ func main() {
 		rate        = flag.Float64("rate", 0, "most operations per second across workers (0 = unpaced); keeps a run inside the tenant's plan budget")
 	)
 	flag.Parse()
-	t, err := replbench.LoadTargets(*targetsPath)
+	t, err := benchclient.LoadTargets(*targetsPath)
 	if err != nil {
 		log.Fatal(err)
 	}
-	r, err := replbench.NewRegion(*region, t, 64)
+	r, err := benchclient.NewRegion(*region, t, 64)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -72,7 +68,7 @@ func main() {
 	}
 	sizes := []size{{"small", 256}, {"medium", 4096}}
 	for _, s := range sizes {
-		// Every key exists before any cell, so reads always hit and writes always replace.
+
 		pace := pacer(*rate)
 		run(*preloaders, time.Time{}, func(worker int, i *int64) bool {
 			pace()
@@ -80,7 +76,7 @@ func main() {
 			if key >= *keys {
 				return false
 			}
-			// Other callers share the tenant's plan budget: a refused preload write waits its Retry-After and tries again.
+
 			for attempt := 1; ; attempt++ {
 				err := put(ctx, r, *collection, id(s, key), doc(s, int64(key)))
 				if err == nil {
@@ -113,7 +109,6 @@ func main() {
 	}
 }
 
-// run starts n workers calling step until it returns false or the deadline (if set) passes, and waits for them.
 func run(n int, deadline time.Time, step func(worker int, counter *int64) bool) {
 	var wg sync.WaitGroup
 	var counter int64
@@ -126,7 +121,6 @@ func run(n int, deadline time.Time, step func(worker int, counter *int64) bool) 
 	wg.Wait()
 }
 
-// pacer returns a call that blocks until the next operation may start, at most rate per second across callers.
 func pacer(rate float64) func() {
 	if rate <= 0 {
 		return func() {}
@@ -145,7 +139,7 @@ func pacer(rate float64) func() {
 	}
 }
 
-func measure(ctx context.Context, r *replbench.Region, coll string, s size, workload string, conc, keys int, d time.Duration, pace func()) cell {
+func measure(ctx context.Context, r *benchclient.Region, coll string, s size, workload string, conc, keys int, d time.Duration, pace func()) cell {
 	start := time.Now()
 	from, end := start.Add(time.Second), start.Add(time.Second+d)
 	lat := make([][]time.Duration, conc)
@@ -188,8 +182,8 @@ func measure(ctx context.Context, r *replbench.Region, coll string, s size, work
 		P50Micros: q(0.50), P99Micros: q(0.99), Errors: errs.Load()}
 }
 
-func put(ctx context.Context, r *replbench.Region, coll, key string, body []byte) error {
-	resp, err := r.Do(ctx, http.MethodPut, replbench.DocPath(coll, key), body, "application/json")
+func put(ctx context.Context, r *benchclient.Region, coll, key string, body []byte) error {
+	resp, err := r.Do(ctx, http.MethodPut, benchclient.DocPath(coll, key), body, "application/json")
 	if err == nil && resp.Status == http.StatusTooManyRequests {
 		err = fmt.Errorf("PUT %s: %w", key, errBusy)
 	} else if err == nil && resp.Status/100 != 2 {
@@ -198,23 +192,20 @@ func put(ctx context.Context, r *replbench.Region, coll, key string, body []byte
 	return err
 }
 
-// errBusy is a 429: the tenant's plan budget refused the request before it ran.
 var errBusy = errors.New("tenant busy")
 
-func get(ctx context.Context, r *replbench.Region, coll, key string) error {
-	resp, err := r.Do(ctx, http.MethodGet, replbench.DocPath(coll, key), nil, "")
+func get(ctx context.Context, r *benchclient.Region, coll, key string) error {
+	resp, err := r.Do(ctx, http.MethodGet, benchclient.DocPath(coll, key), nil, "")
 	if err == nil && resp.Status/100 != 2 {
 		err = fmt.Errorf("GET %s answered %d", key, resp.Status)
 	}
 	return err
 }
 
-// id is a canonical ULID, as the document API requires, and the .NET harness's id for the same key.
 func id(s size, key int) string {
 	return fmt.Sprintf("01JZZZZZZZZZZZ%c%011d", s.name[0]-'a'+'A', key)
 }
 
-// doc is the .NET harness's document of s.bytes with a 13-digit counter, so no write repeats the stored body.
 func doc(s size, counter int64) []byte {
 	head := fmt.Sprintf(`{"name":"Ada Lovelace","n":"%013d","tags":["alpha","beta","gamma"],"score":12.5,"active":true,"pad":"`, counter%10_000_000_000_000)
 	return []byte(head + strings.Repeat("x", s.bytes-len(head)-2) + `"}`)

@@ -1,19 +1,15 @@
 using TerraBase.Errors;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>The member to offer ownership to.</summary>
-/// <param name="UserId">User id of a member.</param>
 public sealed record TransferRequest(string? UserId);
 
-/// <summary><c>POST …/organizations/{organization}/ownership-transfer</c>: offers ownership to a member.</summary>
 public sealed class StartOwnershipTransferEndpoint(IAccessService access) : Endpoint<TransferRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(ManagementRoute.OwnershipTransfer);
@@ -32,7 +28,6 @@ public sealed class StartOwnershipTransferEndpoint(IAccessService access) : Endp
         Metadata(ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(TransferRequest request, CancellationToken cancellationToken) =>
         ManagementRoute.CheckUserId(request.UserId, "userId") switch
         {

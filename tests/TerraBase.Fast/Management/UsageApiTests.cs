@@ -13,7 +13,7 @@ using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Usage;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -37,9 +37,7 @@ public sealed class UsageApiTests
         await Assert.That(File.Exists(catalog)).IsTrue();
         var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         var system = engine.SystemStore ?? throw new InvalidOperationException("startup did not publish SYSTEM");
-        var source = server.Services.GetRequiredService<IChangeGroupSource>();
-        var head = await source.HeadAsync(ChangeGroups.System, system.Incarnation, token)
-            ?? throw new InvalidOperationException("SYSTEM refused its own incarnation");
+        var head = await OffsetAsync();
         var sequence = system.CommitSequence;
         var documents = await SnapshotAsync();
         await using (var transaction = await system.BeginTransactionAsync(write: false, token))
@@ -47,7 +45,6 @@ public sealed class UsageApiTests
             await Assert.That(await transaction.GetAsync("catalog", "version", token)).IsNull();
         }
 
-        // The stationary clock prevents periodic flushes and maintenance from changing the baseline.
         (string Kind, Func<CancellationToken, ValueTask> Flush)[] flushes =
         [
             ("usage", server.Services.GetRequiredService<UsageMeter>().FlushAsync),
@@ -59,7 +56,7 @@ public sealed class UsageApiTests
             await flush(token);
             await Assert.That(File.Exists(catalog)).IsTrue().Because($"the empty {kind} flush must preserve SYSTEM");
             await Assert.That(ReferenceEquals(engine.SystemStore, system)).IsTrue().Because($"the empty {kind} flush must keep the published store");
-            await Assert.That(await source.HeadAsync(ChangeGroups.System, system.Incarnation, token)).IsEqualTo(head)
+            await Assert.That(await OffsetAsync()).IsEqualTo(head)
                 .Because($"the empty {kind} flush must add no captured changes");
             await Assert.That(system.CommitSequence).IsEqualTo(sequence).Because($"the empty {kind} flush must add no write commit");
             await Assert.That(await SnapshotAsync()).IsEquivalentTo(documents).Because($"the empty {kind} flush must leave SYSTEM documents unchanged");
@@ -67,7 +64,12 @@ public sealed class UsageApiTests
             health.EnsureSuccessStatusCode();
         }
 
-        // Read the actual startup documents without invoking the foreground management catalog initializer.
+        async Task<long> OffsetAsync()
+        {
+            await using var read = await system.BeginTransactionAsync(write: false, token);
+            return await read.GetOffsetAsync(token);
+        }
+
         async Task<(string Collection, string Id, string Body)[]> SnapshotAsync()
         {
             await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder
@@ -159,7 +161,7 @@ public sealed class UsageApiTests
     [Test]
     public async Task Database_usage_counts_storage_documents_and_operations()
     {
-        // Count behavior uses controlled query time; plan deadlines have explicit advancing-clock coverage.
+
         await using var api = await ManagementApi.StartAsync(services: services =>
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()));
         var database = await api.CreateManagedDatabaseAsync();
@@ -203,7 +205,7 @@ public sealed class UsageApiTests
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
-        // More rows than a Hobby query may scan (10,000), so a counting scan would be refused as too expensive.
+
         const int Count = 12_000;
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         var found = await api.Server.Services.GetRequiredService<IManagementService>()
@@ -223,7 +225,6 @@ public sealed class UsageApiTests
             await write.CommitAsync(token);
         }
 
-        // A delete and a replacement through the API move the counts by exactly their rows.
         (await data.DeleteAsync(Uri(Document(database, "people", "d0")), token)).EnsureSuccessStatusCode();
         (await data.PutAsJsonAsync(Uri(Document(database, "people", "d1")), new { n = new string('x', 500) }, token)).EnsureSuccessStatusCode();
         sizes[0] = 0;
@@ -250,7 +251,6 @@ public sealed class UsageApiTests
         using var data = await api.CreateClientAsync(first.Organization, "documents:read", "documents:write");
         var meter = api.Server.Services.GetRequiredService<UsageMeter>();
 
-        // 10:30: N reads and M writes, saved by a flush.
         var (writes, reads) = (Faker.Random.Int(2, 5), Faker.Random.Int(1, 4));
         await WriteAsync(data, first, "people", writes);
         for (var i = 0; i < reads; i++)
@@ -260,7 +260,6 @@ public sealed class UsageApiTests
 
         await meter.FlushAsync(CancellationToken.None);
 
-        // 11:30: more, still in memory; a SQL run is one read, whatever it returns.
         time.Advance(TimeSpan.FromHours(1));
         var (laterWrites, laterReads) = (Faker.Random.Int(1, 3), Faker.Random.Int(1, 3));
         await WriteAsync(data, first, "people", laterWrites);
@@ -289,13 +288,12 @@ public sealed class UsageApiTests
             .IsEqualTo(collections.GetProperty("items").EnumerateArray().Sum(item => item.GetProperty("bytes").GetInt64()));
         await Assert.That(database.GetProperty("logicalBytes").GetInt64()).IsGreaterThan(0);
         await Assert.That(Points(day)).IsEquivalentTo([("2026-10-06T00:00:00+00:00", reads + laterReads, writes + laterWrites)]);
-        // Without from: the 24 hours that end with the current one.
+
         var last = Points(recent);
         await Assert.That(last.Count).IsEqualTo(24);
         await Assert.That(last[^2..]).IsEquivalentTo(Points(database), TUnit.Assertions.Enums.CollectionOrdering.Matching);
         await Assert.That(last[..^2].All(point => point is (_, 0, 0))).IsTrue();
 
-        // The project sums both databases; its items carry periods, not series.
         await AssertPeriodAsync(project, "2026-10-06T10:00:00+00:00", "2026-10-06T12:00:00+00:00", "hour", reads + laterReads, writes + laterWrites + 1);
         await Assert.That(Points(project)).IsEquivalentTo(
             [("2026-10-06T10:00:00+00:00", reads, writes), ("2026-10-06T11:00:00+00:00", laterReads, laterWrites + 1)], TUnit.Assertions.Enums.CollectionOrdering.Matching);
@@ -304,7 +302,6 @@ public sealed class UsageApiTests
         await Assert.That(project.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("databaseId").GetString() == second.Id)
             .GetProperty("period").GetProperty("writes").GetInt64()).IsEqualTo(1);
 
-        // Saving changes nothing a reader sees.
         await meter.FlushAsync(CancellationToken.None);
         var saved = await api.Client.GetFromJsonAsync<JsonElement>(Uri(first.Path + "/usage" + hours));
         await Assert.That(Points(saved)).IsEquivalentTo(Points(database), TUnit.Assertions.Enums.CollectionOrdering.Matching);
@@ -334,8 +331,6 @@ public sealed class UsageApiTests
                 await Assert.That(await BucketsAsync(directory, database.Id, "hours")).IsEquivalentTo(["2026-10-06T10"]);
             }
 
-            // 36 days later, past the 35 days of hours. Before any flush prunes it, the saved hour already reads as zero; its
-            // day is still kept.
             await using (var api = await ManagementApi.StartAsync(Settings, time: new FakeTimeProvider(Instant("2026-11-11T11:30:00Z"))))
             {
                 using var member = api.As(user);
@@ -349,8 +344,7 @@ public sealed class UsageApiTests
                 await WriteAsync(data, database, "people", 1);
                 var meter = api.Server.Services.GetRequiredService<UsageMeter>();
                 var owner = new DatabaseOwner(database.Organization, database.Project, database.Id);
-                // Held counts: an expired hour, the oldest kept hour (840 hours end with 11:00) and the one before, the oldest
-                // kept day (400 days end with today) and the one before.
+
                 foreach (var held in new[] { "2026-10-01T05:00:00Z", "2026-10-07T12:00:00Z", "2026-10-07T11:00:00Z", "2025-10-08T05:00:00Z", "2025-10-07T05:00:00Z" })
                 {
                     meter.Add(new UsageKey(owner, Instant(held).ToUnixTimeSeconds() / 3600), new OpCounts(1, 0));
@@ -370,7 +364,6 @@ public sealed class UsageApiTests
         }
     }
 
-    // A flush prunes a page of buckets at a time; every expired one goes, however many pages they fill.
     [Test]
     public async Task A_flush_prunes_more_expired_buckets_than_one_page_holds()
     {
@@ -387,7 +380,6 @@ public sealed class UsageApiTests
         await meter.FlushAsync(CancellationToken.None);
         await Assert.That((await BucketsAsync(api.Server.DataDirectory, database.Id, "hours")).Count).IsEqualTo(20);
 
-        // 36 days later every one of those hours is past the 35 kept days.
         time.Advance(TimeSpan.FromDays(36));
         meter.Add(new UsageKey(owner, Hour("2026-11-11T23:00:00Z")), new OpCounts(1, 0));
         await meter.FlushAsync(CancellationToken.None);
@@ -402,8 +394,7 @@ public sealed class UsageApiTests
         var database = await api.CreateManagedDatabaseAsync();
         var meter = api.Server.Services.GetRequiredService<UsageMeter>();
         var owner = new DatabaseOwner(database.Organization, database.Project, database.Id);
-        // As compaction leaves them, here or on a follower whose clock runs ahead: day-only entries at a day's first hour (one
-        // past the kept hours, one still within them) and a lifetime-only entry at hour 0.
+
         meter.Add(new UsageKey(owner, Hour("2026-10-01T00:00:00Z"), UsageScope.Day), new OpCounts(3, 0));
         meter.Add(new UsageKey(owner, Hour("2026-11-10T00:00:00Z"), UsageScope.Day), new OpCounts(2, 0));
         meter.Add(new UsageKey(owner, 0, UsageScope.Lifetime), new OpCounts(4, 0));
@@ -442,7 +433,7 @@ public sealed class UsageApiTests
         var database = await api.CreateManagedDatabaseAsync();
         var meter = api.Server.Services.GetRequiredService<UsageMeter>();
         var owner = new DatabaseOwner(database.Organization, database.Project, database.Id);
-        // 150 saved hours: their series takes two pages.
+
         for (var hour = 0; hour < 150; hour++)
         {
             meter.Add(new UsageKey(owner, Hour("2026-11-11T11:00:00Z") - hour), new OpCounts(1, 0));
@@ -450,7 +441,7 @@ public sealed class UsageApiTests
 
         await meter.FlushAsync(CancellationToken.None);
         var pages = 0;
-        // Reading the first page of buckets takes 6 seconds of the request's 5.
+
         hook.BeforeList = collection =>
         {
             if (collection.EndsWith("/usage-hours", StringComparison.Ordinal) && Interlocked.Increment(ref pages) == 1)
@@ -507,7 +498,6 @@ public sealed class UsageApiTests
         var transactions = Uri($"{database.Data}/transactions");
         var (a, b) = (ManagementApi.DocumentId("a"), ManagementApi.DocumentId("b"));
 
-        // Each write of a committed transaction counts; its assertions do not.
         using var committed = await data.PostAsJsonAsync(transactions, new
         {
             ops = new object[]
@@ -517,7 +507,7 @@ public sealed class UsageApiTests
                 new { op = "assert", collection = "people", id = ManagementApi.DocumentId("c"), absent = true },
             },
         });
-        // A failed assertion rolls the transaction back: its delete is not counted.
+
         using var rolledBack = await data.PostAsJsonAsync(transactions, new
         {
             ops = new object[]
@@ -532,7 +522,7 @@ public sealed class UsageApiTests
         };
         using var patched = await data.SendAsync(patch);
         using var queried = await data.PostAsJsonAsync(Uri($"{database.Data}/collections/people/query"), new { limit = 1 });
-        // Rejected before the engine answers: no read.
+
         using var unknownCollection = await data.GetAsync(Uri(ManagementApi.DocumentPath(database, "nothing", "a")));
 
         using var usage = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(database.Path + "/usage")));
@@ -550,8 +540,7 @@ public sealed class UsageApiTests
     [Test]
     public async Task Project_usage_sums_every_database()
     {
-        // A fake clock: on a slow machine the request's 5 seconds of wall-clock time would end it early. It moves between
-        // creations, so database ULIDs keep their creation order.
+
         var time = new FakeTimeProvider();
         await using var api = await ManagementApi.StartAsync(time: time);
         var first = await api.CreateManagedDatabaseAsync("first");
@@ -571,7 +560,7 @@ public sealed class UsageApiTests
         await Assert.That(items.Select(item => item.GetProperty("databaseId").GetString()!).ToList()).IsEquivalentTo([first.Id, second.Id]);
         await Assert.That(items[0].GetProperty("databaseId").GetString()).IsEqualTo(first.Id);
         await Assert.That(root.GetProperty("documents").GetInt64()).IsEqualTo(5);
-        // Collections sum every database's: one in each.
+
         await Assert.That(root.GetProperty("collections").GetInt64()).IsEqualTo(2);
         await Assert.That(root.GetProperty("collections").GetInt64()).IsEqualTo(items.Sum(item => item.GetProperty("collections").GetInt64()));
         await Assert.That(root.GetProperty("writes").GetInt64()).IsEqualTo(5);
@@ -582,13 +571,12 @@ public sealed class UsageApiTests
     [Test]
     public async Task Project_usage_reads_every_database_across_catalog_pages()
     {
-        // A fake clock: on a slow machine the request's 5 seconds of wall-clock time would end it early. It moves between
-        // creations, so database ULIDs keep their creation order.
+
         var time = new FakeTimeProvider();
         await using var api = await ManagementApi.StartAsync(time: time);
         var first = await api.CreateManagedDatabaseAsync("db-0");
         List<string> ids = [first.Id];
-        // More than one catalog page of 10 databases.
+
         for (var i = 1; i < 12; i++)
         {
             time.Advance(TimeSpan.FromMilliseconds(1));
@@ -610,7 +598,7 @@ public sealed class UsageApiTests
         await using var api = await ManagementApi.StartAsync(time: time, services: hook.Install);
         var first = await api.CreateManagedDatabaseAsync("db-0");
         await api.CreateManagedDatabaseAsync(first.Organization, first.Project, "db-1");
-        // Each database's count takes 2 seconds of the request's 5.
+
         hook.BeforeBegin = (database, _) =>
         {
             if (database.ProjectId == first.Project)
@@ -625,7 +613,6 @@ public sealed class UsageApiTests
         await api.CreateManagedDatabaseAsync(first.Organization, first.Project, "db-2");
         using var three = await api.Client.GetAsync(Uri(first.ProjectPath + "/usage"));
 
-        // The third count starts 4 seconds in and ends 6 seconds in: its usage is not read.
         await Assert.That(two.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await ErrorAssert.ErrorAsync(three, HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
     }
@@ -643,7 +630,7 @@ public sealed class UsageApiTests
         byte[]? supportedVersion = null;
         var meterLookup = 0;
         var refusedLookups = 0;
-        // Tenant resolution has finished; the meter's next catalog read sees the unsupported marker.
+
         hook.BeforeBegin = async (opened, _) =>
         {
             if (opened.DatabaseId == database.Id && supportedVersion is null)
@@ -688,7 +675,7 @@ public sealed class UsageApiTests
         await using var api = await ManagementApi.StartAsync(time: time, services: hook.Install);
         var database = await api.CreateManagedDatabaseAsync();
         var counts = 0;
-        // Reading the database's size takes 6 seconds of the request's 5.
+
         hook.BeforeSize = (sized, _) =>
         {
             if (sized.DatabaseId == database.Id)
@@ -735,7 +722,6 @@ public sealed class UsageApiTests
             return ValueTask.CompletedTask;
         };
 
-        // A flush holds the meter while the request counts, then waits for it; meanwhile the request's 5 seconds pass.
         using var gate = hook.PauseCommit();
         var flush = meter.FlushAsync(CancellationToken.None).AsTask();
         await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -767,13 +753,13 @@ public sealed class UsageApiTests
                 (IManagementService)registration.ImplementationFactory!(provider),
                 method =>
                 {
-                    // The lookup takes 6 seconds of the request's 5...
+
                     if (Volatile.Read(ref slowLookup) && method == nameof(IManagementService.GetDatabaseTenantAsync))
                     {
                         time.Advance(TimeSpan.FromSeconds(6));
                     }
                 },
-                // ...and returns either a deleted database or an unavailable catalog.
+
                 method => Volatile.Read(ref slowLookup) && method == nameof(IManagementService.GetDatabaseTenantAsync)
                     ? new ValueTask<DatabaseTenantResult>(lookupFailure)
                     : null));
@@ -799,7 +785,7 @@ public sealed class UsageApiTests
             services.Remove(registration);
             services.AddSingleton(provider => SlowManagement.Wrap((IManagementService)registration.ImplementationFactory!(provider), method =>
             {
-                // Resolving a database's tenant takes 6 seconds of the request's 5.
+
                 if (Volatile.Read(ref slowLookups) && method == nameof(IManagementService.GetDatabaseTenantAsync))
                 {
                     time.Advance(TimeSpan.FromSeconds(6));
@@ -845,7 +831,7 @@ public sealed class UsageApiTests
                         time.Advance(TimeSpan.FromSeconds(6));
                     }
                 },
-                // The slow listing finds its project deleted meanwhile.
+
                 method => deleted && Volatile.Read(ref slow) && method == nameof(IManagementService.ListDatabasesAsync)
                     ? new ValueTask<ListDatabasesResult>(new NotFound("the resource does not exist"))
                     : null));
@@ -864,7 +850,7 @@ public sealed class UsageApiTests
     [Arguments(true)]
     public async Task Overlapping_flushes_count_interleaved_operations_once_and_retry_failed_commits(bool failFirstCommit)
     {
-        // These handshakes assert ordering, not a ten-second performance contract; the suite timeout bounds them.
+
         var cancellationToken = TestContext.Current!.Execution.CancellationToken;
         var hook = new UsageCommitHook();
         await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(), services: hook.Install);
@@ -886,7 +872,7 @@ public sealed class UsageApiTests
         using var secondGate = hook.PauseCommit();
         var secondFlush = meter.FlushAsync(CancellationToken.None).AsTask();
         await Assert.That(secondFlush.IsCompleted).IsFalse();
-        // These counts are uncommitted. A read-only connection must see none of this transaction's writes.
+
         await Assert.That(await ReadSavedOpsAsync(api.Server.DataDirectory, database.Id)).IsNull();
         firstGate.Dispose();
         if (failFirstCommit)
@@ -908,7 +894,6 @@ public sealed class UsageApiTests
             await AssertSavedAsync(api, database, reads: 1, writes: 3);
         }
 
-        // More operations arrive after the second snapshot, and a usage reader overlaps its commit.
         await WriteAsync(data, database, "people", 1);
         (await data.GetAsync(Uri(Document(database, "people", "d1")))).EnsureSuccessStatusCode();
         var usageRead = api.Client.GetFromJsonAsync<JsonElement>(Uri(database.Path + "/usage"));
@@ -928,9 +913,6 @@ public sealed class UsageApiTests
         await Assert.That(final.GetProperty("writes").GetInt64()).IsEqualTo(6);
     }
 
-    // Reads took the flush lock, so each analytics read waited for a whole SYSTEM flush, writer wait included (gru, 2026-10-28:
-    // p99 4.4 s). A read now answers from its own catalog snapshot while a flush is paused before or after its commit, and
-    // counts each operation exactly once in either window.
     [Test]
     public async Task A_usage_read_answers_during_a_paused_flush_and_counts_each_write_once()
     {
@@ -976,7 +958,6 @@ public sealed class UsageApiTests
         var meter = api.Server.Services.GetRequiredService<UsageMeter>();
         await WriteAsync(data, database, "people", 2);
 
-        // The usage write commits, then the flush fails as if disposing the transaction had thrown.
         using (var gate = hook.PauseAfterCommit(fail: true))
         {
             var flush = meter.FlushAsync(CancellationToken.None).AsTask();
@@ -1013,13 +994,12 @@ public sealed class UsageApiTests
         await AssertSavedAsync(api, database, reads: 0, writes: 1);
         await WriteAsync(data, database, "people", 1);
 
-        // The flush has its pending snapshot but has not acquired the catalog write transaction yet.
         using var gate = hook.PauseWrite();
         var flush = meter.FlushAsync(CancellationToken.None).AsTask();
         await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
         using var deleted = await api.Client.DeleteAsync(Uri(database.Path));
         deleted.EnsureSuccessStatusCode();
-        // The data API creates a database by name in the catalog: the same name is a new database with a new id.
+
         using var recreated = await data.PutAsync(Uri(database.Data), null);
         recreated.EnsureSuccessStatusCode();
         var recreatedId = (await recreated.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
@@ -1048,7 +1028,6 @@ public sealed class UsageApiTests
         using var run = await api.Client.PostAsJsonAsync(Uri(database.Path + "/sql"), new { sql = "SELECT * FROM people WHERE city = 'x'" });
         run.EnsureSuccessStatusCode();
 
-        // The first tick's usage save fails; the same tick still saves the query field counts.
         using var failure = hook.PauseCommit(fail: true);
         time.Advance(TimeSpan.FromSeconds(10));
         await failure.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -1056,7 +1035,6 @@ public sealed class UsageApiTests
         await UntilAsync(async () => await CountSavedQueryFieldsAsync(api.Server.DataDirectory, database.Id) == 1);
         await Assert.That(await ReadSavedOpsAsync(api.Server.DataDirectory, database.Id)).IsNull();
 
-        // The next tick saves the counts the failure kept pending: the SQL run is a read.
         time.Advance(TimeSpan.FromSeconds(10));
         await UntilAsync(async () => await ReadSavedOpsAsync(api.Server.DataDirectory, database.Id) is not null);
         await AssertSavedAsync(api, database, reads: 1, writes: 1);
@@ -1068,11 +1046,11 @@ public sealed class UsageApiTests
     public async Task A_database_deleted_while_its_usage_is_read_is_not_found_and_left_out_of_its_project(bool project)
     {
         var hook = new UsageCommitHook();
-        // A fake clock: the paused count must not use up the request's 5 seconds of wall-clock time.
+
         await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(), services: hook.Install);
         var deleted = await api.CreateManagedDatabaseAsync("deleted");
         var kept = await api.CreateManagedDatabaseAsync(deleted.Organization, deleted.Project, "kept");
-        // The read has checked membership, measured the file and opened the storage; it pauses before its count transaction.
+
         UsageCommitHook.Gate? armed = new(fail: false);
         using var gate = armed;
         hook.BeforeBegin = async (database, cancellationToken) =>
@@ -1115,7 +1093,7 @@ public sealed class UsageApiTests
             var writes = Faker.Random.Int(1, 4);
             var reads = Faker.Random.Int(1, 4);
             string user, path;
-            // The fake clocks never move, so the periodic flush never runs: only the shutdown flush can save these counts.
+
             await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory, time: new FakeTimeProvider()))
             {
                 user = api.User;
@@ -1191,7 +1169,6 @@ public sealed class UsageApiTests
         await Assert.That(period.GetProperty("writes").GetInt64()).IsEqualTo(writes);
     }
 
-    // The saved bucket names of a database (ids without their writing node), straight from the catalog file, read-only.
     private static async Task<List<string>> BucketsAsync(string dataDirectory, string databaseId, string granularity)
     {
         var path = Path.Combine(dataDirectory, "_system.db");
@@ -1219,7 +1196,6 @@ public sealed class UsageApiTests
         }
     }
 
-    // Reads the server's flushed counters (its own node's document) straight from the catalog file, read-only.
     private static async Task<string?> ReadSavedOpsAsync(string dataDirectory, string databaseId)
     {
         var path = Path.Combine(dataDirectory, "_system.db");
@@ -1242,7 +1218,6 @@ public sealed class UsageApiTests
         return (long)(await command.ExecuteScalarAsync())!;
     }
 
-    // Background work finishes on its own schedule: polls for up to 10 seconds.
     private static async Task UntilAsync(Func<Task<bool>> done)
     {
         for (var attempt = 0; !await done(); attempt++)
@@ -1258,8 +1233,6 @@ public sealed class UsageApiTests
 
     private static string Document(ManagedDatabaseRef database, string collection, string name) => ManagementApi.DocumentPath(database, collection, name);
 
-    // Forwards every call to the management service, after telling the test which method runs; a call that `answer` returns
-    // a result for answers that instead.
     public class SlowManagement : DispatchProxy
     {
         private IManagementService _inner = null!;

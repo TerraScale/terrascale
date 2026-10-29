@@ -1,19 +1,15 @@
 using TerraBase.Errors;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>The role to give a member.</summary>
-/// <param name="Role">owner, admin, member or viewer.</param>
 public sealed record RoleRequest(OrganizationRole? Role);
 
-/// <summary><c>PUT …/organizations/{organization}/members/{user}/role</c>: changes a member's role.</summary>
 public sealed class ChangeMemberRoleEndpoint(IAccessService access) : Endpoint<RoleRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Put(ManagementRoute.Member + "/role");
@@ -32,7 +28,6 @@ public sealed class ChangeMemberRoleEndpoint(IAccessService access) : Endpoint<R
         Metadata(ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(RoleRequest request, CancellationToken cancellationToken) =>
         (ManagementRoute.CheckUserId(ManagementRoute.Value(HttpContext, "user"), "user"), ManagementRoute.CheckRole(request.Role)) switch
         {

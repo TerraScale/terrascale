@@ -9,11 +9,9 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Cluster;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
-using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
 using TerraBase.Fast.Documents;
 using TerraBase.Tenancy;
@@ -21,12 +19,6 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Shapes;
 
-/// <summary>
-/// TBS1 sealing and the shape key endpoint (docs/terrabase/shape-reads.md sections 12, 13 and 16) on one real node per
-/// test: the production <see cref="IShapeCrypto"/> from DI over the real <see cref="DataKeys"/>, backed by the in-memory
-/// bucket holding a frozen wrapped project key. Every object is opened by the strict client decoder below, written from
-/// the specification alone; the shape lineage is the only fixture, so the endpoint has a current handle to check.
-/// </summary>
 public sealed class ShapeCryptoTests
 {
     private const int FrameBytes = 1 << 20;
@@ -36,7 +28,6 @@ public sealed class ShapeCryptoTests
     private const uint LastFrame = 1u << 31;
     private static readonly DateTimeOffset Start = new(2026, 10, 13, 12, 0, 0, TimeSpan.Zero);
     private static readonly string[] ReadScopes = ["documents:read"];
-    // TUnit builds one instance per test, so each test owns its generator.
     private readonly Faker _faker = new();
 
     [Test]
@@ -58,7 +49,6 @@ public sealed class ShapeCryptoTests
         await Assert.That(released.Contains('=', StringComparison.Ordinal)).IsFalse();
         await Assert.That(Convert.ToHexStringLower(Base64Url.DecodeFromChars(released)))
             .IsEqualTo(Convert.ToHexStringLower(Client.EpochKey(host.DataKey, host.Handle, host.Epoch)));
-        // K_e, never K_d.
         await Assert.That(released).IsNotEqualTo(Base64Url.EncodeToString(host.DataKey));
     }
 
@@ -66,7 +56,6 @@ public sealed class ShapeCryptoTests
     public async Task A_filtered_handle_releases_its_epoch_key_until_its_collection_is_recreated()
     {
         const string where = """{"eq":["/status","open"]}""";
-        // The real lineage resolves the filtered handle, so the key endpoint needs its registry entry and filter admission.
         await using var host = await CryptoHost.StartAsync(services: collection =>
             collection.AddSingleton<IShapeLineages>(provider => provider.GetRequiredService<ShapeService>()));
         await Assert.That((await host.Api.PutAsync(DocumentApi.NewId(), new { status = "open" })).Status).IsEqualTo(HttpStatusCode.Created);
@@ -151,8 +140,6 @@ public sealed class ShapeCryptoTests
             ciphertexts.Add(Convert.ToHexStringLower(bytes.AsSpan(HeaderBytes)));
             await Assert.That(Client.Open(bytes, host.Handle, "2", host.Epoch, host.KeyId, key)?.AsSpan().SequenceEqual(plain)).IsTrue();
         }
-
-        // Every object uses nonce 0 for its only frame, so distinct object keys are what keep (key, nonce) unique.
         await Assert.That(salts.Count).IsEqualTo(32);
         await Assert.That(objectKeys.Count).IsEqualTo(32);
         await Assert.That(ciphertexts.Count).IsEqualTo(32);
@@ -184,7 +171,6 @@ public sealed class ShapeCryptoTests
         var key = Base64Url.DecodeFromChars((await current.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("key").GetString()!);
         await Assert.That(Client.Open(next.Bytes.ToArray(), host.Handle, "4", host.Epoch + 1, host.KeyId, key)?.AsSpan().SequenceEqual(plain)).IsTrue();
         await Assert.That(Client.Open(late.Bytes.ToArray(), host.Handle, "4", host.Epoch, host.KeyId, key)).IsNull();
-        // No retained object names the previous epoch, so it is no longer released.
         await AssertRefetchAsync(previous, host.Handle);
         await AssertInvalidAsync(future);
     }
@@ -320,7 +306,6 @@ public sealed class ShapeCryptoTests
         await Assert.That(sameEpoch.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(nextEpoch.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(newObject.Epoch).IsEqualTo(host.Epoch + 1);
-        // Whatever the revoked holder already read stays readable; nothing sealed after rotation opens with its key.
         await Assert.That(Client.Open(oldObject.Bytes.ToArray(), host.Handle, "2", host.Epoch, host.KeyId, oldKey)?.AsSpan().SequenceEqual(oldPlain)).IsTrue();
         await Assert.That(Client.Open(newObject.Bytes.ToArray(), host.Handle, "4", host.Epoch + 1, host.KeyId, oldKey)).IsNull();
         await Assert.That(Client.Open(newObject.Bytes.ToArray(), host.Handle, "4", host.Epoch, host.KeyId, oldKey)).IsNull();
@@ -328,107 +313,8 @@ public sealed class ShapeCryptoTests
     }
 
     [Test]
-    public async Task A_machine_whose_catalog_is_unproven_for_an_epoch_withholds_keys_until_anti_entropy_proves_it_again()
-    {
-        // A partition can hold back a revocation committed on another machine: a after b is cut off from it.
-        await using var pair = await Pair.StartAsync();
-        var host = pair.Host;
-
-        // Past a membership heartbeat, a lists b, which no comparison has proved yet. Tenant rounds never prove the
-        // catalog: it has its own rounds, so a slow tenant repair cannot hold its proofs back either.
-        host.Time.Advance(TimeSpan.FromSeconds(6));
-        var antiEntropy = host.Api.Server.Services.GetRequiredService<AntiEntropy>();
-        await antiEntropy.RunRoundAsync(CancellationToken.None, system: false);
-        await antiEntropy.RunRoundAsync(CancellationToken.None, system: false);
-        await AssertCatalogStaleAsync(await pair.GetKeyAsync());
-        await pair.ProveAsync();
-        await AssertReleasedAsync(host, await pair.GetKeyAsync());
-
-        pair.Cut();
-        // The proof began exactly now: it holds for the whole epoch and not a second more.
-        host.Time.Advance(TimeSpan.FromSeconds(599));
-        await AssertReleasedAsync(host, await pair.GetKeyAsync());
-        host.Time.Advance(TimeSpan.FromSeconds(2));
-        await AssertCatalogStaleAsync(await pair.GetKeyAsync());
-        // Refused before the tenancy checks, so a stale machine reveals nothing about collections either.
-        await AssertCatalogStaleAsync(await host.Api.Client.GetAsync(new Uri(
-            $"{host.Api.Collections}/missing/shape/keys?handle={host.Handle}&epoch={Decimal(host.Crypto.CurrentEpoch)}&key_id={host.KeyId}", UriKind.Relative)));
-
-        pair.Heal();
-        // Past a membership heartbeat, a reads b's real route again.
-        host.Time.Advance(TimeSpan.FromSeconds(6));
-        await pair.ProveAsync();
-        await AssertReleasedAsync(host, await pair.GetKeyAsync());
-    }
-
-    [Test]
-    public async Task An_empty_or_partial_directory_never_lifts_the_catalog_bound()
-    {
-        await using var pair = await Pair.StartAsync();
-        var host = pair.Host;
-        host.Time.Advance(TimeSpan.FromSeconds(6));
-        await pair.ProveAsync();
-        var listed = await pair.Members.ListAsync(CancellationToken.None);
-
-        // An empty member directory proves nothing about this machine, even with b just proved.
-        foreach (var member in listed)
-        {
-            pair.Members.Leave(member.Name);
-        }
-
-        host.Time.Advance(TimeSpan.FromSeconds(6));
-        await AssertCatalogStaleAsync(await pair.GetKeyAsync());
-        foreach (var member in listed)
-        {
-            pair.Members.Join(member);
-        }
-
-        host.Time.Advance(TimeSpan.FromSeconds(6));
-        await AssertReleasedAsync(host, await pair.GetKeyAsync());
-
-        // A self-only view: b is no longer listed, but the catalog records its region, which still needs a proof in the window.
-        pair.Members.Leave("b");
-        host.Time.Advance(TimeSpan.FromSeconds(6));
-        await AssertReleasedAsync(host, await pair.GetKeyAsync());
-        host.Time.Advance(TimeSpan.FromSeconds(600));
-        await AssertCatalogStaleAsync(await pair.GetKeyAsync());
-
-        pair.Members.Join(listed.Single(member => member.Name == "b"));
-        host.Time.Advance(TimeSpan.FromSeconds(6));
-        await pair.ProveAsync();
-        await AssertReleasedAsync(host, await pair.GetKeyAsync());
-    }
-
-    [Test]
-    public async Task A_catalog_that_goes_stale_during_the_key_lookup_releases_no_key()
-    {
-        var lookup = new GatedLineage();
-        await using var pair = await Pair.StartAsync(collection =>
-        {
-            lookup.Inner = (IShapeLineages)collection.Last(service => service.ServiceType == typeof(IShapeLineages)).ImplementationInstance!;
-            collection.AddSingleton<IShapeLineages>(lookup);
-        });
-        var host = pair.Host;
-        // Mid-epoch, so the lookup below ends in the epoch the request names.
-        host.Time.Advance(TimeSpan.FromSeconds(300));
-        await pair.ProveAsync();
-        pair.Cut();
-        host.Time.Advance(TimeSpan.FromSeconds(590));
-        await AssertReleasedAsync(host, await pair.GetKeyAsync());
-
-        // Fresh at the first check; the lookup then outlives the proof, within the endpoint's 30 s deadline.
-        var entered = lookup.Arm();
-        var pending = pair.GetKeyAsync();
-        await entered.WaitAsync(TimeSpan.FromSeconds(10), TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        host.Time.Advance(TimeSpan.FromSeconds(20));
-        lookup.Release();
-        await AssertCatalogStaleAsync(await pending.WaitAsync(TimeSpan.FromSeconds(10), TUnit.Core.TestContext.Current!.Execution.CancellationToken));
-    }
-
-    [Test]
     public async Task An_api_key_revoked_after_authentication_gets_no_key()
     {
-        // Authentication read the key as valid; its revocation lands before the release, as a healing partition delivers it.
         var lookup = new GatedLineage();
         await using var host = await CryptoHost.StartAsync(services: collection =>
         {
@@ -458,7 +344,6 @@ public sealed class ShapeCryptoTests
         await Assert.That(await CodeAsync(refused)).IsEqualTo("invalid_key");
         await Assert.That(refused.Headers.CacheControl?.NoStore).IsTrue();
         await Assert.That((await refused.Content.ReadAsStringAsync()).Contains("\"key\"", StringComparison.Ordinal)).IsFalse();
-        // The owner's own key, authenticated the same way, is still released.
         await Assert.That((await host.ReleasedKeyAsync(host.Epoch, host.KeyId)).Length).IsEqualTo(32);
     }
 
@@ -702,7 +587,6 @@ public sealed class ShapeCryptoTests
         await Assert.That(frames.Sum(frame => frame.Length)).IsEqualTo(plain.Length);
     }
 
-    // The mutations of tbs1_generated_vectors, applied to the frames of a sealed object.
     private static byte[] Mutate(JsonElement mutation, byte[] bytes, byte[] objectKey, byte[] plain)
     {
         var frames = Client.Frames(bytes);
@@ -751,8 +635,6 @@ public sealed class ShapeCryptoTests
         created.StatusCode.ShouldBe(HttpStatusCode.Created);
         var issued = await created.Content.ReadFromJsonAsync<JsonElement>();
         using var reader = host.Api.Management.DataClient(issued.GetProperty("secret").GetString());
-
-        // Worst case: the holder fetches K_e in the first second of the epoch and is revoked right after.
         host.Time.Advance(TimeSpan.FromSeconds(1));
         using var fetched = await host.GetKeyAsync(reader, host.Handle, host.Epoch, host.KeyId);
         fetched.StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -762,8 +644,6 @@ public sealed class ShapeCryptoTests
         var revokedAt = host.Time.GetUtcNow();
         using var refused = await host.GetKeyAsync(reader, host.Handle, host.Epoch, host.KeyId);
         await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-
-        // The last second of the epoch still seals under the held key; the next second does not.
         host.Time.Advance(TimeSpan.FromSeconds(598));
         var lastPlain = _faker.Random.Bytes(_faker.Random.Int(1, 4096));
         using var last = await host.Crypto.EncryptAsync(database, host.Handle, "7", lastPlain, CancellationToken.None);
@@ -776,7 +656,6 @@ public sealed class ShapeCryptoTests
         await Assert.That(Client.Open(last.Bytes.ToArray(), host.Handle, "7", host.Epoch, host.KeyId, held)?.AsSpan().SequenceEqual(lastPlain)).IsTrue();
         await Assert.That(next.Epoch).IsEqualTo(host.Epoch + 1);
         await Assert.That(Client.Open(next.Bytes.ToArray(), host.Handle, "8", host.Epoch + 1, host.KeyId, held)).IsNull();
-        // Measured: newly sealed data stays readable to a revoked API key holder for < one epoch (600 s) after revocation.
         await Assert.That(window).IsEqualTo(TimeSpan.FromSeconds(598));
         await Assert.That(window).IsLessThan(TimeSpan.FromSeconds(600));
     }
@@ -796,19 +675,14 @@ public sealed class ShapeCryptoTests
 
         foreach (var (handle, length, bytes) in objects)
         {
-            // Size is the exact plaintext length plus 70 header bytes and 20 bytes per frame: no padding.
             await Assert.That(bytes.Length).IsEqualTo(HeaderBytes + (length / FrameBytes + 1) * (4 + TagBytes) + length);
             await Assert.That((long)BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(4))).IsEqualTo(host.Epoch);
             await Assert.That(Encoding.ASCII.GetString(bytes, 12, 26)).IsEqualTo(host.KeyId);
-            // Nothing names the tenant, collection or handle in clear.
             foreach (var name in new[] { host.Api.Tenant.OrganizationId, host.Api.Tenant.ProjectId, database.DatabaseId!, DocumentApi.Collection, handle })
             {
                 await Assert.That(bytes.AsSpan().IndexOf(Encoding.ASCII.GetBytes(name).AsSpan())).IsEqualTo(-1);
             }
         }
-
-        // Beyond section 14's "sizes and object counts": the cleartext key id is the same for every shape of the project,
-        // and as a ULID it carries the project key's creation time to the millisecond.
         await Assert.That(objects.Select(item => Encoding.ASCII.GetString(item.Bytes, 12, 26)).Distinct().Count()).IsEqualTo(1);
         await Assert.That(Ulid.Parse(host.KeyId).Time).IsEqualTo(Start.AddMinutes(-1));
         await Assert.That(objects.Select(item => Convert.ToHexString(item.Bytes, 38, 32)).Distinct().Count()).IsEqualTo(objects.Count);
@@ -842,18 +716,6 @@ public sealed class ShapeCryptoTests
             await Assert.That(response.Headers.CacheControl?.NoStore).IsTrue();
             var key = Base64Url.DecodeFromChars((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("key").GetString()!);
             await Assert.That(key.AsSpan().SequenceEqual(Client.EpochKey(host.DataKey, host.Handle, host.Crypto.CurrentEpoch))).IsTrue();
-        }
-    }
-
-    private static async Task AssertCatalogStaleAsync(HttpResponseMessage response)
-    {
-        using (response)
-        {
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-            await Assert.That(await CodeAsync(response)).IsEqualTo("catalog_stale");
-            await Assert.That(response.Headers.RetryAfter).IsNotNull();
-            await Assert.That(response.Headers.CacheControl?.NoStore).IsTrue();
-            await Assert.That((await response.Content.ReadAsStringAsync()).Contains("\"key\"", StringComparison.Ordinal)).IsFalse();
         }
     }
 
@@ -895,10 +757,6 @@ public sealed class ShapeCryptoTests
         return await JsonDocument.ParseAsync(file);
     }
 
-    /// <summary>
-    /// A node backing up to the in-memory bucket, with a fixed clock at the start of an epoch, a shape lineage fixture
-    /// naming a random current handle, and a frozen project data key persisted wrapped in the bucket as the current key.
-    /// </summary>
     private sealed class CryptoHost(DocumentApi api, FakeS3 s3, FakeTimeProvider time, string handle) : IAsyncDisposable
     {
         public DocumentApi Api { get; } = api;
@@ -943,7 +801,6 @@ public sealed class ShapeCryptoTests
             var host = new CryptoHost(api, s3, time, handle);
             try
             {
-                // Nothing has selected this new project's key yet, so the newest persisted key becomes current.
                 (host.KeyId, host.DataKey) = await host.SeedKeyAsync(Start.AddMinutes(-1), RandomNumberGenerator.GetBytes(32));
                 return host;
             }
@@ -960,8 +817,6 @@ public sealed class ShapeCryptoTests
             S3.StoreObject(BackupLayout.Key(Scope, id), Encoding.ASCII.GetBytes(S3.Wrap(key)));
             return Task.FromResult((id, key));
         }
-
-        /// <summary>Persists <paramref name="key"/> wrapped under <paramref name="id"/> and reads it back through the server's <see cref="DataKeys"/>.</summary>
         public async Task<byte[]> BucketKeyAsync(string id, byte[] key)
         {
             S3.StoreObject(BackupLayout.Key(Scope, id), Encoding.ASCII.GetBytes(S3.Wrap(key)));
@@ -983,80 +838,6 @@ public sealed class ShapeCryptoTests
         public ValueTask DisposeAsync() => Api.DisposeAsync();
     }
 
-    /// <summary>
-    /// a (gru, the key server) and b (sjc) in one directory. a's writes answer after their local commit, so its setup needs
-    /// no peer stream; its catalog proofs are what is under test. Cut drops a's route to b, as a partition does.
-    /// </summary>
-    private sealed class Pair(CryptoHost host, TerraBaseTestServer peer, FakeMemberStore members) : IAsyncDisposable
-    {
-        public CryptoHost Host { get; } = host;
-
-        public FakeMemberStore Members { get; } = members;
-
-        public static async Task<Pair> StartAsync(Action<IServiceCollection>? services = null)
-        {
-            var members = new FakeMemberStore();
-            var host = await CryptoHost.StartAsync(services: collection =>
-            {
-                collection.AddSingleton<IMemberDirectory>(members).AddSingleton<IRemoteDurability>(new LocalDurability());
-                services?.Invoke(collection);
-            }, configure: settings =>
-            {
-                settings["node-name"] = "a";
-                settings["region"] = "gru";
-            });
-            try
-            {
-                var peer = await TerraBaseTestServer.StartAsync(settings =>
-                {
-                    host.S3.Configure(settings);
-                    settings["node-name"] = "b";
-                    settings["region"] = "sjc";
-                }, collection =>
-                {
-                    host.S3.Route(collection);
-                    ManualBackupHosting.Configure(collection);
-                    collection.AddSingleton<IMemberDirectory>(members);
-                });
-                return new Pair(host, peer, members);
-            }
-            catch
-            {
-                await host.DisposeAsync();
-                throw;
-            }
-        }
-
-        public Task<HttpResponseMessage> GetKeyAsync() => Host.GetKeyAsync(Host.Api.Client, Host.Handle, Host.Crypto.CurrentEpoch, Host.KeyId);
-
-        /// <summary>Runs a's catalog rounds until one proves b as of now (a bucket still settling waits a second round).</summary>
-        public async Task ProveAsync()
-        {
-            var antiEntropy = Host.Api.Server.Services.GetRequiredService<AntiEntropy>();
-            for (var round = 0; round < 5; round++)
-            {
-                await antiEntropy.RunRoundAsync(CancellationToken.None, system: true);
-                if ((await antiEntropy.CatalogHeldWithinAsync(TimeSpan.FromTicks(1), CancellationToken.None)).Contains("b"))
-                {
-                    return;
-                }
-            }
-
-            throw new TimeoutException("anti-entropy never proved b's catalog");
-        }
-
-        public void Cut() => Members.Map = (viewer, member) => viewer == "a" && member.Name == "b" ? member with { PeerAddress = "http://127.0.0.1:9/" } : member;
-
-        public void Heal() => Members.Map = null;
-
-        public async ValueTask DisposeAsync()
-        {
-            await peer.DisposeAsync();
-            await Host.DisposeAsync();
-        }
-    }
-
-    /// <summary>The fixture's lineage; once armed, the next handle lookup waits for <see cref="Release"/>.</summary>
     private sealed class GatedLineage : IShapeLineages
     {
         private TaskCompletionSource? _entered;
@@ -1091,14 +872,11 @@ public sealed class ShapeCryptoTests
             ValueTask.FromResult<LineageResult>(lineage);
     }
 
-    /// <summary>The real budget; the first armed reservation moves the clock into the next epoch, as a slow admission would.</summary>
     private sealed class RotatingBudget(IMemoryBudget budget, FakeTimeProvider time) : IMemoryBudget
     {
         private int _outstanding;
 
         public bool RotateOnNextReserve { get; set; }
-
-        /// <summary>Reservations taken through this budget and not yet released.</summary>
         public int Outstanding => Volatile.Read(ref _outstanding);
 
         public IMemoryReservation? TryReserve(MemoryLane lane, long bytes) => Track(budget.TryReserve(lane, bytes));
@@ -1139,7 +917,6 @@ public sealed class ShapeCryptoTests
         }
     }
 
-    /// <summary>Stands in for the T1 mirror (FR-22): the retained objects' (handle, epoch, key id) pairs a test proves.</summary>
     private sealed class ProvenPairs : IShapeKeyRetention
     {
         private readonly System.Collections.Concurrent.ConcurrentDictionary<(string, long, string), bool> _pairs = new();
@@ -1150,7 +927,6 @@ public sealed class ShapeCryptoTests
             ValueTask.FromResult(_pairs.ContainsKey((handle, epoch, keyId)));
     }
 
-    /// <summary>A strict TBS1 client written from section 12 alone; <see cref="Open"/> returns null for any rejection.</summary>
     private static class Client
     {
         public static byte[] EpochKey(byte[] dataKey, string handle, long epoch) => HKDF.DeriveKey(HashAlgorithmName.SHA256, dataKey, 32, new byte[32],
@@ -1167,8 +943,6 @@ public sealed class ShapeCryptoTests
             word.CopyTo(associated.AsSpan(HeaderBytes + 8));
             return associated;
         }
-
-        /// <summary>The (start, plaintext length) of each frame of a well-formed object.</summary>
         public static List<(int At, int Length)> Frames(byte[] bytes)
         {
             var frames = new List<(int, int)>();

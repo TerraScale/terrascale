@@ -4,17 +4,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Turso.Data.Sqlite;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
-using TerraBase.Features.Replication;
 using TerraBase.Fast.Documents;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Shapes;
 
-/// <summary>
-/// The changes feed's explicit sequence (FREE_REPLICATION_READ.md sections 3.2 to 3.5): persisted in a counter row, never
-/// rowid. Shape tables are derived data: written uncaptured, never shipped, never copied.
-/// </summary>
 public sealed class FeedSequenceTests
 {
     [Test]
@@ -45,8 +40,6 @@ public sealed class FeedSequenceTests
             var reopened = await StoreAsync(restarted, tenant);
             await Assert.That(await FeedSeqsAsync(reopened)).IsEmpty();
             await Assert.That(await CounterAsync(reopened)).IsEqualTo(highest);
-
-            // A rowid restart would hand out 1 here: the counter must continue past every sequence ever issued.
             await PutOneAsync(reopened, DocumentApi.NewId());
             await Assert.That((await FeedSeqsAsync(reopened)).Single()).IsEqualTo(highest + 1);
         }
@@ -92,8 +85,6 @@ public sealed class FeedSequenceTests
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         var feedBefore = await FeedSeqsAsync(store);
         var before = await CounterAsync(store);
-
-        // Disposed without a commit. Sequence numbers are allocated when states flush, so flush first and prove the rows exist.
         await using (var abandoned = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
             _ = await abandoned.PutAsync(DocumentApi.Collection, DocumentApi.NewId(), Json(1), CancellationToken.None);
@@ -120,8 +111,6 @@ public sealed class FeedSequenceTests
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         await RawWriteAsync(store, $"UPDATE _tb_feed_sequence SET seq = {long.MaxValue} WHERE id = 1;");
         var id = DocumentApi.NewId();
-
-        // The sequence is allocated when the states flush inside CommitAsync, which rethrows the exception unwrapped.
         await Assert.That(async () => await PutOneAsync(store, id)).Throws<OverflowException>();
 
         await Assert.That(await CounterAsync(store)).IsEqualTo(long.MaxValue);
@@ -130,7 +119,7 @@ public sealed class FeedSequenceTests
     }
 
     [Test]
-    public async Task Shape_rows_written_uncaptured_never_reach_the_change_log_or_shipping()
+    public async Task Shape_rows_written_uncaptured_never_reach_change_capture()
     {
         await using var api = await DocumentApi.StartAsync();
         var tenant = await api.TenantOfAsync();
@@ -141,12 +130,7 @@ public sealed class FeedSequenceTests
 
         await Assert.That(await ScalarAsync(store, "SELECT COUNT(*) FROM turso_cdc WHERE table_name IN ('_tb_shape_chunk', '_tb_shape_snapshot');")).IsEqualTo(0L);
 
-        var groups = await api.Server.Services.GetRequiredService<TursoChangeGroupSource>()
-            .ReadAsync(tenant, store.Incarnation, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None);
-        await Assert.That(groups).IsNotNull();
-        var deltas = groups!.Groups.SelectMany(group => group.Deltas).ToArray();
-        await Assert.That(deltas.Any(delta => delta.Id == document)).IsTrue().Because("a captured write ships, so the read itself works");
-        await Assert.That(deltas.Any(delta => delta.Collection is "_tb_shape_chunk" or "_tb_shape_snapshot")).IsFalse();
+        await Assert.That(await ScalarAsync(store, "SELECT COUNT(*) FROM turso_cdc WHERE table_name = '" + TursoStorageTransaction.Table(DocumentApi.Collection).Trim('"') + "';")).IsGreaterThan(0L);
     }
 
     [Test]
@@ -205,9 +189,6 @@ public sealed class FeedSequenceTests
         }
     }
 
-    // Shape rows are written with the same capture-off pragma SuspendCaptureAsync sends, then capture is turned back on.
-    // This helper runs on the writer connection without a transaction, so the statements commit on their own.
-    // sealed_at is Unix milliseconds: 2026-10-13T00:00:00Z.
     private const string ShapeChunk = "INSERT INTO _tb_shape_chunk (handle, offset, end_offset, body, sealed_at) VALUES ('h2-feed-seq', 0, 1, X'7B7D', 1791849600000);";
     private const string ShapeSnapshot = "INSERT INTO _tb_shape_snapshot (handle, offset, page, next_id, body, sealed_at) VALUES ('h2-feed-seq', 0, 0, NULL, X'7B7D', 1791849600000);";
 
@@ -215,8 +196,6 @@ public sealed class FeedSequenceTests
         (TursoDatabaseStore)(await server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
 
     private static byte[] Json(int n) => Encoding.UTF8.GetBytes($"{{\"n\":{n}}}");
-
-    // An instant past every stamp this test writes, so one pass deletes the whole feed.
     private static Hlc FarFuture() => new((ulong)DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeMilliseconds() << 16);
 
     private static async Task PutOneAsync(TursoDatabaseStore store, string id)

@@ -9,7 +9,6 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Storage;
 
-/// <summary>TS-873: a healthy rewrite drops every physical copy of deleted rows and keeps every logical state.</summary>
 public sealed class HealthyRewriteTests
 {
     private const string Probe = "rewrite_probe";
@@ -34,11 +33,6 @@ public sealed class HealthyRewriteTests
                 _ = await delete.DeleteAsync(Probe, StorageFixture.Id("gone"), token);
                 deletion = await delete.CommitAsync(token);
             }
-
-            await StorageFixture.ExecuteWhileWriterHeldAsync(server, null, "UPDATE _tb_gc_floor SET stamp = 123456;");
-            await StorageFixture.ExecuteWhileWriterHeldAsync(server, null,
-                "INSERT INTO _tb_peers (node, applied, acked, stable, seen) VALUES (7, 111, 555, 99, 3);");
-            // Page encryption hides physical bytes even before erasure; the decrypted capture still contains the payload.
             await Assert.That(Holds(SystemFiles(directory), marker)).IsFalse();
             await Assert.That(CapturedMarker(store.FilePath, marker)).IsTrue();
             var wrappedKey = File.ReadAllBytes(store.FilePath + DatabaseKeys.Suffix);
@@ -47,7 +41,6 @@ public sealed class HealthyRewriteTests
 
             await Assert.That(rewrite.Offset).IsGreaterThanOrEqualTo(deletion.Offset);
             await Assert.That(rewrite.TargetIncarnation).IsNotEqualTo(rewrite.SourceIncarnation);
-            // The cached reference serves the new file.
             await Assert.That(ReferenceEquals(await engine.OpenSystemDatabaseAsync(token), store)).IsTrue();
             await Assert.That(store.Incarnation).IsEqualTo(rewrite.TargetIncarnation);
             await Assert.That(File.ReadAllBytes(store.FilePath + DatabaseKeys.Suffix).SequenceEqual(wrappedKey)).IsTrue();
@@ -81,10 +74,6 @@ public sealed class HealthyRewriteTests
             await Assert.That(await read.GetIncarnationAsync(token)).IsEqualTo(store.Incarnation);
             await Assert.That(await read.GetAsync(Probe, StorageFixture.Id("gone"), token)).IsNull();
             await Assert.That(await read.GetAsync(Probe, StorageFixture.Id("kept"), token)).IsNotNull();
-            await Assert.That(Scalar(store.FilePath, "SELECT stamp FROM _tb_gc_floor;")).IsEqualTo("123456");
-            // Applied and stable progress stays; the acknowledged change id named the old file's change log.
-            await Assert.That(Scalar(store.FilePath, "SELECT applied || ',' || acked || ',' || stable || ',' || seen FROM _tb_peers WHERE node = 7;"))
-                .IsEqualTo("111,0,99,3");
         }
     }
 
@@ -113,7 +102,6 @@ public sealed class HealthyRewriteTests
         var waiting = PausedAsync(store);
         var rewriting = engine.RewriteAsync(database, 0, token).AsTask();
         await waiting.WaitAsync(token);
-        // Through the cached fast path: the rewrite holds nothing while it waits, so both go on with the old file (TS-982).
         var cached = system ? (TursoDatabaseStore)await engine.OpenSystemDatabaseAsync(token)
             : (TursoDatabaseStore)(await engine.OpenDatabaseAsync(database!, token))!;
         await using (var other = await cached.BeginTransactionAsync(write: false, token).AsTask().WaitAsync(TimeSpan.FromSeconds(5), token))
@@ -154,11 +142,8 @@ public sealed class HealthyRewriteTests
         await Assert.That(store.Incarnation).IsEqualTo(before);
         await PutAsync(store, StorageFixture.Id("after"), """{"name":"after"}""", token);
         await Assert.That(Directory.EnumerateFiles(Path.GetDirectoryName(store.FilePath)!, "*.rewriting*")).IsEmpty();
-        // A cut that does not include the requested commit is refused too.
         await Assert.That(async () => await engine.RewriteAsync(database, long.MaxValue, token)).Throws<RewriteRefusedException>();
         await Assert.That(store.Incarnation).IsEqualTo(before);
-
-        // The copy has finished, but the final catch-up still waits for this reader. Uncaptured housekeeping cannot be lost.
         reader = await store.BeginTransactionAsync(write: false, token);
         paused = PausedAsync(store);
         rewriting = engine.RewriteAsync(database, 0, token).AsTask();
@@ -192,7 +177,6 @@ public sealed class HealthyRewriteTests
         var rewriting = engine.RewriteAsync(database, 0, token).AsTask();
         await paused.WaitAsync(token);
         await Assert.That(rewriting.IsCompleted).IsFalse();
-        // Its owner sees the file is being replaced and disposes it (ContinuousBackup); a read now would fail.
         await Assert.That(tap.Ended).IsTrue();
         await Assert.That(async () => await tap.ReadAsync(Stream.Null, token)).Throws<ObjectDisposedException>();
         await tap.DisposeAsync();
@@ -214,7 +198,6 @@ public sealed class HealthyRewriteTests
     public async Task A_failure_during_the_file_transition_leaves_one_complete_lineage_after_restart(string fault)
     {
         var token = TestContext.Current!.Execution.CancellationToken;
-        // Before the rename the old file serves; after it, any failed sync (even one a retry would pass) fails storage closed.
         var refused = fault is "rewrite.old_log_removed" or "rewrite.replacing";
         var uncertain = !refused;
         var armed = 0;
@@ -239,7 +222,6 @@ public sealed class HealthyRewriteTests
             var before = store.Incarnation;
             var syncs = 0;
             var sync = engine.DirectorySync;
-            // The rewrite's second directory sync is the one after the rename; a third would be a retry.
             engine.DirectorySync = directory =>
             {
                 var call = Interlocked.Increment(ref syncs);
@@ -262,9 +244,8 @@ public sealed class HealthyRewriteTests
                 await Assert.That(store.Incarnation).IsNotEqualTo(before);
                 await Assert.That(engine.Ledger.FailedClosed).IsNotNull();
                 await Assert.That(await engine.IsReadyAsync(token)).IsFalse();
-                // No write is acknowledged on a file a power loss could still take back.
                 await Assert.That(async () => await PutAsync(store, StorageFixture.Id("after"), """{"name":"after"}""", token))
-                    .Throws<ReplicaCopyFaultedException>();
+                    .Throws<StorageCopyFaultedException>();
             }
 
             if (fault.StartsWith("final-sync", StringComparison.Ordinal))
@@ -282,8 +263,6 @@ public sealed class HealthyRewriteTests
         {
             await server.DisposeAsync();
         }
-
-        // A crash's private copy is recognized and removed at start.
         File.WriteAllText(Path.Combine(Path.GetDirectoryName(path)!, $".{database.DatabaseId}.{EntityIds.New()}.rewriting"), "scratch");
         File.WriteAllText(Path.Combine(directory, $"._system.{EntityIds.New()}.rewriting-wal"), "scratch");
         var reopened = await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = directory);
@@ -291,7 +270,6 @@ public sealed class HealthyRewriteTests
         {
             await Assert.That(Directory.EnumerateFiles(directory, "*.rewriting*", SearchOption.AllDirectories)).IsEmpty();
             var store = (TursoDatabaseStore)(await reopened.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, token))!;
-            // Without a real power loss the renamed file is what is durable here.
             await Assert.That(store.Incarnation).IsEqualTo(expected);
             await using (var read = await store.BeginTransactionAsync(write: false, token))
             {
@@ -322,7 +300,6 @@ public sealed class HealthyRewriteTests
         await write.CommitAsync(token);
     }
 
-    // Spread over many pages, so freed pages, the log and change capture all held it before the rewrite.
     private static string Payload(string marker) => $$"""{"secret":"{{string.Concat(Enumerable.Repeat(marker, 600))}}"}""";
 
     private static Task PausedAsync(TursoDatabaseStore store)
@@ -341,14 +318,6 @@ public sealed class HealthyRewriteTests
         return files.Any(file => File.ReadAllBytes(file).AsSpan().IndexOf(needle) >= 0);
     }
 
-    private static string? Scalar(string path, string sql)
-    {
-        using var connection = new Turso.TursoConnection(TestMasterKey.ConnectionString(path));
-        connection.Open();
-        using var command = connection.CreateCommand();
-        command.CommandText = sql;
-        return Convert.ToString(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
-    }
 
     private static bool CapturedMarker(string path, string marker)
     {

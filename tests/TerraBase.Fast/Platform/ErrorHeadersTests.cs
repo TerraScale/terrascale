@@ -56,7 +56,6 @@ public sealed class ErrorHeadersTests
         await Assert.That(wrongMethod.Content.Headers.Allow).Contains("GET");
     }
 
-    // Only GetCollectionAsync is cancelled independently of the request; everything else passes through.
     private sealed class CancelledCollections(IDocumentService inner) : IDocumentService
     {
         public ValueTask<CollectionResult> GetCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken)
@@ -88,8 +87,8 @@ public sealed class ErrorHeadersTests
             inner.WriteAsync(database, operations, indexErrors, cancellationToken);
 
         public ValueTask<WriteOutcome> WriteConfirmedAsync(
-            TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, bool waitForRemote, CancellationToken cancellationToken) =>
-            inner.WriteConfirmedAsync(database, operations, indexErrors, waitForRemote, cancellationToken);
+            TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken) =>
+            inner.WriteConfirmedAsync(database, operations, indexErrors, cancellationToken);
 
         public IAsyncEnumerable<ExportRow> ExportAsync(TenantContext database, string? afterCollection, string? afterId, CancellationToken cancellationToken) =>
             inner.ExportAsync(database, afterCollection, afterId, cancellationToken);

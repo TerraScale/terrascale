@@ -40,8 +40,6 @@ public sealed class PlatformRestoreFenceTests
             ManualBackupHosting.Configure(services);
             services.AddHttpClient("ts-auth").AddHttpMessageHandler(() => new GlobalIssuerRoute());
         }, time, cancellationToken);
-        await api.VerifyCatalogAsync(cancellationToken);
-        // The harness omits the hosted seeder by default; this fixture seeds once after catalog verification.
         await Assert.That(await api.Server.Services.GetRequiredService<IPlatformCatalog>().EnsurePlatformAsync(cancellationToken) is Done).IsTrue();
         using var client = api.WithToken(api.Issuer.Mint(api.User, token =>
         {
@@ -79,7 +77,7 @@ public sealed class PlatformRestoreFenceTests
             if (hasReceipt)
             {
                 await using var write = await system.BeginTransactionAsync(write: true, cancellationToken);
-                var receipt = new HistoryErasureReceipt(erasure, "holder", 1, HistoryErasure.Fenced, 1, EntityIds.New().ToString(), [], [], time.GetUtcNow());
+                var receipt = new HistoryErasureReceipt(erasure, "holder", 1, HistoryErasure.Fenced, 1, EntityIds.New().ToString(), time.GetUtcNow());
                 await SystemCatalog.PutAsync(write, HistoryErasure.Receipts(erasure), "holder", receipt, TerraBaseJsonContext.Default.HistoryErasureReceipt, cancellationToken);
                 await write.CommitAsync(cancellationToken);
             }
@@ -101,8 +99,6 @@ public sealed class PlatformRestoreFenceTests
                 await ErrorAssert.ErrorAsync(client.PostAsJsonAsync(ManagementApi.Uri(database.Data + "/point-in-time/restore"), new { pointInTime = at, name = "refused", destination }, cancellationToken),
                     HttpStatusCode.Conflict, Code, Message);
             }
-
-            // Also exercise the real PITR implementation beneath management's earlier fence.
             var source = new TenantContext(database.Organization, PlanTier.Enterprise, project, database.Id);
             var result = await api.Server.Services.GetRequiredService<IPointInTimeRestore>().RestoreAsync(source, at, source with { DatabaseId = EntityIds.New().ToString() }, cancellationToken);
             await Assert.That(result is Conflict { Code: Code, Message: Message }).IsTrue();

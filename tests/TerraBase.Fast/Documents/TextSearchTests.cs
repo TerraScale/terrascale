@@ -127,14 +127,13 @@ public sealed class TextSearchTests
         await using var api = await DocumentApi.StartAsync();
         var tenant = await api.TenantOfAsync();
         var database = new ManagedDatabaseRef(tenant.OrganizationId!, tenant.ProjectId!, tenant.DatabaseId!, DocumentApi.Database);
-        // More than 10,000 documents and 8 MiB: a selective indexed query must seek its one candidate.
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 10001)
             INSERT INTO items (id, doc) SELECT printf('%026d', n),
                 json_object('body', CASE WHEN n = 10001 THEN 'commonterm rareterm' ELSE 'commonterm' END,
                     'padding', $padding) FROM rows;
-            INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2)
-                SELECT 'items', id, 0, '', 65536, 0, 1, 0, 0 FROM items;
+            INSERT INTO _tb_state (collection, id, state, stamp, origin, live, h1, h2)
+                SELECT 'items', id, '', 65536, 0, 1, 0, 0 FROM items;
             """, ("$padding", new string('x', 1000)));
         await CreateAsync(api, BodyFields);
         var filter = Search("/body", "rareterm");
@@ -149,7 +148,6 @@ public sealed class TextSearchTests
 
         var counted = await api.TransactAsync(new { op = "assert_count", collection = "items", filter, gte = 1, lte = 1 });
         await Assert.That(counted.Status).IsEqualTo(HttpStatusCode.OK);
-        // Isolate the global candidate cap from per-organization memory admission.
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var broad = await api.QueryAsync(new { filter = Search("/body", "commonterm"), limit = 1 });
         await Assert.That(broad.Status).IsEqualTo(HttpStatusCode.BadRequest);
@@ -235,7 +233,6 @@ public sealed class TextSearchTests
         (await api.PutAsync(id, new { body = "original" })).Status.ShouldBe(HttpStatusCode.Created);
         var guardId = DocumentApi.NewId();
         (await api.PutAsync(guardId, new { guard = true })).Status.ShouldBe(HttpStatusCode.Created);
-        // A failing write after the update exercises rollback; assertions run before writes.
         var failed = await api.TransactAsync(
             new { op = "put", collection = "items", id, document = new { body = "rolledback" } },
             new { op = "create", collection = "items", id = guardId, document = new { guard = false } });

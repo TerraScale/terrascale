@@ -4,63 +4,36 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
 
-/// <summary>
-/// The region catalog (<c>GET /v1/regions</c>, TS-901) lists every region with a live member, and database placement accepts only
-/// those regions (TS-885): an unknown region answers 400 naming the serving ones, and a removed region can be added back.
-/// </summary>
 public sealed class RegionCatalogTests
 {
-    private static readonly string[] Mars = ["mars"];
-    private static readonly string[] SjcAndFra = ["sjc", "fra"];
-    private static readonly string[] FraAndMars = ["fra", "mars"];
-
     [Test]
-    public async Task The_catalog_lists_every_serving_region_and_placement_accepts_only_those()
+    public async Task The_catalog_lists_the_local_region_and_remote_placement_is_rejected()
     {
-        await using var api = await ManagementApi.StartAsync(services: new OtherRegions("sjc", "fra").Register);
-
-        using (var catalog = await api.Server.Client.GetAsync(ManagementApi.Uri("/v1/regions")))
-        {
-            var body = await catalog.Content.ReadAsStringAsync();
-            await Assert.That(catalog.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(body);
-            await Assert.That(body).IsEqualTo("""{"regions":["fra","sjc","test-region"]}""");
-        }
-
-        var organization = await api.CreateOrganizationAsync("Regions");
-        var project = await api.CreateProjectAsync(organization, "Project");
-        var databases = ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases");
-
-        await AssertUnservedAsync(await api.Client.PostAsJsonAsync(databases, new { name = "mars", replicaRegions = Mars }));
-        await AssertUnservedAsync(await api.Client.PostAsJsonAsync(databases, new { name = "home", homeRegion = "mars" }));
-
-        using var created = await api.Client.PostAsJsonAsync(databases, new { name = "main", replicaRegions = SjcAndFra });
-        var createdBody = await created.Content.ReadAsStringAsync();
-        await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(createdBody);
-        var database = ManagementApi.Uri($"{databases}/{JsonElement.Parse(createdBody).GetProperty("id").GetString()}");
-
-        await Assert.That(await PatchAsync(api, database, ["fra"])).IsEquivalentTo(["fra"]);
-        await Assert.That(await PatchAsync(api, database, ["fra", "sjc"])).IsEquivalentTo(["fra", "sjc"]).Because("a removed region can be added back");
-        await AssertUnservedAsync(await api.Client.PatchAsJsonAsync(database, new { replicaRegions = FraAndMars }));
+        await using var api = await ManagementApi.StartAsync();
+        using var catalog = await api.Server.Client.GetAsync(ManagementApi.Uri("/v1/regions"));
+        await Assert.That(catalog.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var regions = await catalog.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(regions.GetProperty("regions").EnumerateArray().Select(region => region.GetString()!)).IsEquivalentTo(["test-region"]);
+        var database = await api.CreateManagedDatabaseAsync();
+        var databases = ManagementApi.Uri($"/v1/management/organizations/{database.Organization}/projects/{database.Project}/databases");
+        await RejectAsync(await api.Client.PostAsJsonAsync(databases, new { name = "replica", replicaRegions = new[] { "sjc" } }));
+        await RejectAsync(await api.Client.PostAsJsonAsync(databases, new { name = "global", allRegions = true }));
+        await RejectAsync(await api.Client.PatchAsJsonAsync(ManagementApi.Uri(database.Path), new { replicaRegions = new[] { "sjc" } }));
+        await RejectAsync(await api.Client.PatchAsJsonAsync(ManagementApi.Uri(database.Path), new { allRegions = true }));
+        using var local = await api.Client.GetAsync(ManagementApi.Uri(database.Path));
+        local.EnsureSuccessStatusCode();
+        var record = await local.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(record.GetProperty("homeRegion").GetString()).IsEqualTo("test-region");
+        await Assert.That(record.GetProperty("replicaRegions").GetArrayLength()).IsEqualTo(0);
     }
 
-    private static async Task AssertUnservedAsync(HttpResponseMessage response)
+    private static async Task RejectAsync(HttpResponseMessage response)
     {
         using (response)
         {
             var body = await response.Content.ReadAsStringAsync();
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest).Because(body);
-            var error = JsonElement.Parse(body).GetProperty("error");
-            await Assert.That(error.GetProperty("code").GetString()).IsEqualTo("invalid_request");
-            await Assert.That(error.GetProperty("message").GetString()).Contains("mars").And.Contains("fra, sjc, test-region");
+            await Assert.That(JsonElement.Parse(body).GetProperty("error").GetProperty("code").GetString()).IsEqualTo("replicas_unavailable");
         }
-    }
-
-    // The replicaRegions of the updated database's body.
-    private static async Task<string[]> PatchAsync(ManagementApi api, Uri database, string[] replicaRegions)
-    {
-        using var response = await api.Client.PatchAsJsonAsync(database, new { replicaRegions });
-        var body = await response.Content.ReadAsStringAsync();
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(body);
-        return [.. JsonElement.Parse(body).GetProperty("replicaRegions").EnumerateArray().Select(region => region.GetString()!)];
     }
 }

@@ -5,18 +5,15 @@ namespace TerraBase.E2E;
 
 public sealed class BackupQualificationE2ETests
 {
-    // Creates and restores whole databases owned by isolated local clusters in the required local stage.
     [Test]
     [Category("local-only")]
     [Scenario(Nodes.InProcess)]
-    public async Task Acknowledged_three_region_writes_survive_snapshot_and_point_in_time_restores()
+    public async Task Acknowledged_local_writes_survive_snapshot_and_point_in_time_restores()
     {
         var run = await BackupQualificationRun.ExecuteAsync();
         var failures = BackupQualification.Failures(run.Plan, run.Outcomes);
         Outcomes.Mark(failures.Count == 0 ? "pass" : "fail", JsonSerializer.Serialize(new { backup = run, failures }));
         await Assert.That(failures).IsEmpty();
-
-        // Exercise the judge against real HTTP outcomes: another refusal, or the right code at the wrong status, cannot pass.
         var fault = run.Plan.Single(cut => !cut.Supported);
         foreach (var (code, status) in new (string? Code, int Status)[]
         {
@@ -45,7 +42,7 @@ public sealed class BackupQualificationE2ETests
         var failures = BackupQualification.Failures(run.Plan, run.Outcomes);
         Outcomes.Mark("harness", JsonSerializer.Serialize(new
         {
-            control = "real three-node backup restores deliberately rewritten; judge must reject changed stored versions",
+            control = "real single-node backup restores deliberately rewritten; judge must reject changed stored versions",
             failures,
         }));
         await Assert.That(failures.Count).IsEqualTo(3);

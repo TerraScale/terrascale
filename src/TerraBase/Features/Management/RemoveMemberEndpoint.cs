@@ -1,15 +1,13 @@
 using TerraBase.Errors;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary><c>DELETE …/organizations/{organization}/members/{user}</c>: removes a member.</summary>
 public sealed class RemoveMemberEndpoint(IAccessService access) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Delete(ManagementRoute.Member);
@@ -27,7 +25,6 @@ public sealed class RemoveMemberEndpoint(IAccessService access) : EndpointWithou
         Metadata(ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         ManagementRoute.CheckUserId(ManagementRoute.Value(HttpContext, "user"), "user") switch
         {

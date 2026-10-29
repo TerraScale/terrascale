@@ -10,45 +10,13 @@ using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Health;
-using TerraBase.Features.Replication;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
 
-/// <summary>
-/// <c>GET …/databases/{database}/changes</c> (docs/terrabase/multi-region-replication.md section 14) on one node: events,
-/// cursors and their resumption, the collection filter, joined remote writes, retention, limits and errors.
-/// </summary>
 public sealed class DatabaseChangesTests
 {
     private static readonly Faker Fake = new();
-
-    [Test]
-    public async Task An_established_feed_stops_sending_when_peer_topology_is_refused()
-    {
-        var token = TestContext.Current!.Execution.CancellationToken;
-        var topology = new ServingTopology();
-        var clock = new HeartbeatClock();
-        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<IPeerTopology>(topology), time: clock);
-        using var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor=now");
-        _ = await stream.NextAsync();
-        _ = await clock.NextIntervalAsync(token);
-        topology.Refuse();
-        clock.Advance(DatabaseChanges.Heartbeat);
-        await Assert.That(async () => await stream.NextAsync()).Throws<IOException>();
-    }
-
-    private sealed class ServingTopology : IPeerTopology
-    {
-        private bool _current = true;
-
-        public bool IsCurrent => Volatile.Read(ref _current);
-
-        public void Refuse() => Volatile.Write(ref _current, false);
-
-        public ValueTask<TopologyStatus> ReadAsync(CancellationToken cancellationToken) =>
-            ValueTask.FromResult(new TopologyStatus(IsCurrent ? 0 : 1, 0, 1, "test", []));
-    }
 
     [Test]
     public async Task A_write_after_cursor_now_streams_with_its_document_and_its_id_resumes_after_it()
@@ -78,7 +46,6 @@ public sealed class DatabaseChangesTests
         }
 
         (await api.SendAsync(HttpMethod.Delete, api.Document(id))).Status.ShouldBe(HttpStatusCode.OK);
-        // Last-Event-ID wins over the cursor parameter, as an EventSource reconnects with its original URL.
         using var resumed = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor=now", resume);
         await Assert.That((await resumed.NextAsync()).Event).IsEqualTo("cursor");
         var deleted = await resumed.NextAsync();
@@ -109,7 +76,6 @@ public sealed class DatabaseChangesTests
         _ = await filtered.NextAsync();
         var items = await filtered.ChangesAsync(5);
         await Assert.That(string.Join(' ', items.Select(change => change.Data.GetProperty("id").GetString()))).IsEqualTo(string.Join(' ', ids));
-        // The filtered stream's cursor passes the other collection's events too: resuming from it delivers nothing old.
         var last = DocumentApi.NewId();
         (await api.PutAsync(last, new { name = "last" })).Status.ShouldBe(HttpStatusCode.Created);
         var next = await filtered.NextAsync();
@@ -117,36 +83,6 @@ public sealed class DatabaseChangesTests
         using var resumed = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?collections={DocumentApi.Collection}&cursor={Uri.EscapeDataString(items[^1].Id)}");
         _ = await resumed.NextAsync();
         await Assert.That((await resumed.NextAsync()).Data.GetProperty("id").GetString()).IsEqualTo(last);
-    }
-
-    [Test]
-    public async Task A_joined_remote_write_streams_once_under_its_origin_and_a_duplicate_join_adds_nothing()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
-        var remote = ReplicaId.Of(4518, 7, 1);
-        var at = new EntryVersion(new Hlc((ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16), remote);
-        var id = DocumentApi.NewId();
-        using var body = JsonDocument.Parse("""{"from":"gru"}""");
-        var delta = DocumentState.Bottom.Put(at, body.RootElement).DeltaAt(at.Stamp);
-        for (var copy = 0; copy < 2; copy++)
-        {
-            await using var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
-            _ = await transaction.JoinAsync(DocumentApi.Collection, id, delta, at, CancellationToken.None);
-            _ = await transaction.CommitAsync(CancellationToken.None);
-        }
-
-        var local = DocumentApi.NewId();
-        (await api.PutAsync(local, new { from = "here" })).Status.ShouldBe(HttpStatusCode.Created);
-        using var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes");
-        _ = await stream.NextAsync();
-        var changes = await stream.ChangesAsync(2);
-        await Assert.That(changes[0].Data.GetProperty("id").GetString()).IsEqualTo(id);
-        await Assert.That(changes[0].Data.GetProperty("origin").GetString()).IsEqualTo(remote.Value.ToString("x16", System.Globalization.CultureInfo.InvariantCulture));
-        await Assert.That(changes[0].Data.GetProperty("version").GetString()).IsEqualTo(at.Stamp.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        await Assert.That(changes[0].Data.GetProperty("document").GetProperty("from").GetString()).IsEqualTo("gru");
-        await Assert.That(changes[1].Data.GetProperty("id").GetString()).IsEqualTo(local);
-        await Assert.That(changes[1].Data.GetProperty("origin").GetString()).IsNotEqualTo(changes[0].Data.GetProperty("origin").GetString());
     }
 
     [Test]
@@ -163,7 +99,6 @@ public sealed class DatabaseChangesTests
         var changes = await stream.ChangesAsync(2);
         var afterFirst = changes[0].Id;
         var afterSecond = changes[1].Id;
-        // Retention deletes both events: the floor is the second one's stamp.
         var trimmed = new Hlc(ulong.Parse(changes[1].Data.GetProperty("version").GetString()!, System.Globalization.CultureInfo.InvariantCulture) + 1);
         await using (var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
@@ -181,111 +116,12 @@ public sealed class DatabaseChangesTests
     }
 
     [Test]
-    public async Task A_cursor_that_never_saw_an_origin_is_410_once_retention_deleted_that_origins_events()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
-        (await api.PutAsync(DocumentApi.NewId(), new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
-        string resume;
-        using (var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes"))
-        {
-            _ = await stream.NextAsync();
-            resume = (await stream.ChangesAsync(1))[0].Id;
-        }
-
-        // A replaced machine (a new origin) writes after the cursor was issued, and retention deletes its event.
-        var joined = await JoinAsync(store, ReplicaId.Of(4518, 9, 1), DateTimeOffset.UtcNow);
-        await Assert.That(await TrimAsync(store, new Hlc(joined.Value + 1))).IsEqualTo(2);
-        await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(resume)}", UriKind.Relative)),
-            HttpStatusCode.Gone, "cursor_expired", "events after the cursor are no longer retained here; start again with cursor=now and re-read");
-    }
-
-    [Test]
-    public async Task An_issued_cursor_with_no_origin_is_410_after_retention_deleted_a_later_event_and_no_cursor_starts_at_retention()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
-        string empty;
-        using (var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor=now"))
-        {
-            empty = (await stream.NextAsync()).Id;
-        }
-
-        var joined = await JoinAsync(store, ReplicaId.Of(4518, 10, 1), DateTimeOffset.UtcNow);
-        var kept = DocumentApi.NewId();
-        (await api.PutAsync(kept, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
-        await Assert.That(await TrimAsync(store, new Hlc(joined.Value + 1))).IsEqualTo(1);
-        await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(empty)}", UriKind.Relative)),
-            HttpStatusCode.Gone, "cursor_expired", "events after the cursor are no longer retained here; start again with cursor=now and re-read");
-        // Without a cursor the client asks for what retention still holds, so the same deletion is no gap.
-        using var fresh = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes");
-        _ = await fresh.NextAsync();
-        await Assert.That((await fresh.NextAsync()).Data.GetProperty("id").GetString()).IsEqualTo(kept);
-    }
-
-    [Test]
-    public async Task An_origin_whose_events_all_aged_out_is_forgotten_and_leaves_resumed_cursors_and_an_old_cursor_is_410()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
-        var now = DateTimeOffset.UtcNow;
-        var gone = ReplicaId.Of(4518, 11, 1);
-        var old = await JoinAsync(store, gone, now - FeedCursor.Forget - TimeSpan.FromDays(1));
-        var kept = DocumentApi.NewId();
-        (await api.PutAsync(kept, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
-        // One retention pass deletes the old event, and its origin's floor is older than the forget horizon.
-        await Assert.That(await TrimAsync(store, FeedCursor.At(now - FeedCursor.Retention))).IsEqualTo(1);
-        await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(await api.DatabaseFileAsync(), readOnly: true)))
-        {
-            await connection.OpenAsync();
-            await using var floors = connection.CreateCommand();
-            floors.CommandText = "SELECT count(*) FROM _tb_feed_floor WHERE origin = $origin;";
-            floors.Parameters.AddWithValue("$origin", unchecked((long)gone.Value));
-            await Assert.That((long)(await floors.ExecuteScalarAsync())!).IsEqualTo(0);
-        }
-
-        // A client that still names the forgotten origin gets it dropped from the next cursor.
-        var scope = ChangeCursor.Scope(await api.TenantOfAsync(), null);
-        var named = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc> { [gone] = old }, FeedCursor.At(now)), scope);
-        using (var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(named)}"))
-        {
-            _ = await stream.NextAsync();
-            var change = await stream.NextAsync();
-            await Assert.That(change.Data.GetProperty("id").GetString()).IsEqualTo(kept);
-            await Assert.That(ChangeCursor.Decode(change.Id)!.Stamps.Keys).DoesNotContain(gone);
-        }
-
-        // A cursor issued longer ago than the retention could lack such an origin: expired.
-        var stale = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc>(), FeedCursor.At(now - FeedCursor.Retention - TimeSpan.FromMinutes(1))), scope);
-        await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(stale)}", UriKind.Relative)),
-            HttpStatusCode.Gone, "cursor_expired", "events after the cursor are no longer retained here; start again with cursor=now and re-read");
-    }
-
-    [Test]
-    public async Task An_anti_entropy_repair_streams_under_this_machine_and_its_cursor_resumes()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
-        // A repair joins with origin 0 (R6), which no cursor can name.
-        await JoinAsync(store, default, DateTimeOffset.UtcNow);
-        using var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes");
-        _ = await stream.NextAsync();
-        var repaired = await stream.NextAsync();
-        await Assert.That(repaired.Data.GetProperty("origin").GetString()).IsNotEqualTo(new string('0', 16));
-        var after = DocumentApi.NewId();
-        (await api.PutAsync(after, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
-        using var resumed = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(repaired.Id)}");
-        _ = await resumed.NextAsync();
-        await Assert.That((await resumed.NextAsync()).Data.GetProperty("id").GetString()).IsEqualTo(after);
-    }
-
-    [Test]
     public async Task A_cursor_issued_in_the_future_counts_as_issued_now()
     {
         await using var api = await DocumentApi.StartAsync();
         var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
         var future = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc>(), FeedCursor.At(DateTimeOffset.UtcNow + TimeSpan.FromDays(30))), ChangeCursor.Scope(await api.TenantOfAsync(), null));
-        var joined = await JoinAsync(store, ReplicaId.Of(4518, 12, 1), DateTimeOffset.UtcNow);
+        var joined = await PutStampAsync(store);
         await Assert.That(await TrimAsync(store, new Hlc(joined.Value + 1))).IsEqualTo(1);
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(future)}", UriKind.Relative)),
             HttpStatusCode.Gone, "cursor_expired", "events after the cursor are no longer retained here; start again with cursor=now and re-read");
@@ -298,7 +134,6 @@ public sealed class DatabaseChangesTests
     public async Task A_cursor_that_does_not_decode_is_410(int origins)
     {
         await using var api = await DocumentApi.StartAsync();
-        // Bytes missing the issue instant, issuer and prefix proof cannot be resumed.
         byte[] old = [0, .. Enumerable.Range(1, origins).SelectMany(origin => Origin((ulong)origin, (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16))];
         var text = Convert.ToBase64String(old).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         var changes = $"{api.DatabasePath()}/changes";
@@ -316,7 +151,6 @@ public sealed class DatabaseChangesTests
         var changes = $"{api.DatabasePath()}/changes";
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{changes}?cursor=AQ-not-a-cursor", UriKind.Relative)),
             HttpStatusCode.Gone, "cursor_expired", "the cursor cannot be resumed; start again with cursor=now and re-read");
-        // A canonical cursor names each origin once, in ascending order.
         var canonical = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc> { [new ReplicaId(1)] = new Hlc(5), [new ReplicaId(2)] = new Hlc(5) }, FeedCursor.At(DateTimeOffset.UtcNow)));
         var bytes = System.Buffers.Text.Base64Url.DecodeFromChars(canonical);
         var unordered = System.Buffers.Text.Base64Url.EncodeToString([.. bytes[..18], .. bytes[74..], .. bytes[18..74]]);
@@ -348,7 +182,6 @@ public sealed class DatabaseChangesTests
     public async Task A_database_bounds_streams_per_machine_and_a_closed_one_frees_its_place()
     {
         await using var api = await DocumentApi.StartAsync();
-        // Test the stream bound without exhausting Hobby's 100-request burst first.
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "pro");
         var changes = $"{api.DatabasePath()}/changes?cursor=now";
         var streams = new List<Sse>();
@@ -390,7 +223,6 @@ public sealed class DatabaseChangesTests
             var scope = ChangeCursor.Scope(await api.TenantOfAsync(cancellationToken: token), null);
             for (var i = 0; i < 100; i++)
             {
-                // Readers resume the same position with independently issued cursors.
                 var resume = cursor is null ? "now" : ChangeCursor.Encode(ChangeCursor.Decode(cursor)! with
                 {
                     Issued = FeedCursor.At(DateTimeOffset.UtcNow - TimeSpan.FromSeconds(i)),
@@ -429,14 +261,12 @@ public sealed class DatabaseChangesTests
         await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock));
         using var initial = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor=now");
         var head = await initial.NextAsync();
-        // Seed a normal-cursor cache entry whose output equals its input while time is frozen.
         using var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(head.Id)}");
         _ = await stream.NextAsync();
         await Assert.That(head.Event).IsEqualTo("cursor");
         for (var interval = 0; interval < 2; interval++)
         {
             var next = stream.NextAsync();
-            // The server arms the interval after flushing its cursor; the client can read that cursor much later.
             await Assert.That(await clock.NextIntervalAsync(token)).IsEqualTo(TimeSpan.FromSeconds(15));
             await Assert.That(await clock.NextIntervalAsync(token)).IsEqualTo(TimeSpan.FromSeconds(15));
             clock.Advance(TimeSpan.FromSeconds(14));
@@ -444,7 +274,6 @@ public sealed class DatabaseChangesTests
             clock.Advance(TimeSpan.FromSeconds(1));
             var beat = await next.WaitAsync(token);
             await Assert.That(beat.Event).IsEqualTo("cursor");
-            // The same position, issued again at the read before the heartbeat.
             await Assert.That(ChangeCursor.Decode(beat.Id)!.Stamps).IsEquivalentTo(ChangeCursor.Decode(head.Id)!.Stamps);
             await Assert.That(beat.Data.GetProperty("cursor").GetString()).IsEqualTo(beat.Id);
             if (interval > 0)
@@ -473,256 +302,16 @@ public sealed class DatabaseChangesTests
         }
     }
 
-    [Test]
-    [Arguments("gru", "sjc", false)]
-    [Arguments("gru", "fra", false)]
-    [Arguments("sjc", "gru", false)]
-    [Arguments("sjc", "fra", false)]
-    [Arguments("fra", "gru", false)]
-    [Arguments("fra", "sjc", false)]
-    [Arguments("fra", "gru", true)]
-    public async Task A_portable_cursor_requires_the_same_origin_prefix_not_just_the_same_event_count(string from, string to, bool differentPrefix)
-    {
-        await using var source = await DocumentApi.StartAsync(values => values["region"] = from);
-        await using var destination = await DocumentApi.StartAsync(values => values["region"] = to);
-        var (sourceRegion, _) = await IdentityAsync(source);
-        var (destinationRegion, _) = await IdentityAsync(destination);
-        await Assert.That((sourceRegion, destinationRegion)).IsEqualTo((from, to));
-        var origin = ReplicaId.Of(4518, 21, 1);
-        var now = DateTimeOffset.UtcNow;
-        var first = DocumentApi.NewId();
-        var second = DocumentApi.NewId();
-        var firstStamp = Stamp(now - TimeSpan.FromMinutes(2));
-        var excluded = DocumentApi.NewId();
-        var secondStamp = Stamp(now - TimeSpan.FromMinutes(1));
-        foreach (var api in new[] { source, destination })
-        {
-            (await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "other" })).Status.ShouldBe(HttpStatusCode.Created);
-            var id = differentPrefix && api == destination ? DocumentApi.NewId() : first;
-            var delta = Group(1, id, firstStamp, origin).Deltas[0];
-            _ = await api.Server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(await api.TenantOfAsync(), origin,
-                [new OriginGroup(1, [delta, delta with { Collection = "other", Id = excluded }]), Group(2, second, secondStamp, origin)], default, CancellationToken.None);
-        }
-
-        string cursor;
-        using (var stream = await Sse.OpenAsync(source.Client, $"{source.DatabasePath()}/changes?collections={DocumentApi.Collection}"))
-        {
-            _ = await stream.NextAsync();
-            cursor = (await stream.ChangesAsync(1))[0].Id;
-        }
-
-        // These fixtures have separate tenant identities; preserve the prefix proof while matching the target scope.
-        cursor = ChangeCursor.Encode(ChangeCursor.Decode(cursor)!, ChangeCursor.Scope(await destination.TenantOfAsync(), new HashSet<string>(StringComparer.Ordinal) { DocumentApi.Collection }));
-        var uri = $"{destination.DatabasePath()}/changes?collections={DocumentApi.Collection}&cursor={Uri.EscapeDataString(cursor)}";
-        using var response = await destination.Client.GetAsync(new Uri(uri, UriKind.Relative), HttpCompletionOption.ResponseHeadersRead);
-        await Assert.That(response.StatusCode).IsEqualTo(differentPrefix ? HttpStatusCode.Gone : HttpStatusCode.OK);
-        if (!differentPrefix)
-        {
-            using var resumed = await Sse.OpenAsync(destination.Client, uri);
-            _ = await resumed.NextAsync();
-            await Assert.That((await resumed.ChangesAsync(1))[0].Data.GetProperty("id").GetString()).IsEqualTo(second);
-        }
-    }
-
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task Persisted_prefixes_rehash_late_joins_and_survive_retention(bool trim)
-    {
-        await using var source = await DocumentApi.StartAsync();
-        await using var destination = await DocumentApi.StartAsync();
-        var origin = ReplicaId.Of(4518, 22, 1);
-        var now = DateTimeOffset.UtcNow;
-        var events = new[]
-        {
-            (Id: DocumentApi.NewId(), Stamp: Stamp(now - TimeSpan.FromMinutes(3))),
-            (Id: DocumentApi.NewId(), Stamp: Stamp(now - TimeSpan.FromMinutes(2))),
-            (Id: DocumentApi.NewId(), Stamp: Stamp(now - TimeSpan.FromMinutes(1))),
-        };
-        foreach (var api in new[] { source, destination })
-        {
-            var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
-            int[] order = api == source ? [0, 1] : [1, 0];
-            foreach (var index in order)
-            {
-                var item = events[index];
-                await using var write = await store.BeginTransactionAsync(write: true, CancellationToken.None);
-                _ = await write.JoinAsync(DocumentApi.Collection, item.Id, Full(item.Stamp, origin), new EntryVersion(item.Stamp, origin), CancellationToken.None);
-                _ = await write.CommitAsync(CancellationToken.None);
-            }
-
-            if (trim)
-            {
-                await Assert.That(await TrimAsync(store, events[1].Stamp)).IsEqualTo(1);
-            }
-        }
-
-        string cursor;
-        using (var stream = await Sse.OpenAsync(source.Client, $"{source.DatabasePath()}/changes?cursor=now"))
-        {
-            cursor = (await stream.NextAsync()).Id;
-        }
-
-        _ = await destination.Server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(await destination.TenantOfAsync(), origin,
-            [Group(3, events[2].Id, events[2].Stamp, origin)], default, CancellationToken.None);
-        cursor = ChangeCursor.Encode(ChangeCursor.Decode(cursor)!, ChangeCursor.Scope(await destination.TenantOfAsync(), null));
-        using var resumed = await Sse.OpenAsync(destination.Client, $"{destination.DatabasePath()}/changes?cursor={Uri.EscapeDataString(cursor)}");
-        _ = await resumed.NextAsync();
-        await Assert.That((await resumed.ChangesAsync(1))[0].Data.GetProperty("id").GetString()).IsEqualTo(events[2].Id);
-    }
-
-    // Regression: sjc's origin o writes e then p. fra's stream from o lost e (retention cut) and fra
-    // refilled e through RepairAsync (origin 0) before p arrived; gru received e and p on o's stream. A reader on fra
-    // gets p, then leaves before fra's repair row of e, and resumes on gru. Expected: e is delivered on gru, or 410.
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task Review_probe_a_cursor_taken_on_a_refilled_machine_never_skips_the_repaired_event_on_another_region(bool repairAfterReaderPassedP)
-    {
-        await using var fra = await DocumentApi.StartAsync(values => values["region"] = "fra");
-        await using var gru = await DocumentApi.StartAsync(values => values["region"] = "gru");
-        var (fraRegion, _) = await IdentityAsync(fra);
-        var (gruRegion, _) = await IdentityAsync(gru);
-        await Assert.That((fraRegion, gruRegion)).IsEqualTo(("fra", "gru"));
-        var o = ReplicaId.Of(4518, 20, 1);
-        var hex = o.Value.ToString("x16", System.Globalization.CultureInfo.InvariantCulture);
-        var now = DateTimeOffset.UtcNow;
-        var (e, eStamp) = (DocumentApi.NewId(), Stamp(now - TimeSpan.FromMinutes(2)));
-        var (p, pStamp) = (DocumentApi.NewId(), Stamp(now - TimeSpan.FromMinutes(1)));
-        var sink = (IChangeGroupSink)fra.Server.Services.GetRequiredService<IChangeGroupSink>();
-        // gru: o's stream, e then p.
-        _ = await gru.Server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(await gru.TenantOfAsync(), o, [Group(1, e, eStamp, o), Group(2, p, pStamp, o)], default, CancellationToken.None);
-        // Refill order: fra repairs e (origin 0, R6's RepairAsync), then o's stream resumes past the cut with p. Lost-apply
-        // order (anti-entropy): fra applied p without e, a reader on fra took the cursor after p, then fra repairs e.
-        var issued = new List<(string Id, string After, HashSet<string> Got)>();
-        if (repairAfterReaderPassedP)
-        {
-            _ = await sink.ApplyAsync(await fra.TenantOfAsync(), o, [Group(3, p, pStamp, o)], default, CancellationToken.None);
-            using var early = await Sse.OpenAsync(fra.Client, $"{fra.DatabasePath()}/changes");
-            issued.Add(((await early.NextAsync()).Id, "start(before repair)", []));
-            var first = (await early.ChangesAsync(1))[0];
-            await Assert.That(first.Data.GetProperty("id").GetString()).IsEqualTo(p);
-            issued.Add((first.Id, "p(before repair)", [p]));
-        }
-
-        var incarnation = (await fra.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await fra.TenantOfAsync(), CancellationToken.None))!.Incarnation;
-        await Assert.That(await sink.RepairAsync(await fra.TenantOfAsync(), incarnation, [new RepairState(DocumentApi.Collection, e, Full(eStamp, o))], CancellationToken.None)).IsEqualTo(1);
-        if (!repairAfterReaderPassedP)
-        {
-            _ = await sink.ApplyAsync(await fra.TenantOfAsync(), o, [Group(3, p, pStamp, o)], default, CancellationToken.None);
-        }
-
-        // Each machine's own write last: it bounds every resumed read there.
-        var (fraSentinel, gruSentinel) = (DocumentApi.NewId(), DocumentApi.NewId());
-        (await fra.PutAsync(fraSentinel, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
-        (await gru.PutAsync(gruSentinel, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
-        string Name(string? id)
-        {
-            return id == e ? "e" : id == p ? "p" : id == fraSentinel ? "fra-sentinel" : id == gruSentinel ? "gru-sentinel" : id ?? "?";
-        }
-
-        string Origin(string? origin)
-        {
-            return origin == hex ? "o" : "own";
-        }
-
-        // A reader on fra from the start of retention: every id fra issues, with what the reader holds when it gets it.
-        var sequence = new List<string>();
-        using (var stream = await Sse.OpenAsync(fra.Client, $"{fra.DatabasePath()}/changes"))
-        {
-            var got = new HashSet<string>(StringComparer.Ordinal);
-            issued.Add(((await stream.NextAsync()).Id, "start", [.. got]));
-            while (true)
-            {
-                var change = (await stream.ChangesAsync(1))[0];
-                var id = change.Data.GetProperty("id").GetString()!;
-                sequence.Add($"{Name(id)}({Origin(change.Data.GetProperty("origin").GetString())})");
-                if (id == fraSentinel)
-                {
-                    break;
-                }
-
-                _ = got.Add(id);
-                if (change.Id.Length > 0)
-                {
-                    issued.Add((change.Id, Name(id), [.. got]));
-                }
-            }
-        }
-
-        Console.WriteLine($"REVIEW-PROBE lost-apply={repairAfterReaderPassedP} o={hex} fra-feed=[{string.Join(", ", sequence)}]");
-        var failures = new List<string>();
-        foreach (var (cursor, after, got) in issued)
-        {
-            foreach (var (region, api, sentinel) in new[] { ("fra", fra, fraSentinel), ("gru", gru, gruSentinel) })
-            {
-                var scoped = ChangeCursor.Encode(ChangeCursor.Decode(cursor)!, ChangeCursor.Scope(await api.TenantOfAsync(), null));
-                var uri = $"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(scoped)}";
-                using (var probe = await api.Client.GetAsync(new Uri(uri, UriKind.Relative), HttpCompletionOption.ResponseHeadersRead))
-                {
-                    if (probe.StatusCode != HttpStatusCode.OK)
-                    {
-                        Console.WriteLine($"REVIEW-PROBE lost-apply={repairAfterReaderPassedP} cursor-after={after} resumed-on={region} -> {(int)probe.StatusCode}");
-                        if (probe.StatusCode != HttpStatusCode.Gone)
-                        {
-                            failures.Add($"after {after} on {region}: {(int)probe.StatusCode}");
-                        }
-
-                        continue;
-                    }
-                }
-
-                using var resumed = await Sse.OpenAsync(api.Client, uri);
-                _ = await resumed.NextAsync();
-                var seen = new List<string>();
-                while (seen.LastOrDefault() != sentinel)
-                {
-                    seen.Add((await resumed.ChangesAsync(1))[0].Data.GetProperty("id").GetString()!);
-                }
-
-                var missing = new[] { e, p }.Where(id => !got.Contains(id) && !seen.Contains(id)).Select(Name).ToList();
-                Console.WriteLine($"REVIEW-PROBE lost-apply={repairAfterReaderPassedP} cursor-after={after} resumed-on={region} -> 200 [{string.Join(", ", seen.Select(Name))}] missing=[{string.Join(", ", missing)}]");
-                if (missing.Count > 0)
-                {
-                    failures.Add($"after {after} on {region}: 200 without {string.Join(", ", missing)}");
-                }
-            }
-        }
-
-        await Assert.That(failures).IsEmpty();
-    }
-
     private static Hlc Stamp(DateTimeOffset at) => new((ulong)at.ToUnixTimeMilliseconds() << 16);
 
-    private static DocumentState Full(Hlc stamp, ReplicaId origin)
+    private static async Task<Hlc> PutStampAsync(IDatabaseStore store)
     {
-        using var body = JsonDocument.Parse("""{"joined":true}""");
-        return DocumentState.Bottom.Put(new EntryVersion(stamp, origin), body.RootElement);
-    }
-
-    private static OriginGroup Group(long changeId, string id, Hlc stamp, ReplicaId origin) =>
-        new(changeId, [new ChangeDelta(DocumentApi.Collection, id, stamp, Full(stamp, origin).DeltaAt(stamp))]);
-
-    private static async Task<(string? Region, string? Machine)> IdentityAsync(DocumentApi api)
-    {
-        using var health = await api.Client.GetAsync(new Uri("/healthz", UriKind.Relative));
-        using var body = JsonDocument.Parse(await health.Content.ReadAsStringAsync());
-        return (body.RootElement.TryGetProperty("region", out var region) ? region.GetString() : null,
-            body.RootElement.TryGetProperty("machine", out var machine) ? machine.GetString() : null);
-    }
-
-    // Joins one document written by `origin` at `at` into the store, as a peer stream does; returns its stamp.
-    private static async Task<Hlc> JoinAsync(IDatabaseStore store, ReplicaId origin, DateTimeOffset at)
-    {
-        var version = new EntryVersion(new Hlc((ulong)at.ToUnixTimeMilliseconds() << 16), origin);
-        using var body = JsonDocument.Parse("""{"joined":true}""");
         await using var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
-        _ = await transaction.JoinAsync(DocumentApi.Collection, DocumentApi.NewId(), DocumentState.Bottom.Put(version, body.RootElement).DeltaAt(version.Stamp), version, CancellationToken.None);
-        _ = await transaction.CommitAsync(CancellationToken.None);
-        return version.Stamp;
+        var stamp = await transaction.PutAsync(DocumentApi.Collection, DocumentApi.NewId(), """{"n":1}"""u8.ToArray(), CancellationToken.None);
+        await transaction.CommitAsync(CancellationToken.None);
+        return new Hlc(unchecked((ulong)stamp));
     }
 
-    // One retention pass deleting the feed events stamped below `before`; returns how many it deleted.
     private static async Task<int> TrimAsync(IDatabaseStore store, Hlc before)
     {
         await using var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
@@ -739,10 +328,7 @@ public sealed class DatabaseChangesTests
         return bytes;
     }
 
-    /// <summary>One SSE event: its name, id and JSON data.</summary>
     private sealed record SseEvent(string Event, string Id, JsonElement Data);
-
-    /// <summary>An open SSE response read one event at a time.</summary>
     private sealed class Sse : IDisposable
     {
         private readonly HttpResponseMessage _response;
@@ -799,8 +385,6 @@ public sealed class DatabaseChangesTests
 
             throw new EndOfStreamException("the stream ended");
         }
-
-        // The next `count` change events, skipping heartbeats.
         public async Task<List<SseEvent>> ChangesAsync(int count)
         {
             var changes = new List<SseEvent>();

@@ -7,11 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"terrascale.tech/ts-benchmark/internal/replbench"
+	"terrascale.tech/ts-benchmark/internal/benchclient"
 )
 
-// Small runs: 4,000 documents, load-a and load-b of 2 batches each; u1 touches 4 documents, d1 5 (7 is updated then
-// deleted), r1 re-creates 1 (13).
 const (
 	testDocs  = 4000
 	testSplit = 2000
@@ -33,8 +31,6 @@ func write(t *testing.T, r *Run, phase string, cfg WriteConfig) WriteStats {
 	return stats
 }
 
-// checkPhase asserts every batch of a phase has exactly one proven terminal event and its recorded versions are the
-// database's current versions of its documents (or tombstones).
 func checkPhase(t *testing.T, r *Run, db *fakeDB, phase string) {
 	t.Helper()
 	p, _ := r.Phase(phase)
@@ -58,7 +54,6 @@ func checkPhase(t *testing.T, r *Run, db *fakeDB, phase string) {
 	}
 }
 
-// checkExactlyOnce asserts each document saw exactly the writes the applied phases make.
 func checkExactlyOnce(t *testing.T, r *Run, db *fakeDB, phases ...string) {
 	t.Helper()
 	db.mu.Lock()
@@ -84,10 +79,10 @@ func TestDelayedCommitOfATimedOutAttemptAppliesOnce(t *testing.T) {
 			db.setFault(func(n int) *fault {
 				switch {
 				case n == 1:
-					return &fault{hold: hold, evaluated: evaluated} // times out at the client, commits later
+					return &fault{hold: hold, evaluated: evaluated}
 				case n == 2 && late == "first attempt commits before the retry":
 					close(hold)
-					<-evaluated // the delayed first attempt applies now, before the retry is evaluated
+					<-evaluated
 				}
 				return nil
 			})
@@ -139,14 +134,14 @@ func TestDuplicatedRetriesNeverInflateCounts(t *testing.T) {
 	})
 	stats := write(t, r, "load-a", WriteConfig{Writers: 1, Timeout: time.Second})
 	for _, h := range holds {
-		close(h) // both stale duplicates reach the database after the third attempt applied
+		close(h)
 		if status := <-evaluated; status != 412 {
 			t.Fatalf("a stale duplicate was evaluated with %d, want 412", status)
 		}
 	}
 	checkExactlyOnce(t, r, db, "load-a")
 	checkPhase(t, r, db, "load-a")
-	// At least the two held duplicates were retried; a slow run may time out more, which the proof absorbs.
+
 	if stats.Attempted != 2 || stats.Acked+stats.Present != 2 || stats.Attempts < 4 || stats.Retries != stats.Attempts-2 || stats.AckedDocs != testSplit {
 		t.Fatalf("stats %+v: want 2 batches proven once each, at least 4 attempts, %d documents", stats, testSplit)
 	}
@@ -157,7 +152,7 @@ func TestDeleteAndRecreateTrackTombstoneVersions(t *testing.T) {
 	for _, p := range []string{"load-a", "load-b", "u1"} {
 		write(t, r, p, WriteConfig{})
 	}
-	// The delete's acknowledgement is lost: its tombstones are proven by the 404s' versions, not by a placeholder.
+
 	db.setFault(func(n int) *fault { return &fault{abortAfter: true, afterCommit: func() { db.fault = nil }} })
 	if stats := write(t, r, "d1", WriteConfig{}); stats.Present != 1 {
 		t.Fatalf("d1 stats %+v: want its batch proven by read", stats)
@@ -183,7 +178,7 @@ func TestRecreateCannotHideAMissedDelete(t *testing.T) {
 		write(t, r, p, WriteConfig{})
 	}
 	db.mu.Lock()
-	db.dropDelete[DocID(r.Seed, 13)] = true // the database answers the delete of 13 but keeps the document
+	db.dropDelete[DocID(r.Seed, 13)] = true
 	db.mu.Unlock()
 	write(t, r, "d1", WriteConfig{})
 	_, err := Write(context.Background(), r, WriteConfig{Phase: "r1", Writers: 1, Timeout: 2 * time.Second})
@@ -206,7 +201,7 @@ func TestAbsentWithoutTombstoneIsNotProofOfDelete(t *testing.T) {
 	for _, p := range []string{"load-a", "load-b", "u1"} {
 		write(t, r, p, WriteConfig{})
 	}
-	// The delete applies, its answer is lost, and the documents then vanish without tombstones (a hypothetical loss).
+
 	db.setFault(func(n int) *fault {
 		return &fault{abortAfter: true, afterCommit: func() {
 			db.fault = nil
@@ -233,7 +228,7 @@ func TestCrashesAroundIntentCommitAcknowledgementAndCompletionResume(t *testing.
 			cfg := WriteConfig{Phase: "load-a", Writers: 1, Timeout: 2 * time.Second}
 			crashed := false
 			if point == "after-commit" {
-				// The database commits batch 1 (request 2); this process dies before the answer arrives.
+
 				db.setFault(func(n int) *fault {
 					if n == 2 {
 						return &fault{afterCommit: func() { cancel(); time.Sleep(100 * time.Millisecond) }}
@@ -264,7 +259,7 @@ func TestCrashesAroundIntentCommitAcknowledgementAndCompletionResume(t *testing.
 			stats := write(t, r, "load-a", WriteConfig{Writers: 1})
 			wantPresent := int64(1)
 			if point == "after-intent" {
-				wantPresent = 0 // never sent: the resend applies and is acknowledged
+				wantPresent = 0
 			}
 			if stats.Present != wantPresent || stats.Skipped != 1 {
 				t.Fatalf("resume stats %+v: want %d proven by read and 1 skipped", stats, wantPresent)
@@ -301,7 +296,7 @@ func TestExactCutPinsTheLedgerPrefixAndRefusesUnresolvedBatches(t *testing.T) {
 	if cut.AtMs < cut.LastAckMs+1000 {
 		t.Fatalf("cut at %d is not after the last acknowledgement %d plus the marker's second", cut.AtMs, cut.LastAckMs)
 	}
-	_ = db // the fake answers /v1/backup as caught up; the node's real quiesce is checked in G0
+	_ = db
 }
 
 func TestUnshippedCutVerifiesTheSourceButIsNeverRestorable(t *testing.T) {
@@ -337,7 +332,7 @@ func TestIdsAreUniqueOrderedAndBodiesCanonical(t *testing.T) {
 		prev = id
 		for _, rev := range []int{1, 2, 3} {
 			b := Body(seed, i, rev)
-			c, err := replbench.Canonical(b)
+			c, err := benchclient.Canonical(b)
 			if err != nil || string(c) != string(b) {
 				t.Fatalf("body %d rev %d is not canonical: %s", i, rev, b)
 			}
@@ -396,7 +391,7 @@ func TestAnInterruptedWriteFailsAndIsNotFenced(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	db.setFault(func(n int) *fault {
 		if n == 2 {
-			cancel() // a signal arrives while the second batch is being written
+			cancel()
 		}
 		return nil
 	})

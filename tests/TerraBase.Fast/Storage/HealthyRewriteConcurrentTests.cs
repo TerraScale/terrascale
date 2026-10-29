@@ -7,7 +7,6 @@ using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
-using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -24,17 +23,23 @@ public sealed class HealthyRewriteConcurrentTests
         var system = (TursoDatabaseStore)await engine.OpenSystemDatabaseAsync(token);
         var database = await api.TenantOfAsync();
         var tenant = (await engine.OpenDatabaseAsync(database, token))!;
-        var peer = new ReplicaId(123);
-        var stable = new Hlc(456);
         var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         system.RewriteWaiting = () => waiting.TrySetResult();
-        // Keep the final cut waiting while real catalog and ledger transactions commit after the pinned snapshot.
         var reader = await system.BeginTransactionAsync(write: false, token);
+        var housekeeping = EntityIds.New().ToString();
         Task<HealthyRewrite> rewrite;
         await using (var retention = (TursoStorageTransaction)await system.BeginTransactionAsync(write: true, token))
         {
-            await retention.RecordStableAsync(peer, stable, DateTimeOffset.UtcNow, token);
-            await retention.TrimAsync(system.BackupAnchor, DateTimeOffset.UtcNow, engine.ReplicaId, new HashSet<long>(), token);
+            await retention.SuspendCaptureAsync(token, rewriteRefreshOnly: true);
+            _ = await retention.LedgerAsync(command =>
+            {
+                using var insert = command("INSERT INTO _tb_fault (organization, project, database, incarnation, reason) VALUES ($organization, $project, $database, $incarnation, 'housekeeping');");
+                insert.Parameters.AddWithValue("$organization", database.OrganizationId);
+                insert.Parameters.AddWithValue("$project", database.ProjectId!);
+                insert.Parameters.AddWithValue("$database", housekeeping);
+                insert.Parameters.AddWithValue("$incarnation", tenant.Incarnation.ToString());
+                return insert.ExecuteNonQuery();
+            }, token);
             rewrite = engine.RewriteAsync(null, 0, token).AsTask();
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(system.Rewriting));
             await retention.CommitAsync(token);
@@ -42,8 +47,8 @@ public sealed class HealthyRewriteConcurrentTests
 
         var organizations = new List<string>();
         var delta = Enumerable.Range(0, 512).Select(_ => EntityIds.New().ToString()).ToArray();
-        var ledger = (RebuildLedger)api.Server.Services.GetRequiredService<IRebuildLedger>();
-        const string reason = "preserve the concurrent rebuild record";
+        var ledger = engine.Ledger;
+        const string reason = "preserve the concurrent storage fault";
         try
         {
             var ready = await Task.WhenAny(waiting.Task, rewrite).WaitAsync(TimeSpan.FromSeconds(30), token);
@@ -55,7 +60,11 @@ public sealed class HealthyRewriteConcurrentTests
             long before;
             await using (var writes = (TursoStorageTransaction)await system.BeginTransactionAsync(write: true, token))
             {
-                before = await writes.GetHeadAsync(token);
+                before = await writes.LedgerAsync(command =>
+                {
+                    using var query = command("SELECT COALESCE(MAX(change_id), 0) FROM turso_cdc;");
+                    return (long)query.ExecuteScalar()!;
+                }, token);
                 foreach (var id in delta)
                 {
                     await writes.PutAsync("rewrite_delta", id, "{}"u8.ToArray(), token);
@@ -64,7 +73,12 @@ public sealed class HealthyRewriteConcurrentTests
             }
             await using (var head = (TursoStorageTransaction)await system.BeginTransactionAsync(write: false, token))
             {
-                await Assert.That(await head.GetHeadAsync(token) - before).IsGreaterThan(1024);
+                var after = await head.LedgerAsync(command =>
+                {
+                    using var query = command("SELECT COALESCE(MAX(change_id), 0) FROM turso_cdc;");
+                    return (long)query.ExecuteScalar()!;
+                }, token);
+                await Assert.That(after - before).IsGreaterThan(1024);
             }
             await ledger.RecordAsync(database, tenant.Incarnation, reason, token);
         }
@@ -78,11 +92,18 @@ public sealed class HealthyRewriteConcurrentTests
         await using var read = (TursoStorageTransaction)await system.BeginTransactionAsync(write: false, token);
         var recorded = await read.LedgerAsync(command =>
         {
-            using var query = command("SELECT reason FROM _tb_rebuild WHERE database = $database;");
+            using var query = command("SELECT reason FROM _tb_fault WHERE database = $database;");
             query.Parameters.AddWithValue("$database", database.DatabaseId!);
             return query.ExecuteScalar() as string;
         }, token);
         await Assert.That(recorded).IsEqualTo(reason);
+        var retained = await read.LedgerAsync(command =>
+        {
+            using var query = command("SELECT reason FROM _tb_fault WHERE database = $database;");
+            query.Parameters.AddWithValue("$database", housekeeping);
+            return query.ExecuteScalar() as string;
+        }, token);
+        await Assert.That(retained).IsEqualTo("housekeeping");
         foreach (var organization in organizations)
         {
             await Assert.That(await read.GetAsync("organizations", organization, token)).IsNotNull();
@@ -91,12 +112,6 @@ public sealed class HealthyRewriteConcurrentTests
         {
             await Assert.That(await read.GetAsync("rewrite_delta", id, token)).IsNotNull();
         }
-        var progress = await read.LedgerAsync(command =>
-        {
-            using var query = command("SELECT stable FROM _tb_peers WHERE node = 123;");
-            return (long)query.ExecuteScalar()!;
-        }, token);
-        await Assert.That(progress).IsEqualTo(456);
     }
 
     [Test]
@@ -105,7 +120,6 @@ public sealed class HealthyRewriteConcurrentTests
     public async Task A_large_rewrite_keeps_committing_and_preserves_every_write_with_a_short_writer_hold(bool system)
     {
         var token = TestContext.Current!.Execution.CancellationToken;
-        // The harness freezes query/writer timing by default; this regression measures real elapsed time.
         await using var api = await DocumentApi.StartAsync(services: services =>
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, TimeProvider.System));
         var server = api.Server;
@@ -132,12 +146,6 @@ public sealed class HealthyRewriteConcurrentTests
         var started = Stopwatch.GetTimestamp();
         var rewrite = engine.RewriteAsync(database, 0, token).AsTask();
         await pinned.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
-        if (!system)
-        {
-            await using var proof = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, token);
-            await proof.AdvanceShapeFrontierAsync(engine.ReplicaId, null, new HashSet<ReplicaId>(), token);
-            await proof.CommitAsync(token);
-        }
         List<string> committed = [];
         var duringCopy = 0;
         while (!rewrite.IsCompleted)

@@ -3,11 +3,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.E2E.WalFaults;
 
-/// <summary>
-/// Barrier B1: a client database's write commits with a synced write-ahead log on the machine that accepted it, before it
-/// is answered. So an answer waits for its commit's sync (a document write and a direct transaction alike), and every
-/// write the machine answered is still there after a power loss drops every unsynced byte of every log.
-/// </summary>
 public sealed class ClientWritePowerLossTests
 {
     [Test]
@@ -15,7 +10,6 @@ public sealed class ClientWritePowerLossTests
     public async Task A_power_loss_keeps_every_client_write_the_node_answered()
     {
         Skip.When(WalSyncFaults.Library is null, "needs Linux and cc to build the write-ahead log fault shim");
-        // Standalone WAL host: recovery must prove the local disk, without a cluster catalog waiting for a peer.
         await using var node = await PowerLossNode.StartAsync(nameof(TenantPowerLossHost));
         var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());
         await node.CommitAsync(EntityIds.New().ToString(), new JsonObject
@@ -24,7 +18,7 @@ public sealed class ClientWritePowerLossTests
             ["ops"] = new JsonArray(
                 new JsonObject { ["op"] = "create_organization", ["id"] = organization, ["name"] = $"power-{organization}" },
                 new JsonObject { ["op"] = "create_project", ["organization"] = organization, ["id"] = project, ["name"] = "power" },
-                new JsonObject { ["op"] = "create_database", ["organization"] = organization, ["project"] = project, ["name"] = "canary", ["id"] = EntityIds.New().ToString(), ["replica_regions"] = new JsonArray(Cluster.Sjc) }),
+                new JsonObject { ["op"] = "create_database", ["organization"] = organization, ["project"] = project, ["name"] = "canary", ["id"] = EntityIds.New().ToString(), ["replica_regions"] = new JsonArray() }),
         });
         var path = $"/v1/projects/{project}/databases/canary";
         await Cluster.CreateCollectionAsync(new(StringComparer.Ordinal) { [Cluster.Gru] = node.Client }, path, "items");
@@ -34,8 +28,6 @@ public sealed class ClientWritePowerLossTests
         {
             await Docs.PutAsync(node.Client, Document(path, id), new JsonObject { ["n"] = index });
         }
-
-        // With every log sync held, a document write and a two-document transaction are each answered only after a sync.
         var delay = TimeSpan.FromMilliseconds(500);
         node.DelaySyncs(delay);
         var clock = System.Diagnostics.Stopwatch.StartNew();

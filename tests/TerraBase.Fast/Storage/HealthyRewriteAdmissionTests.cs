@@ -9,43 +9,33 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Storage;
 
-/// <summary>
-/// TS-873: a request that pinned a database's incarnation before a healthy rewrite is still admitted after it (the same
-/// logical state is in place), while a recorded copy fault or a rewrite whose rename may not be durable still refuses it.
-/// Before, every pin a rewrite replaced answered 503 copy_faulted ("awaiting certified recovery").
-/// </summary>
 public sealed class HealthyRewriteAdmissionTests
 {
     private const string Items = "items";
 
     [Test]
-    public async Task A_pin_a_healthy_rewrite_replaced_is_admitted_and_a_real_fault_still_refuses_it()
+    public async Task Healthy_rewrites_preserve_write_admission_and_a_real_fault_refuses_it()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var server = await TerraBaseTestServer.StartAsync();
         var engine = server.Services.GetRequiredService<TursoStorageEngine>();
-        var faults = server.Services.GetRequiredService<IReplicaCopyFaults>();
+        var faults = engine.Ledger;
         var (database, store) = await CreateAsync(engine, token);
         var id = EntityIds.New().ToString();
         await PutAsync(store, id, token);
-
-        // The exact admission sequence of a request: pin, check, (the rewrite lands), work, check again.
         var pin = store.Incarnation;
-        await Assert.That(await faults.RefusedAsync(database, pin, token)).IsFalse();
+        await Assert.That(faults.Refusal(store)).IsNull();
         var first = await engine.RewriteAsync(database, 0, token);
         var second = await engine.RewriteAsync(database, 0, token);
         await Assert.That(first.SourceIncarnation).IsEqualTo(pin);
-        await Assert.That(await faults.RefusedAsync(database, pin, token)).IsFalse().Because("two healthy rewrites chain back to the pin");
-        await Assert.That(await faults.RefusedAsync(database, first.TargetIncarnation, token)).IsFalse();
-        await Assert.That(await faults.RefusedAsync(database, EntityIds.New(), token)).IsTrue().Because("an incarnation no healthy rewrite replaced");
-
-        // A real fault of the file in place refuses every pin, old ones included.
+        await Assert.That(second.SourceIncarnation).IsEqualTo(first.TargetIncarnation);
+        await Assert.That(faults.Refusal(store)).IsNull();
+        await PutAsync(store, EntityIds.New().ToString(), token);
         await faults.RecordAsync(database, second.TargetIncarnation, "injected copy fault", token);
-        await Assert.That(await faults.RefusedAsync(database, second.TargetIncarnation, token)).IsTrue();
-        await Assert.That(await faults.RefusedAsync(database, pin, token)).IsTrue();
+        await Assert.That(faults.Refusal(store)).IsNotNull();
+        await Assert.ThrowsAsync<StorageCopyFaultedException>(async () => await PutAsync(store, EntityIds.New().ToString(), token));
     }
 
-    // A document read overlapping the rewrite: it pins the old file, waits behind the quiesced store, then reads the new file.
     [Test]
     public async Task A_document_read_overlapping_a_healthy_rewrite_answers_from_the_new_file()
     {
@@ -63,7 +53,6 @@ public sealed class HealthyRewriteAdmissionTests
         store.RewriteWaiting = () => waiting.TrySetResult();
         var rewriting = engine.RewriteAsync(database, 0, token).AsTask();
         await waiting.Task.WaitAsync(token);
-        // The rewrite has not published: the read pins the old incarnation, then waits for a session.
         await Assert.That(store.Incarnation).IsEqualTo(before);
         var reading = documents.GetAsync(new DocumentKey(database, Items, id), token).AsTask();
         await Assert.That(rewriting.IsCompleted).IsFalse();
@@ -72,27 +61,23 @@ public sealed class HealthyRewriteAdmissionTests
         var rewrite = await rewriting;
         var read = await reading;
         await Assert.That(rewrite.SourceIncarnation).IsEqualTo(before);
-        // The incarnation the read pinned (the one in place when it started) is the one the rewrite replaced, and it is admitted.
-        await Assert.That(await server.Services.GetRequiredService<IReplicaCopyFaults>().RefusedAsync(database, before, token)).IsFalse();
+        await Assert.That(engine.Ledger.Refusal(store)).IsNull();
         await Assert.That(read is StoredDocument { Deleted: false } document && Encoding.UTF8.GetString(document.Json.Span) == """{"n":1}""").IsTrue();
     }
 
-    // A rewrite whose rename may not be durable fails storage closed: no pin, old or new, is admitted.
     [Test]
-    public async Task An_uncertain_rewrite_still_fails_every_pin_closed()
+    public async Task An_uncertain_rewrite_refuses_subsequent_writes()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var server = await TerraBaseTestServer.StartAsync();
         var engine = server.Services.GetRequiredService<TursoStorageEngine>();
-        var faults = server.Services.GetRequiredService<IReplicaCopyFaults>();
+        var faults = engine.Ledger;
         var (database, store) = await CreateAsync(engine, token);
         await PutAsync(store, EntityIds.New().ToString(), token);
-        var pin = store.Incarnation;
         var sync = engine.DirectorySync;
         var syncs = 0;
         engine.DirectorySync = directory =>
         {
-            // The second sync follows the rename.
             if (Interlocked.Increment(ref syncs) == 2)
             {
                 throw new IOException("injected directory sync failure");
@@ -102,8 +87,8 @@ public sealed class HealthyRewriteAdmissionTests
         };
 
         await Assert.ThrowsAsync<RewriteUncertainException>(async () => await engine.RewriteAsync(database, 0, token));
-        await Assert.That(await faults.RefusedAsync(database, pin, token)).IsTrue();
-        await Assert.That(await faults.RefusedAsync(database, store.Incarnation, token)).IsTrue();
+        await Assert.That(faults.Refusal(store)).IsNotNull();
+        await Assert.ThrowsAsync<StorageCopyFaultedException>(async () => await PutAsync(store, EntityIds.New().ToString(), token));
     }
 
     private static async Task<(TenantContext Database, TursoDatabaseStore Store)> CreateAsync(TursoStorageEngine engine, CancellationToken token)

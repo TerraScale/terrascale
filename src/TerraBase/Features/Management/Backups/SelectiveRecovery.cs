@@ -17,13 +17,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Backups;
 
-/// <summary>Bounded historical recovery with explicit, authenticated preview approval.</summary>
 public interface ISelectiveRecovery
 {
-    /// <summary>Reads actual historical and current records.</summary>
     ValueTask<IResult> PreviewAsync(HttpContext context, CancellationToken cancellationToken);
 
-    /// <summary>Applies only approved records with exact current-state preconditions.</summary>
     ValueTask<IResult> RecoverAsync(HttpContext context, CancellationToken cancellationToken);
 }
 
@@ -225,10 +222,9 @@ internal sealed class SelectiveRecovery(IManagementService management, IPointInT
         {
             return Invalid("records must be a nonempty distinct subset of the preview");
         }
-        var durability = DocumentRoute.CheckDurability(context);
-        if (durability is not bool waitForRemote)
+        if (DocumentRoute.CheckDurability(context) is Validation durabilityError)
         {
-            return durability switch { Validation error => ErrorResponse.From(error), bool => throw new System.Diagnostics.UnreachableException() };
+            return ErrorResponse.From(durabilityError);
         }
         var found = await restore.ReadSnapshotAsync(database, approval.PointInTime, cancellationToken, approval.Destination).ConfigureAwait(false);
         if (found is not HistoricalSnapshot snapshot)
@@ -249,7 +245,6 @@ internal sealed class SelectiveRecovery(IManagementService management, IPointInT
             operations.Add(new PutOperation(key.Collection, key.Id, past.Json, approved.CurrentVersion is { } tag
                 ? new Precondition([tag], false, false) : new Precondition(null, false, false, IfNeverWritten: true)));
         }
-        // Backup reconstruction can be slow: re-resolve writable access immediately before normal write admission.
         var access = await ManagementRoute.CheckWritableDatabaseAsync(context, management, cancellationToken).ConfigureAwait(false);
         if (access is not TenantContext refreshed || refreshed.VersionScope() != database.VersionScope())
         {
@@ -263,7 +258,7 @@ internal sealed class SelectiveRecovery(IManagementService management, IPointInT
         {
             return ErrorResponse.From(new Conflict("preview expired; preview again", "recovery_preview_invalid"));
         }
-        return await documents.WriteConfirmedAsync(refreshed, operations, indexErrors: true, waitForRemote, cancellationToken).ConfigureAwait(false) switch
+        return await documents.WriteConfirmedAsync(refreshed, operations, indexErrors: true, cancellationToken).ConfigureAwait(false) switch
         {
             DocumentRejected rejected => ErrorResponse.From(rejected.Error, rejected.Op),
             WriteResult written => TypedResults.Ok(new TransactionBody(DocumentRoute.Decimal(written.Offset), written.Durability,
