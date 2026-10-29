@@ -25,7 +25,9 @@ jobs:
           python-version: "3.12"
           activate-environment: true
           enable-cache: true
-          cache-dependency-glob: requirements-ci.txt
+          cache-dependency-glob: |
+            requirements-ci.txt
+            requirements-audit.txt
       - name: tag matches version
         run: test "v$(sed -n 's/__version__ = "\(.*\)"/\1/p' src/terrascale/_version.py)" = "${{ github.event.release.tag_name || github.ref_name }}"
       - run: 'uv pip sync --require-hashes --only-binary :all: requirements-ci.txt'
@@ -33,9 +35,13 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: ~/.cache/pip-audit
-          key: pip-audit-${{ runner.os }}-${{ hashFiles('requirements-ci.txt') }}
+          key: pip-audit-${{ runner.os }}-${{ hashFiles('requirements-ci.txt', 'requirements-audit.txt') }}
           restore-keys: pip-audit-${{ runner.os }}-
-      - name: audit runtime, dev and build graph (all severities)
-        run: pip-audit --strict --disable-pip --require-hashes -r requirements-ci.txt --cache-dir ~/.cache/pip-audit
+      - name: install isolated audit toolchain
+        run: |
+          uv venv --python 3.12 .audit-venv
+          uv pip sync --python .audit-venv/bin/python --require-hashes --only-binary :all: requirements-audit.txt
+      - name: audit runtime, dev, build and audit graphs (all severities)
+        run: .audit-venv/bin/pip-audit --strict --disable-pip --require-hashes -r requirements-ci.txt -r requirements-audit.txt --cache-dir ~/.cache/pip-audit
       - run: uv build --no-build-isolation && twine check dist/*
       - uses: pypa/gh-action-pypi-publish@release/v1

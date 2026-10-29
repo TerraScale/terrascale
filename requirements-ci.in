@@ -1,9 +1,5 @@
-# Runtime/dev/build requirements come from pyproject.toml via compile-ci-lock.sh;
-# include every other tool executed by CI/publication in the same graph.
+# Runtime/dev/build requirements come from pyproject.toml via compile-ci-lock.sh.
+# The audit CLI has its own Python 3.12 lock; SDK tests continue on 3.10–3.13.
 pip
-pip-audit
 twine
 editables
-# GHSA-v4x8-3wr5-3wq8 / GHSA-9vhv-jxww-xfm5 affect 3.20.4..<4.2.1.
-# Fixed 4.2.1+ requires Python 3.11; 3.20.3 is the newest clean 3.10 version.
-filelock<3.20.4
