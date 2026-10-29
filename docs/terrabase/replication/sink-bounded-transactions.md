@@ -61,5 +61,9 @@ frontier acknowledgement; no speculative change weakens it here.
 
 ## Compatibility
 
-Use the eventual PR label `storage-format-unchanged`. There is no storage schema,
-storage-format, wire protocol, API, migration or authentication change.
+The writer-bound change uses the PR label `storage-format-unchanged`.
+`RebuildLedger.RepairRebuildAsync` changes when existing salvage transactions
+commit; it retains the same stored rows, schema, encodings and incarnation checks.
+No storage-format bump or migration is needed. This classification applies to
+the replication writer bound; the folded recovery PR separately documents its
+SQL, socket protocol and authentication behavior changes.
