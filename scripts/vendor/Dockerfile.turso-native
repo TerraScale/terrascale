@@ -15,7 +15,7 @@ RUN echo 'eadb14ec88ac351c938908443bcb89da324411e4eb8f8d068b3cc755fc0808ae  /inp
     && echo 'e90dfc73d7064867fcfa5120c9b23f86d57eeaa7e6fca4c2c53005c80a37314f  /inputs/0002-select-runtime-aegis-c-backend.patch' | sha256sum --check \
     && git apply --check /inputs/0002-select-runtime-aegis-c-backend.patch && git apply /inputs/0002-select-runtime-aegis-c-backend.patch \
     && git apply --check /inputs/turso-native-budget.patch && git apply /inputs/turso-native-budget.patch \
-    && echo '7fa6361646a882508b7825dc59237245fc6a5a87d9f85c9718b5af19b485808f  /inputs/0004-explicit-wal-revision-contract.patch' | sha256sum --check \
+    && echo '5ce78a8c3691810f4ae39b662e87a2c114d4ed45c00ab400dfd39e1b5d498bce  /inputs/0004-explicit-wal-revision-contract.patch' | sha256sum --check \
     && git apply --check /inputs/0004-explicit-wal-revision-contract.patch && git apply /inputs/0004-explicit-wal-revision-contract.patch
 # The sync dependency selects encryption + FTS without the transitive pure-rust default.
 RUN cargo +1.88.0 tree --locked --package turso_sync_sdk_kit --features turso_sdk_kit/fts -e features -i aegis > /inputs/aegis-feature-tree.txt \
@@ -45,7 +45,7 @@ RUN case "$TARGETARCH" in amd64) rid=linux-x64; machine=3e00 ;; arm64) rid=linux
     && grep -qw turso_sync_database_new "/out/release/$rid-exports.txt" \
     && grep -qw turso_terrascale_storage_error_contract "/out/release/$rid-exports.txt" \
     && grep -qw turso_connection_set_fts_progress_handler "/out/release/$rid-exports.txt" \
-    && for symbol in turso_terrascale_wal_contract turso_terrascale_wal_manual turso_terrascale_wal_state turso_terrascale_wal_frame_pages turso_terrascale_wal_read_page turso_terrascale_page_size; do grep -qw "$symbol" "/out/release/$rid-exports.txt"; done \
+    && for symbol in turso_terrascale_wal_contract turso_terrascale_wal_manual turso_terrascale_wal_state turso_terrascale_wal_frame_pages turso_terrascale_snapshot_read_page turso_terrascale_page_size; do grep -qw "$symbol" "/out/release/$rid-exports.txt"; done \
     && cc -Wall -Wextra -Werror -I sdk-kit /inputs/turso-native-smoke.c -L target/lib-release -lturso_sdk_kit -o /smoke \
     && cc -Wall -Wextra -Werror -I sdk-kit /inputs/turso-native-contract-smoke.c -L target/lib-release -lturso_sdk_kit -o /contract-smoke \
     && cc -Wall -Wextra -Werror -I sdk-kit /inputs/turso-native-wal-smoke.c -L target/lib-release -lturso_sdk_kit -o /wal-smoke \

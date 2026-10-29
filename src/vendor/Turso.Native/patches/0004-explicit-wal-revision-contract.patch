@@ -1,8 +1,27 @@
+diff --git a/core/connection.rs b/core/connection.rs
+index 3bfb72b..5a88a73 100644
+--- a/core/connection.rs
++++ b/core/connection.rs
+@@ -4956,6 +4956,14 @@ impl Connection {
+         matches!(self.get_tx_state(), TransactionState::Write { .. })
+     }
+ 
++    pub fn is_in_read_tx(&self) -> bool {
++        matches!(self.get_tx_state(), TransactionState::Read)
++    }
++
++    pub fn is_idle_or_in_read_tx(&self) -> bool {
++        matches!(self.get_tx_state(), TransactionState::None | TransactionState::Read)
++    }
++
+     pub(crate) fn get_mv_tx_id(&self) -> Option<u64> {
+         self.mv_tx.read().map(|(tx_id, _)| tx_id)
+     }
 diff --git a/sdk-kit/src/capi.rs b/sdk-kit/src/capi.rs
-index 0c265bc..6b312c8 100644
+index 0c265bc..e3622d7 100644
 --- a/sdk-kit/src/capi.rs
 +++ b/sdk-kit/src/capi.rs
-@@ -25,6 +25,123 @@ pub extern "C" fn turso_terrascale_storage_error_contract() -> u32 {
+@@ -25,6 +25,145 @@ pub extern "C" fn turso_terrascale_storage_error_contract() -> u32 {
      1
  }
  
@@ -43,7 +62,11 @@ index 0c265bc..6b312c8 100644
 +    if max_frame.is_null() || checkpoint_seq.is_null() {
 +        return wal_misuse("got null pointer", error_opt_out);
 +    }
-+    match connection.core().wal_state() {
++    let core = connection.core();
++    if !core.is_idle_or_in_read_tx() {
++        return wal_misuse("WAL state is only defined outside a write transaction", error_opt_out);
++    }
++    match core.wal_state() {
 +        Ok(state) => {
 +            unsafe {
 +                *max_frame = state.max_frame;
@@ -72,6 +95,22 @@ index 0c265bc..6b312c8 100644
 +        return wal_misuse("invalid WAL frame range", error_opt_out);
 +    }
 +    let core = connection.core();
++    if !core.is_idle_or_in_read_tx() {
++        return wal_misuse("WAL frames are only readable outside a write transaction", error_opt_out);
++    }
++    let max_frame = match core.wal_state() {
++        Ok(state) => state.max_frame,
++        Err(err) => return unsafe { rsapi::TursoError::from(err).to_capi(error_opt_out) },
++    };
++    match first_frame.checked_add(u64::from(count)) {
++        Some(end) if end - 1 <= max_frame => {}
++        _ => return wal_misuse("WAL frame range is past the last frame", error_opt_out),
++    }
++    let bytes = count as usize * std::mem::size_of::<u32>();
++    let (pages_at, sizes_at) = (page_numbers as usize, db_sizes as usize);
++    if count > 0 && pages_at < sizes_at.saturating_add(bytes) && sizes_at < pages_at.saturating_add(bytes) {
++        return wal_misuse("WAL frame output buffers overlap", error_opt_out);
++    }
 +    let mut frame = vec![0u8; 24 + core.get_page_size().get() as usize];
 +    let pages = unsafe { std::slice::from_raw_parts_mut(page_numbers, count as usize) };
 +    let sizes = unsafe { std::slice::from_raw_parts_mut(db_sizes, count as usize) };
@@ -88,10 +127,9 @@ index 0c265bc..6b312c8 100644
 +}
 +
 +#[no_mangle]
-+pub extern "C" fn turso_terrascale_wal_read_page(
++pub extern "C" fn turso_terrascale_snapshot_read_page(
 +    connection: *const c::turso_connection_t,
 +    page_no: u32,
-+    watermark: u64,
 +    page: *mut u8,
 +    page_len: usize,
 +    found: *mut i32,
@@ -105,8 +143,11 @@ index 0c265bc..6b312c8 100644
 +    if page_no == 0 || page.is_null() || found.is_null() || page_len != core.get_page_size().get() as usize {
 +        return wal_misuse("invalid page read", error_opt_out);
 +    }
++    if !core.is_in_read_tx() {
++        return wal_misuse("snapshot page reads need an open read transaction", error_opt_out);
++    }
 +    let buffer = unsafe { std::slice::from_raw_parts_mut(page, page_len) };
-+    match core.try_wal_watermark_read_page(page_no, buffer, Some(watermark)) {
++    match core.try_wal_watermark_read_page(page_no, buffer, None) {
 +        Ok(present) => {
 +            unsafe { *found = i32::from(present) };
 +            c::turso_status_code_t::TURSO_OK
