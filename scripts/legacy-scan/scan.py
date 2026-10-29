@@ -35,7 +35,8 @@ def main():
         path = root / name
         data = os.readlink(path).encode("utf-8") if path.is_symlink() else path.read_bytes()
         content = "" if b"\0" in data else data.decode("utf-8", errors="replace")
-        scoped = [(r, match) for r, pattern, match in rules if pattern.search(name)]
+        scoped = [(r, match) for r, pattern, match in rules if pattern.search(name)
+                  and ("context" not in r or re.search(r["context"], content))]
         for number, line in [(0, name), *enumerate(content.splitlines(), 1)]:
             for term, pattern in terms:
                 allowed = [(r, m) for r, m in scoped

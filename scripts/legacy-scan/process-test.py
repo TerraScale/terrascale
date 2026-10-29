@@ -64,8 +64,17 @@ cases = [
     ({"ops.sh": "flyctl storage list; flyctl deploy"}, "fail", 1, {"fly"}, [("ops.sh", 1, "fly", "E9")]),
     ({"Hrana.bin": b"\x00"}, "fail", 1, {"hrana"}, [("Hrana.bin", 0, "hrana", "E4")]),
     ({"benchmark/runner.go": "documents"}, "fail", 1, {"documents"}, [("benchmark/runner.go", 1, "documents", "P8")]),
+    ({"api.cs": "document_key collection_key document_id collection_id documentKey collectionKey"}, "fail", 1, {"documents", "collections"}, [("api.cs", 1, term, "E4") for term in ["collections"] * 3 + ["documents"] * 3]),
+    ({"di.cs": "IServiceCollection ServiceCollection EndpointServiceCollectionExtensions CollectionKey"}, "fail", 1, {"collections"}, [("di.cs", 1, "collections", "E4")]),
+    ({"parser.cs": "using var document = await JsonDocument.ParseAsync(stream); return document;"}, "fail", 0, set()),
+    ({"parser.cs": "JsonDocument document; document = await JsonDocument.ParseAsync(stream); return document; DocumentKey"}, "fail", 1, {"documents"}, [("parser.cs", 1, "documents", "E4")]),
+    ({"src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Properties/Resources.cs": "Too many restrictions specified for collection {collectionName}. DocumentKey"}, "fail", 1, {"documents"}),
+    ({"src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/SqliteConnection.cs": "DbMetaDataCollectionNames.MetaDataCollections CollectionName collectionName UnknownCollection; webhooks"}, "fail", 1, {"webhooks"}),
     ({"Hrana.txt": "SQL rows"}, "fail", 1, {"hrana"}),
 ]
+for name in ["src/TerraScale.Endpoints/RequestBinder.cs", "src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Properties/Resources.cs", "src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/SqliteConnection.cs"]:
+    source = Path(__file__).resolve().parents[2] / name
+    cases.append(({name: source.read_text()}, "fail", 0, set()))
 with concurrent.futures.ThreadPoolExecutor() as executor:
     list(executor.map(check, cases))
 print(f"Passed {len(cases)} parallel scanner process integration cases")

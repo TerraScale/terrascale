@@ -1,12 +1,12 @@
 [
   {
     "id": "collections",
-    "pattern": "(?i:\\bcollections?\\b)|\\b(?:[A-Za-z_]\\w*)?Collections?(?:[A-Z_]\\w*)?\\b|\\b[a-z_]+_collections?(?:_[a-z_]+)?\\b",
+    "pattern": "(?i:\\bcollections?\\b)|\\b(?:[A-Za-z_]\\w*)?Collections?(?:[A-Z_]\\w*)?\\b|\\b[a-z_]+_collections?(?:_[a-z_]+)?\\b|\\bcollections?(?:[A-Z_]\\w*)?\\b",
     "owner": "E4"
   },
   {
     "id": "documents",
-    "pattern": "(?i:\\bdocuments?\\b)|\\b(?:[A-Za-z_]\\w*)?Documents?(?:[A-Z_]\\w*)?\\b|\\b[a-z_]+_documents?(?:_[a-z_]+)?\\b",
+    "pattern": "(?i:\\bdocuments?\\b)|\\b(?:[A-Za-z_]\\w*)?Documents?(?:[A-Z_]\\w*)?\\b|\\b[a-z_]+_documents?(?:_[a-z_]+)?\\b|\\bdocuments?(?:[A-Z_]\\w*)?\\b",
     "owner": "E4"
   },
   {
