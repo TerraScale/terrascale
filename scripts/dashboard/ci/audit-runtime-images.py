@@ -23,6 +23,9 @@ if not images:
     raise SystemExit("No production runtime bases found")
 targets = []
 for image in sorted(images):
+    # Podman accepts a digest or a tag, but not both; the digest remains the identity.
+    repository, digest = image.rsplit("@", 1)
+    image = re.sub(r":[^/:]+$", "", repository) + "@" + digest
     index = json.loads(subprocess.check_output(["docker", "manifest", "inspect", image]))
     platforms = {}
     for manifest in index["manifests"]:
