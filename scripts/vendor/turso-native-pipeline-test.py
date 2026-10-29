@@ -132,7 +132,7 @@ with tempfile.TemporaryDirectory(prefix="native-pipeline-") as temporary:
             "native smoke: candidate query/cursor/sort/preflight/count use indexed text id seeks; ULIDs, missing hits and empty counts passed\n"
             "native smoke: three-term carrying-slop reader/count/ordered queries refuse scratch; small admitted slop succeeds\n")
         (release / f"{rid}-contract1-smoke.txt").write_text(
-            "contract1 smoke: marker=1, aegis256 persisted FTS, SQL spoof constraint and page tamper TURSO_CORRUPT passed\n")
+            "contract1 smoke: marker=1, aegis256 persisted FTS, SQL spoof constraint, interrupt, completion race, query timeout, value length and page tamper TURSO_CORRUPT passed\n")
         (release / f"{rid}-wal-smoke.txt").write_text(
             "wal contract smoke: marker=1, 1519 frames with the database file untouched across close, snapshot page reads decrypt under a passive checkpoint, write transactions, checkpoints and spills of other connections and bad ranges refused, busy or stale truncates kept, explicit TRUNCATE resets frames\n")
 
@@ -158,7 +158,7 @@ with tempfile.TemporaryDirectory(prefix="native-pipeline-") as temporary:
     manifest(builds[1], "SHA256SUMS-linux-arm64")
     run("prepare-turso-native-release.sh", *builds, fixture / "unqualified", succeeds=False)
     (builds[1] / "release/linux-arm64-contract1-smoke.txt").write_text(
-        "contract1 smoke: marker=1, aegis256 persisted FTS, SQL spoof constraint and page tamper TURSO_CORRUPT passed\n")
+        "contract1 smoke: marker=1, aegis256 persisted FTS, SQL spoof constraint, interrupt, completion race, query timeout, value length and page tamper TURSO_CORRUPT passed\n")
     (builds[1] / "release/linux-arm64-wal-smoke.txt").write_text("not qualified\n")
     manifest(builds[1], "SHA256SUMS-linux-arm64")
     run("prepare-turso-native-release.sh", *builds, fixture / "wal-unqualified", succeeds=False)
