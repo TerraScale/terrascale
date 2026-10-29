@@ -109,4 +109,51 @@ The independently source-linked Slow graph also builds: `dotnet build tests/Terr
 
 A four-CPU-affinity CI rehearsal on mariogk-dev completed locked restore, the full checked Fast/E2E/driver build, both single-file/native packaging proofs, SHA verification and the shard archive in **254 s**. Disabling ReadyToRun only for the CI packaging proof reduced that rehearsal from **282 s**; production image builds retain ReadyToRun. The isolated single-file driver proof passed all **24** tests, with no skips. This rehearsal excludes GitHub setup/upload overhead and is advisory; the actual main CI run remains required.
 
-Live main CI proof is pending the benchmark owner's shipping fix.
+The benchmark owner's fix landed as `ab95ae37f`. Rebased onto that fix and shipped through `ts-ship` as `ca5093d3a565fab15b7dc97cdeffb6877d80de49`. Every affected area's exact-commit status passed below 300 seconds on mariogk-dev, with isolated concurrent builds:
+
+| Gate | Restore/build/test wall time |
+| --- | ---: |
+| libs | 42.161 s |
+| auth | 259.438 s |
+| TerraBase | 215.134 s |
+| benchmark | 32.037 s |
+
+The packaged shard outputs also ran successfully with four-CPU affinity, without rebuilding. Each archive was extracted into a fresh source tree. The complete 406 TerraBase tests were selected exactly once:
+
+| Shard | TerraBase tests | Assigned extra proofs | Wall time |
+| --- | ---: | --- | ---: |
+| 1 | 172 | — | 58 s |
+| 2 | 59 | 24 driver tests | 92 s |
+| 3 | 109 | — | 48 s |
+| 4 | 66 | 3 local E2E tests | 51 s |
+
+All passed, with zero skips.
+
+## Main CI proof
+
+The TerraBase jobs on main push `ca5093d3a565fab15b7dc97cdeffb6877d80de49` passed on four-vCPU GitHub runners: [run 40968149450](https://github.com/TerraScale/terrascale/actions/runs/40968149450). These are full job wall times, including checkout/setup and artifact transfer:
+
+| CI job | Before wall time | After wall time | After tests | Result |
+| --- | ---: | ---: | ---: | --- |
+| terrabase-build | 466 s | 212 s | 24 single-file driver checks | Passed |
+| terrabase (1) | 315 s | 45 s | 172 | Passed |
+| terrabase (2) | 249 s | 47 s | 59 + 24 driver | Passed |
+| terrabase (3) | 96 s | 36 s | 109 | Passed |
+| terrabase (4) | 52 s | 48 s | 66 + 3 local E2E | Passed |
+
+All 406 TerraBase tests passed exactly once; the 24 driver tests and three assigned local E2E tests passed, with no skips. The packaging proof separately runs the same 24 driver behaviors from an isolated single-file bundle and checks the extracted native SHA.
+
+That run exposed one unused `BindingTests` import in the library style gate. It was removed without changing assertions or the gate, and the complete `make libs-check` passed on beta. The correction shipped as `bfa4234e113e876ca82fb8baa5140f217ce64a4f` after `ts-ship/libs` passed in **18.064 s**. Replacement main CI: [40968917311](https://github.com/TerraScale/terrascale/actions/runs/40968917311). Its complete libraries job passed all **92** tests with zero skips in **100 s**, including restore, formatting/style checks, build and test execution.
+
+
+The replacement main push also passed every TerraBase job with the same test counts and zero skips:
+
+| Job | Complete job wall time |
+| --- | ---: |
+| terrabase-build | 202 s |
+| terrabase (1) | 50 s |
+| terrabase (2) | 40 s |
+| terrabase (3) | 32 s |
+| terrabase (4) | 41 s |
+
+Both required local commands and all five TerraBase CI jobs are below the five-minute budget. Native fetching, assertions, formatting, analyzers, packaging and SHA checks remain enforced.
