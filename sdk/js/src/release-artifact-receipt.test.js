@@ -618,7 +618,7 @@ async function createCandidateFixture(checkout, workspace) {
     return {
       schemaVersion: 1,
       mediaType: buildMediaType,
-      repository: "ts-js",
+      repository: "terrascale",
       source: {
         commit: buildIdentity.revision,
         tree: buildIdentity.tree,

@@ -42,10 +42,10 @@ args = sys.argv[1:]
 url = next(arg for arg in args if arg.startswith("https://"))
 with open(os.environ["TEST_REQUESTS"], "a") as log:
     log.write(url + "\\n")
-if url.endswith("/latest"):
-    print("https://github.com/TerraScale/ts-go/releases/tag/v0.0.1", end="")
+if url == "https://api.github.com/repos/TerraScale/terrascale/releases?per_page=100":
+    print('[{"tag_name":"sdk/js/v0.0.99"},{"tag_name":"sdk/go/v0.0.1"},{"tag_name":"sdk/go/v0.0.0"}]', end="")
 else:
-    assert "/download/v0.0.1/" in url, url
+    assert "/download/sdk/go/v0.0.1/" in url, url
     name = url.rsplit("/", 1)[1]
     source = pathlib.Path(os.environ["TEST_DIST"]) / name
     if name == "checksums.txt":
@@ -75,7 +75,7 @@ else:
         with tarfile.open(dist / f"ts_{platform}_{arch}.tar.gz") as archive:
             assert binary.read_bytes() == archive.extractfile("ts").read()
         assert binary.stat().st_mode & 0o111
-    assert requests.read_text().splitlines().count("https://github.com/TerraScale/ts-go/releases/latest") == 4
+    assert requests.read_text().splitlines().count("https://api.github.com/repos/TerraScale/terrascale/releases?per_page=100") == 4
     result = install("Linux", "x86_64", "0.0.1")
     assert result.returncode == 0, result.stderr
     original = binary.read_bytes()

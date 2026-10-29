@@ -7,7 +7,7 @@ asyncio, built on [httpx](https://www.python-httpx.org/). Python 3.10+.
 ```sh
 pip install terrascale
 # until the first PyPI release:
-pip install "git+https://github.com/TerraScale/ts-python@v0.0.3"
+pip install "git+https://github.com/TerraScale/terrascale@main#subdirectory=sdk/python"
 ```
 
 ## Quickstart

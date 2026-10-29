@@ -47,8 +47,11 @@ def main():
             properties = ET.SubElement(root, "PropertyGroup")
             ET.SubElement(properties, "TargetFramework").text = "net11.0"
             ET.SubElement(properties, "TreatWarningsAsErrors").text = "true"
-            ET.SubElement(ET.SubElement(root, "ItemGroup"), "PackageReference",
-                          Include=name, Version=f"[{version}]")
+            ET.SubElement(ET.SubElement(root, "ItemGroup"), "PackageReference", Include=name)
+            central = ET.Element("Project")
+            ET.SubElement(ET.SubElement(central, "PropertyGroup"), "ManagePackageVersionsCentrally").text = "true"
+            ET.SubElement(ET.SubElement(central, "ItemGroup"), "PackageVersion", Include=name, Version=f"[{version}]")
+            ET.ElementTree(central).write(folder / "Directory.Packages.props", encoding="unicode")
             ET.ElementTree(root).write(project, encoding="unicode")
             run("dotnet", "restore", str(project), "--use-lock-file",
                 "--configfile", str(ROOT / "NuGet.config"))

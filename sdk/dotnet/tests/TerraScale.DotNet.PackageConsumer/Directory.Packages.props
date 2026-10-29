@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageVersion Include="TerraScale.DotNet" Version="[$(TerraScaleDotNetVersion)]" />
+  </ItemGroup>
+</Project>

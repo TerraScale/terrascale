@@ -20,11 +20,11 @@ archives:
 checksum:
   name_template: checksums.txt
 snapshot:
-  version_template: 0.0.0-dev
+  version_template: '{{ if .Env.TS_GO_VERSION }}{{ .Env.TS_GO_VERSION }}{{ else }}0.0.0-dev{{ end }}'
 release:
   github:
     owner: TerraScale
-    name: ts-go
+    name: terrascale
   extra_files:
     - glob: scripts/install.sh
     - glob: dist/homebrew/Formula/ts.rb
@@ -35,6 +35,7 @@ brews:
       owner: TerraScale
       name: homebrew-tap
     directory: Formula
+    url_template: 'https://github.com/TerraScale/terrascale/releases/download/sdk/go/v{{ .Version }}/{{ .ArtifactName }}'
     homepage: https://terrascale.tech
     description: TerraScale CLI
     license: Apache-2.0

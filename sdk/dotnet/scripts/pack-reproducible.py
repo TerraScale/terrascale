@@ -106,8 +106,8 @@ def main(destination):
         shutil.copy(consumer / "packages.lock.json", output / "consumer.packages.lock.json")
         metadata = {
             "package": "TerraScale.DotNet", "version": version,
-            "repository": "https://github.com/TerraScale/ts-dotnet", "sourceRevision": revision,
-            "sourceTree": tree, "sourceArchiveSha256": digest(archive), "file": name,
+            "repository": "https://github.com/TerraScale/terrascale", "sourceRevision": revision,
+            "sourceDirectory": "sdk/dotnet", "sourceTree": tree, "sourceArchiveSha256": digest(archive), "file": name,
             "sourceDateEpoch": int(timestamp),
             "sha256": digest(first), "assemblySha256ByFramework": assemblies,
             "contractSha256ByPath": contracts,

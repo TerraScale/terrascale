@@ -26,14 +26,16 @@ elif command -v shasum >/dev/null 2>&1; then
 else
   fail 'sha256sum or shasum is required'
 fi
-base=https://github.com/TerraScale/ts-go/releases
+base=https://github.com/TerraScale/terrascale/releases
 if [ "$release" = latest ]; then
-  # Resolve latest once so the archive and checksum cannot span two releases.
-  url=$(curl --proto '=https' --tlsv1.2 -fsSL -o /dev/null -w '%{url_effective}' "$base/latest")
-  release=${url##*/v}
-  printf '%s\n' "$release" | LC_ALL=C grep -Eq '^0\.0\.(0|[1-9][0-9]*)$' || fail 'latest release must be 0.0.X'
+  # Other monorepo areas also release; select only stable Go SDK tags.
+  release=$(curl --proto '=https' --tlsv1.2 -fsSL 'https://api.github.com/repos/TerraScale/terrascale/releases?per_page=100' |
+    tr ',' '\n' |
+    sed -n 's/.*"tag_name":[[:space:]]*"sdk\/go\/v\(0\.0\.[0-9][0-9]*\)".*/\1/p' |
+    sort -t. -k3,3n | tail -n 1)
+  printf '%s\n' "$release" | LC_ALL=C grep -Eq '^0\.0\.(0|[1-9][0-9]*)$' || fail 'no published Go SDK 0.0.X release found'
 fi
-base=$base/download/v$release
+base=$base/download/sdk/go/v$release
 archive=ts_${platform}_${arch}.tar.gz
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT

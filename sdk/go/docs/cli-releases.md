@@ -1,7 +1,7 @@
 # CLI releases and installation
 
-The CLI lives in `cmd/ts` in **TerraScale/ts-go**. The canonical installer is
-`scripts/install.sh`; the landing site's `/install.sh` redirects to the raw
+The CLI lives in `sdk/go/cmd/ts` in **TerraScale/terrascale**. Run packaging commands from `sdk/go`. The canonical installer is
+`sdk/go/scripts/install.sh`; the landing site's `/install.sh` redirects to the raw
 file on this repository's main branch. No second installer copy is needed.
 
 ## Install a published release
@@ -21,11 +21,11 @@ Checksums detect corruption; trust still depends on GitHub's HTTPS delivery
 of the archive and checksum manifest.
 
 Windows users download the matching zip from
-<https://github.com/TerraScale/ts-go/releases>, verify its SHA-256 against
+<https://github.com/TerraScale/terrascale/releases>, verify its SHA-256 against
 `checksums.txt` (PowerShell: `Get-FileHash .\ts_windows_amd64.zip -Algorithm SHA256`),
 extract `ts.exe` to a user-owned directory and add that directory to PATH.
 
-Every tag has these fixed asset names:
+Every `sdk/go/v0.0.X` tag has these fixed asset names:
 
 | Platform | amd64 | arm64 |
 | --- | --- | --- |
@@ -39,15 +39,11 @@ Other assets: `checksums.txt`, `install.sh` and the generated Homebrew `ts.rb`.
 
 ## Release
 
-1. Merge the reviewed PR after CI is green on its exact head, then create and
-   push the next unused **v0.0.X** tag on a main commit.
-2. The tag workflow builds all six targets and publishes the GitHub release
-   with its own `GITHUB_TOKEN`; no registry token is needed.
+1. Ship the release changes to main with `ts-ship`, then create and push the next unused **sdk/go/v0.0.X** tag on a green main commit.
+2. The tag workflow builds all six targets with GoReleaser's credential-free snapshot packaging, using the tagged package version, then publishes the assets under the original prefixed tag with `gh release`. This uses the workflow's `GITHUB_TOKEN` and requires no paid GoReleaser monorepo support.
 3. Confirm the release assets, checksums and installed `ts --version`.
 
-PRs run `goreleaser release --snapshot --clean` without credentials, validate
-archives/install behavior with `python3 scripts/test-release.py`, and retain
-packages for three days. This does not run or download TerraBase.
+Credential-free package checks run `goreleaser release --snapshot --clean`, validate archives/install behavior with `python3 scripts/test-release.py`, and retain packages for three days. This does not run or download TerraBase. For release packaging set `TS_GO_VERSION` to the numeric `0.0.X` version; the default snapshot version stays `0.0.0-dev`.
 
 ## Homebrew
 

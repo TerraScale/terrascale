@@ -9,7 +9,7 @@ publish a package.
 The repository owner installs the approved nuget.org API key using this command:
 
 ```sh
-gh secret set NUGET_API_KEY --repo TerraScale/ts-dotnet
+gh secret set NUGET_API_KEY --repo TerraScale/terrascale
 ```
 
 Paste the key only into gh's hidden prompt. Do not pass `--body`, put the key in
@@ -19,23 +19,24 @@ GitHub Packages continues to use the workflow's `GITHUB_TOKEN`.
 
 ## Prepare without credentials
 
-Run the release workflow on a reviewed branch or commit's existing ref:
+Run the release workflow from the monorepo:
 
 ```sh
-gh workflow run release.yml --ref release-nuget-tags
+gh workflow run sdk-dotnet-release.yml --repo TerraScale/terrascale --ref main
 ```
 
-After merge, use `--ref main`. Manual dispatch runs only `package`: version
+Use `--ref main` after the change ships. Manual dispatch runs only `package`: version
 validation, locked release build/tests and reproducible packaging. It uploads
 the qualified `.nupkg` and `provenance.json` as the `package` artifact, with no
 registry writes, nuget.org secret or GitHub Packages access. An Actions token
 is still needed to dispatch and download workflow artifacts. CI's existing
 `test` check also qualifies the package, including workflow-only changes.
 
-From a clean committed checkout, the same package qualification runs locally:
+From a clean committed checkout, run qualification on a dev host with `ts-heavy-any`; commands within that job use `sdk/dotnet` as their working directory:
 
 ```sh
-nice -n 19 python3 scripts/pack-reproducible.py /tmp/ts-dotnet-qualified-package
+cd sdk/dotnet
+python3 scripts/pack-reproducible.py /tmp/ts-dotnet-qualified-package
 ```
 
 Qualification compares two clean locked builds, verifies packed contract bytes
@@ -45,11 +46,11 @@ preparation path publishes anything or proves live-service compatibility.
 
 ## Tagged release behavior
 
-After the owner approves publishing, merge a version bump to the next unused
-`0.0.X` and tag its merged `main` commit using the existing release process.
+Ship a version bump to the next unused
+`0.0.X` and tag its shipped `main` commit as `sdk/dotnet/v0.0.X`.
 Do not reuse a published version.
 
-1. `package` requires the tag to match the package version and its commit to
+1. `package` requires the `sdk/dotnet/v0.0.X` tag to match the package version and its commit to
    belong to `origin/main`, runs release checks and qualifies one artifact.
 2. `github-packages` verifies its SHA-256 before publishing those bytes.
 3. `restore` downloads that version into fresh caches, verifies the same hash
