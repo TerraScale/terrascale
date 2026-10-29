@@ -1,0 +1,107 @@
+name: Landing
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'landing-site/**'
+      - '.github/workflows/landing-*.yml'
+  pull_request:
+    paths:
+      - 'landing-site/**'
+      - '.github/workflows/landing-*.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: landing-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      # Report mode: hits are uploaded for review and never fail the build.
+      - name: Scan for legacy references
+        run: python3 scripts/legacy-scan/scan.py --repo ts-landing --root landing-site --output legacy-hits.md
+      - name: Upload legacy hits
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: landing-legacy-hits
+          path: legacy-hits.md
+          if-no-files-found: error
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: landing-site/.node-version
+          cache: npm
+          cache-dependency-path: landing-site/package-lock.json
+      - name: Install dependencies
+        working-directory: landing-site
+        run: npm ci --no-audit --no-fund
+      # Runs the scripts/*.test.mjs suites, prerenders the site and validates the static build.
+      - name: Run tests and validate the static build
+        working-directory: landing-site
+        run: npm run build
+      - name: Upload the verified static build
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: landing-build
+          path: landing-site/build
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    # Only main with successful shipping proof deploys.
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    concurrency:
+      group: landing-deploy
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Require green Fast proof for this exact main commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/status" > "$RUNNER_TEMP/landing-status.json"
+          jq -e '.state == "success" and any(.statuses[]; .context == "ts-ship/landing" and .state == "success" and (.creator.login | ascii_downcase) == "mariogk")' "$RUNNER_TEMP/landing-status.json"
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: landing-site/.node-version
+          cache: npm
+          cache-dependency-path: landing-site/package-lock.json
+      # Installs the pinned wrangler only; the artifact below is the exact build that passed the test job.
+      - name: Install dependencies
+        working-directory: landing-site
+        run: npm ci --no-audit --no-fund
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: landing-build
+          path: landing-site/build
+      # Keeps the production Worker (ts-landing, static assets on terrascale.tech and www) on the same wrangler config.
+      - name: Deploy static assets
+        working-directory: landing-site
+        run: npx wrangler deploy
+      # One check, no retry loop: the build-info revision must equal this commit.
+      - name: Prove the live revision
+        run: |
+          set -euo pipefail
+          live=$(curl -fsS https://terrascale.tech/build-info.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["revision"])')
+          test "$live" = "$GITHUB_SHA"
+          echo "live revision $live matches $GITHUB_SHA"
