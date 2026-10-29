@@ -26,5 +26,7 @@ TerraBase is a leaderless, multi-region document database. Current contracts and
 
 ## Build and tests
 
+- TerraBase Fast must finish in at most 5 minutes; keep it there.
+
 - Build: `make terrabase-build`. Fast pre-push: `make terrabase-test-fast`. Slow: `make terrabase-test-slow`. Additional checks: `make terrabase-analyzer-check`, `make terrabase-check`.
 - Fast/Slow suites live in `tests/TerraBase.Fast` and `tests/TerraBase.Slow`. Drive the actual app over real listeners. `tests/TerraBase.TestHarness/TerraBaseTestServer.cs` starts top-level Program through `WebApplicationFactory<Program>.UseKestrel()` with an owned data directory.
