@@ -4,9 +4,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using TerraScale.Dashboard.Platform.Identity;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.E2E

@@ -3,7 +3,6 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Playwright;
-using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing
 {

@@ -1,7 +1,5 @@
 using System.Text.Json;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Backups;
-using TerraScale.Dashboard.Features.Databases;
 using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.E2E

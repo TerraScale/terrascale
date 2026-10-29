@@ -6,8 +6,6 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.WebUtilities;
-using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.E2E.Demo
 {
@@ -304,7 +302,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                                 requests = new Dictionary<string, long> { ["GET"] = scenario == "negative" ? -3 : scenario == "zero" ? 0 : 10 },
                                 operations = new Dictionary<string, long> { ["document_read"] = scenario == "zero" ? 0 : 4 },
                                 errors = scenario == "zero" ? 0 : 1,
-                                latency = new { p50Ms = scenario == "zero" || scenario == "missing-latency" ? (double?)null : 0.5, p95Ms = scenario == "zero" || scenario == "missing-latency" ? (double?)null : 1.75, p99Ms = scenario == "zero" || scenario == "missing-latency" ? (double?)null : 9d },
+                                latency = new { p50Ms = scenario is "zero" or "missing-latency" ? (double?)null : 0.5, p95Ms = scenario is "zero" or "missing-latency" ? (double?)null : 1.75, p99Ms = scenario is "zero" or "missing-latency" ? (double?)null : 9d },
                                 storageBytes = scenario == "missing-latency" ? (long?)null : 4096,
                                 clientBandwidth = new { bytesSent = 6L, bytesReceived = 7L },
                                 replicationBandwidth = new { bytesSent = scenario == "received-only" ? 0L : 8L, bytesReceived = 9L }

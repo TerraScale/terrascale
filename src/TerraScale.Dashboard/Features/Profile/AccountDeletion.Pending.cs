@@ -66,7 +66,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     "Account closure is still pending. Completion requires project deletion confirmation from every storage region that holds your data. If a required region is unavailable, confirmation waits for recovery. This status does not identify a specific waiting step or region.",
                     attempt, 202);
             }
-            catch (AccountAccessException error) when (error.StatusCode is >= 400 and < 500 && error.StatusCode is not (408 or 429))
+            catch (AccountAccessException error) when (error.StatusCode is >= 400 and < 500 and not (408 or 429))
             {
                 return PendingPage(http, "Deletion status needs attention",
                     "The saved receipt could not confirm account closure. Automatic checks have stopped. Your receipt has been retained. Sign in to the same account and review deletion from your profile; do not treat this error as completion.", attempt, error.StatusCode, attention: true);

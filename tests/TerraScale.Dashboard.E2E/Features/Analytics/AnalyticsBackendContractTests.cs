@@ -2,10 +2,8 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Features.Databases;
 
 namespace TerraScale.Dashboard.E2E.Features.Analytics
 {

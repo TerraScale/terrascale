@@ -1,7 +1,5 @@
 using System.Net;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Common.Accounts;
-using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Accounts
 {
