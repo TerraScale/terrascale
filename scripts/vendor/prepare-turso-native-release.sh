@@ -26,7 +26,7 @@ for rid in linux-x64 linux-arm64; do
   cp "$library" "$output/terrascale-turso-$rid.so"
 done
 {
-  printf 'release=turso-native-v0.8.2-fts-contract1-aegis-wal1-20261029-r4\n'
+  printf 'release=turso-native-v0.8.2-fts-contract1-aegis-wal1-synccdc1-20261029\n'
   printf 'repository_commit=%s\n' "$(git rev-parse HEAD)"
   printf 'workflow_run=%s\n' "${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-TerraScale/terrascale}/actions/runs/${GITHUB_RUN_ID:-not-a-CI-run}"
   printf 'Source, patches, Cargo.lock, recipe, compiler, ABI exports, ELF dependencies and successful smoke logs accompany each architecture.\n'
