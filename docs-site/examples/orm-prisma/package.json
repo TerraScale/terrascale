@@ -1,0 +1,22 @@
+{
+  "name": "terrascale-orm-prisma",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "prisma generate",
+    "diff": "prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script",
+    "migrate": "node migrate.mjs",
+    "start": "node app.ts"
+  },
+  "engines": {
+    "node": "24.x"
+  },
+  "dependencies": {
+    "@prisma/adapter-libsql": "7.10.1",
+    "@prisma/client": "7.10.1",
+    "@libsql/client": "0.18.0"
+  },
+  "devDependencies": {
+    "prisma": "7.10.1"
+  }
+}
