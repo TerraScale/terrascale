@@ -341,14 +341,12 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
     internal static async Task RunCustomerSdkAsync(string root, DatabaseSdkScenario scenario, HttpClient controls, TestAuth auth,
         (string Email, string Password) account, string organizationId, string projectId, string databaseName, string issuedSecret)
     {
-        using (var provenance = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "vendor", "dotnet", "provenance.json"))))
-        {
-            var pinned = provenance.RootElement.GetProperty("version").GetString()!;
-            var loaded = typeof(TerraBaseDocumentsClient).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion;
-            Check(loaded == pinned || loaded.StartsWith(pinned + "+", StringComparison.Ordinal), "Use the exact official .NET SDK pinned by the checkout: " + loaded);
-            Check(provenance.RootElement.GetProperty("assemblySha256ByFramework").TryGetProperty("net" + Environment.Version.ToString(2), out _),
-                "Run customer SDK qualification on the pinned SDK's supported .NET runtime");
-        }
+        var sdkProject = System.Xml.Linq.XDocument.Load(Path.Combine(root, "sdk", "dotnet", "src", "TerraScale.DotNet", "TerraScale.DotNet.csproj"));
+        var pinned = sdkProject.Descendants("Version").Single().Value;
+        var loaded = typeof(TerraBaseDocumentsClient).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion;
+        Check(loaded == pinned || loaded.StartsWith(pinned + "+", StringComparison.Ordinal), "Use the official .NET SDK from the same monorepo revision: " + loaded);
+        Check(sdkProject.Descendants("TargetFrameworks").Any(frameworks => frameworks.Value.Split(';').Contains("net" + Environment.Version.ToString(2), StringComparer.Ordinal)),
+            "Run customer SDK qualification on a supported .NET runtime");
         Check(TerraScaleIds.IsValid(projectId), "Use the canonical ULID project returned by the current producer, without translating it");
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(5));
         var rawTransport = new CustomerTransport(scenario.ProviderOrigin);
