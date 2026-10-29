@@ -7,6 +7,8 @@ namespace TerraScale.Dashboard.Features.Home
     public sealed record ChartColumn(string X, string Y, string Left, string Width, string Header, string Value, string TipX, string TipWidth);
     public sealed record OperationChart(string Label, string Path, string Area, IReadOnlyList<ChartGrid> Grid, IReadOnlyList<ChartTick> Ticks, IReadOnlyList<ChartColumn> Columns, string Name = "Operations")
     {
+        private static readonly double[] GridFactors = [1d, 2d, 5d, 10d];
+
         public static OperationChart For(HomePage page)
         {
             var rangeLabel = page.Range switch { "1h" => "Current UTC hour", "24h" => "Last 24 hours", "30d" => "Last 30 days", _ => "Last 7 days" };
@@ -25,7 +27,7 @@ namespace TerraScale.Dashboard.Features.Home
                 magnitude *= 10;
             }
 
-            var scale = maximum == 0 ? 1 : new[] { 1d, 2d, 5d, 10d }.Select(factor => factor * magnitude).First(value => value >= maximum);
+            var scale = maximum == 0 ? 1 : GridFactors.Select(factor => factor * magnitude).First(value => value >= maximum);
             var coordinates = values.Select((value, index) => (X: 48 + 660d * index / Math.Max(1, values.Length - 1), Y: 14 + 134 * (1 - value / scale))).ToArray();
             var grid = Enumerable.Range(0, 5).Select(step => new ChartGrid(Coordinate(14 + 134d * step / 4), maximum > 0 ? Compact(scale * (4 - step) / 4) : step == 4 ? "0" : "")).ToArray();
             var seen = new HashSet<int>();
