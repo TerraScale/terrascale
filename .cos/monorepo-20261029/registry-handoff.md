@@ -54,3 +54,13 @@ ts-heavy-any python3 scripts/sdk/qualify-release.py rust --repo terrascale --bra
 ```
 
 Create only the relevant `sdk/<lang>/v0.0.X` tag on the qualified SHA and push it. No source repository credentials or URLs are needed after cutover.
+
+## Cloudflare: retain the existing docs deployment credential
+
+The old `ts-docs` scoped token has been exported as RSA-OAEP ciphertext on delta, verified without displaying plaintext, and preserved outside git. No new credential or permissions are needed. The workspace rule requires the operator to install credentials. Run this exact command on **delta**:
+
+```sh
+bash /home/mariogk/Projects/TerraScale/.cos/monorepo-20261029/cloudflare-ci-transfer/install.sh /home/mariogk/Projects/TerraScale/.cos/monorepo-20261029/cloudflare-ci-transfer
+```
+
+It installs the existing token into `TerraScale/terrascale`'s `CLOUDFLARE_API_TOKEN` Actions secret through stdin, then copies the existing nonsecret account ID. The token is never printed. Delete the private transfer directory after the monorepo `docs-deploy.yml` succeeds. The old repository must remain until docs is live from the monorepo and this credential handoff is verified.
