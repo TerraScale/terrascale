@@ -151,7 +151,11 @@ internal static partial class PostgresStatements
     private static PgOne? Savepoint(List<Token> tokens, string text)
     {
         var words = tokens.Where(token => token is not Whitespace).ToArray();
-        bool At(int i, string value) => i < words.Length && words[i] is Word { QuoteStyle: null } word && Is(word, value);
+        bool At(int i, string value)
+        {
+            return i < words.Length && words[i] is Word { QuoteStyle: null } word && Is(word, value);
+        }
+
         var i = 1;
         PgKind kind;
         if (At(0, "SAVEPOINT"))

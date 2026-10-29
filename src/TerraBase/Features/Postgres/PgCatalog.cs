@@ -50,7 +50,8 @@ internal static partial class PgCatalog
 
     private static string[] Tokens(string sql) => [.. new Tokenizer().Tokenize(sql, new PostgreSqlDialect())
         .Where(token => token is not Whitespace)
-        .Select(token => token is Word { QuoteStyle: null } word ? word.Value.ToUpperInvariant() : token.ToString())];
+        .Select(token => token is Word { QuoteStyle: null } word ? word.Value.ToUpperInvariant() : token.ToString()
+            ?? throw new InvalidOperationException("a PostgreSQL token did not render"))];
 
     // Built-in base types a driver may name; "unknown" is a pseudo-type Npgsql also loads.
     private static readonly (int Oid, string Name)[] Types =
