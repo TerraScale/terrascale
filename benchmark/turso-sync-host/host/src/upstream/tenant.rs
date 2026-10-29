@@ -565,6 +565,7 @@ impl Tenant {
         }
         fs::rename(staged, self.data())?;
         revision::sync_dir(&self.dir)?;
+        st.manifest.db_file = None;
         self.attach(st)
     }
 
