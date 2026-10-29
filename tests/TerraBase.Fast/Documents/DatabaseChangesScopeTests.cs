@@ -1,6 +1,5 @@
 using System.Net;
 using System.Text.Json;
-using TerraBase.Engine.Lattices;
 using TerraBase.Features.Documents;
 
 namespace TerraBase.Fast.Documents;
