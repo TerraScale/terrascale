@@ -126,6 +126,7 @@ internal sealed partial class EngineManagementService
                     }
                 }
 
+                _ = await shapeCleanup.ActivateDatabaseAsync(record.Database, time.GetUtcNow().ToUnixTimeMilliseconds(), cancellationToken).ConfigureAwait(false);
                 var absent = await ReadAsync<bool>(transaction => DatabasePurge.AreActiveCopiesAbsentAsync(transaction, record, cancellationToken),
                     static _ => false, cancellationToken).ConfigureAwait(false);
                 if (!absent || record.BackupVerifiedAt is null)

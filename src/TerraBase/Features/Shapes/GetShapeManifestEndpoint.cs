@@ -112,7 +112,16 @@ internal sealed class GetShapeManifestEndpoint(
 
         // A mirrored object exists only for a sealed offset of this handle, and the listing rechecks the retention floor, so a
         // listed offset needs no payload read: T1 readers cost the origin no storage read once the mirror holds the object.
-        var mirrored = await mirror.ManifestAsync(request.Scope.Database, lineage.ShapeId, lineage.Handle, request.OffsetText, 0, cancellationToken);
+        ShapeMirrorManifest mirrored;
+        try
+        {
+            mirrored = await mirror.ManifestAsync(request.Scope.Database, lineage.ShapeId, lineage.Handle, request.OffsetText, 0, cancellationToken);
+        }
+        catch (ShapeCleanupSaturatedException error)
+        {
+            return ErrorResponse.From(new Unavailable(error.Message));
+        }
+
         if (mirrored.Objects.Count > 0)
         {
             return TypedResults.Json(mirrored, ShapeMirrorJsonContext.Default.ShapeMirrorManifest);
@@ -148,8 +157,15 @@ internal sealed class GetShapeManifestEndpoint(
         }
 
         // The read may have adopted the object's metadata in the meantime.
-        var manifest = await mirror.ManifestAsync(request.Scope.Database, lineage.ShapeId, lineage.Handle, request.OffsetText, 0, cancellationToken);
-        return TypedResults.Json(manifest, ShapeMirrorJsonContext.Default.ShapeMirrorManifest);
+        try
+        {
+            var manifest = await mirror.ManifestAsync(request.Scope.Database, lineage.ShapeId, lineage.Handle, request.OffsetText, 0, cancellationToken);
+            return TypedResults.Json(manifest, ShapeMirrorJsonContext.Default.ShapeMirrorManifest);
+        }
+        catch (ShapeCleanupSaturatedException error)
+        {
+            return ErrorResponse.From(new Unavailable(error.Message));
+        }
     }
 
     private Microsoft.AspNetCore.Http.HttpResults.JsonHttpResult<ShapeErrorBody> Refetch(ShapeLineage lineage, string message)

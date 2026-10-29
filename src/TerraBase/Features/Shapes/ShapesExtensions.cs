@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Microsoft.OpenApi;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Engine.Cluster;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
@@ -119,17 +120,23 @@ public static class ShapesExtensions
             .AddSingleton<IShapeChunks>(provider => provider.GetRequiredService<ShapeService>())
             .AddSingleton<IShapeLiveTail>(provider => provider.GetRequiredService<ShapeService>())
             .AddSingleton<IShapeResume>(provider => provider.GetRequiredService<ShapeService>())
+            .AddSingleton(provider => provider.GetService<ShapeStorageSettings>() is { } settings
+                ? new ShapeObjectStore(settings, provider.GetRequiredService<IHttpClientFactory>(), provider.GetRequiredService<TimeProvider>())
+                : null!)
+            .AddSingleton<IShapePurgeBudget>(provider => new ShapePurgeBudget(provider.GetRequiredService<TerraBaseOptions>().Nats,
+                async cancellationToken => provider.GetService<IMemberDirectory>() is { } members
+                    ? (await members.ListAsync(cancellationToken).ConfigureAwait(false)).Select(member => member.Region).Distinct(StringComparer.Ordinal).Count()
+                    : 1,
+                provider.GetRequiredService<TimeProvider>()))
             .AddSingleton<ShapeMirror>(provider => new ShapeMirror(provider.GetRequiredService<IStorageEngine>(),
                 provider.GetRequiredService<IShapeStorage>(), provider.GetRequiredService<IShapeMetrics>(), provider.GetRequiredService<IMemoryBudget>(), provider.GetRequiredService<TimeProvider>(),
-                () => provider.GetRequiredService<IShapeCrypto>(),
-                provider.GetService<ShapeStorageSettings>() is { } settings ? new ShapeObjectStore(settings,
-                    provider.GetRequiredService<IHttpClientFactory>(), provider.GetRequiredService<TimeProvider>(),
-                    provider.GetRequiredService<IShapeCdnPurge>()) : null,
-                provider.GetRequiredService<ILogger<ShapeMirror>>()))
+                () => provider.GetRequiredService<IShapeCrypto>(), provider.GetService<ShapeObjectStore>(), provider.GetRequiredService<IShapeCleanupStore>(),
+                () => provider.GetRequiredService<IShapeCleanup>(), provider.GetRequiredService<ILogger<ShapeMirror>>()))
             .AddSingleton<ShapeCdnPurge>(provider => new ShapeCdnPurge(provider.GetRequiredService<IHttpClientFactory>(),
-                provider.GetService<ShapeStorageSettings>()?.CloudflareApiToken, provider.GetRequiredService<TimeProvider>(),
-                provider.GetRequiredService<IMeterFactory>(), provider.GetRequiredService<ILogger<ShapeCdnPurge>>()))
-            .AddSingleton<IShapeCdnPurge>(provider => provider.GetRequiredService<ShapeCdnPurge>())
+                provider.GetService<ShapeStorageSettings>()?.CloudflareApiToken, provider.GetService<ShapeObjectStore>(),
+                provider.GetRequiredService<IShapeCleanupStore>(), provider.GetRequiredService<IShapePurgeBudget>(), provider.GetRequiredService<IMemoryBudget>(),
+                provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<IMeterFactory>(), provider.GetRequiredService<ILogger<ShapeCdnPurge>>()))
+            .AddSingleton<IShapeCleanup>(provider => provider.GetRequiredService<ShapeCdnPurge>())
             .AddHostedService(provider => provider.GetRequiredService<ShapeCdnPurge>())
             .AddHostedService(provider => new ShapeCdnAnalytics(provider.GetRequiredService<IHttpClientFactory>(),
                 provider.GetService<ShapeStorageSettings>()?.Cdn?.Host,

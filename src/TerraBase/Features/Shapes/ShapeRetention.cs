@@ -66,9 +66,18 @@ internal sealed class ShapeRetention(TimeProvider time, IShapeStorage storage,
     public async ValueTask<int> DropHandleAsync(IDatabaseStore store, string handle, CancellationToken cancellationToken)
     {
         Validate(store, handle);
-        await using var transaction = await storage.BeginTransactionAsync(store, write: true, cancellationToken).ConfigureAwait(false);
-        var deleted = await Storage(transaction).DropShapeAsync(handle, BatchRows, BatchBytes, cancellationToken).ConfigureAwait(false);
-        _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        int deleted;
+        await using (var transaction = await storage.BeginTransactionAsync(store, write: true, cancellationToken).ConfigureAwait(false))
+        {
+            deleted = await Storage(transaction).DropShapeAsync(handle, BatchRows, BatchBytes, cancellationToken).ConfigureAwait(false);
+            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        if (onTrimmed is not null)
+        {
+            await onTrimmed(store, handle, long.MaxValue, cancellationToken).ConfigureAwait(false);
+        }
+
         return deleted;
     }
 
