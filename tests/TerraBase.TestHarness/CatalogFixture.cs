@@ -28,7 +28,18 @@ internal static class CatalogFixture
             if (existing is ResolvedProjectDatabase registered && registered.Database.OrganizationId == database.OrganizationId
                 && registered.Database.DatabaseId == database.DatabaseId)
             {
-                return true;
+                var region = api.Server.Services.GetRequiredService<TerraBase.Configuration.TerraBaseOptions>().Region;
+                if (!registered.Placement.Includes(region))
+                {
+                    return true;
+                }
+
+                return await directory.EnsureLocalDatabaseAsync(registered.Database, linked.Token) switch
+                {
+                    Done => true,
+                    Unavailable => false,
+                    NotFound => throw new InvalidOperationException("The fixture database registration disappeared"),
+                };
             }
 
             var result = await directory.AdoptDatabaseAsync(database, name,

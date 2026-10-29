@@ -16,12 +16,38 @@ namespace TerraScale.Authentication.Fast.Store;
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class TerraBaseSdkContractTests(TerraBaseFixture fixture)
 {
+    private static readonly HashSet<string> RetiredByPivotE2 = new(StringComparer.Ordinal)
+    {
+        "renameOrganization",
+        "getCurrentOrganization",
+        "setCurrentOrganization",
+        "renameProject",
+        "listMembers",
+        "changeMemberRole",
+        "removeMember",
+        "addMember",
+        "leaveOrganization",
+        "createInvitation",
+        "listInvitations",
+        "revokeInvitation",
+        "acceptInvitation",
+        "getOwnershipTransfer",
+        "startOwnershipTransfer",
+        "confirmOwnershipTransfer",
+        "cancelOwnershipTransfer",
+        "getAuditRetention",
+        "setAuditRetention",
+        "listAuditEvents",
+    };
+
     [Test]
     public async Task TerraBase_serves_every_route_the_sdk_calls()
     {
         using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "contracts", "terrabase", "routes.json")));
         var operations = manifest.RootElement.GetProperty("operations").EnumerateArray().ToList();
         await Assert.That(operations.Count).IsGreaterThan(0);
+        var manifestNames = operations.Select(operation => operation.GetProperty("operation").GetString()!).ToHashSet(StringComparer.Ordinal);
+        await Assert.That(RetiredByPivotE2.Except(manifestNames)).IsEmpty();
         var missing = new List<string>();
         foreach (var operation in operations)
         {
@@ -40,7 +66,12 @@ public sealed class TerraBaseSdkContractTests(TerraBaseFixture fixture)
             }
 
             using var response = await (internalRoute ? fixture.Server.Http : fixture.Server.PublicHttp).SendAsync(request);
-            if (response.StatusCode is HttpStatusCode.MethodNotAllowed
+            if (RetiredByPivotE2.Contains(operation.GetProperty("operation").GetString()!))
+            {
+                await Assert.That(response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed).IsTrue()
+                    .Because(operation.GetProperty("operation").GetString()!);
+            }
+            else if (response.StatusCode is HttpStatusCode.MethodNotAllowed
                 || response.StatusCode is HttpStatusCode.NotFound
                 && (await response.Content.ReadAsStringAsync()) is var body && (body.Length == 0 || body.Contains("unknown_route", StringComparison.Ordinal)))
             {

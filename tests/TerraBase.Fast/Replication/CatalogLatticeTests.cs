@@ -6,7 +6,6 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
-using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Replication;
@@ -133,9 +132,10 @@ public sealed class CatalogLatticeTests
         var (organization, project, database) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
         await CatalogFixture.RegisterAsync(gru.Api, user, new TenantContext(organization, PlanTier.Hobby, project, database), "main", Sjc);
         var tenant = new TenantContext(organization, PlanTier.Hobby, project, database);
+        await Assert.That(File.Exists(gru.FileOf(tenant))).IsTrue();
 
         await Assert.That(await sjc.UntilAsync($"projects/{project}/databases", database, json => json is not null)).IsTrue();
-        await Assert.That(await sjc.Tenants.EnsureLocalDatabaseAsync(tenant, CancellationToken.None) is Done).IsTrue();
+        await CatalogFixture.RegisterAsync(sjc.Api, user, tenant, "main", ["gru"]);
         await Assert.That(File.Exists(sjc.FileOf(tenant))).IsTrue();
         var version = await gru.VersionAsync($"projects/{project}/databases", database);
         await CatalogFixture.RegisterAsync(gru.Api, user, tenant, "main", Sjc);

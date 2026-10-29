@@ -46,6 +46,7 @@ public sealed partial class DatabaseRenameRaceTests
             await AwaitPeersAsync(gru, peer);
             var first = await gru.CreateManagedDatabaseAsync(name);
             await UntilAsync(async () => await ReadCatalogAsync(peer, $"projects/{first.Project}/databases", first.Id) is not null);
+            peer.Issuer.RegisterProject(first.Project, first.Organization);
             return (new Regions(gru, peer, delivery), first);
         }
         catch
@@ -172,16 +173,6 @@ public sealed partial class DatabaseRenameRaceTests
         await ReadCatalogAsync(api, $"projects/{project}/database_names", name) == $"\"{id}\""
         && await ReadCatalogAsync(api, $"projects/{project}/databases", id) is { } record
         && JsonElement.Parse(record).GetProperty("name").GetString() == name;
-
-    private static async Task<int> EventsAsync(ManagementApi api, string organization, string action, string target)
-    {
-        var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
-        await using var read = await system.BeginTransactionAsync(write: false, CancellationToken.None);
-        var page = await read.ListAsync($"organizations/{organization}/audit", null, 100, 1024 * 1024, CancellationToken.None);
-        await Assert.That(page.HasMore).IsFalse();
-        return page.Documents.Count(document => JsonElement.Parse(Encoding.UTF8.GetString(document.Json.Span)) is var e
-            && Field(e, "action") == action && Field(e, "target") == target);
-    }
 
     // The management body of the database, read from api by ULID.
     private static async Task<JsonElement> BodyAsync(ManagementApi api, ManagedDatabaseRef database)
