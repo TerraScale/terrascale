@@ -5,16 +5,11 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { LOCALES } from './supportedLocales.mjs'
 import { ZERO_CONFIGURATION_ROUTE } from './routes.mjs'
-
-// Public docs reuse the committed dashboard tokens; see design-reference.md.
 const docsDir = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SITE = 'https://docs.terrascale.tech'
-// Pages marked noindex stay out of the sitemap too.
 const noindexPages = new Set<string>()
 
 const cleanPath = (path: string) => path.replace(/(^|\/)index\.html$/, '$1').replace(/\.html$/, '')
-
-// The Worker serves clean URLs: /guides/mcp and /getting-started/.
 function pageUrl(relativePath: string): string {
   return `${SITE}/${relativePath.replace(/(^|\/)index\.md$/, '$1').replace(/\.md$/, '')}`
 }
@@ -32,7 +27,7 @@ function titleOf(localePrefix: string, link: string): string {
       const heading = text.match(/^# (.+)$/m)
       if (heading) return heading[1]
     } catch {
-      /* missing file: fall through */
+
     }
   }
   return rel.split('/').pop() || link
@@ -40,9 +35,9 @@ function titleOf(localePrefix: string, link: string): string {
 
 const GROUPS = [
   { header: 'quickstart', items: ['/getting-started/', '/getting-started/javascript', '/getting-started/csharp', '/getting-started/go', '/getting-started/python'] },
-  { header: 'sdks', items: ['/guides/sdks', '/guides/authentication', '/guides/sensitive-actions', '/guides/authentication-capabilities', '/guides/end-user-authentication', '/guides/queries', '/guides/sql-http', '/guides/postgres-clients', '/guides/libsql-clients', '/guides/orm-drizzle', '/guides/orm-prisma', '/guides/orm-sqlalchemy', '/guides/errors'] },
-  { header: 'guides', items: ['/guides/dashboard', '/guides/change-sign-in-email', '/guides/organization-access', '/guides/single-sign-on', '/guides/mcp', '/guides/indexes', '/guides/schema-validation', '/guides/ttl', '/guides/full-text-search', '/guides/vector-search', '/guides/transactions', '/guides/realtime', '/guides/functions', '/guides/file-storage', '/guides/monitoring', '/guides/backups-and-restore', '/guides/selective-recovery', '/guides/whole-database-recovery', '/guides/export', '/guides/branches', '/guides/rename-database', '/guides/migrations', '/guides/import', '/guides/import-postgresql', '/guides/import-turso', '/guides/import-ndjson', ZERO_CONFIGURATION_ROUTE] },
-  { header: 'concepts', items: ['/concepts/replication', '/concepts/sync', '/concepts/sql'] },
+  { header: 'sdks', items: ['/guides/sdks', '/guides/authentication', '/guides/sensitive-actions', '/guides/authentication-capabilities', '/guides/end-user-authentication', '/guides/sql-http', '/guides/postgres-clients', '/guides/orm-drizzle', '/guides/orm-prisma', '/guides/orm-sqlalchemy', '/guides/errors'] },
+  { header: 'guides', items: ['/guides/dashboard', '/guides/change-sign-in-email', '/guides/organization-access', '/guides/single-sign-on', '/guides/mcp', '/guides/indexes', '/guides/full-text-search', '/guides/vector-search', '/guides/functions', '/guides/file-storage', '/guides/monitoring', '/guides/backups-and-restore', '/guides/whole-database-recovery', '/guides/branches', '/guides/rename-database', '/guides/migrations', '/guides/import', '/guides/import-postgresql', ZERO_CONFIGURATION_ROUTE] },
+  { header: 'concepts', items: ['/concepts/sql'] },
   { header: 'pricingLimits', items: ['/pricing/', '/limits', '/legal/sla', '/legal/support', '/legal/data-deletion', '/changelog'] },
 ]
 
@@ -551,12 +546,11 @@ for (const l of LOCALES) {
 export default defineConfig({
   title: 'TerraScale',
   description:
-    'TerraScale developer documentation: TerraBase SDK installation, document CRUD, queries, authentication and service limits.',
+    'TerraScale developer documentation: SQL, authentication and service limits.',
   appearance: 'dark',
   vite: {
     build: {
       rollupOptions: {
-        // Base64 hashes can resemble internal issue IDs and fail the public audit.
         output: { hashCharacters: 'hex' },
       },
     },
@@ -564,7 +558,6 @@ export default defineConfig({
       name: 'workers-module-preload',
       transform(source, id) {
         if (!id.endsWith('/vitepress/dist/client/app/composables/preFetch.js')) return
-        // Workers reject speculative prefetch requests; module preloads retain eager route loading.
         const prefetch = 'link.rel = `prefetch`'
         if (!source.includes(prefetch)) throw new Error('VitePress route preload source changed')
         return source.replace(prefetch, 'link.rel = `modulepreload`')

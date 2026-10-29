@@ -33,15 +33,14 @@ The response holds `access_token` (a JWT), `token_type: Bearer`, `expires_in` (a
 | --- | --- |
 | Issuer and token endpoint | `https://auth.terrascale.tech/terrascale`, `…/oauth/token` |
 | Audience | `https://api.terrascale.tech` |
-| Scopes | `documents:read`, `documents:write`, `databases:read`, `databases:write` |
 
-A key limited to one database works only for that database. **Read and write** keys carry `documents:read documents:write`.
+A key limited to one database works only for that database. The scopes that gate SQL access are being updated; the access token's `scope` field lists the scopes it grants.
 
 ## Key expiry and IP allowlists
 
-**Expiry.** Choose when a key expires when you create it: 30 days, 90 days, 365 days, or never. An expired key fails the token exchange with `401` and error `invalid_client`. The key and all access tokens issued from it are refused within **2 seconds** of expiry in every region. Running requests, change streams and open Postgres sessions are cut off within **3 seconds**.
+**Expiry.** Choose when a key expires when you create it: 30 days, 90 days, 365 days, or never. An expired key fails the token exchange with `401` and error `invalid_client`. The key and all access tokens issued from it are refused within **2 seconds** of expiry in every region. Running requests and open sessions are cut off within **3 seconds**.
 
-**IP allowlists.** Limit a key and its project to client networks. Each list takes up to 32 CIDR ranges, IPv4 or IPv6, such as `203.0.113.0/24` or `2001:db8::/32`. A request is allowed only when the client IP is inside the key's list and inside the project's list. Set a list to empty to allow any address. TerraBase answers a request from outside either list with `403` and this body, in every region and on the Postgres wire protocol:
+**IP allowlists.** Limit a key and its project to client networks. Each list takes up to 32 CIDR ranges, IPv4 or IPv6, such as `203.0.113.0/24` or `2001:db8::/32`. A request is allowed only when the client IP is inside the key's list and inside the project's list. Set a list to empty to allow any address. TerraBase answers a request from outside either list with `403` and this body, in every region:
 
 ```json
 {"error":{"code":"ip_not_allowed"}}
@@ -51,11 +50,9 @@ Changes to a key's or a project's allowlist apply within 60 seconds. Keep the al
 
 ## Revocation and rotation
 
-Revoking an API key stops the key and every access token issued from it on all TerraBase transports in every region within **2 seconds** of the revoke being acknowledged. This covers documents, HTTP SQL, libSQL and Postgres. Running requests, change streams and open connections (including idle or busy Postgres sessions) are cut off within **3 seconds**. You do not need to wait for issued tokens to expire.
+Revoking an API key stops the key and every access token issued from it on every transport in every region within **2 seconds** of the revoke being acknowledged. Running requests and open connections are cut off within **3 seconds**. You do not need to wait for issued tokens to expire.
 
 Rotating with zero grace applies the same bounds to the old secret and its tokens. With a grace period, the old secret keeps working until the grace ends; the 2-second refusal and 3-second cutoff bounds start then.
-
-Postgres checks the key at connection startup and before every statement. Revocation or expiry closes the connection with FATAL SQLSTATE `28000` and a message starting `key_revoked:` or `key_expired:`; an open transaction rolls back. Authentication being temporarily unavailable produces FATAL `57P03` with `auth_unavailable:`. See [Postgres clients](/hi/guides/postgres-clients#sqlstate-codes).
 
 ## Two-factor authentication
 
@@ -71,23 +68,21 @@ Turning two-factor on or off signs you out of every other browser and the CLI. F
 
 ## Server applications
 
-Keep credentials in the application platform's secret store. Read them only on the server. Use a project/database scope and the minimum document permissions: reads need `documents:read`; writes need `documents:write`.
+Keep credentials in the application platform's secret store. Read them only on the server. Use a project and database scope with the minimum permissions the application needs.
 
-For JavaScript, pass `token` to `createTerraBaseV1Client`. For C#, pass `ApiKey` or an `AccessTokenProvider`, exclusively. The provider can supply a refreshed credential per request and must honor cancellation. Go uses `Config.Token`. Do not write a raw request wrapper or a private endpoint to bypass the SDK.
-
-A complete [server token provider](/examples/server-token-provider/README.txt) uses published `@terrascale/sdk@0.0.17` to exchange the explicit project grant, coalesce requests and renew before expiry. Download its [module](/examples/server-token-provider/server-client.mjs) and [pinned package manifest](/examples/server-token-provider/package.json); keep the key server-side. Data operations receive a current token per request; failed authorization never replays a mutation.
+Refresh the access token before it expires, and request a current token for each data operation. Do not write a raw request wrapper or a private endpoint to bypass your SDK. Failed authorization never replays a mutation.
 
 ## Browser applications
 
 Keep API keys on your server; never ship one to a browser. Have your server exchange the key and call TerraBase, or hand the browser only data your server has already authorized.
 
-The old Next.js starter's unpublished dependency and credential exchange are not the current quickstart. Do not put a secret in `NEXT_PUBLIC_*`, `VITE_*`, local storage, a shared URL or a client bundle.
+Do not put a secret in `NEXT_PUBLIC_*`, `VITE_*`, local storage, a shared URL or a client bundle.
 
 ## Token validation
 
 The API checks every token's signature, issuer, audience, expiry and scopes. An SDK only checks that a token is well formed, so a token that looks valid can still answer `401` or `403`.
 
-TerraScale uses TerraBase through the same SDK boundary as customer applications. Identity and dashboard data remain isolated from customer application databases. SDK examples must not inspect platform-owned data or offer privileged exploration flows.
+Identity and dashboard data remain isolated from customer application databases.
 
 ## Failed authorization
 
@@ -99,6 +94,6 @@ TerraBase returns authorization errors as `{"error":{"code":"key_revoked"}}` (wi
 | `401 key_expired` | Permanent for this key and its tokens. Stop retrying and obtain a new key. |
 | `503 auth_unavailable` | Temporary: TerraBase cannot confirm that the key is valid and refuses access. Honor `Retry-After: 1`; retry only safe operations within a deadline. |
 
-For other `401` responses, check token expiry and exchange again only while the key is still valid. For `403`, check the resource scope and operation permissions. A `403 ip_not_allowed` means the client address is outside a key or project allowlist; see [Key expiry and IP allowlists](#key-expiry-and-ip-allowlists). Do not retry permission failures automatically. A cutoff can leave a request's outcome uncertain: [reconcile writes before replaying them](/hi/guides/errors). Never log the token, authorization header, raw server error body or a customer document while diagnosing the request.
+For other `401` responses, check token expiry and exchange again only while the key is still valid. For `403`, check the resource scope and operation permissions. A `403 ip_not_allowed` means the client address is outside a key or project allowlist; see [Key expiry and IP allowlists](#key-expiry-and-ip-allowlists). Do not retry permission failures automatically. A cutoff can leave a request's outcome uncertain: [reconcile writes before replaying them](/hi/guides/errors). Never log the token, authorization header, raw server error body or customer data while diagnosing the request.
 
 </div>

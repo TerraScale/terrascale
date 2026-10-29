@@ -117,7 +117,7 @@ api() { curl -sS --fail-with-body -H @<(printf 'Authorization: Bearer %s\n' "$TE
 api -G "https://auth.terrascale.tech/v1/$PROJECT/users/export" --data-urlencode limit=100 > page-1.json
 ```
 
-This is a creation-cutoff scan, **not a transaction snapshot**. Accounts created at or after the first page's cutoff are left out. Deleted accounts disappear, and each page reads profile fields when it is fetched. Replication lag and clock skew at account creation can omit accounts. For a reconciled copy, pause identity changes and let replication catch up before the first page, then compare with the admin user list.
+This is a creation-cutoff scan, **not a transaction snapshot**. Accounts created at or after the first page's cutoff are left out. Deleted accounts disappear, and each page reads profile fields when it is fetched. Concurrent identity changes and clock skew at account creation can omit accounts. For a reconciled copy, pause identity changes and let them settle before the first page, then compare with the admin user list.
 
 Each user has `id` (a stable ULID), `email`, `email_verified` (always `true`: possession was proven at account creation), `created_at`, `disabled` (disabled users are included) and `linked_providers` (`provider`, `client_id` and `subject`). Nothing else is exported: no password or hash, MFA or recovery material, session, token, key or application metadata. Importing the directory elsewhere carries over no credentials or sessions.
 
@@ -126,6 +126,5 @@ In CSV, `linked_providers` is a JSON array in one quoted cell. A cell that start
 ## Current limits
 
 - Verification, sign-in and password-reset emails use your project's name, logo, theme color and `email_message`. They are still sent from TerraScale's verified sender, with TerraScale's security copy and footer. Custom sender domains and your own mail credentials are not supported.
-- Project OIDC tokens do not authorize TerraBase requests. After validating app sign-in, your backend can use [server API-key access](/hi/guides/authentication), or follow the separate [scoped end-user data-token guide](/hi/getting-started/browser-backend-tokens) for browser access governed by collection rules. That guide has its own rollout and live-verification prerequisites; an OIDC access token cannot substitute for its data token. Keep the project key on your backend and derive user IDs and roles from trusted session/account data.
 
 </div>

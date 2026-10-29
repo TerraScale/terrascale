@@ -9,8 +9,6 @@ title: Getting started overview
 
 # Getting started
 
-Start with the [current quickstarts](/pt-br/getting-started/). The JavaScript SDK is published as `@terrascale/sdk@0.0.17`; the C# quickstart builds its package from source.
-
-The previous Next.js guide depended on an unpublished package and a different API contract. Use the current project-scoped Documents API examples for new integrations.
+Start with the [getting started guide](/pt-br/getting-started/) to create an account, a database and an API key. The SQL interface is described in [SQL](/pt-br/concepts/sql).
 
 </div>

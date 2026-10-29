@@ -23,7 +23,7 @@ ts migrate diff <db> [<base>]            # print the schema changes against base
 - `migrate new` adds the next numbered file.
 - `migrate up` applies each pending file in one transaction, and records it in the `ts_migrations` table.
 - `migrate status` lists the files and their states instead of applying them.
-- `migrate diff` prints the tables, collections and indexes that a database adds, drops or changes against `base`. By default, `base` is the database it branched from.
+- `migrate diff` prints the tables and indexes that a database adds, drops or changes against `base`. By default, `base` is the database it branched from.
 
 ## Migration files
 
@@ -66,7 +66,7 @@ The `ts_migrations` table has one row per applied file, with the columns `name` 
 
 ## Compare schemas
 
-`diff` compares tables with their columns and declared types, collections without a table, and indexes. It prints `--- <base>` and `+++ <db>`, then one line for each difference:
+`diff` compares tables with their columns and declared types, and indexes. It prints `--- <base>` and `+++ <db>`, then one line for each difference:
 
 ```text
 --- app
@@ -83,7 +83,7 @@ If nothing differs, it prints `<db> has the schema of <base>`. `diff` does not c
 
 ## Read tables
 
-`ts exec <db> <statement>` runs one SQL statement in its own transaction and prints each row as a JSON line, for example `ts exec app 'SELECT customer, total_cents FROM orders LIMIT 10'`. `ts sql` runs read-only queries over document collections.
+`ts exec <db> <statement>` runs one SQL statement in its own transaction and prints each row as a JSON line, for example `ts exec app 'SELECT customer, total_cents FROM orders LIMIT 10'`.
 
 ## Example workflow
 
@@ -99,10 +99,10 @@ ts migrate up app
 ts migrate status app
 ```
 
-The branch is an independent copy, so a bad migration does not reach `app`. For how to create one per pull request, see [preview databases](/fr/guides/branches#preview-databases-for-pull-requests).
+The branch is an independent copy, so a bad migration does not reach `app`. Branch-per-pull-request workflows are covered in [Branches](/fr/guides/branches), which is being updated for SQL.
 
 ## CI
 
-In CI, set `TERRASCALE_API_KEY` to an API key instead of running `ts auth login`. Database commands such as `db`, `exec`, `sql`, `migrate`, `collection` and `doc` then act as that key in its project. An organization key also needs `-project <id>`, for example `ts -project <id> migrate up app`. `auth`, `whoami`, `projects` and `keys` still need `ts auth login`.
+In CI, set `TERRASCALE_API_KEY` to an API key instead of running `ts auth login`. Database commands such as `db`, `exec` and `migrate` then act as that key in its project. An organization key also needs `-project <id>`, for example `ts -project <id> migrate up app`. `auth`, `whoami`, `projects` and `keys` still need `ts auth login`.
 
 </div>

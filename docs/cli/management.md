@@ -16,10 +16,7 @@ Check `ts help <command>` for your installed release. Select a project with `-pr
 | `backup window <db> [destination]`, `backup plan <db> <RFC3339> [destination]` | Destination is `platform` (default) or `customer`. Window reports available history; plan inspects metadata, not object integrity. |
 | `backup restore-at <db> <RFC3339> <new-db> [destination]` | Restores independently into a new database; requires permitted history and spare database capacity. |
 | `backup destination get/set/delete` | Project-wide customer destination metadata. Set reads one JSON object from stdin and requires `-yes`; delete requires consent. |
-| `-cursor <opaque-cursor>` before `db changes <db> [collection...]` | Resume with the same database/filter set; accepts 0–64 collections. Default `now` follows new changes; `-cursor ''` requests retained history. |
 
-Project deletion refuses a nonempty or unreadable TerraBase database inventory before deletion. This preflight does not serialize concurrent database creation and does not promise tenant teardown or billing cleanup. Organization deletion requires an empty organization and appropriate role.
+Project deletion refuses a nonempty or unreadable database inventory before deletion. This preflight does not serialize concurrent database creation and does not promise tenant teardown or billing cleanup. Organization deletion requires an empty organization and appropriate role.
 
 For destination set, redirect a private file into `ts -yes backup destination set`. Input is at most 16 KiB: `endpoint`, `region`, `bucket`, `mode` (`both` or `customer`), `accessKeyId`, `secretKey`. Never put credentials in argv/logs; output contains only public metadata. Database-restricted keys cannot administer project destinations. Removing the destination preserves customer objects and resumes platform shipping.
-
-Changes include change and cursor-only records, nested under `data` with `--json`. Persist only a nonempty cursor after processing its complete record; intermediate commit-group members may lack a cursor. Delivery is at least once: deduplicate by origin/version/collection/id. Expired cursors fail visibly without rewinding.

@@ -1,34 +1,5 @@
 # C# TerraBase starter
 
-Use the official `TerraScale.DotNet.TerraBase.TerraBaseDocumentsClient` to create,
-read, version-check, update, query and delete one JSON document. It sends every
-request through the SDK and keeps application data in TerraBase.
-
-Requires .NET SDK 10 or newer with the .NET 10 runtime installed, a verified
-C# SDK package built from tag `v0.0.6` into a local feed, and a database plus an access token
-exchanged from a dashboard API key, exported as shown in
-https://docs.terrascale.tech/getting-started/csharp (API origin
-`https://api.terrascale.tech`). The app creates the collection when it does not
-exist. No dotenv loader is included. The application does not create users, organizations or
-projects. Public NuGet publication and automatic endpoint resolution are separate
-release gates.
-
-```bash
-git clone --depth 1 --branch v0.0.6 https://github.com/TerraScale/ts-dotnet.git ../ts-dotnet
-dotnet pack ../ts-dotnet/src/TerraScale.DotNet -c Release -o ../feed
-dotnet build -c Release -p:TerraBaseSdkPackageVersion=0.0.6 \
-  --source ../feed --source https://api.nuget.org/v3/index.json
-dotnet bin/Release/net10.0/TerraBaseStarter.dll
-```
-
-The candidate must contain `TerraBaseDocumentsClient`; neither an older
-`TerraScaleClient` package nor the legacy UUID/shard `NativeClient` contract is
-an interchangeable dependency. Do not infer publication from a source version.
-Prefix local builds/checks in this repository with `nice -n 19`.
-
-Success prints `PASS_TERRABASE_CRUD_QUERY`: the updated document matched its
-query, a stale version was rejected, and the document was deleted and read back
-as absent. No document payload, credential or raw server error is printed.
-The app uses a 60-second overall deadline and 15-second request deadlines.
-Only its generated document is deleted. An interrupted request can leave that
-document behind; reconcile its outcome rather than blindly replaying a write.
+This unpublished source example is awaiting the SQL product update.
+It is not a current connection or API guide. See the
+[SQL overview](https://docs.terrascale.tech/concepts/sql).

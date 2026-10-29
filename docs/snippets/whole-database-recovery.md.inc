@@ -1,6 +1,6 @@
 **Pending rollout.** Check the deployed dashboard and MCP tool discovery for this workflow. The existing [HTTP backup and restore guide](/guides/backups-and-restore) describes the underlying API.
 
-Restore retained point-in-time history into a **new database in the same project**, leaving the source unchanged. To recover individual historical documents into the original database, use [selective recovery](/guides/selective-recovery) instead; whole-database recovery does not use its record-approval token.
+Restore retained point-in-time history into a **new database in the same project**, leaving the source unchanged.
 
 ## Access, history and quota
 

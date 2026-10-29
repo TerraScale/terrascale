@@ -16,7 +16,6 @@ export async function checkResponse(url, expectedBytes, status, contentType) {
       return;
     } catch (error) {
       if (attempt === 1) throw error;
-      // Cloudflare can acknowledge deployment before its assets reach every edge.
       console.warn(`${url}: publication is not ready; retrying the same checks in 30 seconds.`);
       await timers.setTimeout(30_000);
     }
@@ -38,7 +37,7 @@ async function main() {
     ['/getting-started/javascript', 'getting-started/javascript.html', 'text/html'],
     ['/ar/getting-started/', 'ar/getting-started/index.html', 'text/html'],
     ['/guides/zero-configuration', 'guides/zero-configuration.html', 'text/html'],
-    ['/examples/terrabase-js/quickstart.mjs', 'examples/terrabase-js/quickstart.mjs', 'javascript'],
+    ['/llms.txt', 'llms.txt', 'text/plain'],
     [`/assets/${app}`, `assets/${app}`, 'javascript'],
     [`/assets/${style}`, `assets/${style}`, 'text/css'],
     [`/assets/chunks/${search}`, `assets/chunks/${search}`, 'javascript'],

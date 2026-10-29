@@ -53,9 +53,7 @@ Update that reference and the token/asset snapshot after a reviewed dashboard
 merge. The docs adapt VitePress's navigation, search, keyboard support and
 mobile drawer using the dashboard's colors, fonts, spacing and flat sections.
 
-## Examples
+## SQL transition
 
-The [JavaScript example](examples/terrabase-js/README.md) pins published npm
-version 0.0.3. The [C# example](examples/terrabase-dotnet/README.md) consumes an
-exact candidate package. Their downloadable public assets are generated from
-an explicit file list.
+The previous downloadable examples have been removed from the site while SQL
+guides and examples are updated. Source examples are not a published SQL contract.
