@@ -16,7 +16,7 @@ public static class DatabaseRegions
 
     public sealed class PlacementAware;
 
-    internal static Valid<IReadOnlyList<string>> Check(string home, IReadOnlyList<string> replicas, bool created) =>
+    internal static Valid<IReadOnlyList<string>> Check(IReadOnlyList<string> replicas) =>
         replicas.Count > 0 ? new Validation("databases serve only in their home region until replicas are available", "replicas_unavailable")
         : replicas;
 

@@ -7,7 +7,6 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Qos;
 using TerraBase.Features.UserAuth;
-using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Documents;
@@ -137,15 +136,6 @@ internal sealed partial class DatabaseChanges
                     return TypedResults.Empty;
                 }
 
-                if (!started && cursor?.Machine is { Length: > 0 } machine && machine != options.MachineId
-                    && Listeners.ArrivedOn(context) == TerraBaseListener.Client
-                    && !context.Request.Headers.ContainsKey("ts-replay-src") && !context.Request.Headers.ContainsKey("ts-replay-failed")
-                    && await IssuerRegionAsync(machine, stop.Token).ConfigureAwait(false) is { } issuerRegion)
-                {
-                    context.Response.Headers["ts-replay"] = $"region={issuerRegion};instance={machine};fallback=self";
-                    context.Response.Headers.CacheControl = "no-store";
-                    return new IssuerReplay();
-                }
                 var origins = Math.Max(cursor?.Stamps.Count ?? 0, page.Scanned.Count);
                 var cursorBytes = 4L * ((128 + (56 * origins) + 2) / 3);
                 var bytes = page.Events.Sum(change => (long)(change.Document?.Length ?? 0)

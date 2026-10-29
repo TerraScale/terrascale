@@ -277,7 +277,7 @@ internal sealed partial class TursoDatabaseStore(
 
         try
         {
-            await ledger.RecordAsync(tenant, Incarnation, reason, CancellationToken.None).ConfigureAwait(false);
+            await ledger.RecordAsync(tenant, Incarnation, reason).ConfigureAwait(false);
         }
         catch (Exception error)
         {

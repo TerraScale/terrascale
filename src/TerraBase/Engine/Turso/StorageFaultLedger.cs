@@ -53,10 +53,8 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         return store.Incarnation != incarnation && !store.IsHealthyPredecessor(incarnation) || Refusal(store) is not null;
     }
 
-    internal async ValueTask RecordAsync(TenantContext database, Ulid incarnation, string reason, CancellationToken cancellationToken)
+    internal async ValueTask RecordAsync(TenantContext database, Ulid incarnation, string reason)
     {
-
-        cancellationToken = CancellationToken.None;
         if (database == SystemDatabase.Identity)
         {
             FailClosed($"the system database faulted: {reason}");
@@ -72,8 +70,8 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         TursoDatabaseStore system;
         try
         {
-            system = await SystemAsync(cancellationToken).ConfigureAwait(false);
-            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            system = await SystemAsync(CancellationToken.None).ConfigureAwait(false);
+            await _gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception error)
         {

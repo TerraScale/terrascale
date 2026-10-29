@@ -3,7 +3,6 @@ using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Regions;
-using TerraBase.Features.Catalog;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -68,7 +67,7 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
 
         if (!all)
         {
-            var checkedRegions = DatabaseRegions.Check(home, replicas, false);
+            var checkedRegions = DatabaseRegions.Check(replicas);
             if (checkedRegions is Validation invalid)
             {
                 return ErrorResponse.From(invalid);

@@ -183,7 +183,7 @@ internal sealed class ShapeSnapshots(
         }
         return await Storage(transaction).ShapeSnapshotDueAsync(shape.Handle, now, cancellationToken).ConfigureAwait(false);
     }
-    private async ValueTask<ShapeSnapshot> PublishedSnapshotAsync(IStorageTransaction transaction, string handle, CancellationToken cancellationToken)
+    private static async ValueTask<ShapeSnapshot> PublishedSnapshotAsync(IStorageTransaction transaction, string handle, CancellationToken cancellationToken)
     {
         var newest = await Storage(transaction).NewestShapeSnapshotAsync(handle, cancellationToken).ConfigureAwait(false);
         return newest is not null && newest.Offset <= await FrontierAsync(transaction, cancellationToken).ConfigureAwait(false)

@@ -5,7 +5,6 @@ using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Schema;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Qos;
-using TerraBase.Features.Catalog;
 using TerraBase.Features.Webhooks;
 using TerraBase.Tenancy;
 

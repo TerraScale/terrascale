@@ -1,7 +1,6 @@
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
-using TerraBase.Features.Platform;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
@@ -70,7 +69,7 @@ public sealed class UpdateManagedDatabaseEndpoint(IManagementService management,
 
         Valid<IReadOnlyList<string>> checkedRegions = request.HomeRegion is { } requested && requested != home ? new Validation("homeRegion cannot change")
             : request.ReplicaRegions is not { } replicas ? new Validation("replicaRegions or allRegions is required")
-            : DatabaseRegions.Check(home, replicas, created: false) is Validation invalid ? invalid
+            : DatabaseRegions.Check(replicas) is Validation invalid ? invalid
             : DatabaseRegions.Unserved("replicaRegions", replicas, [.. (await regions.ServingAsync(cancellationToken).ConfigureAwait(false)).Union(database.Regions(home), StringComparer.Ordinal)]) is { } unserved ? unserved
             : replicas;
         return checkedRegions switch

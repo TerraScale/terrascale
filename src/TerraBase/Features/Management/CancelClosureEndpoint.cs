@@ -70,10 +70,8 @@ internal sealed class CancelClosureEndpoint(
             return ErrorResponse.From(new Unavailable("the database is not available here"));
         }
 
-        // Never hold SYSTEM and auth writers together. The expected list is immutable; every retry additionally reads
-        // current membership. An offline or retired listed holder stays required.
         var holders = await catalog.ReadAsync<HashSet<string>?>(
-            async transaction => await EngineManagementService.CatalogHoldersAsync(transaction, options.MachineId, cancellationToken).ConfigureAwait(false),
+            _ => ValueTask.FromResult<HashSet<string>?>(EngineManagementService.CatalogHolders(options.MachineId)),
             static _ => null, cancellationToken).ConfigureAwait(false);
         if (holders is null)
         {

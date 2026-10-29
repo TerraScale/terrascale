@@ -2,7 +2,6 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management.Backups;
-using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using ZLogger;
@@ -49,7 +48,7 @@ internal sealed partial class EngineManagementService
             }
 
             var record = new ProjectClosureRecord(projectId, closureId, authorityOrganizationId, time.GetUtcNow(),
-                [.. (await ClosureHoldersAsync(transaction, cancellationToken).ConfigureAwait(false)).Order(StringComparer.Ordinal)], version);
+                [.. CatalogHolders(options.MachineId).Order(StringComparer.Ordinal)], version);
             await PutAsync(transaction, ProjectClosure.Collection, projectId, record, TerraBaseJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false);
             await RefreshClosureReceiptAsync(transaction, record, cancellationToken).ConfigureAwait(false);
             logger.ZLogInformation($"Project {projectId:@Project} is fenced for closure {closureId:@Closure}");
@@ -77,11 +76,8 @@ internal sealed partial class EngineManagementService
         && !await AnyAsync(transaction, ProjectBackupDestinations.Collection(projectId), cancellationToken).ConfigureAwait(false)
         && !await AnyAsync(transaction, Features.FileStorage.FileStorageUsage.Buckets(projectId), cancellationToken).ConfigureAwait(false);
 
-    private ValueTask<HashSet<string>> ClosureHoldersAsync(IStorageTransaction transaction, CancellationToken cancellationToken) =>
-        CatalogHoldersAsync(transaction, options.MachineId, cancellationToken);
-
-    internal static ValueTask<HashSet<string>> CatalogHoldersAsync(IStorageTransaction transaction, string machineId, CancellationToken cancellationToken) =>
-        ValueTask.FromResult(new HashSet<string>(StringComparer.Ordinal) { machineId });
+    internal static HashSet<string> CatalogHolders(string machineId) =>
+        new(StringComparer.Ordinal) { machineId };
 
     private async ValueTask RefreshClosureReceiptAsync(IStorageTransaction transaction, ProjectClosureRecord record, CancellationToken cancellationToken)
     {
@@ -120,7 +116,7 @@ internal sealed partial class EngineManagementService
 
     private async ValueTask<ProjectClosureStatus> ClosureStatusAsync(IStorageTransaction transaction, ProjectClosureRecord record, CancellationToken cancellationToken)
     {
-        var holders = await ClosureHoldersAsync(transaction, cancellationToken).ConfigureAwait(false);
+        var holders = CatalogHolders(options.MachineId);
         holders.UnionWith(record.ExpectedHolders);
         var pending = 0;
         foreach (var holder in holders)

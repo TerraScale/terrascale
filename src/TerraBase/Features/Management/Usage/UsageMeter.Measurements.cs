@@ -102,8 +102,8 @@ internal sealed partial class UsageMeter
     public void RecordClientBytes(TenantContext database, long received, long sent, DateTimeOffset? transferredAt = null)
     {
         Record(database, transferredAt,
-            new(new("client_bytes", options.Region, "", "received"), received),
-            new(new("client_bytes", options.Region, "", "sent"), sent));
+            new(new("client_bytes", options.Region, "received"), received),
+            new(new("client_bytes", options.Region, "sent"), sent));
     }
 
     public IDisposable TrackActive(Action report)
@@ -135,7 +135,7 @@ internal sealed partial class UsageMeter
 
     internal void RecordStorage(TenantContext database, long bytes, DateTimeOffset sampledAt)
     {
-        Record(database, new(new("storage_bytes", options.Region, "", "sample"), 1, bytes), sampledAt);
+        Record(database, new(new("storage_bytes", options.Region, "sample"), 1, bytes), sampledAt);
         stats.StorageSampled(database, bytes);
     }
 
@@ -273,7 +273,6 @@ internal sealed partial class UsageMeter
             }
 
             _measurementMemory.Clear();
-            _backlogs.Clear();
         }
     }
 }

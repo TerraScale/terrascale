@@ -245,9 +245,6 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         CheckDeadline(started);
     }
 
-    private static IEnumerable<UsageReading> Readings(OpCounts counts, string region) =>
-        counts.Meters?.Values.Where(reading => reading.Dimension.Region == region) ?? [];
-
     private static AnalyticsPoint Point(DateTimeOffset start, IEnumerable<UsageReading> readings)
     {
         var values = readings.ToArray();

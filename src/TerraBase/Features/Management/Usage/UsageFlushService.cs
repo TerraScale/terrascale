@@ -2,7 +2,6 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Logs;
-using TerraBase.Features.Catalog;
 using TerraBase.Tenancy;
 using ZLogger;
 

@@ -636,7 +636,7 @@ internal sealed partial class EngineManagementService
 
             case "set_database_regions":
                 {
-                    if (DatabaseRegions.Check(options.Region, op.ReplicaRegions!, created: false) is Validation invalid)
+                    if (DatabaseRegions.Check(op.ReplicaRegions!) is Validation invalid)
                     {
                         return new OperationFailed(invalid);
                     }
@@ -924,7 +924,7 @@ internal sealed partial class EngineManagementService
 
                 IReadOnlyList<string> replicas = op.ReplicaRegions ?? [];
 
-                if (DatabaseRegions.Check(options.Region, replicas, false) is Validation invalid)
+                if (DatabaseRegions.Check(replicas) is Validation invalid)
                 {
                     return await AbandonAsync(prepared, new CommitRejected(invalid, i)).ConfigureAwait(false);
                 }

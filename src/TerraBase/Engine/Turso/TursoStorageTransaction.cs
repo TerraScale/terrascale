@@ -26,7 +26,7 @@ internal sealed partial class TursoStorageTransaction(
     private const int OpFramingBytes = 128;
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
-    private QosContext.ResultMemory? _stateReadMemory =
+    private readonly QosContext.ResultMemory? _stateReadMemory =
         store.SchemaMemory is { } memory ? new QosContext.ResultMemory(memory) : null;
 
     private readonly SemaphoreSlim _gate = new(1, 1);

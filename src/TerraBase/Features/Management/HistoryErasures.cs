@@ -72,7 +72,7 @@ internal sealed partial class HistoryErasures(
                 return existing;
             }
 
-            var holders = await EngineManagementService.CatalogHoldersAsync(transaction, Machine, cancellationToken).ConfigureAwait(false);
+            var holders = EngineManagementService.CatalogHolders(Machine);
             var created = new HistoryErasureRecord(erasureId, requestedAt, requestedAt.AddDays(30),
                 requestedAt.AddDays((options.Backup?.RetentionDays.Values.Max() ?? 0) + 30), [.. holders.Order(StringComparer.Ordinal)], Requester: Machine);
             await SystemCatalog.PutAsync(transaction, HistoryErasure.Collection, erasureId, created, TerraBaseJsonContext.Default.HistoryErasureRecord, cancellationToken).ConfigureAwait(false);
@@ -200,7 +200,7 @@ internal sealed partial class HistoryErasures(
         await catalog.ReadUncheckedAsync(async transaction =>
         {
             var receipts = await ReceiptsAsync(transaction, record, cancellationToken).ConfigureAwait(false);
-            var holders = await HoldersAsync(transaction, record, cancellationToken).ConfigureAwait(false);
+            var holders = Holders(record);
             return (Compute(record, holders, receipts), (IReadOnlyList<HistoryErasureReceipt>)receipts);
         }, cancellationToken).ConfigureAwait(false);
 
@@ -299,7 +299,7 @@ internal sealed partial class HistoryErasures(
                     }
                     else if (own is null || replaced || own.Replica != Self)
                     {
-                        await MarkAsync(record, own, cancellationToken).ConfigureAwait(false);
+                        await MarkAsync(record, cancellationToken).ConfigureAwait(false);
                     }
                     else if (record.FinalId is not null && record.FinalMarks == MarksDigest(receipts) && own.FinalId != record.FinalId)
                     {
@@ -384,7 +384,7 @@ internal sealed partial class HistoryErasures(
         }, unit: "s");
     }
 
-    private async Task MarkAsync(HistoryErasureRecord record, HistoryErasureReceipt? own, CancellationToken cancellationToken)
+    private async Task MarkAsync(HistoryErasureRecord record, CancellationToken cancellationToken)
     {
         var auth = await engine.OpenDatabaseAsync(AuthDatabase, cancellationToken).ConfigureAwait(false);
         if (auth is null || !await auth.HasCollectionAsync(HistoryErasure.MarkCollection, cancellationToken).ConfigureAwait(false))
@@ -738,7 +738,7 @@ internal sealed partial class HistoryErasures(
                 }
 
                 var receipts = await ReceiptsAsync(transaction, current, cancellationToken).ConfigureAwait(false);
-                if (Compute(current, await HoldersAsync(transaction, current, cancellationToken).ConfigureAwait(false), receipts).Status != HistoryErasure.Backup)
+                if (Compute(current, Holders(current), receipts).Status != HistoryErasure.Backup)
                 {
                     return false;
                 }
@@ -850,7 +850,7 @@ internal sealed partial class HistoryErasures(
         return receipts.Count == 1;
     }
 
-    private async ValueTask<bool> CoversSystemAsync(IStorageTransaction transaction, string erasureId, IReadOnlyList<HistoryErasureReceipt> receipts, CancellationToken cancellationToken)
+    private async ValueTask<bool> CoversSystemAsync(IStorageTransaction transaction, string erasureId, List<HistoryErasureReceipt> receipts, CancellationToken cancellationToken)
     {
         if (receipts.Count != 1 || receipts[0].MachineId != Machine)
         {
@@ -935,7 +935,7 @@ internal sealed partial class HistoryErasures(
             return receipts;
         }
 
-        foreach (var holder in await HoldersAsync(transaction, record, cancellationToken).ConfigureAwait(false))
+        foreach (var holder in Holders(record))
         {
             if (await SystemCatalog.GetAsync(transaction, HistoryErasure.Receipts(record.ErasureId), holder, TerraBaseJsonContext.Default.HistoryErasureReceipt, cancellationToken).ConfigureAwait(false)
                 is { FormatVersion: 1 } receipt && receipt.MachineId == holder && receipt.ErasureId == record.ErasureId
@@ -951,9 +951,9 @@ internal sealed partial class HistoryErasures(
         return receipts;
     }
 
-    private async ValueTask<HashSet<string>> HoldersAsync(IStorageTransaction transaction, HistoryErasureRecord record, CancellationToken cancellationToken)
+    private HashSet<string> Holders(HistoryErasureRecord record)
     {
-        var holders = await EngineManagementService.CatalogHoldersAsync(transaction, Machine, cancellationToken).ConfigureAwait(false);
+        var holders = EngineManagementService.CatalogHolders(Machine);
         holders.UnionWith(record.ExpectedHolders);
         return holders;
     }

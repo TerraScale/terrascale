@@ -1,7 +1,5 @@
 using System.Diagnostics.Metrics;
-using System.Text.Json;
 using TerraBase.Engine;
-using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
