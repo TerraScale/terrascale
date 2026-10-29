@@ -210,7 +210,18 @@ public sealed class ProjectClosureTests
             _ = await transaction.CommitAsync(CancellationToken.None);
         }
 
-        await CloseAsync(api.Server.Client, project, closure, organization, HttpStatusCode.OK);
+        using var response = await PutAsync(api.Server.Client, project, closure, organization);
+        var detail = await response.Content.ReadAsStringAsync();
+        if (response.StatusCode != HttpStatusCode.OK)
+        {
+            var receipt = await ReceiptAsync(api, project);
+            await using var read = await catalog.BeginTransactionAsync(write: false, CancellationToken.None);
+            var holders = await EngineManagementService.CatalogHoldersAsync(read, machine, CancellationToken.None);
+            var fence = await SystemCatalog.GetAsync(read, ProjectClosure.Collection, project,
+                TerraBaseJsonContext.Default.ProjectClosureRecord, CancellationToken.None);
+            detail += $"; holders={string.Join(',', holders)}; fence={JsonSerializer.Serialize(fence, TerraBaseJsonContext.Default.ProjectClosureRecord)}; own receipt={JsonSerializer.Serialize(receipt, TerraBaseJsonContext.Default.ProjectClosureReceipt)}";
+        }
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(detail);
     }
 
     [Test]

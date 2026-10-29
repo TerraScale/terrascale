@@ -40,8 +40,8 @@ public sealed class MetricsTests
                 });
             }));
         await using var second = await TerraBaseTestServer.StartAsync();
-        var firstMeter = first.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName);
-        var secondMeter = second.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName);
+        var firstMeter = first.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName, version: name);
+        var secondMeter = second.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName, version: name);
         firstMeter.CreateCounter<long>(name).Add(7);
         secondMeter.CreateCounter<long>(name).Add(11);
         await Assert.That(Volatile.Read(ref foreignPublished)).IsEqualTo(0);
@@ -55,8 +55,16 @@ public sealed class MetricsTests
         unmatchedHttpMeter.CreateCounter<long>(name + "_unmatched_http").Add(1);
         using var health = await first.Client.GetAsync(new Uri("/healthz", UriKind.Relative));
         health.EnsureSuccessStatusCode();
-        using var firstReservation = first.Services.GetRequiredService<IMemoryBudget>().TryReserve(MemoryLane.Foreground, 7);
-        using var secondReservation = second.Services.GetRequiredService<IMemoryBudget>().TryReserve(MemoryLane.Foreground, 11);
+        // Real background work also reserves the server budget. Give this scenario's real budgets a distinct meter
+        // version, so exact feature-isolation assertions cannot accidentally count that unrelated work (#869/#870).
+        using var backgroundFirst = first.Services.GetRequiredService<IMemoryBudget>().TryReserve(MemoryLane.Foreground, 3164);
+        using var backgroundSecond = second.Services.GetRequiredService<IMemoryBudget>().TryReserve(MemoryLane.Foreground, 5186);
+        var firstBudget = new MemoryBudget(1024, firstMeter);
+        var secondBudget = new MemoryBudget(1024, secondMeter);
+        using var firstReservation = firstBudget.TryReserve(MemoryLane.Foreground, 7);
+        using var secondReservation = secondBudget.TryReserve(MemoryLane.Foreground, 11);
+        await Assert.That(backgroundFirst).IsNotNull();
+        await Assert.That(backgroundSecond).IsNotNull();
         await Assert.That(firstReservation).IsNotNull();
         await Assert.That(secondReservation).IsNotNull();
 
@@ -74,8 +82,8 @@ public sealed class MetricsTests
             await Assert.That(Sample(metrics, name + "_case_total")).IsEqualTo("17");
             await Assert.That(metrics).DoesNotContain(name + "_unmatched");
         }
-        await Assert.That(Sample(firstMetrics, "terrabase_memory_reserved_bytes")).IsEqualTo("7");
-        await Assert.That(Sample(secondMetrics, "terrabase_memory_reserved_bytes")).IsEqualTo("11");
+        await Assert.That(Sample(firstMetrics, "terrabase_memory_reserved_bytes", $"otel_scope_version=\"{name}\"")).IsEqualTo("7");
+        await Assert.That(Sample(secondMetrics, "terrabase_memory_reserved_bytes", $"otel_scope_version=\"{name}\"")).IsEqualTo("11");
     }
 
     /// <summary>
