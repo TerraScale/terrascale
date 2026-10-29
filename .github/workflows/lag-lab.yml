@@ -1,0 +1,35 @@
+name: Lag lab
+
+on:
+  pull_request:
+    paths:
+      - benchmark/lag-lab/**
+      - benchmark/bench/2026-10-29-lag-lab*
+      - .github/workflows/lag-lab.yml
+  push:
+    branches: [main]
+    paths:
+      - benchmark/lag-lab/**
+      - benchmark/bench/2026-10-29-lag-lab*
+      - .github/workflows/lag-lab.yml
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+jobs:
+  lag-lab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Install the pinned compiler
+        run: rustup toolchain install 1.99.1 --profile minimal
+      - name: Build the pinned native page host and restore the official client
+        run: bash benchmark/lag-lab/build.sh

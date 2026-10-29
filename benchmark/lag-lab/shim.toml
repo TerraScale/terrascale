@@ -1,0 +1,17 @@
+[package]
+name = "ts_sync_host"
+version = "0.1.0"
+edition = "2021"
+[lib]
+path = "lib.rs"
+crate-type = ["cdylib"]
+[dependencies]
+anyhow.workspace = true
+bytes = "1.11.1"
+prost = "0.14.1"
+roaring = "0.11.2"
+serde_json.workspace = true
+tracing.workspace = true
+crc32c = "0.6.8"
+turso_core = {workspace = true, features = ["conn_raw_api"]}
+turso_sync_engine.workspace = true
