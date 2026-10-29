@@ -1,0 +1,20 @@
+{
+  "source_commit": "5c168be5ef6a32ac966daf5983502a4f694b37ad",
+  "source_tar_sha256": "7ea83d5e28577cf9d8655b77705902379e06b82fb29424f6ea328b5f26f17ecb",
+  "upstream_sync_server_sha256": "70059fa823c2767228d5e08808caaf31171e5fdb57199c8f2a2d8857e76314ae",
+  "cargo_lock_sha256": "34e11a8b9243748dd87e926ebf7f6228b58f22bd56b3d5610708aca1fc8d83df",
+  "native_sha256": "cf0db4bd25fcac1956aa2e5e6b986b60d1cb0210ef33062929034ee6c9e1fba9",
+  "native_bytes": 18364216,
+  "rustc": "1.99.1 (58cf8f9c3 2026-10-13)",
+  "cargo": "1.99.1 (5f94df478 2026-08-27)",
+  "profile": "lib-release",
+  "rustflags": "--cfg=tokio_unstable",
+  "host": "delta",
+  "cpu": "13th Gen Intel(R) Core(TM) i7-13620H",
+  "logical_cpus": 16,
+  "filesystem": "btrfs /dev/nvme0n1p2 @home, compress=zstd:1; Native database directories chattr +C",
+  "drive": "WD PC SN540 SDDPNPF-512G",
+  "scratch": "/home/mariogk/lag-lab-w0-4-20261029",
+  "admission": "TS_HEAVY_HOST=delta ts-heavy-any bash /home/mariogk/lag-lab-w0-4-20261029/build.sh --repo terrascale --branch feat/lag-lab",
+  "cargo_reported_build_seconds": 68
+}
