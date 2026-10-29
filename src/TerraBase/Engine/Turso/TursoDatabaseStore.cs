@@ -378,7 +378,7 @@ internal sealed partial class TursoDatabaseStore(
                 }
                 finally
                 {
-                    await EndAsync(writing, ownsAdmission, operation).ConfigureAwait(false);
+                    await EndAsync(writing, ownsAdmission, operation, indexRevision: beginStarted).ConfigureAwait(false);
                 }
             }
 
@@ -582,7 +582,7 @@ internal sealed partial class TursoDatabaseStore(
         return _writerSession = session;
     }
 
-    internal async ValueTask EndAsync(bool write, bool ownsAdmission, CopyOperation? operation)
+    internal async ValueTask EndAsync(bool write, bool ownsAdmission, CopyOperation? operation, bool indexRevision = true)
     {
         try
         {
@@ -590,7 +590,12 @@ internal sealed partial class TursoDatabaseStore(
             {
                 try
                 {
-                    await IndexRevisionAsync().ConfigureAwait(false);
+                    // A BEGIN cancelled while queued never touched the writer connection. Its cleanup must
+                    // release admission without queueing maintenance behind the call that blocked BEGIN.
+                    if (indexRevision)
+                    {
+                        await IndexRevisionAsync().ConfigureAwait(false);
+                    }
                 }
                 finally
                 {
