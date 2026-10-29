@@ -76,7 +76,7 @@ internal static class RevisionPlanner
         int start;
         ulong floor;
         ulong expected;
-        var exact = manifest.Sealed.FindIndex(sealed => sealed.Generation == revision.Generation);
+        var exact = manifest.Sealed.FindIndex(entry => entry.Generation == revision.Generation);
         if (exact >= 0)
         {
             (start, floor, expected) = (exact, revision.Frame, revision.Generation);
@@ -111,24 +111,24 @@ internal static class RevisionPlanner
             (start, floor, expected) = (0, 0, next);
         }
 
-        foreach (var sealed in manifest.Sealed.Skip(start))
+        foreach (var entry in manifest.Sealed.Skip(start))
         {
-            if (sealed.Generation != expected)
+            if (entry.Generation != expected)
             {
                 return FullReason.Expired;
             }
 
-            if (sealed.Full)
+            if (entry.Full)
             {
                 return FullReason.Rewritten;
             }
 
-            if (floor > sealed.EndFrame)
+            if (floor > entry.EndFrame)
             {
                 return FullReason.Ahead;
             }
 
-            foreach (var (page, last) in sealed.Pages)
+            foreach (var (page, last) in entry.Pages)
             {
                 if (last > floor)
                 {

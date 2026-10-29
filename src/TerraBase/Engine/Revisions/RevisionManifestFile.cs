@@ -112,13 +112,13 @@ internal static class RevisionManifestFile
         }
 
         U16(writer, checked((ushort)manifest.Sealed.Count));
-        foreach (var sealed in manifest.Sealed)
+        foreach (var entry in manifest.Sealed)
         {
-            U64(writer, sealed.Generation);
-            U64(writer, sealed.EndFrame);
-            writer.Write([(byte)(sealed.Full ? 1 : 0)]);
-            U32(writer, (uint)sealed.Pages.Count);
-            foreach (var (page, last) in sealed.Pages.OrderBy(pair => pair.Key))
+            U64(writer, entry.Generation);
+            U64(writer, entry.EndFrame);
+            writer.Write([(byte)(entry.Full ? 1 : 0)]);
+            U32(writer, (uint)entry.Pages.Count);
+            foreach (var (page, last) in entry.Pages.OrderBy(pair => pair.Key))
             {
                 U32(writer, page);
                 U64(writer, last);
