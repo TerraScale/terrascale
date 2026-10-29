@@ -14,7 +14,7 @@ namespace TerraScale.Authentication.Fast.Store;
 /// </summary>
 public sealed class PeerCredentialSenderTests
 {
-    private const string RequestsMetric = "terrabase_peer_authentication_requests_total";
+    private const string RequestsMetric = "terrabase_internal_authentication_requests_total";
 
     private static CancellationToken Token => TestContext.Current!.Execution.CancellationToken;
 
