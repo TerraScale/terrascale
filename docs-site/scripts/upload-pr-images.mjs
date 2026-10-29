@@ -8,7 +8,7 @@ if (!/^[1-9]\d*$/.test(pr ?? '') || files.length === 0) {
   throw new Error('Usage: node scripts/upload-pr-images.mjs <PR-number> <file.png> [more.png ...]')
 }
 const git = (args, options = {}) => execFileSync('git', args, { encoding: 'utf8', ...options }).trim()
-const repo = 'TerraScale/ts-docs'
+const repo = 'TerraScale/terrascale'
 const remote = `https://github.com/${repo}.git`
 execFileSync('gh', ['pr', 'view', pr, '--repo', repo, '--json', 'number'], { stdio: 'ignore' })
 
