@@ -110,6 +110,39 @@ func newParityService(t *testing.T) (*parityService, *parityFixture, *v1.Databas
 	return s, f, client.Database(s.project, s.name)
 }
 
+// Fast proves the owned lifecycle once; Slow exercises the full measurement matrix.
+func TestParityRunnerSeedsAndCleansUp(t *testing.T) {
+	t.Parallel()
+	s, _, database := newParityService(t)
+	ran := false
+	err := parityOwn(t.Context(), json.NewEncoder(s.log), database, "fra", paritySetupDeadline, func(documents map[int]parityDocument) error {
+		ran = true
+		if len(documents) != 2 {
+			t.Fatalf("seed documents %v", documents)
+		}
+		for _, size := range []int{256, 4096} {
+			document := documents[size]
+			if len(document.body) != size || document.id == "" || document.version == "" {
+				t.Fatalf("invalid %d-byte seed: %+v", size, document)
+			}
+			s.mu.Lock()
+			stored := &v1.Document{ID: document.id, Version: s.versions[document.id], State: v1.StateValue, Document: json.RawMessage(s.documents[document.id])}
+			s.mu.Unlock()
+			if err := document.check(stored); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return nil
+	})
+	rows := s.log.rows(t)
+	if err != nil || !ran || s.requestsBeforeID != 0 || len(rows) != 2 {
+		t.Fatalf("err %v, ran %v, %d requests before ownership, rows %v", err, ran, s.requestsBeforeID, rows)
+	}
+	if last := rows[len(rows)-1]; last["deletion"] != "logical_accepted" || last["remote_erasure"] != "unverified" || last["create"] != "created" || len(s.deletes) != 1 || s.deletes[0] != s.name {
+		t.Fatalf("cleanup %v, deletes %v", last, s.deletes)
+	}
+}
+
 // A create that never answers is bounded by the setup deadline, and the exact
 // owned name is still deleted; its absence is flagged for reconciliation.
 func TestParityRunnerBoundsUncertainCreateAndStillCleansUp(t *testing.T) {
