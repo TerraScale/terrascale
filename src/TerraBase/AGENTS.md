@@ -6,7 +6,7 @@ TerraBase is a leaderless, multi-region document database. Current contracts and
 
 ## Structure and storage
 
-- Never fork Turso: no TerraScale/turso repo. Use upstream tursodatabase/turso at a pinned commit, with the tarball verified by SHA-256 at build time (see benchmark/turso-sync-host/turso-pin.env) or the vendored driver in src/vendor/Turso.Data.Sqlite.
+- Never fork the Turso database: use upstream tursodatabase/turso at a pinned commit, tarball verified by SHA-256 at build time (benchmark/turso-sync-host/turso-pin.env). Only the Turso client may be forked (today: the vendored driver in src/vendor/Turso.Data.Sqlite), and only when upstream can't do what we need.
 - Ship one self-contained JIT binary, `terrabase`. No native AOT or trimming. Stay single-file compatible: no `Assembly.Location` or dependence on adjacent assembly files; preserve the single-file analyzer.
 - Keep one server project, `src/TerraBase`. Analyzers live in `src/TerraBase.Analyzers` and its BuildCheck project. Separate projects require a real boundary, such as native interop, generated gRPC contracts or an externally consumed library.
 - Group related endpoints, records, services, options, storage, metrics and registration by feature under `Features/<Feature>/`. Namespaces follow folders under `TerraBase`. Features communicate through small public types; keep unused internals internal. Share primitives only when two features need them.
