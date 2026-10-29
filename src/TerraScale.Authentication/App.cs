@@ -142,7 +142,8 @@ public static class App
         builder.Services.AddSingleton<SigningKeyRotation>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<SigningKeyRotation>());
         builder.Services.AddSingleton(services => new AttemptLimiter(services.GetRequiredService<IDocumentStore>(), services.GetRequiredService<TimeProvider>(), options,
-            services.GetRequiredService<IConfiguration>()["TS_REGION"] ?? (options.Development ? "gru" : throw new AuthConfigurationException("TS_REGION is required outside Development"))));
+            services.GetRequiredService<IConfiguration>()["TS_REGION"] ?? (options.Development ? "gru" : throw new AuthConfigurationException("TS_REGION is required outside Development")),
+            services.GetRequiredService<ILogger<AttemptLimiter>>()));
         builder.Services.AddSingleton<EmailAdmission>();
         if (options.CloudflareEmail is { } cloudflareEmail)
         {

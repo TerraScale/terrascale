@@ -1,8 +1,11 @@
+using System.Diagnostics.Metrics;
 using System.Security.Cryptography;
 using System.Text;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Store;
+using ZLogger;
 
 namespace TerraScale.Authentication.Features.RateLimiting;
 
@@ -16,10 +19,13 @@ public readonly record struct AttemptRejection(DateTimeOffset Until, TimeSpan Re
 /// TerraBase, for authentication, recovery, verification and token endpoints. Each region conditionally updates only its
 /// own bucket on its region's single TerraBase node; reads sum the three replicated components.
 /// Delayed replication can admit extra attempts, but never replaces another region's contribution. A replica with a
-/// slower clock never resets a window another replica has already advanced. Storage failure or
-/// persistent contention fails closed with 503; an attempt is never admitted unrecorded.
+/// slower clock never resets a window another replica has already advanced. When storage fails, the same budgets run
+/// on this replica's in-memory buckets (<see cref="LocalAttemptStore"/>) instead, so brute-force protection holds per
+/// replica and an outage of the limiter's storage never takes sign-in down by itself; every fallback is logged and
+/// counted. Other storage faults (rejected credentials, damaged buckets), persistent contention, or a full in-memory
+/// store fail closed with 503; an attempt is never admitted unrecorded.
 /// </summary>
-public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, AuthOptions options, string region = "gru")
+public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, AuthOptions options, string region = "gru", ILogger<AttemptLimiter>? logger = null)
 {
     /// <summary>The TerraBase collection holding up to three regional <see cref="AttemptBucket"/> documents per limited subject, plus notice claims.</summary>
     public const string Collection = "rate_limits";
@@ -39,6 +45,15 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
         ? index : throw new ArgumentException("The auth region must be gru, sjc or fra.", nameof(region));
 
     private readonly FailClosedDocumentStore store = new(storage);
+
+    private readonly LocalAttemptStore local = new(clock);
+
+    private static readonly Meter Meter = new(AuthMetrics.MeterName);
+
+    private static readonly Counter<long> Fallbacks = Meter.CreateCounter<long>("ts_auth.rate_limit_fallback", description: "Rate-limit checks served from this replica's memory because storage failed.");
+
+    // Fallback warnings are sampled to one a minute; the counter records every one.
+    private long warnedAt = long.MinValue;
 
     // Bucket ids are keyed, so storage never reveals (or lets anyone test guesses of) the subject.
     private readonly byte[] idKey = HKDF.DeriveKey(HashAlgorithmName.SHA256, options.MasterKey, 32, info: "ts-auth rate-limit bucket ids"u8.ToArray());
@@ -103,7 +118,10 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
     /// enough (an upper bound, rounded up to whole seconds, at least one). Uses its own purposes, never shared with
     /// fixed windows or cooldowns; attacker-chosen subjects must be folded.
     /// </summary>
-    public async Task<TimeSpan?> AcquireTokenAsync(string instanceId, string purpose, string subject, int burst, TimeSpan interval, CancellationToken cancellationToken)
+    public Task<TimeSpan?> AcquireTokenAsync(string instanceId, string purpose, string subject, int burst, TimeSpan interval, CancellationToken cancellationToken) =>
+        this.WithFallbackAsync(source => this.AcquireTokenAsync(source, instanceId, purpose, subject, burst, interval, cancellationToken), purpose, cancellationToken);
+
+    private async Task<TimeSpan?> AcquireTokenAsync(IDocumentStore source, string instanceId, string purpose, string subject, int burst, TimeSpan interval, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
         ArgumentException.ThrowIfNullOrEmpty(purpose);
@@ -117,7 +135,7 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
         for (var attempt = 0; attempt < Math.Min(burst + 2L, MaxRounds); attempt++)
         {
             var now = clock.GetUtcNow().ToUnixTimeMilliseconds();
-            var components = await Task.WhenAll(keys.Select(component => this.store.GetAsync<AttemptBucket>(Collection, instanceId, component, cancellationToken)));
+            var components = await Task.WhenAll(keys.Select(component => source.GetAsync<AttemptBucket>(Collection, instanceId, component, cancellationToken)));
             // Window: the writer's clock at the write, in Unix milliseconds. Used: its debt then, in milliseconds.
             if (components.Any(component => component is not null && (component.Document is not { Window: >= 0, Used: >= 0 }
                 || component.Document.Used > capacity || component.Document.Window > now + MaxClockSkew)))
@@ -137,8 +155,8 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
             // Stamped with this replica's clock: a faster reader drains it early (admitting up to the skew), never locks out.
             var bucket = new AttemptBucket(now, (int)(debts[this.regionIndex] + step));
             if (current is null
-                ? await this.store.TryCreateAsync(Collection, instanceId, keys[this.regionIndex], bucket, cancellationToken)
-                : await this.store.TryReplaceAsync(Collection, instanceId, keys[this.regionIndex], bucket, current.Version, cancellationToken))
+                ? await source.TryCreateAsync(Collection, instanceId, keys[this.regionIndex], bucket, cancellationToken)
+                : await source.TryReplaceAsync(Collection, instanceId, keys[this.regionIndex], bucket, current.Version, cancellationToken))
             {
                 return null;
             }
@@ -203,7 +221,44 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
         throw ApiException.Unavailable();
     }
 
-    private async Task<AttemptRejection?> AcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, CancellationToken cancellationToken)
+    private Task<AttemptRejection?> AcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, CancellationToken cancellationToken) =>
+        this.WithFallbackAsync(source => this.AcquireAsync(source, instanceId, purpose, subject, maximum, window, cooldown, cancellationToken), purpose, cancellationToken);
+
+    // Runs a check on TerraBase; when that storage fails (not when the caller gave up), runs it on this replica's memory.
+    private async Task<T> WithFallbackAsync<T>(Func<IDocumentStore, Task<T>> check, string purpose, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await check(this.store).ConfigureAwait(false);
+        }
+        catch (ApiException failure) when (failure.Status == StatusCodes.Status503ServiceUnavailable && !cancellationToken.IsCancellationRequested
+            && Transient(failure.InnerException))
+        {
+            Fallbacks.Add(1, new KeyValuePair<string, object?>("purpose", purpose));
+            var now = clock.GetTimestamp();
+            var last = Interlocked.Read(ref this.warnedAt);
+            if ((last == long.MinValue || clock.GetElapsedTime(last, now) >= TimeSpan.FromMinutes(1))
+                && Interlocked.CompareExchange(ref this.warnedAt, now, last) == last)
+            {
+                logger?.ZLogWarning(failure.InnerException ?? failure, $"Rate-limit storage failed; {purpose:@Purpose} and other budgets run on this replica's memory");
+            }
+
+            return await check(this.local).ConfigureAwait(false);
+        }
+    }
+
+    // Storage that is down, slow or overloaded. A rejected credential, a missing collection, persistent contention or a
+    // damaged bucket still fails closed: those are faults to fix, not outages to ride out.
+    private static bool Transient(Exception? failure) => failure switch
+    {
+        TimeoutException => true,
+        HttpRequestException { StatusCode: null } => true,
+        HttpRequestException { StatusCode: { } status } => (int)status >= 500 || status is System.Net.HttpStatusCode.TooManyRequests or System.Net.HttpStatusCode.MisdirectedRequest,
+        ApiException { Status: StatusCodes.Status503ServiceUnavailable } inner => Transient(inner.InnerException),
+        _ => false,
+    };
+
+    private async Task<AttemptRejection?> AcquireAsync(IDocumentStore source, string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
         ArgumentException.ThrowIfNullOrEmpty(purpose);
@@ -232,7 +287,7 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
             var number = cooldown ? now.ToUnixTimeMilliseconds() : now.ToUnixTimeSeconds() / windowSeconds;
             // Each serving region owns one component. Replication never merges two regions' increments into a
             // last-writer-wins integer, including when both regions create their first bucket during a partition.
-            var components = await Task.WhenAll(keys.Select(component => this.store.GetAsync<AttemptBucket>(Collection, instanceId, component, cancellationToken)));
+            var components = await Task.WhenAll(keys.Select(component => source.GetAsync<AttemptBucket>(Collection, instanceId, component, cancellationToken)));
             foreach (var component in components)
             {
                 if (component is not null && (component.Document is not { Window: >= 0, Used: >= 0 }
@@ -258,8 +313,8 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
             var current = components[this.regionIndex];
             var bucket = new AttemptBucket(effective, current?.Document.Window == effective ? checked(current.Document.Used + 1) : 1);
             if (current is null
-                ? await this.store.TryCreateAsync(Collection, instanceId, key, bucket, cancellationToken)
-                : await this.store.TryReplaceAsync(Collection, instanceId, key, bucket, current.Version, cancellationToken))
+                ? await source.TryCreateAsync(Collection, instanceId, key, bucket, cancellationToken)
+                : await source.TryReplaceAsync(Collection, instanceId, key, bucket, current.Version, cancellationToken))
             {
                 return null;
             }

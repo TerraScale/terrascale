@@ -7,6 +7,7 @@ using TerraScale.Authentication.Features.Oidc;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 
 using TerraScale.DotNet;
+using ZLogger;
 
 namespace TerraScale.Authentication.Features.RateLimiting;
 
@@ -17,7 +18,7 @@ namespace TerraScale.Authentication.Features.RateLimiting;
 /// Untrusted forwarding headers and submitted client identifiers never select a bucket. Missing peers and storage failures
 /// fail closed with an OAuth error.
 /// </summary>
-public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimiter limiter, AuthOptions options, bool clientLimit)
+public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimiter limiter, AuthOptions options, ILogger<TokenRateLimitMiddleware> logger, bool clientLimit)
 {
     /// <summary>Trusted proxies have this many clients' token capacity in their aggregate socket budget.</summary>
     public const int ProxyFactor = 4;
@@ -61,7 +62,10 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
         }
         catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
         {
+            // The limiter's storage failed and it fails closed; name the cause (its type only), so an outage is visible.
+            logger.ZLogWarning(error.InnerException ?? error, $"Token request refused: its rate limit could not be checked");
             context.Response.Headers.CacheControl = "no-store";
+            context.Response.Headers.RetryAfter = "2";
             refusal = EndUserTokenEndpoint.Matches(context.Request.Path)
                 ? Results.Json(new ErrorBody(new ErrorDetail("temporarily_unavailable", "The token request could not be checked; retry shortly.")),
                     statusCode: StatusCodes.Status503ServiceUnavailable)
