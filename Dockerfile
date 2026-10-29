@@ -30,7 +30,7 @@ RUN npx --yes playwright@1.63.0 install --with-deps chromium \
     && npx --yes @redocly/cli@2.57.0 --version \
     && rm -rf /var/lib/apt/lists/*
 # .git is excluded: its packs and index differ per clone and would invalidate every later cached layer.
-COPY --from=ts-dotnet --exclude=.git . /src/ts-dotnet
+COPY --from=ts-dotnet --exclude=.git . /src/terrascale/sdk/dotnet
 WORKDIR /src/terrascale
 
 # COPY from this filtered stage keys restore on manifest contents, not changes to application source.

@@ -9,9 +9,9 @@
     <ProjectReference Include="$(MSBuildThisFileDirectory)src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
-  <!-- Newtonsoft.Json is not allowed: System.Text.Json (source-generated) only.
-       BannedSymbols.txt blocks its APIs in code; this blocks every Newtonsoft
-       package, direct or transitive, from entering the build. -->
+  <!-- Authored code uses System.Text.Json; BannedSymbols.txt blocks Newtonsoft APIs.
+       The package graph also rejects Newtonsoft except the approved dashboard
+       Stripe.net transitive edge, checked below. -->
   <Target Name="BanNewtonsoftJsonPackages" AfterTargets="ResolvePackageAssets" Condition="'@(PackageDependencies)' != '' or '@(PackageReference)' != ''">
     <ItemGroup>
       <_DirectNewtonsoftPackage Include="@(PackageReference)" Condition="$([System.String]::Copy('%(Identity)').Contains('Newtonsoft', System.StringComparison.OrdinalIgnoreCase))" />
