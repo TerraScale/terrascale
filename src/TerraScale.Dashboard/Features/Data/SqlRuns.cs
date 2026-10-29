@@ -51,8 +51,12 @@ namespace TerraScale.Dashboard.Features.Data
                         current is null ? TerraBasePrecondition.Absent : TerraBasePrecondition.Matches(current.Version), cancellationToken);
                     return receipt.Id;
                 }
-                catch (TerraBasePreconditionFailedException) when (attempt < 3)
+                catch (TerraBasePreconditionFailedException)
                 {
+                    if (attempt >= 3)
+                    {
+                        throw;
+                    }
                     attempt++;
                 }
             }
