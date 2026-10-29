@@ -163,17 +163,9 @@ public sealed partial class OidcHarness : IAsyncDisposable
         return database.Id;
     }
 
-    /// <summary>Uses a real regional TerraBase copy; the fixture owns the cluster and shared synthetic keys.</summary>
-    public static async Task<OidcHarness> StartAsync(RegionalTerraBaseFixture fixture, string region, Action<WebApplication>? routes = null)
-    {
-        var email = new CapturingEmailSender();
-        var server = await fixture.StartAuthAsync(region, routes: routes, email: email);
-        return new OidcHarness(null, fixture.Tenant, string.Empty, server, fixture.Database(region), email);
-    }
-
     /// <summary>Another replica on this harness's database and master key; the caller disposes it.</summary>
     public Task<AuthTestServer> StartReplicaAsync(Action<Dictionary<string, string>>? settings = null, TimeProvider? clock = null, Action<IServiceCollection>? services = null, bool runClosureWorker = true) =>
-        StartServerAsync(this.fixture ?? throw new InvalidOperationException("Regional replicas are started through their regional fixture."), this.Tenant, this.Email, values =>
+        StartServerAsync(this.fixture ?? throw new InvalidOperationException("A storage fixture is required to start another auth server."), this.Tenant, this.Email, values =>
         {
             values["master-key"] = this.masterKey;
             settings?.Invoke(values);
