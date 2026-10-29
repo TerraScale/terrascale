@@ -18,8 +18,7 @@ internal sealed record PgResult(PgColumn[]? Columns, IReadOnlyList<IReadOnlyList
     internal SqlReadCharge? ReadCharge { get; init; }
 }
 
-/// <summary>An ErrorResponse: SQLSTATE and a message that never quotes secrets or paths.</summary>
-/// <summary>An error response; a fatal one also ends the session, as a revoked or expired key does.</summary>
+/// <summary>A SQLSTATE and a message without secrets or paths; a fatal error also ends the session.</summary>
 internal sealed record PgError(string Code, string Message, bool Fatal = false);
 
 /// <summary>A statement's results, or its error.</summary>

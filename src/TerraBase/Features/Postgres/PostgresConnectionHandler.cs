@@ -702,6 +702,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     return new PgError("34000", "portal does not exist");
                 }
 
+                if (Aborted(session, running.Statement) is { } executeAborted)
+                {
+                    return executeAborted;
+                }
+
                 if (maxRows > 0)
                 {
                     return new PgError("0A000", "Execute with a row limit is not supported yet");

@@ -6,6 +6,14 @@ Rejected claims/hash candidates (#814/#816), cached-open concerns (#836), unreso
 
 The local recovery bundle `~/Backups/merge-back-20261029/terrascale-194-branches.bundle` preserves all source refs. Delete source refs only after the folded PR merges, excluding any current open-PR branch and any branch owned by another author. The initial historical-PR audit found only MarioGK among listed branch PR authors; refresh ownership and open PRs before deletion.
 
+Additional local-only salvage: beta's `feat/postgres-hastables-slice` at
+`f8fec2d6effb92b3a6eefb894bc372e06b653628` was recovered from its worktree cleanup
+bundle. Its savepoint and shared PostgreSQL test-client work overlaps main and
+the folded port. Retain only its newer `db34d59e3` aborted row-limited Execute
+refusal and `f8fec2d6e` typed message regression; use main's existing shared
+`PostgresWireClient` and `PostgresSql` instead of duplicate test clients. This
+local-only ref is additional to the 194 remote refs below.
+
 Decisions: 45 already in main, 23 dropped evidence, 17 ported, 109 superseded.
 
 | Branch | Original tip | Decision | Evidence / retained behavior |

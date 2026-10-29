@@ -1,7 +1,7 @@
 using System.Globalization;
 using Microsoft.Extensions.Time.Testing;
-using Npgsql;
 using TerraBase.Testing;
+using static TerraBase.Testing.PostgresSql;
 
 namespace TerraBase.Fast.Postgres;
 
@@ -122,34 +122,5 @@ public sealed class PostgresSavepointTests
         await Assert.That(await ScalarAsync(writer, "SELECT count(*) FROM items")).IsEqualTo("1");
         await transaction.CommitAsync();
         await Assert.That(await ScalarAsync(writer, "SELECT count(*) FROM items")).IsEqualTo("2");
-    }
-
-    private static async Task<NpgsqlDataSource> SourceAsync(ManagementApi api)
-    {
-        var database = await api.CreateManagedDatabaseAsync();
-        var key = await api.Server.IssueNarrowedAsync(database.Organization, database.Project, null, "documents:read", "documents:write");
-        return NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder
-        {
-            Host = "127.0.0.1", Port = api.Server.PostgresPort, Username = "savepoints", Password = key,
-            Database = database.Name, SslMode = SslMode.Disable,
-        }.ConnectionString);
-    }
-
-    private static async Task ExecuteAsync(NpgsqlConnection connection, string sql)
-    {
-        await using var command = new NpgsqlCommand(sql, connection);
-        await command.ExecuteNonQueryAsync();
-    }
-
-    private static async Task<string?> ScalarAsync(NpgsqlConnection connection, string sql)
-    {
-        await using var command = new NpgsqlCommand(sql, connection);
-        return Convert.ToString(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
-    }
-
-    private static async Task StateAsync(NpgsqlConnection connection, string sql, string expected)
-    {
-        var error = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, sql));
-        await Assert.That(error!.SqlState).IsEqualTo(expected);
     }
 }

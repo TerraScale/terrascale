@@ -216,36 +216,36 @@ public sealed class PostgresWireTests
     {
         await using var api = await ManagementApi.StartAsync();
         var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
-        await using var wire = await RawClient.ConnectAsync(api.Server.PostgresPort, key, database.Name);
+        await using var wire = await PostgresWireClient.ConnectAsync(api.Server.PostgresPort, key, database.Name);
         await wire.QueryAsync(People);
-        await wire.SyncAsync(RawClient.Parse("described", "SELECT name FROM people"), RawClient.Describe('S', "described"),
-            RawClient.Parse("plain", "SELECT name FROM people"));
+        await wire.SyncAsync(PostgresWireClient.Parse("described", "SELECT name FROM people"), PostgresWireClient.Describe('S', "described"),
+            PostgresWireClient.Parse("plain", "SELECT name FROM people"));
         await wire.QueryAsync("BEGIN; SAVEPOINT s; INSERT INTO people (name) VALUES ('ghost')");
         // "inherited" takes its statement's columns; Describe runs the reads of "cached" and "ghost" ahead of Execute.
-        var bound = await wire.SyncAsync(RawClient.Bind("inherited", "described"), RawClient.Bind("fresh", "plain"),
-            RawClient.Bind("cached", "plain"), RawClient.Describe('P', "cached"), RawClient.Bind("ghost", "plain"), RawClient.Describe('P', "ghost"));
+        var bound = await wire.SyncAsync(PostgresWireClient.Bind("inherited", "described"), PostgresWireClient.Bind("fresh", "plain"),
+            PostgresWireClient.Bind("cached", "plain"), PostgresWireClient.Describe('P', "cached"), PostgresWireClient.Bind("ghost", "plain"), PostgresWireClient.Describe('P', "ghost"));
         var failed = await wire.QueryAsync("INSERT INTO people (name) VALUES (NULL)");
         List<string> refused = [Tags(await wire.QueryAsync("SELECT oid FROM pg_type AS typ JOIN pg_namespace ns ON ns.oid = typnamespace"))];
-        foreach (var message in new[] { RawClient.Parse("again", "SELECT 1"), RawClient.Bind("rebound", "plain"), RawClient.Describe('S', "described"),
-            RawClient.Describe('S', "plain"), RawClient.Describe('P', "inherited"), RawClient.Describe('P', "cached"), RawClient.Describe('P', "fresh"),
-            RawClient.Execute("cached") })
+        foreach (var message in new (char, byte[])[] { PostgresWireClient.Parse("again", "SELECT 1"), PostgresWireClient.Bind("rebound", "plain"), PostgresWireClient.Describe('S', "described"),
+            PostgresWireClient.Describe('S', "plain"), PostgresWireClient.Describe('P', "inherited"), PostgresWireClient.Describe('P', "cached"), PostgresWireClient.Describe('P', "fresh"),
+            PostgresWireClient.Execute("cached"), ('E', [.. "cached\0"u8, 0, 0, 0, 1]) }) // The last asks for one row.
         {
             refused.Add(Tags(await wire.SyncAsync(message)));
         }
 
         await wire.QueryAsync("ROLLBACK TO s");
-        var recovered = await wire.SyncAsync(RawClient.Execute("ghost"));
+        var recovered = await wire.SyncAsync(PostgresWireClient.Execute("ghost"));
         await wire.QueryAsync("INSERT INTO people (name) VALUES ('kept'); SAVEPOINT t; INSERT INTO people (name) VALUES ('late')");
-        await wire.SyncAsync(RawClient.Bind("late", "plain"), RawClient.Describe('P', "late"));
+        await wire.SyncAsync(PostgresWireClient.Bind("late", "plain"), PostgresWireClient.Describe('P', "late"));
         await wire.QueryAsync("ROLLBACK TO t");
-        var kept = await wire.SyncAsync(RawClient.Execute("late"));
-        await wire.SyncAsync(RawClient.Bind("ended", "plain"), RawClient.Describe('P', "ended"));
+        var kept = await wire.SyncAsync(PostgresWireClient.Execute("late"));
+        await wire.SyncAsync(PostgresWireClient.Bind("ended", "plain"), PostgresWireClient.Describe('P', "ended"));
         await wire.QueryAsync("ROLLBACK");
-        var ended = await wire.SyncAsync(RawClient.Execute("ended"));
+        var ended = await wire.SyncAsync(PostgresWireClient.Execute("ended"));
 
         await Assert.That(Tags(bound)).IsEqualTo("Z:T");
         await Assert.That(Tags(failed)).IsEqualTo("E:23502,Z:E");
-        await Assert.That(refused).IsEquivalentTo(Enumerable.Repeat("E:25P02,Z:E", 9));
+        await Assert.That(refused).IsEquivalentTo(Enumerable.Repeat("E:25P02,Z:E", 10));
         await Assert.That(Tags(recovered)).IsEqualTo("C:SELECT 0,Z:T");
         await Assert.That(Tags(kept)).IsEqualTo("D:kept,C:SELECT 1,Z:T");
         await Assert.That(Tags(ended)).IsEqualTo("C:SELECT 0,Z:I");
@@ -493,108 +493,5 @@ public sealed class PostgresWireTests
     {
         var database = await api.CreateManagedDatabaseAsync();
         return (database, await api.Server.IssueNarrowedAsync(database.Organization, database.Project, null, scopes));
-    }
-
-    // The simple-query protocol as psql speaks it: one Query message, every response until ReadyForQuery.
-    private sealed class RawClient(TcpClient tcp, NetworkStream stream) : IAsyncDisposable
-    {
-        public static async Task<RawClient> ConnectAsync(int port, string key, string database)
-        {
-            var tcp = new TcpClient();
-            await tcp.ConnectAsync("127.0.0.1", port);
-            var client = new RawClient(tcp, tcp.GetStream());
-            await client.SendAsync(null, [0, 3, 0, 0, .. CString("user"), .. CString("wire"), .. CString("database"), .. CString(database), 0]);
-            await client.ReadAsync(); // AuthenticationCleartextPassword
-            await client.SendAsync('p', CString(key));
-            while ((await client.ReadAsync()).Type != 'Z')
-            {
-            }
-
-            return client;
-        }
-
-        public async Task<List<(char Type, string?[] Fields)>> QueryAsync(string sql)
-        {
-            await SendAsync('Q', CString(sql));
-            return await ReadyAsync();
-        }
-
-        // Extended-protocol messages, then Sync: errors skip to it, so each refusal is its own call.
-        public async Task<List<(char Type, string?[] Fields)>> SyncAsync(params (char Type, byte[] Body)[] messages)
-        {
-            foreach (var (type, body) in messages)
-            {
-                await SendAsync(type, body);
-            }
-
-            await SendAsync('S', []);
-            return await ReadyAsync();
-        }
-
-        public static (char, byte[]) Parse(string name, string sql) => ('P', [.. CString(name), .. CString(sql), 0, 0]);
-
-        public static (char, byte[]) Bind(string portal, string statement) => ('B', [.. CString(portal), .. CString(statement), 0, 0, 0, 0, 0, 0]);
-
-        public static (char, byte[]) Describe(char kind, string name) => ('D', [(byte)kind, .. CString(name)]);
-
-        public static (char, byte[]) Execute(string portal) => ('E', [.. CString(portal), 0, 0, 0, 0]);
-
-        public async ValueTask DisposeAsync()
-        {
-            await stream.DisposeAsync();
-            tcp.Dispose();
-        }
-
-        private async Task<List<(char Type, string?[] Fields)>> ReadyAsync()
-        {
-            var messages = new List<(char Type, string?[] Fields)>();
-            for (var message = await ReadAsync(); ; message = await ReadAsync())
-            {
-                var body = message.Body;
-                messages.Add((message.Type, message.Type switch
-                {
-                    'D' => Values(body),
-                    'E' => [Encoding.UTF8.GetString(body).Split('\0').First(field => field.StartsWith('C'))[1..]],
-                    'C' => [Encoding.UTF8.GetString(body).TrimEnd('\0')],
-                    'Z' => [((char)body[0]).ToString()],
-                    _ => [null],
-                }));
-                if (message.Type == 'Z')
-                {
-                    return [.. messages.Where(entry => entry.Type is 'D' or 'E' or 'C' or 'Z')];
-                }
-            }
-        }
-
-        private static string?[] Values(byte[] body)
-        {
-            var values = new string?[BinaryPrimitives.ReadInt16BigEndian(body)];
-            for (int i = 0, at = 2; i < values.Length; i++)
-            {
-                var length = BinaryPrimitives.ReadInt32BigEndian(body.AsSpan(at));
-                values[i] = length < 0 ? null : Encoding.UTF8.GetString(body, at + 4, length);
-                at += 4 + Math.Max(0, length);
-            }
-
-            return values;
-        }
-
-        private static byte[] CString(string value) => [.. Encoding.UTF8.GetBytes(value), 0];
-
-        private async Task SendAsync(char? type, byte[] body)
-        {
-            var length = new byte[4];
-            BinaryPrimitives.WriteInt32BigEndian(length, body.Length + 4);
-            await stream.WriteAsync((byte[])[.. type is { } t ? new[] { (byte)t } : [], .. length, .. body]);
-        }
-
-        private async Task<(char Type, byte[] Body)> ReadAsync()
-        {
-            var header = new byte[5];
-            await stream.ReadExactlyAsync(header);
-            var body = new byte[BinaryPrimitives.ReadInt32BigEndian(header.AsSpan(1)) - 4];
-            await stream.ReadExactlyAsync(body);
-            return ((char)header[0], body);
-        }
     }
 }
