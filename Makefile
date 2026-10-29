@@ -227,7 +227,7 @@ sdk-python-test-fast:
 	cd sdk/python && uv pip install --python .venv/bin/python --no-deps --no-build-isolation -e '.[dev]' && .venv/bin/pytest -q
 
 sdk-rust-test-fast:
-	cd sdk/rust && rustup run 1.98.1 cargo test --locked
+	cd sdk/rust && bash scripts/test-fast.sh
 
 .PHONY: docs-test-fast
 docs-test-fast:
