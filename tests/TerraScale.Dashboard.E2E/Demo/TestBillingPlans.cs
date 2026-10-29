@@ -10,7 +10,7 @@ using TerraScale.Dashboard.Features.Billing;
 
 namespace TerraScale.Dashboard.Demo;
 
-// Only the E2E suite and DEMO=true install this protocol wrapper. All app calls continue
+// Only the E2E suite install this protocol wrapper. All app calls continue
 // through the official Stripe SDK and validate actual provider-shaped facts.
 sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessageHandler
 {

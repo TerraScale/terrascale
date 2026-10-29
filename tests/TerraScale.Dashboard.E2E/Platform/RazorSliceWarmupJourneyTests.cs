@@ -54,14 +54,16 @@ public sealed class RazorSliceWarmupJourneyTests(DashboardRootFixture fixture)
     private Process Start(int port)
     {
         var project = Path.Combine(fixture.Root, "src", "TerraScale.Dashboard");
-        var application = Path.Combine(project, "bin", "Release", "net11.0", "TerraScale.Dashboard.dll");
+        var application = typeof(RazorSliceWarmupJourneyTests).Assembly.Location;
         if (!File.Exists(application)) throw new FileNotFoundException("Build the Release dashboard with the E2E suite.", application);
         var start = new ProcessStartInfo("dotnet") { WorkingDirectory = project, RedirectStandardOutput = true, RedirectStandardError = true };
         start.ArgumentList.Add(application);
+        start.ArgumentList.Add("--dashboard-fixture-host");
+        start.ArgumentList.Add(project);
+        start.ArgumentList.Add(port.ToString(System.Globalization.CultureInfo.InvariantCulture));
         foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("TS_", StringComparison.Ordinal) ||
                      name.StartsWith("STRIPE_", StringComparison.Ordinal) || name.StartsWith("ASPNETCORE_", StringComparison.Ordinal)).ToArray())
             start.Environment.Remove(name);
-        start.Environment["DEMO"] = "true";
         start.Environment["ASPNETCORE_HTTP_PORTS"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
         return Process.Start(start) ?? throw new IOException("Could not launch the dashboard program.");
     }

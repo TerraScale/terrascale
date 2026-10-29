@@ -939,7 +939,7 @@ sealed partial class TestDocuments : IDocumentBackend
     private static Exception ProviderError(Type type, HttpStatusCode status, string message) => (Exception)Activator.CreateInstance(type, BindingFlags.Instance | BindingFlags.NonPublic, binder: null, args: [status, message, status == HttpStatusCode.PreconditionFailed ? "precondition_failed" : "name_taken", null], culture: null)!;
 }
 
-// Protocol fixtures serve only the E2E suite and DEMO=true. Billing still
+// Protocol fixtures serve only the E2E suite. Billing still
 // runs the official Stripe SDK, including its real request serialization.
 sealed class TestHttpFactory(HttpMessageHandler transport) : IHttpClientFactory
 {

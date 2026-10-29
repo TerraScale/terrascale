@@ -7,7 +7,7 @@ using TerraScale.Dashboard.Platform.Datastar;
 
 namespace TerraScale.Dashboard.E2E;
 
-// The application's demo host (src/TerraScale.Dashboard/Demo) plus the suite's scenario and probe routes and reference fixtures.
+// The suite's synthetic application host plus the suite's scenario and probe routes and reference fixtures.
 public static class DemoTestHost
 {
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<DemoEnvironment, TestStepUpGateway> StepUps = new();

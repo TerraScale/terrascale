@@ -8,22 +8,15 @@ using TerraScale.Dashboard.Features.Billing;
 
 namespace TerraScale.Dashboard.Demo;
 
-// The public synthetic demo (DEMO=true) wraps the in-memory demo host: production error pages and
-// no admin, MCP, password-reset, scenario or delete/revoke/leave routes. No TerraBase, ts-auth or Stripe.
+// Synthetic application host compiled only into the E2E executable.
 public static partial class PublicDemo
 {
-    // DEMO=true is the user's explicit exception to docs/zero-configuration.md: markets and demos run this
-    // build without providers; unsetting it serves the real application.
-    public static bool Enabled => Environment.GetEnvironmentVariable("DEMO") == "true";
-
-    // Serves the published application directory on the image's HTTP port (8080 in the ASP.NET image).
-    public static async Task<int> RunAsync()
+    public static async Task<int> RunAsync(string contentRoot, int port)
     {
-        var port = int.Parse(Environment.GetEnvironmentVariable("ASPNETCORE_HTTP_PORTS") ?? "8080", System.Globalization.CultureInfo.InvariantCulture);
         var environment = new DemoEnvironment();
         await environment.InitializeAsync();
-        await using var app = environment.CreateHost(AppContext.BaseDirectory, port, StripeBilling.Origin, Configure);
-        Console.WriteLine($"DEMO (synthetic data) on port {port}; signs in as user@example.com");
+        await using var app = environment.CreateHost(contentRoot, port, StripeBilling.Origin, Configure);
+        Console.WriteLine($"Synthetic fixture on port {port}; signs in as user@example.com");
         await app.RunAsync();
         return 0;
     }
