@@ -89,7 +89,7 @@ internal sealed class RevisionDatabase
 
     public async Task UpdateAsync(ManagementApi api, int rows)
     {
-        foreach (var chunk in _acked.Keys.Take(rows).Chunk(PerRequest).ToList())
+        foreach (var chunk in _acked.Keys.Take(rows).Chunk(1).ToList())
         {
             var values = chunk.Select(id => (Id: id, Value: $"u-{EntityIds.New()}-{new string('y', 900)}")).ToList();
             await ExecuteAsync(api, [.. values.Select(row => Statement("UPDATE items SET v = ? WHERE id = ?", row.Value, row.Id))]);
@@ -102,7 +102,7 @@ internal sealed class RevisionDatabase
 
     public async Task DeleteAsync(ManagementApi api, int rows)
     {
-        foreach (var chunk in _acked.Keys.Skip(rows).Take(rows).Chunk(PerRequest).ToList())
+        foreach (var chunk in _acked.Keys.Skip(rows).Take(rows).Chunk(1).ToList())
         {
             await ExecuteAsync(api, [.. chunk.Select(id => Statement("DELETE FROM items WHERE id = ?", id))]);
             foreach (var id in chunk)

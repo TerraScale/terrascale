@@ -189,7 +189,7 @@ public sealed class DurableRevisionTests
 
     private static void CopyDirectory(string from, string to)
     {
-        foreach (var file in Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories))
+        foreach (var file in Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories).Where(file => Path.GetFileName(file) != ".terrabase.lock"))
         {
             var target = Path.Combine(to, Path.GetRelativePath(from, file));
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
