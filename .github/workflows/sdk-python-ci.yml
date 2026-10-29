@@ -1,0 +1,28 @@
+name: SDK python Fast
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sdk/python/**'
+      - '.github/workflows/sdk-python-*.yml'
+      - '.github/workflows/sdk-fast.yml'
+      - 'scripts/sdk/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'sdk/python/**'
+      - '.github/workflows/sdk-python-*.yml'
+      - '.github/workflows/sdk-fast.yml'
+      - 'scripts/sdk/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: read
+
+jobs:
+  fast:
+    uses: ./.github/workflows/sdk-fast.yml
+    with:
+      area: sdk-python

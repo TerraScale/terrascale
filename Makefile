@@ -219,3 +219,24 @@ terrabase-test-shard:
 .PHONY: landing-test-fast
 landing-test-fast:
 	cd landing-site && npm ci --no-audit --no-fund && npm run build
+
+# API-coupled SDKs retain independent Fast suites and release identities.
+.PHONY: sdk-test-fast sdk-dotnet-test-fast sdk-js-test-fast sdk-go-test-fast sdk-python-test-fast sdk-rust-test-fast
+sdk-test-fast: sdk-dotnet-test-fast sdk-js-test-fast sdk-go-test-fast sdk-python-test-fast sdk-rust-test-fast
+
+sdk-dotnet-test-fast:
+	cd sdk/dotnet && bash scripts/test-fast.sh
+
+sdk-js-test-fast:
+	cd sdk/js && mise exec node@24.21.0 -- npm exec --yes --package=npm@11.18.0 -- npm ci --no-audit --no-fund
+	cd sdk/js && mise exec node@24.21.0 -- npm exec --yes --package=npm@11.18.0 -- npm test
+
+sdk-go-test-fast:
+	cd sdk/go && go test -count=1 ./...
+
+sdk-python-test-fast:
+	cd sdk/python && uv venv --allow-existing --python 3.12 .venv && uv pip sync --python .venv/bin/python --require-hashes --only-binary :all: requirements-ci.txt
+	cd sdk/python && uv pip install --python .venv/bin/python --no-deps --no-build-isolation -e '.[dev]' && .venv/bin/pytest -q
+
+sdk-rust-test-fast:
+	cd sdk/rust && bash scripts/test-fast.sh

@@ -1,0 +1,66 @@
+name: SDK JavaScript Release
+
+on:
+  push:
+    tags: ['sdk/js/v0.0.*']
+
+permissions:
+  contents: read
+  statuses: read
+
+concurrency:
+  group: sdk-js-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    uses: ./.github/workflows/sdk-fast.yml
+    with:
+      area: sdk-js
+
+  publish:
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      statuses: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validate the versioned main tag
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^sdk/js/v0\.0\.(0|[1-9][0-9]*)$ ]]
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - name: Download exact qualified bytes
+        id: qualified
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/sdk/download-qualified.py js "$GITHUB_SHA" "$RUNNER_TEMP/qualified"
+      - name: Require the qualified package version
+        env:
+          VERSION: ${{ steps.qualified.outputs.version }}
+        run: test "$GITHUB_REF_NAME" = "sdk/js/v$VERSION"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.21.0'
+          registry-url: https://registry.npmjs.org
+      - name: Provision the reviewed npm CLI
+        working-directory: sdk/js
+        run: node scripts/provision-reviewed-npm.js
+      - name: Publish the qualified tarball
+        env:
+          VERSION: ${{ steps.qualified.outputs.version }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          package="$RUNNER_TEMP/qualified/terrascale-sdk-$VERSION.tgz"
+          test -f "$package"
+          tar -xOf "$package" package/package.json | node --input-type=module -e '
+            let input = ""; for await (const part of process.stdin) input += part;
+            const manifest = JSON.parse(input);
+            if (manifest.name !== "@terrascale/sdk" || manifest.version !== process.env.VERSION) process.exit(1);
+          '
+          npm publish "$package" --ignore-scripts --provenance --access public

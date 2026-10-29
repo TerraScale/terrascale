@@ -40,7 +40,8 @@
 - Projects go in `src/<Project>/`, tests in `tests/<Project>/`, scripts in `scripts/<area>/`, and docs in `docs/<area>/`. All benchmark code, datasets and results belong in `benchmark/`; .NET benchmarks use `benchmark/dotnet/`. Save comparable Markdown result tables in `benchmark/bench/`.
 - Use the root Makefile when a target exists. Build: `make build`; Fast: `make test-fast`; Slow: `make test-slow`; full checks: `make check`. Area targets: `libs-build`, `libs-test`, `libs-check`, `auth-build`, `auth-test-fast`, `auth-test-slow`, `auth-check`, `terrabase-build`, `terrabase-test-fast`, `terrabase-test-slow`, `terrabase-check`, `benchmark-build`, `benchmark-check`.
 - Fast pre-push command: `make test-fast`, or the changed area's `make libs-test`, `make auth-test-fast` or `make terrabase-test-fast`.
-- Auth and TerraBase consume the libraries through ProjectReference. ts-dotnet remains a sibling repo, consumed as source via `TsDotnetRoot` in `Directory.Build.props`. Keep SDKs and dashboard separate.
+- SDKs live in `sdk/dotnet`, `sdk/js`, `sdk/go`, `sdk/python` and `sdk/rust`; read each area's `AGENTS.md`. Fast: `make sdk-dotnet-test-fast`, `make sdk-js-test-fast`, `make sdk-go-test-fast`, `make sdk-python-test-fast`, `make sdk-rust-test-fast`; each finishes within five minutes. `make sdk-test-fast` runs all five.
+- Auth and TerraBase consume the libraries through ProjectReference. ts-dotnet remains a sibling repo, consumed as source via `TsDotnetRoot` in `Directory.Build.props`.
 - Shared build configuration lives in `Directory.Build.props`, `Directory.Build.targets`, `Directory.Packages.props`, `global.json`, `NuGet.config`, `.editorconfig` and `BannedSymbols.txt`.
 
 ## Product rules
