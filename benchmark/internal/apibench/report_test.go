@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -92,9 +93,7 @@ func TestProbeEndpointReusesHandshake(t *testing.T) {
 	defer srv.Close()
 	pool := x509.NewCertPool()
 	pool.AddCert(srv.Certificate())
-	probeRoots = pool
-	defer func() { probeRoots = nil }()
-	if _, err := ProbeEndpoint(context.Background(), srv.URL, 3); err != nil {
+	if _, err := probeEndpoint(context.Background(), srv.URL, 3, pool); err != nil {
 		t.Fatal(err)
 	}
 	if conns.Load() != 3 || healthz.Load() != 3 {
@@ -104,6 +103,16 @@ func TestProbeEndpointReusesHandshake(t *testing.T) {
 
 func TestWriteReportCleansUpAfterWriteError(t *testing.T) {
 	t.Parallel()
+	// RLIMIT_FSIZE is process-wide: keep the real failing write in a child so
+	// parallel report tests retain their normal limits.
+	if os.Getenv("TS_BENCH_REPORT_FSIZE_CHILD") != "1" {
+		child := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestWriteReportCleansUpAfterWriteError$")
+		child.Env = append(os.Environ(), "TS_BENCH_REPORT_FSIZE_CHILD=1")
+		if output, err := child.CombinedOutput(); err != nil {
+			t.Fatalf("report write-failure child: %v\n%s", err, output)
+		}
+		return
+	}
 	r := Run{ID: "01J0FAILRUN", Host: "bench-host", Start: time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)}
 	var old syscall.Rlimit
 	if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &old); err != nil {

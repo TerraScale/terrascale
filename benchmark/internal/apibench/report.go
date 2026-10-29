@@ -48,6 +48,10 @@ type Probe struct {
 // ProbeEndpoint times TCP connect, TLS handshake and GET /healthz n times. Each
 // try uses a fresh connection so no try reuses another's.
 func ProbeEndpoint(ctx context.Context, endpoint string, n int) (Probe, error) {
+	return probeEndpoint(ctx, endpoint, n, nil)
+}
+
+func probeEndpoint(ctx context.Context, endpoint string, n int, roots *x509.CertPool) (Probe, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil {
 		return Probe{}, err
@@ -58,7 +62,7 @@ func ProbeEndpoint(ctx context.Context, endpoint string, n int) (Probe, error) {
 	}
 	var tcp, tlsMS, healthz []float64
 	for range n {
-		t, h, z, err := probeOnce(ctx, endpoint, u.Hostname(), addr)
+		t, h, z, err := probeOnce(ctx, endpoint, u.Hostname(), addr, roots)
 		if err != nil {
 			return Probe{}, err
 		}
@@ -67,10 +71,7 @@ func ProbeEndpoint(ctx context.Context, endpoint string, n int) (Probe, error) {
 	return Probe{TCPConnectMS: NewStat(tcp), TLSHandshakeMS: NewStat(tlsMS), HealthzMS: NewStat(healthz)}, nil
 }
 
-// probeRoots is nil in production, which uses the system roots. Tests trust httptest's certificate through it.
-var probeRoots *x509.CertPool
-
-func probeOnce(ctx context.Context, endpoint, host, addr string) (tcp, handshake, healthz float64, err error) {
+func probeOnce(ctx context.Context, endpoint, host, addr string, roots *x509.CertPool) (tcp, handshake, healthz float64, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/healthz", nil)
 	if err != nil {
 		return 0, 0, 0, err
@@ -83,7 +84,7 @@ func probeOnce(ctx context.Context, endpoint, host, addr string) (tcp, handshake
 	}
 	tcp = msSince(t)
 	t = time.Now()
-	c := tls.Client(conn, &tls.Config{ServerName: host, RootCAs: probeRoots, NextProtos: []string{"http/1.1"}})
+	c := tls.Client(conn, &tls.Config{ServerName: host, RootCAs: roots, NextProtos: []string{"http/1.1"}})
 	if err := c.HandshakeContext(ctx); err != nil {
 		conn.Close()
 		return 0, 0, 0, err
