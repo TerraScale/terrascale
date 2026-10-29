@@ -116,6 +116,7 @@ jobs:
               - src/TerraBase/**
             terrabase:
               - *shared
+              - scripts/ci/terrabase-*
               - terrabase.slnf
               - scripts/ci/test-area.sh
               - src/TerraBase*/**
@@ -345,7 +346,7 @@ jobs:
       contents: read
     steps: *fast-steps
 
-  terrabase:
+  terrabase-build:
     needs: [changes, native]
     if: >-
       github.event_name != 'push' && contains(fromJSON(needs.changes.outputs.fast), 'terrabase')
@@ -353,10 +354,63 @@ jobs:
     env:
       AREA: terrabase
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     permissions:
       contents: read
-    steps: *fast-steps
+    steps:
+      - *checkout
+      - *checkout-ts-dotnet
+      - *native-artifacts
+      - *setup-dotnet
+      - *nuget-cache
+      - *locked-restore
+      - name: Checked build and single-file packaging proof
+        working-directory: terrascale
+        run: bash scripts/ci/test-area.sh build terrabase
+      - name: Pack this commit's build outputs
+        working-directory: terrascale
+        run: find src tests -type d -name bin -prune -print0 | tar --null -T - -czf "$RUNNER_TEMP/terrabase-build.tar.gz"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: terrabase-build
+          path: ${{ runner.temp }}/terrabase-build.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  terrabase:
+    needs: terrabase-build
+    strategy:
+      max-parallel: ${{ github.event_name == 'merge_group' && 2 || 4 }}
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - *checkout
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          global-json-file: terrascale/global.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: terrabase-build
+          path: ${{ runner.temp }}
+      - name: Unpack this commit's build outputs
+        working-directory: terrascale
+        run: tar -xzf "$RUNNER_TEMP/terrabase-build.tar.gz"
+      - name: Fast shard and assigned integration proofs
+        working-directory: terrascale
+        run: make terrabase-test-shard SHARD=${{ matrix.shard }}
+      - name: Retain test durations and failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: terrabase-results-${{ matrix.shard }}
+          path: terrascale/artifacts/test-results/
+          if-no-files-found: error
+          retention-days: 7
 
   main:
     needs: [changes, native]
@@ -649,7 +703,7 @@ jobs:
 
   test:
     name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && 'native-maintenance-unqualified' || 'test' }}
-    needs: [changes, native, libs, auth, terrabase, rust-proof]
+    needs: [changes, native, libs, auth, terrabase-build, terrabase, rust-proof]
     if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -59,7 +59,7 @@ for area in ("libs", "auth", "terrabase"):
 build_check = "src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj"
 assert f"dotnet format whitespace {build_check} --verify-no-changes --no-restore" in stages["build-terrabase"][1]
 assert all_projects <= formatted | {build_check}, all_projects - formatted - {build_check}
-assert "needs: [changes, native, libs, auth, terrabase, rust-proof]" in workflow, "Native/Fast must gate required test; Slow must not delay it"
+assert "needs: [changes, native, libs, auth, terrabase-build, terrabase, rust-proof]" in workflow, "Native/Fast must gate required test; Slow must not delay it"
 assert "AREA: ${{ github.job }}" not in workflow, "github.job is unavailable in job-level env"
 
 # Cheap policy failures stop native downloads and every expensive area; Slow runs independently of publication.
