@@ -242,19 +242,24 @@ internal static class BackupQualificationRun
         Docs.Digest(documents.Select(pair => (pair.Key, Docs.Canonical(JsonNode.Parse(pair.Value.Body))))),
         documents.ToDictionary(pair => pair.Key, pair => pair.Value.Version, StringComparer.Ordinal), sourceId, placement);
 
-    private static async Task<JsonElement> ShippedAsync(Cluster cluster, DateTimeOffset from, CancellationToken token) => await Converge.UntilAsync(async () =>
+    private static async Task<JsonElement> ShippedAsync(Cluster cluster, DateTimeOffset from, CancellationToken token)
     {
-        await cluster.ShipBackupAsync(token);
-        using var window = await cluster[Cluster.Gru].GetAsync(Uri(cluster.DatabasePath + "/point-in-time"), token);
-        if (window.StatusCode == HttpStatusCode.NotFound)
+        _ = await Converge.UntilAsync(() => ServedAtAsync(cluster[Cluster.Gru], cluster.DatabasePath, token),
+            date => date >= from, "the backup checkpoint boundary", token);
+        return await Converge.UntilAsync(async () =>
         {
-            return (JsonElement?)null;
-        }
+            await cluster.ShipBackupAsync(token);
+            using var window = await cluster[Cluster.Gru].GetAsync(Uri(cluster.DatabasePath + "/point-in-time"), token);
+            if (window.StatusCode == HttpStatusCode.NotFound)
+            {
+                return (JsonElement?)null;
+            }
 
-        await Docs.EnsureSuccessAsync(window);
-        return await window.Content.ReadFromJsonAsync<JsonElement>(token);
-    }, window => window is { } found && found.GetProperty("latest").GetDateTimeOffset() >= from,
-        "a newer shipped backup checkpoint", token) is { } shipped ? shipped : throw new InvalidOperationException("no shipped checkpoint");
+            await Docs.EnsureSuccessAsync(window);
+            return await window.Content.ReadFromJsonAsync<JsonElement>(token);
+        }, window => window is { } found && found.GetProperty("latest").GetDateTimeOffset() >= from,
+            "a newer shipped backup checkpoint", token) is { } shipped ? shipped : throw new InvalidOperationException("no shipped checkpoint");
+    }
 
     private static async Task<Dictionary<string, Document>> CaptureVersionsAsync(HttpClient client, Cluster cluster, string organization, string project, string database,
         Dictionary<string, string> acknowledged, Dictionary<string, string> acknowledgedVersions, CancellationToken token)
