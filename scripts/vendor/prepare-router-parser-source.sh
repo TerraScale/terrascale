@@ -11,3 +11,6 @@ fi
 printf '7ea83d5e28577cf9d8655b77705902379e06b82fb29424f6ea328b5f26f17ecb  %s\n' "$archive" | sha256sum --check
 mkdir -p "$output/turso"
 tar -xzf "$archive" -C "$output/turso" --strip-components=1
+mkdir -p "$output/native-turso"
+tar -xzf "$archive" -C "$output/native-turso" --strip-components=1
+patch --batch --fuzz=0 --forward --directory "$output/native-turso" -p1 < "$root/src/vendor/Turso.Native/sql/parser-limits.patch"

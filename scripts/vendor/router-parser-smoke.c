@@ -26,6 +26,20 @@ int main(void) {
     sql = "SELECT 1;garbage";
     if (ts_sql_next((const uint8_t *)sql, strlen(sql), 0, &facts, &length) != 2) return 5;
     if (facts != NULL || length != 0) return 6;
-    puts("parser ABI integration: relative SET, equality predicate, UTF-8 and invalid suffix passed");
+    sql = "SELECT 1 FROM [)]";
+    if (ts_sql_next((const uint8_t *)sql, strlen(sql), 0, &facts, &length) != 0) return 7;
+    ts_sql_free(facts, length);
+    sql = "SELECT ARRAY[1,2][1]";
+    if (ts_sql_next((const uint8_t *)sql, strlen(sql), 0, &facts, &length) != 0) return 8;
+    ts_sql_free(facts, length);
+    char bypass[4096] = "SELECT 1 FROM [--];";
+    for (int i = 0; i < 200; i++) strcat(bypass, "SELECT 1;");
+    if (ts_sql_next((const uint8_t *)bypass, strlen(bypass), 0, &facts, &length) != 3) return 9;
+    strcpy(bypass, "SELECT 1 FROM [--];SELECT ");
+    for (int i = 0; i < 33; i++) strcat(bypass, "(");
+    strcat(bypass, "1");
+    for (int i = 0; i < 33; i++) strcat(bypass, ")");
+    if (ts_sql_next((const uint8_t *)bypass, strlen(bypass), 0, &facts, &length) != 3) return 10;
+    puts("parser ABI integration: SET, WHERE, UTF-8, invalid suffix, bracket names, arrays and budget bypasses passed");
     return 0;
 }
