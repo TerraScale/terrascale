@@ -1,3 +1,4 @@
+using TerraBase.Testing;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -5,11 +6,11 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
-using TerraBase.Fast.Management;
-using TerraBase.Fast.Storage;
+using TerraBase.Slow.Management;
+using TerraBase.Slow.Storage;
 using TerraBase.Features.Memory;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Slow.Platform;
 
 public sealed class ChunkedMemoryAdmissionTests
 {

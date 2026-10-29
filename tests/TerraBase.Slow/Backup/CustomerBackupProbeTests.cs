@@ -8,7 +8,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Testing;
 using static TerraBase.Testing.ManagementApi;
 
-namespace TerraBase.Fast.Backup;
+namespace TerraBase.Slow.Backup;
 
 public sealed class CustomerBackupProbeTests
 {

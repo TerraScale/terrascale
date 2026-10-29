@@ -1,10 +1,11 @@
+using TerraBase.Testing;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Xml.Linq;
-using TerraBase.Fast.Storage;
+using TerraBase.Slow.Storage;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Slow.Platform;
 
 internal static class IsolatedTestChild
 {
@@ -209,7 +210,7 @@ internal static class IsolatedTestChild
                 TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
 
-        await StoragePoolTests.JoinCleanupAsync(errors.Select(static error => Task.FromException(error)), primaryFailure);
+        await StoragePoolHelpers.JoinCleanupAsync(errors.Select(static error => Task.FromException(error)), primaryFailure);
     }
 
     internal static async Task<string> ReadChildOutputAsync(StreamReader reader, CancellationToken cancellationToken)

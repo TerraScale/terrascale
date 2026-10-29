@@ -5,23 +5,23 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Shapes;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 using Turso.Data.Sqlite;
 
-namespace TerraBase.Fast.Shapes;
+namespace TerraBase.Slow.Shapes;
 
 public sealed class ClientAccessRetainedShapeTests
 {
     [Test]
     public async Task Owner_authorization_accepts_deep_retained_documents_in_snapshot_pages_and_closed_chunks()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
-        var rules = CollectionAccessRulesTests.OwnerRules();
-        await CollectionAccessRulesTests.DeclareAsync(api, rules);
+        await using var api = await CollectionAccessFixture.StartAsync();
+        var rules = CollectionAccessFixture.OwnerRules();
+        await CollectionAccessFixture.DeclareAsync(api, rules);
         var actor = DocumentApi.NewId();
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { owner = actor })).Status.ShouldBe(HttpStatusCode.Created);
@@ -33,7 +33,7 @@ public sealed class ClientAccessRetainedShapeTests
 
             await StoredStates.WriteAsync(connection, DocumentApi.Collection, id, deep);
         }
-        using var reader = CollectionAccessRulesTests.Reader(api, actor);
+        using var reader = CollectionAccessFixture.Reader(api, actor);
         var shape = Shape(api);
         using var bootstrap = await reader.GetAsync(Relative(shape + "?offset=-1"));
         bootstrap.StatusCode.ShouldBe(HttpStatusCode.TemporaryRedirect);
@@ -73,14 +73,14 @@ public sealed class ClientAccessRetainedShapeTests
     [Arguments(true)]
     public async Task A_retained_snapshot_cannot_deliver_transferred_payloads_even_with_a_cached_etag(bool warm)
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
-        var rules = CollectionAccessRulesTests.OwnerRules();
-        await CollectionAccessRulesTests.DeclareAsync(api, rules);
+        await using var api = await CollectionAccessFixture.StartAsync();
+        var rules = CollectionAccessFixture.OwnerRules();
+        await CollectionAccessFixture.DeclareAsync(api, rules);
         var alice = DocumentApi.NewId();
         var bob = DocumentApi.NewId();
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { owner = alice, secret = "sealed-owner-payload" })).Status.ShouldBe(HttpStatusCode.Created);
-        using var reader = CollectionAccessRulesTests.Reader(api, alice);
+        using var reader = CollectionAccessFixture.Reader(api, alice);
         var shape = Shape(api);
         using var bootstrap = await reader.GetAsync(Relative(shape + "?offset=-1"));
         bootstrap.StatusCode.ShouldBe(HttpStatusCode.TemporaryRedirect);
@@ -102,20 +102,20 @@ public sealed class ClientAccessRetainedShapeTests
         }
         var fresh = await SnapshotAsync(reader, shape);
         await Assert.That(fresh.Ids).IsEmpty();
-        using var recipient = CollectionAccessRulesTests.Reader(api, bob);
+        using var recipient = CollectionAccessFixture.Reader(api, bob);
         await Assert.That((await SnapshotAsync(recipient, shape)).Ids).IsEquivalentTo([id]);
     }
 
     [Test]
     public async Task Retained_closed_and_live_chunks_refuse_transferred_payloads_and_recover_with_a_fresh_snapshot()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
-        var rules = CollectionAccessRulesTests.OwnerRules();
-        await CollectionAccessRulesTests.DeclareAsync(api, rules);
+        await using var api = await CollectionAccessFixture.StartAsync();
+        var rules = CollectionAccessFixture.OwnerRules();
+        await CollectionAccessFixture.DeclareAsync(api, rules);
         var alice = DocumentApi.NewId();
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { owner = alice, secret = "initial" })).Status.ShouldBe(HttpStatusCode.Created);
-        using var reader = CollectionAccessRulesTests.Reader(api, alice);
+        using var reader = CollectionAccessFixture.Reader(api, alice);
         var shape = Shape(api);
         var initial = await SnapshotAsync(reader, shape);
         (await api.PutAsync(id, new { owner = alice, secret = "sealed-chunk-payload" })).Status.ShouldBe(HttpStatusCode.OK);
@@ -147,11 +147,11 @@ public sealed class ClientAccessRetainedShapeTests
     [Test]
     public async Task Retained_continuations_recheck_both_cursor_ids_even_when_the_user_filter_emits_no_payload()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
-        var rules = CollectionAccessRulesTests.OwnerRules();
-        await CollectionAccessRulesTests.DeclareAsync(api, rules);
+        await using var api = await CollectionAccessFixture.StartAsync();
+        var rules = CollectionAccessFixture.OwnerRules();
+        await CollectionAccessFixture.DeclareAsync(api, rules);
         var actor = DocumentApi.NewId();
-        using var reader = CollectionAccessRulesTests.Reader(api, actor);
+        using var reader = CollectionAccessFixture.Reader(api, actor);
         var where = """{"eq":["/status","open"]}""";
         if (ShapeFilter.Parse(where) is not ShapeFilter filter)
         {
@@ -228,11 +228,11 @@ public sealed class ClientAccessRetainedShapeTests
         using (var owner = api.Management.As(api.Tenant.User))
         {
         }
-        await CollectionAccessRulesTests.DeclareAsync(api, CollectionAccessRulesTests.OwnerRules());
+        await CollectionAccessFixture.DeclareAsync(api, CollectionAccessFixture.OwnerRules());
         var actor = DocumentApi.NewId();
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { owner = actor, secret = "flight-owner-payload" })).Status.ShouldBe(HttpStatusCode.Created);
-        using var reader = CollectionAccessRulesTests.Reader(api, actor);
+        using var reader = CollectionAccessFixture.Reader(api, actor);
         using var bootstrap = await reader.GetAsync(Relative(Shape(api) + "?offset=-1"));
         bootstrap.StatusCode.ShouldBe(HttpStatusCode.TemporaryRedirect);
         var handle = bootstrap.Headers.GetValues("TB-Shape-Handle").Single();

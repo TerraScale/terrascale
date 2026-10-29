@@ -15,46 +15,9 @@ namespace TerraBase.Fast.Shapes;
 public sealed class ClientAccessShapeTests
 {
     [Test]
-    public async Task Snapshot_page_deadlines_never_expose_hidden_ids_in_continuations()
-    {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
-        var ids = Enumerable.Range(0, 3).Select(_ => DocumentApi.NewId()).Order(StringComparer.Ordinal).ToArray();
-        var actor = DocumentApi.NewId();
-        for (var i = 0; i < ids.Length; i++)
-        {
-            (await api.PutAsync(ids[i], new { owner = i == 0 ? DocumentApi.NewId() : actor })).Status.ShouldBe(HttpStatusCode.Created);
-        }
-        var store = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None)
-            ?? throw new InvalidOperationException("the database is missing");
-        await using var transaction = await api.Server.Services.GetRequiredService<IShapeSnapshotTransactions>().BeginAsync(store, write: false, CancellationToken.None);
-        var snapshots = (IShapeSnapshotStorage)transaction;
-        var collection = await transaction.GetCollectionAsync(DocumentApi.Collection, CancellationToken.None)
-            ?? throw new InvalidOperationException("the collection is missing");
-        var identity = ShapeHandle.ComputeCanonical(store, collection, "owner-pagination-test");
-        var time = new FakeTimeProvider();
-        var shape = new ShapeSnapshotDefinition(identity.Handle, identity.ShapeId, collection.Name, collection.Id,
-            RandomNumberGenerator.GetBytes(16), store.Incarnation, _ =>
-            {
-                time.Advance(ShapeSnapshots.PageDeadline);
-                return true;
-            }, OwnerRules().OwnerFilter(actor));
-        var (offset, cursor) = await snapshots.ShapeSnapshotHeadAsync(shape.ResumeScope, time.GetUtcNow(), CancellationToken.None);
-        using var page = await snapshots.BuildShapeSnapshotPageAsync(shape, offset, null, cursor,
-            api.Server.Services.GetRequiredService<IMemoryBudget>(), time, CancellationToken.None);
-        await Assert.That(page.NextId).IsEqualTo(ids[1]);
-        using var body = JsonDocument.Parse(page.Body);
-        await Assert.That(Operations(body.RootElement).Select(op => op.Id)).IsEquivalentTo([ids[1]]);
-        using var next = await snapshots.BuildShapeSnapshotPageAsync(shape, offset, page.NextId, cursor,
-            api.Server.Services.GetRequiredService<IMemoryBudget>(), time, CancellationToken.None);
-        await Assert.That(next.NextId).IsNull();
-        using var nextBody = JsonDocument.Parse(next.Body);
-        await Assert.That(Operations(nextBody.RootElement).Select(op => op.Id)).IsEquivalentTo([ids[2]]);
-    }
-
-    [Test]
     public async Task Owner_snapshots_and_handles_are_isolated_even_with_a_broader_user_filter()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         await RulesAsync(api, OwnerRules());
         var alice = DocumentApi.NewId();
         var bob = DocumentApi.NewId();
@@ -93,7 +56,7 @@ public sealed class ClientAccessShapeTests
     [Test]
     public async Task Owner_chunks_emit_only_proven_deletes_and_authorized_afterimages()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         await RulesAsync(api, OwnerRules());
         var alice = DocumentApi.NewId();
         var bob = DocumentApi.NewId();
@@ -123,7 +86,7 @@ public sealed class ClientAccessShapeTests
     [Test]
     public async Task A_user_where_filter_cannot_authorize_unrelated_deletes_or_old_policy_proofs()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         var rules = OwnerRules();
         await RulesAsync(api, rules);
         var actor = DocumentApi.NewId();
@@ -149,41 +112,9 @@ public sealed class ClientAccessShapeTests
     }
 
     [Test]
-    public async Task Each_identity_bound_public_waiter_rechecks_current_policy()
-    {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
-        var rules = new CollectionAccessRules(null, new CollectionAccessPolicy(false, true, ["reader"]),
-            new CollectionAccessPolicy(false, false, []));
-        await RulesAsync(api, rules);
-        (await api.PutAsync(DocumentApi.NewId(), new { value = "public" })).Status.ShouldBe(HttpStatusCode.Created);
-        using var reader = Reader(api, DocumentApi.NewId(), "reader");
-        using var revoked = Reader(api, DocumentApi.NewId());
-        var shape = Shape(api);
-        var (handle, offset, _) = await SyncAsync(reader, shape);
-        var (otherHandle, otherOffset, _) = await SyncAsync(revoked, shape);
-        await Assert.That(otherHandle).IsNotEqualTo(handle);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        var permittedPoll = reader.GetAsync(Relative($"{shape}?handle={handle}&offset={offset}&live=true"), timeout.Token);
-        var revokedPoll = revoked.GetAsync(Relative($"{shape}?handle={otherHandle}&offset={otherOffset}&live=true"), timeout.Token);
-        await TerraBaseTestServer.EventuallyAsync(async token =>
-        {
-            var scrape = await api.Server.Client.GetStringAsync(Relative("/metrics"), token);
-            return scrape.Split('\n').Where(line => line.StartsWith("terrabase_shape_requests_waiting ", StringComparison.Ordinal)
-                || line.StartsWith("terrabase_shape_requests_waiting{", StringComparison.Ordinal))
-                .Sum(line => double.Parse(line.Split(' ')[^1], CultureInfo.InvariantCulture)) >= 2;
-        }, TimeSpan.FromSeconds(15));
-        await RulesAsync(api, rules with { Read = rules.Read! with { Public = false } });
-        using var denied = await revokedPoll;
-        await AssertOpaqueDenialAsync(denied, handle);
-        using var permitted = await permittedPoll;
-        await Assert.That(permitted.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-        await Assert.That(permitted.Headers.GetValues("TB-Shape-Handle").Single()).IsNotEqualTo(handle);
-    }
-
-    [Test]
     public async Task Missing_rules_deny_end_users_while_roles_public_and_legacy_project_access_work()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { value = "visible" })).Status.ShouldBe(HttpStatusCode.Created);
         var shape = Shape(api);

@@ -4,7 +4,7 @@ using TerraBase.Engine.Turso;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Documents;
+namespace TerraBase.Slow.Documents;
 
 public sealed class QueryPlanTests
 {

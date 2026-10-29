@@ -69,37 +69,6 @@ public sealed class UserAuthTests
     }
 
     [Test]
-    public async Task Cached_and_uncached_tokens_are_rejected_at_exact_expiration_without_contacting_the_issuer()
-    {
-        var now = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-        var clock = new FakeTimeProvider(now);
-        await using var api = await ManagementApi.StartAsync(services: services =>
-            services.AddKeyedSingleton<TimeProvider>(UserAuthenticationHandler.SchemeName, clock));
-        var expires = now.AddMinutes(5);
-        string Mint()
-        {
-            return api.Issuer.Mint(EntityIds.New().ToString(), token =>
-                (token.IssuedAt, token.NotBefore, token.Expires) = (now.UtcDateTime, now.UtcDateTime, expires.UtcDateTime));
-        }
-        using var warm = api.WithToken(Mint());
-        using var cold = api.WithToken(Mint());
-        var discoveryFetches = api.Issuer.DiscoveryFetches;
-        var jwksFetches = api.Issuer.JwksFetches;
-        api.Issuer.Available = false;
-
-        await Assert.That(await StatusAsync(warm)).IsEqualTo(HttpStatusCode.OK);
-        clock.SetUtcNow(expires.AddTicks(-1));
-        await Assert.That(await StatusAsync(warm)).IsEqualTo(HttpStatusCode.OK);
-        clock.Advance(TimeSpan.FromTicks(1));
-
-        await Assert.That(await StatusAsync(warm)).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(await StatusAsync(cold)).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(api.Issuer.DiscoveryFetches).IsEqualTo(discoveryFetches);
-        await Assert.That(api.Issuer.JwksFetches).IsEqualTo(jwksFetches);
-        await Assert.That(api.Issuer.ProjectFetches).IsEqualTo(0);
-    }
-
-    [Test]
     public async Task Unsigned_symmetric_tampered_and_non_access_tokens_are_rejected()
     {
         await using var api = await ManagementApi.StartAsync();
@@ -152,37 +121,6 @@ public sealed class UserAuthTests
 
         await Assert.That(statuses).All().Satisfy(status => status.IsEqualTo(HttpStatusCode.Unauthorized));
         await Assert.That(member).IsEqualTo(HttpStatusCode.OK);
-    }
-
-    [Test]
-    public async Task A_rotated_key_is_fetched_once_and_unknown_keys_refresh_at_most_every_30_seconds()
-    {
-        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        await using var api = await ManagementApi.StartAsync(services: TerraBaseTestServer.EnableConnectionDiagnostics, time: clock);
-        var fetchedAtStartup = api.Issuer.JwksFetches;
-
-        // ts-auth publishes a new key and signs with it: concurrent requests share one refresh and all pass.
-        api.Issuer.Rotate();
-        var rotated = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => SendOnceAsync(api.As(EntityIds.New().ToString()))));
-        var fetchedAfterRotation = api.Issuer.JwksFetches;
-        // Within 30 s of that refresh, another unknown key (unpublished, then published) costs no fetch and fails.
-        clock.Advance(TsAuthKeys.UnknownKeyInterval - TimeSpan.FromTicks(1));
-        var unpublished = api.Issuer.AddKey(SecurityAlgorithms.EcdsaSha256, publish: false);
-        var forged = await SendOnceAsync(api.WithToken(api.Issuer.Mint(EntityIds.New().ToString(), token => token.SigningCredentials = unpublished)));
-        api.Issuer.Rotate();
-        var tooSoon = await SendOnceAsync(api.As(EntityIds.New().ToString()));
-        var fetchedWithinInterval = api.Issuer.JwksFetches;
-        clock.Advance(TimeSpan.FromTicks(1));
-        var later = await SendOnceAsync(api.As(EntityIds.New().ToString()));
-
-        await Assert.That(fetchedAtStartup).IsEqualTo(1);
-        await Assert.That(rotated).All().Satisfy(status => status.IsEqualTo(HttpStatusCode.OK));
-        await Assert.That(fetchedAfterRotation).IsEqualTo(2);
-        await Assert.That(forged).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(tooSoon).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(fetchedWithinInterval).IsEqualTo(2);
-        await Assert.That(later).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(api.Issuer.JwksFetches).IsEqualTo(3);
     }
 
     [Test]
@@ -255,95 +193,6 @@ public sealed class UserAuthTests
         await Assert.That(afterRefresh).IsEqualTo(HttpStatusCode.Unauthorized).Because("one scheduled refresh retires it");
         // Measured bound for key withdrawal: one refresh interval (10 min) while ts-auth answers.
         await Assert.That(TsAuthKeys.RefreshInterval).IsEqualTo(TimeSpan.FromMinutes(10));
-    }
-
-    [Test]
-    public async Task One_deadline_bounds_a_fetch_that_ts_auth_never_finishes()
-    {
-        var timers = new ManualTimers();
-        using var tls = new ClientTls();
-        using var issuer = new TestIssuer { HangJwks = true };
-        var starting = TerraBaseTestServer.StartAsync(
-            settings =>
-            {
-                tls.Apply(settings);
-                TestIssuer.Configure(settings);
-            },
-            services =>
-            {
-                issuer.Route(services);
-                services.AddSingleton<TimeProvider>(timers);
-                // Only the fetch deadline may end the hang, not the HTTP client's own timeout.
-                services.AddHttpClient(TsAuthKeys.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan);
-            });
-
-        // Startup waits for the first fetch, which answers discovery then hangs on the JWKS until its deadline passes.
-        await issuer.JwksHanging.WaitAsync(TimeSpan.FromSeconds(30));
-        await timers.FireAsync(TsAuthKeys.FetchTimeout);
-        await using var server = await starting.WaitAsync(TimeSpan.FromSeconds(30));
-        using var ready = await server.Client.GetAsync(Uri("/readyz"));
-
-        // Serving does not wait for ts-auth's keys: only user tokens do.
-        await Assert.That(issuer.DiscoveryFetches).IsEqualTo(1);
-        await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.OK);
-    }
-
-    [Test]
-    public async Task Ts_auth_going_down_after_startup_keeps_the_cached_keys()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        api.Issuer.Available = false;
-        var unknown = api.Issuer.AddKey(SecurityAlgorithms.EcdsaSha256, publish: false);
-
-        // The unknown key's refresh fails; the cached keys keep validating and the server stays ready.
-        var refreshFailed = await SendOnceAsync(api.WithToken(api.Issuer.Mint(EntityIds.New().ToString(), token => token.SigningCredentials = unknown)));
-        var cached = await SendOnceAsync(api.As(EntityIds.New().ToString()));
-        using var ready = await api.Server.Client.GetAsync(Uri("/readyz"));
-
-        await Assert.That(refreshFailed).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(cached).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.OK);
-    }
-
-    [Test]
-    public async Task Ts_auth_unreachable_at_startup_leaves_the_server_ready_and_tokens_rejected_until_its_keys_load()
-    {
-        var timers = new ManualTimers();
-        using var tls = new ClientTls();
-        using var issuer = new TestIssuer { Available = false };
-        // Timers fire only when the test fires them, so the background retry cannot add a fetch while requests arrive.
-        await using var server = await TerraBaseTestServer.StartAsync(
-            settings =>
-            {
-                tls.Apply(settings);
-                TestIssuer.Configure(settings);
-            },
-            services =>
-            {
-                issuer.Route(services);
-                services.AddSingleton<TimeProvider>(timers);
-            });
-        issuer.Rotate();
-        using var client = tls.CreateClient(server.ClientAddress!, issuer.Mint(EntityIds.New().ToString()));
-
-        // The startup fetch runs in the background; it is started before the server answers, and every request joins it
-        // instead of starting another, so once the requests are answered it has finished and is the only fetch.
-        var statuses = await Task.WhenAll(Enumerable.Range(0, 10).Select(_ => StatusAsync(client)));
-        var fetchesWhileRejecting = issuer.DiscoveryFetches;
-        using var adminReady = await server.Client.GetAsync(Uri("/readyz"));
-        using var clientReady = await client.GetAsync(Uri("/readyz"));
-
-        // ts-auth answers; the background retry loads its keys and then schedules the regular refresh.
-        issuer.Available = true;
-        await timers.FireAsync(TsAuthKeys.StartupRetry);
-        await timers.ScheduledAsync(TsAuthKeys.RefreshInterval);
-        var accepted = await StatusAsync(client);
-
-        await Assert.That(statuses).All().Satisfy(status => status.IsEqualTo(HttpStatusCode.Unauthorized));
-        await Assert.That(fetchesWhileRejecting).IsEqualTo(1);
-        await Assert.That(adminReady.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(clientReady.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(accepted).IsEqualTo(HttpStatusCode.OK);
     }
 
     [Test]

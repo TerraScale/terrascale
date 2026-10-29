@@ -1,3 +1,4 @@
+using TerraBase.Testing;
 using System.Collections.Concurrent;
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
@@ -9,7 +10,7 @@ using TerraBase.Engine.Turso;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
-namespace TerraBase.Fast.Documents;
+namespace TerraBase.Slow.Documents;
 
 public sealed class FeedRetentionDeletionTests
 {

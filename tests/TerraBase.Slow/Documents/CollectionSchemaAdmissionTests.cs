@@ -1,8 +1,9 @@
+using TerraBase.Testing;
 using System.Net;
 using System.Text.Json;
 using Bogus;
 
-namespace TerraBase.Fast.Documents;
+namespace TerraBase.Slow.Documents;
 
 public sealed class CollectionSchemaAdmissionTests
 {

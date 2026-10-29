@@ -9,7 +9,7 @@ using TerraBase.Features.Backup;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Backup;
+namespace TerraBase.Slow.Backup;
 
 /// <summary>
 /// A backlog (about 43 MB of change log, more than one 32 MiB read) survives what used to drop or stall it: a short bucket

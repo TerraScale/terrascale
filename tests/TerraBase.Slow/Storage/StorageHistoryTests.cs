@@ -1,13 +1,14 @@
+using TerraBase.Testing;
 using System.Globalization;
 using System.Net;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Primitives;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 public sealed class StorageHistoryTests
 {

@@ -7,7 +7,7 @@ using TerraBase.Features.Backup;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Backup;
+namespace TerraBase.Slow.Backup;
 
 /// <summary>
 /// A live node's restore window ends at a time its backup proves restorable (A-7): restoring at the advertised latest time

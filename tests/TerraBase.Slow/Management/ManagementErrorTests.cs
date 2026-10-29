@@ -2,7 +2,7 @@ using System.Net;
 using System.Text;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Management;
+namespace TerraBase.Slow.Management;
 
 public sealed class ManagementErrorTests
 {

@@ -1,4 +1,4 @@
-namespace TerraBase.Fast.Management;
+namespace TerraBase.Testing;
 
 // A query deadline clock that reads 0 until armed; then each reading returns the current time and moves it 6 seconds
 // on, past the engine's 5-second query deadline.

@@ -5,7 +5,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 public sealed class StorageBeginCancellationTests
 {
@@ -19,7 +19,7 @@ public sealed class StorageBeginCancellationTests
         {
             settings["storage-threads"] = "1";
             settings["storage-queue"] = "2";
-        }, StorageTransactionTests.ConfigurePool, time: new FakeTimeProvider());
+        }, StorageTransactionFixture.ConfigurePool, time: new FakeTimeProvider());
         var server = management.Server;
         var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
@@ -117,8 +117,8 @@ public sealed class StorageBeginCancellationTests
         finally
         {
             // The threads are released; a started BEGIN can still return a transaction.
-            await StoragePoolTests.JoinCleanupAsync(begins.Select(StorageTransactionTests.DisposeBeginAsync)
-                .Concat(requests.Select(StoragePoolTests.DisposeResponseAsync))
+            await StoragePoolHelpers.JoinCleanupAsync(begins.Select(StorageTransactionFixture.DisposeBeginAsync)
+                .Concat(requests.Select(StoragePoolHelpers.DisposeResponseAsync))
                 .Append(deadline.CancelAsync()), primaryFailure);
         }
     }

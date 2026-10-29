@@ -8,11 +8,11 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Slow.Platform;
 
 public sealed class PressureEdgeTests
 {

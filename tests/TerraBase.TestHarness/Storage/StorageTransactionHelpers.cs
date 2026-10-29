@@ -4,11 +4,12 @@ using Microsoft.Extensions.Logging;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
+using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Testing;
 
-public sealed partial class StorageTransactionTests
+internal static class StorageTransactionFixture
 {
     internal static void ConfigurePool(IServiceCollection services)
     {

@@ -2,7 +2,7 @@ using System.Net;
 using System.Text.Json;
 using TerraBase.Fast.Documents;
 
-namespace TerraBase.Fast.Sql;
+namespace TerraBase.Testing;
 
 /// <summary>Sends statements to <c>…/sql/execute</c> and reads results and errors.</summary>
 internal static class SqlApi

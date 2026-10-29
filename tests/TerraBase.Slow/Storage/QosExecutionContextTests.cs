@@ -1,15 +1,16 @@
+using TerraBase.Testing;
 using System.Collections.Concurrent;
 using System.Net;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine.Turso;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 public sealed class QosExecutionContextTests
 {

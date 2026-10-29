@@ -1,6 +1,7 @@
+using TerraBase.Testing;
 using System.Net;
 
-namespace TerraBase.Fast.Documents;
+namespace TerraBase.Slow.Documents;
 
 public sealed class DocumentIdValidationTests
 {

@@ -226,23 +226,6 @@ public sealed class TenantIsolationTests
         await Assert.That(narrowedBody.GetProperty("databaseId").GetString()).IsEqualTo(secondAppId);
     }
 
-    [Test]
-    public async Task A_key_stored_before_tenancy_no_longer_authenticates()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        using var tenant = await api.CreateTenantAsync("documents:read");
-        const string secret = "tb_legacy-key-from-before-tenancy";
-        var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(secret)));
-        // Exactly what the first API key store wrote: no organization.
-        await DocumentFiles.WriteAsync(
-            Path.Combine(api.Server.DataDirectory, "_system.db"), ("api_keys", hash, """{"id":"legacy","name":"old","scopes":["documents:read"]}"""));
-        using var legacy = api.DataClient(secret);
-
-        using var response = await legacy.GetAsync(tenant.Database("app", "/collections/c/documents"));
-
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-    }
-
     private static bool Addresses(string pattern) =>
         pattern.Contains("{organization}", StringComparison.Ordinal) || pattern.Contains("{project}", StringComparison.Ordinal);
 

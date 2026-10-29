@@ -1,3 +1,5 @@
+using static TerraBase.Testing.CollectionAccessFixture;
+using TerraBase.Testing;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -12,7 +14,7 @@ public sealed partial class CollectionAccessRulesTests
     [Test]
     public async Task Accepted_project_and_end_user_reads_bill_each_returned_document_once()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         await DeclareAsync(api, OwnerRules());
         var actor = DocumentApi.NewId();
         var id = DocumentApi.NewId();
@@ -43,7 +45,7 @@ public sealed partial class CollectionAccessRulesTests
     [Test]
     public async Task Rules_are_strict_metadata_preserving_schema_and_ttl()
     {
-        await using var source = await CollectionAccessRulesTests.StartAsync();
+        await using var source = await CollectionAccessFixture.StartAsync();
         var path = Rules(source);
         await Assert.That((await source.SendAsync(HttpMethod.Get, path)).Json.GetProperty("rules").ValueKind).IsEqualTo(JsonValueKind.Null);
         (await source.SendRawAsync(HttpMethod.Put, $"{source.Collections}/items/schema", """{"type":"object"}""", "application/json")).Status.ShouldBe(HttpStatusCode.OK);
@@ -73,7 +75,7 @@ public sealed partial class CollectionAccessRulesTests
     [Test]
     public async Task No_rules_deny_every_data_route_and_hidden_documents_have_no_etag_even_after_project_cache_hits()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         var actor = DocumentApi.NewId();
         var other = DocumentApi.NewId();
         var id = DocumentApi.NewId();
@@ -121,7 +123,7 @@ public sealed partial class CollectionAccessRulesTests
     [Test]
     public async Task Owner_crud_blocks_claims_transfer_overwrite_patch_delete_and_deleted_id_takeover()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         await DeclareAsync(api, OwnerRules());
         var alice = DocumentApi.NewId();
         var bob = DocumentApi.NewId();
@@ -152,7 +154,7 @@ public sealed partial class CollectionAccessRulesTests
     [Test]
     public async Task Query_limits_counts_near_and_cursors_are_scoped_before_execution_and_roles_are_case_sensitive()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         var rules = OwnerRules() with { Read = new CollectionAccessPolicy(true, false, ["reader"]) };
         await DeclareAsync(api, rules);
         var actor = DocumentApi.NewId();
@@ -188,7 +190,7 @@ public sealed partial class CollectionAccessRulesTests
     [Test]
     public async Task Transactions_scope_assertions_and_rollback_every_write_on_owner_failure()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         await DeclareAsync(api, OwnerRules());
         var actor = DocumentApi.NewId();
         var otherId = DocumentApi.NewId();
@@ -223,7 +225,7 @@ public sealed partial class CollectionAccessRulesTests
     [Test]
     public async Task Point_assertions_use_the_authorized_view_without_revealing_hidden_documents()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         await DeclareAsync(api, OwnerRules());
         var actor = DocumentApi.NewId();
         var visible = DocumentApi.NewId();
@@ -276,7 +278,7 @@ public sealed partial class CollectionAccessRulesTests
     [Test]
     public async Task Batched_absence_assertions_do_not_reserve_hidden_document_bodies()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         await DeclareAsync(api, OwnerRules());
         var hiddenOwner = DocumentApi.NewId();
         var hidden = Enumerable.Range(0, 32).Select(_ => DocumentApi.NewId()).ToArray();
@@ -302,7 +304,7 @@ public sealed partial class CollectionAccessRulesTests
     [Arguments(true)]
     public async Task Role_and_public_write_grants_cover_crud_and_transactions_without_ownership(bool publicWrite)
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         var rules = new CollectionAccessRules(null, new CollectionAccessPolicy(false, true, []),
             new CollectionAccessPolicy(false, publicWrite, publicWrite ? [] : ["writer"]));
         await DeclareAsync(api, rules);
@@ -349,7 +351,7 @@ public sealed partial class CollectionAccessRulesTests
     [Test]
     public async Task A_role_writer_can_update_another_owners_document_but_cannot_transfer_its_owner()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         await DeclareAsync(api, OwnerRules() with { Write = new CollectionAccessPolicy(true, false, ["writer"]) });
         var owner = DocumentApi.NewId();
         var id = DocumentApi.NewId();
@@ -385,7 +387,7 @@ public sealed partial class CollectionAccessRulesTests
     [Arguments(true)]
     public async Task Anonymous_and_cross_project_identities_cannot_reach_any_data_path(bool crossProject)
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         await DeclareAsync(api, new CollectionAccessRules(null, new CollectionAccessPolicy(false, true, []), new CollectionAccessPolicy(false, true, [])));
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { value = "private-project" })).Status.ShouldBe(HttpStatusCode.Created);
@@ -423,7 +425,7 @@ public sealed partial class CollectionAccessRulesTests
     [Test]
     public async Task A_platform_user_session_token_is_not_a_data_credential()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         using var user = api.Management.As(api.Tenant.User);
         var response = await DocumentApi.SendAsync(user, HttpMethod.Get, api.Documents, null);
         await Assert.That(response.Status).IsEqualTo(HttpStatusCode.Unauthorized);

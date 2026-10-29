@@ -6,15 +6,15 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
-using TerraBase.Fast.Management;
-using TerraBase.Fast.Storage;
+using TerraBase.Slow.Management;
+using TerraBase.Slow.Storage;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Slow.Platform;
 
 public sealed class QosAdmissionTests
 {

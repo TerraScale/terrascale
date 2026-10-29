@@ -10,7 +10,7 @@ using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Documents;
+namespace TerraBase.Testing;
 
 /// <summary>A response read to the end: status, JSON body (Undefined when empty) and the headers tests check.</summary>
 internal sealed record ApiResponse(HttpStatusCode Status, JsonElement Json, string? ETag, Uri? Location)

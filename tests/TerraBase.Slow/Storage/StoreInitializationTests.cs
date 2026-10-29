@@ -10,7 +10,7 @@ using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 // TS-624: a store's initialization took its own storage admission while its creator still held the creation admission,
 // so storage-queue=1 refused it about 1 run in 30 under load. It now starts only once the creator released the lock.

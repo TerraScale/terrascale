@@ -8,7 +8,7 @@ using TerraBase.Features.Backup;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Backup;
+namespace TerraBase.Slow.Backup;
 
 /// <summary>
 /// Shipping recovers without losing or overlapping history: a backlog written during a slow snapshot upload ships as

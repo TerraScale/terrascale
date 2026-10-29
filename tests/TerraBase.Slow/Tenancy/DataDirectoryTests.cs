@@ -19,7 +19,7 @@ using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Tenancy;
+namespace TerraBase.Slow.Tenancy;
 
 /// <summary>One process owns a data directory, and only a directory in the tenancy layout (or an empty one) is accepted.</summary>
 public sealed class DataDirectoryTests

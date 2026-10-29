@@ -1,6 +1,5 @@
 using System.Diagnostics.Metrics;
 using System.Globalization;
-using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.Metrics;
 using OpenTelemetry.Metrics;
@@ -8,7 +7,7 @@ using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Slow.Platform;
 
 public sealed class MetricsEdgeTests
 {

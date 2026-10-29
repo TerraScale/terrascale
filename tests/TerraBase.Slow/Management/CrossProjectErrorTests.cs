@@ -4,7 +4,7 @@ using System.Text.Json;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Management;
+namespace TerraBase.Slow.Management;
 
 /// <summary>
 /// The cross-project error contract (docs/terrabase/cross-project-errors.md): another project's database answers on every

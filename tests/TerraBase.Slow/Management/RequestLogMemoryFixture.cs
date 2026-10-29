@@ -7,7 +7,7 @@ using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Management;
+namespace TerraBase.Slow.Management;
 
 // Exact memory assertions exclude persisted observations, but must still detect leaked operation/cache leases.
 internal static class RequestLogMemoryFixture

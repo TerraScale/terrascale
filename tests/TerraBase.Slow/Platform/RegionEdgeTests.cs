@@ -2,17 +2,15 @@ using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using TerraBase.Configuration;
-using TerraBase.Engine.Turso;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Slow.Platform;
 
 public sealed class RegionEdgeTests
 {
     private const string RegionHeader = "X-TerraBase-Region";
     private const string PinHeader = "X-TerraScale-Region-Pin";
     private const string Organizations = "/v1/management/organizations";
-    private const string Database = "/v1/projects/{project}/databases/{database}";
 
     [Test]
     [Arguments("Gru-1")]

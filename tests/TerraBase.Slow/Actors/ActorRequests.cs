@@ -12,7 +12,7 @@ using TerraBase.Engine.Actors;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Actors;
+namespace TerraBase.Slow.Actors;
 
 // Test-only middleware wraps the existing endpoint; every callback must serve the real health response.
 internal sealed class ActorRequests(int actorCount = 2, int maxItems = 256, int maxBytes = 2_097_152, Meter? meter = null) : IStartupFilter, IAsyncDisposable

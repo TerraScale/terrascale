@@ -5,11 +5,11 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 public sealed class HealthyRewriteConcurrentTests
 {

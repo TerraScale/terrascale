@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Slow.Platform;
 
 public sealed class IsolatedTestChildTests
 {

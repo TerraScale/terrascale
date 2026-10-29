@@ -4,12 +4,12 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
-using TerraBase.Fast.Management;
+using TerraBase.Slow.Management;
 using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Backup;
+namespace TerraBase.Slow.Backup;
 
 public sealed class BackupConfigurationIsolationTests
 {

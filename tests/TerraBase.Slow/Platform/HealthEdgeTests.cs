@@ -11,7 +11,7 @@ using TerraBase.Hosting;
 using TerraBase.Testing;
 using TUnit.Core.Enums;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Slow.Platform;
 
 public sealed class HealthEdgeTests
 {

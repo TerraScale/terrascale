@@ -13,7 +13,7 @@ using TerraBase.Features.Backup;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Backup;
+namespace TerraBase.Slow.Backup;
 
 /// <summary>
 /// A point-in-time restore succeeds only when the bucket proves the database's history complete up to the requested time;

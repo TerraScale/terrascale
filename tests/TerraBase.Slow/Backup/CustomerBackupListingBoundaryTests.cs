@@ -10,7 +10,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Features.Backup;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Backup;
+namespace TerraBase.Slow.Backup;
 
 public sealed class CustomerBackupListingBoundaryTests
 {

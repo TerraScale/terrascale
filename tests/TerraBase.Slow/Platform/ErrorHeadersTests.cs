@@ -1,13 +1,14 @@
+using TerraBase.Testing;
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Errors;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Features.Documents;
 using TerraBase.Tenancy;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Slow.Platform;
 
 public sealed class ErrorHeadersTests
 {

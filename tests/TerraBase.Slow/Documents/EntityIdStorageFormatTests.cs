@@ -4,7 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Documents;
+namespace TerraBase.Slow.Documents;
 
 public sealed class EntityIdStorageFormatTests
 {

@@ -10,7 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
@@ -18,7 +18,7 @@ using TerraBase.Features.Shapes;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Shapes;
+namespace TerraBase.Slow.Shapes;
 
 public sealed class ShapeSealTests
 {

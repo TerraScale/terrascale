@@ -9,13 +9,13 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
-using TerraBase.Fast.Documents;
-using TerraBase.Fast.Management;
+using TerraBase.Slow.Documents;
+using TerraBase.Slow.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 public sealed class GroupCommitTests
 {
@@ -125,7 +125,7 @@ public sealed class GroupCommitTests
 
             foreach (var request in pending)
             {
-                await StoragePoolTests.DisposeResponseAsync(request);
+                await StoragePoolHelpers.DisposeResponseAsync(request);
             }
 
             cancellationObserved.Dispose();

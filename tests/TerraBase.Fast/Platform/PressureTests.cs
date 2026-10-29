@@ -1,15 +1,11 @@
-using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
-using System.Net.Sockets;
 using System.Reflection;
 using System.Text.Json;
-using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Fast.Documents;
-using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Platform;
@@ -95,9 +91,6 @@ public sealed class PressureTests
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         return await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
     }
-
-    private static JsonElement Listener(JsonElement snapshot, string listener) =>
-        snapshot.GetProperty("listeners").EnumerateArray().Single(item => item.GetProperty("listener").GetString() == listener);
 
     private static Ulid Incarnation(JsonElement snapshot) => Ulid.Parse(snapshot.GetProperty("process_id").GetString()!);
 

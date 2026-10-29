@@ -6,7 +6,7 @@ using TerraBase.Features.Management;
 using TerraBase.Features.Platform;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Slow.Platform;
 
 public sealed class PlatformPlacementLockTests
 {
@@ -26,7 +26,7 @@ public sealed class PlatformPlacementLockTests
             settings["region"] = "gru";
             settings["auth-issuer"] = production.AuthIssuer ?? string.Empty;
             settings["auth-audience"] = string.Join(',', production.AuthAudiences);
-        }, services => services.AddHttpClient("ts-auth").AddHttpMessageHandler(() => new PlatformDatabasesTests.GlobalIssuerRoute()));
+        }, services => services.AddHttpClient("ts-auth").AddHttpMessageHandler(() => new PlatformDatabaseFixture.GlobalIssuerRoute()));
         var server = api.Server;
         await TerraBaseTestServer.EventuallyAsync(async token => await RecordAsync(server, project, name, token) is not null);
         var before = (await RecordAsync(server, project, name, cancellationToken))!;

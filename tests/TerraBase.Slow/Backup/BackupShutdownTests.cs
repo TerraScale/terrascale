@@ -9,13 +9,13 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
-using TerraBase.Fast.Management;
+using TerraBase.Slow.Management;
 using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Backup;
+namespace TerraBase.Slow.Backup;
 
 public sealed class BackupShutdownTests
 {

@@ -1,3 +1,4 @@
+using TerraBase.Testing;
 using System.Net;
 using System.Text.Json;
 
@@ -71,30 +72,6 @@ public sealed class CollectionApiTests
         await Assert.That((dropAgain.Status, dropAgain.Code)).IsEqualTo((HttpStatusCode.NotFound, "unknown_collection"));
         // Dropping removes the documents, not just the name.
         await Assert.That((recreatedIsEmpty.Status, recreatedIsEmpty.Code)).IsEqualTo((HttpStatusCode.NotFound, "not_found"));
-    }
-
-    [Test]
-    public async Task Invalid_collection_requests_are_rejected()
-    {
-        await using var api = await DocumentApi.StartAsync();
-
-        var noDatabase = await api.SendAsync(HttpMethod.Post, $"{api.Project}/databases/nope/collections", new { name = "a" });
-        var listNoDatabase = await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/nope/collections");
-        var badName = await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "Bad Name" });
-        var noName = await api.SendAsync(HttpMethod.Post, api.Collections, new { });
-        var schema = await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "typed", schema = new { fields = Array.Empty<object>() } });
-        var badCursor = await api.SendAsync(HttpMethod.Get, $"{api.Collections}?cursor=!!");
-        var badLimit = await api.SendAsync(HttpMethod.Get, $"{api.Collections}?limit=201");
-        var notJson = await api.SendRawAsync(HttpMethod.Post, api.Collections, "name=a", "application/x-www-form-urlencoded");
-
-        await Assert.That((noDatabase.Status, noDatabase.Code)).IsEqualTo((HttpStatusCode.NotFound, "unknown_database"));
-        await Assert.That((listNoDatabase.Status, listNoDatabase.Code)).IsEqualTo((HttpStatusCode.NotFound, "unknown_database"));
-        await Assert.That((badName.Status, badName.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
-        await Assert.That(noName.Status).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That((schema.Status, schema.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
-        await Assert.That((badCursor.Status, badCursor.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_cursor"));
-        await Assert.That(badLimit.Status).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That((notJson.Status, notJson.Code)).IsEqualTo((HttpStatusCode.UnsupportedMediaType, "unsupported_media_type"));
     }
 
     private static List<string> Names(ApiResponse page) =>

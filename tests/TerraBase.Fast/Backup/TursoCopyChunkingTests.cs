@@ -79,47 +79,6 @@ public sealed class TursoCopyChunkingTests
         }
     }
 
-    [Test]
-    public async Task Chunked_copy_reports_cancellation_between_rows()
-    {
-        var directory = Directory.CreateTempSubdirectory("turso-copy-cancel-");
-        try
-        {
-            var source = Path.Combine(directory.FullName, "source.db");
-            TestMasterKey.Create(source);
-            using (var connection = new TursoConnection(TestMasterKey.ConnectionString(source, Turso.Data.Sqlite.SqliteOpenMode.ReadWriteCreate)))
-            {
-                connection.Open();
-                Execute(connection, "CREATE TABLE events (id INTEGER PRIMARY KEY, note TEXT);");
-                using var insert = connection.CreateCommand();
-                insert.CommandText = "INSERT INTO events VALUES ($id, $note);";
-                for (var i = 1; i <= 10; i++)
-                {
-                    insert.Parameters.Clear();
-                    insert.Parameters.Add(new TursoParameter("$id", (long)i));
-                    insert.Parameters.Add(new TursoParameter("$note", "note-" + i));
-                    insert.ExecuteNonQuery();
-                }
-            }
-
-            using var cancelled = new CancellationTokenSource();
-            cancelled.Cancel();
-            using (var connection = new TursoConnection(TestMasterKey.ConnectionString(source)))
-            {
-                connection.Open();
-                Execute(connection, "BEGIN;");
-                var copy = Path.Combine(directory.FullName, "copy.db");
-                TestMasterKey.Create(copy);
-                await Assert.That(() => TursoCopy.Write(connection, TestMasterKey.ConnectionString(copy, Turso.Data.Sqlite.SqliteOpenMode.ReadWriteCreate), chunkRows: 2, chunkBytes: 64, cancelled.Token))
-                    .Throws<OperationCanceledException>();
-            }
-        }
-        finally
-        {
-            Directory.Delete(directory.FullName, recursive: true);
-        }
-    }
-
     private static void Execute(TursoConnection connection, string sql)
     {
         using var command = connection.CreateCommand();

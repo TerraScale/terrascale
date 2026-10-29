@@ -7,7 +7,7 @@ using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 public sealed class HealthyRewriteAdmissionTests
 {

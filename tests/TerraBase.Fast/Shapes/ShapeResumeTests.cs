@@ -100,24 +100,6 @@ public sealed partial class ShapeResumeTests
         await Assert.That(resumed.Location).IsEqualTo($"{path}?handle={chunk.Handle}&offset={chunk.Offset}");
     }
 
-    [Test]
-    public async Task A_resume_target_below_the_retention_floor_is_409()
-    {
-        await using var api = await DocumentApi.StartIsolatedAsync();
-        var path = $"{api.Collections}/{DocumentApi.Collection}/shape";
-        _ = await api.PutAsync(DocumentApi.NewId(), new { index = 0 });
-        var synced = await SyncAsync(api.Client, path, null, []);
-        _ = await api.PutAsync(DocumentApi.NewId(), new { index = 1 });
-        _ = await FollowAsync(api.Client, path, $"{path}?handle={synced.Handle}&offset={synced.Offset}", []);
-        var token = TestContext.Current!.Execution.CancellationToken;
-        var store = (await api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), token))!;
-        var retention = new ShapeRetention(new FakeTimeProvider(DateTimeOffset.UtcNow.AddDays(8)), api.Server.Services.GetRequiredService<IShapeStorage>());
-        await Assert.That(await retention.RunPassAsync(store, synced.Handle, token)).IsGreaterThan(0);
-        await Assert.That(await retention.GetFloorAsync(store, synced.Handle, token)).IsGreaterThan(long.Parse(synced.Offset, CultureInfo.InvariantCulture));
-
-        await AssertRefetchAsync(await ResumeAsync(api.Client, path, synced.Cursor), synced.Handle);
-    }
-
     private sealed record Synced(string Handle, string Offset, string Cursor);
 
     private sealed record Reply(HttpStatusCode Status, string? Location, string? CacheControl, string? Handle, string? Code, string? Message);

@@ -8,7 +8,7 @@ using TerraBase.Engine.Turso;
 using TerraBase.Testing;
 using Turso.Data.Sqlite;
 
-namespace TerraBase.Fast.Documents;
+namespace TerraBase.Slow.Documents;
 
 public sealed class LocalHistoryRetentionTests
 {

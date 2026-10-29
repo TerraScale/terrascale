@@ -13,47 +13,6 @@ public sealed class BucketSnapshotTests
     // response (a null check, then the call): subscribing a reader per request made a request completing at the same
     // time call a handler that was just removed (NullReferenceException in ProcessResponseHandlers), failing that pass.
     [Test]
-    public async Task Checking_bucket_snapshots_does_not_break_requests_running_at_the_same_time()
-    {
-        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var s3 = new FakeS3();
-        var settings = new Dictionary<string, string>();
-        s3.Configure(settings);
-        var services = new ServiceCollection();
-        s3.Route(services);
-        await using var provider = services.BuildServiceProvider();
-        using var store = new S3ObjectStore(new Uri(settings["backup-endpoint"]), settings["backup-region"], FakeS3.Bucket,
-            settings["backup-access-key-id"], settings["backup-secret-key"], provider.GetRequiredService<IHttpClientFactory>(),
-            S3ObjectStore.HttpClientName, TimeProvider.System);
-        await store.PutAsync("v1/listed", new MemoryStream([1]), token);
-
-        using var stop = CancellationTokenSource.CreateLinkedTokenSource(token);
-        var listings = Enumerable.Range(0, 8).Select(_ => Task.Run(async () =>
-        {
-            while (!stop.IsCancellationRequested)
-            {
-                await foreach (var _ in store.ListAsync("v1/", null, token))
-                {
-                }
-            }
-        }, token)).ToArray();
-        try
-        {
-            for (var check = 0; check < 500; check++)
-            {
-                await Assert.That(await store.SnapshotsEnabledAsync(token)).IsTrue();
-            }
-        }
-        finally
-        {
-            await stop.CancelAsync();
-        }
-
-        // A failed listing surfaces here.
-        await Task.WhenAll(listings);
-    }
-
-    [Test]
     public async Task The_system_shipper_keeps_one_bucket_snapshot_a_day_for_fourteen_days()
     {
         var time = new FakeTimeProvider(Start);
@@ -82,79 +41,6 @@ public sealed class BucketSnapshotTests
         await Assert.That(metrics).Contains("terrabase_backup_bucket_snapshots_total{otel_scope_name=\"TerraScale.TerraBase\",result=\"taken\"} 2");
         await Assert.That(metrics).Contains("terrabase_backup_bucket_snapshots_total{otel_scope_name=\"TerraScale.TerraBase\",result=\"deleted\"} 3");
         await Assert.That(metrics).Contains($"terrabase_backup_bucket_snapshot_seconds{{otel_scope_name=\"TerraScale.TerraBase\"}} {nextDay.ToUnixTimeSeconds()}");
-    }
-
-    [Test]
-    public async Task A_refused_snapshot_still_expires_the_last_snapshot_and_clears_its_gauge()
-    {
-        var time = new FakeTimeProvider(Start);
-        var s3 = new FakeS3 { Time = time, RejectSnapshots = true };
-        s3.SeedSnapshot(Start.AddDays(-20));
-        await using var api = await StartAsync(s3, time);
-        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-
-        await PassAsync(api, time, TimeSpan.FromHours(1), token);
-        var metrics = await api.Server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative), token);
-
-        await Assert.That(s3.Snapshots).IsEmpty();
-        await Assert.That(metrics).Contains("terrabase_backup_bucket_snapshots_total{otel_scope_name=\"TerraScale.TerraBase\",result=\"failed\"} 1");
-        await Assert.That(metrics).Contains("terrabase_backup_bucket_snapshots_total{otel_scope_name=\"TerraScale.TerraBase\",result=\"deleted\"} 1");
-        await Assert.That(metrics).Contains("terrabase_backup_bucket_snapshot_seconds{otel_scope_name=\"TerraScale.TerraBase\"} 0");
-    }
-
-    [Test]
-    public async Task The_last_snapshot_expires_at_the_inclusive_hourly_lookahead_boundary()
-    {
-        var time = new FakeTimeProvider(Start);
-        var s3 = new FakeS3 { Time = time, RejectSnapshots = true };
-        await using var api = await StartAsync(s3, time);
-        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var at = time.GetUtcNow() - TimeSpan.FromDays(14) + TimeSpan.FromHours(2);
-        s3.SeedSnapshot(at);
-
-        await PassAsync(api, time, TimeSpan.Zero, token);
-        await Assert.That(s3.Snapshots.Select(snapshot => snapshot.At)).IsEquivalentTo([at]);
-        await PassAsync(api, time, TimeSpan.FromHours(1), token);
-        await Assert.That(s3.Snapshots).IsEmpty();
-    }
-
-    [Test]
-    public async Task Refused_expiry_is_visible_retries_and_does_not_block_creation()
-    {
-        var time = new FakeTimeProvider(Start);
-        var s3 = new FakeS3 { Time = time, RejectSnapshotDeletes = true };
-        s3.SeedSnapshot(Start.AddDays(-20));
-        await using var api = await StartAsync(s3, time);
-        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-
-        var taken = await PassAsync(api, time, TimeSpan.FromHours(1), token);
-        var failed = await api.Server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative), token);
-        await Assert.That(s3.Snapshots.Select(snapshot => snapshot.At)).IsEquivalentTo([Start.AddDays(-20), taken]);
-        await Assert.That(failed).Contains("terrabase_backup_bucket_snapshots_total{otel_scope_name=\"TerraScale.TerraBase\",result=\"failed\"} 1");
-        await Assert.That(failed).DoesNotContain("result=\"deleted\"");
-        await Assert.That(failed).Contains($"terrabase_backup_bucket_snapshot_seconds{{otel_scope_name=\"TerraScale.TerraBase\"}} {taken.ToUnixTimeSeconds()}");
-
-        s3.RejectSnapshotDeletes = false;
-        await PassAsync(api, time, TimeSpan.FromHours(1), token);
-        var recovered = await api.Server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative), token);
-        await Assert.That(s3.Snapshots.Select(snapshot => snapshot.At)).IsEquivalentTo([taken]);
-        await Assert.That(recovered).Contains("terrabase_backup_bucket_snapshots_total{otel_scope_name=\"TerraScale.TerraBase\",result=\"deleted\"} 1");
-    }
-
-    [Test]
-    public async Task A_bucket_without_snapshots_skips_the_job_without_failures()
-    {
-        var time = new FakeTimeProvider(Start);
-        var s3 = new FakeS3 { Time = time, SnapshotsEnabled = false };
-        await using var api = await StartAsync(s3, time);
-        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-
-        await PassAsync(api, time, TimeSpan.FromHours(1), token);
-        await PassAsync(api, time, TimeSpan.FromHours(25), token);
-        var metrics = await api.Server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative), token);
-
-        await Assert.That(s3.Snapshots).IsEmpty();
-        await Assert.That(metrics).DoesNotContain("terrabase_backup_bucket_snapshots_total");
     }
 
     private static async Task<ManagementApi> StartAsync(FakeS3 s3, FakeTimeProvider time)

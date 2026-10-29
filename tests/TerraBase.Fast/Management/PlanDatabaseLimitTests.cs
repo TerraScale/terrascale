@@ -11,61 +11,11 @@ namespace TerraBase.Fast.Management;
 
 public sealed class PlanDatabaseLimitTests
 {
-    private static readonly Action<IServiceCollection> PlanAllowances = services => services.Replace(ServiceDescriptor.Singleton(new DatabaseAllowance()));
     private const string AllScopes = "databases:read databases:write documents:read documents:write";
     private const string HobbyLimit =
         "the organization's hobby plan allows 1 database; delete a database or upgrade the plan at https://dash.terrascale.tech/organization?tab=billing";
 
     // Every route that makes a new database counts the organization's live databases across all of its projects.
-    [Test]
-    public async Task A_hobby_organization_is_refused_a_second_database_on_every_create_route()
-    {
-        await using var api = await ManagementApi.StartAsync(services: PlanAllowances);
-        var organization = await api.CreateOrganizationAsync("Acme");
-        var project = await api.CreateProjectAsync(organization, "Shop");
-        var other = await api.CreateProjectAsync(organization, "Blog");
-        var main = await api.CreateDatabaseAsync(organization, project, "main");
-        var databases = $"/v1/management/organizations/{organization}/projects/{project}/databases";
-        using var data = api.DataClient(await api.Server.IssueAsync(organization, "documents:read", "documents:write"));
-
-        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(databases), new { name = "second" }), HttpStatusCode.Conflict, "database_limit", HobbyLimit);
-        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{organization}/projects/{other}/databases"), new { name = "second" }),
-            HttpStatusCode.Conflict, "database_limit", HobbyLimit);
-        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"{databases}/{main}/branches"), new { name = "preview" }), HttpStatusCode.Conflict, "database_limit", HobbyLimit);
-        await ErrorAssert.ErrorAsync(data.PutAsync(Uri($"/v1/projects/{project}/databases/second"), null), HttpStatusCode.Conflict, "database_limit", HobbyLimit);
-
-        // Replaying an existing create still finds it.
-        using var replay = await data.PutAsync(Uri($"/v1/projects/{project}/databases/main"), null);
-        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        using var list = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(databases)));
-        await Assert.That(list.RootElement.GetProperty("items").GetArrayLength()).IsEqualTo(1);
-    }
-
-    [Test]
-    public async Task A_starter_organization_holds_five_live_databases_and_frees_a_slot_on_delete()
-    {
-        await using var api = await ManagementApi.StartAsync(services: PlanAllowances);
-        var organization = await api.CreateOrganizationAsync("Acme");
-        var project = await api.CreateProjectAsync(organization, "Shop");
-        await api.SetPlanAsync(api.User, organization, "starter");
-        var ids = new List<string>();
-        for (var i = 1; i <= 5; i++)
-        {
-            ids.Add(await api.CreateDatabaseAsync(organization, project, "db" + i));
-        }
-
-        var databases = $"/v1/management/organizations/{organization}/projects/{project}/databases";
-        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(databases), new { name = "db6" }), HttpStatusCode.Conflict, "database_limit",
-            "the organization's starter plan allows 5 databases; delete a database or upgrade the plan at https://dash.terrascale.tech/organization?tab=billing");
-        using (var deleted = await api.Client.DeleteAsync(Uri($"{databases}/{ids[0]}")))
-        {
-            await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-        }
-
-        using var created = await api.Client.PostAsJsonAsync(Uri(databases), new { name = "db6" });
-        await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
-    }
-
     // The dashboard publishes a paid plan before the organization's first database; enrollment adopts the memberless record.
     [Test]
     public async Task The_operator_publishes_an_organization_plan_before_its_first_database_and_enrollment_keeps_it()

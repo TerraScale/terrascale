@@ -1,3 +1,4 @@
+using TerraBase.Testing;
 using System.Buffers.Text;
 using System.Net;
 using System.Text.Json;
@@ -6,7 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 
-namespace TerraBase.Fast.Documents;
+namespace TerraBase.Slow.Documents;
 
 public sealed class DocumentStateStorageTests
 {

@@ -1,6 +1,6 @@
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Testing;
 
-public sealed partial class StoragePoolTests
+internal static class StoragePoolHelpers
 {
     internal static async Task DisposeResponseAsync(Task<HttpResponseMessage> request)
     {
@@ -38,13 +38,4 @@ public sealed partial class StoragePoolTests
         }
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition, CancellationToken cancellationToken)
-    {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-
-        while (!condition())
-        {
-            await Task.Delay(10, deadline.Token);
-        }
-    }
 }

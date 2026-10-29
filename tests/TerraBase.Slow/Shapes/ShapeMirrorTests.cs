@@ -12,12 +12,12 @@ using TerraBase.Engine.Turso;
 using TerraBase.Errors;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Shapes;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Shapes;
+namespace TerraBase.Slow.Shapes;
 
 public sealed class ShapeMirrorTests
 {

@@ -2,9 +2,7 @@ using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
-using TerraBase.Hosting;
 using TerraBase.Primitives;
-using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Storage;

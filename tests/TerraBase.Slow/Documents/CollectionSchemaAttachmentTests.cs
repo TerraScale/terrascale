@@ -1,3 +1,4 @@
+using TerraBase.Testing;
 using System.Diagnostics.Metrics;
 using System.Net;
 using System.Text;
@@ -5,10 +6,10 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
-using TerraBase.Fast.Management;
+using TerraBase.Slow.Management;
 using TerraBase.Hosting;
 
-namespace TerraBase.Fast.Documents;
+namespace TerraBase.Slow.Documents;
 
 public sealed class CollectionSchemaAttachmentTests
 {

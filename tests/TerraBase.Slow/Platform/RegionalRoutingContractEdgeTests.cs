@@ -4,15 +4,12 @@ using System.Text;
 using System.Text.Json;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Slow.Platform;
 
 public sealed class RegionalRoutingContractEdgeTests
 {
     private const string RegionHeader = "X-TerraBase-Region";
     private const string HostPinHeader = "X-TerraScale-Region-Pin";
-    private const string Replay = "ts-replay";
-    private const string ReplaySource = "ts-replay-src";
-    private const string ReplayedFromSjc = "region=sjc";
 
     [Test]
     [Arguments("gru_1.api.terrascale.tech", null)]
@@ -92,15 +89,4 @@ public sealed class RegionalRoutingContractEdgeTests
         await Assert.That(list.GetProperty("items").GetArrayLength()).IsEqualTo(0);
     }
 
-    private static async Task<HttpResponseMessage> SendPinnedAsync(HttpClient client, string pin, bool replayed)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Get, ManagementApi.Uri("/v1/management/organizations"));
-        request.Headers.TryAddWithoutValidation("X-TerraScale-Region-Pin", pin);
-        if (replayed)
-        {
-            request.Headers.TryAddWithoutValidation(ReplaySource, ReplayedFromSjc);
-        }
-
-        return await client.SendAsync(request);
-    }
 }

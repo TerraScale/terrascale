@@ -9,7 +9,7 @@ using TerraBase.Engine;
 using TerraBase.Hosting;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Management;
+namespace TerraBase.Slow.Management;
 
 public sealed class DiskHeadroomTests
 {

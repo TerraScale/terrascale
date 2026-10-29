@@ -5,7 +5,7 @@ using TerraBase.Engine;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Management;
+namespace TerraBase.Slow.Management;
 
 public sealed class ProjectCatalogEnrollmentTests
 {

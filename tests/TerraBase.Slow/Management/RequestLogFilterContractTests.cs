@@ -3,7 +3,7 @@ using System.Text.Json;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Management;
+namespace TerraBase.Slow.Management;
 
 public sealed class RequestLogFilterContractTests
 {

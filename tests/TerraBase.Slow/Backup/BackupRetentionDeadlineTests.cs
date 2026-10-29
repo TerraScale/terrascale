@@ -6,7 +6,7 @@ using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Backup;
+namespace TerraBase.Slow.Backup;
 
 public sealed class BackupRetentionDeadlineTests
 {

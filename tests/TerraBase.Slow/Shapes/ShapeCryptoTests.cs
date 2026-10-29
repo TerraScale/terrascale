@@ -13,11 +13,11 @@ using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Shapes;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Shapes;
+namespace TerraBase.Slow.Shapes;
 
 public sealed class ShapeCryptoTests
 {

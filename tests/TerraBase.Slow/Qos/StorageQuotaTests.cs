@@ -3,14 +3,14 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
-using TerraBase.Fast.Documents;
-using TerraBase.Fast.Management;
+using TerraBase.Slow.Documents;
+using TerraBase.Slow.Management;
 using TerraBase.Features.Management;
 using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Qos;
+namespace TerraBase.Slow.Qos;
 
 public sealed class StorageQuotaTests
 {

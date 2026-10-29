@@ -5,7 +5,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 public sealed class QueryQosTests
 {

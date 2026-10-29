@@ -131,48 +131,6 @@ public sealed class ConditionalBranchTests
         await Assert.That(await response.Content.ReadAsStringAsync()).DoesNotContain("database_identity_changed");
     }
 
-    [Test]
-    public async Task Replacing_the_name_after_copy_admission_cannot_redirect_the_storage_source()
-    {
-        var hook = new UsageCommitHook();
-        await using var api = await ManagementApi.StartAsync(services: hook.Install);
-        var source = await api.CreateManagedDatabaseAsync();
-        using var client = ProjectClient(api, source.Project);
-        using var gate = new UsageCommitHook.Gate(fail: false);
-        var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
-        var expectedStorage = await StoredIdsAsync(engine);
-        var copies = 0;
-        string? copiedSource = null;
-        hook.BeforeCopy = async (storage, cancellationToken) =>
-        {
-            Interlocked.Increment(ref copies);
-            copiedSource = storage.DatabaseId;
-            await gate.WaitAsync(cancellationToken);
-        };
-        var pending = client.PostAsJsonAsync(Route(source, source.Id), new { name = "preview" });
-        try
-        {
-            await gate.Entered.Task.WaitAsync(TestContext.Current!.Execution.CancellationToken);
-            using var deleted = await client.DeleteAsync(ManagementApi.Uri(source.Data));
-            deleted.EnsureSuccessStatusCode();
-            var replacement = await api.CreateDatabaseAsync(source.Organization, source.Project, source.Name);
-            await Assert.That(replacement).IsNotEqualTo(source.Id);
-            expectedStorage.Remove(source.Id);
-            expectedStorage.Add(replacement);
-        }
-        finally
-        {
-            gate.Dispose();
-        }
-        await ErrorAssert.ErrorAsync(pending, HttpStatusCode.NotFound, "unknown_route");
-        await Assert.That(copiedSource).IsEqualTo(source.Id);
-        await Assert.That(Volatile.Read(ref copies)).IsEqualTo(1);
-        await Assert.That(await StoredIdsAsync(engine)).IsEquivalentTo(expectedStorage);
-        var listed = await client.GetFromJsonAsync<JsonElement>(ManagementApi.Uri($"/v1/projects/{source.Project}/databases"));
-        await Assert.That(listed.GetProperty("items").GetArrayLength()).IsEqualTo(1);
-        await Assert.That(listed.GetProperty("items")[0].GetProperty("name").GetString()).IsEqualTo(source.Name);
-    }
-
     private static HttpClient ProjectClient(ManagementApi api, string project, string? database = null, bool write = true) =>
         api.WithToken(api.Issuer.Mint(api.User, token =>
         {

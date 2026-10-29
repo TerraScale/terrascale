@@ -10,7 +10,7 @@ using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 public sealed class StorageConstructionTests
 {
@@ -153,7 +153,7 @@ public sealed class StorageConstructionTests
             // Startup can publish a server after cancellation. Join it before inspecting the result.
             if (startup is not null)
             {
-                await StoragePoolTests.JoinCleanupAsync([startup], primaryFailure);
+                await StoragePoolHelpers.JoinCleanupAsync([startup], primaryFailure);
             }
             var cleanup = new List<Task>();
             if (unexpected is not null)
@@ -166,7 +166,7 @@ public sealed class StorageConstructionTests
             }
             try
             {
-                await StoragePoolTests.JoinCleanupAsync(cleanup, primaryFailure);
+                await StoragePoolHelpers.JoinCleanupAsync(cleanup, primaryFailure);
             }
             catch (Exception error)
             {

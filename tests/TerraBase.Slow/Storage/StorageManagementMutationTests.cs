@@ -1,9 +1,10 @@
+using TerraBase.Testing;
 using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 public sealed class StorageManagementMutationTests
 {

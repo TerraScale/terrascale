@@ -4,12 +4,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
 using TerraBase.Engine;
-using TerraBase.Fast.Storage;
+using TerraBase.Slow.Storage;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Slow.Platform;
 
 public sealed class MemoryBudgetTests
 {

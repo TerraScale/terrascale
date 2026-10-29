@@ -6,7 +6,7 @@ using TerraBase.Engine.Turso;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 /// <summary>
 /// TS-982: a history erasure's rewrite of SYSTEM waited up to 30 s for a reader to end while holding the writer, so every

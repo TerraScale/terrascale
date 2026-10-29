@@ -4,11 +4,11 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 public sealed class StampingTransactionTests
 {
@@ -100,7 +100,7 @@ public sealed class StampingTransactionTests
             deadline.Cancel();
             try
             {
-                await StoragePoolTests.JoinCleanupAsync(pending, primaryFailure);
+                await StoragePoolHelpers.JoinCleanupAsync(pending, primaryFailure);
             }
             finally
             {
@@ -118,7 +118,7 @@ public sealed class StampingTransactionTests
         var management = await ManagementApi.StartAsync(settings =>
         {
             settings["storage-threads"] = "1";
-        }, StorageTransactionTests.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow));
+        }, StorageTransactionFixture.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow));
         var server = management.Server;
         await using var serverCleanup = management;
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
@@ -210,7 +210,7 @@ public sealed class StampingTransactionTests
             release.Set();
             try
             {
-                await StoragePoolTests.JoinCleanupAsync(pending, primaryFailure);
+                await StoragePoolHelpers.JoinCleanupAsync(pending, primaryFailure);
             }
             finally
             {

@@ -9,15 +9,15 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.Memory;
-using TerraBase.Fast.Platform;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Platform;
+using TerraBase.Slow.Documents;
 using TerraBase.Features.Shapes;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 using Turso.Data.Sqlite;
 
-namespace TerraBase.Fast.Shapes;
+namespace TerraBase.Slow.Shapes;
 
 public sealed class ShapeMetricsTests
 {
@@ -301,7 +301,7 @@ public sealed class ShapeMetricsTests
         await using var api = await DocumentApi.StartIsolatedAsync();
         if (ownerRules)
         {
-            await CollectionAccessRulesTests.DeclareAsync(api, CollectionAccessRulesTests.OwnerRules());
+            await CollectionAccessFixture.DeclareAsync(api, CollectionAccessFixture.OwnerRules());
         }
         var id = DocumentApi.NewId();
         await Assert.That((await api.PutAsync(id, new { a = 1, owner = "first" })).Status).IsEqualTo(HttpStatusCode.Created);
@@ -332,8 +332,8 @@ public sealed class ShapeMetricsTests
     public async Task Pending_feed_proofs_use_current_collection_metadata()
     {
         await using var api = await DocumentApi.StartIsolatedAsync();
-        var original = CollectionAccessRulesTests.OwnerRules();
-        await CollectionAccessRulesTests.DeclareAsync(api, original);
+        var original = CollectionAccessFixture.OwnerRules();
+        await CollectionAccessFixture.DeclareAsync(api, original);
         var id = DocumentApi.NewId();
         await Assert.That((await api.PutAsync(id, new { owner = "first", nextOwner = "last" })).Status).IsEqualTo(HttpStatusCode.Created);
         var token = TestContext.Current!.Execution.CancellationToken;

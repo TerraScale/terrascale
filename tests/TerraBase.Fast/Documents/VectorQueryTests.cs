@@ -1,3 +1,4 @@
+using TerraBase.Testing;
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
@@ -40,27 +41,6 @@ public sealed class VectorQueryTests
         await Assert.That(Ranked(cosine, ids)).IsEqualTo("same 0, close 0.2, far 1");
         await Assert.That(Ranked(l2, ids)).IsEqualTo("close 0.632, same 1");
         await Assert.That(l2.Json.GetProperty("next_cursor").ValueKind).IsEqualTo(JsonValueKind.Null);
-    }
-
-    [Test]
-    public async Task Near_sort_rejects_requests_outside_its_limits()
-    {
-        await using var api = await StartAsync();
-        var near = new { near = new { path = "/v", vector = Query } };
-        (ApiResponse Response, string Message)[] cases =
-        [
-            (await api.QueryAsync(new { sort = new object[] { near, new { path = "/a" } } }), "near is the only sort key, without path or order"),
-            (await api.QueryAsync(new { sort = new[] { near }, cursor = "x" }), "near returns one page of at most 1000 documents, without a cursor"),
-            (await api.QueryAsync(new { sort = new[] { new { near = new { path = "/v", vector = new double[4097] } } } }), "near vector has 1 to 4096 numbers within the float32 range"),
-            (await api.QueryAsync(new { sort = new[] { new { near = new { path = "/v", vector = new double[3] } } } }), "a cosine near vector is not all zeros"),
-            (await api.QueryAsync(new { sort = new[] { new { near = new { path = "/v", vector = Query, metric = "dot" } } } }), "near metric is cosine or l2"),
-            (await api.QueryAsync(new { sort = new[] { new { near = new { path = "$id", vector = Query } } } }), "near path is a JSON Pointer"),
-        ];
-
-        foreach (var (response, message) in cases)
-        {
-            await Assert.That((response.Status, response.Code, response.Message)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_query", message));
-        }
     }
 
     private static string Ranked(ApiResponse result, Dictionary<string, string> ids) => string.Join(", ", result.Json.GetProperty("items").EnumerateArray().Select(item =>

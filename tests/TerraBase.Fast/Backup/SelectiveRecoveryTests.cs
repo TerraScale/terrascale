@@ -21,27 +21,6 @@ namespace TerraBase.Fast.Backup;
 public sealed class SelectiveRecoveryTests
 {
     [Test]
-    public async Task Out_of_retention_points_are_refused_even_when_objects_remain(CancellationToken cancellationToken)
-    {
-        await using var fixture = await Fixture.StartAsync(cancellationToken);
-        fixture.Time.Advance(TimeSpan.FromDays(2));
-        await TerraBaseTestServer.EventuallyAsync(async token =>
-        {
-            using var backups = await fixture.Recovery.GetAsync(ManagementApi.Uri(fixture.Database.Data + "/backups"), token);
-            backups.EnsureSuccessStatusCode();
-            var listed = await backups.Content.ReadFromJsonAsync<JsonElement>(token);
-            return listed.GetProperty("items").EnumerateArray().Any(backup => backup.GetProperty("trigger").GetString() == "scheduled");
-        }, TimeSpan.FromSeconds(30));
-        using var response = await fixture.Recovery.PostAsJsonAsync(fixture.Route("recovery-preview"), new
-        {
-            pointInTime = fixture.Point,
-            selections = new[] { new { collection = "people" } },
-        }, cancellationToken);
-        await Assert.That(response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound).IsTrue();
-        await fixture.AssertCleanAsync();
-    }
-
-    [Test]
     [Arguments("recovery-preview")]
     [Arguments("recover")]
     public async Task Database_write_scope_alone_cannot_read_or_restore_documents(string operation, CancellationToken cancellationToken)
@@ -140,43 +119,6 @@ public sealed class SelectiveRecoveryTests
     }
 
     [Test]
-    public async Task Recovery_preserves_storage_quota_and_does_not_partially_write(CancellationToken cancellationToken)
-    {
-        await using var fixture = await Fixture.StartAsync(cancellationToken);
-        var preview = await fixture.PreviewAsync(cancellationToken);
-        fixture.StorageLimit = 1;
-        using var applied = await fixture.ApplyAsync(preview, ["first", "second"], cancellationToken);
-        await Assert.That(applied.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
-        var body = await applied.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
-        await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("storage_quota");
-        using var absent = await fixture.Data.GetAsync(fixture.Document("people", "first"), cancellationToken);
-        await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await fixture.AssertCleanAsync();
-    }
-
-    [Test]
-    public async Task Disk_headroom_refuses_recovery_and_success_releases_its_scratch_lease(CancellationToken cancellationToken)
-    {
-        await using var fixture = await Fixture.StartAsync(cancellationToken);
-        var bytes = new DriveInfo(fixture.Api.Server.DataDirectory).AvailableFreeSpace - DiskBudget.Headroom - (8L << 20);
-        using (fixture.Api.Server.Services.GetRequiredService<IDiskBudget>().Reserve(bytes))
-        {
-            using var refused = await fixture.Recovery.PostAsJsonAsync(fixture.Route("recovery-preview"), new
-            {
-                pointInTime = fixture.Point,
-                selections = new[] { new { collection = "people" } },
-            }, cancellationToken);
-            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-            var body = await refused.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
-            await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("disk_capacity");
-            await Assert.That(refused.Headers.RetryAfter).IsNotNull();
-            await Assert.That(fixture.ScratchFiles()).IsEmpty();
-        }
-        _ = await fixture.PreviewAsync(cancellationToken);
-        await fixture.AssertCleanAsync();
-    }
-
-    [Test]
     public async Task Revoked_project_access_invalidates_an_existing_approval(CancellationToken cancellationToken)
     {
         await using var fixture = await Fixture.StartAsync(cancellationToken);
@@ -215,41 +157,6 @@ public sealed class SelectiveRecoveryTests
         using var absent = await fixture.Data.GetAsync(fixture.Document("people", "first"), cancellationToken);
         await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await fixture.AssertCleanAsync();
-    }
-
-    [Test]
-    public async Task Cancelling_a_preview_download_removes_private_recovery_files(CancellationToken cancellationToken)
-    {
-        await using var fixture = await Fixture.StartAsync(cancellationToken);
-        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var released = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        fixture.S3.BeforeGet = async (key, token) =>
-        {
-            if (!key.Contains("/snapshots/", StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            entered.TrySetResult();
-            try
-            {
-                await Task.Delay(Timeout.InfiniteTimeSpan, token);
-            }
-            finally
-            {
-                released.TrySetResult();
-            }
-        };
-        var request = fixture.PreviewAsync(cancel.Token);
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
-        using var competing = await fixture.Recovery.PostAsJsonAsync(fixture.Route("recovery-preview"), new { }, cancellationToken);
-        await Assert.That(competing.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(competing.Headers.RetryAfter).IsNotNull();
-        cancel.Cancel();
-        await Assert.That(async () => await request).Throws<OperationCanceledException>();
-        await released.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
-        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(fixture.ScratchFiles().Length == 0));
     }
 
     private sealed class GlobalIssuerRoute : DelegatingHandler

@@ -9,7 +9,7 @@ using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 public sealed class WorkerExecutionContextTests
 {
@@ -94,11 +94,11 @@ public sealed class WorkerExecutionContextTests
             await deadline.CancelAsync();
             if (creation is not null)
             {
-                await StoragePoolTests.JoinCleanupAsync([StoragePoolTests.DisposeResponseAsync(creation)], primaryFailure);
+                await StoragePoolHelpers.JoinCleanupAsync([StoragePoolHelpers.DisposeResponseAsync(creation)], primaryFailure);
             }
             if (probe is not null)
             {
-                await StoragePoolTests.JoinCleanupAsync([probe], primaryFailure);
+                await StoragePoolHelpers.JoinCleanupAsync([probe], primaryFailure);
             }
         }
 

@@ -4,7 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Configuration;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Slow.Platform;
 
 public sealed class ReadinessConfigurationTests
 {

@@ -7,7 +7,7 @@ using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 public sealed class HealthyRewriteEdgeTests
 {
@@ -236,8 +236,6 @@ public sealed class HealthyRewriteEdgeTests
         await write.CommitAsync(token);
     }
 
-    private static string Payload(string marker) => $$"""{"secret":"{{string.Concat(Enumerable.Repeat(marker, 600))}}"}""";
-
     private static Task PausedAsync(TursoDatabaseStore store)
     {
         var paused = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -245,37 +243,4 @@ public sealed class HealthyRewriteEdgeTests
         return paused.Task;
     }
 
-    private static IEnumerable<string> SystemFiles(string directory) =>
-        Directory.EnumerateFiles(directory, "_system.db*").Concat(Directory.EnumerateFiles(directory, "._system.*"));
-
-    private static bool Holds(IEnumerable<string> files, string marker)
-    {
-        var needle = Encoding.UTF8.GetBytes(marker);
-        return files.Any(file => File.ReadAllBytes(file).AsSpan().IndexOf(needle) >= 0);
-    }
-
-    private static bool CapturedMarker(string path, string marker)
-    {
-        using var connection = new Turso.TursoConnection(TestMasterKey.ConnectionString(path));
-        connection.Open();
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';";
-        if (Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) == 0)
-        {
-            return false;
-        }
-
-        command.CommandText = "SELECT after FROM turso_cdc WHERE after IS NOT NULL;";
-        using var rows = command.ExecuteReader();
-        var needle = Encoding.UTF8.GetBytes(marker);
-        while (rows.Read())
-        {
-            if (((byte[])rows.GetValue(0)).AsSpan().IndexOf(needle) >= 0)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
 }

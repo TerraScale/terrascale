@@ -4,10 +4,10 @@ using System.Net;
 using System.Text.Json;
 using Bogus;
 using TerraBase.Features.Shapes;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Shapes;
+namespace TerraBase.Slow.Shapes;
 
 /// <summary>
 /// Security review V4 of free shape reads (free-reads.md 3.9, shape-reads.md 11 and 13) over HTTP on one real node:

@@ -1,20 +1,16 @@
-using System.Diagnostics.Metrics;
 using System.Text;
 using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
-using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
-using TerraBase.Fast.Documents;
-using TerraBase.Features.Backup;
+using TerraBase.Slow.Documents;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 /// <summary>
 /// The Turso session pool, through the running server's engine: no listener can dispose a
@@ -82,7 +78,7 @@ public sealed class StorageTransactionEdgeTests
     [Test]
     public async Task Disposing_a_transaction_twice_returns_its_session_once()
     {
-        await using var server = await TerraBaseTestServer.StartAsync(services: StorageTransactionTests.ConfigurePool);
+        await using var server = await TerraBaseTestServer.StartAsync(services: StorageTransactionFixture.ConfigurePool);
         var (_, store) = await OpenAsync(server);
         // Creation leaves the bootstrap session idle.
         await Assert.That(store.IdleCount).IsEqualTo(1);
@@ -104,7 +100,7 @@ public sealed class StorageTransactionEdgeTests
     [Test]
     public async Task A_deleted_database_hands_out_and_keeps_no_session()
     {
-        await using var server = await TerraBaseTestServer.StartAsync(services: StorageTransactionTests.ConfigurePool);
+        await using var server = await TerraBaseTestServer.StartAsync(services: StorageTransactionFixture.ConfigurePool);
         var (engine, store) = await OpenAsync(server);
         var open = await store.BeginTransactionAsync(write: false, CancellationToken.None);
         await (await store.BeginTransactionAsync(write: false, CancellationToken.None)).DisposeAsync();
@@ -123,7 +119,7 @@ public sealed class StorageTransactionEdgeTests
     [Test]
     public async Task A_cancelled_request_takes_no_idle_session()
     {
-        await using var server = await TerraBaseTestServer.StartAsync(services: StorageTransactionTests.ConfigurePool);
+        await using var server = await TerraBaseTestServer.StartAsync(services: StorageTransactionFixture.ConfigurePool);
         var (_, store) = await OpenAsync(server);
         await Assert.That(store.IdleCount).IsEqualTo(1);
         using var cancelled = new CancellationTokenSource();
@@ -137,7 +133,7 @@ public sealed class StorageTransactionEdgeTests
     [Test]
     public async Task A_disposed_transaction_refuses_every_operation()
     {
-        await using var server = await TerraBaseTestServer.StartAsync(services: StorageTransactionTests.ConfigurePool);
+        await using var server = await TerraBaseTestServer.StartAsync(services: StorageTransactionFixture.ConfigurePool);
         var (_, store) = await OpenAsync(server);
         var stale = await store.BeginTransactionAsync(write: true, CancellationToken.None);
         await stale.DisposeAsync();
@@ -160,7 +156,7 @@ public sealed class StorageTransactionEdgeTests
     {
         await using var server = await TerraBaseTestServer.StartAsync(services: services =>
         {
-            StorageTransactionTests.ConfigurePool(services);
+            StorageTransactionFixture.ConfigurePool(services);
             // Maintenance may rent an idle session; freeze its clock for exact pool/LRU/file observations.
             services.AddSingleton<TimeProvider>(new FakeTimeProvider(DateTimeOffset.UtcNow));
         });
@@ -204,7 +200,7 @@ public sealed class StorageTransactionEdgeTests
     [Test]
     public async Task A_shut_down_engine_opens_no_database()
     {
-        await using var server = await TerraBaseTestServer.StartAsync(services: StorageTransactionTests.ConfigurePool);
+        await using var server = await TerraBaseTestServer.StartAsync(services: StorageTransactionFixture.ConfigurePool);
         var (engine, _) = await OpenAsync(server);
         await engine.OpenSystemDatabaseAsync(CancellationToken.None);
 
@@ -453,7 +449,7 @@ public sealed class StorageTransactionEdgeTests
         const int Rows = 32;
         // Per-test time isolates the admission assertion from the periodic usage flush.
         var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        await using var management = await ManagementApi.StartAsync(time: time, services: StorageTransactionTests.ConfigurePool);
+        await using var management = await ManagementApi.StartAsync(time: time, services: StorageTransactionFixture.ConfigurePool);
         var server = management.Server;
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
         var client = tenant.Data;
@@ -531,7 +527,7 @@ public sealed class StorageTransactionEdgeTests
         {
             settings["storage-threads"] = "1";
             settings["storage-queue"] = "3";
-        }, StorageTransactionTests.ConfigurePool);
+        }, StorageTransactionFixture.ConfigurePool);
         var (_, store) = await OpenAsync(server);
         var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         var io = engine.Io;
@@ -618,7 +614,7 @@ public sealed class StorageTransactionEdgeTests
                 }
             }
 
-            await StorageTransactionTests.DisposeBeginAsync(reader);
+            await StorageTransactionFixture.DisposeBeginAsync(reader);
         }
 
         await other.DisposeAsync();

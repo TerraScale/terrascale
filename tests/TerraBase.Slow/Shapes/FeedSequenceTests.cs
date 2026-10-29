@@ -4,11 +4,11 @@ using Microsoft.Extensions.DependencyInjection;
 using Turso.Data.Sqlite;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Shapes;
+namespace TerraBase.Slow.Shapes;
 
 public sealed class FeedSequenceTests
 {

@@ -5,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Sql;
+namespace TerraBase.Testing;
 
 internal sealed class SqlNativeDatabase : IAsyncDisposable
 {

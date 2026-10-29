@@ -5,7 +5,7 @@ using Bogus;
 using TerraBase.Features.Import;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Import;
+namespace TerraBase.Slow.Import;
 
 public sealed class ImportHardeningTests
 {

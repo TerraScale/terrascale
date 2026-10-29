@@ -4,7 +4,7 @@ using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 /// <summary>A deletion of one incarnation of a database file never removes the file that replaced it.</summary>
 public sealed class DatabaseIncarnationTests

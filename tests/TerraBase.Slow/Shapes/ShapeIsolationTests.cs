@@ -6,10 +6,10 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Shapes;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Shapes;
+namespace TerraBase.Slow.Shapes;
 
 /// <summary>
 /// Tenant isolation of live tails over HTTP (free-reads.md 3.6): one organization's parked long polls fill its own share of

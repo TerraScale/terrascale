@@ -3,11 +3,11 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
-using TerraBase.Fast.Storage;
+using TerraBase.Slow.Storage;
 using TerraBase.Features.Management;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Management;
+namespace TerraBase.Slow.Management;
 
 public sealed partial class HistoryErasureBackupTests
 {

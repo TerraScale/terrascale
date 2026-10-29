@@ -8,7 +8,7 @@ using TerraBase.Tenancy;
 using TerraBase.Testing;
 using Turso.Data.Sqlite;
 
-namespace TerraBase.Fast.Revisions;
+namespace TerraBase.Testing;
 
 internal sealed class RevisionReplica
 {

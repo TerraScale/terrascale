@@ -2,7 +2,7 @@ using Bogus;
 using Npgsql;
 using NpgsqlTypes;
 using TerraBase.Testing;
-using static TerraBase.Fast.Sql.SqlNativeDatabase;
+using static TerraBase.Testing.SqlNativeDatabase;
 
 namespace TerraBase.Fast.Sql;
 

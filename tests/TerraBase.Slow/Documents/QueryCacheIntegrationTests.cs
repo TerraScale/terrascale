@@ -6,13 +6,13 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Errors;
-using TerraBase.Fast.Storage;
+using TerraBase.Slow.Storage;
 using TerraBase.Features.Documents;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Documents;
+namespace TerraBase.Slow.Documents;
 
 public sealed class QueryCacheIntegrationTests
 {

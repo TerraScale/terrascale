@@ -1,15 +1,13 @@
 using System.Net;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Platform;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Slow.Platform;
 
 /// <summary>
 /// Every TerraBase start seeds TerraScale's own databases (ts-auth, ts-dashboard) under fixed ids, in the
@@ -21,7 +19,6 @@ public sealed class PlatformDatabasesEdgeTests
     private static readonly string[] Regions = ["gru", "sjc", "fra"];
 
     private static readonly string Auth = $"/v1/projects/{PlatformDatabases.AuthProjectId}/databases/{PlatformDatabases.Auth}";
-    private static readonly string Dashboard = $"/v1/projects/{PlatformDatabases.DashboardProjectId}/databases/{PlatformDatabases.Dashboard}";
 
     [Test]
     public async Task Restarts_and_concurrent_runs_keep_one_set_of_records_and_the_data()

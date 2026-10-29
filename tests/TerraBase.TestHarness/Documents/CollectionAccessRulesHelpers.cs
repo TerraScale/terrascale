@@ -1,9 +1,9 @@
 using System.Net;
 using TerraBase.Engine;
 
-namespace TerraBase.Fast.Documents;
+namespace TerraBase.Testing;
 
-public sealed partial class CollectionAccessRulesTests
+internal static class CollectionAccessFixture
 {
     internal static async Task<DocumentApi> StartAsync()
     {

@@ -3,7 +3,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 public sealed class DatabaseErasureTests
 {

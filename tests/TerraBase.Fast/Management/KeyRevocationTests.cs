@@ -77,33 +77,6 @@ public sealed class KeyRevocationTests
     }
 
     [Test]
-    public async Task A_key_answer_too_slow_for_new_work_to_outlast_refuses_it_before_it_starts(CancellationToken cancellationToken)
-    {
-        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        await using var api = await ManagementApi.StartAsync(time: time, cancellationToken: cancellationToken);
-        var database = await api.CreateManagedDatabaseAsync();
-        var (_, token) = Grant(api, database);
-        using var client = api.WithToken(token);
-        var route = ManagementApi.Uri(database.Data + "/collections");
-
-        api.Issuer.BeforeStatus = () => time.Advance(TimeSpan.FromSeconds(1.5));
-        using (var slow = await client.GetAsync(route, cancellationToken))
-        {
-            await Assert.That(slow.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-            await Assert.That((await slow.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("error").GetProperty("code").GetString()).IsEqualTo("auth_unavailable");
-            await Assert.That(slow.Headers.RetryAfter!.Delta).IsEqualTo(TimeSpan.FromSeconds(1));
-        }
-
-        api.Issuer.BeforeStatus = null;
-        using (var retried = await client.GetAsync(route, cancellationToken))
-        {
-            await Assert.That(retried.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        }
-
-        await Assert.That(api.Issuer.StatusRequests).IsEqualTo(2);
-    }
-
-    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task An_established_http_feed_ends_when_its_last_key_authority_expires(bool unavailable, CancellationToken cancellationToken)
@@ -164,51 +137,6 @@ public sealed class KeyRevocationTests
     }
 
     [Test]
-    public async Task A_write_still_waiting_when_its_key_cannot_be_verified_answers_auth_unavailable_instead_of_a_reset(CancellationToken cancellationToken)
-    {
-        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        var queued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        string? target = null;
-        await using var api = await ManagementApi.StartAsync(time: time, cancellationToken: cancellationToken, services: services =>
-            services.AddSingleton<DatabaseLifecycleCheckpoint>((step, tenant) =>
-            {
-                if (step == "writer.waiting" && tenant.DatabaseId == Volatile.Read(ref target))
-                {
-                    queued.TrySetResult();
-                }
-            }));
-        var database = await api.CreateManagedDatabaseAsync();
-        var (_, token) = Grant(api, database, scope: "documents:read documents:write");
-        using var client = api.WithToken(token);
-        var sql = ManagementApi.Uri(database.Data + "/sql/execute");
-        var create = new { statements = new[] { new { sql = "CREATE TABLE waiting (id INTEGER PRIMARY KEY)" } } };
-        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>()
-            .OpenDatabaseAsync(new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id), cancellationToken))!;
-        Volatile.Write(ref target, database.Id);
-        HttpResponseMessage response;
-        await using (var held = await store.BeginTransactionAsync(write: true, cancellationToken))
-        {
-            var waiting = client.PostAsJsonAsync(sql, create, cancellationToken);
-            await queued.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
-            api.Issuer.StatusAvailable = false;
-            time.Advance(TimeSpan.FromSeconds(2));
-            response = await waiting.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
-        }
-
-        using (response)
-        {
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-            await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("error").GetProperty("code").GetString())
-                .IsEqualTo("auth_unavailable");
-            await Assert.That(response.Headers.RetryAfter!.Delta).IsEqualTo(TimeSpan.FromSeconds(1));
-        }
-
-        api.Issuer.StatusAvailable = true;
-        using var retried = await client.PostAsJsonAsync(sql, create, cancellationToken);
-        await Assert.That(retried.StatusCode).IsEqualTo(HttpStatusCode.OK);
-    }
-
-    [Test]
     public async Task Revocation_ends_an_open_postgres_session_and_refuses_new_connections()
     {
         await using var api = await ManagementApi.StartAsync();
@@ -246,58 +174,6 @@ public sealed class KeyRevocationTests
         var startup = await Assert.ThrowsAsync<PostgresException>(fresh.OpenAsync);
         await Assert.That(startup!.SqlState).IsEqualTo("28000");
         await Assert.That(startup.MessageText).StartsWith("key_revoked:");
-    }
-
-    [Test]
-    public async Task An_older_ts_auth_without_key_status_keeps_keys_working_on_http_and_postgres()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var database = await api.CreateManagedDatabaseAsync();
-        api.Issuer.StatusServed = false;
-        var (_, token) = Grant(api, database);
-        using var client = api.WithToken(token);
-        using (var response = await client.GetAsync(ManagementApi.Uri(database.Data + "/collections")))
-        {
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        }
-
-        foreach (var claims in new[] { true, false })
-        {
-            var id = EntityIds.New().ToString();
-            var key = id + "_" + new Faker().Random.String2(52, "0123456789abcdefghjkmnpqrstvwxyz");
-            api.Issuer.GrantClient(key, () => api.Issuer.Mint(id, descriptor =>
-            {
-                descriptor.Claims["project_id"] = database.Project;
-                descriptor.Claims["scope"] = "documents:read databases:read";
-                if (claims)
-                {
-                    descriptor.Claims["key_id"] = id;
-                    descriptor.Claims["key_gen"] = TestIssuer.KeyGeneration(key);
-                }
-            }));
-            var settings = new NpgsqlConnectionStringBuilder { Host = "127.0.0.1", Port = api.Server.PostgresPort, Username = "wire", Password = key, Database = database.Name, SslMode = SslMode.Disable, Pooling = false };
-            await using var connection = new NpgsqlConnection(settings.ConnectionString);
-            await connection.OpenAsync();
-            await using var command = new NpgsqlCommand("SELECT 1", connection);
-            await Assert.That(await command.ExecuteScalarAsync()).IsEqualTo(1L);
-        }
-    }
-
-    [Test]
-    public async Task A_token_issued_before_key_status_keeps_reading_without_a_status_check()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var database = await api.CreateManagedDatabaseAsync();
-        var id = EntityIds.New().ToString();
-        var token = api.Issuer.Mint(id, descriptor =>
-        {
-            descriptor.Claims["project_id"] = database.Project;
-            descriptor.Claims["scope"] = "documents:read databases:read";
-        });
-        using var client = api.WithToken(token);
-        using var response = await client.GetAsync(ManagementApi.Uri(database.Data + "/collections"));
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(api.Issuer.StatusRequests).IsEqualTo(0);
     }
 
     private static (string Key, string Token) Grant(ManagementApi api, ManagedDatabaseRef database, bool mismatched = false, string scope = "documents:read databases:read")

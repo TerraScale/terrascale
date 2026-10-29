@@ -7,7 +7,7 @@ using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Testing;
 
 /// <summary>Stable, ordered ULID addresses and explicit collection creation for document fixtures.</summary>
 internal static class StorageFixture

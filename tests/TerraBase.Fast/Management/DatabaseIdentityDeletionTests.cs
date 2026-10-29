@@ -89,26 +89,6 @@ public sealed class DatabaseIdentityDeletionTests
     }
 
     [Test]
-    [Arguments("not-an-id")]
-    [Arguments("01arz3ndektsv4rrffq69g5fav")]
-    [Arguments("81ARZ3NDEKTSV4RRFFQ69G5FAV")]
-    [Arguments("01ARZ3NDEKTSV4RRFFQ69G5FAI")]
-    [Arguments("01ARZ3NDEKTSV4RRFFQ69G5FAV,01ARZ3NDEKTSV4RRFFQ69G5FAV")]
-    public async Task Malformed_identity_is_a_safe_bad_request(string expected)
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var database = await api.CreateManagedDatabaseAsync();
-        using var client = ProjectClient(api, database.Project);
-        using var response = await client.DeleteAsync(Uri(database.Data + "/if-id/" + expected));
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-        await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("invalid_request");
-        await Assert.That(body.GetProperty("error").GetProperty("message").GetString()).DoesNotContain(expected);
-        using var preserved = await client.GetAsync(Uri(database.Data));
-        await Assert.That(preserved.StatusCode).IsEqualTo(HttpStatusCode.OK);
-    }
-
-    [Test]
     public async Task Recreated_name_does_not_satisfy_the_old_identity()
     {
         await using var api = await ManagementApi.StartAsync();
@@ -124,53 +104,6 @@ public sealed class DatabaseIdentityDeletionTests
         var document = await PutDocumentAsync(client, replacement);
         await ErrorAssert.ErrorAsync(client.DeleteAsync(Uri(original.Data + "/if-id/" + original.Id)), HttpStatusCode.Conflict, "database_identity_mismatch", "the database identity does not match expectedId");
         await AssertDocumentAsync(client, document);
-    }
-
-    [Test]
-    public async Task Name_replacement_after_resolution_cannot_redirect_the_delete_to_the_new_database()
-    {
-        ManagementApi? fixture = null;
-        ManagedDatabaseRef? original = null;
-        IManagementService? inner = null;
-        string? replacementDocument = null;
-        var armed = 0;
-        var resolutions = 0;
-        await using var api = await ManagementApi.StartAsync(services: services =>
-        {
-            var registration = services.Single(service => service.ServiceType == typeof(IManagementService));
-            services.Remove(registration);
-            services.AddSingleton(provider =>
-            {
-                inner = (IManagementService)registration.ImplementationFactory!(provider);
-                return UsageApiTests.SlowManagement.Wrap(inner, operation =>
-                {
-                    if (Volatile.Read(ref armed) == 1 && operation == nameof(IManagementService.FindDatabaseRecordAsync))
-                    {
-                        Interlocked.Increment(ref resolutions);
-                    }
-                }, operation => operation == nameof(IManagementService.GetDatabaseAsync) && Interlocked.Exchange(ref armed, 0) == 1
-                    ? new ValueTask<GetDatabaseResult>(ReplaceBeforePlacementAsync()) : null);
-            });
-        });
-        fixture = api;
-        original = await api.CreateManagedDatabaseAsync();
-        using var client = ProjectClient(api, original.Project);
-        Volatile.Write(ref armed, 1);
-        using var stale = await client.DeleteAsync(Uri(original.Data + "/if-id/" + original.Id));
-        await Assert.That(stale.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(Volatile.Read(ref resolutions)).IsEqualTo(1);
-        await AssertDocumentAsync(client, replacementDocument!);
-
-        async Task<GetDatabaseResult> ReplaceBeforePlacementAsync()
-        {
-            using var deleted = await fixture!.Client.DeleteAsync(Uri(original!.Path));
-            deleted.EnsureSuccessStatusCode();
-            var replacement = await fixture.CreateManagedDatabaseAsync(original.Organization, original.Project, original.Name);
-            await Assert.That(replacement.Id).IsNotEqualTo(original.Id);
-            using var writer = ProjectClient(fixture, original.Project);
-            replacementDocument = await PutDocumentAsync(writer, replacement);
-            return await inner!.GetDatabaseAsync(fixture.User, original.Organization, original.Project, original.Id, CancellationToken.None);
-        }
     }
 
     [Test]

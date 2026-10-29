@@ -2,7 +2,7 @@ using System.Diagnostics;
 using TerraBase.Configuration;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Shapes;
+namespace TerraBase.Slow.Shapes;
 
 public sealed class ShapeStorageStartupTests
 {

@@ -1,12 +1,13 @@
+using TerraBase.Testing;
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Features.Management;
 using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
 
-namespace TerraBase.Fast.Qos;
+namespace TerraBase.Slow.Qos;
 
 public sealed class LifecycleQuotaTests
 {

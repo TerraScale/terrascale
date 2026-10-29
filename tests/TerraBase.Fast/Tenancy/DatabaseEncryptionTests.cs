@@ -57,68 +57,6 @@ public sealed class DatabaseEncryptionTests
     }
 
     [Test]
-    [Arguments("missing")]
-    [Arguments("tampered")]
-    [Arguments("wrong-master")]
-    [Arguments("another-database")]
-    public async Task An_unusable_system_wrapped_key_refuses_start_without_replacing_it(string problem)
-    {
-        var directory = Directory.CreateTempSubdirectory("terrabase-encryption-key-").FullName;
-        try
-        {
-            Seed seed;
-            await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory))
-            {
-                seed = await SeedAsync(api, "preserved-" + EntityIds.New());
-            }
-
-            var keyPath = Path.Combine(directory, "_system.db.key");
-            var original = await File.ReadAllBytesAsync(keyPath);
-            switch (problem)
-            {
-                case "missing":
-                    File.Delete(keyPath);
-                    break;
-                case "tampered":
-                    var altered = (byte[])original.Clone();
-                    altered["TERRABASE-DB-KEY-1\n".Length + 8] ^= 1;
-                    await File.WriteAllBytesAsync(keyPath, altered);
-                    break;
-                case "wrong-master":
-                    var (key, wrapped) = await new TerraBase.Features.Backup.MasterKey(RandomNumberGenerator.GetBytes(32))
-                        .GenerateDataKeyAsync(CancellationToken.None);
-                    CryptographicOperations.ZeroMemory(key);
-                    await File.WriteAllTextAsync(keyPath, "TERRABASE-DB-KEY-1\n" + wrapped + "\n");
-                    break;
-                default:
-                    File.Copy(seed.DatabaseFile + ".key", keyPath, overwrite: true);
-                    break;
-            }
-
-            var damaged = File.Exists(keyPath) ? await File.ReadAllBytesAsync(keyPath) : null;
-            await Assert.That(async () =>
-            {
-                await using var refused = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory);
-            }).ThrowsException();
-            await Assert.That(File.Exists(keyPath)).IsEqualTo(damaged is not null);
-            if (damaged is not null)
-            {
-                await Assert.That((await File.ReadAllBytesAsync(keyPath)).SequenceEqual(damaged)).IsTrue();
-            }
-
-            // Restoring the original wrapped key must recover the exact data, rather than a new empty catalog.
-            await File.WriteAllBytesAsync(keyPath, original);
-            await using var restored = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory);
-            using var data = restored.DataClient(seed.ApiKey);
-            await Assert.That(await data.GetStringAsync(seed.Document)).IsEqualTo(seed.Response);
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
-    [Test]
     public async Task Encrypted_backup_restore_preserves_the_document_with_a_fresh_encrypted_target_key()
     {
         var token = TestContext.Current!.Execution.CancellationToken;

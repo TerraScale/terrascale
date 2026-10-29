@@ -1,6 +1,6 @@
 using Turso.Data.Sqlite;
 
-namespace TerraBase.Fast.Indexes;
+namespace TerraBase.Slow.Indexes;
 
 /// <summary>The pinned custom native core and normal driver opens support FTS without an opt-in.</summary>
 public sealed class TursoFtsNativeTests

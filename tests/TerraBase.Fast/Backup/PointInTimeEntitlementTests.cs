@@ -15,58 +15,6 @@ public sealed class PointInTimeEntitlementTests
 {
 
     [Test]
-    [Arguments("hobby", 1)]
-    [Arguments("starter", 5)]
-    public async Task Project_token_restores_count_toward_the_organization_database_allowance(string plan, int limit, CancellationToken cancellationToken)
-    {
-        var s3 = new FakeS3();
-        var time = new ManualTime();
-        await using var api = await StartAsync(s3, time);
-        var organization = EntityIds.New().ToString();
-        var project = EntityIds.New().ToString();
-        if (plan != "hobby")
-        {
-            await SetPlanAsync(api, organization, plan);
-        }
-
-        using var client = ProjectClient(api, organization, project);
-        var database = await CreateAsync(api, client, organization, project);
-        await ShipAsync(api, time, TimeSpan.FromSeconds(10), cancellationToken);
-        var window = await JsonAsync(client.GetAsync(Uri(database.Data + "/point-in-time"), cancellationToken));
-        var at = window.GetProperty("latest").GetDateTimeOffset();
-        var route = Uri(database.Data + "/point-in-time/restore");
-        for (var i = 1; i < limit - 1; i++)
-        {
-            await JsonAsync(client.PostAsJsonAsync(route, new { pointInTime = at, name = "restored-" + i }, cancellationToken), HttpStatusCode.Created);
-        }
-
-        if (limit > 1)
-        {
-            var requests = Enumerable.Range(0, 2).Select(index =>
-                client.PostAsJsonAsync(route, new { pointInTime = at, name = "last-" + index }, cancellationToken));
-            var responses = await Task.WhenAll(requests);
-            try
-            {
-                await Assert.That(responses.Count(response => response.StatusCode == HttpStatusCode.Created)).IsEqualTo(1);
-                await ErrorAsync(responses.Single(response => response.StatusCode != HttpStatusCode.Created), HttpStatusCode.Conflict, "database_limit", "allows 5 databases");
-            }
-            finally
-            {
-                foreach (var response in responses)
-                {
-                    response.Dispose();
-                }
-            }
-        }
-
-        using var refused = await client.PostAsJsonAsync(route, new { pointInTime = at, name = "overflow" }, cancellationToken);
-        await ErrorAsync(refused, HttpStatusCode.Conflict, "database_limit", "allows " + limit);
-        var list = await JsonAsync(client.GetAsync(Uri($"/v1/projects/{project}/databases"), cancellationToken));
-        await Assert.That(list.GetProperty("items").GetArrayLength()).IsEqualTo(limit);
-        await Assert.That(list.GetProperty("items").EnumerateArray().Any(item => item.GetProperty("name").GetString() == "overflow")).IsFalse();
-    }
-
-    [Test]
     [Arguments("starter", 3, 2, true)]
     [Arguments("starter", 3, 4, false)]
     [Arguments("pro", 7, 4, true)]

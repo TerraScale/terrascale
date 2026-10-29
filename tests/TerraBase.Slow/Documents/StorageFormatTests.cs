@@ -2,7 +2,7 @@ using System.Net;
 using Turso.Data.Sqlite;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Documents;
+namespace TerraBase.Slow.Documents;
 
 public sealed class StorageFormatTests
 {

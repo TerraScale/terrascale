@@ -2,9 +2,9 @@ using System.Text;
 using TerraBase.Configuration;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Testing;
 
-public sealed partial class PlatformDatabasesTests
+internal static class PlatformDatabaseFixture
 {
     // Test-only transport: serve the production issuer's discovery/JWKS with this test's private signing keys.
     internal sealed class GlobalIssuerRoute : DelegatingHandler

@@ -10,7 +10,7 @@ using TerraBase.Features.Backup;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Backup;
+namespace TerraBase.Slow.Backup;
 
 public sealed class BackupDiscoveryShutdownTests
 {

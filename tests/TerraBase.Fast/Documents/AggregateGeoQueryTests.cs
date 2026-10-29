@@ -9,8 +9,6 @@ public sealed class AggregateGeoQueryTests
 {
     private static readonly string[] Status = ["/status"];
     private static readonly string[] Amount = ["/amount"];
-    private static readonly string[] Twice = ["/a", "/a"];
-    private static readonly string[] FivePaths = ["/a", "/b", "/c", "/d", "/e"];
     private static readonly string[] AmountAndMissing = ["/amount", "/missing"];
     private static readonly string[] Ops = ["sum", "avg", "min", "max"];
     private static readonly string[] LatLon = ["loc.lat", "loc.lon"];
@@ -35,30 +33,6 @@ public sealed class AggregateGeoQueryTests
         await Assert.That(grouped.Json.GetProperty("items").GetArrayLength()).IsEqualTo(0);
         await Assert.That(Groups(grouped)).IsEqualTo("null 1 sum=1 avg=1 min=1 max=1; \"open\" 2 sum=4 avg=4 min=4 max=4; \"paid\" 2 sum=12.5 avg=6.25 min=2.5 max=10");
         await Assert.That(Groups(total)).IsEqualTo(" 6 sum=14.5 sum=0");
-    }
-
-    [Test]
-    public async Task Aggregate_rejects_requests_outside_its_limits()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        foreach (var status in new[] { "a", "b", "c" })
-        {
-            (await api.PutAsync(DocumentApi.NewId(), new { status })).Status.ShouldBe(HttpStatusCode.Created);
-        }
-
-        var byStatus = new { group_by = Status };
-        (ApiResponse Response, string Message)[] cases =
-        [
-            (await api.QueryAsync(new { aggregate = byStatus, limit = 2 }), "the aggregate has more than 2 groups: narrow the filter or raise limit (at most 1000)"),
-            (await api.QueryAsync(new { aggregate = byStatus, sort = new[] { new { path = "/status" } } }), "aggregate takes no sort, project, cursor or count"),
-            (await api.QueryAsync(new { aggregate = new { sum = Twice } }), "sum takes distinct JSON Pointers"),
-            (await api.QueryAsync(new { aggregate = new { group_by = FivePaths } }), "group_by has at most 4 paths"),
-        ];
-
-        foreach (var (response, message) in cases)
-        {
-            await Assert.That((response.Status, response.Code, response.Message)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_query", message));
-        }
     }
 
     [Test]

@@ -7,13 +7,13 @@ using Turso.Data.Sqlite;
 using TerraBase.Engine.Turso;
 using TerraBase.Errors;
 using TerraBase.Features.Shapes;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
-namespace TerraBase.Fast.Shapes;
+namespace TerraBase.Slow.Shapes;
 
 /// <summary>
 /// Shape retention (FR-20 maintenance): chunks and snapshots older than the feed retention leave, each handle keeps a floor

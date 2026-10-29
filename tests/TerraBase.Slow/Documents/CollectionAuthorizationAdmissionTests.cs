@@ -1,3 +1,4 @@
+using TerraBase.Testing;
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -5,7 +6,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 
-namespace TerraBase.Fast.Documents;
+namespace TerraBase.Slow.Documents;
 
 public sealed class CollectionAuthorizationAdmissionTests
 {
@@ -19,8 +20,8 @@ public sealed class CollectionAuthorizationAdmissionTests
         var actor = DocumentApi.NewId();
         var ownId = DocumentApi.NewId();
         (await api.PutAsync(ownId, new { owner = actor, rank = 7 })).Status.ShouldBe(HttpStatusCode.Created);
-        using var owner = CollectionAccessRulesTests.Reader(api, actor);
-        using var empty = CollectionAccessRulesTests.Reader(api, DocumentApi.NewId());
+        using var owner = CollectionAccessFixture.Reader(api, actor);
+        using var empty = CollectionAccessFixture.Reader(api, DocumentApi.NewId());
         await CheckReadsAsync(api, owner, ownId);
         await CheckReadsAsync(api, empty, null);
         var store = await StoreAsync(api);
@@ -56,8 +57,8 @@ public sealed class CollectionAuthorizationAdmissionTests
         var store = await StoreAsync(api);
         await SeedAsync(store, DocumentApi.NewId(), 100_001, 0);
         await IndexOwnerAsync(store);
-        using var owner = CollectionAccessRulesTests.Reader(api, actor);
-        using var empty = CollectionAccessRulesTests.Reader(api, DocumentApi.NewId());
+        using var owner = CollectionAccessFixture.Reader(api, actor);
+        using var empty = CollectionAccessFixture.Reader(api, DocumentApi.NewId());
         await CheckReadsAsync(api, owner, ownId);
         await CheckReadsAsync(api, empty, null);
         await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
@@ -72,12 +73,12 @@ public sealed class CollectionAuthorizationAdmissionTests
         var ownId = DocumentApi.NewId();
         (await api.PutAsync(ownId, new { owner = actor, rank = 7 })).Status.ShouldBe(HttpStatusCode.Created);
         await SeedAsync(await StoreAsync(api), actor, 10_001, 0);
-        using var owner = CollectionAccessRulesTests.Reader(api, actor);
+        using var owner = CollectionAccessFixture.Reader(api, actor);
         var filter = new { eq = new object[] { "$id", ownId } };
-        var sorted = await CollectionAccessRulesTests.SendAsync(owner, HttpMethod.Post, api.Query,
+        var sorted = await CollectionAccessFixture.SendAsync(owner, HttpMethod.Post, api.Query,
             new { filter, sort = new[] { new { path = "/rank" } }, limit = 1 });
         await Assert.That((sorted.Status, sorted.Code)).IsEqualTo((HttpStatusCode.BadRequest, "sort_requires_index"));
-        var asserted = await CollectionAccessRulesTests.SendAsync(owner, HttpMethod.Post, api.Transactions,
+        var asserted = await CollectionAccessFixture.SendAsync(owner, HttpMethod.Post, api.Transactions,
             new { ops = new[] { new { op = "assert_count", collection = "items", filter, gte = 1, lte = 1 } } });
         await Assert.That((asserted.Status, asserted.Code)).IsEqualTo((HttpStatusCode.BadRequest, "assert_requires_index"));
     }
@@ -101,27 +102,27 @@ public sealed class CollectionAuthorizationAdmissionTests
             await write.CommitAsync(CancellationToken.None);
         }
 
-        using var owner = CollectionAccessRulesTests.Reader(api, actor, "reader");
+        using var owner = CollectionAccessFixture.Reader(api, actor, "reader");
         var search = new { search = new[] { "/body", "native" } };
         foreach (var filter in new object[] { search, new { not = search }, new { or = new object[] { search, new { exists = "/body" } } } })
         {
-            var denied = await CollectionAccessRulesTests.SendAsync(owner, HttpMethod.Post, api.Query, new { filter, count = true });
+            var denied = await CollectionAccessFixture.SendAsync(owner, HttpMethod.Post, api.Query, new { filter, count = true });
             await Assert.That((denied.Status, denied.Code, denied.Message)).IsEqualTo(
                 (HttpStatusCode.BadRequest, "invalid_query", "search requires collection-wide read access"));
         }
 
         var ranked = new { filter = search, sort = new[] { new { path = "$score", order = "desc" } }, count = true };
-        var deniedScore = await CollectionAccessRulesTests.SendAsync(owner, HttpMethod.Post, api.Query, ranked);
+        var deniedScore = await CollectionAccessFixture.SendAsync(owner, HttpMethod.Post, api.Query, ranked);
         await Assert.That((deniedScore.Status, deniedScore.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_query"));
-        var asserted = await CollectionAccessRulesTests.SendAsync(owner, HttpMethod.Post, api.Transactions,
+        var asserted = await CollectionAccessFixture.SendAsync(owner, HttpMethod.Post, api.Transactions,
             new { ops = new[] { new { op = "assert_count", collection = "items", filter = search, gte = 1, lte = 1 } } });
         await Assert.That((asserted.Status, asserted.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_query"));
 
-        await CollectionAccessRulesTests.DeclareAsync(api, CollectionAccessRulesTests.OwnerRules() with
+        await CollectionAccessFixture.DeclareAsync(api, CollectionAccessFixture.OwnerRules() with
         {
             Read = new CollectionAccessPolicy(true, publicRead, publicRead ? [] : ["reader"]),
         });
-        var allowed = await CollectionAccessRulesTests.SendAsync(owner, HttpMethod.Post, api.Query, ranked);
+        var allowed = await CollectionAccessFixture.SendAsync(owner, HttpMethod.Post, api.Query, ranked);
         await Assert.That(allowed.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(allowed.Ids).IsEquivalentTo([ownId, hiddenId]);
         await Assert.That(allowed.Json.GetProperty("count").GetProperty("value").GetString()).IsEqualTo("2");
@@ -137,7 +138,7 @@ public sealed class CollectionAuthorizationAdmissionTests
             new { limit = 1, count = true, filter = new { eq = new object[] { "/rank", 7 } } },
         })
         {
-            var result = await CollectionAccessRulesTests.SendAsync(reader, HttpMethod.Post, api.Query, query);
+            var result = await CollectionAccessFixture.SendAsync(reader, HttpMethod.Post, api.Query, query);
             await Assert.That(result.Status).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(result.Ids).IsEquivalentTo(ownId is null ? Array.Empty<string>() : [ownId]);
             await Assert.That(result.Json.GetProperty("count").GetProperty("value").GetString()).IsEqualTo(expected);
@@ -145,11 +146,11 @@ public sealed class CollectionAuthorizationAdmissionTests
             await Assert.That(result.Json.GetProperty("next_cursor").ValueKind).IsEqualTo(JsonValueKind.Null);
         }
 
-        var list = await CollectionAccessRulesTests.SendAsync(reader, HttpMethod.Get, api.Documents + "?limit=1");
+        var list = await CollectionAccessFixture.SendAsync(reader, HttpMethod.Get, api.Documents + "?limit=1");
         await Assert.That(list.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(list.Ids).IsEquivalentTo(ownId is null ? Array.Empty<string>() : [ownId]);
         var count = ownId is null ? 0 : 1;
-        var asserted = await CollectionAccessRulesTests.SendAsync(reader, HttpMethod.Post, api.Transactions,
+        var asserted = await CollectionAccessFixture.SendAsync(reader, HttpMethod.Post, api.Transactions,
             new
             {
                 ops = new object[]
@@ -168,7 +169,7 @@ public sealed class CollectionAuthorizationAdmissionTests
         try
         {
             using var owner = api.Management.As(api.Tenant.User);
-            await CollectionAccessRulesTests.DeclareAsync(api, CollectionAccessRulesTests.OwnerRules());
+            await CollectionAccessFixture.DeclareAsync(api, CollectionAccessFixture.OwnerRules());
             return api;
         }
         catch

@@ -5,7 +5,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Documents;
+namespace TerraBase.Slow.Documents;
 
 /// <summary>
 /// Both query compilers keep an expression index usable (docs/terrabase/turso-spike.md, planner findings): values are read

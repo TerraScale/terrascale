@@ -1,10 +1,7 @@
 using Bogus;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Time.Testing;
 using Npgsql;
-using TerraBase.Features.Sql;
 using TerraBase.Testing;
-using static TerraBase.Fast.Sql.SqlNativeDatabase;
+using static TerraBase.Testing.SqlNativeDatabase;
 
 namespace TerraBase.Fast.Sql;
 
@@ -65,25 +62,4 @@ public sealed class SqlNativeTransactionTests
         await Assert.That(ids.Select(row => Convert.ToInt64(row[0], System.Globalization.CultureInfo.InvariantCulture))).IsEquivalentTo([1L, 3L]);
     }
 
-    [Test]
-    public async Task An_idle_transaction_expires_after_five_seconds_releases_the_writer_and_its_commit_fails()
-    {
-        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        await using var db = await StartAsync(services => services.AddKeyedSingleton<TimeProvider>(SqlLimits.TransactionClock, clock));
-        await using var idle = await db.Postgres.OpenConnectionAsync();
-        await using var other = await db.Postgres.OpenConnectionAsync();
-        await PostgresSql.ExecuteAsync(idle, "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)");
-
-        await using var transaction = await idle.BeginTransactionAsync();
-        await PostgresSql.ExecuteAsync(idle, "INSERT INTO notes (id, body) VALUES (1, $1)", Faker.Lorem.Sentence());
-        clock.Advance(SqlLimits.MaxTransactionTime + TimeSpan.FromSeconds(1));
-
-        await TerraBaseTestServer.EventuallyAsync(async _ => await StateAsync(other, "INSERT OR REPLACE INTO notes (id, body) VALUES (2, $1)", Faker.Lorem.Sentence()) is null,
-            TimeSpan.FromSeconds(10));
-        var commit = await Assert.ThrowsAsync<PostgresException>(() => transaction.CommitAsync());
-        var ids = await ReadAsync(other, "SELECT id FROM notes");
-
-        await Assert.That(commit!.SqlState).IsEqualTo("57014");
-        await Assert.That(ids.Select(row => Convert.ToInt64(row[0], System.Globalization.CultureInfo.InvariantCulture))).IsEquivalentTo([2L]);
-    }
 }

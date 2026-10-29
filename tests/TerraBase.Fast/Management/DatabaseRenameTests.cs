@@ -68,22 +68,6 @@ public sealed class DatabaseRenameTests
         await Assert.That((await ReadAsync(await restricted.GetAsync(Uri(stable)))).GetProperty("name").GetString()).IsEqualTo("renamed");
     }
 
-    [Test]
-    [Arguments("")]
-    [Arguments("Invalid")]
-    [Arguments("has space")]
-    [Arguments("con")]
-    [Arguments("name\n")]
-    public async Task Invalid_names_leave_the_current_name_unchanged(string name)
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var database = await api.CreateManagedDatabaseAsync("original");
-        using var client = Client(api, database.Project);
-        using var invalid = await client.PatchAsJsonAsync(Uri(database.Data), new { name });
-        await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That((await ReadAsync(await client.GetAsync(Uri(database.Data)))).GetProperty("id").GetString()).IsEqualTo(database.Id);
-    }
-
     private static HttpClient Client(ManagementApi api, string project, string? database = null) => api.WithToken(api.Issuer.Mint(api.User, token =>
     {
         token.Claims["project_id"] = project;

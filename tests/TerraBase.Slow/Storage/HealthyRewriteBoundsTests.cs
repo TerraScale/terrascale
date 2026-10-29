@@ -5,12 +5,12 @@ using System.Text;
 using System.Threading.Channels;
 using TerraBase.Engine.Turso;
 using TerraBase.Engine;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 public sealed class HealthyRewriteBoundsTests
 {

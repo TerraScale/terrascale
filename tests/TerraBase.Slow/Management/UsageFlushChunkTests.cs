@@ -1,13 +1,14 @@
+using TerraBase.Testing;
 using System.Net;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Configuration;
 using TerraBase.Engine;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 
-namespace TerraBase.Fast.Management;
+namespace TerraBase.Slow.Management;
 
 /// <summary>
 /// Batch 16 (2026-10-26): one usage flush saved every database's counts in one SYSTEM transaction and held the writer for up

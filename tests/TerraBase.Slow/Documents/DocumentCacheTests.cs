@@ -10,15 +10,15 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Errors;
-using TerraBase.Fast.Management;
-using TerraBase.Fast.Storage;
+using TerraBase.Slow.Management;
+using TerraBase.Slow.Storage;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Fast.Platform;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Documents;
+namespace TerraBase.Slow.Documents;
 
 public sealed class DocumentCacheTests
 {
@@ -93,7 +93,7 @@ public sealed class DocumentCacheTests
         {
             deadline.Cancel();
             release.TrySetResult();
-            await StoragePoolTests.JoinCleanupAsync([old], primaryFailure);
+            await StoragePoolHelpers.JoinCleanupAsync([old], primaryFailure);
         }
 
         async Task<string> ReadOldAsync()
@@ -340,7 +340,7 @@ public sealed class DocumentCacheTests
             operationTimeout.Cancel();
             release.Set();
             response?.Dispose();
-            await StoragePoolTests.JoinCleanupAsync([pending], primaryFailure);
+            await StoragePoolHelpers.JoinCleanupAsync([pending], primaryFailure);
         }
     }
 
@@ -570,7 +570,7 @@ public sealed class DocumentCacheTests
             finally
             {
                 operationTimeout.Cancel();
-                await StoragePoolTests.JoinCleanupAsync(pending, primaryFailure);
+                await StoragePoolHelpers.JoinCleanupAsync(pending, primaryFailure);
             }
         }
     }
@@ -747,7 +747,7 @@ public sealed class DocumentCacheTests
         finally
         {
             deadline.Cancel();
-            await StoragePoolTests.JoinCleanupAsync(readers, primaryFailure);
+            await StoragePoolHelpers.JoinCleanupAsync(readers, primaryFailure);
         }
 
         await Assert.That(acknowledged).IsEqualTo(Writes);

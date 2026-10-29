@@ -1,12 +1,12 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Qos;
+namespace TerraBase.Slow.Qos;
 
 public sealed class OperationAllowanceTests
 {

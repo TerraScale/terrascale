@@ -4,7 +4,7 @@ using TerraBase.Engine;
 using TerraBase.Features.Qos;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Documents;
+namespace TerraBase.Slow.Documents;
 
 public sealed class TextSearchBudgetTests
 {

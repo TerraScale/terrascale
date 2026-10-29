@@ -12,7 +12,7 @@ using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Management;
+namespace TerraBase.Slow.Management;
 
 public sealed class QueryShapeMemoryTests
 {

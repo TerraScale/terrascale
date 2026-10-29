@@ -169,20 +169,6 @@ public sealed class ExplainSqlApiTests
     }
 
     [Test]
-    public async Task Explain_and_check_return_not_found_when_registered_storage_is_unavailable()
-    {
-        var hook = new UsageCommitHook();
-        await using var api = await ManagementApi.StartAsync(services: hook.Install);
-        var database = await api.CreateManagedDatabaseAsync();
-        using var client = ProjectClient(api, database.Project);
-        hook.Hidden = tenant => tenant.DatabaseId == database.Id;
-        await ErrorAssert.ErrorAsync(client.PostAsJsonAsync(ExplainPath(database), new { sql = "SELECT * FROM people" }),
-            HttpStatusCode.NotFound, "not_found");
-        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/sql/check"), new { sql = "SELECT * FROM people" }),
-            HttpStatusCode.NotFound, "not_found");
-    }
-
-    [Test]
     public async Task Explain_isolates_projects_and_hides_unknown_or_deleted_database_names_before_sql()
     {
         await using var api = await ManagementApi.StartAsync();
@@ -207,67 +193,6 @@ public sealed class ExplainSqlApiTests
         using var deleted = await api.Client.DeleteAsync(ManagementApi.Uri(database.Path));
         deleted.EnsureSuccessStatusCode();
         await ErrorAssert.ErrorAsync(client.PostAsJsonAsync(ExplainPath(database), new { sql = Sql }), HttpStatusCode.NotFound, "not_found");
-    }
-
-    [Test]
-    public async Task Invalid_sql_returns_invalid_request_while_check_still_returns_ok_false()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var database = await api.CreateManagedDatabaseAsync();
-        using var client = ProjectClient(api, database.Project);
-        const string Secret = "zzsecretzz";
-        string?[] invalid =
-        [
-            null,
-            "",
-            $"SELEC * FROM {Secret}",
-            $"DELETE FROM people WHERE email = '{Secret}'",
-            $"SELECT * FROM people; SELECT * FROM {Secret}",
-            $"SELECT * FROM people WHERE email = '{Secret}' LIMIT 0",
-        ];
-
-        foreach (var sql in invalid)
-        {
-            using var response = await client.PostAsJsonAsync(ExplainPath(database), new { sql });
-            var text = await response.Content.ReadAsStringAsync();
-            using var body = JsonDocument.Parse(text);
-            using var check = await api.Client.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/sql/check"), new { sql });
-            check.EnsureSuccessStatusCode();
-            var checkBody = await check.Content.ReadFromJsonAsync<JsonElement>();
-
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest).Because(sql ?? "null sql");
-            await Assert.That(body.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("invalid_request");
-            await Assert.That(response.Headers.CacheControl?.NoStore).IsTrue();
-            await Assert.That(text).DoesNotContain(Secret);
-            await Assert.That(checkBody.GetProperty("ok").GetBoolean()).IsFalse();
-        }
-    }
-
-    [Test]
-    public async Task Explain_maps_an_engine_deadline_to_invalid_query_and_recovers_after_rejection()
-    {
-        var clock = new SteppingClock();
-        await using var api = await ManagementApi.StartAsync(
-            TerraBaseTestServer.UseProductionQueryBudget, services: services => services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock));
-        var database = await api.CreateManagedDatabaseAsync();
-        await SeedPeopleAsync(api, database);
-        const string Sql = "SELECT * FROM people LIMIT 1";
-
-        using var client = ProjectClient(api, database.Project);
-        clock.Armed = true;
-        try
-        {
-            await ErrorAssert.ErrorAsync(client.PostAsJsonAsync(ExplainPath(database), new { sql = Sql }),
-                HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
-        }
-        finally
-        {
-            clock.Armed = false;
-        }
-
-        var recovered = await ExplainAsync(api, database, Sql);
-        await Assert.That(recovered.GetProperty("ok").GetBoolean()).IsTrue();
-        await Assert.That(Strings(recovered, "plan")).IsNotEmpty();
     }
 
     [Test]

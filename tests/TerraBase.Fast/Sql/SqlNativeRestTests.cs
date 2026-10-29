@@ -1,6 +1,7 @@
+using TerraBase.Testing;
 using System.Net;
 using Bogus;
-using static TerraBase.Fast.Sql.SqlNativeDatabase;
+using static TerraBase.Testing.SqlNativeDatabase;
 
 namespace TerraBase.Fast.Sql;
 

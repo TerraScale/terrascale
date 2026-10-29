@@ -1,5 +1,4 @@
 using TerraBase.Configuration;
-using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Platform;

@@ -83,27 +83,6 @@ public sealed class PostgresWireTests
     }
 
     [Test]
-    public async Task Tables_named_pg_something_are_ordinary_tables_and_postgres_only_commands_answer_0A000()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
-        await using var source = Source(api, key, database.Name);
-        await using var connection = await source.OpenConnectionAsync();
-
-        await ExecuteAsync(connection, "CREATE TABLE IF NOT EXISTS pg_orders (id INTEGER PRIMARY KEY, label TEXT)");
-        await ExecuteAsync(connection, "INSERT INTO pg_orders (id, label) VALUES ($1, $2)", 7, "seven");
-        var rows = await ReadAsync(connection, "SELECT o.id, o.label FROM pg_orders o JOIN pg_orders p ON p.id = o.id");
-        var catalog = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, "SELECT typname FROM pg_type"));
-        var listen = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, "LISTEN ch"));
-        var extension = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, "CREATE EXTENSION IF NOT EXISTS pgcrypto"));
-
-        await Assert.That(rows[0]).IsEquivalentTo(["7", "seven"]);
-        await Assert.That(catalog!.SqlState).IsEqualTo("0A000");
-        await Assert.That(listen!.SqlState).IsEqualTo("0A000");
-        await Assert.That(extension!.SqlState).IsEqualTo("0A000");
-    }
-
-    [Test]
     public async Task Index_statements_run_and_a_unique_index_answers_unique_violation()
     {
         await using var api = await ManagementApi.StartAsync();

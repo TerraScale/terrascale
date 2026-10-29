@@ -14,7 +14,7 @@ using Microsoft.Extensions.Logging;
 using TerraBase.Features.Backup;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Backup;
+namespace TerraBase.Slow.Backup;
 
 // Only the socket and DNS adapters are replaced: the customer's real handler still decides whether to connect.
 internal sealed class CustomerBackupNetworkFixture : ICustomerBackupDns, ICustomerBackupConnector, IAsyncDisposable

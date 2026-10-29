@@ -15,38 +15,6 @@ namespace TerraBase.Fast.FileStorage;
 public sealed class FileStorageTests
 {
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task Empty_bucket_deletion_does_not_require_a_file_collection(bool missingCollection)
-    {
-        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        await using var api = await ProjectApi.StartAsync(token);
-        var path = $"/v1/projects/{api.Database.Project}/buckets";
-        var rules = new CollectionAccessRules(null, new(false, true, []), new(false, true, []));
-        string id;
-        if (missingCollection)
-        {
-            // Earlier bucket creation persisted its record without registering the empty file collection.
-            id = DocumentApi.NewId();
-            var store = await api.Api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
-            await using var transaction = await store.BeginTransactionAsync(write: true, token);
-            await SystemCatalog.PutAsync(transaction, SystemCatalog.ProjectState(api.Database.Project) + "file-buckets", id,
-                new FileBucket(id, "files", "test-region", rules), TerraBaseJsonContext.Default.FileBucket, token);
-            _ = await transaction.CommitAsync(token);
-        }
-        else
-        {
-            var created = await Send(api.Client, HttpMethod.Post, path, new { name = "files", rules });
-            await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
-            id = created.Json.GetProperty("id").GetString()!;
-        }
-        await Assert.That((await Send(api.Client, HttpMethod.Get, path + "/" + id + "/files")).Json.GetProperty("items").GetArrayLength()).IsEqualTo(0);
-        await Assert.That((await Send(api.Client, HttpMethod.Delete, path + "/" + id)).Status).IsEqualTo(HttpStatusCode.NoContent);
-        await Assert.That((await Send(api.Client, HttpMethod.Get, path)).Json.GetProperty("items").GetArrayLength()).IsEqualTo(0);
-        await Assert.That((await Send(api.Client, HttpMethod.Delete, path + "/" + id)).Status).IsEqualTo(HttpStatusCode.NotFound);
-    }
-
-    [Test]
     public async Task Owner_upload_is_hidden_until_verified_and_second_user_gets_403()
     {
         var objects = new Objects();
@@ -80,33 +48,6 @@ public sealed class FileStorageTests
         await Assert.That(used).IsEqualTo(5);
         await Assert.That((await Send(alice, HttpMethod.Delete, file)).Status).IsEqualTo(HttpStatusCode.NoContent);
         await Assert.That((await Send(alice, HttpMethod.Post, file + "/download")).Status).IsEqualTo(HttpStatusCode.NotFound);
-    }
-
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task A_backup_only_endpoint_keeps_documents_available_and_file_uploads_fail_closed(bool r2)
-    {
-        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var backups = new FakeS3 { R2 = r2 };
-        await using var api = await DocumentApi.StartAsync(backups.Configure, backups.Route, cancellationToken: token);
-        await Assert.That((await api.SendAsync(HttpMethod.Get, api.Documents, cancellationToken: token)).Status).IsEqualTo(HttpStatusCode.OK);
-        using var owner = api.Management.As(api.Tenant.User);
-        using var project = api.Management.WithToken(api.Management.Issuer.Mint(api.Tenant.User, descriptor =>
-        {
-            descriptor.Claims["project_id"] = api.Tenant.ProjectId;
-            descriptor.Claims["scope"] = "documents:read documents:write";
-        }));
-        var buckets = api.Project + "/buckets";
-        var created = await Send(project, HttpMethod.Post, buckets,
-            new { name = "files", rules = new CollectionAccessRules(null, new(false, true, []), new(false, true, [])) });
-        await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
-        var bucket = buckets + "/" + created.Json.GetProperty("id").GetString();
-        var upload = await Send(project, HttpMethod.Post, bucket + "/files/upload",
-            new { name = "one", contentType = "text/plain", size = 1, sha256 = Convert.ToBase64String(new byte[32]), metadata = new { } });
-        await Assert.That(upload.Status).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        var used = await api.Server.Services.GetRequiredService<IFileStorageUsage>().BytesAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, token);
-        await Assert.That(used).IsEqualTo(0);
     }
 
     [Test]
@@ -153,22 +94,6 @@ public sealed class FileStorageTests
         }
         var used = await api.Server.Services.GetRequiredService<IFileStorageUsage>().BytesAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, token);
         await Assert.That(used).IsEqualTo(completeIdentity ? 1 : 0);
-    }
-
-    [Test]
-    public async Task File_reservations_and_documents_share_the_organization_quota()
-    {
-        await using var api = await ProjectApi.StartAsync(services =>
-        {
-            services.Replace(ServiceDescriptor.Singleton<IFileObjectStore>(new Objects()));
-            services.Replace(ServiceDescriptor.Singleton<IStorageQuota>(provider => new StorageQuota(provider.GetRequiredService<IStorageEngine>(), provider.GetRequiredService<ITenantDirectory>(), _ => 10)));
-        }, CancellationToken.None);
-        var path = $"/v1/projects/{api.Database.Project}/buckets";
-        var created = await Send(api.Client, HttpMethod.Post, path, new { name = "files", rules = new CollectionAccessRules(null, new(false, true, []), new(false, true, [])) });
-        var bucket = path + "/" + created.Json.GetProperty("id").GetString();
-        var request = new { name = "one", contentType = "text/plain", size = 6, sha256 = Convert.ToBase64String(new byte[32]), metadata = new { } };
-        await Assert.That((await Send(api.Client, HttpMethod.Post, bucket + "/files/upload", request)).Status).IsEqualTo(HttpStatusCode.Created);
-        await Assert.That((await Send(api.Client, HttpMethod.Post, bucket + "/files/upload", request)).Status).IsEqualTo(HttpStatusCode.TooManyRequests);
     }
 
     private static HttpClient User(ProjectApi api, string actor)

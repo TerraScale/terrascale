@@ -1,10 +1,11 @@
+using TerraBase.Testing;
 using System.Net;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Primitives;
 
-namespace TerraBase.Fast.Documents;
+namespace TerraBase.Slow.Documents;
 
 public sealed class StoredJsonAdmissionTests
 {

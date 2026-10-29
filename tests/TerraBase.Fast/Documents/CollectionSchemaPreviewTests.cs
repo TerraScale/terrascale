@@ -1,3 +1,4 @@
+using TerraBase.Testing;
 using System.Diagnostics.Metrics;
 using System.Net;
 using System.Text;
@@ -17,7 +18,7 @@ public sealed class CollectionSchemaPreviewTests
     [Test]
     public async Task Large_preview_is_read_only_redacted_bound_and_prospective()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         var path = $"{api.Collections}/items/schema";
         var preview = path + "/preview";
         var secret = new Faker().Random.String2(12000);
@@ -37,7 +38,7 @@ public sealed class CollectionSchemaPreviewTests
         await Assert.That((await api.SendRawAsync(HttpMethod.Post, preview + "?cursor=forged", Schema, "application/json")).Code).IsEqualTo("invalid_cursor");
         using var outsider = await api.Management.CreateTenantAsync("documents:read", "documents:write");
         (await DocumentApi.SendAsync(outsider.Data, HttpMethod.Post, continuation, new StringContent(Schema, Encoding.UTF8, "application/json"))).Status.ShouldBe(HttpStatusCode.NotFound);
-        using var reader = CollectionAccessRulesTests.Reader(api, DocumentApi.NewId());
+        using var reader = CollectionAccessFixture.Reader(api, DocumentApi.NewId());
         (await DocumentApi.SendAsync(reader, HttpMethod.Post, preview, new StringContent(Schema, Encoding.UTF8, "application/json"))).Status.ShouldBe(HttpStatusCode.Forbidden);
         using var readOnly = await api.ClientWithScopesAsync("documents:read");
         (await DocumentApi.SendAsync(readOnly, HttpMethod.Post, preview, new StringContent(Schema, Encoding.UTF8, "application/json"))).Status.ShouldBe(HttpStatusCode.Forbidden);
@@ -68,42 +69,4 @@ public sealed class CollectionSchemaPreviewTests
         await Assert.That(tail.Json.GetProperty("complete").GetBoolean()).IsTrue();
     }
 
-    [Test]
-    public async Task Canceled_preview_releases_admission_and_allows_a_subsequent_preview()
-    {
-        using var cancellation = new CancellationTokenSource();
-        var requests = new CollectionSchemaTests.CanceledSchemaRequest(cancellation.Token);
-        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<IStartupFilter>(requests));
-        var meter = api.Server.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName);
-        using var listener = new MeterListener();
-        listener.InstrumentPublished = (instrument, observer) =>
-        {
-            if (instrument.Name == "terrabase.schema.admission_keyword_evaluations" && ReferenceEquals(instrument.Meter, meter))
-            {
-                observer.EnableMeasurementEvents(instrument);
-            }
-        };
-        listener.SetMeasurementEventCallback<long>((_, _, _, _) => cancellation.Cancel());
-        listener.Start();
-        var path = $"{api.Collections}/items/schema/preview";
-        await api.Server.Services.GetRequiredService<IRequestLogs>().FlushAsync(CancellationToken.None);
-        var baseline = await api.ReservedBytesAsync() - MemoryAccounting.Retained(api.Server);
-        try
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(path, UriKind.Relative)) { Content = new StringContent(Schema, Encoding.UTF8, "application/json") };
-            request.Headers.Add(CollectionSchemaTests.CanceledSchemaRequest.Header, "true");
-            using var canceled = await api.Client.SendAsync(request);
-            await Assert.That(canceled.IsSuccessStatusCode).IsFalse();
-        }
-        catch (HttpRequestException)
-        {
-            // Kestrel may abort the transport when server-side cancellation escapes the pipeline.
-        }
-
-        await Assert.That(await requests.Finished.Task.WaitAsync(TimeSpan.FromSeconds(30))).IsTrue();
-        listener.Dispose();
-        await api.Server.Services.GetRequiredService<IRequestLogs>().FlushAsync(CancellationToken.None);
-        await Assert.That(await api.ReservedBytesAsync() - MemoryAccounting.Retained(api.Server)).IsEqualTo(baseline);
-        (await api.SendRawAsync(HttpMethod.Post, path, Schema, "application/json")).Status.ShouldBe(HttpStatusCode.OK);
-    }
 }

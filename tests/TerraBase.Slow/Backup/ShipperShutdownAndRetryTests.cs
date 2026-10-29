@@ -6,7 +6,7 @@ using TerraBase.Features.Backup;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Backup;
+namespace TerraBase.Slow.Backup;
 
 /// <summary>
 /// Shutdown ships what generations hold and starts none, a failing daily snapshot backs off without holding segments back,

@@ -45,45 +45,6 @@ public sealed class RequestLogApiTests
     }
 
     [Test]
-    public async Task Recording_capacity_is_reported_even_when_no_requests_could_be_admitted()
-    {
-        await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider());
-        var database = await api.CreateManagedDatabaseAsync();
-        var logs = api.Server.Services.GetRequiredService<IRequestLogs>();
-        // Fill the shared pending budget with other synthetic owners; no fabricated records belong to this database.
-        for (var owner = 0; owner < 11; owner++)
-        {
-            var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, EntityIds.New().ToString());
-            for (var request = 0; request < 100; request++)
-            {
-                logs.Record(tenant, "GET", "/v1/projects/{project}/databases/{database}/collections", 200, TimeSpan.Zero, 0);
-            }
-        }
-        using var project = Project(api, database.Project, "databases:read");
-        var body = await ReadAsync(project, database);
-        await Assert.That(body.GetProperty("items").GetArrayLength()).IsEqualTo(0);
-        await Assert.That(body.GetProperty("recordingLimited").GetBoolean()).IsTrue();
-    }
-
-    [Test]
-    public async Task Exceptions_after_database_authorization_are_recorded_as_500()
-    {
-        await using var api = await ManagementApi.StartAsync(services: services => services.AddSingleton<IQueryShapeTracker, ThrowingShapes>());
-        var database = await api.CreateManagedDatabaseAsync();
-        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
-        await ManagementApi.CreateCollectionAsync(data, database, "people");
-        // POST /sql accepts only project access tokens (TsAuth databases:read); an API key answers 401.
-        using var project = Project(api, database.Project, "databases:read");
-        using var failed = await project.PostAsJsonAsync(ManagementApi.Uri(database.Data + "/sql"), new { sql = "SELECT * FROM people" });
-        await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
-        var body = await ReadAsync(project, database, "?status=5xx");
-        var failure = body.GetProperty("items").EnumerateArray().Single();
-        await Assert.That(failure.GetProperty("status").GetInt32()).IsEqualTo(500);
-        await Assert.That(failure.GetProperty("isQuery").GetBoolean()).IsTrue();
-        await Assert.That(body.GetRawText()).DoesNotContain("SELECT");
-    }
-
-    [Test]
     public async Task Authorized_requests_include_failures_and_committed_operations_without_private_values()
     {
         await using var api = await ManagementApi.StartAsync();

@@ -6,7 +6,7 @@ using TerraBase.Features.Platform;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Slow.Platform;
 
 /// <summary>
 /// Platform admins (a ts-auth user token with platform_role admin, forwarded by the dashboard) read the platform databases

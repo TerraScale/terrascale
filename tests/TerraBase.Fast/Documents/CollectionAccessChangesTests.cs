@@ -1,3 +1,4 @@
+using TerraBase.Testing;
 using System.Net;
 using System.Text.Json;
 using TerraBase.Engine;
@@ -13,7 +14,7 @@ public sealed class CollectionAccessChangesTests
     [Arguments("owner")]
     public async Task Fresh_feeds_exclude_previous_collection_generations_before_every_read_grant(string grant)
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         var actor = DocumentApi.NewId();
         var deleted = DocumentApi.NewId();
         var reused = DocumentApi.NewId();
@@ -54,7 +55,7 @@ public sealed class CollectionAccessChangesTests
     [Test]
     public async Task Owner_streams_never_share_unfiltered_pages_and_delete_ids_require_matching_preimages()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         await DeclareAsync(api, OwnerRules());
         var alice = DocumentApi.NewId();
         var bob = DocumentApi.NewId();
@@ -90,7 +91,7 @@ public sealed class CollectionAccessChangesTests
     [Test]
     public async Task Feed_cursors_bind_identity_roles_and_policy_and_live_policy_changes_terminate_the_stream()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         var policy = OwnerRules() with { Read = new CollectionAccessPolicy(true, true, ["reader"]) };
         await DeclareAsync(api, policy);
         var actor = DocumentApi.NewId();
@@ -121,7 +122,7 @@ public sealed class CollectionAccessChangesTests
     [Test]
     public async Task Public_role_and_default_deny_feeds_never_include_collection_metadata()
     {
-        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await using var api = await CollectionAccessFixture.StartAsync();
         var actor = DocumentApi.NewId();
         using var user = Reader(api, actor);
         using var role = Reader(api, actor, "reader");

@@ -7,7 +7,7 @@ using TerraBase.Engine.Lattices;
 using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
 
-namespace TerraBase.Fast.Management;
+namespace TerraBase.Testing;
 
 internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>, bool>? intercepts = null, Func<PlanTier, long>? storageLimit = null)
 {

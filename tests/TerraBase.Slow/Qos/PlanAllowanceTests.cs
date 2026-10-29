@@ -1,11 +1,12 @@
+using TerraBase.Testing;
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
 
-namespace TerraBase.Fast.Qos;
+namespace TerraBase.Slow.Qos;
 
 public sealed class PlanAllowanceTests
 {

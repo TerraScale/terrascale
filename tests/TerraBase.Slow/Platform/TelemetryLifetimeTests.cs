@@ -6,7 +6,7 @@ using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Slow.Platform;
 
 public sealed class TelemetryLifetimeTests
 {
@@ -17,7 +17,7 @@ public sealed class TelemetryLifetimeTests
         if (Environment.GetEnvironmentVariable(ChildFlag) != "1")
         {
             // Full collections must not pause unrelated fixtures in the parallel suite.
-            await IsolatedTestChild.RunAsync(ChildFlag, "TerraBase.Fast.Platform", nameof(TelemetryLifetimeTests),
+            await IsolatedTestChild.RunAsync(ChildFlag, "TerraBase.Slow.Platform", nameof(TelemetryLifetimeTests),
                 nameof(A_disposed_host_releases_telemetry_without_waiting_for_http_handler_expiry));
             return;
         }

@@ -1,6 +1,6 @@
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Documents;
+namespace TerraBase.Testing;
 
 /// <summary>Owns the default document server and its temporary data directory until all tests in this assembly finish.</summary>
 public static class SharedDocumentServer

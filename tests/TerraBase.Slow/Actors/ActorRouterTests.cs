@@ -4,12 +4,12 @@ using System.Net;
 using System.Text.Json;
 using Bogus;
 using TerraBase.Engine.Actors;
-using TerraBase.Fast.Platform;
+using TerraBase.Slow.Platform;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
-using static TerraBase.Fast.Actors.ActorRequests;
+using static TerraBase.Slow.Actors.ActorRequests;
 
-namespace TerraBase.Fast.Actors;
+namespace TerraBase.Slow.Actors;
 
 public sealed class ActorRouterTests
 {
@@ -350,7 +350,7 @@ public sealed class ActorRouterTests
         if (Environment.GetEnvironmentVariable(ChildFlag) != "1")
         {
             // Full collections must not pause unrelated fixtures in the parallel suite.
-            await IsolatedTestChild.RunAsync(ChildFlag, "TerraBase.Fast.Actors", nameof(ActorRouterTests),
+            await IsolatedTestChild.RunAsync(ChildFlag, "TerraBase.Slow.Actors", nameof(ActorRouterTests),
                 nameof(An_idle_actor_releases_its_last_callback_payload_and_result_before_next_admission));
             return;
         }

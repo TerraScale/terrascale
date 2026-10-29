@@ -4,7 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Fast.Storage;
+using TerraBase.Slow.Storage;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Logs;
 using TerraBase.Features.Management.Usage;
@@ -13,7 +13,7 @@ using TerraBase.Fast.Platform;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
-namespace TerraBase.Fast.Management;
+namespace TerraBase.Slow.Management;
 
 public sealed class RequestLogMemoryTests
 {

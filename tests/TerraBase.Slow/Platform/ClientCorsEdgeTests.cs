@@ -1,8 +1,7 @@
 using System.Net;
-using System.Text.Json;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Slow.Platform;
 
 public sealed class ClientCorsEdgeTests
 {

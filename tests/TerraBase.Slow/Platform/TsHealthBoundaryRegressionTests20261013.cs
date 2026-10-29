@@ -6,7 +6,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine.Turso;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Slow.Platform;
 
 // TS Health maps to the existing operational probes; there is no separate ts-health project.
 public sealed class TsHealthBoundaryRegressionTests20261013

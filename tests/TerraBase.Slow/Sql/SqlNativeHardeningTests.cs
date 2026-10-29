@@ -11,9 +11,9 @@ using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
-using static TerraBase.Fast.Sql.SqlNativeDatabase;
+using static TerraBase.Testing.SqlNativeDatabase;
 
-namespace TerraBase.Fast.Sql;
+namespace TerraBase.Slow.Sql;
 
 public sealed class SqlNativeHardeningTests
 {

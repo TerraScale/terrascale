@@ -1,3 +1,4 @@
+using static TerraBase.Testing.StoragePoolHelpers;
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
@@ -6,7 +7,7 @@ using TerraBase.Engine.Turso;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 public sealed partial class StoragePoolTests
 {
@@ -225,7 +226,7 @@ public sealed partial class StoragePoolTests
         {
             settings["storage-threads"] = "1";
             settings["storage-queue"] = "2";
-        }, StorageTransactionTests.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow));
+        }, StorageTransactionFixture.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow));
         var server = management.Server;
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
         await management.SetPlanAsync(tenant.User, tenant.OrganizationId, "enterprise");
@@ -284,7 +285,7 @@ public sealed partial class StoragePoolTests
         using var operationTimeout = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         // Keep periodic catalog writes from returning a session between the fixture's controlled evictions.
         await using var management = await ManagementApi.StartAsync(
-            services: StorageTransactionTests.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow));
+            services: StorageTransactionFixture.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow));
         var server = management.Server;
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
         var client = tenant.Data;
@@ -328,7 +329,7 @@ public sealed partial class StoragePoolTests
         {
             settings["storage-threads"] = "1";
             settings["storage-queue"] = "2";
-        }, StorageTransactionTests.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow));
+        }, StorageTransactionFixture.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow));
         var server = management.Server;
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
         await management.SetPlanAsync(tenant.User, tenant.OrganizationId, "enterprise");
@@ -391,6 +392,16 @@ public sealed partial class StoragePoolTests
             // Join every request after the held worker is released, even if cancellation won.
             await JoinCleanupAsync(requests.Select(DisposeResponseAsync)
                 .Append(deadline.CancelAsync()), primaryFailure);
+        }
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition, CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+        while (!condition())
+        {
+            await Task.Delay(10, deadline.Token);
         }
     }
 

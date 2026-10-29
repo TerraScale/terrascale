@@ -5,7 +5,7 @@ using OpenTelemetry.Metrics;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Slow.Platform;
 
 public sealed class StoppedHostTests
 {

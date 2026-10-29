@@ -6,12 +6,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
-using TerraBase.Fast.Documents;
+using TerraBase.Slow.Documents;
 using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 public sealed class TursoSchedulingQosTests
 {
@@ -106,7 +106,7 @@ public sealed class TursoSchedulingQosTests
             cancelQueued.Cancel();
             foreach (var request in pending)
             {
-                await StoragePoolTests.DisposeResponseAsync(request);
+                await StoragePoolHelpers.DisposeResponseAsync(request);
             }
         }
     }

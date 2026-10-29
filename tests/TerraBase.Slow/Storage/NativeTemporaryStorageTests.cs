@@ -1,11 +1,11 @@
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Configuration;
 using TerraBase.Engine;
-using TerraBase.Fast.Platform;
+using TerraBase.Slow.Platform;
 using TerraBase.Testing;
 using Turso.Data.Sqlite;
 
-namespace TerraBase.Fast.Storage;
+namespace TerraBase.Slow.Storage;
 
 public sealed class NativeTemporaryStorageTests
 {
