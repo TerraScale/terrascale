@@ -38,7 +38,7 @@ jobs:
       - name: check resolved graph
         if: matrix.python == '3.12'
         run: bash scripts/check-ci-lock.sh
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         if: matrix.python == '3.12'
         with:
           path: ~/.cache/pip-audit
