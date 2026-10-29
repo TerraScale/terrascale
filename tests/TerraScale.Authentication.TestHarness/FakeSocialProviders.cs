@@ -26,12 +26,16 @@ public sealed class FakeSocialProviders : IDisposable
     private static readonly JsonWebTokenHandler Tokens = new() { SetDefaultTimesOnTokenCreation = false };
     private readonly RSA rsa = RSA.Create(2048);
     private readonly RsaSecurityKey key;
+    private readonly ConcurrentDictionary<string, Grant> accessTokens = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Grant> grants = new(StringComparer.Ordinal);
 
     public FakeSocialProviders() => this.key = new RsaSecurityKey(this.rsa) { KeyId = Guid.NewGuid().ToString("N") };
 
     /// <summary>The project's client secret every token endpoint expects (Google, GitHub, OIDC).</summary>
     public string ClientSecret { get; } = Guid.NewGuid().ToString("N");
+
+    /// <summary>The signed Google issuer claim, independent of its fixed discovery issuer.</summary>
+    public string GoogleTokenIssuer { get; set; } = "https://accounts.google.com";
 
     /// <summary>The project's Apple key; its public half verifies Apple client-secret JWTs.</summary>
     public ECDsa AppleKey { get; } = ECDsa.Create(ECCurve.NamedCurves.nistP256);
@@ -44,13 +48,13 @@ public sealed class FakeSocialProviders : IDisposable
     /// The user approves the authorization request ts-auth redirected to: a one-time code for <paramref name="email"/>,
     /// bound to the request's client, redirect URI, nonce and PKCE challenge.
     /// </summary>
-    public string Approve(Uri authorization, string email, bool verified = true)
+    public string Approve(Uri authorization, string email, bool verified = true, string? subject = "12345")
     {
         ArgumentNullException.ThrowIfNull(authorization);
         var query = QueryHelpers.ParseQuery(authorization.Query);
         var code = Guid.NewGuid().ToString("N");
         string Value(string name) => query.TryGetValue(name, out var value) ? value.ToString() : string.Empty;
-        this.grants[code] = new(authorization.Host, Value("client_id"), Value("redirect_uri"), Value("nonce"), Value("code_challenge"), email, verified);
+        this.grants[code] = new(authorization.Host, Value("client_id"), Value("redirect_uri"), Value("nonce"), Value("code_challenge"), email, verified, subject);
         return code;
     }
 
@@ -61,7 +65,7 @@ public sealed class FakeSocialProviders : IDisposable
         this.AppleKey.Dispose();
     }
 
-    private sealed record Grant(string Host, string ClientId, string RedirectUri, string Nonce, string Challenge, string Email, bool Verified);
+    private sealed record Grant(string Host, string ClientId, string RedirectUri, string Nonce, string Challenge, string Email, bool Verified, string? Subject);
 
     private string Jwks()
     {
@@ -119,18 +123,26 @@ public sealed class FakeSocialProviders : IDisposable
             && new JsonWebToken(secret).Kid == "KEY1234567";
     }
 
-    private string IdToken(string issuer, Grant grant, bool appleStyle) => Tokens.CreateToken(JsonSerializer.Serialize(new Dictionary<string, object>
+    private string IdToken(string issuer, Grant grant, bool appleStyle)
     {
-        ["iss"] = issuer,
-        ["aud"] = grant.ClientId,
-        ["sub"] = Guid.NewGuid().ToString("N"),
-        ["iat"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-        ["exp"] = DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds(),
-        ["nonce"] = grant.Nonce,
-        ["email"] = grant.Email,
-        // Apple sends the flag as a string.
-        ["email_verified"] = appleStyle ? (grant.Verified ? "true" : "false") : grant.Verified,
-    }), new SigningCredentials(this.key, SecurityAlgorithms.RsaSha256));
+        var claims = new Dictionary<string, object>
+        {
+            ["iss"] = issuer,
+            ["aud"] = grant.ClientId,
+            ["iat"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            ["exp"] = DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds(),
+            ["nonce"] = grant.Nonce,
+            ["email"] = grant.Email,
+            // Apple sends the flag as a string.
+            ["email_verified"] = appleStyle ? (grant.Verified ? "true" : "false") : grant.Verified,
+        };
+        if (grant.Subject is not null)
+        {
+            claims["sub"] = grant.Subject;
+        }
+
+        return Tokens.CreateToken(JsonSerializer.Serialize(claims), new SigningCredentials(this.key, SecurityAlgorithms.RsaSha256));
+    }
 
     private async Task<string?> AnswerAsync(HttpRequestMessage request)
     {
@@ -149,7 +161,7 @@ public sealed class FakeSocialProviders : IDisposable
                 return this.Jwks();
             case ("oauth2.googleapis.com", "/token"):
                 return form.GetValueOrDefault("client_secret") == this.ClientSecret && this.Redeem(form, "accounts.google.com", pkce: true) is { } google
-                    ? new JsonObject { ["id_token"] = this.IdToken("https://accounts.google.com", google, false) }.ToJsonString() : null;
+                    ? new JsonObject { ["id_token"] = this.IdToken(this.GoogleTokenIssuer, google, false) }.ToJsonString() : null;
             case ("idp.example.test", "/tenant/token"):
                 return form.GetValueOrDefault("client_secret") == this.ClientSecret && this.Redeem(form, "idp.example.test", pkce: true) is { } oidc
                     ? new JsonObject { ["id_token"] = this.IdToken(OidcIssuer, oidc, false) }.ToJsonString() : null;
@@ -159,14 +171,27 @@ public sealed class FakeSocialProviders : IDisposable
                     ? new JsonObject { ["id_token"] = this.IdToken("https://appleid.apple.com", apple, true) }.ToJsonString() : null;
             case ("github.com", "/login/oauth/access_token"):
                 // GitHub answers JSON only when asked to.
-                return request.Headers.Accept.Any(accept => accept.MediaType == "application/json") && form.GetValueOrDefault("client_secret") == this.ClientSecret
-                    && this.Redeem(form, "github.com", pkce: true) is { } github
-                    ? new JsonObject { ["access_token"] = "gho_" + github.Email, ["token_type"] = "bearer" }.ToJsonString() : null;
-            case ("api.github.com", "/user/emails"):
-                var email = request.Headers.Authorization?.Parameter is { } bearer && bearer.StartsWith("gho_", StringComparison.Ordinal) ? bearer[4..] : null;
-                return email is null || request.Headers.UserAgent.Count == 0 ? null : new JsonArray(
-                    new JsonObject { ["email"] = "other-" + email, ["primary"] = false, ["verified"] = true },
-                    new JsonObject { ["email"] = email, ["primary"] = true, ["verified"] = !email.StartsWith("unverified", StringComparison.Ordinal) }).ToJsonString();
+                if (!request.Headers.Accept.Any(accept => accept.MediaType == "application/json") || form.GetValueOrDefault("client_secret") != this.ClientSecret
+                    || this.Redeem(form, "github.com", pkce: true) is not { } github)
+                {
+                    return null;
+                }
+
+                var token = "gho_" + Guid.NewGuid().ToString("N");
+                this.accessTokens[token] = github;
+                return new JsonObject { ["access_token"] = token, ["token_type"] = "bearer" }.ToJsonString();
+            case ("api.github.com", "/user") or ("api.github.com", "/user/emails"):
+                if (request.Headers.Authorization?.Parameter is not { } bearer || !this.accessTokens.TryGetValue(bearer, out var account)
+                    || request.Headers.UserAgent.Count == 0)
+                {
+                    return null;
+                }
+
+                return uri.AbsolutePath == "/user"
+                    ? new JsonObject { ["id"] = long.Parse(account.Subject!, System.Globalization.CultureInfo.InvariantCulture) }.ToJsonString()
+                    : new JsonArray(
+                        new JsonObject { ["email"] = "other-" + account.Email, ["primary"] = false, ["verified"] = true },
+                        new JsonObject { ["email"] = account.Email, ["primary"] = true, ["verified"] = account.Verified }).ToJsonString();
             default:
                 return null;
         }
