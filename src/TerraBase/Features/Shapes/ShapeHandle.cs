@@ -6,6 +6,7 @@ using System.Text.Json;
 using TerraBase.Engine;
 
 namespace TerraBase.Features.Shapes;
+
 internal readonly record struct ShapeHandle(string Handle, string ShapeId, string CanonicalFilter)
 {
     public static ShapeHandle Compute(IDatabaseStore store, CollectionInfo collection, JsonElement? where = null) =>

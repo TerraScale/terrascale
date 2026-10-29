@@ -7,6 +7,8 @@ internal sealed class MemberClock(TimeProvider time)
     private readonly Lock _lock = new();
     private Hlc _last;
 
+    public DateTimeOffset UtcNow => time.GetUtcNow();
+
     public Hlc Tick(Hlc floor = default)
     {
         var now = time.GetUtcNow().ToUnixTimeMilliseconds();

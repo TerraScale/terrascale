@@ -4,6 +4,7 @@ using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Stats;
+
 internal static class StatsLatency
 {
     private static readonly double[] Bounds =

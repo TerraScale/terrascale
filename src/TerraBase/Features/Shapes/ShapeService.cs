@@ -9,6 +9,7 @@ using TerraBase.Tenancy;
 using ZLogger;
 
 namespace TerraBase.Features.Shapes;
+
 internal sealed class ShapeService(
     IStorageEngine engine, IDocumentService documents, IShapeSealer sealer, IShapeSnapshotSealer snapshots,
     IShapeStorage storage, IShapeRetention retention, IShapeFilterRegistry filters, ShapeRegistry registry, ShapeLiveGate gate,

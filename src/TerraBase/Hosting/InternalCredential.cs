@@ -3,6 +3,7 @@ using System.Text;
 using TerraBase.Configuration;
 
 namespace TerraBase.Hosting;
+
 internal sealed class InternalCredential
 {
     internal const string EnvironmentVariable = "TERRABASE_PEER_SECRET";

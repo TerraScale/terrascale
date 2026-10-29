@@ -5,6 +5,7 @@ using TerraBase.Errors;
 using ZLogger;
 
 namespace TerraBase.Hosting;
+
 public sealed record ErrorBody(ErrorDetail Error);
 public sealed record ErrorDetail(
     string Code,

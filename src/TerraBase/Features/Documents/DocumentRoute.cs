@@ -12,6 +12,7 @@ using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Documents;
+
 internal readonly union TenantResult(TenantContext, Validation, NotFound, Unavailable);
 internal readonly union KeyResult(DocumentKey, Validation, NotFound, Unavailable);
 internal readonly union BodyResult(byte[], Validation, PayloadTooLarge, UnsupportedMediaType);

@@ -4,6 +4,7 @@ using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Health;
+
 public sealed record StatusBody(
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("version")] string Version,

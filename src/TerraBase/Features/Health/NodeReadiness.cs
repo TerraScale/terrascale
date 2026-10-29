@@ -2,6 +2,7 @@ using TerraBase.Engine;
 using TerraBase.Features.Catalog;
 
 namespace TerraBase.Features.Health;
+
 public interface INodeReadiness
 {
     ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken);

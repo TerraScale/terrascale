@@ -10,6 +10,7 @@ using TerraBase.Features.Memory;
 using ZLogger;
 
 namespace TerraBase.Features.Shapes;
+
 internal sealed record ShapeSnapshotDefinition(
     string Handle, string ShapeId, string Collection, string CollectionGeneration, ReadOnlyMemory<byte> ResumeScope,
     Ulid Incarnation, Func<StoredDocument, bool>? Predicate = null, DocumentFilter? OwnerFilter = null);

@@ -17,6 +17,7 @@ using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Shapes;
+
 internal sealed class GetShapeKeyEndpoint(
     IDocumentService documents, ITenantDirectory tenants, IShapeLineages lineages, IShapeCrypto crypto, ICatalogGate catalog, IApiKeyStore keys,
     TimeProvider time) : EndpointWithoutRequest<IResult>

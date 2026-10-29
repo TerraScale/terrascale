@@ -2,6 +2,7 @@ using System.Diagnostics.Metrics;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.Stats;
+
 internal sealed class StatsMetrics
 {
     private const int TopCount = 10;

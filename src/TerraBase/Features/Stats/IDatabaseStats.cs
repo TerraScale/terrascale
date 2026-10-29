@@ -1,6 +1,7 @@
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Stats;
+
 public interface IDatabaseStats
 {
     void Read(TenantContext database);

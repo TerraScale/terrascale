@@ -7,6 +7,7 @@ using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
 
 namespace TerraBase.Features.Shapes;
+
 public static class ShapesExtensions
 {
     private const string Handle = "h1-f3171a2230109328";

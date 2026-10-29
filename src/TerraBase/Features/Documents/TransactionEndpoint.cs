@@ -10,6 +10,7 @@ using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Documents;
+
 public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizationService authorization, ITenantDirectory tenants, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     private const int MaxOps = 1024;

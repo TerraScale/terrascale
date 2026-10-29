@@ -8,6 +8,7 @@ using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Documents;
+
 public sealed class PutCollectionSchemaEndpoint(IDocumentService documents, ITenantDirectory tenants, IMemoryBudget memory) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()

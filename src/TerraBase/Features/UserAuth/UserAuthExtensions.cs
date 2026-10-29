@@ -10,6 +10,7 @@ using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.UserAuth;
+
 public static class UserAuthExtensions
 {
     public const string PolicyName = "user";

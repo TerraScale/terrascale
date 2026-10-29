@@ -1,6 +1,7 @@
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Memory;
+
 public enum MemoryLane
 {
     Foreground,

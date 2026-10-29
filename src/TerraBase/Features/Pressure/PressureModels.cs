@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 
 namespace TerraBase.Features.Pressure;
+
 public sealed record PressureBody
 {
     [JsonPropertyName("schema")] public int Schema => 1;

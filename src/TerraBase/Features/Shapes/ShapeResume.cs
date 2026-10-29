@@ -4,6 +4,7 @@ using TerraBase.Errors;
 using TerraBase.Features.Qos;
 
 namespace TerraBase.Features.Shapes;
+
 internal interface IShapeResumeStorage
 {
     ValueTask<long?> ReadShapeResumeTargetAsync(string collection, IReadOnlyDictionary<ReplicaId, Hlc> covered, IReadOnlyDictionary<ReplicaId, FeedPrefix> prefixes, long head,

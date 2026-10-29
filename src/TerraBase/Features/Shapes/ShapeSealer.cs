@@ -5,6 +5,7 @@ using TerraBase.Features.Qos;
 using ZLogger;
 
 namespace TerraBase.Features.Shapes;
+
 public sealed record ShapeSealDefinition(string ShapeId, string Handle, string Collection,
     string CollectionGeneration, ReadOnlyMemory<byte> ResumeScope, Ulid Incarnation, Func<StoredDocument, bool>? Predicate = null,
     DocumentOwnerProof? OwnerAuthorization = null);
@@ -149,6 +150,7 @@ internal sealed class ShapeSealer(
             while (!store.IsClosed)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var sequence = store.CommitSequence;
                 var refused = false;
                 try
                 {

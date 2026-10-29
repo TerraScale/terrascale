@@ -15,6 +15,7 @@ using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Documents;
+
 public interface IDatabaseChanges
 {
     ValueTask<IResult> StreamAsync(

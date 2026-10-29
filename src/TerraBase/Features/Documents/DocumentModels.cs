@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace TerraBase.Features.Documents;
+
 public sealed record DocumentBody(
     string Id, string Version, string State, JsonElement Document,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] double? Distance = null,

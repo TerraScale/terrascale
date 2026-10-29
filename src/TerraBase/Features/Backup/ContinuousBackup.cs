@@ -10,6 +10,7 @@ using TerraBase.Tenancy;
 using ZLogger;
 
 namespace TerraBase.Features.Backup;
+
 public sealed record BackupFileStatus(
     string File, string? Generation, long LogBytes, DateTimeOffset? LastShippedAt, double LagSeconds, long PendingBytes, string? LastError, bool Shipping,
     long? SizeBytes, BackupDrill? LastDrill);

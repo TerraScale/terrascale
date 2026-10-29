@@ -24,6 +24,7 @@ using TerraBase.Features.Webhooks;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Hosting;
+
 [JsonSerializable(typeof(DeployFunctionRequest))]
 [JsonSerializable(typeof(FunctionBody))]
 [JsonSerializable(typeof(FunctionBody[]))]
@@ -52,7 +53,6 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(DatabaseRequestLogs))]
 [JsonSerializable(typeof(RequestLogRecord))]
 [JsonSerializable(typeof(Ulid))]
-[JsonSerializable(typeof(ReplicaRecoveryRequest))]
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, MaxDepth = RequestJson.StoredDocumentMaxDepth + 8)]
 [JsonSerializable(typeof(AcceptInvitationRequest))]
 [JsonSerializable(typeof(CreateImportRequest))]

@@ -5,6 +5,7 @@ using OpenTelemetry;
 using OpenTelemetry.Metrics;
 
 namespace TerraBase.Hosting;
+
 public static class Telemetry
 {
     public const string MeterName = "TerraScale.TerraBase";

@@ -4,6 +4,7 @@ using TerraBase.Errors;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Documents;
+
 public sealed record DocumentKey(TenantContext Database, string Collection, string Id);
 public sealed record Precondition(IReadOnlyList<string>? IfMatch, bool IfMatchAny, bool IfNoneMatch, bool IfNeverWritten = false)
 {

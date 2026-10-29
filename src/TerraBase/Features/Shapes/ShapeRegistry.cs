@@ -6,6 +6,7 @@ using TerraBase.Tenancy;
 using ZLogger;
 
 namespace TerraBase.Features.Shapes;
+
 internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, IMemoryBudget budget, TimeProvider time, ILogger<ShapeRegistry>? logger = null)
     : IShapeFlightSealer, IDisposable
 {

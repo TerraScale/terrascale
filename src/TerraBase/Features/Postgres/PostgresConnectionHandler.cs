@@ -22,6 +22,7 @@ using TerraBase.Tenancy;
 using ZLogger;
 
 namespace TerraBase.Features.Postgres;
+
 internal sealed class PostgresConnectionHandler(IServiceProvider services) : ConnectionHandler
 {
     private const int Protocol30 = 196608, CancelCode = 80877102, SslCode = 80877103, GssCode = 80877104;

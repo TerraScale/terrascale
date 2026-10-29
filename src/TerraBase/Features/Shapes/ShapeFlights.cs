@@ -5,6 +5,7 @@ using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Shapes;
+
 internal interface IShapeFlightSealer
 {
     ValueTask<ShapeFlightSealResult> SealAsync(IDatabaseStore store, CancellationToken cancellationToken);

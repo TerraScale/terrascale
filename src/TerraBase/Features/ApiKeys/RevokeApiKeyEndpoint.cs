@@ -5,6 +5,7 @@ using TerraBase.Primitives;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.ApiKeys;
+
 public sealed class RevokeApiKeyEndpoint(IApiKeyStore keys) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()

@@ -1,6 +1,7 @@
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Pressure;
+
 public sealed class PressureEndpoint(IPressureSignals pressure) : EndpointWithoutRequest<PressureBody>
 {
     public override void Configure()
