@@ -2,7 +2,7 @@ using Microsoft.OpenApi;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraScale.Endpoints;
@@ -12,7 +12,6 @@ namespace TerraBase.Features.Management;
 /// <summary>Deletes only the immutable database identity the caller inspected.</summary>
 internal sealed class DeleteManagedDatabaseIfIdEndpoint(IManagementService management, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Delete(ProjectApiRoute.Database + "/if-id/{expectedId}");
@@ -38,7 +37,6 @@ internal sealed class DeleteManagedDatabaseIfIdEndpoint(IManagementService manag
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware(), new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }
 
-    /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var expected = ManagementRoute.Value(HttpContext, "expectedId");
@@ -47,7 +45,6 @@ internal sealed class DeleteManagedDatabaseIfIdEndpoint(IManagementService manag
             return ValueTask.FromResult(ErrorResponse.From(new Validation("expectedId must be a canonical uppercase ULID")));
         }
 
-        // Catalog middleware already replaced the name with its immutable ID. Never resolve the name again.
         if (!string.Equals(expected, ManagementRoute.Value(HttpContext, "database"), StringComparison.Ordinal))
         {
             return ValueTask.FromResult(ErrorResponse.From(new Conflict("the database identity does not match expectedId", "database_identity_mismatch")));

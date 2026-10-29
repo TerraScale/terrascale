@@ -21,7 +21,7 @@ public sealed class TursoQosEnterpriseTests
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 100001)
             INSERT INTO "items" (id, doc) SELECT printf('00000000000000000000%06d', n), '{"n":1}' FROM rows;
-            INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2) SELECT 'items', id, 0, '', 65536, 0, 1, 0, 0 FROM "items";
+            INSERT INTO _tb_state (collection, id, state, stamp, origin, live, h1, h2) SELECT 'items', id, '', 65536, 0, 1, 0, 0 FROM "items";
             """);
         var planPath = ManagementApi.Uri($"/v1/management/organizations/{database.Organization}/plan");
         using var upgraded = await plans.PutAsJsonAsync(planPath, new { plan = "pro" });
@@ -51,7 +51,7 @@ public sealed class TursoQosEnterpriseTests
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 10000)
             INSERT INTO "items" (id, doc) SELECT printf('00000000000000000000%06d', n), '{"n":1}' FROM rows;
-            INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2) SELECT 'items', id, 0, '', 65536, 0, 1, 0, 0 FROM "items";
+            INSERT INTO _tb_state (collection, id, state, stamp, origin, live, h1, h2) SELECT 'items', id, '', 65536, 0, 1, 0, 0 FROM "items";
             """);
         var planPath = ManagementApi.Uri($"/v1/management/organizations/{database.Organization}/plan");
         using var upgraded = await plans.PutAsJsonAsync(planPath, new { plan = "pro" });

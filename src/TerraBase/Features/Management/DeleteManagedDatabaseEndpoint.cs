@@ -1,7 +1,7 @@
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -10,7 +10,6 @@ namespace TerraBase.Features.Management;
 /// <summary><c>DELETE …/databases/{database}</c>: deletes a database and its data.</summary>
 internal sealed class DeleteManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Delete(ProjectApiRoute.Database);
@@ -28,7 +27,6 @@ internal sealed class DeleteManagedDatabaseEndpoint(IManagementService managemen
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware(), new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }
 
-    /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         DeleteAsync(HttpContext, management, options, cancellationToken);
 

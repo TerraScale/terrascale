@@ -5,22 +5,12 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Engine;
 
-/// <summary>
-/// Wraps any <see cref="IStorageEngine"/> and moves <see cref="IWriteStamps"/> on every write that goes
-/// through it: client writes and Management alike.
-/// </summary>
-/// <remarks>
-/// ponytail: stamps live in fixed stripes, so unrelated documents or collections that share a stripe
-/// invalidate each other (about 1 in 4096); more stripes if cache hit rates under writes suffer.
-/// </remarks>
 internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngine, IWriteStamps
 {
     private const int Stripes = 4096;
 
     private readonly long[] _stripes = new long[Stripes];
 
-    // ponytail: one epoch for database and collection metadata changes; per-collection epochs if their
-    // conservative cache invalidation becomes measurable.
     private long _epoch;
 
     internal void InvalidateAll() => Interlocked.Increment(ref _epoch);
@@ -40,7 +30,6 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
 
     public ValueTask<bool> MayHaveSystemCollectionStateAsync(string collection, CancellationToken cancellationToken) =>
         inner.MayHaveSystemCollectionStateAsync(collection, cancellationToken);
-
 
     public event EventHandler<IDatabaseStore>? DatabaseDeleted
     {
@@ -106,8 +95,6 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
     public ValueTask<bool> VerifyDatabaseErasureAsync(TenantContext database, CancellationToken cancellationToken) =>
         inner.VerifyDatabaseErasureAsync(database, cancellationToken);
 
-    // Plans can change while a store remains open; only storage identity participates in invalidation.
-    // Null is reserved for system storage and cannot be a valid tenant database.
     private static int DocumentStripe(TenantContext? database, string collection, string id) =>
         Stripe(HashCode.Combine(database?.OrganizationId, database?.ProjectId, database?.DatabaseId, collection, id));
 
@@ -151,7 +138,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
             }
             finally
             {
-                // The shared transaction commits outside the wrapper: move its stamps again as CommitAsync would.
+
                 stamped?.Committed();
             }
         }
@@ -163,15 +150,12 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
     {
         public long Work => inner.Work;
 
-        // Every operation joins the same gate before returning, so reads cannot overtake queued writes.
         private readonly SemaphoreSlim _gate = new(1, 1);
         private readonly Lock _disposalGate = new();
         private Task? _disposal;
         private bool _streaming;
         private bool _writeFailed;
 
-        // One bit per stripe the transaction wrote to: bounded (512 bytes) however many writes it makes,
-        // allocated by the first write.
         private ulong[]? _written;
         private bool _collectionsWritten;
 
@@ -179,8 +163,6 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
 
         public ValueTask<Ulid> GetIncarnationAsync(CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetIncarnationAsync(cancellationToken), cancellationToken);
-
-
 
         public ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetAsync(collection, id, cancellationToken), cancellationToken);
@@ -208,35 +190,8 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
             string collection, string id, ReadOnlyMemory<byte> json, IReadOnlyList<FieldOperation> operations, CancellationToken cancellationToken) =>
             WriteAsync(collection, id, () => inner.PatchAsync(collection, id, json, operations, cancellationToken), cancellationToken);
 
-        // A collection's metadata document drops or creates its collection, as a replicated delta of a collection it lacks may.
-        public ValueTask<bool> JoinBaselineAsync(string collection, string id, DocumentState state, EntryVersion at, CancellationToken cancellationToken) =>
-            collection is DocumentDelta.Collections or DocumentDelta.Indexes
-                ? WriteCollectionAsync(() => inner.JoinBaselineAsync(collection, id, state, at, cancellationToken), cancellationToken)
-                : WriteAsync(collection, id, () => inner.JoinBaselineAsync(collection, id, state, at, cancellationToken), cancellationToken);
-
-        public ValueTask<bool> JoinAsync(string collection, string id, Lattices.DocumentState delta, Lattices.EntryVersion at, CancellationToken cancellationToken) =>
-            collection is DocumentDelta.Collections or DocumentDelta.Indexes
-                ? WriteCollectionAsync(() => inner.JoinAsync(collection, id, delta, at, cancellationToken), cancellationToken)
-                : WriteAsync(collection, id, () => inner.JoinAsync(collection, id, delta, at, cancellationToken), cancellationToken);
-
-        public ValueTask<bool> WouldJoinAsync(string collection, string id, Lattices.DocumentState delta, CancellationToken cancellationToken) =>
-            inner.WouldJoinAsync(collection, id, delta, cancellationToken);
-
-        public ValueTask RequireAppliedAsync(Lattices.ReplicaId origin, Lattices.Hlc expected, CancellationToken cancellationToken) =>
-            inner.RequireAppliedAsync(origin, expected, cancellationToken);
-
-        public ValueTask<IReadOnlyDictionary<Lattices.ReplicaId, Lattices.Hlc>> GetAppliedAsync(CancellationToken cancellationToken) =>
-            RunAsync(() => inner.GetAppliedAsync(cancellationToken), cancellationToken);
-
         public ValueTask<bool> HoldsHistoryAtOrBelowAsync(Lattices.Hlc cut, CancellationToken cancellationToken) =>
             RunAsync(() => inner.HoldsHistoryAtOrBelowAsync(cut, cancellationToken), cancellationToken);
-
-        public async ValueTask RecordAppliedAsync(Lattices.ReplicaId origin, Lattices.Hlc applied, CancellationToken cancellationToken) =>
-            _ = await RunAsync(async () =>
-            {
-                await inner.RecordAppliedAsync(origin, applied, cancellationToken).ConfigureAwait(false);
-                return true;
-            }, cancellationToken, mutation: true).ConfigureAwait(false);
 
         public ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken) =>
             WriteAsync(collection, id, () => inner.DeleteAsync(collection, id, cancellationToken), cancellationToken);
@@ -395,12 +350,11 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
             }
             finally
             {
-                // Also on failure: whether a failed commit reached the file is unknown.
+
                 Committed();
             }
         }, cancellationToken);
 
-        // Moves the stamps of everything this transaction wrote, once its commit returned or failed.
         public void Committed()
         {
             if (_collectionsWritten)
@@ -425,7 +379,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
                 {
                     throw new InvalidOperationException("dispose the active changes stream before using the transaction");
                 }
-                // Closes submissions and queues cleanup after every already-admitted operation.
+
                 return new(_disposal ??= DisposeCoreAsync());
             }
         }
@@ -445,7 +399,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
 
         private ValueTask<T> WriteCollectionAsync<T>(Func<ValueTask<T>> write, CancellationToken cancellationToken) => RunAsync(async () =>
         {
-            // Collection and prefix deletion remove many documents; the bounded global epoch covers them.
+
             _collectionsWritten = true;
             Interlocked.Increment(ref engine._epoch);
             return await write().ConfigureAwait(false);
@@ -457,7 +411,6 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
             return await write().ConfigureAwait(false);
         }, cancellationToken, mutation: true);
 
-        // The document's and its collection's stamps move before the write reaches storage.
         private void Stamp(string collection, string id)
         {
             _written ??= new ulong[Stripes / 64];
@@ -477,14 +430,13 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
                 {
                     if (mutation)
                     {
-                        // Mark refusal before stream cleanup can admit a concurrent commit.
+
                         _writeFailed = true;
                     }
                     throw new InvalidOperationException("dispose the active changes stream before using the transaction");
                 }
                 _streaming = stream;
-                // Admission and waiting are atomic with respect to disposal; no pre-disposal call can
-                // arrive at the operation gate after cleanup has already queued there.
+
                 return _gate.WaitAsync(cancellationToken);
             }
         }
@@ -507,7 +459,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
         }
 
         private ValueTask<T> RunAsync<T>(Func<ValueTask<T>> call, CancellationToken cancellationToken, bool mutation = false) =>
-            // Forward cancelled mutations in submission order so the native transaction records failure.
+
             RunCoreAsync(EnterAsync(mutation ? CancellationToken.None : cancellationToken, mutation: mutation), call, mutation);
 
         private async ValueTask<T> RunCoreAsync<T>(Task waiting, Func<ValueTask<T>> call, bool mutation)

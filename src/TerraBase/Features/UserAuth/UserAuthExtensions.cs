@@ -6,7 +6,6 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
-using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -29,7 +28,7 @@ internal static class UserAuthExtensions
         })
             .ConfigurePrimaryHttpMessageHandler((handler, _) => ((SocketsHttpHandler)handler).AllowAutoRedirect = false)
             .AddHttpMessageHandler(provider => RequestIdentity.CreatePropagationHandler(
-                provider.GetRequiredService<PeerCredential>().CorrelationKey,
+                provider.GetRequiredService<InternalCredential>().CorrelationKey,
                 new Uri(provider.GetRequiredService<TerraBaseOptions>().AuthIssuer ?? "about:blank")))
             .RemoveAllLoggers();
         services.AddSingleton<TsAuthKeys>();

@@ -1,16 +1,14 @@
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Backups;
 
-/// <summary>DELETE a project's customer backup destination.</summary>
 public sealed class DeleteBackupDestinationEndpoint(IProjectBackupDestinations destinations) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Delete(BackupDestinationRoute.Path);
@@ -28,7 +26,6 @@ public sealed class DeleteBackupDestinationEndpoint(IProjectBackupDestinations d
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         BackupDestinationRoute.IsDatabaseScoped ? ErrorResponse.From(new NotFound())
         : await destinations.DeleteAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), cancellationToken) switch

@@ -11,29 +11,23 @@ import (
 	"time"
 
 	"github.com/oklog/ulid/v2"
-	"terrascale.tech/ts-benchmark/internal/replbench"
+	"terrascale.tech/ts-benchmark/internal/benchclient"
 )
 
-// ProbeStep is one checked server behaviour.
 type ProbeStep struct {
 	Name   string `json:"name"`
 	Passed bool   `json:"passed"`
 	Detail string `json:"detail"`
-	// Skipped: this node cannot show the behaviour (no backup configured); never counted as passed.
+
 	Skipped bool `json:"skipped,omitempty"`
 }
 
-// Probe checks, on the pinned binary and in a scratch database of the run's project, every server behaviour the
-// writer's exactly-once argument rests on: conditional create/put/delete, retried requests answering 412 without
-// changing anything, a tombstone's 404 carrying its version, re-create conditioned on that version, all-or-nothing
-// transactions, canonical round trips of the generated bodies, and $id range queries. Until it passes on the exact
-// binary, no exactly-once or no-loss statement may rest on the writer.
 func Probe(ctx context.Context, r *Run) ([]ProbeStep, error) {
 	c, err := r.Client(time.Minute)
 	if err != nil {
 		return nil, err
 	}
-	// A database of its own per probe, so the probe can be rerun on the same node.
+
 	db, coll := "probe-"+strings.ToLower(ulid.Make().String()), "c"
 	base := r.DatabasePath(db)
 	if _, err := c.JSON(ctx, http.MethodPost,
@@ -113,7 +107,7 @@ func Probe(ctx context.Context, r *Run) ([]ProbeStep, error) {
 	st, v = tx(map[string]any{"op": "put", "id": x, "if_match": vt, "document": body(3)})
 	v3 := first(v)
 	gs, gv, gb := get(x)
-	canon, _ := replbench.Canonical(gb)
+	canon, _ := benchclient.Canonical(gb)
 	check("re-create conditioned on the tombstone version answers 200 with the new body", st == 200 && gs == 200 && gv == v3 && bytes.Equal(canon, body(3)), "HTTP %d; GET %d %q", st, gs, gv)
 	st, _ = tx(map[string]any{"op": "put", "id": x, "if_match": vt, "document": body(3)})
 	check("a retried re-create answers 412", st == 412, "HTTP %d", st)
@@ -122,7 +116,7 @@ func Probe(ctx context.Context, r *Run) ([]ProbeStep, error) {
 	check("a transaction with one failing precondition applies nothing", st == 412 && gs == 404 && gv == "", "HTTP %d; GET of the other op's document %d ETag %q", st, gs, gv)
 	st, _ = tx(map[string]any{"op": "create", "id": z, "document": json.RawMessage(Body(r.Seed, 99, 1))})
 	gs, _, gb = get(z)
-	canon, _ = replbench.Canonical(gb)
+	canon, _ = benchclient.Canonical(gb)
 	check("a generated body round-trips to identical canonical JSON", st == 200 && gs == 200 && bytes.Equal(canon, Body(r.Seed, 99, 1)), "HTTP %d; GET %d", st, gs)
 	var ids []string
 	for k := int64(10); k < 20; k++ {
@@ -166,8 +160,6 @@ func first(v []string) string {
 
 func isVersion(v string) bool { return len(v) == 37 && strings.HasPrefix(v, "tbv1-") }
 
-// backupFields checks that GET /v1/backup answers every member BackupFile decodes, on every listed file. A node without
-// backup lists no files, so there the step is skipped, not passed.
 func backupFields(ctx context.Context, c *Client) ProbeStep {
 	step := ProbeStep{Name: "GET /v1/backup answers the members client.go decodes"}
 	resp, err := c.Do(ctx, http.MethodGet, "/v1/backup", nil)
@@ -200,9 +192,6 @@ func backupFields(ctx context.Context, c *Client) ProbeStep {
 	return step
 }
 
-// fenceSteps checks the phase fence the writer relies on: a transaction asserting fences/closed-<phase> absent applies
-// while the fence does not exist, and once the fence is created the same shape of transaction (create, conditional
-// put, conditional delete) answers 412 and applies nothing.
 func fenceSteps(ctx context.Context, c *Client, base, coll string, r *Run) []ProbeStep {
 	var steps []ProbeStep
 	check := func(name string, ok bool, format string, args ...any) {

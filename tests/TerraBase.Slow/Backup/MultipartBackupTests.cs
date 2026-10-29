@@ -13,8 +13,6 @@ namespace TerraBase.Slow.Backup;
 
 public sealed class MultipartBackupTests
 {
-    // Base64 of random bytes does not compress, so the sealed snapshot of these documents (about 150 MiB) takes two
-    // 128 MiB parts.
     private const int Documents = 200;
     private const int RandomBytes = 576 * 1024;
     private const long PartSize = 128L << 20;
@@ -29,7 +27,6 @@ public sealed class MultipartBackupTests
         var (database, hashes) = await FillAsync(api, cancellationToken);
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         var snapshots = File(database) + "/snapshots/";
-        // Part 1 waits until part 2 is stored, so the parts complete out of order, and its first attempt fails.
         var order = new ConcurrentQueue<int>();
         var secondStored = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var failed = 0;
@@ -61,8 +58,6 @@ public sealed class MultipartBackupTests
         time.Advance(TimeSpan.FromSeconds(1));
         await backup.RunOnceAsync(cancellationToken);
         var status = Status(backup, database);
-
-        // Restore to a second between the snapshot and the later write: every snapshot document, and nothing after it.
         using var restored = await api.Client.PostAsJsonAsync(ManagementApi.Uri($"{database.Path}/point-in-time/restore"),
             new { pointInTime = snapshotted.AddSeconds(3), name = "restored" }, cancellationToken);
         var matching = 0;
@@ -102,8 +97,6 @@ public sealed class MultipartBackupTests
         var (database, _) = await FillAsync(api, cancellationToken);
         var snapshots = File(database) + "/snapshots/";
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
-
-        // The last part fails on every attempt: the upload is aborted after its bounded retries.
         s3.FailPart = (key, part) => part == 2 && key.StartsWith(snapshots, StringComparison.Ordinal);
         time.Advance(TimeSpan.FromSeconds(10));
         await backup.RunOnceAsync(cancellationToken);
@@ -112,8 +105,6 @@ public sealed class MultipartBackupTests
         var abortedAfterFailure = s3.AbortedUploads;
         var pendingAfterFailure = s3.PendingUploads;
         var storedAfterFailure = s3.Objects.Keys.Count(key => key.StartsWith(snapshots, StringComparison.Ordinal));
-
-        // The next pass is cancelled while its parts are in flight.
         s3.FailPart = (_, _) => false;
         var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         s3.BeforePart = async (key, _, token) =>
@@ -155,8 +146,6 @@ public sealed class MultipartBackupTests
         await Assert.That(stored[0].Value.LongLength).IsGreaterThan(PartSize);
     }
 
-    // A failed upload is aborted and never resumed: retrying the key with a newer body uploads every part again, so no part
-    // of the older body reaches the object, and the older upload cannot complete later.
     [Test]
     public async Task A_stale_multipart_upload_cannot_replace_or_leak_into_a_newer_object_under_the_same_key()
     {
@@ -193,9 +182,6 @@ public sealed class MultipartBackupTests
         await Assert.That(s3.PendingUploads).IsEqualTo(0);
     }
 
-    // A completion counts only when a HEAD of the key reports the whole length and proves this upload: by its id in the object's
-    // metadata, or by S3's multipart ETag of its own parts. One store, phase by phase, so the suite's parallel tests hold few
-    // 128 MiB bodies at once.
     [Test]
     public async Task A_multipart_upload_counts_only_with_proof_that_the_key_holds_it_whole()
     {
@@ -210,9 +196,6 @@ public sealed class MultipartBackupTests
         s3.StoreObject(key, Filled(length, older));
         var stored = $"<CompleteMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>{FakeS3.Bucket}</Bucket><Key>{key}</Key>"
             + "</CompleteMultipartUploadResult>";
-
-        // 1. The control: an older object of exactly the same length sits at the key, so a length-only check accepts both a 200
-        // answer with an error body and a success answer that stored nothing. Neither proves this upload.
         var failures = new List<Exception>();
         var controlLengths = new List<long?>();
         foreach (var answer in new[] { "<Error><Code>InternalError</Code><Message>We encountered an internal error.</Message></Error>", stored })
@@ -227,8 +210,6 @@ public sealed class MultipartBackupTests
         }
 
         var oldKept = s3.Objects[key].AsSpan().IndexOfAnyExcept(older) == -1;
-
-        // 2. This upload's own object, reported at another length.
         var truncated = $"v1/{Ulid.NewUlid()}/snapshots/truncated";
         s3.HeadLengthOverride = item => item == truncated ? PartSize : null;
         await using (var content = await FileAsync(newer, cancellationToken))
@@ -237,9 +218,6 @@ public sealed class MultipartBackupTests
         }
 
         await store.DeleteAsync(truncated, cancellationToken);
-
-        // 3. A store that keeps no metadata (like the PitrLab emulator) but S3's ETags: the multipart ETag proves an upload. An
-        // older object of the same length and another body has another ETag; one with the identical body is the same data.
         (s3.DropUploadMetadata, s3.Md5ETags, s3.CompleteAnswer) = (true, true, null);
         var proven = SnapshotKey();
         await using (var content = await FileAsync(newer, cancellationToken))
@@ -265,9 +243,6 @@ public sealed class MultipartBackupTests
         {
             await store.PutAsync(key, content, cancellationToken);
         }
-
-        // 4. Neither proof (no metadata, opaque ETags): the upload fails closed. A snapshot key names this attempt alone, so its
-        // unproven object is deleted; another key (a log segment's, which a retry rewrites) keeps its object.
         (s3.Md5ETags, s3.CompleteAnswer) = (false, null);
         var snapshot = SnapshotKey();
         var segment = BackupLayout.Segment($"v1/{Ulid.NewUlid()}/{Ulid.NewUlid()}/{Ulid.NewUlid()}", Ulid.NewUlid(), 0, DateTimeOffset.UnixEpoch);
@@ -276,10 +251,7 @@ public sealed class MultipartBackupTests
             await using var content = await FileAsync(newer, cancellationToken);
             failures.Add((await Assert.ThrowsAsync<Exception>(() => store.PutAsync(unproven, content, cancellationToken)))!);
         }
-
-        // A length-only check would have accepted every unproven answer: the key held an older object of the uploaded length.
         await Assert.That(controlLengths).IsEquivalentTo(new long?[] { length, length, length });
-        // An error body already fails in the SDK; every other failure is this store's missing or other evidence.
         await Assert.That(failures[0] is Amazon.S3.AmazonS3Exception or IOException).IsTrue();
         await Assert.That(failures.Skip(1).All(error => error is IOException)).IsTrue();
         await Assert.That(failures).Count().IsEqualTo(6);
@@ -289,15 +261,12 @@ public sealed class MultipartBackupTests
         await Assert.That(s3.Objects[key].AsSpan().IndexOfAnyExcept(older)).IsEqualTo(-1);
         await Assert.That(s3.Objects.ContainsKey(snapshot)).IsFalse();
         await Assert.That(s3.Objects.ContainsKey(segment)).IsTrue();
-        // Completed: the truncated object, the proven one, the older one at the key, and both unproven ones. Aborted: the three
-        // that never completed but the identical body's, which the store answered and left pending.
         await Assert.That(s3.StartedUploads).IsEqualTo(9);
         await Assert.That(s3.CompletedUploads).IsEqualTo(5);
         await Assert.That(s3.AbortedUploads).IsEqualTo(3);
         await Assert.That(s3.PendingUploads).IsEqualTo(1);
     }
 
-    // A body the caller does not keep: only the fake holds it, so it is freed when the key is replaced.
     private static byte[] Filled(long length, byte fill)
     {
         var body = new byte[length];
@@ -307,8 +276,6 @@ public sealed class MultipartBackupTests
 
     private static string SnapshotKey() =>
         BackupLayout.Snapshot($"v1/{Ulid.NewUlid()}/{Ulid.NewUlid()}/{Ulid.NewUlid()}", DateTimeOffset.UnixEpoch.AddDays(20_000), Ulid.NewUlid(), 0);
-
-    // The Content-Length a plain HEAD of the key reports, as a length-only completion check would read it.
     private static async Task<long?> HeadLengthAsync(FakeS3 s3, ServiceProvider provider, string key, CancellationToken cancellationToken)
     {
         var settings = new Dictionary<string, string>();
@@ -319,7 +286,6 @@ public sealed class MultipartBackupTests
         return response.IsSuccessStatusCode ? response.Content.Headers.ContentLength : null;
     }
 
-    // The fake's transports, without a server.
     private static ServiceProvider Routed(FakeS3 s3)
     {
         var services = new ServiceCollection();
@@ -327,7 +293,6 @@ public sealed class MultipartBackupTests
         return services.BuildServiceProvider();
     }
 
-    // The platform bucket's store over the fake's transport.
     private static S3ObjectStore PlatformStore(FakeS3 s3, ServiceProvider provider)
     {
         var settings = new Dictionary<string, string>();
@@ -337,7 +302,6 @@ public sealed class MultipartBackupTests
             S3ObjectStore.HttpClientName, TimeProvider.System);
     }
 
-    // A scratch file of two parts (128 MiB and 1 MiB) filled with one byte, deleted when closed.
     private static async Task<FileStream> FileAsync(byte fill, CancellationToken cancellationToken)
     {
         var file = new FileStream(Path.Combine(Path.GetTempPath(), $"terrabase-multipart-{Ulid.NewUlid()}"), FileMode.CreateNew, FileAccess.ReadWrite,
@@ -362,7 +326,7 @@ public sealed class MultipartBackupTests
         }, time);
         try
         {
-            await api.VerifyCatalogAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+
             Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
             return api;
         }
@@ -373,12 +337,10 @@ public sealed class MultipartBackupTests
         }
     }
 
-    // Documents of incompressible text; only their hashes stay in memory.
     private static async Task<(ManagedDatabaseRef Database, byte[][] Hashes)> FillAsync(ManagementApi api, CancellationToken cancellationToken)
     {
         var faker = new Faker();
         var database = await api.CreateManagedDatabaseAsync("main");
-        // Enterprise lifts the request budget, which refills on the fake clock.
         await api.SetPlanAsync(api.User, database.Organization, "enterprise", cancellationToken);
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "items", cancellationToken);
@@ -397,7 +359,7 @@ public sealed class MultipartBackupTests
     private static BackupFileStatus Status(IContinuousBackup backup, ManagedDatabaseRef database) =>
         backup.Status.Files.Single(file => file.File == File(database));
 
-    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
+    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
 
     private static string DocumentPath(ManagedDatabaseRef database, string name, string document) =>
         $"/v1/projects/{database.Project}/databases/{name}/collections/items/documents/by-key?id={ManagementApi.DocumentId(document)}";

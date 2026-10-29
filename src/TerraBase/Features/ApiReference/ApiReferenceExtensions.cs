@@ -22,7 +22,6 @@ public static class ApiReferenceExtensions
     public static IServiceCollection AddTerraBaseApiReference(this IServiceCollection services, string documentName) =>
         services.AddOpenApi(documentName, options =>
         {
-            // Admin-listener operations (endpoints without client metadata) stay out of the public document.
             options.ShouldInclude = description => description.ActionDescriptor.EndpointMetadata.OfType<ListenerMetadata>()
                 .Any(metadata => metadata.Listeners.Contains(TerraBaseListener.Client))
                 && description.RelativePath?.StartsWith("v1/management/", StringComparison.OrdinalIgnoreCase) != true
@@ -32,13 +31,12 @@ public static class ApiReferenceExtensions
             {
                 var terrabase = context.ApplicationServices.GetRequiredService<TerraBaseOptions>();
                 document.Info.Version = ServiceVersion.Value;
-                // Relative, so the document works on every regional host and behind any proxy.
                 document.Servers = [new OpenApiServer { Url = "/", Description = $"TerraBase node in region {terrabase.Region}" }];
                 document.Components ??= new OpenApiComponents();
                 document.Extensions ??= new Dictionary<string, IOpenApiExtension>(StringComparer.Ordinal);
                 document.Extensions["x-tagGroups"] = new JsonNodeExtension(JsonNode.Parse("""
                     [{"name":"Management","tags":["Databases","Imports","Backups","Indexes","Schema","Usage","Platform"]},
-                     {"name":"Data","tags":["Collections","Documents","Queries","Transactions","Live","Webhooks","Functions","File storage","SQL"]},
+                     {"name":"Data","tags":["Collections","Documents","Queries","Transactions","Live","Functions","File storage","SQL"]},
                      {"name":"System","tags":["Health","Regions"]}]
                     """)!);
                 document.Components.SecuritySchemes = new Dictionary<string, IOpenApiSecurityScheme>(StringComparer.Ordinal)
@@ -90,7 +88,6 @@ public static class ApiReferenceExtensions
 
                 var scopes = policies.Where(scope => ApiKeyScopes.All.Contains(scope)
                     || ApiKeyScopes.ProjectTokenScopes.Contains(scope)).ToList();
-                // EXPLAIN validates its exact project scope in the endpoint after JWT authentication.
                 if (operation.OperationId == "explainSql" && policies.Contains(UserAuthExtensions.PolicyName))
                 {
                     scopes.Add(ApiKeyScopes.DatabasesRead);
@@ -101,7 +98,6 @@ public static class ApiReferenceExtensions
                     return;
                 }
 
-                // HTTP bearer requirements cannot carry OAuth scopes; document the JWT claim requirements separately.
                 operation.Security = [new OpenApiSecurityRequirement { [new OpenApiSecuritySchemeReference(TsAuthScheme, context.Document)] = [] }];
                 operation.Extensions ??= new Dictionary<string, IOpenApiExtension>(StringComparer.Ordinal);
                 operation.Extensions["x-required-scopes"] = new JsonNodeExtension(new JsonArray([.. scopes.Select(scope => JsonValue.Create(scope))]));
@@ -122,7 +118,6 @@ public static class ApiReferenceExtensions
             return Task.CompletedTask;
         }).AddDocumentTransformer((document, _, _) =>
         {
-            // Request-body metadata can replace content after the operation examples ran.
             foreach (var path in document.Paths.Values)
             {
                 if (path.Operations is not { } operations)

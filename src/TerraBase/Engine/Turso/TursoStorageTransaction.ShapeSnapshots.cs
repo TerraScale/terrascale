@@ -37,7 +37,7 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
         RunAsync(() =>
         {
             var latest = NewestShapeSnapshot(handle);
-            // A snapshot below the retention floor is never a bootstrap answer: reseal at the head.
+
             if (latest is null || latest.Offset < ShapeFloor(handle))
             {
                 return true;
@@ -71,16 +71,11 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
         }, cancellationToken);
 
     public ValueTask<(long Offset, string Cursor)> ShapeSnapshotHeadAsync(
-        bool remote, ReadOnlyMemory<byte> resumeScope, DateTimeOffset now, CancellationToken cancellationToken) =>
+        ReadOnlyMemory<byte> resumeScope, DateTimeOffset now, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
             CountRead("shape");
             var offset = (long)Command("SELECT seq FROM _tb_feed_sequence WHERE id = 1;").ExecuteScalar()!;
-            // Values are read at the head: a snapshot seals only once the head is remote durable.
-            if (remote && ShapeFrontierOrHead(remote: true) < offset)
-            {
-                throw new StorageBusyException();
-            }
 
             Dictionary<ReplicaId, Hlc> stamps = [];
             Dictionary<ReplicaId, FeedPrefix> prefixes = [];
@@ -144,7 +139,6 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
             throw new ShapeSealOffsetException();
         }
 
-        // Ops buffer and framing are admitted before any row is materialized; rows and the encoded page reserve their own bytes.
         var workspace = memory.TryReserve(MemoryLane.Bulk, ShapeSnapshots.WorkspaceBytes, store.Tenant) ?? throw new StorageBusyException();
         IMemoryReservation? singletonMemory = null;
         try
@@ -159,7 +153,7 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
             var more = false;
             while (!more)
             {
-                // Turso drains a reader when closed; small metadata batches bound unused lookahead work.
+
                 var batch = ShapeSnapshotRows(shape.Collection, shape.OwnerFilter, last,
                     count == ShapeSnapshots.PageDocuments ? 1 : Math.Min(128, ShapeSnapshots.PageExamined - examined + 1), cancellationToken);
                 if (batch.Count == 0)
@@ -242,7 +236,6 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
                 throw new InvalidDataException("a shape snapshot page exceeds its byte limit");
             }
 
-            // Admission includes the retained body and the provider's copy when it is inserted.
             var resultMemory = memory.TryReserve(MemoryLane.Bulk, checked(bytes * 3L + 4096), store.Tenant) ?? throw new StorageBusyException();
             try
             {
@@ -282,7 +275,6 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
                 throw new InvalidDataException("snapshot ownership requires a trusted subject equality");
             }
 
-            // Apply ownership before examining rows: even a page's continuation id must be authorized.
             ownerPath = "$" + string.Concat(segments.Select(segment => ".\""
                 + JsonEncodedText.Encode(segment, JavaScriptEncoder.UnsafeRelaxedJsonEscaping).Value + "\""));
             ownerSubject = actor;
@@ -333,7 +325,7 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
         await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
         _ = await RunAsync(() =>
         {
-            // The page was built by a long-lived reader that may predate a committed drop: check lineage in this writer.
+
             var handle = shape.Handle;
             PublishShapeLineage(handle, shape.Collection, shape.CollectionGeneration, shape.Incarnation);
             var command = Command("""

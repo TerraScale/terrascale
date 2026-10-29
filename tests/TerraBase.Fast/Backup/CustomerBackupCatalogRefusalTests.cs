@@ -47,7 +47,7 @@ public sealed class CustomerBackupCatalogRefusalTests
         await Assert.That(hook.AfterGet is null).IsTrue();
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         await backup.RunOnceAsync(token);
-        var prefix = $"v1/{database.Organization}/{database.Project}/{database.Id}/";
+        var prefix = $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local/";
         var status = await api.Server.Client.GetFromJsonAsync(Uri("/v1/backup"), TerraBaseJsonContext.Default.BackupStatus, token);
         // Unsupported ownership prevents discovery from opening a tenant tap at all.
         await Assert.That(status!.Files.Any(file => file.File == prefix[..^1])).IsFalse();

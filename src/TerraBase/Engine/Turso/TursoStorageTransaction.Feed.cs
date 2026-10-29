@@ -6,16 +6,9 @@ using TerraBase.Features.Qos;
 
 namespace TerraBase.Engine.Turso;
 
-/// <summary>
-/// The changes feed's index (docs/terrabase/multi-region-replication.md sections 5 and 14): one <c>_tb_feed</c> row per
-/// <c>_tb_state</c> row a transaction writes, local or joined, in the same transaction, so the feed holds exactly the
-/// committed states and a backup carries it with them. Each origin's rows arrive in its commit order (its own writes on
-/// the single writer, a peer's on its one ordered stream), so a per-origin stamp is a cursor any machine can resume.
-/// <c>_tb_feed_floor</c> lists every origin with the highest stamp retention deleted.
-/// </summary>
 internal sealed partial class TursoStorageTransaction
 {
-    // Rows read per origin and page, before completing the last stamp: a stamp is never split between pages.
+
     private const int FeedOriginRows = 512;
 
     private const string InsertFeed = "INSERT INTO _tb_feed (seq, commit_offset, origin, stamp, collection, id, deleted, prefix, access_before, access_after, collection_generation) VALUES ($seq, $commit, $origin, $stamp, $collection, $id, $deleted, $prefix, $access_before, $access_after, $generation);";
@@ -74,7 +67,7 @@ internal sealed partial class TursoStorageTransaction
 
     public async ValueTask<int> TrimFeedAsync(Hlc before, int limit, CancellationToken cancellationToken)
     {
-        // This transaction holds the writer. Retention can wait for the rewrite; replay cannot restore its uncaptured cut.
+
         if (store.Rewriting)
         {
             return 0;
@@ -128,7 +121,6 @@ internal sealed partial class TursoStorageTransaction
                 }
             }
 
-            // An origin whose events all aged out leaves the feed and the cursors; see FeedCursor.Forget.
             var forget = Command("DELETE FROM _tb_feed_floor WHERE stamp > 0 AND stamp < $forget AND NOT EXISTS (SELECT 1 FROM _tb_feed f WHERE f.origin = _tb_feed_floor.origin);");
             forget.Parameters.AddWithValue("$forget", Version(Before(before, FeedCursor.Retention)));
             var forgotten = forget.ExecuteNonQuery();
@@ -137,8 +129,6 @@ internal sealed partial class TursoStorageTransaction
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
-    // Worker-only, after a state row's write: its feed row, and its origin's floor row on the origin's first event here.
-    // System and metadata documents stay out: only client databases have feed tables.
     private void AppendFeed(string collection, string id, EntryVersion at, bool live, DocumentOwnerProof? beforeProof, DocumentOwnerProof? afterProof, string? generation)
     {
         if (store.IsSystem || IsMetadata(collection))
@@ -146,18 +136,8 @@ internal sealed partial class TursoStorageTransaction
             return;
         }
 
-        // An anti-entropy repair (origin 0, R6) is filed as this machine's event at a fresh stamp: no cursor can name
-        // origin 0, and a fresh stamp keeps this machine's events in commit order. Repairs never ship, so other machines
-        // file their own repairs the same way.
-        if (at.Node.Value == 0)
-        {
-            at = new EntryVersion(Member.Clock.Tick(), Member.Id);
-        }
-
         var origin = unchecked((long)at.Node.Value);
-        // Retention may empty the feed: Turso reuses rowids even with AUTOINCREMENT after a reopen.
-        // Read, then set: under the writer nothing moves in between, and Turso runs an UPDATE ... RETURNING or an INSERT ...
-        // SELECT several times slower than these plain statements together.
+
         var seq = Command(FeedSequence).ExecuteScalar() is long current && current < long.MaxValue
             ? current + 1
             : throw new OverflowException("the feed sequence is exhausted");
@@ -188,10 +168,8 @@ internal sealed partial class TursoStorageTransaction
         RehashFeedAfter(origin, at.Stamp, prefix);
     }
 
-    // The stamp `age` before `stamp`'s instant (0 when that is before the epoch).
     private static Hlc Before(Hlc stamp, TimeSpan age) => new((ulong)Math.Max(0, stamp.Milliseconds - (long)age.TotalMilliseconds) << 16);
 
-    // Worker-only.
     private List<(ReplicaId Origin, Hlc Floor)> Floors()
     {
         var floors = new List<(ReplicaId, Hlc)>();
@@ -205,8 +183,6 @@ internal sealed partial class TursoStorageTransaction
         return floors;
     }
 
-    // Worker-only. Reads each origin's next rows, merges them by (stamp, origin) up to the lowest last stamp of an origin
-    // that has more, and stops between two stamps once a bound is reached; per origin, what it returns is always a prefix.
     private FeedPage ReadFeed(FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, bool includeDocuments, CancellationToken cancellationToken)
     {
         var stamps = cursor?.Stamps ?? new Dictionary<ReplicaId, Hlc>();
@@ -215,7 +191,7 @@ internal sealed partial class TursoStorageTransaction
         Dictionary<ReplicaId, FeedPrefix> prefixes = cursor?.Prefixes.ToDictionary() ?? [];
         if (cursor is not null)
         {
-            // A named origin this machine forgot (all its events aged out long ago) leaves the cursor.
+
             var forgotten = Before(cursor.Issued, FeedCursor.Forget);
             foreach (var origin in stamps.Keys.Where(origin => stamps[origin].Value < forgotten.Value && !floors.Exists(floor => floor.Origin == origin)))
             {
@@ -224,7 +200,6 @@ internal sealed partial class TursoStorageTransaction
             }
         }
 
-        // A stamp alone cannot prove this machine saw all earlier events: a late join can change a previously read prefix.
         foreach (var (origin, stamp) in scanned)
         {
             var floor = floors.Find(item => item.Origin == origin).Floor;
@@ -245,8 +220,7 @@ internal sealed partial class TursoStorageTransaction
         foreach (var (origin, floor) in floors)
         {
             var known = stamps.TryGetValue(origin, out var after);
-            // Retention deleted an event the cursor promised: above a named origin's stamp, or of an origin the issuing
-            // machine had no event of, unless that event had already expired when the cursor was issued.
+
             if (cursor is not null && (known ? after.Value < floor.Value : floor.Value > 0 && floor.Value >= Before(cursor.Issued, FeedCursor.Retention).Value))
             {
                 return new FeedPage([], stamps, More: false, Expired: true);
@@ -265,7 +239,7 @@ internal sealed partial class TursoStorageTransaction
             var read = OriginRows(unchecked((long)origin.Value), after, cancellationToken);
             if (read.Count >= FeedOriginRows)
             {
-                // The origin has more: other origins' later rows wait for the next page, so the merge stays in order.
+
                 more = true;
                 cap = Math.Min(cap, read[^1].Stamp);
             }
@@ -310,7 +284,7 @@ internal sealed partial class TursoStorageTransaction
 
             var document = deleted || !includeDocuments ? null : FeedDocumentJson(collection, id, tables);
             bytes += includeDocuments ? document?.Length ?? 0 : (long)Encoding.UTF8.GetByteCount(id) * 6 + 128;
-            // Typed as the nullable memory itself: a null byte[] would convert to empty memory, not to an absent document.
+
             var proof = Command("SELECT access_before, access_after, coalesce(octet_length(access_before),0), coalesce(octet_length(access_after),0), collection_generation FROM _tb_feed WHERE rowid = $rowid;");
             proof.Parameters.AddWithValue("$rowid", rowId);
             DocumentOwnerProof? beforeProof = null;
@@ -345,7 +319,6 @@ internal sealed partial class TursoStorageTransaction
         return new FeedPage(events, scanned, more, Expired: false) { Issuer = Member.Id, Prefixes = prefixes, Before = before };
     }
 
-    // Account for both row lists, keys, prefixes and events before copying any origin's page, even filtered-out rows.
     private void ReserveFeedMetadata(long origin, Hlc after, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -368,7 +341,6 @@ internal sealed partial class TursoStorageTransaction
         }
     }
 
-    // The chain survives retention. Both head cursors and cross-machine validation need one indexed row per origin.
     private FeedPrefix PrefixThrough(ReplicaId origin, Hlc floor, Hlc stamp, CancellationToken cancellationToken, string path = "feed")
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -387,7 +359,6 @@ internal sealed partial class TursoStorageTransaction
         return new FeedPrefix(floor, baseline.ExecuteScalar() as byte[] ?? new byte[32]);
     }
 
-    // Ordered CDC appends have no suffix. A late join rehashes its successors in bounded pages in the same transaction.
     private void RehashFeedAfter(long origin, Hlc stamp, FeedPrefix prefix)
     {
         while (true)
@@ -410,7 +381,6 @@ internal sealed partial class TursoStorageTransaction
         }
     }
 
-    // Worker-only: an origin's rows after `after`, and every row of the last stamp read.
     private List<(long Stamp, string Collection, string Id, bool Deleted, long RowId, byte[] Hash)> OriginRows(long origin, Hlc after, CancellationToken cancellationToken)
     {
         var rows = new List<(long, string, string, bool, long, byte[])>();
@@ -435,7 +405,6 @@ internal sealed partial class TursoStorageTransaction
             return rows;
         }
 
-        // A transaction writes at most 1024 documents, so one stamp holds at most 1024 rows.
         var same = Command(FeedSameStamp);
         same.Parameters.AddWithValue("$origin", origin);
         same.Parameters.AddWithValue("$stamp", rows[^1].Item1);
@@ -452,8 +421,6 @@ internal sealed partial class TursoStorageTransaction
         return rows;
     }
 
-    // Worker-only: the document's current JSON, or null when its collection or row is gone (deleted since, dropped, or a
-    // hidden uniqueness loser).
     private byte[]? FeedDocumentJson(string collection, string id, Dictionary<string, bool> tables)
     {
         if (!tables.TryGetValue(collection, out var exists))

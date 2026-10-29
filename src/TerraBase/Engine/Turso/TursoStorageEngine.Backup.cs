@@ -8,7 +8,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Engine.Turso;
 
-/// <summary>Continuous backup of the engine's files (TS-633): log taps, roll-forward and import of restored files.</summary>
 internal sealed partial class TursoStorageEngine
 {
     public async ValueTask<IWalTap?> OpenTapAsync(TenantContext? database, CancellationToken cancellationToken)
@@ -68,7 +67,6 @@ internal sealed partial class TursoStorageEngine
                         return false;
                     }
 
-                    // Replay can restore the source's commit_offset row; renew only after every segment is applied.
                     command.CommandText = TursoStatements.RenewIncarnation;
                     command.Parameters.AddWithValue("$incarnation", EntityIds.New().ToString());
                     command.ExecuteNonQuery();
@@ -79,7 +77,7 @@ internal sealed partial class TursoStorageEngine
                 }
                 catch (SqliteException)
                 {
-                    // Not a database, or corrupt beyond what integrity_check reports.
+
                     return false;
                 }
             }, cancellationToken).ConfigureAwait(false);
@@ -93,7 +91,7 @@ internal sealed partial class TursoStorageEngine
     public async ValueTask ImportDatabaseAsync(TenantContext database, string file, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(file);
-        // The PITR caller retains its decoded-input workspace claim through this copy and deletion of the input.
+
         var (key, path) = Locate(database);
         Task<TursoDatabaseStore> initialization;
         await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
@@ -120,7 +118,7 @@ internal sealed partial class TursoStorageEngine
                     using var begin = source.CreateCommand();
                     begin.CommandText = "BEGIN;";
                     begin.ExecuteNonQuery();
-                    // Restoring a snapshot twice must give each database its own new data key.
+
                     TursoCopy.Write(source, targetConnection, cancellationToken);
                 }, cancellationToken).ConfigureAwait(false);
                 await TursoDatabaseStore.InitializeAsync(key.Database, temporary, Io, _pragmas, Encryption, cancellationToken).ConfigureAwait(false);
@@ -137,15 +135,10 @@ internal sealed partial class TursoStorageEngine
         await initialization.ConfigureAwait(false);
     }
 
-    /// <remarks>ponytail: sorts every table by all its columns, a full scan each; fine for a daily drill of small databases.</remarks>
-    public ValueTask<byte[]> ChecksumAsync(string file, CancellationToken cancellationToken) =>
-        ChecksumAsync(file, normalizePeerBookkeeping: false, cancellationToken);
-
-    /// <summary>Same-cut live drill digest, excluding only uncaptured peer bookkeeping and bookkeeping-only rows.</summary>
     internal ValueTask<byte[]> RestoreDrillChecksumAsync(string file, CancellationToken cancellationToken) =>
-        ChecksumAsync(file, normalizePeerBookkeeping: true, cancellationToken);
+    ChecksumAsync(file, cancellationToken);
 
-    private async ValueTask<byte[]> ChecksumAsync(string file, bool normalizePeerBookkeeping, CancellationToken cancellationToken)
+    public async ValueTask<byte[]> ChecksumAsync(string file, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(file);
         Io.Admit();
@@ -167,7 +160,7 @@ internal sealed partial class TursoStorageEngine
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         Append(hash, rows);
-                        // The engine's own tables (change capture, statistics) differ between a file and its restore.
+
                         if (rows.GetString(0) == "table" && !ChangeLog.EngineTable(rows.GetString(1)))
                         {
                             tables.Add(rows.GetString(1));
@@ -180,15 +173,8 @@ internal sealed partial class TursoStorageEngine
                     cancellationToken.ThrowIfCancellationRequested();
                     var name = "\"" + table.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
                     using var command = connection.CreateCommand();
-                    // File incarnations deliberately differ after restore; compare the logical commit offset instead.
-                    var projection = table == "commit_offset" ? "id, value" : "*";
-                    // Stable/ack reports suspend capture, can create rows, and never advance applied progress.
-                    var peers = normalizePeerBookkeeping && table == "_tb_peers";
-                    if (peers)
-                    {
-                        projection = "node, applied";
-                    }
 
+                    var projection = table == "commit_offset" ? "id, value" : "*";
                     command.CommandText = $"SELECT {projection} FROM {name} LIMIT 0;";
                     int columns;
                     using (var shape = command.ExecuteReader())
@@ -196,8 +182,7 @@ internal sealed partial class TursoStorageEngine
                         columns = shape.FieldCount;
                     }
 
-                    var filter = peers ? " WHERE applied <> 0" : "";
-                    command.CommandText = $"SELECT {projection} FROM {name}{filter} ORDER BY {string.Join(", ", Enumerable.Range(1, columns).Select(column => column.ToString(CultureInfo.InvariantCulture)))};";
+                    command.CommandText = $"SELECT {projection} FROM {name} ORDER BY {string.Join(", ", Enumerable.Range(1, columns).Select(column => column.ToString(CultureInfo.InvariantCulture)))};";
                     using var rows = command.ExecuteReader();
                     hash.AppendData(Encoding.UTF8.GetBytes(table + "\0"));
                     while (rows.Read())
@@ -216,7 +201,6 @@ internal sealed partial class TursoStorageEngine
             Io.Release();
         }
 
-        // Each value with a type tag and, for text and blobs, its length, so no two rows hash alike by concatenation.
         static void Append(IncrementalHash hash, SqliteDataReader row)
         {
             Span<byte> scalar = stackalloc byte[9];

@@ -399,7 +399,7 @@ public sealed class CustomerBackupListingBoundaryTests
 
     private static FakeTimeProvider Clock() => new(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
 
-    private static string FilePrefix(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
+    private static string FilePrefix(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
 
     private static string SnapshotName(DateTimeOffset at, string generation, string position) =>
         string.Create(CultureInfo.InvariantCulture, $"{at.ToUnixTimeMilliseconds():D13}-{generation}-{position}");

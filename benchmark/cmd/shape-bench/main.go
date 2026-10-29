@@ -1,10 +1,3 @@
-// Command shape-bench measures fan-out on one of two local TerraBase nodes: a steady writer at a fixed rate into one
-// collection, and N = 1, 10, 100 and 1000 followers of the same collection, one N per step, for each target: the
-// changes feed (GET …/changes SSE) and the shape endpoint (GET …/shape, snapshot, chunks and live long-poll). It records
-// requested, admitted and rejected followers (the feed admits 32 streams per database and 1024 per machine), delivery
-// lag, response body bytes, the server's CPU and memory, its storage reads by path and its document accounting reads.
-//
-// Run it from benchmark/ after a Release build of the host (README.md). It takes no flags.
 package main
 
 import (
@@ -30,24 +23,20 @@ import (
 )
 
 const (
-	// Database placement requires two regions; all client traffic goes to gru.
 	hostProject = "../tests/TerraBase.E2E"
 	region      = "gru"
-	hostRegions = "gru,sjc"
+	hostRegions = "gru"
 	reportDir   = "bench"
 
-	writeRate = 20 // writes per second, open loop
-	admitRate = 20 // follower requests per second while a step opens its streams
-	// 1000 paced followers take about 50 s; past this the step is invalid.
+	writeRate = 20
+	admitRate = 20
+
 	admissionDeadline = 2 * time.Minute
 	payloadBytes      = 256
-	// Deliveries of in-window writes that arrive within this long after the window still count.
+
 	grace = 5 * time.Second
 )
 
-// target is one followed endpoint below the database URL; the report names its steps by name and transport. reads are the
-// terrabase.storage.reads paths the step reports, one status key each; inferred marks a target with a source-derived
-// document-SELECT estimate.
 type target struct {
 	name, transport, path string
 	reads                 []readPath
@@ -56,25 +45,20 @@ type target struct {
 	waitReady             func(*bench, context.Context, *measure, int64) (int64, error)
 }
 
-// readPath is one bounded path label of terrabase.storage.reads and the status key its step delta is reported under.
 type readPath struct{ key, path string }
 
-// targets is the fixed target list, each run at every follower count. changes.fanout comes first: it calibrates the
-// metrics listener.
 var targets = []target{
 	{name: "changes.fanout", transport: "sse-http1", path: "/changes", inferred: true,
 		reads:     []readPath{{key: "storage_reads_delta", path: "feed"}},
 		follow:    (*bench).followChanges,
 		waitReady: (*bench).waitStreams},
-	// Shape metadata SQL (path shape), payload-body SELECTs (path shape_body) and document checks (path point, node-wide:
-	// it also counts the writer's own point reads) are separate deltas, never summed.
+
 	{name: "shape.fanout", transport: "http1-long-poll", path: "/shape",
 		reads:     []readPath{{key: "storage_reads_delta_shape", path: "shape"}, {key: "storage_reads_delta_shape_body", path: "shape_body"}, {key: "storage_reads_delta_point", path: "point"}},
 		follow:    (*bench).followShape,
 		waitReady: waitParked},
 }
 
-// paths are the terrabase.storage.reads path labels the target reports.
 func (t target) paths() []string {
 	var out []string
 	for _, r := range t.reads {
@@ -83,11 +67,8 @@ func (t target) paths() []string {
 	return out
 }
 
-// followers are the follower counts: every N runs, even past the admission cap.
 var followers = []int{1, 10, 100, 1000}
 
-// spec carries the step timing; any missed delivery marks a step's error rate. One-step sweeps have no p99 baseline,
-// so there is no p99 gate.
 var spec = apibench.Spec{WarmupS: 5, StepS: 30, Safety: apibench.Safety{MaxErrorRate: 0.0001}}
 
 func main() {
@@ -115,9 +96,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	// Before the run writes anything, so the report's own files never count as changes.
+
 	commits := provenance()
-	work, err := os.MkdirTemp("", "shape-bench-") // 0700: the targets file holds the node's token
+	work, err := os.MkdirTemp("", "shape-bench-")
 	if err != nil {
 		return err
 	}
@@ -183,9 +164,6 @@ func run() error {
 	return runErr
 }
 
-// sweep runs each target at each N as its own one-step apibench sweep through apibench.Serve, so a breached threshold
-// at one N never skips the next. The serving side announces startup before Serve's ready line. Any exec error (an
-// invalid measurement) ends the run with the results so far.
 func sweep(startup apibench.Startup, ready apibench.Ready, step func(apibench.Step) (apibench.Result, error)) (apibench.Startup, []apibench.Result, error) {
 	stepsR, stepsW := io.Pipe()
 	resultsR, resultsW := io.Pipe()
@@ -238,21 +216,19 @@ func sweep(startup apibench.Startup, ready apibench.Ready, step func(apibench.St
 	return got, out, <-served
 }
 
-// notes is the report's own section: what each column means for this benchmark, the admission outcome per N and the
-// raw metric lines the accounting deltas come from.
 func notes(results []apibench.Result, probes []probe, pid int, metricsURL, commits string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n## Fan-out notes\n\n")
 	fmt.Fprintf(&b, "- %s\n", commits)
-	fmt.Fprintf(&b, "- Two local nodes (%s) in the tests/TerraBase.E2E BenchmarkClusterHost process: placement requires two regions; writes and followers target only %s. Plain HTTP on loopback: no WAN, no edge proxy, no TLS. No network probe ran; the startup row is one host launch until its targets file appeared.\n", hostRegions, region)
+	fmt.Fprintf(&b, "- One local node (%s) in the LocalBenchmarkHost process; writes and followers target %s. Plain HTTP on loopback: no WAN, no edge proxy, no TLS. No network probe ran; the startup row is one host launch until its targets file appeared.\n", hostRegions, region)
 	fmt.Fprintln(&b, "- Shared reporter placeholders: network probe, startup max RSS, MB out, and auth ms are unmeasured here; their zeros are placeholders. The shared startup heading says 5 launches, but this run has one launch.")
 	fmt.Fprintf(&b, "- Writer: %d PUTs/s of %d-byte documents into one collection, open loop; every write must succeed. Followers are opened one at a time at %d/s, each awaiting its admission or rejection (the local tenant is on the Hobby QoS plan), then all read together through the measured window. Per target: changes.fanout opens GET …/changes?cursor=now&collections=<that collection> as an SSE stream; shape.fanout opens GET …/shape as HTTP/1.1 JSON requests (bootstrap offset=-1, then snapshot pages, chunks and live long-polls).\n", writeRate, payloadBytes, admitRate)
-	fmt.Fprintf(&b, "- Columns: conc = requested N; rate = writes/s; req/s = deliveries/s summed over admitted followers; p50…max = delivery lag from the write's send time (in the document) to the follower reading its change event; err %% = missed deliveries of in-window writes to admitted followers (grace %s); MB in = response body bytes read by admitted followers in the window (changes: SSE stream bytes; shape: JSON response bodies); CPU %% and RSS MB = the combined host process (/proc/%d: both nodes, replication work, ts-auth stand-in and test runner), not this client.\n", grace, pid)
+	fmt.Fprintf(&b, "- Columns: conc = requested N; rate = writes/s; req/s = deliveries/s summed over admitted followers; p50…max = delivery lag from the write's send time (in the document) to the follower reading its change event; err %% = missed deliveries of in-window writes to admitted followers (grace %s); MB in = response body bytes read by admitted followers in the window (changes: SSE stream bytes; shape: JSON response bodies); CPU %% and RSS MB = the combined host process (/proc/%d: the node, ts-auth stand-in and test runner), not this client.\n", grace, pid)
 	fmt.Fprintf(&b, "- QoS budget: the local tenant is on the Hobby plan (QosPolicy.cs: 50 requests/s sustained, burst 100, concurrency 4). The writer and every follower's request share it. A refusal is 429 tenant_busy with Retry-After; each is repeated after its Retry-After (at least 200 ms) and counted: qos_busy_followers (both targets) and qos_busy_writes. A repeat delays a delivery and is not a loss; a delivery that misses the window and grace is counted as missed.\n")
 	fmt.Fprintf(&b, "- Admission, changes.fanout: the server admits at most 32 streams per database per machine and 1024 per machine (DatabaseChanges.cs); rejections are changes_busy. Above 32, only admitted followers are measured: req/s and MB in do not grow with requested N, and no gain past the cap is claimed.\n")
 	fmt.Fprintf(&b, "- Admission, shape.fanout: a follower is admitted on its first 200 body. Refusals before admission are shape_busy (429, the running-flight caps: 32 per machine and 8 per organization (ShapeFlights.cs MaxFlights, MaxFlightsPerOrganization), no queue) and shape_too_large (503); anything else is an invalid measurement. Concurrent identical live polls join one flight. Live requesters are capped at 4096 per machine and 1024 per organization, across all flights (ShapeFlights.cs MaxRequesters, MaxRequestersPerOrganization); a live poll beyond that answers shape_busy and is retried. server_at_ready is the gauge terrabase.shape.requests.waiting when the step became ready (shape), or the open feed streams (changes). req/s and origin reads are the measured outcome, not an assumed collapse.\n")
 	fmt.Fprintf(&b, "- Capacity rows: a step that reaches a limit is a row, not a failed run. Its stopped column names the limit: no follower admitted, the admission deadline, or a readiness timeout (all before the window, so writes, deliveries, storage reads and latency are n/a; the shared table's zeros there are placeholders, not measurements), or no delivery in the window (measured: every expected delivery is missed; its latency is n/a, since no delivery was measured, and the shared table's zeros there are placeholders). Rejected counts and qos_busy_followers are kept for every row.\n")
-	fmt.Fprintf(&b, "- Storage reads (primary, measured): terrabase.storage.reads{path} (terrabase_storage_reads_total) from %s, after minus before the step, gru node only; sjc reads are not included. Each target names its paths. The feed reports path=\"feed\": head, floor, prefix and retention reads, and each document body. The shape target reports path=\"shape\" (metadata SQL), path=\"shape_body\" (payload-body SELECTs) and path=\"point\" (document checks) as separate deltas, never summed here. The point delta is node-wide: it also counts the writer's point reads during the step, so it is not attributable to shape followers alone. Every count includes zero-row reads and misses; page cache hits count; this is not disk I/O.\n", metricsURL)
+	fmt.Fprintf(&b, "- Storage reads (primary, measured): terrabase.storage.reads{path} (terrabase_storage_reads_total) from %s, after minus before the step, gru node only. Each target names its paths. The feed reports path=\"feed\": head, floor, prefix and retention reads, and each document body. The shape target reports path=\"shape\" (metadata SQL), path=\"shape_body\" (payload-body SELECTs) and path=\"point\" (document checks) as separate deltas, never summed here. The point delta is node-wide: it also counts the writer's point reads during the step, so it is not attributable to shape followers alone. Every count includes zero-row reads and misses; page cache hits count; this is not disk I/O.\n", metricsURL)
 	fmt.Fprintf(&b, "- Storage window: the scrape before admission (before the first follower opens) through the scrape after warmup, the 30 s measured window, grace and a 6 s settle. A step's delta therefore includes admission, warmup and grace reads, not the measured window alone. A fall of a counter fails the step (reset or restarted node). A path absent before the step counts as zero, since its counter starts at zero in a process; a path absent after it fails the step, never as zero.\n")
 	fmt.Fprintf(&b, "- Shape followers: each bootstraps at offset=-1 (307 to the newest snapshot's first page), pages the snapshot, catches up through chunks, then long-polls live at the sealed head. Their response bytes are JSON bodies over HTTP/1.1, not SSE; each request is one answer, and each follower holds at most one open live poll. Retries after shape_busy or unavailable are counted in the status \"retries\"; they are neither delivered nor missed.\n")
 	fmt.Fprintf(&b, "- accounting_reads_delta (secondary): terrabase.stats.operations{kind=\"read\"} from %s, after minus before the step, gru node only. It is document accounting (document GETs and queries), published per closed 5 s window; it is not a storage read count.\n", metricsURL)
@@ -265,7 +241,7 @@ func notes(results []apibench.Result, probes []probe, pid int, metricsURL, commi
 				rejected = append(rejected, fmt.Sprintf("%d %s", v, code))
 			}
 		}
-		// A row without a writes count stopped before its window: its window figures were not measured.
+
 		window := []string{"n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a"}
 		if w, ok := r.Status["writes"]; ok {
 			per := 0.0
@@ -293,7 +269,6 @@ func notes(results []apibench.Result, probes []probe, pid int, metricsURL, commi
 	return b.String()
 }
 
-// storageCell is a row's storage reads: a single path's delta as a bare number, or each labelled path's delta in turn.
 func storageCell(status map[string]int64) string {
 	var parts []string
 	for _, k := range slices.Sorted(maps.Keys(status)) {
@@ -318,8 +293,6 @@ func git(args ...string) string {
 	return strings.TrimSpace(string(b))
 }
 
-// provenance names the measured code: HEAD, the last commit of the product and host (src, tests) and of this harness,
-// and whether the working tree differs from HEAD.
 func provenance() string {
 	state := "unknown"
 	if b, err := exec.Command("git", "status", "--porcelain", "--", "..").Output(); err == nil {

@@ -10,9 +10,8 @@ using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Qos;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Features.UserAuth;
-using TerraBase.Features.Webhooks;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -23,8 +22,7 @@ namespace TerraBase.Features.Management;
 internal sealed partial class EngineManagementService(
     IStorageEngine engine, IOrphanDatabaseFiles orphanFiles, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger, DatabaseLifecycleCheckpoint checkpoint, IMeterFactory meters,
     IProjectAuthorityVerifier projectAuthority, Lazy<IStorageQuota> quota,
-    Lazy<IRemoteDurability> durability, Lazy<ICatalogGate> catalogGate, Lazy<IWebhookErasure> webhookErasure, DatabaseAllowance databaseAllowance,
-    Lazy<IEscrowPeers> escrowPeers)
+    Lazy<ICatalogGate> catalogGate, DatabaseAllowance databaseAllowance)
     : IManagementService, ITenantDirectory, IHostedService, ICatalogGuard, IDatabaseFileCatalog
 {
     private const string Organizations = "organizations";
@@ -34,10 +32,8 @@ internal sealed partial class EngineManagementService(
     private const string CatalogVersion = ManagementCatalog.Version;
     private const string PendingDatabaseCleanup = "pending_database_cleanup";
 
-    // Global: project id to its organization id, so a client-chosen project id is unique across organizations.
     private const string ProjectOrganizations = "project_organizations";
 
-    // Catalog documents are small; this only bounds a page if one ever is not.
     private const long MaxPageBytes = 1024 * 1024;
 
     private const int CatalogPage = 100;
@@ -249,14 +245,6 @@ internal sealed partial class EngineManagementService(
             return new Done();
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
-    // Decision 0013: a new database's replica regions when its request names none, every other serving region; null where
-    // writes are confirmed in another region and none serves, so the database cannot be created yet.
-    private async ValueTask<IReadOnlyList<string>?> DefaultReplicasAsync(CancellationToken cancellationToken)
-    {
-        var others = await durability.Value.OtherRegionsAsync(cancellationToken).ConfigureAwait(false);
-        return others.Count == 0 && durability.Value.Confirms ? null : others;
-    }
-
     public async ValueTask<CreateDatabaseResult> CreateDatabaseAsync(
         string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken, IReadOnlyList<string>? replicaRegions = null,
         bool allRegions = false) =>
@@ -281,7 +269,6 @@ internal sealed partial class EngineManagementService(
             transaction => SetDatabaseRegionsAsync(transaction, userId, organizationId, projectId, databaseId, replicaRegions, cancellationToken, allRegions), static error => error,
             cancellationToken);
 
-    // In the caller's transaction, so a commit can set regions with its other operations.
     private async ValueTask<SetDatabaseRegionsResult> SetDatabaseRegionsAsync(
         IStorageTransaction transaction, string userId, string organizationId, string projectId, string databaseId, IReadOnlyList<string> replicaRegions,
         CancellationToken cancellationToken, bool allRegions = false)
@@ -302,10 +289,13 @@ internal sealed partial class EngineManagementService(
             return ManagementErrors.NotFound;
         }
 
-        // Platform databases stay in every region with no recorded home: only the unchanged placement is accepted, and it writes nothing.
+        if (allRegions || replicaRegions.Count > 0)
+        {
+            return new Conflict("databases serve only in their home region until replicas are available", "replicas_unavailable");
+        }
         if (PlatformDatabases.IsPlatform(tenant.OrganizationId))
         {
-            return allRegions && replicaRegions.Count == 0 && database.AllRegions ? database : ManagementErrors.PlatformPlacementLocked;
+            return database;
         }
 
         if (database.Home(options.Region) != options.Region)
@@ -313,7 +303,6 @@ internal sealed partial class EngineManagementService(
             return ManagementErrors.WrongRegion;
         }
 
-        // The home region numbers its changes; other regions take the highest number they see (docs/cross-region.md).
         var placed = database with
         {
             HomeRegion = options.Region,
@@ -441,7 +430,6 @@ internal sealed partial class EngineManagementService(
         };
     }
 
-    // Records a database's deletion intent through unregister, which removes its record, then deletes its files.
     private async ValueTask<RecordedDeletion> DeleteRecordedAsync(
         TenantContext storage, Func<IStorageTransaction, CancellationToken, ValueTask<bool>> unregister, CancellationToken cancellationToken)
     {
@@ -460,7 +448,7 @@ internal sealed partial class EngineManagementService(
                 return result switch
                 {
                     bool accepted => accepted,
-                    Unavailable => false, // Decline the engine intent; preserve the native refusal for the caller.
+                    Unavailable => false,
                 };
             }, cancellationToken).ConfigureAwait(false);
         }
@@ -479,7 +467,6 @@ internal sealed partial class EngineManagementService(
         }
 
         checkpoint("delete.intent", storage);
-        // The committed intent survives failure or cancellation of the file operation.
         var cleanup = await FinishDatabaseCleanupAsync(storage, CancellationToken.None).ConfigureAwait(false);
         if (cleanup is Unavailable error)
         {
@@ -492,13 +479,11 @@ internal sealed partial class EngineManagementService(
 
     private readonly union RecordedDeletion(bool, Unavailable);
 
-    // Its home records permanent purge authority; convergence deletes every replica without a placement edit.
     private readonly union DeletionPlacement(Done, Conflict);
 
     private static DeletionPlacement CheckDeletionPlacement(ManagedDatabase database, string region) =>
         database.Home(region) != region ? ManagementErrors.WrongRegion : new Done();
 
-    // A database the user may delete in this region, with the tenant its storage is addressed by, in the caller's transaction.
     private static async ValueTask<DeletableDatabaseCheck> DeletableAsync(
         IStorageTransaction transaction, string userId, string organizationId, string projectId, string databaseId, string region, CancellationToken cancellationToken)
     {
@@ -521,8 +506,6 @@ internal sealed partial class EngineManagementService(
         return CheckDeletionPlacement(database, region) is Conflict refused ? refused : new DeletableDatabase(tenant with { DatabaseId = database.Id }, database);
     }
 
-    // Removes a database from the catalog and records its cleanup intent, in the caller's transaction; the files go
-    // after it commits (FinishDatabaseCleanupAsync), or at the next start.
     private async ValueTask<UnregisterResult> UnregisterDatabaseAsync(
         IStorageTransaction transaction, string userId, string organizationId, string projectId, string databaseId, string region, CancellationToken cancellationToken) =>
         await DeletableAsync(transaction, userId, organizationId, projectId, databaseId, region, cancellationToken).ConfigureAwait(false) switch
@@ -533,7 +516,6 @@ internal sealed partial class EngineManagementService(
             Conflict error => error,
         };
 
-    // Removes a database's record and records its cleanup intent, in the caller's transaction, after the caller's checks.
     private async ValueTask<TenantContext> UnregisterRecordAsync(
         IStorageTransaction transaction, TenantContext storage, ManagedDatabase database, CancellationToken cancellationToken, bool customerDeletion = false)
     {
@@ -543,18 +525,12 @@ internal sealed partial class EngineManagementService(
             await BackupDestinationHistory.CaptureAsync(transaction, storage, cancellationToken).ConfigureAwait(false);
         }
         await PutAsync(transaction, PendingDatabaseCleanup, database.Id, storage, TerraBaseJsonContext.Default.TenantContext, cancellationToken).ConfigureAwait(false);
-        // The name is released only when it is this database's: after a name race it can be another database's.
         if (await GetAsync(transaction, DatabaseNames(database.ProjectId), database.Name, Id, cancellationToken).ConfigureAwait(false) == database.Id)
         {
             await transaction.DeleteAsync(DatabaseNames(database.ProjectId), database.Name, cancellationToken).ConfigureAwait(false);
         }
         await transaction.DeleteAsync(Databases(database.ProjectId), database.Id, cancellationToken).ConfigureAwait(false);
-        // The database's backups expire through the storage sweep from this commit on, and its tooling state
-        // (backup schedule, usage and query field counts) goes with it.
         await StorageSweep.AddAsync(transaction, new SweepEntry(StorageSweep.DatabaseBackups, storage.OrganizationId, database.Id), cancellationToken).ConfigureAwait(false);
-        // A tombstone, not a removal: the id stays taken, so another region replicating this database does not bring it
-        // back here and a commit cannot reuse it (docs/cross-region.md). Backup passes list live entries only. A database
-        // this region only recorded has no entry to tombstone yet.
         if (await transaction.TombstoneAsync(EngineManagedBackupService.BackedUpDatabases, database.Id, cancellationToken).ConfigureAwait(false) is null)
         {
             await PutAsync(transaction, EngineManagedBackupService.BackedUpDatabases, database.Id, DatabaseOwner.Of(storage), TerraBaseJsonContext.Default.DatabaseOwner, cancellationToken)
@@ -581,7 +557,6 @@ internal sealed partial class EngineManagementService(
             };
         }
 
-        // Copy at home, preserving the customer's placement for the new database.
         if (source.Home(options.Region) != options.Region)
         {
             return ManagementErrors.WrongRegion;
@@ -639,22 +614,15 @@ internal sealed partial class EngineManagementService(
         };
     }
 
-    // Records cleanup ownership before creating (or copying) storage, then registers the database and
-    // clears the intent in one transaction. project resolves the tenant of the project to add to (or why there is
-    // none) inside each transaction. A copy reads the engine database sourceId of that project (a database or a
-    // backup snapshot).
     private async ValueTask<AddDatabaseResult> AddDatabaseAsync(
         Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, string? sourceId, string? branchedFrom, CancellationToken cancellationToken,
         string? id = null, DatabasePlacement? placement = null, DateTimeOffset? createdAt = null)
     {
-        // Copies are new databases even when their preserved home differs from the snapshot's region.
-        // Replica materialization has no sourceId and spends no additional unit.
         var allowance = sourceId is not null || (placement?.Home ?? options.Region) == options.Region
-            ? new AllowanceCheck(databaseAllowance.Limit, options.Region, await ServingAsync(cancellationToken).ConfigureAwait(false))
+            ? new AllowanceCheck(databaseAllowance.Limit, options.Region, [options.Region])
             : null;
 
-        // Checked again when registering; this avoids creating storage for a request that cannot succeed.
-        var precheck = await WithUnitAsync(() => PrecheckAsync(project, name, allowance, cancellationToken), project, allowance, cancellationToken).ConfigureAwait(false);
+        var precheck = await PrecheckAsync(project, name, allowance, cancellationToken).ConfigureAwait(false);
 
         if (precheck is not TenantContext tenant)
         {
@@ -678,19 +646,10 @@ internal sealed partial class EngineManagementService(
         }
 
         using var admission = lease;
-        if (placement is null)
-        {
-            if (await DefaultReplicasAsync(cancellationToken).ConfigureAwait(false) is not { } replicas)
-            {
-                return DatabaseRegions.NoOtherRegion;
-            }
+        placement ??= new DatabasePlacement(options.Region, [], 1);
 
-            placement = new DatabasePlacement(options.Region, replicas, 1);
-        }
-
-        // A platform database is at home in every region (no recorded home), so every region seeds the same record.
         var database = new ManagedDatabase(
-            id ?? NewId(), tenant.ProjectId!, name, branchedFrom, createdAt ?? time.GetUtcNow(), PlatformDatabases.IsPlatform(tenant.OrganizationId) ? null : placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version,
+            id ?? NewId(), tenant.ProjectId!, name, branchedFrom, createdAt ?? time.GetUtcNow(), placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version,
             placement.AllRegions);
         var storage = tenant with { DatabaseId = database.Id };
         var preparation = await PrepareDatabaseAsync(storage, sourceId is null ? null : tenant with { DatabaseId = sourceId }, cancellationToken).ConfigureAwait(false);
@@ -720,7 +679,7 @@ internal sealed partial class EngineManagementService(
                 };
             }
 
-            registered = await WithUnitAsync(() => RegisterAsync(project, database, allowance, cancellationToken), project, allowance, cancellationToken).ConfigureAwait(false);
+            registered = await RegisterAsync(project, database, allowance, cancellationToken).ConfigureAwait(false);
 
             if (registered is TenantContext)
             {
@@ -740,7 +699,6 @@ internal sealed partial class EngineManagementService(
 
         if (registered is Unavailable refused)
         {
-            // Keep the owned file and durable intent until recovery can interpret the catalog again.
             return refused;
         }
 
@@ -758,7 +716,6 @@ internal sealed partial class EngineManagementService(
         return new AddedDatabase(database, storage);
     }
 
-    // The allowance precheck of AddDatabaseAsync, in a read transaction.
     private ValueTask<AddDatabasePrecheck> PrecheckAsync(
         Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, AllowanceCheck? allowance, CancellationToken cancellationToken) =>
         ReadAsync<AddDatabasePrecheck>(
@@ -771,7 +728,6 @@ internal sealed partial class EngineManagementService(
             },
             static error => error, cancellationToken);
 
-    // Registers prepared storage for AddDatabaseAsync and audits it, in a write transaction.
     private ValueTask<AddDatabasePrecheck> RegisterAsync(
         Func<IStorageTransaction, ValueTask<ProjectTenant>> project, ManagedDatabase database, AllowanceCheck? allowance, CancellationToken cancellationToken) =>
         WriteAsync<AddDatabasePrecheck>(async transaction =>
@@ -788,25 +744,6 @@ internal sealed partial class EngineManagementService(
             };
         }, static error => error, cancellationToken);
 
-    // Runs check again after a peer granted a unit, while it finds this region holding none (decision 0016).
-    private async ValueTask<AddDatabasePrecheck> WithUnitAsync(
-        Func<ValueTask<AddDatabasePrecheck>> check, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, AllowanceCheck? allowance, CancellationToken cancellationToken)
-    {
-        var result = await check().ConfigureAwait(false);
-        for (var attempt = 0; attempt < MaxUnitAcquisitions && allowance is not null && result is Conflict conflict && conflict == ManagementErrors.DatabaseAllowanceElsewhere; attempt++)
-        {
-            if (await AcquireUnitAsync(project, allowance, cancellationToken).ConfigureAwait(false) is { } refusal)
-            {
-                return refusal;
-            }
-
-            result = await check().ConfigureAwait(false);
-        }
-
-        return result;
-    }
-
-    // Why a database could not be added.
     private static AddDatabaseResult Refused(AddDatabasePrecheck check) => check switch
     {
         NotFound error => error,
@@ -816,8 +753,6 @@ internal sealed partial class EngineManagementService(
         TenantContext => throw new UnreachableException(),
     };
 
-    // Creates (or copies source into) storage under a committed cleanup intent, which stays until registration or
-    // cleanup clears it. False when the branch source is missing, leaving nothing behind.
     private async ValueTask<RecordedDeletion> PrepareDatabaseAsync(TenantContext storage, TenantContext? source, CancellationToken cancellationToken)
     {
         checkpoint("create.prepare", storage);
@@ -853,7 +788,6 @@ internal sealed partial class EngineManagementService(
         }
         catch
         {
-            // A rejected destination never acquired ownership. A stop in the intent callback leaves recovery work.
             if (publishing)
             {
                 _ = await FinishDatabaseCleanupAsync(storage, CancellationToken.None).ConfigureAwait(false);
@@ -868,7 +802,6 @@ internal sealed partial class EngineManagementService(
 
         if (!created)
         {
-            // A missing source or refused intent made no target and acquired no durable ownership.
             return decision;
         }
 
@@ -876,7 +809,6 @@ internal sealed partial class EngineManagementService(
         return true;
     }
 
-    // Registers prepared storage and clears its intent in the caller's transaction, when the project still allows it.
     private static async ValueTask<AddDatabaseCheck> RegisterDatabaseAsync(
         IStorageTransaction transaction, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, ManagedDatabase database,
         AllowanceCheck? allowance, CancellationToken cancellationToken)
@@ -889,7 +821,6 @@ internal sealed partial class EngineManagementService(
         var check = await CanAddDatabaseAsync(transaction, project, database.Name, cancellationToken, allowance).ConfigureAwait(false);
         if (check is TenantContext tenant)
         {
-            // Register the name, record and default backup owner in one native call.
             await transaction.PutBatchAsync(
             [
                 (DatabaseNames(database.ProjectId), database.Name, JsonSerializer.SerializeToUtf8Bytes(database.Id, Id)),
@@ -910,8 +841,6 @@ internal sealed partial class EngineManagementService(
         return check;
     }
 
-    // Resolves prepared storage after an error around its registration: the commit can succeed before a later
-    // transaction or disposal error, so both catalog facts are confirmed in one snapshot.
     private async ValueTask AbandonDatabaseAsync(TenantContext storage)
     {
         var registered = await ReadAsync<RecordedDeletion>(async transaction =>
@@ -933,8 +862,6 @@ internal sealed partial class EngineManagementService(
         }
     }
 
-    // The project's tenant when the project exists and the name is free in it.
-    // allowance: the plan's database allowance, which bounds a new database; null for a replica or a name check alone.
     private static async ValueTask<AddDatabaseCheck> CanAddDatabaseAsync(
         IStorageTransaction transaction, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, CancellationToken cancellationToken,
         AllowanceCheck? allowance = null)
@@ -955,7 +882,6 @@ internal sealed partial class EngineManagementService(
             };
         }
 
-        // A closing project registers nothing here once this transaction sees its fence (docs/terrabase/project-closure.md).
         if (await IsProjectClosedAsync(transaction, tenant.ProjectId!, cancellationToken).ConfigureAwait(false))
         {
             return ManagementErrors.NotFound;
@@ -971,9 +897,6 @@ internal sealed partial class EngineManagementService(
             : tenant;
     }
 
-    // The plan's database allowance, when the organization's live databases across its projects reach it, or when this
-    // region holds no unit of it (decision 0016). Checked in the registering transaction, so concurrent creates in any regions
-    // never pass it together; databases already above it stay. Platform databases are exempt.
     private static async ValueTask<Conflict?> DatabaseLimitAsync(IStorageTransaction transaction, TenantContext tenant, AllowanceCheck allowance, CancellationToken cancellationToken)
     {
         var allowed = allowance.Limit(tenant.Plan);
@@ -988,7 +911,6 @@ internal sealed partial class EngineManagementService(
             : null;
     }
 
-    // A project of the organization as a tenant: null when there is no organization or the project is not one of its projects.
     private static async ValueTask<TenantContext?> ProjectTenantAsync(
         IStorageTransaction transaction, Organization? organization, string projectId, CancellationToken cancellationToken) =>
         organization is not null
@@ -1016,7 +938,6 @@ internal sealed partial class EngineManagementService(
             : ManagementErrors.NotFound;
     }
 
-    // The project's database as a tenant: null when the project is not found or has no such database.
     private static async ValueTask<TenantContext?> DatabaseTenantAsync(
         IStorageTransaction transaction, TenantContext? project, string databaseId, CancellationToken cancellationToken) =>
         project is not null
@@ -1045,7 +966,6 @@ internal sealed partial class EngineManagementService(
         IStorageTransaction transaction, string projectId, string databaseId, CancellationToken cancellationToken) =>
         GetAsync(transaction, Databases(projectId), databaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken);
 
-    /// <summary>The plan of an organization inside a catalog transaction, or the default plan once it is deleted.</summary>
     internal static async ValueTask<PlanTier> PlanUncheckedAsync(IStorageTransaction transaction, string organizationId, CancellationToken cancellationToken) =>
         (await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false))?.Plan
         ?? PlanTier.Hobby;
@@ -1055,7 +975,6 @@ internal sealed partial class EngineManagementService(
         await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false) is { } organization
             && (organization.CreatedBy == userId || ProjectActor(userId, organizationId)) ? organization : null;
 
-    // A project is looked up under its organization, so a project id under another organization is not found.
     internal static async ValueTask<Project?> GetProjectAsync(
         IStorageTransaction transaction, string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>
         ProjectAccess.Current is { } access && access.ProjectId != projectId
@@ -1063,7 +982,6 @@ internal sealed partial class EngineManagementService(
             ? null
             : await GetAsync(transaction, Projects(organizationId), projectId, TerraBaseJsonContext.Default.Project, cancellationToken).ConfigureAwait(false);
 
-    /// <summary>The database inside a catalog transaction, for slices that register state atomically with its existence.</summary>
     internal static async ValueTask<ManagedDatabase?> GetDatabaseAsync(
         IStorageTransaction transaction, string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken) =>
         ProjectAccess.Current is { DatabaseName: not null } access && access.DatabaseId != databaseId
@@ -1155,7 +1073,6 @@ internal sealed partial class EngineManagementService(
         };
     }
 
-    // Commits what the callback wrote, unless keep rejects its result: then the transaction rolls back on disposal.
     private async ValueTask<T> WriteCatalogAsync<T>(
         Func<IStorageTransaction, ValueTask<T>> write, CancellationToken cancellationToken, Func<T, bool>? keep = null,
         [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
@@ -1174,7 +1091,6 @@ internal sealed partial class EngineManagementService(
         }
     }
 
-    // Initializes only fresh catalogs. Concurrent first calls serialize on the write transaction.
     public async ValueTask<CatalogCheck> EnsureCatalogAsync(CancellationToken cancellationToken)
     {
         if (!catalogGate.Value.IsOpen)
@@ -1267,41 +1183,27 @@ internal sealed partial class EngineManagementService(
 
     private static string DatabaseNames(string projectId) => $"projects/{projectId}/database_names";
 
-    // A database just added to the catalog, with the tenant its storage is addressed by.
     private sealed record AddedDatabase(ManagedDatabase Database, TenantContext Tenant, bool Existing = false);
 
-    // A database the user may delete here, with the tenant its storage is addressed by.
     private sealed record DeletableDatabase(TenantContext Storage, ManagedDatabase Record);
 
-    // The project a database is added to, or why the user may not add one.
     private readonly union ProjectTenant(TenantContext, NotFound, Forbidden);
 
-    // The project a database is added to when its name is free there, or why not.
     private readonly union AddDatabaseCheck(TenantContext, NotFound, Forbidden, Conflict);
 
-    // As AddDatabaseCheck, read outside a commit, where the catalog can be unavailable.
     private readonly union AddDatabasePrecheck(TenantContext, NotFound, Forbidden, Conflict, Unavailable);
 
-    // A database added to the catalog, or why not.
     private readonly union AddDatabaseResult(AddedDatabase, NotFound, Forbidden, Conflict, QuotaExceeded, Unavailable);
 
-    // A database the user may delete here, or why not.
     private readonly union DeletableDatabaseCheck(DeletableDatabase, NotFound, Forbidden, Conflict);
 
-    // As DeletableDatabaseCheck, read outside a commit.
     private readonly union DeletableDatabaseResult(DeletableDatabase, NotFound, Forbidden, Conflict, Unavailable);
 
-    // The storage of a database removed from the catalog, or why it was not.
     private readonly union UnregisterResult(TenantContext, NotFound, Forbidden, Conflict);
 }
 
-/// <summary>Where a database is registered: its organization (tenant), project and id.</summary>
-/// <param name="OrganizationId">Owning organization.</param>
-/// <param name="ProjectId">Owning project.</param>
-/// <param name="DatabaseId">The database.</param>
 internal sealed record DatabaseOwner(string OrganizationId, string ProjectId, string DatabaseId)
 {
-    /// <summary>The database a tenant context addresses.</summary>
     public static DatabaseOwner Of(TenantContext database)
     {
         ArgumentNullException.ThrowIfNull(database);

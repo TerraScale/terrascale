@@ -12,7 +12,6 @@ using Outcome = TerraBase.E2E.BackupQualification.Outcome;
 
 namespace TerraBase.E2E;
 
-/// <summary>Real HTTP backup and restore results; the same producer runs locally and on the pinned disposable app.</summary>
 internal static class BackupQualificationRun
 {
     internal sealed record Document(string Body, string Version, long Stamp);
@@ -33,19 +32,17 @@ internal static class BackupQualificationRun
         var points = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
         try
         {
-            // Cut names and support status are frozen before writes, never selected from successful restores.
             string[] cuts = ["manual-after-commit", "pitr-checkpoint", "pitr-latest", "before-window"];
             var source = await GetAsync(client, cluster.DatabasePath, token);
             var organization = cluster.OrganizationId ?? throw new InvalidOperationException("backup qualification needs the source organization id");
             var sourceId = source.GetProperty("id").GetString()!;
-            // Placement is frozen from the source record before any restore: a restore keeps the source's primary and replicas.
             string[] placement = [source.GetProperty("homeRegion").GetString()!,
                 .. source.GetProperty("replicaRegions").EnumerateArray().Select(region => region.GetString()!)];
             var projectId = cluster.ProjectPath.Split('/')[^1];
             var acknowledged = new Dictionary<string, string>(StringComparer.Ordinal);
             var acknowledgedVersions = new Dictionary<string, string>(StringComparer.Ordinal);
             var fake = new Faker();
-            foreach (var region in cluster.Regions)
+            foreach (var region in Cluster.Regions)
             {
                 var ops = Enumerable.Range(0, 3).Select(_ =>
                 {
@@ -69,8 +66,6 @@ internal static class BackupQualificationRun
             {
                 throw new InvalidOperationException("manual backup did not report ready for the source database");
             }
-
-            // A shipped checkpoint past every member's server clock after the marker committed, not the runner's clock, chooses the PIT cut.
             var checkpoint = await ShippedAsync(cluster, firstCommitted, token);
             var first = Expected(initial, sourceId, placement);
             var changed = acknowledged.Keys.First();
@@ -94,14 +89,12 @@ internal static class BackupQualificationRun
             var latest = await ShippedAsync(cluster, latestCommitted, token);
             plan.AddRange([
                 new(cuts[0], true, first), new(cuts[1], true, first), new(cuts[2], true, Expected(latestDocuments, sourceId, placement)),
-                // Before the oldest snapshot yet inside the plan's retention window: the backup does not hold it, a typed 409.
                 new(cuts[3], false, first, "backup_history_incomplete", 409),
             ]);
             foreach (var cut in plan)
             {
                 var name = "e2e-restore-" + EntityIds.New().ToString().ToLowerInvariant();
                 var path = cluster.ProjectPath + "/databases/" + name;
-                // Record before POST: even a response lost after publication must leave a cleanup attempt.
                 cleanup.Add(path);
                 var route = cut.Name == cuts[0]
                     ? cluster.DatabasePath + "/backups/" + backupBody.GetProperty("id").GetString() + "/restore"
@@ -113,12 +106,8 @@ internal static class BackupQualificationRun
                     points.Add(cut.Name, at);
                 }
 
-                var replays = cluster.Replays.Count;
                 using var restored = await client.PostAsJsonAsync(Uri(route), new { name, pointInTime = at }, token);
-                // The copy is made where the edge replayed the restore (the snapshot's region, or the primary for PITR);
-                // its other regions fill asynchronously, so it is read there.
-                var holder = cluster[cluster.Replays.Skip(replays).LastOrDefault(replay => !replay.FellBack && replay.PathAndQuery == route)?.Target
-                    ?? Cluster.Gru];
+                var holder = client;
                 if (restored.StatusCode != HttpStatusCode.Created)
                 {
                     var refusal = await restored.Content.ReadFromJsonAsync<JsonElement>(token);
@@ -127,7 +116,6 @@ internal static class BackupQualificationRun
                 }
                 else if (!cut.Supported)
                 {
-                    // This cut exercises the API's pre-window refusal, even a matching restore violates that contract.
                     outcomes.Add(new(cut.Name, null, null, (int)restored.StatusCode));
                 }
                 else
@@ -171,11 +159,11 @@ internal static class BackupQualificationRun
                     outcome = outcomes[^1],
                     expected = cut.Acknowledged,
                     point_in_time = cut.Name == cuts[0] ? (DateTimeOffset?)null : at,
-                    nodes = cluster.Regions.Select(cluster.Identity).ToArray(),
+                    nodes = Cluster.Regions.Select(Cluster.Identity).ToArray(),
                 }));
             }
 
-            result = new(plan, outcomes, [.. cluster.Regions.Select(cluster.Identity)], points);
+            result = new(plan, outcomes, [.. Cluster.Regions.Select(Cluster.Identity)], points);
         }
         catch (Exception error)
         {
@@ -187,7 +175,6 @@ internal static class BackupQualificationRun
             {
                 try
                 {
-                    // A restore inherits the source's replica regions, so it is deleted the way every owned database is.
                     await Cluster.DeleteDatabaseAsync(region => cluster[region], Cluster.Gru, path);
                 }
                 catch (Exception cleanupError)
@@ -201,7 +188,7 @@ internal static class BackupQualificationRun
         {
             Outcomes.Mark("fail", JsonSerializer.Serialize(new
             {
-                backup = new Run(plan, outcomes, [.. cluster.Regions.Select(cluster.Identity)], points),
+                backup = new Run(plan, outcomes, [.. Cluster.Regions.Select(Cluster.Identity)], points),
                 errors = errors.Select(error => error.Message).ToArray(),
             }));
         }
@@ -209,8 +196,6 @@ internal static class BackupQualificationRun
         return errors.Count == 0 ? result! : throw new AggregateException("backup qualification or cleanup failed", errors);
     }
 
-    // Every member already holds the earlier writes before this marker can reach whichever member ships the backup. Answers
-    // a restore point at or after which every member's copy of the marker is restorable.
     private static async Task<DateTimeOffset> CheckpointMarkerAsync(Cluster cluster, Dictionary<string, string> bodies, Dictionary<string, string> versions, CancellationToken token)
     {
         var id = EntityIds.New().ToString();
@@ -222,11 +207,7 @@ internal static class BackupQualificationRun
         }, token);
         await RecordAcknowledgementsAsync(committed, versions, token);
         _ = await Converge.ListedAsync(cluster, Docs.Digest(bodies.Select(pair => (pair.Key, pair.Value))), "checkpoint marker", token);
-        // The shipper stamps its commit row with its own wall clock in whole seconds, not with the marker's HLC version, and
-        // a restore at T holds it only once that second ends by T. Kestrel's Date is a cache its heartbeat refreshes every
-        // second, so a served Date can predate the commit; one that changes after the marker was listed everywhere was set
-        // later than that member's commit, and the second after it ends the commit's second.
-        var dates = await Task.WhenAll(cluster.Regions.Select(async region =>
+        var dates = await Task.WhenAll(Cluster.Regions.Select(async region =>
         {
             var served = await ServedAtAsync(cluster[region], cluster.DatabasePath, token);
             return await Converge.UntilAsync(() => ServedAtAsync(cluster[region], cluster.DatabasePath, token), date => date > served, $"a refreshed {region} server Date", token);
@@ -245,9 +226,9 @@ internal static class BackupQualificationRun
     {
         await Docs.EnsureSuccessAsync(committed);
         var transaction = await committed.Content.ReadFromJsonAsync<JsonElement>(token);
-        if (transaction.GetProperty("durability").GetString() != "remote_durable")
+        if (transaction.GetProperty("durability").GetString() != "local_durable")
         {
-            throw new InvalidOperationException("transaction was not acknowledged as remote_durable");
+            throw new InvalidOperationException("transaction was not acknowledged as local_durable");
         }
 
         foreach (var document in transaction.GetProperty("results").EnumerateArray())
@@ -261,19 +242,24 @@ internal static class BackupQualificationRun
         Docs.Digest(documents.Select(pair => (pair.Key, Docs.Canonical(JsonNode.Parse(pair.Value.Body))))),
         documents.ToDictionary(pair => pair.Key, pair => pair.Value.Version, StringComparer.Ordinal), sourceId, placement);
 
-    private static async Task<JsonElement> ShippedAsync(Cluster cluster, DateTimeOffset from, CancellationToken token) => await Converge.UntilAsync(async () =>
+    private static async Task<JsonElement> ShippedAsync(Cluster cluster, DateTimeOffset from, CancellationToken token)
     {
-        await cluster.ShipBackupAsync(token);
-        using var window = await cluster[Cluster.Gru].GetAsync(Uri(cluster.DatabasePath + "/point-in-time"), token);
-        if (window.StatusCode == HttpStatusCode.NotFound)
+        _ = await Converge.UntilAsync(() => ServedAtAsync(cluster[Cluster.Gru], cluster.DatabasePath, token),
+            date => date >= from, "the backup checkpoint boundary", token);
+        return await Converge.UntilAsync(async () =>
         {
-            return (JsonElement?)null;
-        }
+            await cluster.ShipBackupAsync(token);
+            using var window = await cluster[Cluster.Gru].GetAsync(Uri(cluster.DatabasePath + "/point-in-time"), token);
+            if (window.StatusCode == HttpStatusCode.NotFound)
+            {
+                return (JsonElement?)null;
+            }
 
-        await Docs.EnsureSuccessAsync(window);
-        return await window.Content.ReadFromJsonAsync<JsonElement>(token);
-    }, window => window is { } found && found.GetProperty("latest").GetDateTimeOffset() >= from,
-        "a newer shipped backup checkpoint", token) is { } shipped ? shipped : throw new InvalidOperationException("no shipped checkpoint");
+            await Docs.EnsureSuccessAsync(window);
+            return await window.Content.ReadFromJsonAsync<JsonElement>(token);
+        }, window => window is { } found && found.GetProperty("latest").GetDateTimeOffset() >= from,
+            "a newer shipped backup checkpoint", token) is { } shipped ? shipped : throw new InvalidOperationException("no shipped checkpoint");
+    }
 
     private static async Task<Dictionary<string, Document>> CaptureVersionsAsync(HttpClient client, Cluster cluster, string organization, string project, string database,
         Dictionary<string, string> acknowledged, Dictionary<string, string> acknowledgedVersions, CancellationToken token)

@@ -7,14 +7,12 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Qos;
 using TerraBase.Features.UserAuth;
-using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Documents;
 
 internal sealed partial class DatabaseChanges
 {
-    // End-user pages never join the database-wide flight: each page authorizes against one current storage snapshot.
     private async ValueTask<IResult> StreamEndUserAsync(
         HttpContext context, TenantContext database, FeedCursor? cursor, bool head, IReadOnlySet<string>? collections,
         ProjectAccess access, CancellationToken cancellationToken)
@@ -48,10 +46,6 @@ internal sealed partial class DatabaseChanges
         {
             while (true)
             {
-                if (!topology.IsCurrent)
-                {
-                    throw new OperationCanceledException("peer topology is not verified");
-                }
 
                 using var results = QosContext.Enter(database, memory);
                 if (await engine.OpenDatabaseAsync(database, stop.Token).ConfigureAwait(false) is not { } store)
@@ -120,15 +114,12 @@ internal sealed partial class DatabaseChanges
                         else if (CollectionRuleAccess.ProofMatches(change.AccessBefore, grant.Collection, grant.Rules, access)
                             || CollectionRuleAccess.ProofMatches(change.AccessAfter, grant.Collection, grant.Rules, access))
                         {
-                            // A deleted/hidden/transferred document can name only an id with this policy's ownership proof.
                             visible.Add(change with { Deleted = true, Document = null });
                         }
                     }
 
                     page = page with { Events = visible };
                 }
-
-                // Re-evaluate when a policy or document changed during the read, before exposing any page bytes.
                 if (store.CommitSequence != sequence)
                 {
                     continue;
@@ -145,17 +136,6 @@ internal sealed partial class DatabaseChanges
                     return TypedResults.Empty;
                 }
 
-                if (!started && cursor?.Machine is { Length: > 0 } machine && machine != options.MachineId
-                    && Listeners.ArrivedOn(context) == TerraBaseListener.Client
-                    && !context.Request.Headers.ContainsKey("ts-replay-src") && !context.Request.Headers.ContainsKey("ts-replay-failed")
-                    && await IssuerRegionAsync(machine, stop.Token).ConfigureAwait(false) is { } issuerRegion)
-                {
-                    context.Response.Headers["ts-replay"] = $"region={issuerRegion};instance={machine};fallback=self";
-                    context.Response.Headers.CacheControl = "no-store";
-                    return new IssuerReplay();
-                }
-
-                // Admit serialization and cursor buffers before allocating, as on the project-token path.
                 var origins = Math.Max(cursor?.Stamps.Count ?? 0, page.Scanned.Count);
                 var cursorBytes = 4L * ((128 + (56 * origins) + 2) / 3);
                 var bytes = page.Events.Sum(change => (long)(change.Document?.Length ?? 0)
@@ -180,7 +160,6 @@ internal sealed partial class DatabaseChanges
                 var cursorText = ChangeCursor.Encode(next, scope);
                 foreach (var change in page.Events)
                 {
-                    // Only the final event carries a cursor; a disconnect earlier replays the page safely.
                     Change(buffer, change, ReferenceEquals(change, page.Events[^1]) ? cursorText : null);
                     await SendAsync(context, buffer.WrittenMemory, stop.Token).ConfigureAwait(false);
                     buffer.ResetWrittenCount();
@@ -195,12 +174,8 @@ internal sealed partial class DatabaseChanges
                 }
             }
         }
-        catch (OperationCanceledException) when (stop.IsCancellationRequested || !topology.IsCurrent)
+        catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {
-            if (!topology.IsCurrent)
-            {
-                RefuseTopology(context);
-            }
         }
         catch (QosMemoryException) when (!stop.IsCancellationRequested)
         {

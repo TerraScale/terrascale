@@ -167,7 +167,7 @@ public sealed class SnapshotTimestampTests
         }
     }
 
-    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
+    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
 
     private sealed class SnapshotPause(TimeProvider time, CancellationToken testDeadline)
     {

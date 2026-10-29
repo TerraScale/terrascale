@@ -17,19 +17,16 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Backups;
 
-/// <summary>Bounded historical recovery with explicit, authenticated preview approval.</summary>
 public interface ISelectiveRecovery
 {
-    /// <summary>Reads actual historical and current records.</summary>
     ValueTask<IResult> PreviewAsync(HttpContext context, CancellationToken cancellationToken);
 
-    /// <summary>Applies only approved records with exact current-state preconditions.</summary>
     ValueTask<IResult> RecoverAsync(HttpContext context, CancellationToken cancellationToken);
 }
 
 internal static class SelectiveRecoveryRoute
 {
-    public const string Description = "Selects retained historical live records, previews their actual historical/current contents, then explicitly restores only approved records into the original database. selections contains 1 to 16 distinct existing collection names; omitted ids selects the whole historical collection, explicit ids selects 1 to 100 records. At most 100 records and 1 MiB combined historical/current JSON per preview; split larger selections into explicit id batches. Collections must already exist: explicitly recreate a dropped collection before previewing. Historical schema, ACLs, indexes and TTL settings are never restored. Approval expires after 10 minutes and is bound to the acting user, source and issuing process; pin the same server for apply or preview again. recover accepts only approval and a nonempty subset of its record keys. Every approved current version (including tombstones and never-written state) must still match this region's applied state, like If-Match; otherwise 412 and no writes. Writes not yet replicated here are outside that precondition. Platform databases are refused with 409 recovery_erasure_fenced. Retention, writable access, current schema and ordinary write/storage quotas are rechecked. Preview also requires documents:read; apply also requires documents:write. At most two recovery operations per node and one per source; excess work answers 503 capacity with Retry-After. Scratch never becomes a customer database and is cleaned on completion/error/cancellation. Apply honors TB-Durability like document transactions; ambiguous outcomes must not be retried automatically. " + ProjectApiRoute.IdentityDescription;
+    public const string Description = "Selects retained historical live records, previews their actual historical/current contents, then explicitly restores only approved records into the original database. selections contains 1 to 16 distinct existing collection names; omitted ids selects the whole historical collection, explicit ids selects 1 to 100 records. At most 100 records and 1 MiB combined historical/current JSON per preview; split larger selections into explicit id batches. Collections must already exist: explicitly recreate a dropped collection before previewing. Historical schema, ACLs, indexes and TTL settings are never restored. Approval expires after 10 minutes and is bound to the acting user, source and issuing process; pin the same server for apply or preview again. recover accepts only approval and a nonempty subset of its record keys. Every approved current version (including tombstones and never-written state) must still match the current local state, like If-Match; otherwise 412 and no writes. Platform databases are refused with 409 recovery_erasure_fenced. Retention, writable access, current schema and ordinary write/storage quotas are rechecked. Preview also requires documents:read; apply also requires documents:write. At most two recovery operations per node and one per source; excess work answers 503 capacity with Retry-After. Scratch never becomes a customer database and is cleaned on completion/error/cancellation. Apply commits locally; ambiguous outcomes must not be retried automatically. " + ProjectApiRoute.IdentityDescription;
 
     public static void Configure(EndpointDefinition endpoint, string documentScope)
     {
@@ -225,10 +222,9 @@ internal sealed class SelectiveRecovery(IManagementService management, IPointInT
         {
             return Invalid("records must be a nonempty distinct subset of the preview");
         }
-        var durability = DocumentRoute.CheckDurability(context);
-        if (durability is not bool waitForRemote)
+        if (DocumentRoute.CheckDurability(context) is Validation durabilityError)
         {
-            return durability switch { Validation error => ErrorResponse.From(error), bool => throw new System.Diagnostics.UnreachableException() };
+            return ErrorResponse.From(durabilityError);
         }
         var found = await restore.ReadSnapshotAsync(database, approval.PointInTime, cancellationToken, approval.Destination).ConfigureAwait(false);
         if (found is not HistoricalSnapshot snapshot)
@@ -249,7 +245,6 @@ internal sealed class SelectiveRecovery(IManagementService management, IPointInT
             operations.Add(new PutOperation(key.Collection, key.Id, past.Json, approved.CurrentVersion is { } tag
                 ? new Precondition([tag], false, false) : new Precondition(null, false, false, IfNeverWritten: true)));
         }
-        // Backup reconstruction can be slow: re-resolve writable access immediately before normal write admission.
         var access = await ManagementRoute.CheckWritableDatabaseAsync(context, management, cancellationToken).ConfigureAwait(false);
         if (access is not TenantContext refreshed || refreshed.VersionScope() != database.VersionScope())
         {
@@ -263,7 +258,7 @@ internal sealed class SelectiveRecovery(IManagementService management, IPointInT
         {
             return ErrorResponse.From(new Conflict("preview expired; preview again", "recovery_preview_invalid"));
         }
-        return await documents.WriteConfirmedAsync(refreshed, operations, indexErrors: true, waitForRemote, cancellationToken).ConfigureAwait(false) switch
+        return await documents.WriteConfirmedAsync(refreshed, operations, indexErrors: true, cancellationToken).ConfigureAwait(false) switch
         {
             DocumentRejected rejected => ErrorResponse.From(rejected.Error, rejected.Op),
             WriteResult written => TypedResults.Ok(new TransactionBody(DocumentRoute.Decimal(written.Offset), written.Durability,

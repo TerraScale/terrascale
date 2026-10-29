@@ -149,7 +149,7 @@ public sealed class ContinuousBackupRetentionTests
         await Assert.That(record.GetProperty("lastDrill").GetProperty("passed").GetBoolean()).IsTrue();
     }
 
-    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
+    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
 
     // Snapshot keys are <ms>-<generation>-<position>, oldest first.
     private static List<(DateTimeOffset At, long Position)> Snapshots(FakeS3 s3, ManagedDatabaseRef database) =>

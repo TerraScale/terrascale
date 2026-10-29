@@ -25,8 +25,8 @@ SHA-256 of the key string they came from). ts-auth caps their expiry at the key'
 
 ## How TerraBase checks (`IKeyAuthority`, every region)
 
-- Every HTTP request with a key's token asks `IKeyAuthority`. That covers documents, queries, transactions, HTTP SQL,
-  libSQL/Hrana and change streams. The check runs in the project-check middleware, before scope authorization.
+- Every HTTP request with a key's token asks `IKeyAuthority`. That covers documents, queries, transactions, HTTP SQL
+  and change streams. The check runs in the project-check middleware, before scope authorization.
 - On Postgres, every dashboard key is exchanged at ts-auth's token endpoint. It is checked at startup and again before every
   statement, including the rows a Describe already read, which are sent only if the key still acts at Execute.
 - One answer per (key, key string, project) per node. A **yes** holds for 2 seconds from when the question was *sent*,
@@ -37,16 +37,15 @@ SHA-256 of the key string they came from). ts-auth caps their expiry at the key'
   then answers `503 auth_unavailable` with `Retry-After: 1`, and Postgres answers FATAL `57P03 auth_unavailable`.
 - No events are pushed, so no new replication or catalog path is added. The 2-second check already meets the bound in
   every region. A push channel would only shorten a window that is already short. CatalogGate's anchored revocations
-  of TerraBase's own `tb_` keys (the wire protocol) are unchanged.
+  of TerraBase's own `tb_` keys are unchanged.
 
 ## Open connections and long work
 
 | Transport | New requests / statements | Already running |
 |---|---|---|
-| HTTP (documents, SQL, libSQL) | `401 key_revoked` / `401 key_expired` (with `WWW-Authenticate: Bearer error="invalid_token"`) | the request is cut off within 2.5 s, including slow request bodies. Before its response starts it is answered like a new request: the `401` above, or `503 auth_unavailable` with `Retry-After: 1` when the key could not be verified in time. A response already under way is aborted |
+| HTTP (documents, SQL) | `401 key_revoked` / `401 key_expired` (with `WWW-Authenticate: Bearer error="invalid_token"`) | the request is cut off within 2.5 s, including slow request bodies. Before its response starts it is answered like a new request: the `401` above, or `503 auth_unavailable` with `Retry-After: 1` when the key could not be verified in time. A response already under way is aborted |
 | Change streams (SSE) | refused as above | the connection is aborted within 2.5 s |
 | Postgres | FATAL `28000 key_revoked: ...` / `key_expired: ...`, then the connection closes | the session is watched for its whole life, idle or busy. Its TCP connection is aborted within 2.5 s and unflushed rows are dropped. An open transaction rolls back |
-| Wire protocol | dashboard keys are not accepted. `tb_` keys keep CatalogGate revocation | unchanged |
 
 A request or session is watched by asking `IKeyAuthority` every 250 ms while it runs. These checks hit the same
 per-node answers, so a busy key still costs about one ts-auth call per node per second. Running work never outlives the

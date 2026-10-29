@@ -17,16 +17,13 @@ using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Pressure;
 using TerraBase.Features.Regions;
-using TerraBase.Features.Replication;
 using TerraBase.Features.Sql;
 using TerraBase.Features.UserAuth;
 using TerraBase.Features.Functions;
-using TerraBase.Features.Webhooks;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Hosting;
 
-/// <summary>Source-generated JSON metadata for every request and response type (fast startup, no reflection-based serialization).</summary>
 [JsonSerializable(typeof(DeployFunctionRequest))]
 [JsonSerializable(typeof(FunctionBody))]
 [JsonSerializable(typeof(FunctionBody[]))]
@@ -42,23 +39,10 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(TerraBase.Features.FileStorage.FileBucketPage))]
 [JsonSerializable(typeof(TerraBase.Features.FileStorage.FileObjectPage))]
 [JsonSerializable(typeof(FunctionSchedule))]
-[JsonSerializable(typeof(CreateWebhookRequest))]
-[JsonSerializable(typeof(CreatedWebhookBody))]
-[JsonSerializable(typeof(WebhookBody[]))]
-[JsonSerializable(typeof(WebhookDeliveryBody[]))]
-[JsonSerializable(typeof(WebhookPayload))]
-[JsonSerializable(typeof(WebhookRegistration))]
-[JsonSerializable(typeof(WebhookState))]
-[JsonSerializable(typeof(WebhookDispatch))]
-[JsonSerializable(typeof(WebhookDeliveryRecord))]
 [JsonSerializable(typeof(CollectionSchemaPreviewBody))]
 [JsonSerializable(typeof(DatabaseRequestLogs))]
 [JsonSerializable(typeof(RequestLogRecord))]
 [JsonSerializable(typeof(Ulid))]
-[JsonSerializable(typeof(ReplicaRecoveryRequest))]
-[JsonSerializable(typeof(Features.Replication.CatalogGateStatus))]
-[JsonSerializable(typeof(TopologyManifest))]
-[JsonSerializable(typeof(TopologyStatus))]
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, MaxDepth = RequestJson.StoredDocumentMaxDepth + 8)]
 [JsonSerializable(typeof(CreateImportRequest))]
 [JsonSerializable(typeof(UpdateImportRequest))]
@@ -157,9 +141,6 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(Organization))]
 [JsonSerializable(typeof(PlanRequest))]
 [JsonSerializable(typeof(PressureBody))]
-[JsonSerializable(typeof(ReplicationStatus))]
-[JsonSerializable(typeof(ReplicationPeerStatus))]
-[JsonSerializable(typeof(ReplicationDatabaseStatus))]
 [JsonSerializable(typeof(Project))]
 [JsonSerializable(typeof(QuotaRegion))]
 [JsonSerializable(typeof(ProjectBackupDestination))]
@@ -175,14 +156,12 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(ProjectUsage))]
 [JsonSerializable(typeof(AllowanceUsagePage))]
 [JsonSerializable(typeof(ProjectAnalytics))]
-[JsonSerializable(typeof(ProjectReplication))]
 [JsonSerializable(typeof(QueryFieldUsage))]
 [JsonSerializable(typeof(QueryShapeListBody))]
 [JsonSerializable(typeof(QueryShapeRecord))]
 [JsonSerializable(typeof(QueryShapeStats))]
 [JsonSerializable(typeof(RestoreWindow))]
 [JsonSerializable(typeof(RegionsBody))]
-[JsonSerializable(typeof(ReplicationHealthBody))]
 [JsonSerializable(typeof(SavedQuery))]
 [JsonSerializable(typeof(SavedQueryEntry))]
 [JsonSerializable(typeof(SavedQueryRequest))]

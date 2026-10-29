@@ -12,7 +12,6 @@ namespace TerraBase.Features.Management.Logs;
 /// <summary>Recent redacted request observations for an authorized database.</summary>
 internal sealed class ListDatabaseLogsEndpoint(IManagementService management, IRequestLogs logs) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(ProjectApiRoute.Database + "/logs");
@@ -20,7 +19,7 @@ internal sealed class ListDatabaseLogsEndpoint(IManagementService management, IR
         Summary("Lists recent database requests and slow query requests");
         Description("Newest 100 recorded requests within 24 hours. status, when supplied, is 2xx, 3xx, 4xx or 5xx. " +
             "Route templates contain no document keys, query text or credentials. Operations count committed document operations. " +
-            "Recording is best effort; pending observations can be lost on crash and remote observations arrive through catalog replication. " +
+            "Recording is best effort; pending observations can be lost on crash. " +
             "RecordingLimited reports capacity omissions on this server since startup; truncated reports a full recent window. " +
             "Expired records are excluded from reads and physically pruned on that database's next log flush. " +
             "Query requests with latencyMs >= 100 are slow queries. " + CursorDescription + " " + ProjectApiRoute.IdentityDescription);
@@ -45,7 +44,6 @@ internal sealed class ListDatabaseLogsEndpoint(IManagementService management, IR
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         HttpContext.Response.Headers.CacheControl = "no-store";
@@ -77,7 +75,6 @@ internal sealed class ListDatabaseLogsEndpoint(IManagementService management, IR
         Schema = new OpenApiSchema { Type = JsonSchemaType.String, Pattern = "^[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
     };
 
-    /// <summary>Reads the optional cursor; false when it is repeated or not a canonical ULID.</summary>
     internal static bool TryCursor(HttpContext context, out string? after)
     {
         var values = context.Request.Query["after"];

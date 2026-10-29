@@ -67,7 +67,7 @@ public sealed class TextSearchBackupTests
         await Assert.That(missing.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("not_found");
         time.Advance(TimeSpan.FromSeconds(1));
         await backup.RunOnceAsync(token);
-        var shipped = backup.Status.Files.Single(file => file.File == $"v1/{database.Organization}/{database.Project}/{database.Id}").LastShippedAt!.Value;
+        var shipped = backup.Status.Files.Single(file => file.File == $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local").LastShippedAt!.Value;
 
         using var copied = await api.Client.PostAsJsonAsync(ManagementApi.Uri($"{database.Path}/branches"), new { name = "main-copy" });
         await Assert.That(copied.StatusCode).IsEqualTo(HttpStatusCode.Created);

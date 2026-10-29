@@ -1,8 +1,0 @@
-Six preflight results observed from ts-sjc-1 at 2026-10-26T15:57Z via temporary loopback SSH reverse forwards to delta and onward to the respective public regional IP.
-Certificate and hostname verification: system default context; pg.terrascale.tech for Postgres (after SSLRequest), api.terrascale.tech for Wire.
-gru postgres TLSv1.3 verified
-gru wire TLSv1.3 verified
-sjc postgres TLSv1.3 verified
-sjc wire TLSv1.3 verified
-fra postgres TLSv1.3 verified
-fra wire TLSv1.3 verified

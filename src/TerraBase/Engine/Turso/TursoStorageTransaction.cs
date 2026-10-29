@@ -12,17 +12,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Engine.Turso;
 
-/// <summary>
-/// One transaction; every Turso call runs on its runner: the <see cref="TursoIoPool"/> for reads, the database's
-/// <see cref="TursoWriteLane"/> for writes.
-/// </summary>
-/// <param name="store">The database this transaction belongs to.</param>
-/// <param name="session">The rented session; returned to <paramref name="store"/> on dispose.</param>
-/// <param name="transaction">The Turso transaction.</param>
-/// <param name="runner">Runs every Turso call of this transaction.</param>
-/// <param name="write">Whether mutations are allowed.</param>
-/// <param name="committed">Runs after a commit that changed the database.</param>
-/// <param name="ownsAdmission">Whether disposal releases this transaction's I/O admission.</param>
 internal sealed partial class TursoStorageTransaction(
     TursoDatabaseStore store, TursoSession session, SqliteTransaction transaction, TursoRunner runner, bool write, Action? committed,
     bool ownsAdmission)
@@ -30,7 +19,6 @@ internal sealed partial class TursoStorageTransaction(
 {
     internal TursoDatabaseStore.CopyOperation? Operation { get; init; }
 
-    // Bounds one commit's written bytes, every repeated write and its framing included.
     private const long MaxWrittenBytes = 7 * 1024 * 1024;
     private const int MaxDocumentBytes = DocumentJson.MaxBytes;
     private const int MaxWrites = 1024;
@@ -38,8 +26,7 @@ internal sealed partial class TursoStorageTransaction(
     private const int OpFramingBytes = 128;
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
-    // Serializes calls and disposal, so two workers never use the same connection concurrently.
-    private QosContext.ResultMemory? _stateReadMemory =
+    private readonly QosContext.ResultMemory? _stateReadMemory =
         store.SchemaMemory is { } memory ? new QosContext.ResultMemory(memory) : null;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -53,36 +40,23 @@ internal sealed partial class TursoStorageTransaction(
 
     private long _changeBytes;
 
-    // A refused or failed write makes this transaction able only to roll back.
     private bool _faulted;
 
-    // Set once COMMIT returned: a later failure resetting the pooled session no longer makes the write look failed.
     private bool _committed;
-    private bool _collected;
     private int _writes;
     private long _writtenBytes;
 
-    // This transaction's local commit offset, separate from document versions.
     private long? _offset;
 
-    // Set by an index build, whose ANALYZE only connections opened after its commit plan with.
     private bool _statisticsChanged;
 
-    // Group commit (TursoDatabaseStore.WriteAsync): each queued write runs inside a savepoint, and this snapshot of the
-    // in-memory capture and limits rolls back with it.
     private (long ChangeBytes, int Captured, int Writes, long WrittenBytes, long? Offset, bool CollectionsChanged)?
         _savepoint;
 
-    /// <summary>Whether a per-commit limit refused a write since the last savepoint: alone in a transaction, it could fit.</summary>
     internal bool LimitsReached { get; private set; }
 
-    /// <summary>The offset this transaction committed at, set as soon as its Turso commit succeeded; null before.</summary>
     internal CommitResult? Committed { get; private set; }
 
-    /// <summary>
-    /// Whether this transaction created or dropped a collection, state readers see beside its documents: the store forgets
-    /// its collection names on commit.
-    /// </summary>
     internal bool ChangedReaderState { get; private set; }
 
     public Guid Scope { get; } = store.Scope;
@@ -118,12 +92,10 @@ internal sealed partial class TursoStorageTransaction(
                 return (long)Command(TursoStatements.StoredDocumentBytes).ExecuteScalar()!;
             }
 
-            // Hidden uniqueness losers are kept aside, out of their collections' tables.
             return (long)Command(TursoStatements.ClientConflictBytes).ExecuteScalar()!
                 + (long)Command(TursoStatements.ClientStoredBytes).ExecuteScalar()!;
         }, cancellationToken);
 
-    // Worker-only: query readers fetch bodies after their id/key page has admitted the row.
     private StoredDocument? ReadDocument(string collection, string id, string path = "point")
     {
         if (IsClient)
@@ -149,7 +121,6 @@ internal sealed partial class TursoStorageTransaction(
         return await RunAsync(() => ReadVersion(collection, id), cancellationToken).ConfigureAwait(false);
     }
 
-    // Worker-only.
     private DocumentVersion? ReadVersion(string collection, string id)
     {
         if (!HasTable(collection))
@@ -169,10 +140,6 @@ internal sealed partial class TursoStorageTransaction(
         return new DocumentVersion(Version(collection, id, reader, 0), reader.GetBoolean(1));
     }
 
-    // Worker-only; runs inside a mutation, so a rejected document also makes the transaction roll back only. The private
-    // system catalog also stores scalars (name indexes, sequences): a document state holds objects only, so a system
-    // scalar is stored as the object {"\u0000": value} and read back as the value (SystemValue). A system object that
-    // holds that field itself is refused. An admitted client document (PutAdmittedAsync) was read by its caller already.
     private ReadOnlyMemory<byte> Admit(ReadOnlyMemory<byte> json, bool admitted)
     {
         if (admitted && !store.IsSystem)
@@ -195,7 +162,6 @@ internal sealed partial class TursoStorageTransaction(
     private const string ScalarField = "\"\\u0000\":";
     private static readonly byte[] ScalarPrefix = Encoding.UTF8.GetBytes("{" + ScalarField);
 
-    // A stored system document, as it was written: a scalar comes back without its wrapper (see Admit).
     private static byte[] SystemValue(byte[] body) =>
         body.AsSpan().StartsWith(ScalarPrefix) ? body[ScalarPrefix.Length..^1] : body;
 
@@ -214,7 +180,6 @@ internal sealed partial class TursoStorageTransaction(
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
-    // One call for the whole run: each put otherwise costs two hops through the write lane and back.
     public async ValueTask PutBatchAsync(
         IReadOnlyList<(string Collection, string Id, ReadOnlyMemory<byte> Json)> puts, Memory<(long Version, DocumentVersion? Previous)> results,
         CancellationToken cancellationToken)
@@ -243,7 +208,6 @@ internal sealed partial class TursoStorageTransaction(
         return await RunAsync(() => Put(collection, id, json, cancellationToken, operations).Version, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
-    // Worker-only, inside a mutation. A PATCH writes `patch` to a client document's state; `json` is what it leaves.
     private (long Version, DocumentState State) Put(
         string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken, IReadOnlyList<FieldOperation>? patch = null,
         bool admitted = false)
@@ -258,7 +222,6 @@ internal sealed partial class TursoStorageTransaction(
             ReserveJson(bytes);
         }
 
-        // Schema admission and the drop barrier share the same collection state and JSON lookup.
         var metadata = IsClient && exists ? CollectionState(collection) : DocumentState.Bottom;
         if (exists && metadataBytes is not null && metadata.Equals(DocumentState.Bottom))
         {
@@ -273,7 +236,7 @@ internal sealed partial class TursoStorageTransaction(
         Reserve(id, json.Length);
         if (!exists)
         {
-            // An implicit collection carries the same captured identity metadata as an explicit creation.
+
             CreateCollection(new CollectionInfo(collection, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()), cancellationToken);
             if (IsClient)
             {
@@ -293,7 +256,6 @@ internal sealed partial class TursoStorageTransaction(
             next = state.Put(at, parsed.RootElement);
         }
 
-        // Reads and uniqueness see the materialized document: canonical JSON, fields in name order.
         var materialized = Materialize(next);
         var affected = ReplaceUniqueKeys(collection, id, materialized, cancellationToken);
         ClearUniqueConflict(collection, id);
@@ -304,7 +266,6 @@ internal sealed partial class TursoStorageTransaction(
         return (version, next);
     }
 
-    // A register removed without a trace would come back with the next late delta: every deletion is a tombstone.
     public async ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken) =>
         await TombstoneAsync(collection, id, cancellationToken).ConfigureAwait(false) is not null;
 
@@ -313,14 +274,14 @@ internal sealed partial class TursoStorageTransaction(
         return await RunAsync<long?>(() =>
         {
             ThrowIfReadOnly();
-            // Check liveness from metadata without reading a body, within this serialized call.
+
             if (ReadVersion(collection, id) is not { Deleted: false })
             {
                 return null;
             }
 
             Reserve(id, 0);
-            // ponytail: tombstones stay until tombstone GC on applied vectors (TS-647 step 7).
+
             var affected = ReplaceUniqueKeys(collection, id, null, cancellationToken);
             ClearUniqueConflict(collection, id);
             cancellationToken.ThrowIfCancellationRequested();
@@ -333,19 +294,17 @@ internal sealed partial class TursoStorageTransaction(
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
-    // Client commits keep per-commit limits and metadata documents; _system is never a client database.
     private DocumentState CollectionState(string name) =>
         _pending.TryGetValue((DocumentDelta.Collections, name), out var pending) ? pending.State : ReadState(DocumentDelta.Collections, name, localWrite: true);
 
     private ClearEntry? CollectionDrop(string name) => CollectionState(name).Clear is { Deleted: true } drop ? drop : null;
 
-    // Local writes keep the collection clear and mint above it even when observing a remote clock was capped.
     private (DocumentState State, EntryVersion At) BeginDocument(string collection, string id, ClearEntry? collectionDrop)
     {
         var (state, at) = Begin(collection, id);
         if (collectionDrop is { } drop)
         {
-            state = state.Join(new DocumentState(drop, DocumentState.Bottom.Fields));
+            state = state.ClearThrough(drop);
             if (at.Stamp.Value <= drop.Version.Stamp.Value)
             {
                 at = at with { Stamp = Member.Clock.Tick(drop.Version.Stamp) };
@@ -365,7 +324,6 @@ internal sealed partial class TursoStorageTransaction(
         return offset;
     }
 
-    // Admits one write against the per-commit limits of a client database.
     private void Reserve(string id, int documentBytes)
     {
         if (!IsClient)
@@ -373,7 +331,6 @@ internal sealed partial class TursoStorageTransaction(
             return;
         }
 
-        // An empty id has no successor to resume after.
         if (id.Length == 0)
         {
             throw new InvalidDataException("a document id is empty");
@@ -397,7 +354,7 @@ internal sealed partial class TursoStorageTransaction(
     {
         return await RunAsync(() => WithQueryBudget(() =>
         {
-            // A missing cursor is not "", so the first page also holds an empty id.
+
             if (!HasTable(collection))
             {
                 return new DocumentPage([], HasMore: false);
@@ -411,7 +368,6 @@ internal sealed partial class TursoStorageTransaction(
                 command.Parameters.AddWithValue("$after", afterId);
             }
 
-            // One extra row tells whether another page exists without reading its body.
             command.Parameters.AddWithValue("$limit", limit + 1);
             var documents = new List<StoredDocument>();
             long bytes = 0;
@@ -449,7 +405,6 @@ internal sealed partial class TursoStorageTransaction(
             cancellationToken, observation), cancellationToken).ConfigureAwait(false);
     }
 
-    // Runs only inside a pool item: the native progress callback and its removal own this connection.
     private T WithQueryBudget<T>(Func<T> execute, CancellationToken cancellationToken, QueryObservation? observation = null)
     {
         session.ObserveQueries(observation);
@@ -478,7 +433,6 @@ internal sealed partial class TursoStorageTransaction(
 
     private QueryBudget? _queryBudget;
 
-    // The handler and its removal run only on workers while this transaction owns the connection.
     private QueryBudget StartQueryBudget(CancellationToken cancellationToken)
     {
         var budget = new QueryBudget(store.Time, store.QueryBudget,
@@ -487,8 +441,7 @@ internal sealed partial class TursoStorageTransaction(
         _queryBudget = budget;
         session.Connection.SetFtsProgressHandler((work, bytes) =>
             cancellationToken.IsCancellationRequested || budget.Native(work, bytes));
-        // SQL row functions and native FTS share this request's work and deadline.
-        // The clock is read every 32nd row, about as often as SQLite's handler ran (every 1000 instructions).
+
         var rows = 0;
         session.StopWhen(() => cancellationToken.IsCancellationRequested || (++rows % 32 == 0 && budget.Exceeded));
         session.Charge(size => budget.Limited && budget.Scan(size), () => budget.Limited && budget.Row());
@@ -510,15 +463,12 @@ internal sealed partial class TursoStorageTransaction(
         return new QueryCapacityException("query execution budget exceeded", error);
     }
 
-    // A stream accumulates Turso execution time, excluding worker queueing and consumer time between rows.
     private sealed class QueryBudget(TimeProvider time, TimeSpan defaultDeadline, QosPolicy? policy, QosContext.ResultMemory? memory) : IDisposable
     {
         private bool _running = true;
         private long _started = time.GetTimestamp();
         private TimeSpan _paused;
 
-        // Turso counts no VM instructions, so a candidate row charges about what SQLite ran for it: 8 for the row
-        // and 4 per JSON read. This keeps the plans' former instruction limits (1M Hobby, 5M Pro) at their scale.
         private const long RowWork = 8;
         private const long ReadWork = 4;
 
@@ -531,20 +481,16 @@ internal sealed partial class TursoStorageTransaction(
 
         private int _jsonReads;
 
-        /// <summary>Charges each later candidate row the JSON reads (filter and sort keys) of the statement about to run.</summary>
         public void Charge(string sql) => _jsonReads = JsonRead().Count(sql);
 
-        /// <summary>Engine work units charged so far.</summary>
         public long Work { get; private set; }
 
         public bool Limited => _workLimit != long.MaxValue
             || policy is not null && (policy.ScanRows != long.MaxValue || policy.ScanBytes != long.MaxValue);
 
-        // Execution time, engine work and scanned candidates bound a statement.
         public bool Exceeded => ScanExceeded
             || (policy?.QueryTimeout ?? defaultDeadline) is var deadline && deadline != Timeout.InfiniteTimeSpan && Spent >= deadline;
 
-        /// <summary>Charges one row combination of a relational read; true once the work limit is spent.</summary>
         public bool Row()
         {
             Work += RowWork;
@@ -566,7 +512,6 @@ internal sealed partial class TursoStorageTransaction(
             return false;
         }
 
-        // Native residency, temporary chunks and scorer buffers are charged before allocation, including cache hits.
         public bool Native(ulong work, ulong bytes)
         {
             var byteLimit = Math.Min(policy?.ScanBytes ?? 128 * 1024 * 1024, 128 * 1024 * 1024);
@@ -621,12 +566,11 @@ internal sealed partial class TursoStorageTransaction(
         }
     }
 
-    // Bound both candidate count and JSON bytes before Turso retains bodies in its temporary sorter.
     private void CheckSortBudget(string collection, long maxBytes, CancellationToken cancellationToken,
         QueryObservation? observation = null, string? candidates = null, DocumentFilter? filter = null)
     {
         using var command = Uncached(collection);
-        // Owner admission covers the entire readable set, before submitted predicates/candidates.
+
         command.CommandText = new TursoQueryCompiler(command.Parameters, Rows(collection),
             candidates: filter is AuthorizedFilter ? null : candidates)
             .CompileSortAdmission(filter, observation is not null);
@@ -657,7 +601,6 @@ internal sealed partial class TursoStorageTransaction(
         return query.Explain ? page with { Plan = ExplainQuery(query, searches, observation, cancellationToken) } : page;
     }
 
-    // The plan of the statement the query just ran, with what running it cost: EXPLAIN QUERY PLAN prepares, never runs.
     private DocumentQueryPlan ExplainQuery(DocumentQuery query, SearchResults searches, QueryObservation? observation, CancellationToken cancellationToken)
     {
         using var command = Uncached(query.Collection);
@@ -693,9 +636,8 @@ internal sealed partial class TursoStorageTransaction(
             CheckSortBudget(query.Collection, query.MaxBytes, cancellationToken, observation, searches.Candidates, query.Filter);
         }
 
-        // Compiled per request so every new filter shape does not grow the session's command cache.
         using var command = Uncached(query.Collection);
-        // A vector index narrows a near query to the candidates it reranks exactly.
+
         var candidates = searches.Candidates ?? VectorCandidates(query, cancellationToken);
         command.CommandText = new TursoQueryCompiler(command.Parameters, Rows(query.Collection), searches.Ordinals, candidates).Compile(query, observation is not null);
         _queryBudget!.Charge(command.CommandText);
@@ -762,7 +704,6 @@ internal sealed partial class TursoStorageTransaction(
                 break;
             }
 
-            // Documents without a comparable vector sort last, at +Infinity.
             if (query.Near is not null && double.IsPositiveInfinity(reader.GetDouble(3)))
             {
                 break;
@@ -771,17 +712,17 @@ internal sealed partial class TursoStorageTransaction(
             var size = reader.GetInt64(2);
             if (rows.Count == query.Limit || (rows.Count > 0 && bytes + size > query.MaxBytes))
             {
-                // A near query answers its nearest documents in one page.
+
                 return new QueryPage(rows, HasMore: query.Near is null);
             }
 
             bytes += size;
-            // ReadDocument admits the body's detached copies before the body and sort keys allocate.
+
             var document = ReadDocument(query.Collection, reader.GetString(0), "query")!;
             var keys = new object?[reader.FieldCount - 3];
             for (var i = 0; i < keys.Length; i++)
             {
-                // Read string key bytes with Turso's length, preserving NULs in continuation keys.
+
                 keys[i] = reader.IsDBNull(3 + i) ? null
                     : i % 2 == 1 && reader.GetInt64(2 + i) == 5
                         ? Encoding.UTF8.GetString(TursoSession.Bytes(reader, 3 + i))
@@ -799,7 +740,7 @@ internal sealed partial class TursoStorageTransaction(
     {
         return await RunAsync(() => WithQueryBudget(() =>
         {
-            // A client count examines the collection's state rows: this transaction's writes need theirs.
+
             FlushStates();
             using var searches = PrepareSearch(collection, filter, cancellationToken);
             using var command = Uncached(collection);
@@ -820,7 +761,7 @@ internal sealed partial class TursoStorageTransaction(
         Func<SqliteCommand> createCommand, SqlQuery query, QueryObservation? observation,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        // The stream owns the operation gate until its reader is closed, including an early consumer break.
+
         await EnterStreamAsync(cancellationToken).ConfigureAwait(false);
         SqliteCommand? command = null;
         SqliteDataReader? reader = null;
@@ -859,7 +800,7 @@ internal sealed partial class TursoStorageTransaction(
             var changes = reader!;
             while (true)
             {
-                // One row per worker call: neither a background producer nor an unbounded materialized stream.
+
                 var row = await runner.RunAsync<StoredDocument?>(() =>
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -904,12 +845,12 @@ internal sealed partial class TursoStorageTransaction(
         {
             try
             {
-                // Cancellation must not abandon native cleanup or release the gate before it finishes.
+
                 await runner.RunAsync(() =>
                 {
                     try
                     {
-                        // Reset before finalizing: native finalization drains rows and invokes the cancelled scan guard.
+
                         reader?.Abort();
                     }
                     finally
@@ -950,9 +891,6 @@ internal sealed partial class TursoStorageTransaction(
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
-    // Client databases record their collections and indexes as documents of reserved collections, so creations and drops
-    // replicate with their transaction and join like documents (TS-574). A replicated transaction's own metadata stays
-    // local: the applied registers carry what it needs.
     private void WriteMetadata(string collection, string name, string? body)
     {
         if (!IsClient)
@@ -964,8 +902,7 @@ internal sealed partial class TursoStorageTransaction(
         var (state, at) = Begin(collection, name);
         if (collection == DocumentDelta.Collections && _pending.ContainsKey((collection, name)))
         {
-            // A drop must follow this transaction's row writes, and recreation must follow its drop. Keep that
-            // drop in the final delta too: Changed selects captured entries without changing their merge version.
+
             var previous = at.Stamp;
             at = at with { Stamp = Member.Clock.Tick(previous) };
             if (state.Clear is { } clear && clear.Changed == previous)
@@ -995,7 +932,7 @@ internal sealed partial class TursoStorageTransaction(
         DocumentState next;
         if (collection == DocumentDelta.Collections)
         {
-            // Collection clears only record drops; a concurrent creation must not replace the deletion barrier.
+
             next = parsed.RootElement.EnumerateObject().Aggregate(state, (current, property) => current.Set(at, property.Name, property.Value));
             foreach (var field in state.Fields.Keys.Where(field => !parsed.RootElement.TryGetProperty(field, out _)))
             {
@@ -1038,7 +975,7 @@ internal sealed partial class TursoStorageTransaction(
         }
 
         ChangedReaderState = true;
-        // Local metadata allocates immediately, so a failed allocation faults this mutation too.
+
         Offset();
 
         WriteMetadata(DocumentDelta.Collections, collection.Name, string.Create(CultureInfo.InvariantCulture, $$"""{"created_at":{{collection.CreatedAt}},"entity_id":"{{collection.Id}}"}"""));
@@ -1148,7 +1085,7 @@ internal sealed partial class TursoStorageTransaction(
             }
 
             Command(TursoStatements.DropDocuments, name).ExecuteNonQuery();
-            RemoveMerkleStates(name);
+
             Command(TursoStatements.DropStates, name).ExecuteNonQuery();
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -1175,23 +1112,20 @@ internal sealed partial class TursoStorageTransaction(
         }
     }
 
-    // A collection clear dominates the same entries as a document clear; last-applied row stamps are not lattice versions.
     private void DropCoveredCollection(string name, ClearEntry drop, CancellationToken cancellationToken)
     {
         var clear = new DocumentState(drop, DocumentState.Bottom.Fields);
         var retained = false;
         var pendingIds = _pending.Keys.Where(key => key.Collection == name).Select(key => key.Id).ToArray();
-        // Read once: the loop changes neither the definition nor the drop it is weighed against, and each read is admitted
-        // for the whole transaction.
+
         IReadOnlyList<UniqueConstraint> constraints = IsClient ? ReadUniqueConstraints(name) : [];
         foreach (var id in CollectionDropIds(name, cancellationToken).Where(id => !_pending.ContainsKey((name, id))).Concat(pendingIds))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            // Each document is written before the next is read, so its admission ends with its iteration: an unbounded
-            // collection must not accumulate leases for the whole drop.
+
             using var admission = store.SchemaMemory is { } memory ? new QosContext.ResultMemory(memory) : null;
             var state = _pending.TryGetValue((name, id), out var pending) ? pending.State : ReadState(name, id, admission);
-            var next = state.Join(clear);
+            var next = state.ClearThrough(drop);
             if (next.Equals(state) && !next.Equals(clear))
             {
                 retained = true;
@@ -1206,7 +1140,7 @@ internal sealed partial class TursoStorageTransaction(
             _pending.Remove((name, id));
             if (next.Equals(clear))
             {
-                RemoveMerkleState(name, id);
+
                 var delete = Command("DELETE FROM _tb_state WHERE collection = $collection AND id = $id;", name);
                 delete.Parameters.AddWithValue("$id", id);
                 delete.ExecuteNonQuery();
@@ -1214,7 +1148,7 @@ internal sealed partial class TursoStorageTransaction(
             else
             {
                 retained = true;
-                // Derived projection, not a new local operation: origin 0 prevents the CDC tailer from echoing it.
+
                 WriteState(name, id, next, new EntryVersion(drop.Version.Stamp, default));
             }
 
@@ -1297,7 +1231,6 @@ internal sealed partial class TursoStorageTransaction(
         update.ExecuteNonQuery();
     }
 
-    // Worker-only: drops a client collection's table, documents and states. Dropping the table drops its indexes too.
     private void DropTable(string name)
     {
         using (var table = PlainCommand($"DROP TABLE {Table(name)};"))
@@ -1305,7 +1238,6 @@ internal sealed partial class TursoStorageTransaction(
             table.ExecuteNonQuery();
         }
 
-        RemoveMerkleStates(name);
         Command(TursoStatements.DropStates, name).ExecuteNonQuery();
         Command(TursoStatements.DropCollectionStats, name).ExecuteNonQuery();
         foreach (var key in _pending.Keys.Where(key => key.Collection == name).ToList())
@@ -1342,10 +1274,6 @@ internal sealed partial class TursoStorageTransaction(
                 committing = true;
                 transaction.Commit();
                 _committed = true;
-                if (_collected)
-                {
-                    store.Collected();
-                }
 
                 if (_rewriteUncaptured)
                 {
@@ -1366,11 +1294,10 @@ internal sealed partial class TursoStorageTransaction(
                     {
                         store.UncapturedCommit(_uncapturedBy);
                     }
-                    // An error at or after COMMIT, a failed sync included: whether the file holds the commit is unknown.
+
                     NoteCopyFault("an error at or after COMMIT");
                 }
 
-                // The driver can throw after the commit landed. Both only drop caches: safe whether or not it did.
                 if (committing && ChangedReaderState)
                 {
                     store.ForgetCollections();
@@ -1384,8 +1311,6 @@ internal sealed partial class TursoStorageTransaction(
                 throw;
             }
 
-            // On the write thread right after the commit, so readers see stale collection names only
-            // briefly. Every step runs, each even when one before it failed.
             CommitResult result;
             try
             {
@@ -1393,14 +1318,13 @@ internal sealed partial class TursoStorageTransaction(
             }
             catch
             {
-                // The commit landed but its final CDC row could not be read: the log of this file is not what it wrote.
+
                 NoteCopyFault("the commit marker could not be read after COMMIT");
                 if (_offset is not null || _feedChanged)
                 {
                     Follow("the commit notification", committed);
                 }
 
-                NotifyReplicationCommitted();
                 throw;
             }
 
@@ -1413,28 +1337,23 @@ internal sealed partial class TursoStorageTransaction(
 
             if (_statisticsChanged)
             {
-                // Only query plans depend on it: a session opened before the ANALYZE plans without the new statistics.
+
                 Follow("moving the statistics generation", store.StatisticsChanged);
             }
 
             return result;
         }, cancellationToken).ConfigureAwait(false);
 
-        // A failed wake-up only delays its waiter, which also wakes on its own timeout.
         if (_offset is not null || _feedChanged)
         {
             Follow("the commit notification", committed);
         }
 
-        // Placement readers must observe the advanced catalog cache generation when this wake arrives.
-        NotifyReplicationCommitted();
         if (_followFailure is { } failure)
         {
             ExceptionDispatchInfo.Throw(failure);
         }
 
-        // Damage may be observed by a concurrent reader or an after-commit hook while native COMMIT runs.
-        // The durable intent preserves the commit; a known fault must not return a successful acknowledgement.
         RefuseKnownFault();
         return result;
     }
@@ -1443,21 +1362,19 @@ internal sealed partial class TursoStorageTransaction(
     {
         if (write && store.Ledger?.FailedClosed is { } failed)
         {
-            throw new ReplicaCopyFaultedException($"storage failed closed: {failed}");
+            throw new StorageCopyFaultedException($"storage failed closed: {failed}");
         }
 
         if (write && store.CopyFault is { } copyFault)
         {
-            throw new ReplicaCopyFaultedException($"this copy is faulted: {copyFault}");
+            throw new StorageCopyFaultedException($"this copy is faulted: {copyFault}");
         }
     }
 
     private const string CommitMarkerSql = "SELECT change_id, change_type FROM turso_cdc ORDER BY change_id DESC LIMIT 1;";
 
-    // Set once this transaction ran a statement through PlainCommand, which is where every DDL runs.
     private bool _ranPlain;
 
-    // Worker-only, after COMMIT and before releasing the exclusive writer; never read a later connection's head.
     private CommitMarker ReadCommitMarker()
     {
         if (store.Tenant is { } tenant)
@@ -1465,7 +1382,6 @@ internal sealed partial class TursoStorageTransaction(
             store.Checkpoint?.Invoke("writer.marker", tenant);
         }
 
-        // Kept unless this transaction ran DDL: preparing this statement cost more than the rest of a small write's statements.
         var kept = _ranPlain ? null : session.AfterCommit(CommitMarkerSql, transaction);
         using var fresh = kept is null ? session.Connection.CreateCommand() : null;
         fresh?.CommandText = CommitMarkerSql;
@@ -1479,19 +1395,8 @@ internal sealed partial class TursoStorageTransaction(
         return new CommitMarker(store.Incarnation, reader.GetInt64(0));
     }
 
-    private void NotifyReplicationCommitted()
-    {
-        // Remote catalog joins can change placement; ordinary joined states are never shipped again.
-        if (_offset is not null && (store.IsSystem || (_captured > 0 && !_captureSuspended)))
-        {
-            Follow("the replication notification", store.ReplicationCommitted);
-        }
-    }
-
-    // The first step after the commit that failed: CommitAsync throws it once every step ran.
     private Exception? _followFailure;
 
-    // Runs one step after the commit landed; its failure is logged and kept instead of skipping the steps after it.
     private void Follow(string step, Action? action)
     {
         try
@@ -1505,15 +1410,11 @@ internal sealed partial class TursoStorageTransaction(
         }
     }
 
-    // Savepoints are lazy: SAVEPOINT runs with the write's first statement and RELEASE with the next write's, so a
-    // batched write pays no extra thread hop for them.
     private bool _savepointPending;
     private bool _releasePending;
 
-    /// <summary>Whether the current request added client state rows since its savepoint, after flushing them.</summary>
     internal bool SavepointHasChanges => _savepoint is { } saved && _captured > saved.Captured;
 
-    /// <summary>Starts the savepoint one queued write of a group commit runs in. Runs no statement yet.</summary>
     internal void Savepoint()
     {
         ThrowIfReadOnly();
@@ -1522,13 +1423,12 @@ internal sealed partial class TursoStorageTransaction(
         LimitsReached = false;
     }
 
-    /// <summary>Keeps what the write since <see cref="Savepoint"/> did. Runs no statement yet.</summary>
     internal void ReleaseSavepoint()
     {
         _ = _savepoint ?? throw new InvalidOperationException("no savepoint is open");
         if (_savepointPending)
         {
-            // The write ran no statement: there is nothing to release.
+
             _savepointPending = false;
         }
         else
@@ -1539,13 +1439,12 @@ internal sealed partial class TursoStorageTransaction(
         _savepoint = null;
     }
 
-    /// <summary>Undoes what the write since <see cref="Savepoint"/> did, including a failure that faulted the transaction.</summary>
     internal ValueTask RollbackToSavepointAsync()
     {
         var saved = _savepoint ?? throw new InvalidOperationException("no savepoint is open");
         if (_savepointPending)
         {
-            // The write ran no statement: only its in-memory state rolls back.
+
             _savepointPending = false;
             Restore(saved);
             return ValueTask.CompletedTask;
@@ -1563,7 +1462,7 @@ internal sealed partial class TursoStorageTransaction(
         (long ChangeBytes, int Captured, int Writes, long WrittenBytes, long? Offset, bool CollectionsChanged) saved)
     {
         _pending.Clear();
-        // A collection the rolled-back write created is gone again.
+
         _tables = null;
         (_changeBytes, _captured, _writes, _writtenBytes, _offset, ChangedReaderState) =
             (saved.ChangeBytes, saved.Captured, saved.Writes, saved.WrittenBytes, saved.Offset, saved.CollectionsChanged);
@@ -1571,7 +1470,6 @@ internal sealed partial class TursoStorageTransaction(
         _faulted = false;
     }
 
-    // Worker-only: runs the savepoint statements a batched write deferred, before its next statement.
     private void RunPendingSavepoint()
     {
         if (_releasePending)
@@ -1589,13 +1487,8 @@ internal sealed partial class TursoStorageTransaction(
 
     private const string GroupSavepoint = "batched";
 
-    /// <summary>
-    /// Set once Turso rolled the whole transaction back after a failed statement, every savepoint included: it can only
-    /// be disposed.
-    /// </summary>
     internal bool Aborted { get; private set; }
 
-    // Worker-only: runs a call of this transaction, and notices when a failure ended it.
     private T Guarded<T>(Func<T> call)
     {
         if (Aborted)
@@ -1607,7 +1500,7 @@ internal sealed partial class TursoStorageTransaction(
         {
             return call();
         }
-        // Whatever surfaced: a stopped read arrives as a QueryCapacityException or an OperationCanceledException.
+
         catch (Exception error) when (NoteDamage(error) || Ended())
         {
             Aborted = _faulted = true;
@@ -1615,9 +1508,6 @@ internal sealed partial class TursoStorageTransaction(
         }
     }
 
-    // Unlike SQLite, Turso rolls the whole transaction back when a statement fails while it steps (a stopped read, for
-    // one). The driver then marks the transaction ended (src/vendor/Turso.Data.Sqlite, patch 0003) and refuses the
-    // commands bound to it; preparing one runs nothing.
     private bool Ended()
     {
         using var probe = session.Connection.CreateCommand();
@@ -1644,13 +1534,6 @@ internal sealed partial class TursoStorageTransaction(
     private bool _rewriteUncaptured;
     private string? _uncapturedBy;
 
-    /// <summary>
-    /// Stops capturing this write transaction's later statements in <c>turso_cdc</c> (design C's per-transaction toggle,
-    /// docs/terrabase/multi-region-replication.md section 7); capture resumes when the transaction ends. Only for state
-    /// that a restore and a replica rebuild themselves, such as the change tailer's own bookkeeping: continuous backup
-    /// ships captured changes only, so anything written uncaptured is missing from every point-in-time restore.
-    /// Only writes confined to tables refreshed or discarded at the rewrite's final cut pass rewriteRefreshOnly.
-    /// </summary>
     internal ValueTask SuspendCaptureAsync(CancellationToken cancellationToken, bool rewriteRefreshOnly = false, [CallerMemberName] string? caller = null)
     {
         if (!write)
@@ -1681,7 +1564,7 @@ internal sealed partial class TursoStorageTransaction(
 
     public ValueTask DisposeAsync()
     {
-        // Every caller awaits the same cleanup, including its failure; the session returns only once.
+
         lock (_disposalGate)
         {
             if (_streaming)
@@ -1711,19 +1594,19 @@ internal sealed partial class TursoStorageTransaction(
                     }
                     finally
                     {
-                        // Also when a failed statement ended it: the driver then knows, and rolls nothing back.
+
                         transaction.Dispose();
                     }
 
                     if (write && store.Tenant is { } tenant)
                     {
-                        // Integration tests make the writer's reset fail here; production's checkpoint does nothing.
+
                         store.Checkpoint?.Invoke("writer.reset", tenant);
                     }
 
                     if (_captureSuspended)
                     {
-                        // A failed reset closes the writer: the next one opens with capture on.
+
                         using var capture = session.Connection.CreateCommand();
                         capture.CommandText = TursoSession.CaptureOn;
                         capture.ExecuteNonQuery();
@@ -1731,14 +1614,14 @@ internal sealed partial class TursoStorageTransaction(
 
                     if (!write && store.Tenant is { } readingTenant)
                     {
-                        // Integration tests make the reader's reset fail here: the session is then closed, not pooled.
+
                         store.Checkpoint?.Invoke("reader.reset", readingTenant);
                     }
                 }
-                // NoteDamage only notes a damaged file's error, so its fault is recorded before the writer is released.
+
                 catch (Exception error) when (NoteDamage(error) || _committed)
                 {
-                    // The write committed and synced: only this session is lost, so the commit is not reported as failed.
+
                     store.Discard(session);
                     return;
                 }
@@ -1748,7 +1631,6 @@ internal sealed partial class TursoStorageTransaction(
                     throw;
                 }
 
-                // Still admitted until pooled or closed, including an eviction checkpoint.
                 store.Return(session);
             }, CancellationToken.None).ConfigureAwait(false);
             Operation?.Complete();
@@ -1759,7 +1641,7 @@ internal sealed partial class TursoStorageTransaction(
             {
                 if (_copyFault is { } reason)
                 {
-                    // Recorded before the writer is released: no later writer of this process uses the file unrefused.
+
                     await store.RecordCopyFaultAsync(reason).ConfigureAwait(false);
                 }
             }
@@ -1786,7 +1668,6 @@ internal sealed partial class TursoStorageTransaction(
 
     private long GetOffset() => (long?)session.Command(TursoStatements.CurrentOffset, transaction).ExecuteScalar() ?? 0;
 
-    // Every write in one transaction shares one offset, allocated under the database writer gate.
     private long Offset()
     {
         if (_offset is null)
@@ -1801,7 +1682,6 @@ internal sealed partial class TursoStorageTransaction(
         return _offset.Value;
     }
 
-    // Worker-only, inside a mutation: a refused write also refuses the commit.
     private void ThrowIfReadOnly()
     {
         if (!write)
@@ -1824,20 +1704,20 @@ internal sealed partial class TursoStorageTransaction(
             {
                 if (mutation)
                 {
-                    // Mark refusal before stream cleanup can admit a concurrent commit.
+
                     _faulted = true;
                 }
                 throw new InvalidOperationException("dispose the active changes stream before using the transaction");
             }
             _streaming = stream;
-            // Admission and waiting are atomic with disposal, so cleanup queues after every accepted call.
+
             return _gate.WaitAsync(cancellationToken);
         }
     }
 
     private async Task EnterStreamAsync(CancellationToken cancellationToken)
     {
-        // Reserve the stream before waiting: later calls must not queue behind a suspended consumer.
+
         var waiting = EnterAsync(cancellationToken, stream: true);
         try
         {
@@ -1853,24 +1733,8 @@ internal sealed partial class TursoStorageTransaction(
         }
     }
 
-    // A snapshot replay writes each page's states before it reads the next page, so it keeps no earlier read: their
-    // admission ends with the page. Held to the commit, a 386 MB SYSTEM file's reads (16x their bytes) outgrew the
-    // process budget after 108-158 s of writer hold, and every retry failed the same way (sjc, 2026-10-28).
-    internal ValueTask<bool> ReleaseStateReadsAsync(CancellationToken cancellationToken) =>
-        RunAsync(() =>
-        {
-            if (_stateReadMemory is { } held && store.SchemaMemory is { } memory)
-            {
-                held.Dispose();
-                _stateReadMemory = new QosContext.ResultMemory(memory);
-            }
-
-            return true;
-        }, cancellationToken);
-
-    // retry: journal reads use the session's cancellable busy handling (TursoSession.ExecuteAsync).
     private ValueTask<T> RunAsync<T>(Func<T> call, CancellationToken cancellationToken, bool mutation = false, bool retry = false) =>
-        // A submitted mutation keeps its ordered gate slot even if cancelled: poison before a later commit.
+
         RunCoreAsync(EnterAsync(mutation ? CancellationToken.None : cancellationToken, mutation: mutation), call, mutation, retry, cancellationToken);
 
     private async ValueTask<T> RunCoreAsync<T>(Task waiting, Func<T> call, bool mutation, bool retry, CancellationToken cancellationToken)
@@ -1891,7 +1755,7 @@ internal sealed partial class TursoStorageTransaction(
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 RunPendingSavepoint();
-                // Turso cannot interrupt a running statement: writes cancel between statements.
+
                 var result = Guarded(call);
                 if (mutation)
                 {
@@ -1912,7 +1776,7 @@ internal sealed partial class TursoStorageTransaction(
         }
         catch when (_copyFault is not null)
         {
-            // Durable before the caller sees the damage: a read records no intent, so a crash from here still faults the copy.
+
             await store.Flagged.ConfigureAwait(false);
             if (mutation)
             {
@@ -1923,7 +1787,7 @@ internal sealed partial class TursoStorageTransaction(
         }
         catch when (mutation)
         {
-            // Includes pre-cancellation and queue cancellation before the worker callback runs.
+
             _faulted = true;
             throw;
         }
@@ -1952,10 +1816,8 @@ internal sealed partial class TursoStorageTransaction(
         return command;
     }
 
-    // Called right before a physical SELECT over document or feed rows, so misses and empty pages count too.
     private void CountRead(string path) => store.StorageReads?.Add(1, new KeyValuePair<string, object?>("path", path));
 
-    // Native octet_length projections inspect size without copying JSON; GetBytes/GetStream would allocate first.
     private void ReserveJson(long size)
     {
         QosContext.ReserveResult(checked(size * 3 + 2048), store.IsSystem ? null : QosContext.Current);

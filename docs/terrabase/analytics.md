@@ -80,9 +80,9 @@ Each point contains:
   authorized database, with its latency, an error when any of its messages
   failed, and its protocol message bytes in each direction.
 
-- `statements`: SQL statements by protocol, `postgres` (the PostgreSQL wire) and
-  `hrana` (libSQL pipeline and cursor), each with `statements`, `errors` and
-  `latency` (the same percentiles as requests, of each statement's own run).
+- `statements`: SQL statements for protocol `postgres` (the PostgreSQL wire),
+  with `statements`, `errors` and `latency` (the same percentiles as requests,
+  of each statement's own run).
   See [Statements and requests](#statements-and-requests).
 
 Failed writes do not become committed operation counts. Client request counts,
@@ -99,12 +99,6 @@ A request is one HTTP request, or one PostgreSQL wire exchange; a statement is
 one SQL statement it carried. They are measured separately and never change
 each other's status:
 
-- A Hrana pipeline answers SQL errors as error results inside an HTTP 200, as
-  the protocol requires. The request is a success (no request error); each
-  failed `execute`, batch step or `sequence` is a statement error. A `sequence`
-  counts as one statement, as the core reports neither how many of its
-  statements ran nor which one failed. `describe` and stream bookkeeping
-  (`store_sql`, `close`, ...) are not statements.
 - A PostgreSQL exchange is a request error when any message in it failed; each
   statement that reached the database is one statement, its failure one
   statement error. Describing a statement is not one, unless describing it fails

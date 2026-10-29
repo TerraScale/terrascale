@@ -11,13 +11,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Documents;
 
-/// <summary><c>POST /v1/projects/{project}/databases/{database}/transactions</c>: applies up to 1024 operations atomically.</summary>
 public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizationService authorization, ITenantDirectory tenants, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     private const int MaxOps = 1024;
     private const int MaxAssertCounts = 16;
-
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(DocumentRoute.DatabaseRoute + "/transactions");
@@ -26,7 +23,7 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
         Description("""
             {"ops":[…]} with 1 to 1024 operations across the collections of one database: create (put with if_none_match "*"; id is generated as a ULID when omitted), put (document, optional if_match or if_none_match "*"), patch (exactly one of merge or ops, optional if_match), delete (optional if_match), assert (filter: the document exists and matches; or absent: true) and assert_count (filter, gte and/or lte; at most 16 per transaction, at most 10000 documents examined). Assertions see the state before this transaction's writes. Two operations may not target the same document. Every failure names the failing operation in error.op. Assertions also need the documents:read scope. Query assertions and counts are interrupted after 5 million engine work units or a 5-second deadline (400 invalid_query, query too expensive). Every id is a canonical uppercase ULID (400 invalid_document_id otherwise).
             Captured changes contain at most 2 MiB of UTF-8 collection names, ids and JSON. Exceeding this limit returns 503 capacity with the failing error.op, rolling back the entire transaction; split the writes into smaller transactions.
-            Mutations answer local_durable once this region's commit is synced to disk; replication to the other placed regions continues in the background. With the header TB-Durability: remote_durable, mutations in a cell also wait up to 10 seconds for another placed region's durable acknowledgement and answer remote_durable (a cell of one answers local_durable); only then, before execution, 503 remote_region_unavailable or confirmation_busy carries Retry-After, and an ambiguous commit or missing acknowledgement answers 503 write_outcome_unknown with region and machine, without Retry-After; never replay it automatically. Any other TB-Durability value answers 400. A database placed in its home region alone answers 409 placement_needs_two_regions on either path until a placement update adds a region. Assertions only answer unchanged.
+            Mutations answer local_durable after the local commit is synced to disk. An ambiguous commit answers 503 write_outcome_unknown with region and machine; never replay it automatically. Assertions only answer unchanged.
             """);
         Tags("Transactions");
         Metadata(new RequestBodyMetadata(typeof(TransactionRequest), DocumentRoute.JsonMediaType));
@@ -41,8 +38,6 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
         RequireAuthorization(ApiKeyScopes.DocumentsWrite);
         Metadata(ListenerMetadata.Client);
     }
-
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         await DocumentRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
         {
@@ -54,20 +49,18 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
                 (Validation error, _, _) => ErrorResponse.From(error),
                 (_, Validation error, _) => ErrorResponse.From(error),
                 (_, _, Validation error) => ErrorResponse.From(error),
-                (_, _, bool waitForRemote) => await DocumentRoute.CheckBodyAsync(HttpContext, DocumentRoute.MaxRequestBytes, "invalid_request", cancellationToken, DocumentRoute.JsonMediaType) switch
+                (_, _, Done) => await DocumentRoute.CheckBodyAsync(HttpContext, DocumentRoute.MaxRequestBytes, "invalid_request", cancellationToken, DocumentRoute.JsonMediaType) switch
                 {
                     Validation error => ErrorResponse.From(error),
                     PayloadTooLarge error => ErrorResponse.From(error),
                     UnsupportedMediaType error => ErrorResponse.From(error),
-                    byte[] body => await TransactAsync(database, body, waitForRemote, cancellationToken),
+                    byte[] body => await TransactAsync(database, body, cancellationToken),
                 },
             },
         };
 
-    private async ValueTask<IResult> TransactAsync(TenantContext database, byte[] body, bool waitForRemote, CancellationToken cancellationToken)
+    private async ValueTask<IResult> TransactAsync(TenantContext database, byte[] body, CancellationToken cancellationToken)
     {
-        // The envelope is read without parsing the operations, so each operation, duplicate members included,
-        // is checked by RequestJson on its own and its failures carry its index.
         using var envelope = Envelope(body);
         if (envelope is null)
         {
@@ -77,11 +70,11 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
         return Ops(envelope.RootElement) switch
         {
             Validation error => ErrorResponse.From(error),
-            List<JsonElement> ops => await TransactAsync(database, ops, waitForRemote, cancellationToken),
+            List<JsonElement> ops => await TransactAsync(database, ops, cancellationToken),
         };
     }
 
-    private async ValueTask<IResult> TransactAsync(TenantContext database, List<JsonElement> ops, bool waitForRemote, CancellationToken cancellationToken)
+    private async ValueTask<IResult> TransactAsync(TenantContext database, List<JsonElement> ops, CancellationToken cancellationToken)
     {
         var operations = new List<DocumentOperation>(ops.Count);
         var targets = new HashSet<(string, string)>();
@@ -105,11 +98,10 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
         var firstAssertion = operations.FindIndex(operation => operation is AssertOperation or AssertCountOperation);
         if (firstAssertion >= 0 && !(await authorization.AuthorizeAsync(HttpContext.User, ApiKeyScopes.DocumentsRead)).Succeeded)
         {
-            // Like every operation-specific failure, it names the operation: the first assertion.
             return ErrorResponse.From(new Forbidden("assertions need the documents:read scope", "forbidden_scope"), firstAssertion);
         }
 
-        return await documents.WriteConfirmedAsync(database, operations, indexErrors: true, waitForRemote, cancellationToken) switch
+        return await documents.WriteConfirmedAsync(database, operations, indexErrors: true, cancellationToken) switch
         {
             DocumentRejected rejected => ErrorResponse.From(rejected.Error, rejected.Op),
             WriteResult written => TypedResults.Ok(new TransactionBody(
@@ -123,8 +115,6 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
                 })])),
         };
     }
-
-    /// <summary>The document an operation targets; <see langword="null"/> for <c>assert_count</c>.</summary>
     internal static (string, string)? Target(DocumentOperation operation) => operation switch
     {
         PutOperation put => (put.Collection, put.Id),
@@ -133,16 +123,12 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
         AssertOperation assert => (assert.Collection, assert.Id),
         _ => null,
     };
-
-    /// <summary>Parses and validates one operation of a transaction (also of a Management commit), or answers the rule it breaks.</summary>
     internal static Valid<DocumentOperation> CheckOperation(JsonElement json, TimeProvider time)
     {
         if (json.ValueKind != JsonValueKind.Object)
         {
             return new Validation("each operation is a JSON object");
         }
-
-        // Optional operation members may be omitted, but explicit null is never an omission.
         if (json.EnumerateObject().Any(member => member.Value.ValueKind == JsonValueKind.Null))
         {
             return new Validation("operation members cannot be null");
@@ -219,16 +205,12 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
             _ => new Validation("the operation's kind or members are invalid"),
         };
     }
-
-    // if_match is read like If-Match (compared strongly); if_none_match is only "*".
     private static Valid<Precondition> Precondition(TransactionOpRequest op) => op.IfNoneMatch switch
     {
         null => op.IfMatch is null ? new Precondition(null, IfMatchAny: false, IfNoneMatch: false) : ETags.CheckIfMatch(op.IfMatch),
         "*" when op.IfMatch is null => Documents.Precondition.Absent,
         _ => new Validation("if_none_match is \"*\" and excludes if_match"),
     };
-
-    // Null when the body is not valid JSON.
     private static JsonDocument? Envelope(byte[] body)
     {
         try
@@ -240,8 +222,6 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
             return null;
         }
     }
-
-    // {"ops":[…]} exactly: one ops member holding 1 to 1024 operations.
     private static Valid<List<JsonElement>> Ops(JsonElement envelope)
     {
         if (envelope.ValueKind != JsonValueKind.Object)

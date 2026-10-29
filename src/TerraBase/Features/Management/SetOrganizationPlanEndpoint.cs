@@ -1,5 +1,5 @@
 using TerraBase.Errors;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -9,7 +9,6 @@ namespace TerraBase.Features.Management;
 /// <summary><c>PUT /v1/management/organizations/{organization}/plan</c>: sets an organization's plan.</summary>
 internal sealed class SetOrganizationPlanEndpoint(IManagementService management) : Endpoint<PlanRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Put(ManagementRoute.Organization + "/plan");
@@ -27,7 +26,6 @@ internal sealed class SetOrganizationPlanEndpoint(IManagementService management)
         Metadata(ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(PlanRequest request, CancellationToken cancellationToken) =>
         ManagementRoute.CheckPlan(request) switch
         {

@@ -1,7 +1,7 @@
 using Cronos;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -13,7 +13,6 @@ internal sealed class SetBackupPolicyEndpoint(IManagementService management, IMa
 {
     private const int MaxRetentionDays = 35;
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Put(ProjectApiRoute.Database + "/backup-policy");
@@ -31,7 +30,6 @@ internal sealed class SetBackupPolicyEndpoint(IManagementService management, IMa
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(BackupPolicyRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);

@@ -13,7 +13,7 @@ someone else, which lets a key enumerate other tenants' project and database ide
 reserved for a resource the credential does reach but an operation it may not perform. This is
 the contract; a QA expectation of "wrong project → 403" is not met by relabelling and must not be.
 
-## HTTP data protocols (documents, HTTP SQL, libSQL/Hrana)
+## HTTP data protocols (documents, HTTP SQL)
 
 | Case | Status | `code` | Message |
 | --- | --- | --- | --- |
@@ -23,20 +23,13 @@ the contract; a QA expectation of "wrong project → 403" is not met by relabell
 | The key's IP allowlist refuses the client | `403` | `ip_not_allowed` | names the client address |
 
 - The `404` holds for every route under `/v1/projects/{project}/databases/{database}`: documents,
-  collections, export, changes, `sql/execute`, `libsql/{v2,v3}/pipeline` and `cursor`. Whether
+  collections, export, changes and `sql/execute`. Whether
   the route names another project's database by name or by ULID, or names another project's ULID
   in the caller's own project route, nothing in the answer differs from a missing database, and
   nothing is read or changed there.
-- Body shape: REST and HTTP SQL answer `{"error":{"code","message"}}`. libSQL answers its own
-  `{"error","message","code"}` once the route reaches its endpoint; a route naming a project
-  other than the token's own is refused before any endpoint runs and answers the REST shape on
-  every protocol. That split depends only on the caller's own token, never on whether a resource
-  exists.
+- Body shape: REST and HTTP SQL answer `{"error":{"code","message"}}`.
 - `ip_not_allowed` and missing-scope answers come from the key's own restrictions and are decided
   before or after the tenant lookup in a way that never depends on another tenant's resources.
-- libSQL batons: a baton of another credential or database answers `400 STREAM_EXPIRED`, exactly
-  like an unknown baton, and the stream stays usable by its owner. A baton of a stream without
-  state (autocommit) opens a fresh stream in the caller's own database instead.
 
 ## PostgreSQL wire (`pg.terrascale.tech:5432`)
 
@@ -64,8 +57,8 @@ cannot tell another tenant's database from a missing one.
 
 - `tests/TerraBase.Fast/Management/CrossProjectErrorTests.cs`: foreign database by name and ULID,
   through the foreign and the caller's project route, against absent databases and projects, on
-  collections, collection delete, export, HTTP SQL, libSQL v2 and v3; the foreign database is
-  unchanged afterwards. Foreign batons answer like unknown ones and stay with their owner.
+  collections, collection delete, export and HTTP SQL; the foreign database is
+  unchanged afterwards.
 - `tests/TerraBase.Fast/Postgres/PostgresWireTests.cs`
   `Wrong_keys_unknown_databases_and_unreached_databases_fail_alike`: `28P01` for all three.
 - `tests/TerraBase.Fast/Management/ProjectTokenTests.cs`: `database`-restricted tokens and

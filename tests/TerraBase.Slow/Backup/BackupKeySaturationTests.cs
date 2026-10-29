@@ -49,7 +49,7 @@ public sealed class BackupKeySaturationTests
                 time.Advance(TimeSpan.FromSeconds(10));
                 var backup = live.Server.Services.GetRequiredService<IContinuousBackup>();
                 await backup.RunOnceAsync(cancellationToken);
-                var status = backup.Status.Files.Single(status => status.File == $"v1/{database.Organization}/{database.Project}/{database.Id}");
+                var status = backup.Status.Files.Single(status => status.File == $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local");
                 await Assert.That(status.LastError).IsNull();
                 await Assert.That(status.Generation).IsNotNull();
             }
@@ -64,7 +64,7 @@ public sealed class BackupKeySaturationTests
                 File.Copy(Path.Combine(directory, file), Path.Combine(coldDirectory, file));
             }
 
-            var filePrefix = $"v1/{database.Organization}/{database.Project}/{database.Id}";
+            var filePrefix = $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
             var keys = $"v1/keys/{database.Organization}/{database.Project}/";
             var snapshot = s3.Objects.Single(item => item.Key.StartsWith(filePrefix + "/snapshots/", StringComparison.Ordinal));
             var snapshotName = snapshot.Key[(snapshot.Key.LastIndexOf('/') + 1)..].Split('-');
@@ -169,11 +169,11 @@ public sealed class BackupKeySaturationTests
             observation.Phase("cold.ship-system");
             var coldBackup = cold.Server.Services.GetRequiredService<IContinuousBackup>();
             await coldBackup.RunOnceAsync(cancellationToken);
-            var systemStatus = coldBackup.Status.Files.Single(status => status.File == "v1/_system");
+            var systemStatus = coldBackup.Status.Files.Single(status => status.File == "v1/_system/nodes/local");
             await Assert.That(systemStatus.LastError).IsNull();
             await Assert.That(systemStatus.Generation).IsNotNull();
             await Assert.That(systemStatus.Shipping).IsTrue();
-            await Assert.That(coldBackup.Status.Files.Select(status => status.File)).IsEquivalentTo(["v1/_system"]);
+            await Assert.That(coldBackup.Status.Files.Select(status => status.File)).IsEquivalentTo(["v1/_system/nodes/local"]);
             await Assert.That(s3.Objects.Keys.Where(key => key.StartsWith("v1/keys/_system/", StringComparison.Ordinal))).IsEquivalentTo([systemWrappedKey]);
             await Assert.That(systemRequests.Gets).IsEqualTo(1);
             await Assert.That(systemRequests.Unwraps).IsEqualTo(1);

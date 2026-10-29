@@ -257,7 +257,7 @@ public sealed class DataKeyOverlapTests
         }
     }
 
-    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
+    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
     private static string Keys(ManagedDatabaseRef database) => $"v1/keys/{database.Organization}/{database.Project}/";
     private static int Stripe(string key) => (StringComparer.Ordinal.GetHashCode(key) & int.MaxValue) % 64;
 

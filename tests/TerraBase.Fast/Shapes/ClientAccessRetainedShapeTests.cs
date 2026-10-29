@@ -30,7 +30,7 @@ public sealed class ClientAccessRetainedShapeTests
         await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(await api.DatabaseFileAsync())))
         {
             await connection.OpenAsync();
-            // Restored states support deeper trees than the HTTP write contract permits.
+
             await StoredStates.WriteAsync(connection, DocumentApi.Collection, id, deep);
         }
         using var reader = CollectionAccessRulesTests.Reader(api, actor);
@@ -179,7 +179,7 @@ public sealed class ClientAccessRetainedShapeTests
                 }, rules.OwnerFilter(actor));
             var snapshots = (IShapeSnapshotStorage)transaction;
             string cursor;
-            (offset, cursor) = await snapshots.ShapeSnapshotHeadAsync(false, definition.ResumeScope, time.GetUtcNow(), CancellationToken.None);
+            (offset, cursor) = await snapshots.ShapeSnapshotHeadAsync(definition.ResumeScope, time.GetUtcNow(), CancellationToken.None);
             string? after = null;
             for (var page = 0; page < 3; page++)
             {

@@ -16,16 +16,14 @@ import (
 	"syscall"
 	"time"
 
-	"terrascale.tech/ts-benchmark/internal/replbench"
+	"terrascale.tech/ts-benchmark/internal/benchclient"
 )
 
 type host struct {
-	targets replbench.Targets
+	targets benchclient.Targets
 	stop    func() error
 }
 
-// startHost runs tests/TerraBase.E2E's BenchmarkClusterHost with two regions (the Release build, as
-// benchmark/scripts/repl-local.sh does) and waits for its targets file. stop deletes the file, which ends the host.
 func startHost(ctx context.Context, work string) (*host, error) {
 	project, err := filepath.Abs(hostProject)
 	if err != nil {
@@ -39,10 +37,10 @@ func startHost(ctx context.Context, work string) (*host, error) {
 	}
 	defer log.Close()
 	cmd := exec.Command("dotnet", "run", "--project", project, "--configuration", "Release", "--no-build", "--",
-		"--treenode-filter", "/*/*/BenchmarkClusterHost/*")
-	cmd.Env = append(os.Environ(), "TERRABASE_BENCH_TARGETS="+file, "TERRABASE_BENCH_REGIONS="+hostRegions)
+		"--treenode-filter", "/*/*/LocalBenchmarkHost/*")
+	cmd.Env = append(os.Environ(), "TERRABASE_BENCH_TARGETS="+file)
 	cmd.Stdout, cmd.Stderr = log, log
-	// Its own process group: an interrupt reaches this process only, and a kill reaches dotnet run's child too.
+
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		return nil, err
@@ -80,13 +78,12 @@ func startHost(ctx context.Context, work string) (*host, error) {
 			return fail(fmt.Errorf("the cluster host was not ready within 3 minutes"))
 		}
 	}
-	t, err := replbench.LoadTargets(file)
+	t, err := benchclient.LoadTargets(file)
 	if err != nil {
 		return fail(err)
 	}
 	_, gru := t.Regions[region]
-	_, sjc := t.Regions["sjc"]
-	if !gru || !sjc || len(t.Regions) != 2 || t.Kind != "local" || t.PID <= 0 {
+	if !gru || len(t.Regions) != 1 || t.Kind != "local" || t.PID <= 0 {
 		return fail(fmt.Errorf("targets: want a local host with regions %s and its pid", hostRegions))
 	}
 	h.targets = t
@@ -98,9 +95,6 @@ func tail(path string) string {
 	return string(b[max(0, len(b)-4096):])
 }
 
-// metricsURL finds the host's Prometheus scrape. The targets file names only the client URL, so it asks every TCP port
-// the host process listens on for /metrics while exactly one calibration stream is open on gru. Only that node's
-// scoped scrape has one open stream; port order alone cannot identify a node in this two-region process.
 func metricsURL(ctx context.Context, pid int) (string, error) {
 	urls, ports, err := metricsListeners(ctx, pid)
 	if err != nil {
@@ -121,8 +115,6 @@ func metricsURL(ctx context.Context, pid int) (string, error) {
 	return "", fmt.Errorf("want exactly one scoped metrics listener of process %d with one calibration stream, found %v (ports %v)", pid, matches, ports)
 }
 
-// metricsListeners are the /metrics URLs of the host process's TCP listeners that answer a TerraBase scrape, and every
-// port it listens on.
 func metricsListeners(ctx context.Context, pid int) ([]string, []int, error) {
 	fds, err := os.ReadDir(fmt.Sprintf("/proc/%d/fd", pid))
 	if err != nil {
@@ -159,7 +151,6 @@ func metricsListeners(ctx context.Context, pid int) ([]string, []int, error) {
 	return urls, ports, nil
 }
 
-// streamCount accepts the feed's single unlabelled gauge, avoiding a first-series choice if its format changes.
 func streamCount(body string) (float64, bool) {
 	lines := promLines(body, "terrabase_changes_streams")
 	if len(lines) != 1 {
@@ -168,7 +159,6 @@ func streamCount(body string) (float64, bool) {
 	return promValue(lines[0], "terrabase_changes_streams", "")
 }
 
-// listenPorts are the ports of the LISTEN sockets of a /proc/net/tcp{,6} table whose inode is in inodes.
 func listenPorts(table string, inodes map[string]bool) []int {
 	var ports []int
 	for line := range strings.Lines(table) {
@@ -204,8 +194,6 @@ func get(ctx context.Context, c *http.Client, u string) (string, error) {
 	return string(b), nil
 }
 
-// promValue is the value of the first sample of metric base (or base_total, the exporter's counter name) whose line
-// holds label.
 func promValue(body, base, label string) (float64, bool) {
 	for _, line := range promLines(body, base) {
 		if !strings.Contains(line, label) {
@@ -224,17 +212,12 @@ func promValue(body, base, label string) (float64, bool) {
 	return 0, false
 }
 
-// storageReadsMetric is terrabase.storage.reads, a synchronous counter of physical SELECTs exported with _total. Its
-// path label is one of storageReadPaths; any other value fails the step rather than joining a delta.
 const storageReadsMetric = "terrabase_storage_reads"
 
-// shape_body is one served chunk's payload SELECT; shape is every other shape SELECT (metadata, probes, seals).
 var storageReadPaths = []string{"point", "query", "feed", "shape", "shape_body"}
 
 var pathLabel = regexp.MustCompile(`[{,]path="([^"]*)"`)
 
-// storageReads is the counter's value per path label. A sample without a bounded path, or a path repeated in the
-// scrape, is an error.
 func storageReads(body string) (map[string]float64, error) {
 	out := map[string]float64{}
 	for _, line := range promLines(body, storageReadsMetric) {
@@ -254,8 +237,6 @@ func storageReads(body string) (map[string]float64, error) {
 	return out, nil
 }
 
-// pathCounts is each path's counter before a step. A path whose series is absent counts as zero: the counter is created
-// with the first SELECT of its path, and it starts at zero in each process.
 func pathCounts(body string, paths []string) (map[string]float64, error) {
 	counts, err := storageReads(body)
 	if err != nil {
@@ -268,8 +249,6 @@ func pathCounts(body string, paths []string) (map[string]float64, error) {
 	return out, nil
 }
 
-// pathDeltas is the SELECTs of each path between the before counts and the scrape after the step. An absent series
-// after the step fails it, never as zero; a counter that fell was reset or its node restarted.
 func pathDeltas(before map[string]float64, after string, paths []string) (map[string]int64, error) {
 	counts, err := storageReads(after)
 	if err != nil {
@@ -289,8 +268,6 @@ func pathDeltas(before map[string]float64, after string, paths []string) (map[st
 	return out, nil
 }
 
-// rawSamples are the scrape lines the step's deltas come from, for the report: the accounting and storage counters and
-// the shape gauges and counter.
 func rawSamples(body string) string {
 	var lines []string
 	for _, base := range []string{"terrabase_stats_operations", storageReadsMetric, "terrabase_shape_reads", "terrabase_shape_requests_waiting", "terrabase_shape_flights_active"} {
@@ -299,7 +276,6 @@ func rawSamples(body string) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-// promLines are the sample lines of metric base or base_total.
 func promLines(body, base string) []string {
 	var out []string
 	for line := range strings.Lines(body) {

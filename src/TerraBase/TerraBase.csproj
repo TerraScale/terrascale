@@ -1,28 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <RootNamespace>TerraBase</RootNamespace>
-    <!-- Source-generated libc interop for native temporary storage. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>terrabase</AssemblyName>
     <Version>0.1.0</Version>
-    <!-- /healthz reports the source commit as revision; CI passes TERRABASE_REVISION (the image has no .git). -->
     <SourceRevisionId Condition="'$(TERRABASE_REVISION)' != ''">$(TERRABASE_REVISION)</SourceRevisionId>
-    <!-- Release artifact: one self-contained, single-file executable running on the
-         JIT (no native AOT, no trimming). Native libraries are bundled into the file.
-         Self-contained is set only for publish (make publish): the test suites
-         reference this project and cannot reference a self-contained executable. -->
     <PublishSingleFile>true</PublishSingleFile>
     <PublishDocumentationFile>false</PublishDocumentationFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <UserSecretsId />
-    <!-- Tiered PGO optimizes frequently executed methods after startup. -->
     <TieredPGO>true</TieredPGO>
-    <!-- ReadyToRun precompiles on publish for a faster cold start; hot methods still tier up on the JIT. -->
     <PublishReadyToRun>true</PublishReadyToRun>
-    <!-- Workstation GC: a 512 MB machine gets no per-core server heaps; concurrent marking keeps pauses short. -->
     <ServerGarbageCollection>false</ServerGarbageCollection>
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
-    <!-- HTTP endpoints, OpenAPI and Scalar from TerraScale.Endpoints (src/TerraScale.Endpoints, Directory.Build.targets). -->
     <UseTerraScaleEndpoints>true</UseTerraScaleEndpoints>
   </PropertyGroup>
 
@@ -31,10 +21,6 @@
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
     <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
-    <PackageReference Include="Google.Protobuf" />
-    <PackageReference Include="Grpc.AspNetCore" />
-    <PackageReference Include="Grpc.Net.Client" />
-    <PackageReference Include="Grpc.Tools" PrivateAssets="all" />
     <PackageReference Include="AWSSDK.S3" />
     <PackageReference Include="Cronos" />
     <PackageReference Include="Jint" />
@@ -49,30 +35,20 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- TerraBase's own compile-time rules (TB0001: discarded union results); analyzer only, not in the binary. -->
     <ProjectReference Include="../TerraBase.Analyzers/TerraBase.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
     <ProjectReference Include="../TerraScale.Logging/TerraScale.Logging.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The Fast suite checks the query plan of every engine statement (Engine/Turso/TursoStatements.cs);
-         the shared test harness, linked into both suites, applies the engine's lock-conflict test. -->
     <InternalsVisibleTo Include="TerraBase.Fast" />
     <InternalsVisibleTo Include="TerraBase.Slow" />
-    <!-- The end-to-end suite links the same harness, which reaches the same internals. -->
     <InternalsVisibleTo Include="TerraBase.E2E" />
   </ItemGroup>
 
   <ItemGroup>
     <None Update="THIRD-PARTY-NOTICES" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
-
   <ItemGroup>
-    <!-- Checked-in, versioned inter-node contract (wire-compatible with terrabase-rust/proto). -->
-    <Protobuf Include="Features/Replication/Protos/**/*.proto" ProtoRoot="Features/Replication/Protos" GrpcServices="Both" />
-  </ItemGroup>
-  <ItemGroup>
-    <!-- Vendored, with TerraScale's fixes (src/vendor/Turso.Data.Sqlite/UPSTREAM.md). -->
     <ProjectReference Include="../vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj" />
   </ItemGroup>
 </Project>

@@ -14,7 +14,7 @@ public sealed class SqlSortBudgetTests
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "items");
-        // Nine bodies of about 0.95 MiB, stored without uploads, pass the sort's 8 MiB candidate budget.
+
         var payload = new string('x', 1_000_000);
         for (var n = 0; n < 9; n++)
         {
@@ -27,7 +27,7 @@ public sealed class SqlSortBudgetTests
         using var index = await api.Client.PostAsJsonAsync(ManagementApi.Uri($"{database.Path}/indexes"),
             new { collection = "items", fields = IndexFields });
         index.EnsureSuccessStatusCode();
-        // The same descending query, now read backwards along the index.
+
         using var indexed = await api.Client.PostAsJsonAsync(ManagementApi.Uri($"{database.Path}/sql"), new { sql = Sql });
         indexed.EnsureSuccessStatusCode();
         var body = await indexed.Content.ReadFromJsonAsync<JsonElement>();
@@ -45,7 +45,7 @@ public sealed class SqlSortBudgetTests
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 10001)
             INSERT INTO "items" (id, doc) SELECT printf('00000000-0000-7000-8000-%012x', n), '{"n":1}' FROM rows;
-            INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2) SELECT 'items', id, 0, '', 65536, 0, 1, 0, 0 FROM "items";
+            INSERT INTO _tb_state (collection, id, state, stamp, origin, live, h1, h2) SELECT 'items', id, '', 65536, 0, 1, 0, 0 FROM "items";
             """);
 
         using var sorted = await api.Client.PostAsJsonAsync(ManagementApi.Uri($"{database.Path}/sql"),

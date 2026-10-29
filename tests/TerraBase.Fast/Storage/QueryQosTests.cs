@@ -20,11 +20,10 @@ public sealed class QueryQosTests
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "items");
-        // Seed the isolated database directly; every observed behavior runs over the real HTTPS listener.
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 10001)
             INSERT INTO "items" (id, doc) SELECT printf('00000000000000000000%06d', n), '{"n":1}' FROM rows;
-            INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2) SELECT 'items', id, 0, '', 65536, 0, 1, 0, 0 FROM "items";
+            INSERT INTO _tb_state (collection, id, state, stamp, origin, live, h1, h2) SELECT 'items', id, '', 65536, 0, 1, 0, 0 FROM "items";
             """);
         using var hobby = await QueryAsync();
         await ErrorAssert.ErrorAsync(Task.FromResult(hobby), HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
@@ -38,11 +37,8 @@ public sealed class QueryQosTests
 
         using var downgraded = await plans.PutAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{database.Organization}/plan"), new { plan = "hobby" });
         downgraded.EnsureSuccessStatusCode();
-        // The first over-budget candidate has invalid legacy JSON. The guard must reject it before
-        // either Turso JSON predicates or managed materialization reads its body.
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database,
             "UPDATE \"items\" SET doc = 'invalid-json' WHERE id = printf('00000000000000000000%06d', 10001);");
-        // Change the predicate to avoid a previously cached Pro result.
         using var again = await QueryAsync("absent");
         await ErrorAssert.ErrorAsync(Task.FromResult(again), HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
         using var resumed = await data.PostAsJsonAsync(ManagementApi.Uri($"{database.Data}/collections/items/query"), new { limit = 1 });
@@ -93,7 +89,7 @@ public sealed class QueryQosTests
         await ManagementApi.CreateCollectionAsync(data, database, "items");
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             INSERT INTO "items" (id, doc) VALUES ('0000000000E00800000000000A', $body), ('0000000000E00800000000000B', $body);
-            INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2) SELECT 'items', id, 0, '', 65536, 0, 1, 0, 0 FROM "items";
+            INSERT INTO _tb_state (collection, id, state, stamp, origin, live, h1, h2) SELECT 'items', id, '', 65536, 0, 1, 0, 0 FROM "items";
             """, ("$body", JsonSerializer.Serialize(new { s = new string('\0', 64 * 1024) })));
         var path = ManagementApi.Uri($"{database.Data}/collections/items/query");
         var sort = Enumerable.Range(0, 4).Select(_ => new { path = "/s" }).ToArray();
@@ -126,7 +122,7 @@ public sealed class QueryQosTests
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 17)
             INSERT INTO "items" (id, doc) SELECT printf('00000000000000000000%06d', n), $body FROM rows;
-            INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2) SELECT 'items', id, 0, '', 65536, 0, 1, 0, 0 FROM "items";
+            INSERT INTO _tb_state (collection, id, state, stamp, origin, live, h1, h2) SELECT 'items', id, '', 65536, 0, 1, 0, 0 FROM "items";
             """, ("$body", "{\"pad\":\"" + new string('a', 1024 * 1024 - 10) + "\"}"));
         var query = new { filter = new { exists = "/missing" }, limit = 1 };
         using var hobby = await data.PostAsJsonAsync(ManagementApi.Uri($"{database.Data}/collections/items/query"), query);
@@ -149,7 +145,7 @@ public sealed class QueryQosTests
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 10001)
             INSERT INTO "items" (id, doc) SELECT printf('00000000000000000000%06d', n), '{"n":1}' FROM rows;
-            INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2) SELECT 'items', id, 0, '', 65536, 0, 1, 0, 0 FROM "items";
+            INSERT INTO _tb_state (collection, id, state, stamp, origin, live, h1, h2) SELECT 'items', id, '', 65536, 0, 1, 0, 0 FROM "items";
             """);
         using var counted = await data.PostAsJsonAsync(ManagementApi.Uri($"{database.Data}/collections/items/query"), new { limit = 1, count = true });
         await ErrorAssert.ErrorAsync(Task.FromResult(counted), HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
@@ -157,8 +153,6 @@ public sealed class QueryQosTests
         await Assert.That(resumed.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
-    // Read-pool checks advance 1.5 seconds: beyond Hobby's deadline, within Pro's.
-    // Catalog audit writes use their write lane and must not expire while setting up a plan change.
     private sealed class QueryClock(long step = 1500) : TimeProvider
     {
         private long _timestamp;
@@ -171,5 +165,4 @@ public sealed class QueryQosTests
         public override long GetTimestamp() => Thread.CurrentThread.Name == "terrabase-turso"
             ? Interlocked.Add(ref _timestamp, Volatile.Read(ref _step)) : Volatile.Read(ref _timestamp);
     }
-
 }

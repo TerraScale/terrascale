@@ -20,33 +20,31 @@ import (
 	"github.com/HdrHistogram/hdrhistogram-go"
 	"github.com/oklog/ulid/v2"
 	"terrascale.tech/ts-benchmark/internal/apibench"
-	"terrascale.tech/ts-benchmark/internal/replbench"
+	"terrascale.tech/ts-benchmark/internal/benchclient"
 )
 
 type bench struct {
 	pid        int
 	collection string
-	origin     string // the client listener's base URL
-	database   string // the database's URL
-	target     target // the step's target
+	origin     string
+	database   string
+	target     target
 	token      string
-	writer     *replbench.Region
+	writer     *benchclient.Region
 	sse        *http.Client
-	shape      *http.Client // follows no redirect: the bootstrap's 307 is read, then followed by hand
+	shape      *http.Client
 	metrics    string
-	admitBy    time.Time // shape followers repeat a refusal before admission until then (live load only)
+	admitBy    time.Time
 }
 
-// probe holds a step's raw metric lines, for the report.
 type probe struct {
 	n             int
 	target        string
 	before, after string
 }
 
-// newBench creates the run's collection and finds the node's metrics listener.
-func newBench(ctx context.Context, t replbench.Targets) (*bench, error) {
-	w, err := replbench.NewRegion(region, t, writeRate*4)
+func newBench(ctx context.Context, t benchclient.Targets) (*bench, error) {
+	w, err := benchclient.NewRegion(region, t, writeRate*4)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +54,7 @@ func newBench(ctx context.Context, t replbench.Targets) (*bench, error) {
 		origin:     strings.TrimSuffix(t.Regions[region].URL, "/"),
 		token:      t.Regions[region].Token,
 		writer:     w,
-		// One connection per stream: a rejected follower's connection closes with it.
+
 		sse: &http.Client{Transport: &http.Transport{DisableKeepAlives: true}},
 		shape: &http.Client{Transport: &http.Transport{DisableKeepAlives: true}, CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -77,8 +75,6 @@ func newBench(ctx context.Context, t replbench.Targets) (*bench, error) {
 	return b, nil
 }
 
-// findMetrics identifies gru's scoped exporter without changing the shared host's targets format. No writer runs
-// during this calibration stream, and it closes before any measured step starts.
 func (b *bench) findMetrics(ctx context.Context) error {
 	ctx, stop := context.WithTimeout(ctx, 30*time.Second)
 	defer stop()
@@ -104,27 +100,24 @@ func (b *bench) findMetrics(ctx context.Context) error {
 	return m.firstErr()
 }
 
-// measure is one step's delivery record.
 type measure struct {
-	bytes    atomic.Int64      // response body bytes read by admitted followers
-	atHead   atomic.Int64      // shape followers that sent their first live long-poll (client side, before it reaches the server)
-	retries  atomic.Int64      // shape requests repeated after a busy or unavailable refusal in the window
-	qosBusy  atomic.Int64      // 429 tenant_busy answers to followers, before or after admission; each is repeated after Retry-After
-	refused  atomic.Int64      // shape refusals before admission repeated until bench.admitBy (live load only)
-	failures atomic.Int64      // shape followers that ended on an error
-	codes    [600]atomic.Int64 // shape responses by HTTP status
-	reasons  sync.Map          // shape refusals by "<status> <code>: <message>", each an *atomic.Int64
+	bytes    atomic.Int64
+	atHead   atomic.Int64
+	retries  atomic.Int64
+	qosBusy  atomic.Int64
+	refused  atomic.Int64
+	failures atomic.Int64
+	codes    [600]atomic.Int64
+	reasons  sync.Map
 
 	mu         sync.Mutex
-	start, end time.Time // the recorded window, by write send time
-	deadline   time.Time // deliveries read after it do not count
-	ok, events int64     // first deliveries; every received upsert of an in-window write
+	start, end time.Time
+	deadline   time.Time
+	ok, events int64
 	hist       *hdrhistogram.Histogram
 	err        error
 }
 
-// capacityLimit is a step the node reached its limit on before the window: followers refused, or not ready, within the
-// step's bounds. The row records it with its counts and reason. It is not an invalid measurement.
 type capacityLimit string
 
 func (c capacityLimit) Error() string { return string(c) }
@@ -145,7 +138,6 @@ type changeEvent struct {
 	} `json:"document"`
 }
 
-// deliver records one change event a follower read at at; seen is that follower's delivered ids (delivery is at least once).
 func (m *measure) deliver(seen map[string]bool, data []byte, at time.Time) error {
 	var e changeEvent
 	if err := json.Unmarshal(data, &e); err != nil {
@@ -170,12 +162,6 @@ func (m *measure) deliver(seen map[string]bool, data []byte, at time.Time) error
 	return nil
 }
 
-// step runs st.Concurrency followers against the steady writer. It answers an error for an invalid measurement:
-// a follower refused other than by its feed or shape cap or that fails, a stream that ends early, a failed or late
-// write, a server stream count that disagrees with the admitted followers, or a window without writes. A capacity
-// limit is a valid row instead, with its counts and Stopped reason: no follower admitted, admission or readiness
-// timed out, or no delivery in the window. Its unmeasured figures stay zero and are shown as n/a in the notes; a row
-// with no delivery also has zero latency, which is n/a, not a measured value.
 func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, probe, error) {
 	n := st.Concurrency
 	p := probe{n: n, target: st.Scenario}
@@ -188,8 +174,7 @@ func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, pr
 	if _, err := b.target.waitReady(b, ctx, &measure{}, 0); err != nil {
 		return fail(err)
 	}
-	// The window opens here, before admission: the storage delta covers admission, warmup, the measured window, grace
-	// and the settle below, not the 30 s measured window alone.
+
 	before, err := get(ctx, metricsClient, b.metrics)
 	if err != nil {
 		return fail(err)
@@ -211,13 +196,11 @@ func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, pr
 		stop()
 		wg.Wait()
 	}()
-	// Paced and one at a time: the local tenant's Hobby QoS plan refuses bursts, and an admitted stream gives back its
-	// QoS slot once its first cursor is sent. Admitted streams stay open, so all of them read together afterwards.
-	outcomes := make(chan string, n) // "admitted" or "rejected_<code>"; "" when the follower failed (m.err)
+
+	outcomes := make(chan string, n)
 	status := map[string]int64{}
 	t0, deadline := time.Now(), time.After(admissionDeadline)
-	// limited is the row of a step that ended at a capacity limit before its window: counts so far, reason, and no
-	// measured figures (the window never opened, so writes, deliveries and storage reads are absent).
+
 	limited := func(reason error) (apibench.Result, probe, error) {
 		status["qos_busy_followers"] = m.qosBusy.Load()
 		status["retries"] = m.retries.Load()
@@ -268,13 +251,13 @@ func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, pr
 	m.mu.Unlock()
 	var writes, writeQoS atomic.Int64
 	written := make(chan error, 1)
-	// A write still unanswered at the cutoff fails the step.
+
 	wctx, wcancel := context.WithDeadline(fctx, cutoff)
 	defer wcancel()
 	go func() { written <- b.write(wctx, t0, start, end, &writes, &writeQoS) }()
 	sleep(ctx, time.Until(start))
 	bytes0 := m.bytes.Load()
-	sampler := replbench.StartLocalSampler(b.pid, nil)
+	sampler := benchclient.StartLocalSampler(b.pid, nil)
 	sleep(ctx, time.Until(end))
 	bytes1 := m.bytes.Load()
 	res := sampler.Stop().Nodes["all nodes (one process)"]
@@ -288,8 +271,6 @@ func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, pr
 	stop()
 	wg.Wait()
 
-	// The accounting read counter moves once per closed 5 s window: wait one out so the step's reads are in it. The
-	// storage counter is synchronous; this settle also covers server work still running after the streams close.
 	sleep(ctx, 6*time.Second)
 	after, err := get(ctx, metricsClient, b.metrics)
 	if err != nil {
@@ -316,14 +297,14 @@ func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, pr
 	case res.CPUCores.N == 0:
 		return fail(fmt.Errorf("no CPU sample of process %d", b.pid))
 	case m.ok == 0:
-		// The window was measured and every expected delivery is missed: a valid row at the capacity limit.
+
 		stopped = fmt.Sprintf("no delivery of %d expected", expected)
 	case m.ok > expected:
 		return fail(fmt.Errorf("%d deliveries, more than the %d expected", m.ok, expected))
 	}
 	status["writes"] = w
 	status["server_at_ready"] = atReady
-	// Both count QoS repeats from the step's start: followers from admission, the writer from its first write.
+
 	status["qos_busy_followers"] = m.qosBusy.Load()
 	status["qos_busy_writes"] = writeQoS.Load()
 	for _, rd := range b.target.reads {
@@ -335,7 +316,7 @@ func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, pr
 	}
 	status["retries"] = m.retries.Load()
 	d := float64(st.StepS)
-	// No delivery means no latency to measure: the fields stay zero, and the notes mark the row's latency n/a.
+
 	var lat apibench.Latency
 	if m.ok > 0 {
 		lat = apibench.Latency{
@@ -371,7 +352,6 @@ func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, pr
 	}, p, nil
 }
 
-// countReason counts one shape refusal by status, error code and message.
 func (m *measure) countReason(status int, body []byte) {
 	var e struct {
 		Error struct{ Code, Message string }
@@ -387,8 +367,6 @@ func (m *measure) firstErr() error {
 	return m.err
 }
 
-// followChanges opens one feed stream and reports its admission on outcomes, then reads it until ctx ends. A 429
-// tenant_busy open is repeated after Retry-After; only the feed's own cap is an expected rejection.
 func (b *bench) followChanges(ctx context.Context, m *measure, outcomes chan<- string) {
 	report := func(err error) {
 		m.fail(err)
@@ -418,7 +396,7 @@ func (b *bench) followChanges(ctx context.Context, m *measure, outcomes chan<- s
 			outcomes <- "rejected_changes_busy"
 			return
 		default:
-			// Any other refusal (tenant_memory, storage_busy) invalidates the admission baseline.
+
 			report(fmt.Errorf("%s: HTTP %d %s", b.target.path, r.StatusCode, body))
 			return
 		}
@@ -451,7 +429,6 @@ func (b *bench) followChanges(ctx context.Context, m *measure, outcomes chan<- s
 	}
 }
 
-// openFeed sends one feed open with the follower's bearer token.
 func (b *bench) openFeed(ctx context.Context) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.database+b.target.path+"?cursor=now&collections="+url.QueryEscape(b.collection), nil)
 	if err != nil {
@@ -462,8 +439,6 @@ func (b *bench) openFeed(ctx context.Context) (*http.Response, error) {
 	return b.sse.Do(req)
 }
 
-// write PUTs one document every 1/writeRate s from t0 until end, counting those sent inside [start, end) in inWindow.
-// Each document holds its send time. Any failed write is an error; a QoS repeat is counted in qosBusy.
 func (b *bench) write(ctx context.Context, t0, start, end time.Time, inWindow, qosBusy *atomic.Int64) error {
 	var wg sync.WaitGroup
 	var once sync.Once
@@ -475,7 +450,7 @@ func (b *bench) write(ctx context.Context, t0, start, end time.Time, inWindow, q
 		}
 		wg.Go(func() {
 			sent := time.Now()
-			resp, err := b.put(ctx, replbench.DocPath(b.collection, ulid.Make().String()), document(sent), qosBusy)
+			resp, err := b.put(ctx, benchclient.DocPath(b.collection, ulid.Make().String()), document(sent), qosBusy)
 			switch {
 			case err != nil:
 				once.Do(func() {
@@ -497,9 +472,7 @@ func (b *bench) write(ctx context.Context, t0, start, end time.Time, inWindow, q
 	return failed
 }
 
-// put sends one write. A 429 tenant_busy is the plan's request budget refusing it before the write applies: the same
-// body is repeated after Retry-After, and the document keeps its first send time, so the wait shows in its lag.
-func (b *bench) put(ctx context.Context, path string, body []byte, qosBusy *atomic.Int64) (replbench.Response, error) {
+func (b *bench) put(ctx context.Context, path string, body []byte, qosBusy *atomic.Int64) (benchclient.Response, error) {
 	for {
 		resp, err := b.writer.Do(ctx, http.MethodPut, path, body, "application/json")
 		if err != nil || resp.Status != http.StatusTooManyRequests || errorCode(bytes.NewReader(resp.Body)) != "tenant_busy" {
@@ -512,7 +485,6 @@ func (b *bench) put(ctx context.Context, path string, body []byte, qosBusy *atom
 	}
 }
 
-// document is a payloadBytes JSON document holding its send time in t.
 func document(sent time.Time) []byte {
 	b := fmt.Appendf(nil, `{"t":%d,"pad":"`, sent.UnixNano())
 	b = append(b, bytes.Repeat([]byte("x"), payloadBytes-len(b)-2)...)
@@ -521,8 +493,6 @@ func document(sent time.Time) []byte {
 
 var metricsClient = &http.Client{Timeout: 5 * time.Second}
 
-// waitStreams waits up to 30 s for the node's open feed streams (terrabase.changes.streams, absent before the first
-// stream) to equal want. It returns that count, the node's own at readiness.
 func (b *bench) waitStreams(ctx context.Context, _ *measure, want int64) (int64, error) {
 	var got float64
 	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); sleep(ctx, 200*time.Millisecond) {
@@ -542,8 +512,6 @@ func (b *bench) waitStreams(ctx context.Context, _ *measure, want int64) (int64,
 	return 0, fmt.Errorf("the node has %v open feed streams, want %d", got, want)
 }
 
-// readSSE calls on with each event's type and data until r ends. A field's value follows its colon, less one leading
-// space; lines starting with a colon are comments.
 func readSSE(r io.Reader, on func(event string, data []byte) error) error {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64<<10), 8<<20)
@@ -576,7 +544,6 @@ func readSSE(r io.Reader, on func(event string, data []byte) error) error {
 	return sc.Err()
 }
 
-// errorCode is the code of a TerraBase error body, or "unknown".
 func errorCode(r io.Reader) string {
 	var body struct {
 		Error struct {

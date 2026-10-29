@@ -22,8 +22,8 @@ public sealed class StaleUploadCleanupTests
         using var node = new S3ObjectStore(new Uri(settings["backup-endpoint"]), settings["backup-region"], FakeS3.Bucket,
             settings["backup-access-key-id"], settings["backup-secret-key"], provider.GetRequiredService<IHttpClientFactory>(),
             S3ObjectStore.HttpClientName, time);
-        const string old = "v1/_system/snapshots/old";
-        const string fresh = "v1/_system/snapshots/fresh";
+        const string old = "v1/_system/nodes/local/snapshots/old";
+        const string fresh = "v1/_system/nodes/local/snapshots/fresh";
         var foreign = $"v1/{Ulid.NewUlid()}/{Ulid.NewUlid()}/{Ulid.NewUlid()}/snapshots/old";
         await LeaveUploadAsync(s3, node, old, cancellationToken);
         await LeaveUploadAsync(s3, node, foreign, cancellationToken);

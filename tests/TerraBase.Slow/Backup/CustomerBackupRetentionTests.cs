@@ -21,7 +21,7 @@ public sealed class CustomerBackupRetentionTests
         var s3 = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
-        await api.VerifyCatalogAsync(cancellationToken);
+
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await CreateManagedDatabaseAsync(api, cancellationToken);
         using var data = api.DataClient(await api.Server.IssueAsync(database.Organization, ["documents:read", "documents:write"], cancellationToken));
@@ -42,7 +42,6 @@ public sealed class CustomerBackupRetentionTests
         for (var index = 0; index < expiredCount; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            // The retained real snapshot has position zero, below every candidate's position. Its WAL remains needed.
             var key = string.Create(CultureInfo.InvariantCulture,
                 $"{File(database)}/snapshots/{first + index:D13}-{generation}-0000000000009999");
             s3.SeedObject(customer: true, key, []);
@@ -80,8 +79,6 @@ public sealed class CustomerBackupRetentionTests
             await AssertDocumentAsync(data, restored, "before", before, cancellationToken);
             await AssertDocumentAsync(data, restored, "after", after, cancellationToken);
         }
-
-        // A recent floor survives; a hard-expired floor drains in the first pass. Both protect the real snapshot's WAL.
         await Assert.That(previous).IsEqualTo(hardExpired ? 1 : 2);
         await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
@@ -90,7 +87,6 @@ public sealed class CustomerBackupRetentionTests
     {
         s3.Route(services);
         ManualBackupHosting.Configure(services);
-        // Bound captured output from the 10,002-snapshot customer workload; warnings and errors remain visible.
         services.AddLogging(logging => logging.AddFilter("System.Net.Http.HttpClient.backup-s3-customer.", LogLevel.Warning));
     }
 
@@ -198,7 +194,7 @@ public sealed class CustomerBackupRetentionTests
         await Assert.That(body.GetProperty("document").GetProperty("text").GetString()).IsEqualTo(text);
     }
 
-    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
+    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
 
     private static Uri Uri(string path) => ManagementApi.Uri(path);
 }

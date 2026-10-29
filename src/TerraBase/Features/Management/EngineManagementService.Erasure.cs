@@ -10,7 +10,6 @@ namespace TerraBase.Features.Management;
 internal sealed partial class EngineManagementService
 {
     // Called only under a version-2 permanent closure fence. Every holder advances bounded work independently;
-    // the existing database purge owns file, webhook and backup cleanup, including copies in other regions.
     private async ValueTask<bool> EraseProjectBatchAsync(IStorageTransaction transaction, ProjectClosureRecord closure, CancellationToken token)
     {
         var project = closure.ProjectId;

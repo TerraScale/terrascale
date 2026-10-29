@@ -2,17 +2,14 @@ using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using Bogus;
-using Grpc.Core;
-using Grpc.Core.Interceptors;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
-using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Backup;
-using TerraBase.Features.Replication;
-using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
 using TerraBase.Testing;
 
@@ -46,30 +43,9 @@ public sealed class BoundedShutdownTests
     }
 
     [Test]
-    public async Task A_peer_that_never_sends_hello_cannot_consume_the_hosted_service_budget()
-    {
-        var token = TestContext.Current!.Execution.CancellationToken;
-        var entered = new HandshakeProbe();
-        await using var server = await TerraBaseTestServer.StartAsync(services: services =>
-        {
-            services.AddSingleton(entered);
-            services.AddGrpc(options => options.Interceptors.Add<HandshakeProbe>());
-        });
-        using var channel = PeerChannel.Create(server.BaseAddress, PeerTls.Credential);
-        using var peer = new Features.Replication.V1.Replication.ReplicationClient(channel).Push(cancellationToken: token);
-        await entered.Entered.Task.WaitAsync(token);
-        var completion = server.Services.GetRequiredService<ApplicationRunCompletion>().Completion.Task;
-        var elapsed = Stopwatch.StartNew();
-        server.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
-        await completion.WaitAsync(TimeSpan.FromSeconds(45), token);
-        TestContext.Current!.OutputWriter.WriteLine($"shutdown_seconds={elapsed.Elapsed.TotalSeconds:F3} peer_without_hello=true");
-        await Assert.That(elapsed.Elapsed).IsLessThan(Shutdown.HostedBudget);
-    }
-
-    [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task Active_changes_and_peer_streams_stop_before_storage_closes_within_budget(bool stalledBackup)
+    public async Task Active_changes_stop_before_storage_closes_within_budget(bool stalledBackup)
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         var bucket = new FakeS3();
@@ -85,8 +61,6 @@ public sealed class BoundedShutdownTests
         var hostedBudget = server.Services.GetRequiredService<IOptions<HostOptions>>().Value.ShutdownTimeout;
         var streams = new List<HttpResponseMessage>();
         var readers = new List<StreamReader>();
-        using var channel = PeerChannel.Create(server.BaseAddress, PeerTls.Credential);
-        var peers = new List<AsyncDuplexStreamingCall<PushFrame, AckFrame>>();
         var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         try
@@ -100,15 +74,6 @@ public sealed class BoundedShutdownTests
                 var reader = new StreamReader(await response.Content.ReadAsStreamAsync(token));
                 readers.Add(reader);
                 await ReadEventAsync(reader, "cursor", token);
-            }
-
-            for (var index = 0; index < 2; index++)
-            {
-                var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Push(cancellationToken: token);
-                peers.Add(call);
-                await call.RequestStream.WriteAsync(new PushFrame { Hello = new Hello { Node = ReplicaId.Of(123, (uint)index + 1, 0).Value, Region = "sjc" } }, token);
-                await Assert.That(await call.ResponseStream.MoveNext(token)).IsTrue();
-                await Assert.That(call.ResponseStream.Current.Welcome).IsNotNull();
             }
 
             var text = new Faker().Lorem.Sentence();
@@ -139,8 +104,6 @@ public sealed class BoundedShutdownTests
                     }
                 };
             }
-
-            // Keep clients alive throughout shutdown: client disposal cannot make the drain pass.
             var elapsed = Stopwatch.StartNew();
             lifetime.StopApplication();
             await completion.WaitAsync(TimeSpan.FromSeconds(45), token);
@@ -163,19 +126,6 @@ public sealed class BoundedShutdownTests
                 }
             }
 
-            foreach (var peer in peers)
-            {
-                try
-                {
-                    await Assert.That(await peer.ResponseStream.MoveNext(token)).IsFalse();
-                }
-                catch (RpcException error) when (error.StatusCode is StatusCode.Cancelled or StatusCode.Unknown or StatusCode.Unavailable
-                    || error.StatusCode == StatusCode.Internal && error.Status.DebugException is HttpProtocolException)
-                {
-                    // gRPC reports the server-side end while the client itself remains uncancelled.
-                }
-            }
-
             await using var restarted = await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = server.DataDirectory);
             using var saved = await restarted.Client.GetAsync(new Uri(api.Document(committed), UriKind.Relative), token);
             await Assert.That(saved.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -184,11 +134,6 @@ public sealed class BoundedShutdownTests
         }
         finally
         {
-            foreach (var peer in peers)
-            {
-                peer.Dispose();
-            }
-
             foreach (var reader in readers)
             {
                 reader.Dispose();
@@ -199,6 +144,40 @@ public sealed class BoundedShutdownTests
                 stream.Dispose();
             }
         }
+    }
+
+    [Test]
+    public async Task A_changes_write_in_progress_at_shutdown_completes_before_clean_eof()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var barrier = new ChangesWriteBarrier();
+        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<IStartupFilter>(barrier));
+        var lifetime = api.Server.Services.GetRequiredService<IHostApplicationLifetime>();
+        var completion = api.Server.Services.GetRequiredService<ApplicationRunCompletion>().Completion.Task;
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(api.DatabasePath() + "/changes?cursor=now", UriKind.Relative));
+        var pending = api.Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+        try
+        {
+            await barrier.Entered.Task.WaitAsync(token);
+            lifetime.StopApplication();
+        }
+        finally
+        {
+            barrier.Release.TrySetResult();
+        }
+
+        using var response = await pending;
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(token));
+        await ReadEventAsync(reader, "cursor", token);
+        while (await reader.ReadLineAsync(token) is not null)
+        {
+        }
+
+        await completion.WaitAsync(TimeSpan.FromSeconds(45), token);
+        await Assert.That(engine.CleanupCompletion.IsCompletedSuccessfully).IsTrue();
+        await Assert.That(engine.Pool.OpenCount).IsEqualTo(0);
     }
 
     [Test]
@@ -217,8 +196,6 @@ public sealed class BoundedShutdownTests
 
         using var release = new ManualResetEventSlim();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        // Cancellation callbacks run newest first. Hold dispatch here so the producer observes the original
-        // cancelled token while the stream's earlier linked-token callback has definitely not run yet.
         using var registration = lifetime.ApplicationStopping.Register(() =>
         {
             entered.TrySetResult();
@@ -231,7 +208,6 @@ public sealed class BoundedShutdownTests
         try
         {
             await entered.Task.WaitAsync(token);
-            // A real commit wakes the already-open stream and starts its next shared producer.
             await using (var transaction = await store.BeginTransactionAsync(write: true, token))
             {
                 _ = await transaction.PutAsync(DocumentApi.Collection, DocumentApi.NewId(), "{\"n\":1}"u8.ToArray(), token);
@@ -274,7 +250,6 @@ public sealed class BoundedShutdownTests
         await Assert.That(await reader.GetAsync(DocumentApi.Collection, id, token)).IsNotNull();
         try
         {
-            // The real grace wait expires while this admitted reader keeps native cleanup outstanding.
             await engine.DisposeAsync();
             await Assert.That(engine.Io.Closed).IsTrue();
             await Assert.That(engine.CleanupCompletion.IsCompleted).IsFalse();
@@ -282,7 +257,6 @@ public sealed class BoundedShutdownTests
         }
         finally
         {
-            // Retiring the last reader still needs the journal writer and the I/O pool.
             await reader.DisposeAsync();
         }
 
@@ -295,7 +269,7 @@ public sealed class BoundedShutdownTests
         var saved = (await reopened.OpenDatabaseAsync(tenant, token))!;
         await using var check = await saved.BeginTransactionAsync(write: false, token);
         await Assert.That(await check.GetAsync(DocumentApi.Collection, id, token)).IsNotNull();
-        await Assert.That(await reopened.Ledger.GetAsync(tenant, token)).IsNull();
+        await Assert.That(reopened.Ledger.Refusal((TursoDatabaseStore)saved)).IsNull();
     }
 
     private static async Task ReadEventAsync(StreamReader reader, string expected, CancellationToken cancellationToken)
@@ -314,6 +288,30 @@ public sealed class BoundedShutdownTests
         throw new EndOfStreamException("changes stream ended before its event");
     }
 
+    private sealed class ChangesWriteBarrier : IStartupFilter
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use(async (context, continuation) =>
+            {
+                if (context.Request.Path.Value?.EndsWith("/changes", StringComparison.Ordinal) == true)
+                {
+                    context.Response.OnStarting(async () =>
+                    {
+                        Entered.TrySetResult();
+                        await Release.Task.WaitAsync(context.RequestAborted);
+                    });
+                }
+
+                await continuation(context);
+            });
+            next(app);
+        };
+    }
+
     private sealed class HeldShutdown : IHostedService
     {
         public TaskCompletionSource Stopping { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -325,19 +323,6 @@ public sealed class BoundedShutdownTests
         {
             Stopping.TrySetResult();
             await Release.Task.WaitAsync(cancellationToken);
-        }
-    }
-
-    private sealed class HandshakeProbe : Interceptor
-    {
-        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public override Task DuplexStreamingServerHandler<TRequest, TResponse>(
-            IAsyncStreamReader<TRequest> requestStream, IServerStreamWriter<TResponse> responseStream,
-            ServerCallContext context, DuplexStreamingServerMethod<TRequest, TResponse> continuation)
-        {
-            Entered.TrySetResult();
-            return continuation(requestStream, responseStream, context);
         }
     }
 }

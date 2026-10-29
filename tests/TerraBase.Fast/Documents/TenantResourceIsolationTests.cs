@@ -36,8 +36,7 @@ public sealed class TenantResourceIsolationTests
         using (var held = budget.TryReserve(MemoryLane.Bulk, Budget - 16 * 1024, null))
         {
             await Assert.That(held).IsNotNull();
-            // The no-organization dashboard request admits its 16 KiB base reservation, then has no
-            // process headroom to materialize catalog rows. System reads cannot bypass result admission.
+
             using var refused = await owner.GetAsync(route);
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
             await Assert.That((await refused.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetProperty("code").GetString())
@@ -65,13 +64,13 @@ public sealed class TenantResourceIsolationTests
         var share = (long)(Budget * QosPolicy.For(plan).MemoryShare);
         using var first = budget.TryReserve(MemoryLane.Foreground, share - 1, tenant);
         using var second = budget.TryReserve(MemoryLane.Bulk, 1, tenant with { ProjectId = faker.Random.Guid().ToString() });
-        using var refused = budget.TryReserve(MemoryLane.Replication, 1, tenant);
+        using var refused = budget.TryReserve(MemoryLane.Bulk, 1, tenant);
         using var oversized = budget.TryReserve(MemoryLane.Foreground, long.MaxValue, tenant);
         await Assert.That(first).IsNotNull();
         await Assert.That(second).IsNotNull();
         await Assert.That(refused).IsNull();
         await Assert.That(oversized).IsNull();
-        // Observe real server accounting over its administrative listener, without tenant metric labels.
+
         var metrics = await server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative));
         var reserved = metrics.Split('\n').Where(line => line.StartsWith("terrabase_memory_reserved", StringComparison.Ordinal))
             .Select(line => long.Parse(line.Split(' ', StringSplitOptions.RemoveEmptyEntries)[1], CultureInfo.InvariantCulture));
@@ -107,7 +106,7 @@ public sealed class TenantResourceIsolationTests
             var extra = new TenantContext(EntityIds.New().ToString(), PlanTier.Pro);
             using var refused = budget.TryReserve(MemoryLane.Foreground, 1, extra);
             await Assert.That(refused).IsNull();
-            // Zero-byte leases allocate no table slot and remain valid at capacity.
+
             using var zero = budget.TryReserve(MemoryLane.Foreground, 0, extra);
             await Assert.That(zero).IsNotNull();
             reservations[0].Dispose();
@@ -186,7 +185,7 @@ public sealed class TenantResourceIsolationTests
         var budget = management.Server.Services.GetRequiredService<IMemoryBudget>();
         using (var oldRetention = budget.TryReserve(MemoryLane.Foreground, Budget - Budget / 16, database))
         {
-            // Enterprise holds more than the entire new Hobby memory allowance, so admission alone would lock it out.
+
             await Assert.That(oldRetention).IsNull();
         }
         using (var changed = await service.PutAsJsonAsync(planUri, new { plan = "hobby" }))
@@ -290,7 +289,7 @@ public sealed class TenantResourceIsolationTests
         }
         await Assert.That(await ReadAsync(paid, "hot", page)).IsEqualTo("paid");
         await Assert.That(await ReadAsync(hobby, "b0", false)).IsEqualTo("hobby");
-        // Out-of-band changes identify hits without depending on write-stamp hash collisions.
+
         await StorageFixture.ExecuteAsync(await paid.FileAsync(management.Server, "shop", deadline.Token),
             """UPDATE "items" SET doc = json_set(doc, '$.name', 'disk');""");
         await StorageFixture.ExecuteAsync(await hobby.FileAsync(management.Server, "shop", deadline.Token),

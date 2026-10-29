@@ -20,30 +20,26 @@ import (
 	"time"
 
 	"github.com/oklog/ulid/v2"
-	"terrascale.tech/ts-benchmark/internal/replbench"
+	"terrascale.tech/ts-benchmark/internal/benchclient"
 )
 
-// The free-read tiers (docs/terrabase/free-reads-cdn.md) as a catch-up load (README "Catch-up tiers"): readers that join
-// behind the head read the same sealed snapshot page and chunks, from the origin (t0), the bucket by presigned URL (t1) or
-// Cloudflare's cache in front of an R2 bucket (t2). The bucket decides t1 or t2: an R2 bucket's manifest links its CDN.
 const (
-	catchupJoinS = 10                    // readers join evenly over this many seconds
-	sealPace     = 50 * time.Millisecond // one write per 50 ms, 20 per second
+	catchupJoinS = 10
+	sealPace     = 50 * time.Millisecond
 	mirrorWait   = 2 * time.Minute
-	cdnHost      = ".terrascale.tech" // ShapeObjectStore.Cdn: shapes-<bucket>.terrascale.tech
+	cdnHost      = ".terrascale.tech"
 )
 
-// catchupStep is one (tier, readers, repeat) measurement.
 type catchupStep struct {
 	Tier                          string
 	N, Repeat, Chunks             int
-	Reads                         map[string]int64    // terrabase.storage.reads delta by path, both nodes
-	Sealed, Mirrored              int64               // terrabase.shape.seals and mirror uploads (bucket PUTs) during the readers
-	MirroredAhead                 int                 // objects the manifest chain listed before the readers started
-	Origin, Manifests, ObjectGets int64               // reader requests: origin shape reads, manifest calls, object fetches
-	EdgeHits, EdgeMisses          int64               // t2 object fetches Cloudflare answered from cache (cf-cache-status HIT), or not
-	Locations                     map[string][2]int64 // t2 [hits, misses] by Cloudflare location (the cf-ray suffix)
-	Start, End                    time.Time           // the readers' window, for the bucket's own GetObject count (R2 analytics)
+	Reads                         map[string]int64
+	Sealed, Mirrored              int64
+	MirroredAhead                 int
+	Origin, Manifests, ObjectGets int64
+	EdgeHits, EdgeMisses          int64
+	Locations                     map[string][2]int64
+	Start, End                    time.Time
 	OriginBytes, ObjectBytes      int64
 	Failures                      int64
 	Error                         string `json:",omitempty"`
@@ -87,11 +83,11 @@ func catchup(args []string) error {
 		return fmt.Errorf("-tiers: %q", *tiers)
 	}
 	ctx := context.Background()
-	var t replbench.Targets
+	var t benchclient.Targets
 	var nodes []string
 	if *origin != "" {
-		// A running cluster mirrors to its own bucket; its nodes' metrics are scraped directly.
-		t = replbench.Targets{Project: *project, Database: *database, Regions: map[string]replbench.RegionTarget{region: {URL: *origin, Token: os.Getenv("TS_BENCH_API_KEY")}}}
+
+		t = benchclient.Targets{Project: *project, Database: *database, Regions: map[string]benchclient.RegionTarget{region: {URL: *origin, Token: os.Getenv("TS_BENCH_API_KEY")}}}
 		nodes = strings.Split(*metrics, ",")
 		if *project == "" || *database == "" || *metrics == "" || t.Regions[region].Token == "" {
 			return fmt.Errorf("-origin needs -project, -database, -metrics and TS_BENCH_API_KEY")
@@ -115,7 +111,7 @@ func catchup(args []string) error {
 			return err
 		}
 	}
-	w, err := replbench.NewRegion(region, t, writeRate*4)
+	w, err := benchclient.NewRegion(region, t, writeRate*4)
 	if err != nil {
 		return err
 	}
@@ -142,7 +138,7 @@ func catchup(args []string) error {
 	if *out == "" {
 		*out = fmt.Sprintf("%s/%s-catchup-%s", reportDir, time.Now().UTC().Format(time.DateOnly), ulid.Make())
 	}
-	if err := replbench.WriteJSON(*out+".json", steps); err != nil {
+	if err := benchclient.WriteJSON(*out+".json", steps); err != nil {
 		return err
 	}
 	if err := os.WriteFile(*out+".md", []byte(catchupTable(steps)), 0o644); err != nil {
@@ -152,8 +148,6 @@ func catchup(args []string) error {
 	return nil
 }
 
-// runCatchup seals a snapshot and s.Chunks chunks behind it on a new collection (so a new handle and new objects), waits
-// for the mirror on t1 and t2, then lets s.N readers join and catch up to the head.
 func runCatchup(ctx context.Context, b *bench, objects *http.Client, nodes []string, s *catchupStep) error {
 	b.collection = "cu-" + strings.ToLower(ulid.Make().String())
 	body, _ := json.Marshal(map[string]string{"name": b.collection})
@@ -178,8 +172,7 @@ func runCatchup(ctx context.Context, b *bench, objects *http.Client, nodes []str
 		if err := b.writeOne(ctx); err != nil {
 			return err
 		}
-		// Reading the head after a write seals one chunk once the write is remote durable: the steady state a live reader
-		// drives. Until then the head answers unchanged, and the next write joins the same chunk.
+
 		next, err := b.retryGet(ctx, m, b.shapeURL(url.Values{"handle": {handle}, "offset": {offset}}))
 		if err != nil || next.status != http.StatusOK {
 			return fmt.Errorf("seal chunk: %v HTTP %d %s", err, next.status, next.body)
@@ -237,7 +230,6 @@ func runCatchup(ctx context.Context, b *bench, objects *http.Client, nodes []str
 	return nil
 }
 
-// retryGet repeats a request the server refused as busy or unavailable (429, 503), as a client would.
 func (b *bench) retryGet(ctx context.Context, m *measure, target string) (shapeResponse, error) {
 	for range 100 {
 		resp, err := b.shapeGet(ctx, m, target)
@@ -249,8 +241,6 @@ func (b *bench) retryGet(ctx context.Context, m *measure, target string) (shapeR
 	return shapeResponse{}, fmt.Errorf("%s: still busy after 100 tries", target)
 }
 
-// writeOne writes a new document. A busy node or an unknown outcome (429, 503) is written again as another document:
-// setup only needs writes to seal chunks, so a write that did land is harmless.
 func (b *bench) writeOne(ctx context.Context) error {
 	for range 10 {
 		resp, err := b.writer.Do(ctx, http.MethodPut, "/collections/"+b.collection+"/documents/by-key?id="+ulid.Make().String(), document(time.Now()), "application/json")
@@ -274,7 +264,6 @@ type manifestObject struct {
 	Size       int64  `json:"size"`
 }
 
-// manifest lists the mirrored objects from the absolute shape URL target's offset.
 func (b *bench) manifest(ctx context.Context, handle, offset string) ([]manifestObject, error) {
 	resp, err := b.retryGet(ctx, &measure{}, b.database+"/collections/"+b.collection+"/shape/manifest?"+url.Values{"handle": {handle}, "offset": {offset}}.Encode())
 	if err != nil || resp.status != http.StatusOK {
@@ -284,7 +273,6 @@ func (b *bench) manifest(ctx context.Context, handle, offset string) ([]manifest
 	return m.Objects, json.Unmarshal(resp.body, &m)
 }
 
-// mirrored counts the objects the manifest chain lists from the first page to head.
 func (b *bench) mirrored(ctx context.Context, handle, first, head string) (int, error) {
 	offset, count := offsetOf(first), 0
 	for offset != head {
@@ -303,8 +291,6 @@ func offsetOf(target string) string {
 	return u.Query().Get("offset")
 }
 
-// catchUp reads from the snapshot's first page to head: on t1 and t2 through the manifest's objects while it lists them,
-// otherwise from the origin.
 func (b *bench) catchUp(ctx context.Context, objects *http.Client, s *catchupStep, handle, first, head string) error {
 	m := &measure{}
 	offset := offsetOf(first)
@@ -343,7 +329,6 @@ func (b *bench) catchUp(ctx context.Context, objects *http.Client, s *catchupSte
 	return nil
 }
 
-// fetchObject reads one object (t1 straight from the bucket, t2 through Cloudflare) and checks its size and digest.
 func fetchObject(ctx context.Context, client *http.Client, s *catchupStep, o manifestObject) error {
 	u, err := url.Parse(o.URL)
 	if err != nil {
@@ -377,8 +362,7 @@ func fetchObject(ctx context.Context, client *http.Client, s *catchupStep, o man
 	if s.Tier != "t2" {
 		return nil
 	}
-	// Any status but HIT may have read the bucket (MISS, EXPIRED, ...), so it counts as a miss. A lower-tier MISS that the
-	// upper tier answered counts too: an upper bound on bucket reads, which R2's own GetObject count then measures.
+
 	hit := resp.Header.Get("Cf-Cache-Status") == "HIT"
 	location := resp.Header.Get("Cf-Ray")
 	location = location[strings.LastIndexByte(location, '-')+1:]
@@ -399,7 +383,6 @@ func fetchObject(ctx context.Context, client *http.Client, s *catchupStep, o man
 	return nil
 }
 
-// catchupTable reports the median and range over repeats of every (tier, readers) step.
 func catchupTable(steps []*catchupStep) string {
 	type key struct {
 		tier string
@@ -474,7 +457,6 @@ func catchupTable(steps []*catchupStep) string {
 	return b.String()
 }
 
-// bucketGets are the object reads that may have reached the bucket: every fetch on t1, cache misses on t2.
 func bucketGets(s *catchupStep) int64 {
 	if s.Tier == "t2" {
 		return s.EdgeMisses

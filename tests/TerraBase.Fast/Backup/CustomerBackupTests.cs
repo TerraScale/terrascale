@@ -65,7 +65,7 @@ public sealed class CustomerBackupTests
         await Assert.That(customerKeys.Any(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))).IsTrue();
         await Assert.That(customerKeys.Any(key => key.StartsWith(File(database) + "/wal/", StringComparison.Ordinal))).IsTrue();
         await Assert.That(customerKeys.All(s3.Objects.ContainsKey)).IsTrue();
-        await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith("v1/_system/", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith("v1/_system/nodes/local/", StringComparison.Ordinal))).IsTrue();
         await Assert.That(customerKeys.Any(key => key.Contains("_system", StringComparison.Ordinal))).IsFalse();
         await Assert.That(s3.CustomerObjects.All(item => item.Value.AsSpan().StartsWith("TBK1"u8) || item.Key.StartsWith("v1/keys/", StringComparison.Ordinal))).IsTrue();
         await Assert.That(s3.CustomerObjects.Values.Any(content => content.AsSpan().IndexOf(Encoding.UTF8.GetBytes(after)) >= 0)).IsFalse();
@@ -311,7 +311,7 @@ public sealed class CustomerBackupTests
         await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
         await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(sibling) + "/snapshots/", StringComparison.Ordinal))).IsTrue();
         await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(otherOrganization) + "/snapshots/", StringComparison.Ordinal))).IsTrue();
-        await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith("v1/_system/", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith("v1/_system/nodes/local/", StringComparison.Ordinal))).IsTrue();
         await Assert.That(s3.CustomerObjects.Keys.All(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal)
             || key.StartsWith($"v1/keys/{customer.Organization}/{customer.Project}/", StringComparison.Ordinal))).IsTrue();
         using var platformWindow = await api.Client.GetAsync(Uri(customer.Path + "/point-in-time"), cancellationToken);
@@ -1397,7 +1397,7 @@ public sealed class CustomerBackupTests
         objects.Keys.Where(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))
             .Select(key => key.Split('/')[^1].Split('-')[1]).ToHashSet(StringComparer.Ordinal);
 
-    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
+    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
 
     private static Uri Uri(string path) => ManagementApi.Uri(path);
 }

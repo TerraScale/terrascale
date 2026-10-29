@@ -2,15 +2,12 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management.Backups;
-using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using ZLogger;
 
 namespace TerraBase.Features.Management;
 
-// docs/terrabase/project-closure.md: a permanent per-project fence, accepted only once every catalog holder confirmed the
-// project empty under it.
 internal sealed partial class EngineManagementService
 {
     private string? _closuresAfter;
@@ -51,7 +48,7 @@ internal sealed partial class EngineManagementService
             }
 
             var record = new ProjectClosureRecord(projectId, closureId, authorityOrganizationId, time.GetUtcNow(),
-                [.. (await ClosureHoldersAsync(transaction, cancellationToken).ConfigureAwait(false)).Order(StringComparer.Ordinal)], version);
+                [.. CatalogHolders(options.MachineId).Order(StringComparer.Ordinal)], version);
             await PutAsync(transaction, ProjectClosure.Collection, projectId, record, TerraBaseJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false);
             await RefreshClosureReceiptAsync(transaction, record, cancellationToken).ConfigureAwait(false);
             logger.ZLogInformation($"Project {projectId:@Project} is fenced for closure {closureId:@Closure}");
@@ -69,47 +66,18 @@ internal sealed partial class EngineManagementService
             && await IsProjectRegisteredAsync(transaction, project, namespaceId, token).ConfigureAwait(false);
     }
 
-    // Read by every registration and enrollment in its committing transaction.
     private static ValueTask<bool> IsProjectClosedAsync(IStorageTransaction transaction, string projectId, CancellationToken cancellationToken) =>
         ProjectClosure.IsClosedAsync(transaction, projectId, cancellationToken);
 
-    // The same contents DeleteProjectAsync refuses to delete.
     private static async ValueTask<bool> IsProjectEmptyAsync(IStorageTransaction transaction, string projectId, CancellationToken cancellationToken) =>
         !await AnyAsync(transaction, Databases(projectId), cancellationToken).ConfigureAwait(false)
         && !await AnyAsync(transaction, EngineApiKeyStore.ProjectKeys(projectId), cancellationToken).ConfigureAwait(false)
         && !await AnyAsync(transaction, ProjectBackupDestinations.Collection(projectId), cancellationToken).ConfigureAwait(false)
         && !await AnyAsync(transaction, Features.FileStorage.FileStorageUsage.Buckets(projectId), cancellationToken).ConfigureAwait(false);
 
-    // Every machine that ever ran this catalog (retired ones included) and this one; no holder is silently dropped.
-    private ValueTask<HashSet<string>> ClosureHoldersAsync(IStorageTransaction transaction, CancellationToken cancellationToken) =>
-        CatalogHoldersAsync(transaction, options.MachineId, cancellationToken);
+    internal static HashSet<string> CatalogHolders(string machineId) =>
+        new([machineId], StringComparer.Ordinal);
 
-    /// <summary>
-    /// Every machine that ever ran this catalog (retired ones included) and <paramref name="machineId"/>: the holders that
-    /// project closure and shared-history erasure (<see cref="HistoryErasures"/>) wait for. Bounded to 1024.
-    /// </summary>
-    internal static async ValueTask<HashSet<string>> CatalogHoldersAsync(IStorageTransaction transaction, string machineId, CancellationToken cancellationToken)
-    {
-        var holders = new HashSet<string>(StringComparer.Ordinal) { machineId };
-        string? after = null;
-        DocumentPage page;
-        do
-        {
-            page = await transaction.ListAsync(CatalogGate.Members, after, CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-            holders.UnionWith(page.Documents.Select(member => member.Id));
-            if (holders.Count > 1024)
-            {
-                throw new InvalidOperationException("catalog membership exceeds its bound");
-            }
-
-            after = page.Documents.Count == 0 ? after : page.Documents[^1].Id;
-        }
-        while (page.HasMore);
-
-        return holders;
-    }
-
-    // This machine's receipt, in a transaction that sees the fence: once empty, nothing registers here again.
     private async ValueTask RefreshClosureReceiptAsync(IStorageTransaction transaction, ProjectClosureRecord record, CancellationToken cancellationToken)
     {
         record = await GetAsync(transaction, ProjectClosure.Collection, record.ProjectId, TerraBaseJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false)
@@ -129,9 +97,6 @@ internal sealed partial class EngineManagementService
             .ConfigureAwait(false);
     }
 
-    // Whether RefreshClosureReceiptAsync would write nothing: this machine's receipt proves the current fence empty, and nothing
-    // is left to erase, revoke, scan or verify. Every closure ever accepted is converged every pass; read under the writer, they
-    // held SYSTEM's writer ~30 times a second on every node (2026-10-27). What lands later is erased by the next pass's write.
     private async ValueTask<bool> IsClosureSettledAsync(IStorageTransaction transaction, ProjectClosureRecord record, CancellationToken cancellationToken)
     {
         var project = record.ProjectId;
@@ -148,11 +113,9 @@ internal sealed partial class EngineManagementService
     private ValueTask<ProjectClosureReceipt?> OwnClosureReceiptAsync(IStorageTransaction transaction, ProjectClosureRecord record, CancellationToken cancellationToken) =>
         GetAsync(transaction, ProjectClosure.Receipts(record.ProjectId), options.MachineId, TerraBaseJsonContext.Default.ProjectClosureReceipt, cancellationToken);
 
-    // Receipts must name this fence and current active-erasure evidence, independent of wall-clock ordering.
-    // Legacy empty-only receipts cannot complete either contract.
     private async ValueTask<ProjectClosureStatus> ClosureStatusAsync(IStorageTransaction transaction, ProjectClosureRecord record, CancellationToken cancellationToken)
     {
-        var holders = await ClosureHoldersAsync(transaction, cancellationToken).ConfigureAwait(false);
+        var holders = CatalogHolders(options.MachineId);
         holders.UnionWith(record.ExpectedHolders);
         var pending = 0;
         foreach (var holder in holders)
@@ -169,7 +132,6 @@ internal sealed partial class EngineManagementService
         return new ProjectClosureStatus(pending == 0 ? ProjectClosure.Accepted : ProjectClosure.Pending, record.ClosureId, pending);
     }
 
-    // One bounded page per pass, as permanent purges are; only this machine's receipt is written.
     private async ValueTask ConvergeClosuresAsync(CancellationToken cancellationToken)
     {
         var page = await ReadAsync<DocumentPage?>(async transaction => await transaction.ListAsync(ProjectClosure.Collection, _closuresAfter,

@@ -45,7 +45,7 @@ public sealed class IndexApiTests
         var remaining = await api.Client.GetFromJsonAsync<JsonElement>(Uri(indexes));
 
         await Assert.That(byDefault.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        // "customer.email" is not a valid name as written, so the default name carries a hash of the exact definition.
+
         var defaultName = created.GetProperty("name").GetString()!;
         await Assert.That(defaultName).Matches("^orders__customer_demail_[0-9a-f]{8}$");
         await Assert.That(byDefault.Headers.Location!.ToString()).IsEqualTo($"{indexes}/{defaultName}");
@@ -112,7 +112,7 @@ public sealed class IndexApiTests
         (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "p1")), new { email = Faker.Internet.Email(), name = Faker.Name.FullName() }))
             .EnsureSuccessStatusCode();
         (await api.Client.PostAsJsonAsync(Uri($"{database.Path}/sql"), new { sql = "SELECT * FROM people WHERE email = 'a@example.com'" })).EnsureSuccessStatusCode();
-        // An index on another field takes the name the email recommendation's index would get.
+
         (await api.Client.PostAsJsonAsync(Uri(indexes), new { collection = "people", fields = Name, name = "people_email" })).EnsureSuccessStatusCode();
 
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(indexes), new { collection = "Bad Name", fields = Email }), HttpStatusCode.BadRequest, "invalid_request", BadCollection);
@@ -151,7 +151,7 @@ public sealed class IndexApiTests
         (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "p1")), new { email = Faker.Internet.Email() })).EnsureSuccessStatusCode();
         (await api.Client.PostAsJsonAsync(Uri($"{database.Path}/sql"), new { sql = "SELECT * FROM people WHERE email = 'a@example.com'" })).EnsureSuccessStatusCode();
         (await api.Client.PostAsJsonAsync(Uri($"{database.Path}/indexes"), new { collection = "people", fields = Name })).EnsureSuccessStatusCode();
-        // The catalog still lists the database, so each request reaches the index service, which finds no storage.
+
         hook.Hidden = tenant => tenant.DatabaseId == database.Id;
 
         await ErrorAssert.ErrorAsync(
@@ -177,7 +177,6 @@ public sealed class IndexApiTests
         await Assert.That(applied.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(applied.Headers.Location!.ToString()).IsEqualTo($"{database.Path}/indexes/people_email");
 
-        // A trailing slash on the collection route still yields the canonical index location.
         using var created = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/indexes/"), new { collection = "people", fields = Name });
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(created.Headers.Location!.ToString()).IsEqualTo($"{database.Path}/indexes/people_name");
@@ -212,7 +211,7 @@ public sealed class IndexApiTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        // people_a.email and people.a_email both join to people_a_email; so do [a_b, c] and [a, b_c].
+
         (await api.Client.PostAsJsonAsync(Uri($"{database.Path}/sql"), new { sql = "SELECT * FROM people_a WHERE email = 'a'" })).EnsureSuccessStatusCode();
         (await api.Client.PostAsJsonAsync(Uri($"{database.Path}/sql"), new { sql = "SELECT * FROM people WHERE a_email = 'a'" })).EnsureSuccessStatusCode();
 
@@ -225,7 +224,7 @@ public sealed class IndexApiTests
         HttpStatusCode[] statuses = [first.StatusCode, second.StatusCode, left.StatusCode, right.StatusCode];
         await Assert.That(statuses.All(status => status == HttpStatusCode.Created)).IsTrue();
         await Assert.That(names.Distinct().Count()).IsEqualTo(4);
-        // Escaped parts joined by __ keep every boundary: the readable parts already differ, before the hash.
+
         await Assert.That(names.Select(index => index[..^9]).Order(StringComparer.Ordinal))
             .IsEquivalentTo(["orders__a__b_uc", "orders__a_ub__c", "people__a_uemail", "people_ua__email"]);
     }
@@ -235,7 +234,7 @@ public sealed class IndexApiTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        // Four statements of 256 conditions use 1024 distinct unindexed fields; the database records the first 1000.
+
         for (var batch = 0; batch < 4; batch++)
         {
             var conditions = Enumerable.Range(batch * 256, 256).Select(i => $"f{i:D4} = 1");
@@ -245,7 +244,7 @@ public sealed class IndexApiTests
 
         (await api.Client.PostAsJsonAsync(Uri($"{database.Path}/sql"), new { sql = "SELECT * FROM people WHERE f0000 = 1 OR f1023 = 1" })).EnsureSuccessStatusCode();
         var pending = (await api.Client.GetFromJsonAsync<JsonElement>(Uri($"{database.Path}/index-recommendations"))).GetProperty("items").GetArrayLength();
-        // Saved to the catalog, the counts read the same.
+
         await api.Server.Services.GetRequiredService<QueryFieldRecorder>().FlushAsync(CancellationToken.None);
         var items = (await api.Client.GetFromJsonAsync<JsonElement>(Uri($"{database.Path}/index-recommendations"))).GetProperty("items");
         var ids = items.EnumerateArray().Select(item => item.GetProperty("id").GetString()!).ToList();
@@ -267,7 +266,7 @@ public sealed class IndexApiTests
         (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "p1")), new { email = Faker.Internet.Email() })).EnsureSuccessStatusCode();
         (await api.Client.PostAsJsonAsync(Uri($"{database.Path}/indexes"), new { collection = "people", fields = Email })).EnsureSuccessStatusCode();
         var before = await ReadIndexStatsAsync(api, database, "tb_index_people_email");
-        // Change the indexed collection, so an unwanted table-wide ANALYZE would change its statistics.
+
         for (var i = 2; i <= 8; i++)
         {
             (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", $"p{i}")), new { email = Faker.Internet.Email() })).EnsureSuccessStatusCode();
@@ -304,12 +303,12 @@ public sealed class IndexApiTests
         await ManagementApi.CreateCollectionAsync(data, database, "people");
         (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "p1")), new { email = Faker.Internet.Email() })).EnsureSuccessStatusCode();
         await ManagementApi.CreateCollectionAsync(data, database, "orders");
-        // A thousand orders, stored without a request each.
+
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             WITH RECURSIVE rows(n) AS (VALUES(0) UNION ALL SELECT n + 1 FROM rows WHERE n < 999)
             INSERT INTO "orders" (id, doc) SELECT printf('00000000-0000-7000-8000-%012x', n),
                 json_object('sku', 'sku-' || n) FROM rows;
-            INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2) SELECT 'orders', id, 0, '', 65536, 0, 1, 0, 0 FROM "orders";
+            INSERT INTO _tb_state (collection, id, state, stamp, origin, live, h1, h2) SELECT 'orders', id, '', 65536, 0, 1, 0, 0 FROM "orders";
             """);
 
         (await api.Client.PostAsJsonAsync(Uri($"{database.Path}/indexes"), new { collection = "people", fields = Email })).EnsureSuccessStatusCode();
@@ -342,7 +341,6 @@ public sealed class IndexApiTests
             await Assert.That(statuses.All(status => status == HttpStatusCode.NotFound)).IsTrue().Because(path);
         }
 
-        // The index on the real database survived the misaddressed drop.
         var indexes = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"{database.Path}/indexes"));
         await Assert.That(Names(indexes)).IsEquivalentTo(["people_email"]);
     }

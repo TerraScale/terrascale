@@ -1,3 +1,4 @@
+using TerraBase.Engine;
 using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Net;
@@ -7,12 +8,10 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
-using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
-using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -25,9 +24,6 @@ public sealed class UsageAnalyticsTests
     [Arguments("analytics", nameof(IManagementService.ListDatabasesAsync))]
     [Arguments("analytics", nameof(IManagementService.GetDatabaseAsync))]
     [Arguments("analytics", nameof(IManagementService.GetDatabaseTenantAsync))]
-    [Arguments("replication", nameof(IManagementService.ListDatabasesAsync))]
-    [Arguments("replication", nameof(IManagementService.GetDatabaseAsync))]
-    [Arguments("replication", nameof(IManagementService.GetDatabaseTenantAsync))]
     public async Task Catalog_refusals_reach_analytics_as_503_instead_of_empty_results(string feature, string failedRead)
     {
         var refuse = false;
@@ -110,8 +106,7 @@ public sealed class UsageAnalyticsTests
         long heldBeforeRefusal = 0;
         long catalogReadBytes = 0;
         long catalogBytesBeforeRefusal = 0;
-        // Catalog result buffers stay admitted through delivery, alongside the analytics observations. They are admitted at
-        // their stored size, which wraps a scalar in an object (StoredStates.SystemBody).
+
         var scalarWrapper = StoredStates.SystemBody("0").Length - 1;
         hook.AfterRead = document => Interlocked.Add(ref catalogReadBytes,
             (document.Json.Length + (document.Json.Span[0] == (byte)'{' ? 0 : scalarWrapper)) * 3L + 2048);
@@ -121,7 +116,7 @@ public sealed class UsageAnalyticsTests
             {
                 Interlocked.Increment(ref firstSeriesReads);
             }
-            // Lifetime totals list every node's usage documents.
+
             if (collection == SystemCatalog.DatabaseState(first.Id) + "usage")
             {
                 Interlocked.Increment(ref firstMeterReads);
@@ -135,7 +130,7 @@ public sealed class UsageAnalyticsTests
         {
             if (collection == $"projects/{first.Project}/databases" && id == second.Id && Volatile.Read(ref firstSeriesReads) == 1 && supportedVersion is null)
             {
-                // The second tenant keeps its accepted snapshot; only its following meter read sees the new version.
+
                 heldBeforeRefusal = ReservedBytes(api);
                 catalogBytesBeforeRefusal = Interlocked.Read(ref catalogReadBytes);
                 supportedVersion = await catalog.WriteUncheckedAsync(async transaction =>
@@ -244,7 +239,6 @@ public sealed class UsageAnalyticsTests
         await Assert.That(point.GetProperty("latency").GetProperty("p99Ms").GetDouble()).IsGreaterThanOrEqualTo(point.GetProperty("latency").GetProperty("p95Ms").GetDouble());
         await Assert.That(point.GetProperty("clientBandwidth").GetProperty("bytesReceived").GetInt64()).IsGreaterThan(0);
         await Assert.That(point.GetProperty("clientBandwidth").GetProperty("bytesSent").GetInt64()).IsGreaterThan(0);
-        await Assert.That(point.GetProperty("replicationBandwidth").GetProperty("bytesSent").GetInt64()).IsEqualTo(0);
 
         await api.Server.Services.GetRequiredService<UsageMeter>().FlushAsync(CancellationToken.None);
         var after = await ReadAsync(client, route);
@@ -269,7 +263,7 @@ public sealed class UsageAnalyticsTests
             new { name = new Faker().Name.FullName() });
         current.EnsureSuccessStatusCode();
         await api.Server.Services.GetRequiredService<UsageMeter>().FlushAsync(CancellationToken.None);
-        foreach (var feature in new[] { "analytics", "replication" })
+        foreach (var feature in new[] { "analytics" })
         {
             var result = await ReadAsync(client, ManagementApi.Uri($"/v1/projects/{database.Project}/{feature}?range=7d"));
             var series = result.GetProperty("items")[0].GetProperty("series");
@@ -284,7 +278,6 @@ public sealed class UsageAnalyticsTests
 
     [Test]
     [Arguments("analytics")]
-    [Arguments("replication")]
     public async Task Project_JWT_scope_and_database_narrowing_protect_every_observation(string feature)
     {
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1");
@@ -321,11 +314,8 @@ public sealed class UsageAnalyticsTests
             .All(point => point.GetProperty("latency").GetProperty("p50Ms").ValueKind == JsonValueKind.Null)).IsTrue();
         using var invalid = await client.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/analytics?range=2h"));
         await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        var status = await ReadAsync(client, ManagementApi.Uri($"/v1/projects/{database.Project}/replication"));
-        await Assert.That(status.GetProperty("items")[0].GetProperty("status").GetString()).IsEqualTo("stopped");
-        await Assert.That(status.GetProperty("items")[0].GetProperty("lagMs").ValueKind).IsEqualTo(JsonValueKind.Null);
         var document = await ReadAsync(client, ManagementApi.Uri("/openapi/v1.json"));
-        foreach (var feature in new[] { "analytics", "replication" })
+        foreach (var feature in new[] { "analytics" })
         {
             await Assert.That(document.GetProperty("paths").TryGetProperty($"/v1/projects/{{project}}/{feature}", out _)).IsTrue();
             await Assert.That(document.GetProperty("paths").TryGetProperty($"/v1/projects/{{project}}/databases/{{database}}/{feature}", out _)).IsTrue();
@@ -390,100 +380,6 @@ public sealed class UsageAnalyticsTests
     }
 
     [Test]
-    public async Task Regional_health_keeps_a_diverged_peer_visible_when_another_peer_is_healthy()
-    {
-        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 8, 21, 30, 0, TimeSpan.Zero));
-        var peers = new ObservedPeers();
-        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1",
-            services => services.AddSingleton<IReplicationStatus>(peers), clock);
-        var database = await api.CreateManagedDatabaseAsync();
-        using var client = ProjectClient(api, database.Project);
-        var lagging = new ReplicationDatabaseStatus(0, database.Organization, database.Project, database.Id,
-            Ulid.NewUlid(), 3, 1, 2, true, 14, 0.25);
-        var healthy = lagging with { Acknowledged = 3, DurableLag = 0, Diverged = false, CatchupSeconds = 0, ConvergenceSeconds = 1.5 };
-        peers.State = new(true, 1, 0, [new(0, 2, [lagging], "sfo-1"), new(1, 0, [healthy], "sfo-1")]);
-        clock.Advance(TimeSpan.FromSeconds(10));
-        var route = ManagementApi.Uri($"/v1/projects/{database.Project}/replication?range=1h&region=gru-1");
-        await TerraBaseTestServer.EventuallyAsync(async token =>
-        {
-            var result = await client.GetFromJsonAsync<JsonElement>(route, token);
-            return result.GetProperty("items")[0].GetProperty("status").GetString() == "diverged";
-        });
-        var observed = (await ReadAsync(client, route)).GetProperty("items")[0];
-        await Assert.That(observed.GetProperty("lagMs").GetDouble()).IsEqualTo(14000);
-        await Assert.That(observed.GetProperty("divergence").GetBoolean()).IsTrue();
-        await Assert.That(observed.GetProperty("convergenceMs").GetDouble()).IsEqualTo(1500);
-        peers.State = new(true, 1, 0, [new(0, 0, [healthy], "sfo-1"), new(1, 0, [healthy], "sfo-1")]);
-        clock.Advance(TimeSpan.FromSeconds(10));
-        await TerraBaseTestServer.EventuallyAsync(async token =>
-        {
-            var result = await client.GetFromJsonAsync<JsonElement>(route, token);
-            return result.GetProperty("items")[0].GetProperty("status").GetString() == "healthy";
-        });
-    }
-
-    [Test]
-    public async Task A_silent_peer_stops_regional_health_beside_a_fresh_one_until_it_is_forgotten()
-    {
-        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 8, 21, 30, 0, TimeSpan.Zero));
-        var peers = new ObservedPeers();
-        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1",
-            services => services.AddSingleton<IReplicationStatus>(peers), clock);
-        var database = await api.CreateManagedDatabaseAsync();
-        using var client = ProjectClient(api, database.Project);
-        var flush = api.Server.Services.GetServices<IHostedService>().OfType<UsageFlushService>().Single();
-        var route = ManagementApi.Uri($"/v1/projects/{database.Project}/replication?range=1h&region=gru-1");
-        var synced = new ReplicationDatabaseStatus(0, database.Organization, database.Project, database.Id, Ulid.NewUlid(), 3, 3, 0, false, 0, null);
-
-        peers.State = new(true, 1, 0, [new(0, 0, [synced], "sfo-1"), new(1, 0, [synced], "iad-1")]);
-        await Assert.That((await ObserveAsync(TimeSpan.FromSeconds(10))).GetProperty("status").GetString()).IsEqualTo("healthy");
-
-        // iad-1 goes silent while sfo-1 keeps reporting: the fresh peer must not hide it.
-        peers.State = new(true, 1, 0, [new(0, 0, [synced], "sfo-1")]);
-        JsonElement mixed = default;
-        for (var tick = 0; tick < 4; tick++)
-        {
-            mixed = await ObserveAsync(TimeSpan.FromSeconds(10));
-        }
-
-        await Assert.That(mixed.GetProperty("status").GetString()).IsEqualTo("stopped");
-        await Assert.That(mixed.GetProperty("lagMs").ValueKind).IsEqualTo(JsonValueKind.Number);
-
-        // Silent past ten minutes, iad-1 counts as removed.
-        await Assert.That((await ObserveAsync(TimeSpan.FromMinutes(10))).GetProperty("status").GetString()).IsEqualTo("healthy");
-
-        // A diverged peer goes silent beside a fresh healthy one: its old divergence is not current, so stopped, not diverged.
-        peers.State = new(true, 1, 0, [new(0, 0, [synced], "sfo-1"), new(1, 0, [synced with { Diverged = true }], "iad-1")]);
-        await Assert.That((await ObserveAsync(TimeSpan.FromSeconds(10))).GetProperty("status").GetString()).IsEqualTo("diverged");
-        peers.State = new(true, 1, 0, [new(0, 0, [synced], "sfo-1")]);
-        JsonElement stale = default;
-        for (var tick = 0; tick < 4; tick++)
-        {
-            stale = await ObserveAsync(TimeSpan.FromSeconds(10));
-        }
-
-        await Assert.That(stale.GetProperty("status").GetString()).IsEqualTo("stopped");
-        await Assert.That(stale.GetProperty("divergence").GetBoolean()).IsFalse();
-        await Assert.That((await ObserveAsync(TimeSpan.FromMinutes(10))).GetProperty("status").GetString()).IsEqualTo("healthy");
-
-        // Every peer silent, the last one having diverged: stopped, with neither current lag nor divergence.
-        peers.State = new(true, 1, 0, [new(0, 0, [synced with { Diverged = true }], "sfo-1")]);
-        await Assert.That((await ObserveAsync(TimeSpan.FromSeconds(10))).GetProperty("status").GetString()).IsEqualTo("diverged");
-        peers.State = new(true, 1, 0, []);
-        var silent = await ObserveAsync(TimeSpan.FromSeconds(40));
-        await Assert.That(silent.GetProperty("status").GetString()).IsEqualTo("stopped");
-        await Assert.That(silent.GetProperty("lagMs").ValueKind).IsEqualTo(JsonValueKind.Null);
-        await Assert.That(silent.GetProperty("divergence").ValueKind).IsEqualTo(JsonValueKind.Null);
-
-        async Task<JsonElement> ObserveAsync(TimeSpan advance)
-        {
-            clock.Advance(advance);
-            await flush.FlushAsync(CancellationToken.None);
-            return (await ReadAsync(client, route)).GetProperty("items")[0];
-        }
-    }
-
-    [Test]
     public async Task Observed_history_stays_readable_after_its_region_leaves_the_placement()
     {
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1");
@@ -522,9 +418,9 @@ public sealed class UsageAnalyticsTests
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 8, 21, 30, 0, TimeSpan.Zero));
         var hook = new UsageCommitHook();
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1", hook.Install, clock);
-        // Registered databases: a flush keeps only the observations of databases the catalog names.
+
         var first = await api.CreateManagedDatabaseAsync("db0");
-        // Hobby admission would throttle creating the databases below; the plan does not change sampling.
+
         await api.SetPlanAsync(api.User, first.Organization, "enterprise");
         var databases = new List<TenantContext> { new(first.Organization, PlanTier.Hobby, first.Project, first.Id) };
         for (var i = 1; i < 140; i++)
@@ -535,12 +431,11 @@ public sealed class UsageAnalyticsTests
 
         await Assert.That(databases.Count).IsEqualTo(140);
 
-        // Two minutes sample 2 × 128 databases; the second pass lists them in reverse.
         var flush = api.Server.Services.GetServices<IHostedService>().OfType<UsageFlushService>().Single();
         foreach (var reverse in new[] { false, true })
         {
             hook.ReverseDatabases = reverse;
-            // These explicit passes own sampling; a wall-clock correction does not also launch hosted passes.
+
             clock.AdjustTime(clock.GetUtcNow() + TimeSpan.FromMinutes(1));
             await flush.SampleStorageAsync(CancellationToken.None);
             await flush.FlushAsync(CancellationToken.None);
@@ -557,7 +452,7 @@ public sealed class UsageAnalyticsTests
                 Unavailable error => throw new InvalidOperationException(error.Message),
                 null => throw new InvalidOperationException("usage observations unavailable"),
             };
-            unsampled += lifetime.Meters?.ContainsKey("storage_bytes|gru-1||sample") == true ? 0 : 1;
+            unsampled += lifetime.Meters?.ContainsKey("storage_bytes|gru-1|sample") == true ? 0 : 1;
         }
 
         await Assert.That(unsampled).IsEqualTo(0);
@@ -572,7 +467,6 @@ public sealed class UsageAnalyticsTests
         var created = await api.CreateManagedDatabaseAsync();
         var database = new TenantContext(created.Organization, PlanTier.Hobby, created.Project, created.Id);
 
-        // Sizing the database takes past the end of the minute its pass started in, once.
         var slow = 1;
         hook.BeforeSize = (_, _) =>
         {
@@ -583,7 +477,7 @@ public sealed class UsageAnalyticsTests
 
             return ValueTask.CompletedTask;
         };
-        // The background sampler may start this minute's pass as soon as the clock reaches it.
+
         var started = (clock.GetUtcNow().ToUnixTimeSeconds() / 60) + 1;
         clock.Advance(TimeSpan.FromMinutes(1));
         var flush = api.Server.Services.GetServices<IHostedService>().OfType<UsageFlushService>().Single();
@@ -591,14 +485,13 @@ public sealed class UsageAnalyticsTests
         await flush.SampleStorageAsync(CancellationToken.None);
         await flush.FlushAsync(CancellationToken.None);
 
-        // Its sample stays in that minute, so the next minute's pass samples the database again, once.
         var (_, series) = await api.Server.Services.GetRequiredService<UsageMeter>()
             .GetObservationsAsync(database, new UsageWindow(UsageWindow.Minute, started, 2), CancellationToken.None) switch
         {
             UsageCounts counts => counts,
             Unavailable error => throw new InvalidOperationException(error.Message),
         };
-        await Assert.That(series.Select(point => point.Meters?.GetValueOrDefault("storage_bytes|gru-1||sample")?.Count ?? 0))
+        await Assert.That(series.Select(point => point.Meters?.GetValueOrDefault("storage_bytes|gru-1|sample")?.Count ?? 0))
             .IsEquivalentTo([1L, 1L], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     }
 
@@ -616,7 +509,6 @@ public sealed class UsageAnalyticsTests
                 .Sum(point => point.GetProperty("requests").TryGetProperty("post", out var posts) ? posts.GetInt64() : 0);
         }
 
-        // EXPLAIN resolves its database itself; it is still one metered request of that database.
         var before = await PostsAsync();
         using (var explained = await client.PostAsJsonAsync(
             ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{database.Name}/sql/explain"), new { sql = "SELECT * FROM people LIMIT 1" }))
@@ -626,24 +518,14 @@ public sealed class UsageAnalyticsTests
 
         await Assert.That(await PostsAsync()).IsEqualTo(before + 1);
 
-        // Two saturated byte counters of one database total at the 64-bit limit rather than overflowing the response.
         var meter = api.Server.Services.GetRequiredService<UsageMeter>();
-        var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
-        meter.RecordReplicationBytes(tenant, "sfo-1", "delta", true, long.MaxValue);
-        meter.RecordReplicationBytes(tenant, "sfo-1", "handoff", true, long.MaxValue);
-        var series = (await ReadAsync(client, analytics)).GetProperty("items")[0].GetProperty("series").EnumerateArray().ToArray();
-        await Assert.That(series.Max(point => point.GetProperty("replicationBandwidth").GetProperty("bytesSent").GetInt64())).IsEqualTo(long.MaxValue);
-        var replication = await ReadAsync(client, ManagementApi.Uri($"/v1/projects/{database.Project}/replication?range=1h&region=gru-1"));
-        await Assert.That(replication.GetProperty("items")[0].GetProperty("bandwidth").EnumerateArray()
-            .All(pair => pair.GetProperty("bytesSent").GetInt64() == long.MaxValue)).IsTrue();
 
-        // Two saturated request readings fill one latency bin past the 64-bit range: percentiles still interpolate within it.
         var latency = new long[UsageReading.LatencyBounds.Count];
         latency[5] = long.MaxValue;
         var meters = new Dictionary<string, UsageReading>(StringComparer.Ordinal);
         foreach (var method in new[] { "get", "post" })
         {
-            var dimension = new UsageDimension("requests", "gru-1", "", method);
+            var dimension = new UsageDimension("requests", "gru-1", method);
             meters[dimension.Key] = new(dimension, long.MaxValue, 0, latency);
         }
 
@@ -665,7 +547,7 @@ public sealed class UsageAnalyticsTests
         using var client = ProjectClient(api, database.Project);
         var meter = api.Server.Services.GetRequiredService<UsageMeter>();
         var now = clock.GetUtcNow().ToUnixTimeSeconds() / 60;
-        // Minutes before the server started, so no real request shares their bins.
+
         void Requests(long minute, params (int Bin, long Count)[] bins)
         {
             var latency = new long[UsageReading.LatencyBounds.Count];
@@ -674,14 +556,13 @@ public sealed class UsageAnalyticsTests
                 latency[bin] = count;
             }
 
-            var dimension = new UsageDimension("requests", "gru-1", "", "get");
+            var dimension = new UsageDimension("requests", "gru-1", "get");
             var key = new UsageKey(new(database.Organization, database.Project, database.Id), minute / 60, TerraBase.Features.Management.Usage.UsageScope.Minute, (int)(minute % 60));
             meter.Add(key, new OpCounts(0, 0, new Dictionary<string, UsageReading>(StringComparer.Ordinal) { [dimension.Key] = new(dimension, bins.Sum(bin => bin.Count), 0, latency) }));
         }
 
-        // A hundred requests of 16 to 32 ms (a 20 ms request's bin): ranks spread across the bin, not all at its 32 ms bound.
         Requests(now - 30, (7, 100));
-        // Half under 0.25 ms, half beyond 32768 ms: the open last bin reports its lower bound.
+
         Requests(now - 20, (0, 50), (UsageReading.LatencyBounds.Count - 1, 50));
         var series = (await ReadAsync(client, ManagementApi.Uri($"/v1/projects/{database.Project}/analytics?range=1h&region=gru-1")))
             .GetProperty("items")[0].GetProperty("series").EnumerateArray().ToArray();
@@ -730,13 +611,7 @@ public sealed class UsageAnalyticsTests
             UsageCounts counts => counts,
             Unavailable error => throw new InvalidOperationException(error.Message),
         };
-        await Assert.That(known.Meters?.ContainsKey("requests|gru-1||get") ?? false).IsTrue();
-    }
-
-    private sealed class ObservedPeers : IReplicationStatus
-    {
-        public ReplicationStatus State { get; set; } = new(true, 0, 0, []);
-        public ReplicationStatus Snapshot() => State;
+        await Assert.That(known.Meters?.ContainsKey("requests|gru-1|get") ?? false).IsTrue();
     }
 
     private static async Task AssertMemoryReleasedAsync(ManagementApi api, long baseline)
@@ -752,7 +627,7 @@ public sealed class UsageAnalyticsTests
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, observer) =>
         {
-            // Observe only this server's gauge while tests run in parallel.
+
             if (instrument.Name == "terrabase.memory.reserved" && ReferenceEquals(instrument.Meter, meter))
             {
                 observer.EnableMeasurementEvents(instrument);

@@ -5,7 +5,6 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Shapes;
@@ -31,8 +30,7 @@ public sealed class ClientAccessShapeTests
         var snapshots = (IShapeSnapshotStorage)transaction;
         var collection = await transaction.GetCollectionAsync(DocumentApi.Collection, CancellationToken.None)
             ?? throw new InvalidOperationException("the collection is missing");
-        var replica = api.Server.Services.GetRequiredService<TursoStorageEngine>().ReplicaId;
-        var identity = ShapeHandle.ComputeCanonical(store, replica, collection, "owner-pagination-test");
+        var identity = ShapeHandle.ComputeCanonical(store, collection, "owner-pagination-test");
         var time = new FakeTimeProvider();
         var shape = new ShapeSnapshotDefinition(identity.Handle, identity.ShapeId, collection.Name, collection.Id,
             RandomNumberGenerator.GetBytes(16), store.Incarnation, _ =>
@@ -40,7 +38,7 @@ public sealed class ClientAccessShapeTests
                 time.Advance(ShapeSnapshots.PageDeadline);
                 return true;
             }, OwnerRules().OwnerFilter(actor));
-        var (offset, cursor) = await snapshots.ShapeSnapshotHeadAsync(false, shape.ResumeScope, time.GetUtcNow(), CancellationToken.None);
+        var (offset, cursor) = await snapshots.ShapeSnapshotHeadAsync(shape.ResumeScope, time.GetUtcNow(), CancellationToken.None);
         using var page = await snapshots.BuildShapeSnapshotPageAsync(shape, offset, null, cursor,
             api.Server.Services.GetRequiredService<IMemoryBudget>(), time, CancellationToken.None);
         await Assert.That(page.NextId).IsEqualTo(ids[1]);

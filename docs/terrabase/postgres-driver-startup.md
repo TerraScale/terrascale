@@ -15,4 +15,4 @@ Returning a row does not commit an explicit transaction; rollback discards its w
 These changes support specific driver workflows. They do not implement arbitrary
 PostgreSQL catalogs, savepoints, identity DDL, extensions, COPY or PostgreSQL ORM
 migration tooling. ORM guides must identify their actual SQL dialect and transport;
-libSQL ORM validation does not establish PostgreSQL dialect compatibility.
+Validation of SQLite-oriented ORMs does not establish PostgreSQL dialect compatibility.

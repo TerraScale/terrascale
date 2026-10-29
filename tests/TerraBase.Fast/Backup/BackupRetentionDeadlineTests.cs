@@ -23,7 +23,7 @@ public sealed class BackupRetentionDeadlineTests
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         time.Advance(TimeSpan.FromSeconds(10));
         await backup.RunOnceAsync(token);
-        var prefix = $"v1/{database.Organization}/{database.Project}/{database.Id}";
+        var prefix = $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
         var baseline = s3.Objects.Keys.Single(key => key.StartsWith(prefix + "/snapshots/", StringComparison.Ordinal));
         var at = time.GetUtcNow();
         s3.FailPut = key => key.StartsWith(prefix + "/snapshots/", StringComparison.Ordinal);
@@ -79,7 +79,7 @@ public sealed class BackupRetentionDeadlineTests
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         time.Advance(TimeSpan.FromSeconds(10));
         await backup.RunOnceAsync(token);
-        var prefix = $"v1/{database.Organization}/{database.Project}/{database.Id}";
+        var prefix = $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
         var baseline = s3.Objects.Keys.Single(key => key.StartsWith(prefix + "/snapshots/", StringComparison.Ordinal));
         s3.FailPut = key => key.StartsWith(prefix + "/snapshots/", StringComparison.Ordinal);
         using var write = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "after")), new { text = "retained" }, token);
@@ -121,7 +121,7 @@ public sealed class BackupRetentionDeadlineTests
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         time.Advance(TimeSpan.FromSeconds(10));
         await backup.RunOnceAsync(token);
-        var prefix = $"v1/{database.Organization}/{database.Project}/{database.Id}";
+        var prefix = $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
         var baseline = s3.Objects.Keys.Single(key => key.StartsWith(prefix + "/snapshots/", StringComparison.Ordinal));
         var at = time.GetUtcNow();
         time.Advance(TimeSpan.FromSeconds(10));

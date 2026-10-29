@@ -11,7 +11,6 @@ namespace TerraBase.Features.Functions;
 
 /// <summary>A finished run: its JSON result or error, console lines and the document writes it recorded.</summary>
 internal sealed record FunctionRun(string? Result, string? Error, List<string> Lines, List<DocumentOperation> Writes);
-
 /// <summary>Runs one invocation in a fresh Jint engine without CLR, file, network or environment access.</summary>
 internal static class FunctionRunner
 {
@@ -23,7 +22,6 @@ internal static class FunctionRunner
     private const int MaxDocumentBytes = 256 * 1024;
     private const int MaxResultChars = 1024 * 1024;
 
-    // The only host surface: console lines and recorded writes. Writes apply after a successful return.
     private const string Prelude = """
         "use strict";
         const __text = v => typeof v === "string" ? v : JSON.stringify(v);
@@ -58,8 +56,7 @@ internal static class FunctionRunner
         }
     }
 
-    /// <summary>Runs synchronously on the calling thread, which owns the engine's memory accounting.</summary>
-    public static FunctionRun Run(string source, string eventJson, string? readOnlyCollection, CancellationToken cancellationToken)
+    public static FunctionRun Run(string source, string eventJson, CancellationToken cancellationToken)
     {
         var lines = new List<string>();
         var writes = new List<DocumentOperation>();
@@ -78,7 +75,7 @@ internal static class FunctionRunner
             }
         }));
         engine.SetValue("__write", new Func<string, string, string?, string?, string>((kind, collection, id, json) =>
-            Record(writes, kind, collection, id, json, readOnlyCollection)));
+            Record(writes, kind, collection, id, json)));
         try
         {
             engine.Execute(Prelude);
@@ -107,22 +104,20 @@ internal static class FunctionRunner
         }
         catch (Exception error) when (error is not OutOfMemoryException)
         {
-            // Parse errors and host argument errors carry only customer-derived text.
             return new FunctionRun(null, error.Message, lines, []);
         }
     }
 
-    private static string Record(List<DocumentOperation> writes, string kind, string collection, string? id, string? json, string? readOnlyCollection)
+    private static string Record(List<DocumentOperation> writes, string kind, string collection, string? id, string? json)
     {
         if (writes.Count >= MaxWrites)
         {
             throw new JavaScriptLimitException($"at most {MaxWrites} writes per invocation");
         }
 
-        if (!DatabaseName.TryParse(collection, out _) || collection == readOnlyCollection)
+        if (!DatabaseName.TryParse(collection, out _))
         {
-            throw new JavaScriptLimitException(collection == readOnlyCollection
-                ? "a change trigger cannot write its own collection" : "collection must be a lowercase name of at most 63 characters");
+            throw new JavaScriptLimitException("collection must be a lowercase name of at most 63 characters");
         }
 
         id ??= EntityIds.New().ToString();

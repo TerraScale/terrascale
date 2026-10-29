@@ -14,7 +14,7 @@ internal sealed class DeployFunctionEndpoint(IManagementService management, IFun
         Put(FunctionRoute.Item);
         Name("deployFunction");
         Summary("Deploys or replaces a function");
-        Description(FunctionRoute.Description + " Body {source, trigger?: {collection, events?: [upsert|delete]}, cron?}: at most 256 KiB of JavaScript that must parse; a trigger runs the function on the collection's changes (at least once, with retries); cron is five-field UTC. At most 32 functions per database.");
+        Description(FunctionRoute.Description + " Body {source, cron?}: at most 256 KiB of JavaScript that must parse; cron is five-field UTC. At most 32 functions per database.");
         Tags("Functions");
         Metadata(new RequestBodyMetadata(typeof(DeployFunctionRequest), "application/json"));
         Produces<FunctionBody>();
@@ -25,11 +25,10 @@ internal sealed class DeployFunctionEndpoint(IManagementService management, IFun
         RequireAuthorization(ApiKeyScopes.DocumentsRead, ApiKeyScopes.DocumentsWrite);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Client);
     }
-
     /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(DeployFunctionRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return FunctionRoute.RunAsync(HttpContext, management, (tenant, name) => functions.DeployAsync(tenant, HttpContext.Request.RouteValues["database"]!.ToString()!, name, request, cancellationToken), cancellationToken);
+        return FunctionRoute.RunAsync(HttpContext, management, (tenant, name) => functions.DeployAsync(tenant, name, request, cancellationToken), cancellationToken);
     }
 }

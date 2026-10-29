@@ -7,7 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Primitives;
 
 namespace TerraBase.Testing;
@@ -106,8 +106,8 @@ public sealed class ManagementApi : IAsyncDisposable
     }
 
     /// <summary>Verifies a fixture's catalog even when its frozen clock cannot schedule a retry after the startup deadline.</summary>
-    internal async Task VerifyCatalogAsync(CancellationToken cancellationToken) =>
-        await Assert.That(await ((CatalogGate)Server.Services.GetRequiredService<ICatalogGate>()).VerifyAsync(cancellationToken)).IsTrue();
+    internal Task VerifyCatalogAsync(CancellationToken cancellationToken) =>
+        Server.Services.GetRequiredService<ICatalogGate>().Opened.WaitAsync(cancellationToken);
 
     public HttpClient As(string user) => Authorized(() => Issuer.Mint(user));
 

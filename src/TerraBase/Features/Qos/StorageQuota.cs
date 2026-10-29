@@ -9,7 +9,6 @@ namespace TerraBase.Features.Qos;
 internal sealed class StorageQuota : IStorageQuota, IDisposable
 {
     internal static readonly Unavailable AccountingUnavailable = new("storage accounting is at capacity; retry later", "storage_accounting_busy");
-    // ponytail: bounded stripes can serialize unrelated organizations; use bounded keyed gates if this becomes measurable.
     private readonly SemaphoreSlim[] _gates = [.. Enumerable.Range(0, 256).Select(_ => new SemaphoreSlim(1, 1))];
     private readonly MemoryCache _usage = new(new MemoryCacheOptions { SizeLimit = 1024 });
     private readonly IStorageEngine _engine;
@@ -17,8 +16,6 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
     private readonly Func<PlanTier, long> _limit;
 
     public StorageQuota(IStorageEngine engine, ITenantDirectory directory) : this(engine, directory, plan => QosPolicy.For(plan).StorageBytes) { }
-
-    // Integration fixtures can exercise exact byte boundaries without changing the production plan policy.
     internal StorageQuota(IStorageEngine engine, ITenantDirectory directory, Func<PlanTier, long> limit)
     {
         _engine = engine;
@@ -42,7 +39,6 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
 
         if (_limit(plan) == long.MaxValue)
         {
-            // Enterprise keeps engine group commit: no commercial gate, scan, or speculative cache update.
             return new StorageQuotaLease(null, long.MaxValue, _ => ValueTask.FromResult<StorageQuotaBytesResult>(0L), _ => { });
         }
 
@@ -110,7 +106,6 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
                 return used;
             }, delta =>
             {
-                // Replication or maintenance may commit outside this gate: never cache their unknown byte changes.
                 var committedSequence = store.CommitSequence;
                 if (current is not null && committedSequence == current.Sequence + 1)
                 {
@@ -218,8 +213,6 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
         {
             return cached;
         }
-
-        // The scalar accounting API bypasses query limits while retaining the caller's scheduling priority.
         var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {

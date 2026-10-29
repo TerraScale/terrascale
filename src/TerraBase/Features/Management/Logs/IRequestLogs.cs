@@ -6,8 +6,7 @@ namespace TerraBase.Features.Management.Logs;
 
 /// <summary>
 /// A completed authorized request: an HTTP request, or a PostgreSQL wire exchange (route <c>postgres</c>, ending at its Sync).
-/// Route is a template, never a URL, query text or parameters. Statements and statement errors count the SQL statements it
-/// carried, so a Hrana pipeline whose statements failed inside its 200 shows them.
+/// Route is a template, never a URL, query text or parameters. Statements and statement errors count the SQL statements it carried.
 /// </summary>
 public sealed record DatabaseRequestLog(
     [property: JsonRequired] string Id,

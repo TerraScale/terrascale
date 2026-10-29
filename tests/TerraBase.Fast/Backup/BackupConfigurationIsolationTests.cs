@@ -60,7 +60,7 @@ public sealed class BackupConfigurationIsolationTests
             await Assert.That(first.Cancelled.Task.IsCompleted).IsTrue();
             await Assert.That(first.Active).IsEqualTo(0);
             await Assert.That(first.Released.Task.IsCompleted).IsFalse();
-            await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith("v1/_system/snapshots/", StringComparison.Ordinal))).IsTrue();
+            await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith("v1/_system/nodes/local/snapshots/", StringComparison.Ordinal))).IsTrue();
             await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
             await Assert.That(s3.CustomerObjects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
 
@@ -90,7 +90,7 @@ public sealed class BackupConfigurationIsolationTests
             passes.Add(walPass);
             await walPass.WaitAsync(TimeSpan.FromSeconds(30), token);
             await Assert.That(Volatile.Read(ref reads)).IsEqualTo(2);
-            await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith("v1/_system/wal/", StringComparison.Ordinal))).IsTrue();
+            await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith("v1/_system/nodes/local/wal/", StringComparison.Ordinal))).IsTrue();
             await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(healthy) + "/wal/", StringComparison.Ordinal))).IsTrue();
             await AssertRestoredAsync(api, data, healthy, "platform", "platform-live", [("before", before), ("during", during)], token);
             await Assert.That(first.Released.Task.IsCompleted || retry.Released.Task.IsCompleted).IsFalse();
@@ -277,7 +277,7 @@ public sealed class BackupConfigurationIsolationTests
         }
     }
 
-    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
+    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
 
     private sealed class ConfigurationGate
     {

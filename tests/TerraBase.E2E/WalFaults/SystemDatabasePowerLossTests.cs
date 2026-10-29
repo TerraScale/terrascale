@@ -4,11 +4,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.E2E.WalFaults;
 
-/// <summary>
-/// The system database's acknowledged writes survive a power loss of their node: its commits sync the write-ahead log
-/// (<c>synchronous = FULL</c>), unlike a tenant database's (decision 0003). Its organization, project, database
-/// registration and API key are all still there after every unsynced byte of every log is dropped.
-/// </summary>
 public sealed class SystemDatabasePowerLossTests
 {
     [Test]
@@ -18,7 +13,7 @@ public sealed class SystemDatabasePowerLossTests
         Skip.When(WalSyncFaults.Library is null, "needs Linux and cc to build the write-ahead log fault shim");
         await using var node = await PowerLossNode.StartAsync(nameof(TenantPowerLossHost));
         var owner = EntityIds.New().ToString();
-        var createdDatabase = await node.CreateDatabaseAsync(owner, [Cluster.Sjc]);
+        var createdDatabase = await node.CreateDatabaseAsync(owner, []);
         var organization = createdDatabase.Organization;
         var project = createdDatabase.Project;
         var path = $"/v1/projects/{project}/databases/canary";

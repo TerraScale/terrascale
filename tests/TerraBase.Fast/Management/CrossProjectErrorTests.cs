@@ -14,15 +14,12 @@ public sealed class CrossProjectErrorTests
 {
     private const string AllScopes = "databases:read databases:write documents:read documents:write";
     private const string Sql = """{"statements":[{"sql":"DROP TABLE IF EXISTS kept"}]}""";
-    private const string Pipeline = """{"requests":[{"type":"execute","stmt":{"sql":"DROP TABLE IF EXISTS kept"}},{"type":"close"}]}""";
 
     [Test]
     [Arguments("GET", "/collections", null)]
     [Arguments("DELETE", "/collections/people", null)]
     [Arguments("GET", "/export", null)]
     [Arguments("POST", "/sql/execute", Sql)]
-    [Arguments("POST", "/libsql/v2/pipeline", Pipeline)]
-    [Arguments("POST", "/libsql/v3/pipeline", Pipeline)]
     public async Task Another_projects_database_answers_like_one_that_does_not_exist(string method, string suffix, string? body)
     {
         await using var api = await ManagementApi.StartAsync();
@@ -53,7 +50,6 @@ public sealed class CrossProjectErrorTests
         }
 
         // Every target answers the same status, code and message. A route naming another project is refused before its
-        // protocol runs (TerraBase error body even on libSQL), so bytes match among targets with the same route project:
         // whether the database exists never shows.
         foreach (var (status, text) in answers)
         {
@@ -73,40 +69,6 @@ public sealed class CrossProjectErrorTests
         await Assert.That(table.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
-    [Test]
-    public async Task Another_projects_libsql_baton_is_unknown_and_stays_with_its_owner()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var own = await api.CreateManagedDatabaseAsync("own");
-        var otherProject = await api.CreateProjectAsync(own.Organization, "Other project");
-        var foreign = await api.CreateManagedDatabaseAsync(own.Organization, otherProject, "foreign");
-        using var owner = api.WithToken(Token(api, foreign.Project));
-        using var client = api.WithToken(Token(api, own.Project));
-
-        using var created = await owner.PostAsync(ManagementApi.Uri(foreign.Data + "/sql/execute"), Json("""{"statements":[{"sql":"CREATE TABLE t (a TEXT)"}]}"""));
-        created.EnsureSuccessStatusCode();
-        // An open transaction makes the stream stateful: its baton names that stream, not a fresh one.
-        using var opened = await owner.PostAsync(ManagementApi.Uri(foreign.Data + "/libsql/v2/pipeline"),
-            Json("""{"requests":[{"type":"execute","stmt":{"sql":"BEGIN"}},{"type":"execute","stmt":{"sql":"INSERT INTO t VALUES ('kept')"}}]}"""));
-        var baton = (await opened.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("baton").GetString();
-        var reuse = $$$"""{"baton":"{{{baton}}}","requests":[{"type":"execute","stmt":{"sql":"DROP TABLE t"}}]}""";
-        var unknown = $$$"""{"baton":"{{{EntityIds.New()}}}","requests":[{"type":"execute","stmt":{"sql":"DROP TABLE t"}}]}""";
-
-        using var stolen = await client.PostAsync(ManagementApi.Uri(own.Data + "/libsql/v2/pipeline"), Json(reuse));
-        using var missing = await client.PostAsync(ManagementApi.Uri(own.Data + "/libsql/v2/pipeline"), Json(unknown));
-        using var routed = await client.PostAsync(ManagementApi.Uri(foreign.Data + "/libsql/v2/pipeline"), Json(reuse));
-        await Assert.That((stolen.StatusCode, await Code(stolen))).IsEqualTo((HttpStatusCode.BadRequest, "STREAM_EXPIRED"));
-        await Assert.That((missing.StatusCode, await Code(missing))).IsEqualTo((HttpStatusCode.BadRequest, "STREAM_EXPIRED"));
-        await Assert.That((routed.StatusCode, await Code(routed))).IsEqualTo((HttpStatusCode.NotFound, "unknown_database"));
-
-        using var resumed = await owner.PostAsync(ManagementApi.Uri(foreign.Data + "/libsql/v2/pipeline"),
-            Json($$$"""{"baton":"{{{baton}}}","requests":[{"type":"execute","stmt":{"sql":"COMMIT"}},{"type":"close"}]}"""));
-        await Assert.That(resumed.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await resumed.Content.ReadAsStringAsync()).DoesNotContain("\"error\"");
-        using var count = await owner.PostAsync(ManagementApi.Uri(foreign.Data + "/sql/execute"), Json("""{"statements":[{"sql":"SELECT count(*) FROM t"}]}"""));
-        await Assert.That(await count.Content.ReadAsStringAsync()).Contains("[[1]]");
-    }
-
     private static string Token(ManagementApi api, string project) =>
         api.Issuer.Mint(EntityIds.New().ToString(), token =>
         {
@@ -116,9 +78,7 @@ public sealed class CrossProjectErrorTests
 
     private static StringContent Json(string body) => new(body, Encoding.UTF8, "application/json");
 
-    private static async Task<string?> Code(HttpResponseMessage response) => Error(await response.Content.ReadAsStringAsync()).Code;
 
-    // TerraBase nests {"error":{"code","message"}}; libSQL answers {"error","message","code"} at the top level.
     private static (string? Code, string? Message) Error(string body)
     {
         var json = JsonElement.Parse(body);

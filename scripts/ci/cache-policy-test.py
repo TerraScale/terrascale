@@ -19,15 +19,10 @@ assert "mode=max" not in workflow, "Published binaries and source snapshots must
 # setup-dotnet saves its NuGet cache after any successful job, pull requests included: no job may enable it.
 assert "cache: true" not in workflow
 assert not re.search(r"uses: actions/cache@", workflow), "Use explicit restore/save to restrict writers"
-assert workflow.count("uses: actions/cache/save@") == 2
+assert workflow.count("uses: actions/cache/save@") == 1
 nuget_writer = workflow.split("uses: actions/cache/save@", 1)[1].split("\n      - ", 1)[0]
 assert "github.event_name == 'push' && github.ref == 'refs/heads/main'" in nuget_writer
 assert "steps.nuget.outputs.cache-primary-key" in nuget_writer
-cargo_writer = workflow.split("      - name: Cache Rust dependency downloads on main\n", 1)[1].split("\n  test:", 1)[0]
-assert "github.event_name == 'push' && github.ref == 'refs/heads/main'" in cargo_writer
-assert "steps.cargo.outputs.cache-primary-key" in cargo_writer
-assert "path: ~/.cargo/registry" in cargo_writer
-assert "target/" not in cargo_writer, "Cache dependency downloads, never proof outcomes"
 assert "uses: actions/cache/restore@" in workflow
 assert "DeterministicSourcePaths: false" in workflow, "CallerFilePath fixtures need their real source path"
 assert "ContinuousIntegrationBuild: false" not in workflow
@@ -59,7 +54,7 @@ for area in ("libs", "auth", "terrabase"):
 build_check = "src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj"
 assert f"dotnet format whitespace {build_check} --verify-no-changes --no-restore" in stages["build-terrabase"][1]
 assert all_projects <= formatted | {build_check}, all_projects - formatted - {build_check}
-assert "needs: [changes, native, libs, auth, terrabase-build, terrabase, rust-proof]" in workflow, "Native/Fast must gate required test; Slow must not delay it"
+assert "needs: [changes, native, libs, auth, terrabase-build, terrabase]" in workflow, "Native/Fast must gate required test; Slow must not delay it"
 assert "AREA: ${{ github.job }}" not in workflow, "github.job is unavailable in job-level env"
 
 # Cheap policy failures stop native downloads and every expensive area; Slow runs independently of publication.

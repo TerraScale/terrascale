@@ -10,8 +10,6 @@ namespace TerraBase.Fast.Platform;
 
 public sealed class ApiReferenceTests
 {
-    // Every operation of the public document with its security scheme and required JWT scopes. Update it with every public endpoint;
-    // an admin-listener operation appearing here is a leak.
     private const string Operations = """
         DELETE /v1/projects/{project}/backup-destination TsAuth(databases:write) deleteBackupDestination Backups
         DELETE /v1/projects/{project}/buckets/{bucket} TsAuth(documents:write) deleteFileBucket File storage
@@ -21,13 +19,11 @@ public sealed class ApiReferenceTests
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) deleteDocument Documents
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:write) deleteDeclaredCollectionSchema Collections
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/ttl TsAuth(documents:write) deleteCollectionTtl Collections
-        DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/webhooks/{webhook} TsAuth(documents:read,documents:write) deleteCollectionWebhook Webhooks
         DELETE /v1/projects/{project}/databases/{database}/functions/{function} TsAuth(documents:read,documents:write) deleteFunction Functions
         DELETE /v1/projects/{project}/databases/{database}/if-id/{expectedId} TsAuth(databases:write) deleteDatabaseIfId Databases
         DELETE /v1/projects/{project}/databases/{database}/indexes/{index} TsAuth(databases:write) dropIndex Indexes
         DELETE /v1/projects/{project}/saved-queries/{query} TsAuth(databases:write) deleteSavedQuery Queries
         GET /backupz anonymous backupz Health
-        GET /health/replication anonymous replicationHealth Health
         GET /healthz anonymous healthz Health
         GET /readyz anonymous readyz Health
         GET /v1/platform/databases TsAuth(platform_role=admin) listPlatformDatabases Platform
@@ -54,13 +50,10 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape/keys TsAuth(documents:read) getShapeKey Live
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape/manifest TsAuth(documents:read) getShapeManifest Live
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/ttl TsAuth(documents:read) getCollectionTtl Collections
-        GET /v1/projects/{project}/databases/{database}/collections/{collection}/webhooks TsAuth(documents:read) listCollectionWebhooks Webhooks
-        GET /v1/projects/{project}/databases/{database}/collections/{collection}/webhooks/{webhook}/deliveries TsAuth(documents:read) listCollectionWebhookDeliveries Webhooks
         GET /v1/projects/{project}/databases/{database}/export TsAuth(documents:read) exportDatabase Documents
         GET /v1/projects/{project}/databases/{database}/export-schedule TsAuth(databases:read) getExportSchedule Backups
         GET /v1/projects/{project}/databases/{database}/functions TsAuth(documents:read,documents:write) listFunctions Functions
         GET /v1/projects/{project}/databases/{database}/functions/{function} TsAuth(documents:read,documents:write) getFunction Functions
-        GET /v1/projects/{project}/databases/{database}/functions/{function}/deliveries TsAuth(documents:read,documents:write) listFunctionDeliveries Functions
         GET /v1/projects/{project}/databases/{database}/functions/{function}/logs TsAuth(documents:read,documents:write) listFunctionLogs Functions
         GET /v1/projects/{project}/databases/{database}/import TsAuth(databases:read) getImport Imports
         GET /v1/projects/{project}/databases/{database}/index-recommendations TsAuth(databases:read) listIndexRecommendations Indexes
@@ -68,12 +61,10 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/logs TsAuth(databases:read) listDatabaseLogs Logs
         GET /v1/projects/{project}/databases/{database}/point-in-time TsAuth(databases:read) getRestoreWindow Backups
         GET /v1/projects/{project}/databases/{database}/query-shapes TsAuth(databases:read) listQueryShapes Queries
-        GET /v1/projects/{project}/databases/{database}/replication TsAuth(databases:read) getDatabaseReplication Replication
         GET /v1/projects/{project}/databases/{database}/schema TsAuth(databases:read) getDatabaseSchema Schema
         GET /v1/projects/{project}/databases/{database}/schema/{collection} TsAuth(databases:read) getCollectionSchema Schema
         GET /v1/projects/{project}/databases/{database}/usage TsAuth(databases:read) getDatabaseUsage Usage
         GET /v1/projects/{project}/metrics TsAuth(databases:read) getProjectMetrics Analytics
-        GET /v1/projects/{project}/replication TsAuth(databases:read) getProjectReplication Replication
         GET /v1/projects/{project}/saved-queries TsAuth(databases:read) listSavedQueries Queries
         GET /v1/projects/{project}/saved-queries/{query} TsAuth(databases:read) getSavedQuery Queries
         GET /v1/projects/{project}/usage TsAuth(databases:read) getProjectUsage Usage
@@ -94,7 +85,6 @@ public sealed class ApiReferenceTests
         POST /v1/projects/{project}/databases/{database}/collections/{collection}/documents TsAuth(documents:write) createDocument Documents
         POST /v1/projects/{project}/databases/{database}/collections/{collection}/query TsAuth(documents:read) queryDocuments Queries
         POST /v1/projects/{project}/databases/{database}/collections/{collection}/schema/preview TsAuth(documents:read,documents:write) previewCollectionSchema Collections
-        POST /v1/projects/{project}/databases/{database}/collections/{collection}/webhooks TsAuth(documents:read,documents:write) createCollectionWebhook Webhooks
         POST /v1/projects/{project}/databases/{database}/functions/{function}/invoke TsAuth(documents:read) invokeFunction Functions
         POST /v1/projects/{project}/databases/{database}/import TsAuth(databases:write,documents:write) createImport Imports
         POST /v1/projects/{project}/databases/{database}/import/cancel TsAuth(databases:write) cancelImport Imports
@@ -102,8 +92,6 @@ public sealed class ApiReferenceTests
         POST /v1/projects/{project}/databases/{database}/import/start TsAuth(databases:write,documents:write) startImport Imports
         POST /v1/projects/{project}/databases/{database}/index-recommendations/{recommendation}/apply TsAuth(databases:write) applyIndexRecommendation Indexes
         POST /v1/projects/{project}/databases/{database}/indexes TsAuth(databases:write) createIndex Indexes
-        POST /v1/projects/{project}/databases/{database}/libsql/{version}/cursor TsAuth(documents:read) libsqlCursor SQL
-        POST /v1/projects/{project}/databases/{database}/libsql/{version}/pipeline TsAuth(documents:read) libsqlPipeline SQL
         POST /v1/projects/{project}/databases/{database}/point-in-time/plan TsAuth(databases:read) planPointInTime Backups
         POST /v1/projects/{project}/databases/{database}/point-in-time/recover TsAuth(databases:write,documents:write) recoverHistoricalRecords Backups
         POST /v1/projects/{project}/databases/{database}/point-in-time/recovery-preview TsAuth(databases:write,documents:read) previewSelectiveRecovery Backups
@@ -140,14 +128,12 @@ public sealed class ApiReferenceTests
         using var script = await client.GetAsync(Uri("/scalar/scalar.js"));
 
         await Assert.That(root.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        // Relative, so it holds on every regional host and behind proxies.
         await Assert.That(root.Headers.Location!.IsAbsoluteUri).IsFalse();
         await Assert.That(root.Headers.Location.OriginalString).IsEqualTo("scalar/");
         await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(page.Content.Headers.ContentType!.MediaType).IsEqualTo("text/html");
         var html = await page.Content.ReadAsStringAsync();
         await Assert.That(html).Contains("openapi/v1.json");
-        // Hardened in TerraScale.Endpoints: system fonts, no telemetry and no AI agent, so the page talks to nothing but this service.
         await Assert.That(html).Contains("\"withDefaultFonts\":false");
         await Assert.That(html).Contains("\"telemetry\":false");
         await Assert.That(html).Contains("\"agent\":{\"disabled\":true}");
@@ -237,7 +223,6 @@ public sealed class ApiReferenceTests
         await Assert.That(previewExample.GetProperty("examined").GetInt32()).IsEqualTo(2);
         await Assert.That(previewExample.GetProperty("complete").GetBoolean()).IsTrue();
         await Assert.That(destination.GetProperty("delete").GetProperty("responses").GetProperty("204").TryGetProperty("content", out _)).IsFalse();
-        // Route or query can supply members, so the binder may inline this body with relaxed `required`; accept either form.
         var putSchema = destination.GetProperty("put").GetProperty("requestBody").GetProperty("content").GetProperty("application/json").GetProperty("schema");
         if (putSchema.TryGetProperty("$ref", out var putReference))
         {
@@ -261,7 +246,6 @@ public sealed class ApiReferenceTests
         }
 
         var schemas = document.GetProperty("components").GetProperty("schemas");
-        // Credentials belong only to the request; responses also exclude the sealed credentials.
         await Assert.That(schemas.GetProperty("ProjectBackupDestinationRequest").GetProperty("properties")
             .EnumerateObject().Select(property => property.Name).ToList())
             .IsEquivalentTo(["endpoint", "region", "bucket", "accessKeyId", "secretKey", "mode"]);
@@ -341,8 +325,6 @@ public sealed class ApiReferenceTests
                 var example = success.GetProperty("content").GetProperty("application/json").GetProperty("example");
                 await Assert.That(EntityIds.IsValid(example.GetProperty("id").GetString())).IsTrue().Because(line);
             }
-
-            // Every operation documents a success, and every error status the error envelope (or a probe's status body).
             await Assert.That(responses.Any(status => status.Name.StartsWith('2'))).IsTrue().Because(line);
             foreach (var error in responses.Where(status => string.CompareOrdinal(status.Name, "400") >= 0))
             {
@@ -362,7 +344,6 @@ public sealed class ApiReferenceTests
 
                 if (operation.TryGetProperty("x-required-claims", out var claims))
                 {
-                    // The platform explore API: a platform role, not a scope.
                     await Assert.That(claims.EnumerateArray().Select(claim => claim.GetString()).Single()).IsEqualTo("platform_role=admin").Because(line);
                     await Assert.That(operation.GetProperty("description").GetString()).Contains("platform_role claim is admin").Because(line);
                     continue;

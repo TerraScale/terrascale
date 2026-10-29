@@ -36,7 +36,6 @@ updates:
   - package-ecosystem: cargo
     directories:
       - /benchmark/clients/rust
-      - /scripts/terrabase/libsql/rust
     schedule:
       interval: weekly
     open-pull-requests-limit: 0

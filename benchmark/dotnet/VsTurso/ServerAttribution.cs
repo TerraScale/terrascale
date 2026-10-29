@@ -8,20 +8,12 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.E2E
 {
-    /// <summary>
-    /// Splits every measured HTTP request one node answers into server time (ASP.NET Core's HttpRequestIn activity: hosting's
-    /// context creation to the response's completion), engine time (its <see cref="IDocumentService.GetAsync"/> and
-    /// <see cref="IDocumentService.WriteConfirmedAsync"/> calls) and their difference, the API's overhead. All wall time, not
-    /// CPU; the listener, the activity and one sample per request add their own cost to what they measure (VsTurso/ATTRIBUTION.md).
-    /// </summary>
     internal sealed class ServerAttribution : IDisposable
     {
-        // A capped reservoir: a cell keeps at most this many paired timings (256 KiB) at any read rate.
         private const int Capacity = 16_384;
         private const string Hosting = "Microsoft.AspNetCore";
         private const string RequestIn = "Microsoft.AspNetCore.Hosting.HttpRequestIn";
 
-        // Unique per instance, so another node's attribution in this process never reads or records these samples.
         private readonly string _key = "vs-turso-attribution-" + Guid.NewGuid().ToString("N");
         private readonly ActivityListener _listener;
         private Capture? _active;
@@ -51,7 +43,6 @@ namespace TerraBase.E2E
             ActivitySource.AddActivityListener(_listener);
         }
 
-        /// <summary>Replaces the node's <see cref="IDocumentService"/> singleton with one that times it inside requests.</summary>
         public void Install(IServiceCollection services)
         {
             var original = services.Last(descriptor => descriptor.ServiceType == typeof(IDocumentService) && !descriptor.IsKeyedService);
@@ -60,7 +51,6 @@ namespace TerraBase.E2E
             services.AddSingleton<IDocumentService>(provider => new AttributedDocuments((IDocumentService)factory(provider), this));
         }
 
-        /// <summary>Starts one cell's capture using the client's monotonic measurement window.</summary>
         public void Open(long from, long until)
         {
             Volatile.Write(ref _active, new Capture(from, until));
@@ -71,7 +61,6 @@ namespace TerraBase.E2E
             return Interlocked.Exchange(ref _active, null)?.Close();
         }
 
-        /// <summary>The current request's sample when it belongs to the open capture; null outside one.</summary>
         internal Sample? Join()
         {
             if (Volatile.Read(ref _active) is not { } capture)
@@ -132,13 +121,11 @@ namespace TerraBase.E2E
                     var slot = seen < Capacity ? seen : Random.Shared.NextInt64(seen + 1);
                     if (slot < Capacity)
                     {
-                        // Record the pair under the same lock; Close excludes all later writers.
                         _samples[slot] = (serverTicks, engineTicks);
                     }
                 }
             }
 
-            /// <summary>Stops recording; requests hosting completes later are dropped. Null when no request was measured.</summary>
             public ServerStats? Close()
             {
                 lock (_samples)
@@ -166,12 +153,10 @@ namespace TerraBase.E2E
         }
     }
 
-    /// <summary>Per-request wall-time quantiles in µs, each sorted on its own: overhead p50 is not server p50 minus engine p50.</summary>
     internal sealed record ServerStats(
         long Requests, int Sampled, double ServerP50Micros, double ServerP99Micros, double EngineP50Micros, double EngineP99Micros,
         double OverheadP50Micros, double OverheadP99Micros);
 
-    /// <summary>Times the two calls the document routes make; every other member forwards untouched.</summary>
     internal sealed class AttributedDocuments(IDocumentService inner, ServerAttribution attribution) : IDocumentService
     {
         public IDocumentService Inner => inner;
@@ -182,14 +167,13 @@ namespace TerraBase.E2E
         }
 
         public ValueTask<WriteOutcome> WriteConfirmedAsync(
-            TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, bool waitForRemote, CancellationToken cancellationToken)
+            TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken)
         {
             return attribution.Join() is { } sample
-                ? TimedAsync(sample, Stopwatch.GetTimestamp(), inner.WriteConfirmedAsync(database, operations, indexErrors, waitForRemote, cancellationToken))
-                : inner.WriteConfirmedAsync(database, operations, indexErrors, waitForRemote, cancellationToken);
+                ? TimedAsync(sample, Stopwatch.GetTimestamp(), inner.WriteConfirmedAsync(database, operations, indexErrors, cancellationToken))
+                : inner.WriteConfirmedAsync(database, operations, indexErrors, cancellationToken);
         }
 
-        // began is read before the call starts, so its synchronous part counts as engine time.
         private static async ValueTask<T> TimedAsync<T>(ServerAttribution.Sample sample, long began, ValueTask<T> call)
         {
             try

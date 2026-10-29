@@ -14,7 +14,7 @@ case "$1:$2" in
     scripts/vendor/test-turso-native-singlefile.sh
     [[ $1 == build ]] && exit 0
     make -o restore terrabase-test-fast CONFIGURATION=Release
-    make -j2 -o restore -o terrabase-build terrabase-replication-matrix terrabase-e2e-local CONFIGURATION=Release
+    make -j2 -o restore -o terrabase-build terrabase-e2e-local CONFIGURATION=Release
     ;;
   *)
     echo 'Expected fast libs|terrabase or build terrabase' >&2

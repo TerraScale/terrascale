@@ -63,7 +63,7 @@ public interface IPointInTimeRestore
 
 /// <summary>Restores from the newest snapshot at or before the time, rolled forward through its generation's segments.</summary>
 internal sealed class PointInTimeRestore(
-    IWalBackup engine, IRecoverySnapshotReader scratch, BackupTargets targets, IContinuousBackup shipper, ITenantDirectory tenants, BackupSettings settings, TimeProvider time)
+    IWalBackup engine, IRecoverySnapshotReader scratch, BackupTargets targets, IContinuousBackup shipper, ITenantDirectory tenants, BackupSettings settings, TimeProvider time, TerraBaseOptions options)
     : IPointInTimeRestore
 {
     private const int MaxPlanItems = 10_000;
@@ -85,7 +85,7 @@ internal sealed class PointInTimeRestore(
                 return new NotFound("continuous backup holds nothing of this database");
             }
 
-            var file = BackupLayout.File(database);
+            var file = BackupLayout.File(database, options.MachineId);
             var snapshots = await ScanSnapshotsAsync(backup.Store, file, at, MaxPlanItems, deadline.Token).ConfigureAwait(false);
             if (snapshots is null)
             {
@@ -182,7 +182,7 @@ internal sealed class PointInTimeRestore(
             return new NotFound();
         }
 
-        var file = BackupLayout.File(database);
+        var file = BackupLayout.File(database, options.MachineId);
         var snapshots = await ScanSnapshotsAsync(backup.Store, file, DateTimeOffset.MaxValue, int.MaxValue, cancellationToken).ConfigureAwait(false);
         return await WindowAsync(database, file, snapshots, now, backup, destination, proven: true, cancellationToken).ConfigureAwait(false);
     }
@@ -306,7 +306,7 @@ internal sealed class PointInTimeRestore(
             return new NotFound("continuous backup holds nothing of this database");
         }
 
-        var file = BackupLayout.File(source);
+        var file = BackupLayout.File(source, options.MachineId);
         var snapshots = await ScanSnapshotsAsync(backup.Store, file, at, int.MaxValue, cancellationToken).ConfigureAwait(false);
         if (snapshots?.First is null)
         {

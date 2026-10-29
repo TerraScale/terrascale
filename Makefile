@@ -41,8 +41,8 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 .PHONY: restore build fmt fmt-check lint test-fast test-slow test check docker-test clean \
 	libs-build libs-test libs-check libs-nativeaot-check \
 	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-mail-delivery-check auth-check auth-publish auth-dev \
-	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-replication-matrix terrabase-e2e-local terrabase-e2e terrabase-e2e-orch-outage terrabase-check terrabase-run terrabase-publish \
-	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local benchmark-repl-chunks
+	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-e2e-local terrabase-e2e terrabase-check terrabase-run terrabase-publish \
+	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke
 
 # Global: the whole solution.
 restore:
@@ -167,55 +167,22 @@ terrabase-test-slow: terrabase-build
 
 TERRABASE_E2E_RUN = dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build --
 
-# Six writes, six deletes, one three-way conflict and each of the three region outages. No expected failures.
-# CI's required TerraBase test stage runs it locally; the deploy E2E job runs the same non-outage tests on ts-orch.
-terrabase-replication-matrix: terrabase-build
-	$(TERRABASE_E2E_RUN) --treenode-filter '/*/*/*/*[Category=replication-matrix]' --minimum-expected-tests 16 --output detailed --no-ansi $(TEST_ARGS)
-
-# The local-only category: scenarios that only local nodes may run (every node stopped at once, whole databases created
-# and restored, a cursor's issuer stopped, a canceled outage's recovery) and the routing and outage harness checks.
-# CI's required TerraBase test stage runs it; the deploy E2E job excludes the category with a visible filter. Exactly
-# $(E2E_LOCAL_TESTS) tests, each an actual pass or a harness check: a skip, a failure or a missing test fails the target.
-E2E_LOCAL_TESTS := 67
+E2E_LOCAL_TESTS := 3
 terrabase-e2e-local: terrabase-build
 	rm -f "$(E2E_RESULTS)"
 	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL -u TERRABASE_E2E_ORCH_NODES TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" $(TERRABASE_E2E_RUN) --treenode-filter '/*/*/*/*[Category=local-only]' --minimum-expected-tests $(E2E_LOCAL_TESTS) --output detailed --no-ansi $(TEST_ARGS) || status=$$?; \
 	jq -r 'select(.category == "fail" or .category == "skip") | "E2E \(.category): \(.test)\n\(.detail)"' "$(E2E_RESULTS)" || status=1; exit $$status
 	jq -se 'length == $(E2E_LOCAL_TESTS) and all(.[]; .category == "pass" or .category == "harness")' "$(E2E_RESULTS)"
 
-# End-to-end replication (tests/TerraBase.E2E): leaderless writes between gru, sjc and fra, every pair and three-way, with
-# partitions, restarts, a region down, backlog and clock skew. Local by default (in-process nodes); tests/TerraBase.E2E/Gaps.cs
-# records which scenarios wait on which replication slice. With TERRABASE_E2E_ORCH_NODES (each region's client listener over
-# NetBird) and TERRABASE_E2E_ORCH_KEY (the e2e project's ts-auth API key) set, the same scenarios run against the disposable
-# ts-orch service terrabase-e2e from a host on the mesh (docs/terrabase/e2e-ts-orch.md). Not part of check.
-# Each test's outcome goes to $(E2E_RESULTS); the summary after the run keeps actual passes, expected failures (with their
-# slice), unwired hooks, skips (with their reason) and failures apart, and names the commit and the working tree's patch.
 E2E_RESULTS ?= $(CURDIR)/tests/TerraBase.E2E/bin/e2e-results.jsonl
 terrabase-e2e: terrabase-build
 	rm -f "$(E2E_RESULTS)"
 	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build $(TEST_ARGS) || status=$$?; \
 	scripts/terrabase/e2e-summary.sh report "$(E2E_RESULTS)" "$${E2E_LABEL:-local}" || status=1; exit $$status
 
-# Stops each region of the ts-orch service terrabase-e2e in one isolated test: run alone, never with terrabase-e2e or other
-# orch-outage tests. It fails unless the run records exactly one test, the all-regions outage proof (OrchOutageE2ETests), as
-# an actual pass on ts-orch nodes: a skip, a second test or a missing result is never live evidence.
-terrabase-e2e-orch-outage: terrabase-build
-	rm -f "$(E2E_RESULTS)"
-	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL TERRABASE_E2E_ORCH_OUTAGE=1 TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build --treenode-filter '/*/*/*/*[Category=replication-matrix-orch-outage]' --minimum-expected-tests 1 $(TEST_ARGS) || status=$$?; \
-	scripts/terrabase/e2e-summary.sh report "$(E2E_RESULTS)" "$${E2E_LABEL:-orch-outage}" || status=1; \
-	jq -se --arg test Each_region_stopped_then_started_catches_up_on_writes_tombstones_and_conflicts_from_both_survivors \
-		'length == 1 and (.[0] | .category == "pass" and .nodes == "ts-orch nodes" and .faults == "NodeStop" and (.test | sub("\\(.*$$"; "")) == $$test)' \
-		"$(E2E_RESULTS)" > /dev/null \
-		|| { echo "terrabase-e2e-orch-outage: the run is not exactly one actual pass of the all-regions outage proof on ts-orch nodes" >&2; status=1; }; exit $$status
-
 terrabase-check: terrabase-build terrabase-analyzer-check
 	scripts/terrabase/e2e-summary.sh check tests/TerraBase.E2E/COVERAGE.md tests/TerraBase.E2E/RUNS.md
 
-# The Hrana proof uses upstream wire types and a maintained TLS transport; compile its pinned dependency graph.
-.PHONY: terrabase-libsql-rust-check
-terrabase-libsql-rust-check:
-	cd scripts/terrabase/libsql/rust && cargo fmt --check
-	cd scripts/terrabase/libsql/rust && cargo check --locked
 
 terrabase-run:
 	dotnet run --project src/TerraBase --configuration $(CONFIGURATION)
@@ -237,22 +204,6 @@ benchmark-check:
 
 benchmark-smoke:
 	$(MAKE) -C benchmark smoke
-
-# Multi-region replication benchmark against three local regions in one host process (Release build): writes
-# REPL_ARGS' documents (default 1,000,000) across gru, sjc and fra, verifies every region and writes
-# benchmark/bench/<date>-repl-local-<docs>.md. Example: nice -n 19 make benchmark-repl-local REPL_ARGS='--docs 100000'.
-benchmark-repl-local:
-	$(MAKE) terrabase-build CONFIGURATION=Release
-	$(MAKE) -C benchmark repl-bench-build
-	benchmark/scripts/repl-local.sh
-
-# Log chunks (RT3b) against the same three local regions: per region, peer-link and object-store bytes and object-store
-# requests for a small-write and a bulk-write load, REPEATS times each (default 3). The source of
-# benchmark/bench/2026-10-23-free-replication.md. Example: nice -n 19 make benchmark-repl-chunks.
-benchmark-repl-chunks:
-	$(MAKE) terrabase-build CONFIGURATION=Release
-	$(MAKE) -C benchmark repl-bench-build
-	benchmark/scripts/repl-chunks.sh
 
 .PHONY: terrabase-test-shard
 terrabase-test-shard:

@@ -210,11 +210,9 @@ internal sealed partial class EngineManagementService
         await engine.DeleteDatabaseAsync(storage, cancellationToken, retainIntentOwnership: true).ConfigureAwait(false);
         checkpoint("cleanup.files", storage);
         var erasureVerified = authority is true
-            && await webhookErasure.Value.EraseAsync(storage, cancellationToken).ConfigureAwait(false)
             && await engine.VerifyDatabaseErasureAsync(storage, cancellationToken).ConfigureAwait(false);
         if (authority is true && !erasureVerified)
         {
-            // Keep the committed deletion pending until webhook payloads and every native handle are gone.
             return new Done();
         }
 

@@ -15,18 +15,10 @@ using TerraBase.Fast.Documents;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
-using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
-using TerraBase.Tenancy;
 
 namespace TerraBase.Fast.Shapes;
 
-/// <summary>
-/// FR-13 snapshots (shape-reads.md sections 3.2 and 6): every page of a snapshot is built in one read transaction whose
-/// feed head is S, pages are written by short uncaptured writer transactions, and only finished snapshots are served.
-/// The snapshot API runs against the decorated production store; the raw Turso store is used only to inspect and damage rows.
-/// Reseal policy: 16 chunks per page of the newest snapshot past its offset (at most 4096), or one hour since it was sealed.
-/// </summary>
 public sealed class ShapeSnapshotTests
 {
     private static readonly DateTimeOffset Start = new(2026, 10, 13, 12, 0, 0, TimeSpan.Zero);
@@ -50,35 +42,6 @@ public sealed class ShapeSnapshotTests
     }
 
     [Test]
-    public async Task A_local_snapshot_without_remote_proof_is_never_reused_or_read_in_a_cell()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        await using var fixture = await Fixture.OpenAsync(api);
-        _ = await api.PutAsync(DocumentApi.NewId(), new { n = 1 });
-        var shape = await ShapeAsync(fixture.Store);
-        var local = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
-        await Assert.That(local.Offset).IsGreaterThan(0L);
-        var remote = new ShapeSnapshots(fixture.Memory, fixture.Time, fixture.Transactions, new RequiredDurability());
-        await Assert.That(await remote.NewestAsync(fixture.Store, shape.Handle, CancellationToken.None)).IsNull();
-        using var page = await remote.ReadPageAsync(fixture.Store, shape.Handle, local.Offset, null, CancellationToken.None);
-        await Assert.That(page).IsNull();
-        await Assert.That(async () => await remote.SealIfDueAsync(fixture.Store, shape, CancellationToken.None)).Throws<StorageBusyException>()
-            .Because("the not-due path must not promote an existing local-only snapshot");
-        await Assert.That(async () => await remote.SealIfDueAsync(fixture.Store, await ShapeAsync(fixture.Store), CancellationToken.None)).Throws<StorageBusyException>()
-            .Because("a fresh snapshot must wait for proof covering its values_at head");
-    }
-
-    // Models opening locally sealed bytes in a cell: the integration storage must require remote evidence.
-    private sealed class RequiredDurability : IRemoteDurability
-    {
-        public bool Confirms => true;
-        public ValueTask<IReadOnlyList<string>> OtherRegionsAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
-        public ValueTask<RemoteAdmission> AdmitAsync(TenantContext database, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public ValueTask<bool> WaitAsync(TenantContext database, CommitMarker marker, CancellationToken cancellationToken) => throw new NotSupportedException();
-    }
-
-    // The gate for snapshot isolation on Turso: a read transaction keeps its feed head and row values while HTTP writes commit.
-    [Test]
     public async Task A_read_transaction_keeps_its_feed_head_and_page_bytes_while_http_writes_commit()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -93,7 +56,7 @@ public sealed class ShapeSnapshotTests
         await using (var reader = await transactions.BeginAsync(fixture.Store, write: false, CancellationToken.None))
         {
             var storage = (IShapeSnapshotStorage)reader;
-            var (offset, cursor) = await storage.ShapeSnapshotHeadAsync(remote: false, shape.ResumeScope, Start, CancellationToken.None);
+            var (offset, cursor) = await storage.ShapeSnapshotHeadAsync(shape.ResumeScope, Start, CancellationToken.None);
             head = offset;
             byte[] before;
             using (var page = await storage.BuildShapeSnapshotPageAsync(shape, offset, null, cursor, fixture.Memory, fixture.Time, CancellationToken.None))
@@ -105,7 +68,7 @@ public sealed class ShapeSnapshotTests
             _ = await WriteAsync(api, model, (ids[0], Doc(100)), (ids[2], null), (DocumentApi.NewId(), Doc(101)));
             await Assert.That(await CounterAsync(fixture.Raw)).IsGreaterThan(offset).Because("the HTTP writes committed while the reader stayed open");
 
-            var (again, cursorAgain) = await storage.ShapeSnapshotHeadAsync(remote: false, shape.ResumeScope, Start, CancellationToken.None);
+            var (again, cursorAgain) = await storage.ShapeSnapshotHeadAsync(shape.ResumeScope, Start, CancellationToken.None);
             await Assert.That(again).IsEqualTo(offset);
             await Assert.That(cursorAgain).IsEqualTo(cursor);
             using (var page = await storage.BuildShapeSnapshotPageAsync(shape, offset, null, cursor, fixture.Memory, fixture.Time, CancellationToken.None))
@@ -118,7 +81,7 @@ public sealed class ShapeSnapshotTests
         }
 
         await using var fresh = await transactions.BeginAsync(fixture.Store, write: false, CancellationToken.None);
-        var (current, _) = await ((IShapeSnapshotStorage)fresh).ShapeSnapshotHeadAsync(remote: false, shape.ResumeScope, Start, CancellationToken.None);
+        var (current, _) = await ((IShapeSnapshotStorage)fresh).ShapeSnapshotHeadAsync(shape.ResumeScope, Start, CancellationToken.None);
         await Assert.That(current).IsEqualTo(await CounterAsync(fixture.Raw));
         await Assert.That(current).IsGreaterThan(head);
     }
@@ -126,11 +89,9 @@ public sealed class ShapeSnapshotTests
     [Test]
     public async Task A_seal_scanning_while_http_writes_commit_publishes_byte_bounded_contiguous_pages_at_its_head()
     {
-        // The blocked predicate holds one storage thread, so the concurrent HTTP writes need others.
         await using var api = await DocumentApi.StartAsync(settings => settings["storage-threads"] = "4");
         await using var fixture = await Fixture.OpenAsync(api);
         var faker = new Faker();
-        // One id is held back to be written later, inside the keyset range: between ids[500] and ids[501].
         var all = Ids(1001);
         var inside = all[501];
         string[] ids = [.. all.Where(id => id != inside)];
@@ -157,15 +118,12 @@ public sealed class ShapeSnapshotTests
             await started.Task.WaitAsync(Wait);
             await Assert.That(async () => await fixture.Snapshots.SealIfDueAsync(fixture.Store, await ShapeAsync(fixture.Store), CancellationToken.None))
                 .Throws<StorageBusyException>().Because("one seal is admitted at a time");
-
-            // Updates at both ends and the middle, deletes, an id inside the keyset range and one after it, all while page 0 scans.
             _ = await WriteAsync(api, model, (ids[0], Doc(-1)), (ids[500], Doc(-2)), (ids[999], Doc(-3)), (ids[1], null), (ids[998], null),
                 (inside, Doc(-4)), (DocumentApi.NewId(), Doc(-5)));
             afterWrites = await CounterAsync(fixture.Raw);
         }
         finally
         {
-            // A failed write or assertion must not leave the storage thread blocked in the predicate.
             release.Set();
         }
 
@@ -185,8 +143,6 @@ public sealed class ShapeSnapshotTests
         }
 
         await Assert.That((await api.GetAsync(ids[0])).Version).IsNotEqualTo(versions[ids[0]]).Because("the write did commit");
-
-        // Pages are byte bounded below the document limit, and each continuation is the page's last examined id.
         var first = await PageOpsAsync(pages[0]);
         await Assert.That(first.Length).IsLessThan(ShapeSnapshots.PageDocuments);
         for (var i = 0; i < nextIds.Count - 1; i++)
@@ -194,8 +150,6 @@ public sealed class ShapeSnapshotTests
             var pageOps = await PageOpsAsync(pages[i]);
             await Assert.That(nextIds[i]).IsEqualTo(Id(pageOps[^1]));
         }
-
-        // Stored pages are fixed bytes: reading the chain again returns them unchanged.
         var (again, _) = await PagesAsync(fixture.Snapshots, fixture.Store, shape.Handle, snapshot.Offset);
         await Assert.That(again.Count).IsEqualTo(pages.Count);
         for (var i = 0; i < pages.Count; i++)
@@ -213,7 +167,6 @@ public sealed class ShapeSnapshotTests
     [Test]
     public async Task A_snapshot_at_S_equals_the_replayed_write_history_and_feed_through_S()
     {
-        // Each S is checked three ways: the HTTP write history, the raw feed, and FR-12 chunks sealed at S and replayed from 0.
         await using var api = await DocumentApi.StartAsync();
         await StorageFixture.CreateCollectionAsync(api.Tenant, DocumentApi.Database, "other");
         await using var fixture = await Fixture.OpenAsync(api);
@@ -225,9 +178,8 @@ public sealed class ShapeSnapshotTests
         var shape = await ShapeAsync(fixture.Store);
         var first = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
         var firstModel = Model(model);
-        var sealer = new ShapeSealer(fixture.Memory, NullLogger<ShapeSealer>.Instance, new TursoShapeStorage(api.Server.Services.GetRequiredService<TursoStorageEngine>()), new LocalDurability());
+        var sealer = new ShapeSealer(fixture.Memory, NullLogger<ShapeSealer>.Instance, new TursoShapeStorage(api.Server.Services.GetRequiredService<TursoStorageEngine>()));
         var chunkShape = await ChunkShapeAsync(fixture.Store, shape);
-        // Chunk values are materialized at sealing time, so each checkpoint is sealed before the next writes commit.
         await Assert.That(await sealer.SealUpToHeadAsync(fixture.Store, chunkShape, 0, CancellationToken.None)).IsEqualTo(first.Offset);
         SortedDictionary<string, (string Version, string Document)> replayed = [with(StringComparer.Ordinal)];
         await ReplayChunksAsync(sealer, fixture.Store, shape.Handle, 0, first.Offset, replayed);
@@ -244,8 +196,6 @@ public sealed class ShapeSnapshotTests
         await Assert.That(await sealer.SealUpToHeadAsync(fixture.Store, chunkShape, first.Offset, CancellationToken.None)).IsEqualTo(second.Offset);
         await ReplayChunksAsync(sealer, fixture.Store, shape.Handle, first.Offset, second.Offset, replayed);
         await AssertReplayMatchesAsync(fixture.Snapshots, fixture.Store, shape, second.Offset, replayed);
-
-        // Later commits cannot change the already sealed prefix or its snapshot.
         SortedDictionary<string, (string Version, string Document)> again = [with(StringComparer.Ordinal)];
         await ReplayChunksAsync(sealer, fixture.Store, shape.Handle, 0, first.Offset, again);
         await AssertReplayMatchesAsync(fixture.Snapshots, fixture.Store, shape, first.Offset, again);
@@ -317,11 +267,9 @@ public sealed class ShapeSnapshotTests
         await using var fixture = await Fixture.OpenAsync(api);
         var ids = Ids(3);
         var model = Model();
-        // Each 600 KiB document fills a page on its own, so the seal writes three pages.
         _ = await WriteAsync(api, model, [.. ids.Select((id, n) => (id, (JsonObject?)Doc(n, new string('x', 600 * 1024))))]);
         using var cancel = new CancellationTokenSource();
         var calls = 0;
-        // Page 0 sees documents 0 and 1 (1 does not fit); the third call is page 1, after page 0 is stored.
         var shape = await ShapeAsync(fixture.Store, document =>
         {
             if (Interlocked.Increment(ref calls) == 3)
@@ -354,7 +302,6 @@ public sealed class ShapeSnapshotTests
     public async Task A_seal_without_memory_admission_or_after_cancellation_publishes_nothing()
     {
         await using var api = await DocumentApi.StartAsync();
-        // A Hobby tenant gets 1/16 of 16 MiB: the seal's small admissions fit, the 1 MiB page workspace on top of them does not.
         await using var fixture = await Fixture.OpenAsync(api, limit: 16L * 1024 * 1024);
         _ = await WriteAsync(api, Model(), (DocumentApi.NewId(), Doc(1)));
         var shape = await ShapeAsync(fixture.Store);
@@ -412,7 +359,6 @@ public sealed class ShapeSnapshotTests
     {
         await using var api = await DocumentApi.StartAsync();
         await using var fixture = await Fixture.OpenAsync(api);
-        // Every id is a 26-character ULID, so a filtered-out id fits wherever the included id before it did.
         var ids = Ids(3);
         var excluded = ids[1];
         var model = Model();
@@ -421,7 +367,7 @@ public sealed class ShapeSnapshotTests
         int framing;
         await using (var reader = await fixture.Transactions.BeginAsync(fixture.Store, write: false, CancellationToken.None))
         {
-            var (offset, cursor) = await ((IShapeSnapshotStorage)reader).ShapeSnapshotHeadAsync(remote: false, shape.ResumeScope, Start, CancellationToken.None);
+            var (offset, cursor) = await ((IShapeSnapshotStorage)reader).ShapeSnapshotHeadAsync(shape.ResumeScope, Start, CancellationToken.None);
             var document = await reader.GetAsync(DocumentApi.Collection, ids[0], CancellationToken.None);
             var operation = ShapeSnapshots.Upsert(DocumentApi.Collection, document!);
             var operations = new byte[operation.Length + 2];
@@ -467,7 +413,6 @@ public sealed class ShapeSnapshotTests
         var ids = Ids(5);
         var model = Model();
         _ = await WriteAsync(api, model, [.. ids.Select((id, n) => (id, (JsonObject?)Doc(n)))]);
-        // The scan of ids[1] uses up the deadline, so page 0 stops before ids[2]. Each id is examined once.
         var shape = await ShapeAsync(fixture.Store, document =>
         {
             if (document.Id == ids[1])
@@ -486,7 +431,6 @@ public sealed class ShapeSnapshotTests
         await AssertMatchesAsync(await OpsAsync(pages, shape, snapshot.Offset), model);
     }
 
-    // {"n":"<0xFF>"} is invalid UTF-8; {"n": is malformed JSON. Both are stored uncaptured over a valid HTTP write.
     [Test]
     [Arguments("7B226E223A22FF227D")]
     [Arguments("7B226E223A")]
@@ -496,7 +440,6 @@ public sealed class ShapeSnapshotTests
         await using var fixture = await Fixture.OpenAsync(api);
         var ids = Ids(2);
         _ = await WriteAsync(api, Model(), (ids[0], Doc(0)), (ids[1], Doc(1)));
-        // Keep the corruption as bytes: a TEXT cast can replace invalid UTF-8 before the snapshot reads it.
         await RawWriteAsync(fixture.Raw, $"UPDATE \"{DocumentApi.Collection}\" SET doc = X'{damaged}' WHERE id = '{ids[1]}';");
         await Assert.That(await ScalarAsync(fixture.Raw, $"SELECT hex(CAST(doc AS BLOB)) = '{damaged}' FROM \"{DocumentApi.Collection}\" WHERE id = '{ids[1]}';"))
             .IsEqualTo(1L).Because("the stored damage must reach the snapshot validator unchanged");
@@ -517,8 +460,6 @@ public sealed class ShapeSnapshotTests
         var shape = await ShapeAsync(fixture.Store);
         var first = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
         await Assert.That(await ScalarAsync(fixture.Raw, $"SELECT COUNT(*) FROM _tb_shape_snapshot WHERE handle = '{shape.Handle}';")).IsEqualTo(1L);
-
-        // A chunk ending at the snapshot's offset is already covered and does not count.
         await RawWriteAsync(fixture.Raw, Chunks(shape.Handle, [(0, first.Offset), .. Enumerable.Range(0, ShapeSnapshots.ResealChunksPerPage - 1)
             .Select(i => (first.Offset + i, first.Offset + i + 1))]));
         _ = await WriteAsync(api, Model(), (DocumentApi.NewId(), Doc(2)));
@@ -543,12 +484,9 @@ public sealed class ShapeSnapshotTests
         var shape = await ShapeAsync(fixture.Store);
         var first = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
         await Assert.That(first.Offset).IsGreaterThan(0L);
-        // Pages enough that 16 chunks per page pass 4096, so the cap decides.
         await RawWriteAsync(fixture.Raw, "INSERT INTO _tb_shape_snapshot (handle, offset, page, next_id, body, sealed_at) VALUES "
             + string.Join(", ", Enumerable.Range(1, ShapeSnapshots.ResealChunks / ShapeSnapshots.ResealChunksPerPage).Select(page =>
                 FormattableString.Invariant($"('{shape.Handle}', {first.Offset}, {page}, 'p{page}', X'7B7D', 1791849600000)"))) + ";");
-
-        // A chunk ending at the snapshot's offset is already covered and does not count.
         await RawWriteAsync(fixture.Raw, Chunks(shape.Handle, (0, first.Offset)));
         await RawWriteAsync(fixture.Raw, Chunks(shape.Handle, [.. Enumerable.Range(0, ShapeSnapshots.ResealChunks - 1)
             .Select(i => (first.Offset + i, first.Offset + i + 1))]));
@@ -598,17 +536,13 @@ public sealed class ShapeSnapshotTests
             Raw = raw;
             Store = store;
             Transactions = transactions;
-            Snapshots = new ShapeSnapshots(memory, Time, transactions, new LocalDurability());
+            Snapshots = new ShapeSnapshots(memory, Time, transactions);
         }
 
         public FakeTimeProvider Time { get; } = new(Start);
 
         public MemoryBudget Memory { get; }
-
-        /// <summary>The engine's store, for SQL inspection only.</summary>
         public TursoDatabaseStore Raw { get; }
-
-        /// <summary>The decorated production store every snapshot call goes through.</summary>
         public IDatabaseStore Store { get; }
 
         public TursoShapeSnapshotTransactions Transactions { get; }
@@ -642,7 +576,6 @@ public sealed class ShapeSnapshotTests
             DocumentApi.Collection, collection.Id, RandomNumberGenerator.GetBytes(16), store.Incarnation, predicate);
     }
 
-    /// <summary>The FR-12 chunk shape with the snapshot's identity, bound to the collection's current generation.</summary>
     private static async Task<ShapeSealDefinition> ChunkShapeAsync(IDatabaseStore store, ShapeSnapshotDefinition shape)
     {
         await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
@@ -651,7 +584,6 @@ public sealed class ShapeSnapshotTests
         return new ShapeSealDefinition(shape.ShapeId, shape.Handle, shape.Collection, collection.Id, shape.ResumeScope, store.Incarnation);
     }
 
-    /// <summary>Applies the contiguous closed chunks of (from, through] in order: upsert stores id, version and document, delete removes.</summary>
     private static async Task ReplayChunksAsync(
         ShapeSealer sealer, IDatabaseStore store, string handle, long from, long through, SortedDictionary<string, (string Version, string Document)> state)
     {
@@ -687,7 +619,6 @@ public sealed class ShapeSnapshotTests
         await Assert.That(from).IsEqualTo(through).Because("the chunk chain reaches S exactly");
     }
 
-    /// <summary>The snapshot at S holds exactly the replayed ids, each with the replayed version and document bytes.</summary>
     private static async Task AssertReplayMatchesAsync(
         ShapeSnapshots snapshots, IDatabaseStore store, ShapeSnapshotDefinition shape, long offset, SortedDictionary<string, (string Version, string Document)> replayed)
     {
@@ -710,8 +641,6 @@ public sealed class ShapeSnapshotTests
         from is null ? new(StringComparer.Ordinal) : new(from.ToDictionary(pair => pair.Key, pair => (JsonObject)pair.Value.DeepClone()), StringComparer.Ordinal);
 
     private static string Id(JsonElement op) => op.GetProperty("id").GetString()!;
-
-    /// <summary>Writes in transactions of 250 operations (null deletes), applies them to the model and returns each result's version.</summary>
     private static async Task<Dictionary<string, string>> WriteAsync(
         DocumentApi api, SortedDictionary<string, JsonObject> model, params (string Id, JsonObject? Document)[] writes)
     {
@@ -742,7 +671,6 @@ public sealed class ShapeSnapshotTests
         return versions;
     }
 
-    /// <summary>Follows a published snapshot's continuation chain; every page must be served.</summary>
     private static async Task<(List<byte[]> Pages, List<string?> NextIds)> PagesAsync(ShapeSnapshots snapshots, IDatabaseStore store, string handle, long offset)
     {
         List<byte[]> pages = [];
@@ -760,7 +688,6 @@ public sealed class ShapeSnapshotTests
         return (pages, nextIds);
     }
 
-    /// <summary>Checks every page against section 6 and the chain's contiguity, and returns the ops in page order.</summary>
     private static async Task<List<JsonElement>> OpsAsync(List<byte[]> pages, ShapeSnapshotDefinition shape, long offset)
     {
         var at = offset.ToString(CultureInfo.InvariantCulture);
@@ -822,7 +749,6 @@ public sealed class ShapeSnapshotTests
         return ops;
     }
 
-    /// <summary>The ops are the model in ordinal id order, each id once, with the stored document unchanged.</summary>
     private static async Task AssertMatchesAsync(List<JsonElement> ops, SortedDictionary<string, JsonObject> model)
     {
         await Assert.That(string.Join(',', ops.Select(Id))).IsEqualTo(string.Join(',', model.Keys));
@@ -832,7 +758,6 @@ public sealed class ShapeSnapshotTests
         }
     }
 
-    /// <summary>The live ids of the shape's collection after replaying feed rows with seq at or below S, in ordinal order.</summary>
     private static Task<string[]> FeedLiveAsync(TursoDatabaseStore store, long offset) => store.WithWriterAsync(session =>
     {
         using var command = session.Connection.CreateCommand();
@@ -856,8 +781,6 @@ public sealed class ShapeSnapshotTests
         command.CommandText = sql;
         return (long)command.ExecuteScalar()!;
     }, "a test inspecting shape rows", CancellationToken.None);
-
-    // The same capture-off pragma SuspendCaptureAsync sends; each statement commits on its own.
     private static Task<bool> RawWriteAsync(TursoDatabaseStore store, params string[] statements) => store.WithWriterAsync(session =>
     {
         using (var off = session.Connection.CreateCommand())
@@ -884,8 +807,6 @@ public sealed class ShapeSnapshotTests
 
         return true;
     }, "a test writing shape chunks uncaptured", CancellationToken.None);
-
-    // Multi-row inserts of at most 500 rows per statement, as raw uncaptured chunk rows the B1 tests also write.
     private static string[] Chunks(string handle, params (long Offset, long End)[] chunks) =>
         [.. chunks.Chunk(500).Select(batch => "INSERT INTO _tb_shape_chunk (handle, offset, end_offset, body, sealed_at) VALUES "
             + string.Join(", ", batch.Select(chunk => FormattableString.Invariant($"('{handle}', {chunk.Offset}, {chunk.End}, X'7B7D', 1791849600000)"))) + ";")];

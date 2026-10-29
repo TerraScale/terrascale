@@ -483,16 +483,16 @@ public sealed class BackupShutdownTests
             }, time);
             backup = api.Server.Services.GetRequiredService<ContinuousBackup>();
             var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
-            await WaitForSnapshotsAsync(api, deadline.Token, "v1/_system");
+            await WaitForSnapshotsAsync(api, deadline.Token, "v1/_system/nodes/local");
             var database = await api.CreateManagedDatabaseAsync("main");
             var other = await api.CreateManagedDatabaseAsync(database.Organization, database.Project, "other");
             using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
             await ManagementApi.CreateCollectionAsync(data, database, "people");
             await ManagementApi.CreateCollectionAsync(data, other, "people");
             time.Advance(TimeSpan.FromSeconds(10));
-            await WaitForSnapshotsAsync(api, deadline.Token, "v1/_system", File(database), File(other));
+            await WaitForSnapshotsAsync(api, deadline.Token, "v1/_system/nodes/local", File(database), File(other));
             await Assert.That(backup.Status.Files.Select(file => file.File)).IsEquivalentTo(
-                ["v1/_system", File(database), File(other)]);
+                ["v1/_system/nodes/local", File(database), File(other)]);
             await Assert.That(backup.Status.Files.All(file => file.Generation is not null)).IsTrue();
 
             s3.BeforePut = async (key, token) =>
@@ -594,14 +594,14 @@ public sealed class BackupShutdownTests
             }, time);
             var backup = api.Server.Services.GetRequiredService<ContinuousBackup>();
             var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
-            await WaitForSnapshotsAsync(api, token, "v1/_system");
+            await WaitForSnapshotsAsync(api, token, "v1/_system/nodes/local");
             var database = await api.CreateManagedDatabaseAsync("main");
             var other = await api.CreateManagedDatabaseAsync(database.Organization, database.Project, "other");
             using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
             await ManagementApi.CreateCollectionAsync(data, database, "people");
             await ManagementApi.CreateCollectionAsync(data, other, "people");
             time.Advance(TimeSpan.FromSeconds(10));
-            await WaitForSnapshotsAsync(api, token, "v1/_system", File(database), File(other));
+            await WaitForSnapshotsAsync(api, token, "v1/_system/nodes/local", File(database), File(other));
             await Assert.That(backup.Status.Files.Count).IsEqualTo(3);
 
             stop = backup.StopAsync(CancellationToken.None);
@@ -697,7 +697,7 @@ public sealed class BackupShutdownTests
         }
     }
 
-    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
+    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
 
     private static async Task SetCustomerAsync(ManagementApi api, ManagedDatabaseRef database, CancellationToken token)
     {

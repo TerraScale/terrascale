@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
@@ -8,7 +7,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.Management;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -19,38 +18,34 @@ namespace TerraBase.Fast.Management;
 public sealed class DatabasePurgeTests
 {
     [Test]
-    public async Task Customer_deletion_fixes_deadlines_and_requires_each_historical_holder()
+    public async Task Customer_deletion_fixes_deadlines_and_requires_its_local_absence_receipt()
     {
         await using var state = new PurgeData();
         await using var api = await state.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         var tenant = Tenant(database);
-        await PurgeData.WriteAsync(api, async transaction => { _ = await transaction.PutAsync(CatalogGate.Members, "retired-node", "{\"region\":\"sjc\"}"u8.ToArray(), CancellationToken.None); });
         using var deleted = await api.Client.DeleteAsync(new Uri(database.Path, UriKind.Relative));
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         var catalog = api.Server.Services.GetRequiredService<SystemCatalog>();
         var record = (await catalog.ListDatabasePurgesAsync(null, 100, CancellationToken.None))!.Items.Single();
+        var machine = api.Server.Services.GetRequiredService<TerraBaseOptions>().MachineId;
         await Assert.That(record.RequestedAt).IsEqualTo(state.Clock.GetUtcNow());
         await Assert.That(record.ActiveDueAt).IsEqualTo(record.RequestedAt.AddDays(30));
         await Assert.That(record.BackupDueAt).IsEqualTo(record.RequestedAt.AddDays(39));
-        await Assert.That(record.ExpectedHolders).IsEquivalentTo(["local", "retired-node"]);
+        await Assert.That(record.ExpectedHolders).IsEquivalentTo([machine]);
+        await PurgeData.WriteAsync(api, async transaction =>
+        {
+            _ = await transaction.DeleteAsync(DatabasePurge.Receipts(database.Id), machine, CancellationToken.None);
+        });
         await Assert.That(await catalog.AreActiveCopiesAbsentAsync(tenant, CancellationToken.None)).IsFalse();
         await Assert.That(await catalog.MarkBackupVerifiedAsync(tenant, state.Clock.GetUtcNow(), CancellationToken.None)).IsFalse();
-        state.Clock.Advance(TimeSpan.FromDays(40));
         await PurgeData.ConvergeAsync(api);
         var retried = (await catalog.ListDatabasePurgesAsync(null, 100, CancellationToken.None))!.Items.Single();
         await Assert.That(retried.RequestedAt).IsEqualTo(record.RequestedAt);
         await Assert.That(retried.ActiveDueAt).IsEqualTo(record.ActiveDueAt);
         await Assert.That(retried.BackupDueAt).IsEqualTo(record.BackupDueAt);
-        await Assert.That(retried.BackupVerifiedAt).IsNull();
-        var metrics = await api.Server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative));
-        await Assert.That(metrics.Split('\n').Single(line => line.StartsWith("terrabase_purge_pending{", StringComparison.Ordinal)).Split(' ')[^1]).IsEqualTo("1");
-        await Assert.That(metrics.Split('\n').Single(line => line.StartsWith("terrabase_purge_overdue{", StringComparison.Ordinal)).Split(' ')[^1]).IsEqualTo("1");
-        await PurgeData.WriteAsync(api, transaction => SystemCatalog.PutAsync(transaction, DatabasePurge.Receipts(database.Id), "retired-node",
-            new DatabasePurgeReceipt(tenant, "retired-node", state.Clock.GetUtcNow(), Authority: record.RequestedAt), TerraBaseJsonContext.Default.DatabasePurgeReceipt, CancellationToken.None));
         await Assert.That(await catalog.AreActiveCopiesAbsentAsync(tenant, CancellationToken.None)).IsTrue();
         await Assert.That(await catalog.MarkBackupVerifiedAsync(tenant, state.Clock.GetUtcNow(), CancellationToken.None)).IsTrue();
-        await Assert.That((await catalog.ListDatabasePurgesAsync(null, 100, CancellationToken.None))!.Items.Count).IsEqualTo(1);
     }
 
     [Test]
@@ -60,31 +55,27 @@ public sealed class DatabasePurgeTests
         await using var api = await state.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         var tenant = Tenant(database);
-        await PurgeData.WriteAsync(api, async transaction => { _ = await transaction.PutAsync(CatalogGate.Members, "skewed-node", "{\"region\":\"sjc\"}"u8.ToArray(), CancellationToken.None); });
         using var deleted = await api.Client.DeleteAsync(new Uri(database.Path, UriKind.Relative));
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         var catalog = api.Server.Services.GetRequiredService<SystemCatalog>();
         var record = (await catalog.ListDatabasePurgesAsync(null, 100, CancellationToken.None))!.Items.Single();
         var machine = api.Server.Services.GetRequiredService<TerraBaseOptions>().MachineId;
 
-        // A holder whose clock runs an hour behind the requester still proves absence of the purge it read.
-        await PutReceiptAsync("skewed-node", record.RequestedAt.AddHours(-1), record.RequestedAt);
+        await PutReceiptAsync(machine, record.RequestedAt.AddHours(-1), record.RequestedAt);
         await Assert.That(await catalog.AreActiveCopiesAbsentAsync(tenant, CancellationToken.None)).IsTrue();
-        // So does a backup verifier whose clock runs behind: authority and receipts are read under its writer.
+
         await Assert.That(await catalog.MarkBackupVerifiedAsync(tenant, record.RequestedAt.AddHours(-1), CancellationToken.None)).IsTrue();
-        // A receipt that never read this purge proves nothing, however late its clock says it was written.
-        await PutReceiptAsync("skewed-node", record.RequestedAt.AddHours(1), null);
+
+        await PutReceiptAsync(machine, record.RequestedAt.AddHours(1), null);
         await Assert.That(await catalog.AreActiveCopiesAbsentAsync(tenant, CancellationToken.None)).IsFalse();
-        await PutReceiptAsync("skewed-node", record.RequestedAt.AddHours(1), record.RequestedAt.AddTicks(1));
+        await PutReceiptAsync(machine, record.RequestedAt.AddHours(1), record.RequestedAt.AddTicks(1));
         await Assert.That(await catalog.AreActiveCopiesAbsentAsync(tenant, CancellationToken.None)).IsFalse();
 
-        // This node's own bound receipt from a behind clock counts too: convergence keeps it instead of cleaning up again.
         var skewed = record.RequestedAt.AddHours(-1);
         await PutReceiptAsync(machine, skewed, record.RequestedAt);
         await PurgeData.ConvergeAsync(api);
         await Assert.That((await ReceiptAsync(machine))!.VerifiedAt).IsEqualTo(skewed);
 
-        // A receipt from before receipts named their authority no longer counts; a live holder re-verifies and reissues it.
         await PutReceiptAsync(machine, record.RequestedAt.AddHours(1), null);
         await PurgeData.ConvergeAsync(api);
         await Assert.That((await ReceiptAsync(machine))!.Authority).IsEqualTo(record.RequestedAt);
@@ -111,20 +102,18 @@ public sealed class DatabasePurgeTests
         var database = await api.CreateManagedDatabaseAsync();
         using var deleted = await api.Client.DeleteAsync(new Uri(database.Path, UriKind.Relative));
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-        // A replicated scalar and a repeated nested key, both keyed ahead of the real record.
+
         var (scalar, repeated) = ("00000000000000000000000001", "00000000000000000000000002");
-        var at = new EntryVersion(new Hlc((ulong)state.Clock.GetUtcNow().ToUnixTimeMilliseconds() << 16), ReplicaId.Of(7, 4251, 0));
         var store = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
         await using (var join = await store.BeginDurableTransactionAsync(CancellationToken.None))
         {
             foreach (var (id, json) in new[]
             {
-                (scalar, """{"\u0000":null}"""),
-                (repeated, $$"""{"database":{"organizationId":"o","projectId":"p","databaseId":"{{repeated}}","databaseId":"{{repeated}}"},"formatVersion":1}"""),
+                (scalar, "null"),
+                (repeated, """{"database":42,"formatVersion":1}"""),
             })
             {
-                using var body = JsonDocument.Parse(json);
-                _ = await join.JoinAsync(DatabasePurge.Collection, id, DocumentState.Bottom.Put(at, body.RootElement), at, CancellationToken.None);
+                _ = await join.PutAsync(DatabasePurge.Collection, id, System.Text.Encoding.UTF8.GetBytes(json), CancellationToken.None);
             }
 
             _ = await join.CommitAsync(CancellationToken.None);
@@ -133,7 +122,7 @@ public sealed class DatabasePurgeTests
         var catalog = api.Server.Services.GetRequiredService<SystemCatalog>();
         var all = (await catalog.ListDatabasePurgesAsync(null, 100, CancellationToken.None))!;
         await Assert.That(all.Items.Select(record => record.Database.DatabaseId!)).IsEquivalentTo([database.Id]);
-        // One row per page still moves past each unreadable row instead of repeating it.
+
         var first = (await catalog.ListDatabasePurgesAsync(null, 1, CancellationToken.None))!;
         await Assert.That(first.Items).IsEmpty();
         await Assert.That(first.Next).IsEqualTo(scalar);
@@ -170,7 +159,7 @@ public sealed class DatabasePurgeTests
             var store = await api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
             await using (var gc = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None))
             {
-                _ = await gc.CollectAsync(new Hlc((ulong)state.Clock.GetUtcNow().AddMinutes(1).ToUnixTimeMilliseconds() << 16), CancellationToken.None);
+                _ = await gc.CollectHistoryAsync(new Hlc((ulong)state.Clock.GetUtcNow().AddMinutes(1).ToUnixTimeMilliseconds() << 16), CancellationToken.None);
                 await gc.CommitAsync(CancellationToken.None);
             }
             await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
@@ -234,14 +223,7 @@ public sealed class DatabasePurgeTests
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         var unknown = Tenant(database) with { DatabaseId = EntityIds.New().ToString() };
         await Assert.That(await engine.CreateDatabaseAsync(unknown, CancellationToken.None)).IsTrue();
-        var member = api.Server.Services.GetRequiredService<LocalReplica>();
-        var now = member.Clock.Tick();
-        member.Presence.Listed([("unheard", "sjc")], now.Milliseconds);
         var system = await api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
-        await using (var gc = (TursoStorageTransaction)await system.BeginTransactionAsync(write: false, CancellationToken.None))
-        {
-            await Assert.That((await gc.GetHorizonAsync(now, CancellationToken.None)).Value).IsEqualTo(0UL);
-        }
         using var deleted = await api.Client.DeleteAsync(new Uri(database.Path, UriKind.Relative));
         deleted.EnsureSuccessStatusCode();
         await PurgeData.ConvergeAsync(api);

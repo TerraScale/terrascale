@@ -9,12 +9,6 @@ using Turso.Data.Sqlite;
 
 namespace TerraBase.Slow.AckAfterSegment;
 
-/// <summary>
-/// One server and one database for the remote-segment-before-ACK prototype. The server's own backup is configured but
-/// never ships (<see cref="ManualBackupHosting"/>), so <see cref="SegmentAckGate"/> holds the database's only tap. The
-/// prototype's bucket is a fake S3 reached through the real S3 client, with <see cref="ObjectStoreFaults"/> in its chain.
-/// A write is a document PUT on the data API: its 2xx is today's acknowledgement (one local commit).
-/// </summary>
 internal sealed class AckPrototype : IAsyncDisposable
 {
     public const string Collection = "items";
@@ -47,9 +41,8 @@ internal sealed class AckPrototype : IAsyncDisposable
         ServiceProvider? clients = null;
         try
         {
-            await api.VerifyCatalogAsync(cancellationToken);
+
             var database = await api.CreateManagedDatabaseAsync();
-            // The enterprise plan lifts the organization's request budget, so many writers measure the gate, not a limit.
             await api.SetPlanAsync(api.User, database.Organization, "enterprise", cancellationToken);
             var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
             await ManagementApi.CreateCollectionAsync(data, database, Collection, cancellationToken);
@@ -78,12 +71,9 @@ internal sealed class AckPrototype : IAsyncDisposable
         }
     }
 
-    /// <summary>Starts the database's generation: its snapshot is stored before this returns.</summary>
     public Task<SegmentAckGate> GateAsync(CancellationToken cancellationToken, TimeProvider? time = null) =>
         SegmentAckGate.StartAsync(Backup, new TenantContext(Database.Organization, PlanTier.Enterprise, Database.Project, Database.Id),
             Store, Prefix, _scratch, time ?? TimeProvider.System, cancellationToken);
-
-    /// <summary>Writes a new document; returns when the server acknowledged it, as today, after its local commit.</summary>
     public async Task<string> WriteAsync(CancellationToken cancellationToken)
     {
         var id = EntityIds.New().ToString();
@@ -92,7 +82,6 @@ internal sealed class AckPrototype : IAsyncDisposable
         return id;
     }
 
-    /// <summary>Restores the generation from the bucket alone and returns the ids of the documents it holds.</summary>
     public async Task<(HashSet<string> Ids, long Position, int Segments)> RestoreAsync(CancellationToken cancellationToken)
     {
         var (file, position, segments) = await SegmentHistory.RestoreAsync(Store, Backup, Prefix, _scratch, cancellationToken);

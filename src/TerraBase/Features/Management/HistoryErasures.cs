@@ -2,7 +2,6 @@ using System.Diagnostics.Metrics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Grpc.Core;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
@@ -16,16 +15,8 @@ using ZLogger;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>What a history erasure request answers.</summary>
 internal readonly union HistoryErasureResult(HistoryErasureStatus, Conflict, Unavailable);
 
-/// <summary>
-/// Shared-history erasure of ts-auth's database and SYSTEM (TS-873, docs/terrabase/history-erasure.md). Barriers are committed
-/// marker writes, never clock reads: each holder commits a marker in its auth file while that file holds the deletion fence;
-/// the requester covers every marker (and every origin any holder reported) before auth re-verifies; the final cut is the
-/// finalizer's applied vector plus its own committed final marker, captured in the same writer transaction; each holder covers
-/// that cut, takes its own commit offset and healthily rewrites both files. Status is computed from every holder's receipt.
-/// </summary>
 internal sealed partial class HistoryErasures(
     IStorageEngine engine, IHealthyRewrite rewrites, SystemCatalog catalog, LocalReplica self, TerraBaseOptions options,
     TimeProvider time, IMeterFactory meters, IServiceProvider services, ILogger<HistoryErasures> logger) : BackgroundService
@@ -53,18 +44,13 @@ internal sealed partial class HistoryErasures(
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(10);
 
     private static readonly TimeSpan MinimumRewriteInterval = TimeSpan.FromMinutes(10);
-    // Only Auth and System, shared by all phases; RunOnceAsync serializes access. Use monotonic elapsed time.
     private readonly Dictionary<string, long> _rewriteStarted = [];
     private RewritePhase _nextRewritePhase;
 
     private enum RewritePhase { Final, Residue, Retirement }
 
-    // A refused rewrite waits this long before the next attempt of that file, doubling to an hour: each attempt ends the
-    // backup tap of a file that does drain, and a busy file must not be refused (and re-shipped) every pass.
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromHours(1);
     private readonly Dictionary<string, (DateTimeOffset Next, TimeSpan Delay)> _backoff = [];
-    private long _epochStalled;
-    private long _passEpochStalled;
 
     private string Machine => options.MachineId;
 
@@ -86,8 +72,7 @@ internal sealed partial class HistoryErasures(
                 return existing;
             }
 
-            // A SYSTEM-wide rollback is recovered by auth presenting its original request time again: same deadlines.
-            var holders = await EngineManagementService.CatalogHoldersAsync(transaction, Machine, cancellationToken).ConfigureAwait(false);
+            var holders = EngineManagementService.CatalogHolders(Machine);
             var created = new HistoryErasureRecord(erasureId, requestedAt, requestedAt.AddDays(30),
                 requestedAt.AddDays((options.Backup?.RetentionDays.Values.Max() ?? 0) + 30), [.. holders.Order(StringComparer.Ordinal)], Requester: Machine);
             await SystemCatalog.PutAsync(transaction, HistoryErasure.Collection, erasureId, created, TerraBaseJsonContext.Default.HistoryErasureRecord, cancellationToken).ConfigureAwait(false);
@@ -103,7 +88,6 @@ internal sealed partial class HistoryErasures(
             return new Conflict("this history erasure exists with another request time", "erasure_conflict");
         }
 
-        // Only the requester settles and finalizes; a certified erasure is never settled again.
         if (token is not null)
         {
             return record.Requester != Machine || record.Certified
@@ -120,8 +104,6 @@ internal sealed partial class HistoryErasures(
         return status;
     }
 
-    // The requester's copies cover every holder's committed fence marker, and every origin a holder reported: only then may auth's
-    // re-verification against this machine count, so the token is this machine's.
     private async Task<HistoryErasureStatus?> SettleAsync(HistoryErasureRecord record, IReadOnlyList<HistoryErasureReceipt> receipts, CancellationToken cancellationToken)
     {
         if (!await WithAuthAsync(write: false, (transaction, token) => CoversMarksAsync(transaction, record.ErasureId, receipts, token), cancellationToken).ConfigureAwait(false))
@@ -146,8 +128,6 @@ internal sealed partial class HistoryErasures(
         return settled is null ? null : (await StatusAsync(settled, cancellationToken).ConfigureAwait(false)).Status;
     }
 
-    // Auth re-verified against this machine after the settlement; the final cut is captured with its own marker in one writer
-    // transaction per file.
     private async Task<HistoryErasureResult> FinalizeAsync(HistoryErasureRecord record, string token, CancellationToken cancellationToken)
     {
         var receipts = await catalog.ReadUncheckedAsync(transaction => ReceiptsAsync(transaction, record, cancellationToken), cancellationToken).ConfigureAwait(false);
@@ -165,7 +145,7 @@ internal sealed partial class HistoryErasures(
             return new Unavailable("the auth database is not open here", "auth_database_missing");
         }
 
-        OriginCut[]? cut;
+        ulong cut;
         var transaction = await auth.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
@@ -174,13 +154,12 @@ internal sealed partial class HistoryErasures(
                 return new Conflict("a fence marker is no longer covered here", "settlement_stale");
             }
 
-            var applied = Cuts(await transaction.GetAppliedAsync(cancellationToken).ConfigureAwait(false));
             var stamp = await PutMarkAsync(transaction, record.ErasureId, "final", markId, finalId, cancellationToken).ConfigureAwait(false);
-            cut = [.. applied, new OriginCut(Self, stamp)];
+            cut = stamp;
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        if (!await MarkCommittedAsync(auth, markId, cut[^1].Stamp, cancellationToken).ConfigureAwait(false))
+        if (!await MarkCommittedAsync(auth, markId, cut, cancellationToken).ConfigureAwait(false))
         {
             return new Unavailable("the final marker is not readable after its commit", "final_unproven");
         }
@@ -194,8 +173,6 @@ internal sealed partial class HistoryErasures(
                 return null;
             }
 
-            var applied = Cuts(await system.GetAppliedAsync(cancellationToken).ConfigureAwait(false));
-            // The SYSTEM cut's own entry: this marker's committed stamp, which holders read as the version of this document.
             await SystemCatalog.PutAsync(system, HistoryErasure.Finals(record.ErasureId), Machine, new FinalBody(finalId), FinalJson, cancellationToken).ConfigureAwait(false);
             var next = current with
             {
@@ -204,9 +181,7 @@ internal sealed partial class HistoryErasures(
                 FinalMachine = Machine,
                 FinalReplica = Self,
                 FinalMarks = marks,
-                FinalAuth = cut,
-                FinalSystem = applied,
-                // A new cut needs its own backup inventory.
+                FinalAuthMark = cut,
                 BackupCleanAt = null,
                 BackupFinalId = null,
             };
@@ -225,7 +200,7 @@ internal sealed partial class HistoryErasures(
         await catalog.ReadUncheckedAsync(async transaction =>
         {
             var receipts = await ReceiptsAsync(transaction, record, cancellationToken).ConfigureAwait(false);
-            var holders = await HoldersAsync(transaction, record, cancellationToken).ConfigureAwait(false);
+            var holders = Holders(record);
             return (Compute(record, holders, receipts), (IReadOnlyList<HistoryErasureReceipt>)receipts);
         }, cancellationToken).ConfigureAwait(false);
 
@@ -238,17 +213,10 @@ internal sealed partial class HistoryErasures(
         string? token = null;
         if (record.Certified)
         {
-            // Immutable: the subject's history is erased from the certified holders and their backups. Holders joining later
-            // copied the erased files. What remains is the fence's own metadata, after ts-auth retires it.
             pending = record.CertifiedHolders!.Count(holder => byHolder.GetValueOrDefault(holder) is not { Phase: HistoryErasure.RetiredPhase });
             status = pending > 0 ? HistoryErasure.Retire : HistoryErasure.Complete;
         }
-        else if (EpochStalled(receipts) is var stalled and > 0)
-        {
-            // An older replica epoch of a holder (it restarted uncleanly) may hold acknowledged writes only peers kept, and its
-            // applied progress may be gone. Only a fresh all-holder fence and actual snapshot imports prove coverage.
-            (status, pending) = (HistoryErasure.EpochStalled, stalled);
-        }
+
         else
         {
             var marks = MarksDigest(receipts);
@@ -263,16 +231,8 @@ internal sealed partial class HistoryErasures(
         }
 
         return new HistoryErasureStatus(status, record.ErasureId, pending, record.ActiveDueAt, record.BackupDueAt,
-            status is HistoryErasure.Fencing or HistoryErasure.Reverify or HistoryErasure.Rewriting or HistoryErasure.EpochStalled && now >= record.ActiveDueAt,
+            status is HistoryErasure.Fencing or HistoryErasure.Reverify or HistoryErasure.Rewriting && now >= record.ActiveDueAt,
             status is not (HistoryErasure.Complete or HistoryErasure.Retire) && now >= record.BackupDueAt, token);
-    }
-
-    // Holders whose receipt names older epochs of their own replica, plus origins some holder reported that are an older epoch
-    // (same region and member, lower epoch) of a marked holder's replica.
-    private static int EpochStalled(IReadOnlyList<HistoryErasureReceipt> receipts)
-    {
-        var origins = ObsoleteOrigins(receipts);
-        return receipts.Count(receipt => NeedsEpochFence(receipt, receipts) || NeedsOldCoverage(receipt, receipts, origins));
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -285,10 +245,8 @@ internal sealed partial class HistoryErasures(
                 await RunOnceAsync(stoppingToken).ConfigureAwait(false);
             }
             catch (Exception error) when (stoppingToken.IsCancellationRequested
-                && error is ObjectDisposedException or RpcException { StatusCode: StatusCode.Cancelled })
+                && error is ObjectDisposedException)
             {
-                // Storage can already be closed when a failed pass races the worker's stop request, and a snapshot pull
-                // ends as a cancelled call: either faulted the worker, so every redeploy exited unhandled (2026-10-28).
                 break;
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
@@ -299,14 +257,12 @@ internal sealed partial class HistoryErasures(
         }
     }
 
-    /// <summary>One bounded page: this machine's own markers, rewrites and receipts, then backup verification.</summary>
     internal async Task RunOnceAsync(CancellationToken cancellationToken)
     {
         await _pass.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             RegisterMetrics();
-            // Read before any catalog check: the check initializes a fresh catalog, which a machine with no erasure must not do.
             var page = await catalog.ReadUncheckedAsync(transaction => SystemCatalog.ListAsync(transaction, HistoryErasure.Collection, _after, Page,
                 TerraBaseJsonContext.Default.HistoryErasureRecord, static record => record.ErasureId, cancellationToken), cancellationToken).ConfigureAwait(false);
             if (page.Items.Count == 0 && _after is null)
@@ -315,7 +271,6 @@ internal sealed partial class HistoryErasures(
                 Interlocked.Exchange(ref _activeOverdue, 0);
                 Interlocked.Exchange(ref _backupOverdue, 0);
                 Interlocked.Exchange(ref _oldestTicks, 0);
-                Interlocked.Exchange(ref _epochStalled, 0);
                 return;
             }
 
@@ -337,7 +292,6 @@ internal sealed partial class HistoryErasures(
                     var own = receipts.FirstOrDefault(receipt => receipt.MachineId == Machine);
                     if (record.Certified)
                     {
-                        // Only the fence's retirement remains, and only for the holders the certificate covers.
                         if (record.CertifiedHolders!.Contains(Machine, StringComparer.Ordinal) && own is not { Phase: HistoryErasure.RetiredPhase })
                         {
                             retire.Add(record);
@@ -345,19 +299,7 @@ internal sealed partial class HistoryErasures(
                     }
                     else if (own is null || replaced || own.Replica != Self)
                     {
-                        // No marker yet, another file than our last step left (restore, rebuild, copy), or another replica epoch
-                        // (an unclean restart): fence again from this file and epoch.
-                        await MarkAsync(record, own, cancellationToken).ConfigureAwait(false);
-                    }
-                    else if (NeedsEpochFence(own, receipts))
-                    {
-                        // Every holder reports its actual old-epoch coverage after observing the new epoch. A previous
-                        // receipt can predate an ACKed tail surviving only on a third holder.
-                        await MarkAsync(record, own, cancellationToken, recutReplicas: EpochView(receipts)).ConfigureAwait(false);
-                    }
-                    else if (status.Status == HistoryErasure.EpochStalled)
-                    {
-                        await RecoverEpochAsync(record, own, receipts, cancellationToken).ConfigureAwait(false);
+                        await MarkAsync(record, cancellationToken).ConfigureAwait(false);
                     }
                     else if (record.FinalId is not null && record.FinalMarks == MarksDigest(receipts) && own.FinalId != record.FinalId)
                     {
@@ -372,14 +314,12 @@ internal sealed partial class HistoryErasures(
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested)
                 {
-                    // Still pending, and still old: the operator alert counts it.
                     Count(record, null);
                     _errors.Add(1, new KeyValuePair<string, object?>("reason", "record"));
                     logger.ZLogWarning(error, $"A history erasure step failed; the next pass tries again");
                 }
             }
 
-            // Rotate after a successful auth rewrite: a stream of new final cuts must not starve residue or retirement.
             var first = (int)_nextRewritePhase;
             for (var step = 0; step < 3; step++)
             {
@@ -401,9 +341,8 @@ internal sealed partial class HistoryErasures(
             Interlocked.Exchange(ref _activeOverdue, _passActiveOverdue);
             Interlocked.Exchange(ref _backupOverdue, _passBackupOverdue);
             Interlocked.Exchange(ref _oldestTicks, _passOldestTicks);
-            Interlocked.Exchange(ref _epochStalled, _passEpochStalled);
             _after = null;
-            _passPending = _passActiveOverdue = _passBackupOverdue = _passOldestTicks = _passEpochStalled = 0;
+            _passPending = _passActiveOverdue = _passBackupOverdue = _passOldestTicks = 0;
         }
         finally
         {
@@ -411,7 +350,6 @@ internal sealed partial class HistoryErasures(
         }
     }
 
-    // A null status: the record failed before it could be judged; it is pending and as old as its request.
     private void Count(HistoryErasureRecord record, HistoryErasureStatus? status)
     {
         if (status?.Status == HistoryErasure.Complete)
@@ -420,14 +358,11 @@ internal sealed partial class HistoryErasures(
         }
 
         _passPending++;
-        // The true age; an epoch stall has its own gauge (terrabase_history_erasure_epoch_stalled) for a direct, no-hold rule.
         _passOldestTicks = _passOldestTicks == 0 ? record.RequestedAt.UtcTicks : Math.Min(_passOldestTicks, record.RequestedAt.UtcTicks);
         _passActiveOverdue += status?.ActiveOverdue == true ? 1 : 0;
         _passBackupOverdue += status?.BackupOverdue == true ? 1 : 0;
-        _passEpochStalled += status?.Status == HistoryErasure.EpochStalled ? 1 : 0;
     }
 
-    /// <summary>The operator alert's age (ts-orchestrator rule on <c>oldest_age</c>): an offline listed holder keeps an erasure pending.</summary>
     internal static readonly TimeSpan AlertAge = TimeSpan.FromDays(20);
 
     private void RegisterMetrics()
@@ -442,10 +377,6 @@ internal sealed partial class HistoryErasures(
         meter.CreateObservableGauge("terrabase.history_erasure.pending", () => Interlocked.Read(ref _pending));
         meter.CreateObservableGauge("terrabase.history_erasure.active_overdue", () => Interlocked.Read(ref _activeOverdue));
         meter.CreateObservableGauge("terrabase.history_erasure.backup_overdue", () => Interlocked.Read(ref _backupOverdue));
-        // Erasures waiting for an old epoch's snapshot proof; the existing rule alerts within 15 minutes if recovery stalls.
-        meter.CreateObservableGauge("terrabase.history_erasure.epoch_stalled", () => Interlocked.Read(ref _epochStalled));
-        // The operator alert fires at 20 days (an offline listed holder never completes on its own; removing a region is a user
-        // decision): the same rule as terrabase.purge.oldest_age.
         meter.CreateObservableGauge("terrabase.history_erasure.oldest_age", () =>
         {
             var ticks = Interlocked.Read(ref _oldestTicks);
@@ -453,10 +384,7 @@ internal sealed partial class HistoryErasures(
         }, unit: "s");
     }
 
-    // Phase 1 on this holder: the marker commits in the same auth writer transaction that sees the fence live, so every later
-    // write of this origin is fenced (auth asserts the fence's absence in its own write transactions) and every earlier one is
-    // below the marker's stamp. The receipt is published only after the committed marker reads back.
-    private async Task MarkAsync(HistoryErasureRecord record, HistoryErasureReceipt? own, CancellationToken cancellationToken, string? recoveryAfter = null, ulong[]? recutReplicas = null)
+    private async Task MarkAsync(HistoryErasureRecord record, CancellationToken cancellationToken)
     {
         var auth = await engine.OpenDatabaseAsync(AuthDatabase, cancellationToken).ConfigureAwait(false);
         if (auth is null || !await auth.HasCollectionAsync(HistoryErasure.MarkCollection, cancellationToken).ConfigureAwait(false))
@@ -468,19 +396,15 @@ internal sealed partial class HistoryErasures(
         var markId = MarkId(record.ErasureId, HistoryErasure.Fenced, Machine);
         ulong stamp;
         Ulid incarnation;
-        OriginCut[] applied;
         var transaction = await auth.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            // ts-auth names the fence in its request document (auth database, retired with the fence), never in SYSTEM.
             if (await FenceOfAsync(transaction, record.ErasureId, cancellationToken).ConfigureAwait(false) is not { } fence
                 || await transaction.GetVersionAsync(AuthDeletionJobs, fence, cancellationToken).ConfigureAwait(false) is not { Deleted: false })
             {
-                // This copy has not received the request or the fence yet.
                 return;
             }
 
-            applied = Cuts(await transaction.GetAppliedAsync(cancellationToken).ConfigureAwait(false));
             incarnation = await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false);
             stamp = await PutMarkAsync(transaction, record.ErasureId, HistoryErasure.Fenced, markId, null, cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -495,52 +419,14 @@ internal sealed partial class HistoryErasures(
         var system = await SystemIncarnationAsync(cancellationToken).ConfigureAwait(false);
         _ = await catalog.WriteDurableAsync(async system_ =>
         {
-            var systemApplied = Cuts(await system_.GetAppliedAsync(cancellationToken).ConfigureAwait(false));
-            var previous = PreviousOf(own);
-            var previousAuth = own?.PreviousAuth ?? [];
-            var previousSystem = own?.PreviousSystem ?? [];
-            if (own is not null && own.Replica != Self)
-            {
-                previousAuth = MergeCuts(previousAuth, new OriginCut(own.Replica, own.AuthMark));
-                var version = await system_.GetVersionAsync(HistoryErasure.Receipts(record.ErasureId), Machine, cancellationToken).ConfigureAwait(false);
-                if (version is { Deleted: false } stored)
-                {
-                    previousSystem = MergeCuts(previousSystem, new OriginCut(own.Replica, unchecked((ulong)stored.Version)));
-                }
-            }
-
-            // Legacy stalls without both original cuts stay stalled: an epoch id alone is no coverage proof.
-            if (previous is not null && previous.All(origin => previousAuth.Any(cut => cut.Replica == origin && cut.Stamp > 0)
-                && previousSystem.Any(cut => cut.Replica == origin && cut.Stamp > 0))
-                && previousAuth.All(cut => Cut(applied, cut.Replica) >= cut.Stamp)
-                && previousSystem.All(cut => Cut(systemApplied, cut.Replica) >= cut.Stamp))
-            {
-                previous = null;
-            }
-
             await SystemCatalog.PutAsync(system_, HistoryErasure.Receipts(record.ErasureId), Machine,
-                new HistoryErasureReceipt(record.ErasureId, Machine, Self, HistoryErasure.Fenced, stamp, incarnation.ToString(), applied, systemApplied, time.GetUtcNow(),
-                    PreviousReplicas: previous, PreviousAuth: previousAuth, PreviousSystem: previousSystem, RecoveryAfter: recoveryAfter ?? own?.RecoveryAfter, RecutReplicas: recutReplicas ?? (own?.Replica == Self ? own.RecutReplicas : null)),
+                new HistoryErasureReceipt(record.ErasureId, Machine, Self, HistoryErasure.Fenced, stamp, incarnation.ToString(), time.GetUtcNow()),
                 TerraBaseJsonContext.Default.HistoryErasureReceipt, cancellationToken).ConfigureAwait(false);
             await PutLineageAsync(system_, incarnation, system, cancellationToken).ConfigureAwait(false);
             return true;
         }, static _ => false, cancellationToken).ConfigureAwait(false);
     }
 
-    // This machine's older epochs: kept across markers until actual imported coverage proves their original cuts.
-    private ulong[]? PreviousOf(HistoryErasureReceipt? own)
-    {
-        var previous = (own?.PreviousReplicas ?? []).ToHashSet();
-        if (own is not null && own.Replica != Self)
-        {
-            previous.Add(own.Replica);
-        }
-
-        return previous.Count == 0 ? null : [.. previous.Order()];
-    }
-
-    // Phase 2 on this holder: both files cover the final cut under their writers, then each is rewritten from a cut at or above
-    // the offset this machine committed it at. One rewrite per file covers every ready erasure of the page.
     private async Task RewriteAsync(List<HistoryErasureRecord> ready, CancellationToken cancellationToken)
     {
         if (ready.Count == 0 || Backing(Auth) || Backing(System))
@@ -590,8 +476,6 @@ internal sealed partial class HistoryErasures(
             return;
         }
 
-        // Each file's rewrite must replace exactly the file the coverage was read from; its lineage is recorded as it succeeds, so
-        // a refused second file does not make the first look replaced by someone else.
         if (await TryRewriteAsync(AuthDatabase, Auth, covered.Offset, covered.Incarnation, cancellationToken).ConfigureAwait(false) is not { } a)
         {
             return;
@@ -632,8 +516,6 @@ internal sealed partial class HistoryErasures(
         }, static _ => false, cancellationToken).ConfigureAwait(false);
     }
 
-    // Residue: once collection and feed retention removed every tombstone and feed event at or below the final cut, one more
-    // rewrite leaves no erased id in the auth file. SYSTEM residue follows SYSTEM's own collection (not gated here).
     private async Task RewriteResidueAsync(List<HistoryErasureRecord> ready, CancellationToken cancellationToken)
     {
         if (ready.Count == 0 || Backing(Auth))
@@ -646,7 +528,7 @@ internal sealed partial class HistoryErasures(
             List<HistoryErasureRecord> result = [];
             foreach (var record in ready)
             {
-                if (!await transaction.HoldsHistoryAtOrBelowAsync(new Hlc(record.FinalAuth!.Max(cut => cut.Stamp)), token).ConfigureAwait(false))
+                if (!await transaction.HoldsHistoryAtOrBelowAsync(new Hlc(record.FinalAuthMark), token).ConfigureAwait(false))
                 {
                     result.Add(record);
                 }
@@ -678,9 +560,6 @@ internal sealed partial class HistoryErasures(
         }, static _ => false, cancellationToken).ConfigureAwait(false);
     }
 
-    // Retirement, on each certified holder: after ts-auth deleted the fence (job first, request document last), wait until this
-    // auth file holds no tombstone or feed event at or below the request document's deletion (or, once that tombstone is
-    // collected, this machine's clock when it first looked: later, so conservative), then rewrite it once more.
     private async Task RetireAsync(List<HistoryErasureRecord> ready, CancellationToken cancellationToken)
     {
         if (ready.Count == 0 || Backing(Auth))
@@ -712,7 +591,6 @@ internal sealed partial class HistoryErasures(
                     var request = await transaction.GetVersionAsync(HistoryErasure.MarkCollection, record.ErasureId, token).ConfigureAwait(false);
                     if (request is { Deleted: false })
                     {
-                        // ts-auth has not retired the fence yet.
                         continue;
                     }
 
@@ -736,7 +614,7 @@ internal sealed partial class HistoryErasures(
                 {
                     var own = owns[record.ErasureId];
                     await SystemCatalog.PutAsync(transaction, HistoryErasure.Receipts(record.ErasureId), Machine,
-                        (own ?? new HistoryErasureReceipt(record.ErasureId, Machine, Self, HistoryErasure.ResidueCleared, 0, "", [], [], time.GetUtcNow())) with { RetireCut = cut },
+                        (own ?? new HistoryErasureReceipt(record.ErasureId, Machine, Self, HistoryErasure.ResidueCleared, 0, "", time.GetUtcNow())) with { RetireCut = cut },
                         TerraBaseJsonContext.Default.HistoryErasureReceipt, cancellationToken).ConfigureAwait(false);
                 }
 
@@ -770,7 +648,6 @@ internal sealed partial class HistoryErasures(
     private const string Auth = "auth";
     private const string System = "system";
 
-    // Every erasure phase shares the per-file start interval, including refused attempts and longer refusal backoffs.
     private bool Backing(string file) =>
         _rewriteStarted.TryGetValue(file, out var started) && time.GetElapsedTime(started) < MinimumRewriteInterval
         || _backoff.TryGetValue(file, out var backoff) && time.GetUtcNow() < backoff.Next;
@@ -789,7 +666,6 @@ internal sealed partial class HistoryErasures(
             _backoff.Remove(file);
             if (rewrite.SourceIncarnation != covered)
             {
-                // Another path replaced the file after the coverage was read: that coverage says nothing about this rewrite.
                 _errors.Add(1, new KeyValuePair<string, object?>("reason", "rewrite_source_changed"));
                 return null;
             }
@@ -798,8 +674,6 @@ internal sealed partial class HistoryErasures(
         }
         catch (RewriteRefusedException error)
         {
-            // The old file serves again; the file's next attempt waits, doubling, plus up to a quarter more so machines and
-            // files refused together do not all try again at once.
             var delay = _backoff.TryGetValue(file, out var backoff) ? TimeSpan.FromTicks(Math.Min(backoff.Delay.Ticks * 2, MaxBackoff.Ticks)) : Interval;
             var wait = delay + TimeSpan.FromTicks((long)(delay.Ticks * 0.25 * Random.Shared.NextDouble()));
             _backoff[file] = (time.GetUtcNow() + wait, delay);
@@ -809,18 +683,12 @@ internal sealed partial class HistoryErasures(
         }
         catch (RewriteUncertainException error)
         {
-            // Storage failed closed; no receipt until a restart finds one whole file and this machine fences again.
             _errors.Add(1, new KeyValuePair<string, object?>("reason", "rewrite_uncertain"));
             logger.ZLogError(error, $"A history erasure rewrite may not be durable; storage failed closed");
             return null;
         }
     }
 
-    // Backup closure, by the requester only: (1) an inventory finds every platform snapshot and log generation of each file started
-    // after that file's last rewrite, or carries authenticated pinned-file lineage for it (a generation never spans a rewrite), and no noncurrent version,
-    // delete marker or older upload under either prefix; its time is kept (BackupCleanAt). (2) Bucket snapshots taken up to that
-    // time can still hold older objects: only once none remains is the erasure certified. Expiry is the existing plan retention
-    // and bucket snapshot retention; this only verifies it. Local staging belongs to the rewritten files (the tap ended).
     private async Task VerifyBackupsAsync(List<HistoryErasureRecord> records, CancellationToken cancellationToken)
     {
         if (services.GetService(typeof(S3ObjectStore)) is not S3ObjectStore store)
@@ -842,17 +710,22 @@ internal sealed partial class HistoryErasures(
             bool snapshots;
             try
             {
-                clean = await OlderAbsentAsync(store, BackupLayout.File(AuthDatabase), cut, cancellationToken, [.. receipts.Select(receipt => receipt.Residue!)], services.GetRequiredService<DataKeys>(), BackupLayout.KeyScope(AuthDatabase)).ConfigureAwait(false)
-                    && await OlderAbsentAsync(store, BackupLayout.File(null), systemCut, cancellationToken, [.. receipts.Select(receipt => receipt.System!)], services.GetRequiredService<DataKeys>(), BackupLayout.KeyScope(null)).ConfigureAwait(false)
-                    && !await store.HoldsHiddenVersionsAsync(BackupLayout.File(AuthDatabase) + "/", cut, MaxBackupObjects, cancellationToken).ConfigureAwait(false)
-                    && !await store.HoldsHiddenVersionsAsync(BackupLayout.File(null) + "/", systemCut, MaxBackupObjects, cancellationToken).ConfigureAwait(false);
+                clean = true;
+                foreach (var receipt in receipts)
+                {
+                    var authFile = BackupLayout.File(AuthDatabase, receipt.MachineId);
+                    var systemFile = BackupLayout.File(null, receipt.MachineId);
+                    clean &= await OlderAbsentAsync(store, authFile, cut, cancellationToken, [receipt.Residue!], services.GetRequiredService<DataKeys>(), BackupLayout.KeyScope(AuthDatabase)).ConfigureAwait(false)
+                        && await OlderAbsentAsync(store, systemFile, systemCut, cancellationToken, [receipt.System!], services.GetRequiredService<DataKeys>(), BackupLayout.KeyScope(null)).ConfigureAwait(false)
+                        && !await store.HoldsHiddenVersionsAsync(authFile + "/", cut, MaxBackupObjects, cancellationToken).ConfigureAwait(false)
+                        && !await store.HoldsHiddenVersionsAsync(systemFile + "/", systemCut, MaxBackupObjects, cancellationToken).ConfigureAwait(false);
+                }
                 snapshots = clean && record.BackupCleanAt is { } since && record.BackupFinalId == record.FinalId
                     && await store.SnapshotsEnabledAsync(cancellationToken).ConfigureAwait(false)
                     && (await store.ListSnapshotsAsync(cancellationToken).ConfigureAwait(false)).Any(snapshot => snapshot.At <= since);
             }
             catch (Exception) when (!cancellationToken.IsCancellationRequested)
             {
-                // Provider errors can contain credentials: classify only.
                 _errors.Add(1, new KeyValuePair<string, object?>("reason", "backup_inventory"));
                 continue;
             }
@@ -871,14 +744,13 @@ internal sealed partial class HistoryErasures(
                 }
 
                 var receipts = await ReceiptsAsync(transaction, current, cancellationToken).ConfigureAwait(false);
-                if (Compute(current, await HoldersAsync(transaction, current, cancellationToken).ConfigureAwait(false), receipts).Status != HistoryErasure.Backup)
+                if (Compute(current, Holders(current), receipts).Status != HistoryErasure.Backup)
                 {
                     return false;
                 }
 
                 var next = !clean ? current with { BackupCleanAt = null, BackupFinalId = null }
                     : current.BackupCleanAt is null || current.BackupFinalId != current.FinalId ? current with { BackupCleanAt = time.GetUtcNow(), BackupFinalId = current.FinalId }
-                    // Certified: the digests and token have served; only opaque ids remain permanently.
                     : current with
                     {
                         BackupVerifiedAt = time.GetUtcNow(),
@@ -940,7 +812,6 @@ internal sealed partial class HistoryErasures(
         return true;
     }
 
-    // A restore, rebuild or copy replaced a file since this machine's last erasure step: its receipts no longer describe it.
     private async Task<bool> LineageChangedAsync(CancellationToken cancellationToken)
     {
         var lineage = await catalog.ReadUncheckedAsync(transaction => SystemCatalog.GetAsync(transaction, HistoryErasure.Lineage, Machine,
@@ -954,7 +825,6 @@ internal sealed partial class HistoryErasures(
         return lineage.Auth != auth.ToString() || lineage.System != (await SystemIncarnationAsync(cancellationToken).ConfigureAwait(false)).ToString();
     }
 
-    // One file's new incarnation, as soon as its rewrite succeeded; the other keeps the incarnation recorded before.
     private async Task RecordLineageAsync(Ulid? auth, Ulid? system, CancellationToken cancellationToken) =>
         _ = await catalog.WriteDurableAsync(async transaction =>
         {
@@ -971,87 +841,57 @@ internal sealed partial class HistoryErasures(
     private async Task<Ulid> SystemIncarnationAsync(CancellationToken cancellationToken) =>
         await catalog.ReadUncheckedAsync(transaction => transaction.GetIncarnationAsync(cancellationToken), cancellationToken).ConfigureAwait(false);
 
-    // Requester side, in an auth transaction: each holder's committed marker is here with its exact stamp, every other origin's is
-    // applied through it, and every origin any holder reported is applied here at least as far.
     private async ValueTask<bool> CoversMarksAsync(IStorageTransaction transaction, string erasureId, IReadOnlyList<HistoryErasureReceipt> receipts, CancellationToken cancellationToken)
     {
-        var applied = await transaction.GetAppliedAsync(cancellationToken).ConfigureAwait(false);
+        var incarnation = await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false);
         foreach (var receipt in receipts)
         {
-            var version = await transaction.GetVersionAsync(HistoryErasure.MarkCollection, MarkId(erasureId, HistoryErasure.Fenced, receipt.MachineId), cancellationToken).ConfigureAwait(false);
-            if (version is not { Deleted: false } stored || unchecked((ulong)stored.Version) != receipt.AuthMark
-                || receipt.Replica != Self && Applied(applied, receipt.Replica) < receipt.AuthMark)
+            if (receipt.MachineId != Machine || receipt.AuthIncarnation != incarnation.ToString()
+                || await transaction.GetVersionAsync(HistoryErasure.MarkCollection, MarkId(erasureId, HistoryErasure.Fenced, Machine), cancellationToken).ConfigureAwait(false)
+                    is not { Deleted: false } stored || unchecked((ulong)stored.Version) != receipt.AuthMark)
             {
                 return false;
             }
         }
-
-        return CoversReported(applied, receipts, receipts.SelectMany(receipt => receipt.AuthApplied));
+        return receipts.Count == 1;
     }
 
-    // Requester side, in a SYSTEM transaction: each holder's receipt is its SYSTEM marker; its origin is applied through it.
-    private async ValueTask<bool> CoversSystemAsync(IStorageTransaction transaction, string erasureId, IReadOnlyList<HistoryErasureReceipt> receipts, CancellationToken cancellationToken)
+    private async ValueTask<bool> CoversSystemAsync(IStorageTransaction transaction, string erasureId, List<HistoryErasureReceipt> receipts, CancellationToken cancellationToken)
     {
-        var applied = await transaction.GetAppliedAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var receipt in receipts.Where(receipt => receipt.Replica != Self))
+        if (receipts.Count != 1 || receipts[0].MachineId != Machine)
         {
-            if (await transaction.GetVersionAsync(HistoryErasure.Receipts(erasureId), receipt.MachineId, cancellationToken).ConfigureAwait(false) is not { Deleted: false } version
-                || Applied(applied, receipt.Replica) < unchecked((ulong)version.Version))
-            {
-                return false;
-            }
+            return false;
         }
-
-        return CoversReported(applied, receipts, receipts.SelectMany(receipt => receipt.SystemApplied));
+        var lineage = await SystemCatalog.GetAsync(transaction, HistoryErasure.Lineage, Machine,
+            TerraBaseJsonContext.Default.HistoryErasureLineage, cancellationToken).ConfigureAwait(false);
+        return lineage?.System == (await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false)).ToString()
+            && await transaction.GetVersionAsync(HistoryErasure.Receipts(erasureId), Machine, cancellationToken).ConfigureAwait(false) is { Deleted: false };
     }
 
-    // An origin no holder marks for (a retired replica): every holder reported how far it had it; this copy has at least that.
-    private bool CoversReported(IReadOnlyDictionary<ReplicaId, Hlc> applied, IReadOnlyList<HistoryErasureReceipt> receipts, IEnumerable<OriginCut> reported)
-    {
-        var marked = receipts.Select(receipt => receipt.Replica).Append(Self).ToHashSet();
-        return reported.Where(cut => !marked.Contains(cut.Replica)).All(cut => Applied(applied, cut.Replica) >= cut.Stamp);
-    }
-
-    // Holder side, under the auth writer: every entry of the final cut is applied here, the finalizer's own marker included.
     private async ValueTask<bool> CoversFinalAuthAsync(IStorageTransaction transaction, HistoryErasureRecord record, CancellationToken cancellationToken)
     {
-        if (record.FinalAuth is not { Length: > 0 and <= HistoryErasure.MaxHolders } cut || record.FinalMachine is null)
+        if (record.FinalAuthMark == 0 || record.FinalMachine != Machine)
         {
             return false;
         }
-
-        var applied = await transaction.GetAppliedAsync(cancellationToken).ConfigureAwait(false);
-        if (record.FinalReplica != Self && await transaction.GetVersionAsync(HistoryErasure.MarkCollection, MarkId(record.ErasureId, "final", record.FinalMachine), cancellationToken).ConfigureAwait(false)
-            is not { Deleted: false })
-        {
-            return false;
-        }
-
-        return cut.All(entry => entry.Replica == Self || Applied(applied, entry.Replica) >= entry.Stamp);
+        return await transaction.GetVersionAsync(HistoryErasure.MarkCollection, MarkId(record.ErasureId, "final", Machine), cancellationToken).ConfigureAwait(false)
+            is { Deleted: false } marker && unchecked((ulong)marker.Version) == record.FinalAuthMark && record.FinalReplica == Self;
     }
 
     private async ValueTask<bool> CoversFinalSystemAsync(IStorageTransaction transaction, HistoryErasureRecord record, CancellationToken cancellationToken)
     {
-        if (record.FinalSystem is not { Length: <= HistoryErasure.MaxHolders } cut || record.FinalMachine is null)
+        if (record.FinalMachine != Machine)
         {
             return false;
         }
-
-        var applied = await transaction.GetAppliedAsync(cancellationToken).ConfigureAwait(false);
-        if (record.FinalReplica != Self && (await transaction.GetVersionAsync(HistoryErasure.Finals(record.ErasureId), record.FinalMachine, cancellationToken).ConfigureAwait(false)
-            is not { Deleted: false } marker || Applied(applied, record.FinalReplica) < unchecked((ulong)marker.Version)))
-        {
-            return false;
-        }
-
-        return cut.All(entry => entry.Replica == Self || Applied(applied, entry.Replica) >= entry.Stamp);
+        var marker = await SystemCatalog.GetAsync(transaction, HistoryErasure.Finals(record.ErasureId), Machine, FinalJson, cancellationToken).ConfigureAwait(false);
+        return marker is not null && marker.FinalId == record.FinalId;
     }
 
     private async Task<T> WithAuthAsync<T>(bool write, Func<IStorageTransaction, CancellationToken, ValueTask<T>> read, CancellationToken cancellationToken)
     {
         var auth = await engine.OpenDatabaseAsync(AuthDatabase, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException("the auth database is not open on this machine");
-        // A write transaction without a commit: its reads run under the writer, ordered with every commit.
         var transaction = await auth.BeginTransactionAsync(write, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
@@ -1059,7 +899,6 @@ internal sealed partial class HistoryErasures(
         }
     }
 
-    // The fence document id ts-auth's request names, or null: request id = erasure id, written by ts-auth before it asks.
     private static async ValueTask<string?> FenceOfAsync(IStorageTransaction transaction, string erasureId, CancellationToken cancellationToken)
     {
         if (await transaction.GetAsync(HistoryErasure.MarkCollection, erasureId, cancellationToken).ConfigureAwait(false) is not { Deleted: false } request)
@@ -1074,7 +913,6 @@ internal sealed partial class HistoryErasures(
             ? value : null;
     }
 
-    // The marker's stamp, as committed: a later read sees the same version, so the receipt names a durable write.
     private static async Task<bool> MarkCommittedAsync(IDatabaseStore auth, string markId, ulong stamp, CancellationToken cancellationToken)
     {
         var transaction = await auth.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
@@ -1087,7 +925,6 @@ internal sealed partial class HistoryErasures(
 
     private async ValueTask<ulong> PutMarkAsync(IStorageTransaction transaction, string erasureId, string kind, string markId, string? finalId, CancellationToken cancellationToken)
     {
-        // Opaque fields only: the erasure and final ids, the machine name and a nonce (every marker mints a new stamp).
         var body = JsonSerializer.SerializeToUtf8Bytes(new MarkBody(erasureId, kind, Machine, EntityIds.New(time).ToString(), finalId), MarkJson);
         return unchecked((ulong)await transaction.PutAsync(HistoryErasure.MarkCollection, markId, body, cancellationToken).ConfigureAwait(false));
     }
@@ -1096,7 +933,6 @@ internal sealed partial class HistoryErasures(
         await SystemCatalog.GetAsync(transaction, HistoryErasure.Collection, erasureId, TerraBaseJsonContext.Default.HistoryErasureRecord, cancellationToken).ConfigureAwait(false)
             is { FormatVersion: 1 } record && record.ErasureId == erasureId ? record : null;
 
-    // Valid receipts of the record's holders and of current members; each written only by its own machine.
     private async ValueTask<List<HistoryErasureReceipt>> ReceiptsAsync(IStorageTransaction transaction, HistoryErasureRecord? record, CancellationToken cancellationToken)
     {
         List<HistoryErasureReceipt> receipts = [];
@@ -1105,15 +941,10 @@ internal sealed partial class HistoryErasures(
             return receipts;
         }
 
-        foreach (var holder in await HoldersAsync(transaction, record, cancellationToken).ConfigureAwait(false))
+        foreach (var holder in Holders(record))
         {
             if (await SystemCatalog.GetAsync(transaction, HistoryErasure.Receipts(record.ErasureId), holder, TerraBaseJsonContext.Default.HistoryErasureReceipt, cancellationToken).ConfigureAwait(false)
                 is { FormatVersion: 1 } receipt && receipt.MachineId == holder && receipt.ErasureId == record.ErasureId
-                && receipt.AuthApplied.Length <= HistoryErasure.MaxHolders && receipt.SystemApplied.Length <= HistoryErasure.MaxHolders
-                && (receipt.PreviousReplicas?.Length ?? 0) <= HistoryErasure.MaxHolders
-                && (receipt.PreviousAuth?.Length ?? 0) <= HistoryErasure.MaxHolders
-                && (receipt.PreviousSystem?.Length ?? 0) <= HistoryErasure.MaxHolders
-                && (receipt.RecutReplicas?.Length ?? 0) <= HistoryErasure.MaxHolders
                 && (receipt.Phase == HistoryErasure.Fenced
                     || receipt.Phase is HistoryErasure.Rewritten or HistoryErasure.ResidueCleared && receipt.FinalId is not null && receipt.Auth is not null && receipt.System is not null
                     || receipt.Phase == HistoryErasure.RetiredPhase && receipt.Retired is not null && receipt.RetireCut > 0)
@@ -1126,10 +957,9 @@ internal sealed partial class HistoryErasures(
         return receipts;
     }
 
-    // Expected holders plus every machine listed now: an offline or retired holder keeps the erasure pending.
-    private async ValueTask<HashSet<string>> HoldersAsync(IStorageTransaction transaction, HistoryErasureRecord record, CancellationToken cancellationToken)
+    private HashSet<string> Holders(HistoryErasureRecord record)
     {
-        var holders = await EngineManagementService.CatalogHoldersAsync(transaction, Machine, cancellationToken).ConfigureAwait(false);
+        var holders = EngineManagementService.CatalogHolders(Machine);
         holders.UnionWith(record.ExpectedHolders);
         return holders;
     }
@@ -1138,23 +968,11 @@ internal sealed partial class HistoryErasures(
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n',
             receipts.OrderBy(receipt => receipt.MachineId, StringComparer.Ordinal).Select(receipt => $"{receipt.MachineId}|{receipt.Replica}|{receipt.AuthMark}")))));
 
-    /// <summary>A marker's document id: a ULID from SHA-256 over the random erasure id, kind and machine (no subject data).</summary>
     internal static string MarkId(string erasureId, string kind, string machine) =>
         new Ulid(SHA256.HashData(Encoding.UTF8.GetBytes($"ts873/{erasureId}/{kind}/{machine}")).AsSpan(0, 16)).ToString();
 
-    private static ulong Applied(IReadOnlyDictionary<ReplicaId, Hlc> applied, ulong replica) =>
-        applied.TryGetValue(new ReplicaId(replica), out var stamp) ? stamp.Value : 0;
-
-    // Refused beyond the bound: a truncated vector would claim coverage it does not carry.
-    private OriginCut[] Cuts(IReadOnlyDictionary<ReplicaId, Hlc> applied)
-    {
-        OriginCut[] cuts = [.. applied.Where(entry => entry.Key.Value != Self).Select(entry => new OriginCut(entry.Key.Value, entry.Value.Value))];
-        return cuts.Length < HistoryErasure.MaxHolders ? cuts : throw new InvalidOperationException("a history erasure cut exceeds its bound");
-    }
-
     private static HistoryRewrite Bind(HealthyRewrite rewrite) => new(rewrite.SourceIncarnation.ToString(), rewrite.TargetIncarnation.ToString(), rewrite.Offset);
 
-    // The auth database's deletion fence collection (ts-auth AuthStore.DeletionJobCollection).
     private const string AuthDeletionJobs = "deletion_jobs";
 
     private static readonly System.Text.Json.Serialization.Metadata.JsonTypeInfo<MarkBody> MarkJson = HistoryErasureJson.Default.MarkBody;

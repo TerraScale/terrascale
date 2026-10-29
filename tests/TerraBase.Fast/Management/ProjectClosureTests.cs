@@ -213,7 +213,7 @@ public sealed class ProjectClosureTests
         {
             var receipt = await ReceiptAsync(api, project);
             await using var read = await catalog.BeginTransactionAsync(write: false, CancellationToken.None);
-            var holders = await EngineManagementService.CatalogHoldersAsync(read, machine, CancellationToken.None);
+            var holders = EngineManagementService.CatalogHolders(machine);
             var fence = await SystemCatalog.GetAsync(read, ProjectClosure.Collection, project,
                 TerraBaseJsonContext.Default.ProjectClosureRecord, CancellationToken.None);
             detail += $"; holders={string.Join(',', holders)}; fence={JsonSerializer.Serialize(fence, TerraBaseJsonContext.Default.ProjectClosureRecord)}; own receipt={JsonSerializer.Serialize(receipt, TerraBaseJsonContext.Default.ProjectClosureReceipt)}";

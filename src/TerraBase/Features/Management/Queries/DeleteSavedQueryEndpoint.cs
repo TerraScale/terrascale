@@ -1,6 +1,6 @@
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -9,7 +9,6 @@ namespace TerraBase.Features.Management.Queries;
 /// <summary><c>DELETE …/saved-queries/{query}</c>: deletes a saved query.</summary>
 internal sealed class DeleteSavedQueryEndpoint(IManagementService management, IQueryService queries) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Delete(ProjectApiRoute.SavedQuery);
@@ -25,7 +24,6 @@ internal sealed class DeleteSavedQueryEndpoint(IManagementService management, IQ
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         await ManagementRoute.CheckWritableProjectAsync(HttpContext, management, cancellationToken) switch
         {

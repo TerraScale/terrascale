@@ -29,7 +29,7 @@ internal sealed partial class TursoDatabaseStore
             await ledger.SettleAsync(this, cancellationToken).ConfigureAwait(false);
         }
 
-        ThrowIfRefused(rebuild: false);
+        ThrowIfRefused(maintenance: false);
         var reader = await RentAsync(cancellationToken).ConfigureAwait(false);
         RevisionPullResult result;
         try
@@ -75,7 +75,7 @@ internal sealed partial class TursoDatabaseStore
     {
         if (CloseRefusal is { } refusal)
         {
-            throw new ReplicaCopyFaultedException(refusal);
+            throw new StorageCopyFaultedException(refusal);
         }
     }
 

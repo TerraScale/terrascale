@@ -13,7 +13,7 @@ namespace TerraBase.Fast.Management;
 public sealed class HistoryErasureInspectionTests
 {
     [Test]
-    public async Task Inspection_is_peer_only_redacts_tokens_and_never_changes_the_catalog()
+    public async Task Inspection_requires_internal_credentials_redacts_tokens_and_never_changes_the_catalog()
     {
         var clock = new FakeTimeProvider();
         await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock));
@@ -37,7 +37,7 @@ public sealed class HistoryErasureInspectionTests
         var record = new HistoryErasureRecord(erasure, clock.GetUtcNow(), clock.GetUtcNow().AddDays(30), clock.GetUtcNow().AddDays(60),
             ["local"], Requester: "local", SettlementToken: "must-never-leak", FinalId: EntityIds.New().ToString());
         var rewrite = new HistoryRewrite(EntityIds.New().ToString(), EntityIds.New().ToString(), 42);
-        var receipt = new HistoryErasureReceipt(erasure, "local", 1, HistoryErasure.ResidueCleared, 2, rewrite.Source, [], [], clock.GetUtcNow(),
+        var receipt = new HistoryErasureReceipt(erasure, "local", 1, HistoryErasure.ResidueCleared, 2, rewrite.Source, clock.GetUtcNow(),
             FinalId: record.FinalId, Auth: rewrite, System: rewrite, Residue: rewrite, ResidueAt: clock.GetUtcNow());
         await catalog.WriteUncheckedAsync(async transaction =>
         {

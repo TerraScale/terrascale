@@ -487,10 +487,10 @@ public sealed class PointInTimeHistoryTests
         // A catalog follower applies the leader's writes without capture: its next snapshot at the same position does not
         // show that nothing was written in between, so no time after a snapshot is proven.
         var next = snapshot with { At = snapshot.At.AddDays(1) };
-        await Assert.That(async () => await reader.BuildAsync(BackupLayout.File(null), BackupLayout.KeyScope(null), snapshot, snapshot.At.AddHours(1), until: null, next, cancellationToken))
+        await Assert.That(async () => await reader.BuildAsync(BackupLayout.File(null, "local"), BackupLayout.KeyScope(null), snapshot, snapshot.At.AddHours(1), until: null, next, cancellationToken))
             .Throws<BackupHistoryIncompleteException>();
 
-        var restored = await reader.BuildAsync(BackupLayout.File(null), BackupLayout.KeyScope(null), snapshot, snapshot.At, until: null, next, cancellationToken);
+        var restored = await reader.BuildAsync(BackupLayout.File(null, "local"), BackupLayout.KeyScope(null), snapshot, snapshot.At, until: null, next, cancellationToken);
         using (restored)
         {
             await Assert.That(System.IO.File.Exists(restored.Path)).IsTrue();
@@ -523,7 +523,7 @@ public sealed class PointInTimeHistoryTests
         // The generation's log the shipper has read: where its next segment starts.
         public long LogBytes => Api.Server.Services.GetRequiredService<IContinuousBackup>().Status.Files.Single(file => file.File == File).LogBytes;
 
-        private string File => $"v1/{Database.Organization}/{Database.Project}/{Database.Id}";
+        private string File => $"v1/{Database.Organization}/{Database.Project}/{Database.Id}/nodes/local";
 
         public TenantContext Tenant => new(Database.Organization, PlanTier.Pro, Database.Project, Database.Id);
 
@@ -730,7 +730,7 @@ public sealed class PointInTimeHistoryTests
 
         // The newest snapshot of the system database.
         public SnapshotKey SystemSnapshot() =>
-            s3.Objects.Keys.Where(key => key.StartsWith(BackupLayout.Snapshots(BackupLayout.File(null)), StringComparison.Ordinal))
+            s3.Objects.Keys.Where(key => key.StartsWith(BackupLayout.Snapshots(BackupLayout.File(null, "local")), StringComparison.Ordinal))
                 .Order(StringComparer.Ordinal).Select(key => BackupLayout.ParseSnapshot(key)!).Last();
 
         public Task RefusedAsync(DateTimeOffset at, string code, string message, CancellationToken cancellationToken) =>

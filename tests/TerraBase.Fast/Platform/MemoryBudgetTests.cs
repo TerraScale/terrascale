@@ -35,7 +35,7 @@ public sealed class MemoryBudgetTests
                 await using var server = await TerraBaseTestServer.StartAsync(services: services =>
                 {
                     var options = (TerraBaseOptions)services.Single(service => service.ServiceType == typeof(TerraBaseOptions)).ImplementationInstance!;
-                    // Replace the singleton directly: no feature registration may provide the validation.
+
                     var replacement = copy
                         ? setting switch
                         {
@@ -126,10 +126,10 @@ public sealed class MemoryBudgetTests
         });
 
         using var first = budget.TryReserve(MemoryLane.Foreground, 1);
-        // Would overflow the counter if it were added before the check.
+
         using var huge = budget.TryReserve(MemoryLane.Foreground, long.MaxValue);
         using var rest = budget.TryReserve(MemoryLane.Bulk, Budget - 1);
-        using var over = budget.TryReserve(MemoryLane.Replication, 1);
+        using var over = budget.TryReserve(MemoryLane.Bulk, 1);
 
         await Assert.That(first).IsNotNull();
         await Assert.That(huge).IsNull();
@@ -137,7 +137,7 @@ public sealed class MemoryBudgetTests
         await Assert.That(over).IsNull();
         first!.Dispose();
         rest!.Dispose();
-        // Disposing twice returns the bytes once.
+
         rest.Dispose();
         using var tooLarge = budget.TryReserve(MemoryLane.Foreground, Budget + 1);
         await Assert.That(tooLarge).IsNull();
@@ -152,7 +152,7 @@ public sealed class MemoryBudgetTests
         await Assert.That(excess).IsNull();
         listener.RecordObservableInstruments();
         await Assert.That(total).IsEqualTo(Budget);
-        // A zero-byte reservation remains valid when capacity is exhausted and changes no accounting.
+
         using var zero = budget.TryReserve(MemoryLane.Foreground, 0);
         await Assert.That(zero).IsNotNull();
         await Assert.That(zero!.Bytes).IsEqualTo(0);
@@ -180,7 +180,7 @@ public sealed class MemoryBudgetTests
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, observer) =>
         {
-            // Every parallel test owns a meter factory; sample only this server's budget.
+
             if (instrument.Name == "terrabase.memory.reserved" && ReferenceEquals(instrument.Meter, meter))
             {
                 observer.EnableMeasurementEvents(instrument);
@@ -196,7 +196,7 @@ public sealed class MemoryBudgetTests
         });
         listener.Start();
         var cancellationToken = deadline.Token;
-        // Independent dedicated workers: no rendezvous can strand another worker after a failure.
+
         var workers = Enumerable.Range(0, Workers).Select(_ => Task.Factory.StartNew(() =>
         {
             for (var round = 0; round < Rounds; round++)
@@ -204,7 +204,7 @@ public sealed class MemoryBudgetTests
                 cancellationToken.ThrowIfCancellationRequested();
                 using var oversized = budget.TryReserve(MemoryLane.Bulk, Budget + 1);
                 using var reservation = budget.TryReserve(MemoryLane.Foreground, Size);
-                // Sample the budget's actual counter while this reservation is still held.
+
                 listener.RecordObservableInstruments();
             }
         }, cancellationToken, TaskCreationOptions.LongRunning, TaskScheduler.Default)).ToArray();
@@ -269,7 +269,6 @@ public sealed class MemoryBudgetTests
             deadline.Cancel();
         }
 
-        // Returned exactly once each: the whole budget is free, and no more than the whole budget.
         using var all = budget.TryReserve(MemoryLane.Foreground, Budget);
         await Assert.That(all).IsNotNull();
         using var excess = budget.TryReserve(MemoryLane.Foreground, 1);
@@ -279,7 +278,7 @@ public sealed class MemoryBudgetTests
     [Test]
     public async Task Invalidated_and_cached_entries_return_their_reservations()
     {
-        // About 1 MiB: most of the cache's share, so its reservation shows in the budget.
+
         const int Padding = 768 * 1024;
         var management = await ManagementApi.StartAsync(values => values["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture));
         var server = management.Server;
@@ -314,14 +313,12 @@ public sealed class MemoryBudgetTests
             }
 
             await Assert.That(IsHeld(budget, Budget - Padding)).IsTrue();
-            // And the entry really is cached (not refused and about to be released): a change made behind the
-            // server's back stays invisible.
+
             await StorageFixture.ExecuteAsync(await tenant.FileAsync(server, "shop"), """UPDATE "items" SET doc = json_set(doc, '$.disk', 1);""");
             await Assert.That(await client.GetStringAsync(uri)).DoesNotContain("disk");
-            // The stored document is its state's materialization again before the delete writes over it.
+
             await StorageFixture.ExecuteAsync(await tenant.FileAsync(server, "shop"), """UPDATE "items" SET doc = json_remove(doc, '$.disk');""");
 
-            // The read after a delete finds nothing to cache, so it must evict the invalidated entry itself.
             using (var deleted = await client.DeleteAsync(uri))
             {
                 deleted.EnsureSuccessStatusCode();
@@ -348,7 +345,6 @@ public sealed class MemoryBudgetTests
             await management.DisposeAsync();
         }
 
-        // Stopping clears the cache, which returns every reservation.
         await Assert.That(await CanReserveAsync(budget, Budget)).IsTrue();
     }
 
@@ -362,15 +358,12 @@ public sealed class MemoryBudgetTests
         });
     }
 
-    // A cache entry reserves its bytes before the response is sent, so this needs no waiting.
     private static bool IsHeld(IMemoryBudget budget, long bytes)
     {
         using var reservation = budget.TryReserve(MemoryLane.Foreground, bytes);
         return reservation is null;
     }
 
-    // Eviction callbacks run on the thread pool shortly after an entry leaves the cache, so a release may
-    // take a moment.
     private static async Task<bool> CanReserveAsync(IMemoryBudget budget, long bytes)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);

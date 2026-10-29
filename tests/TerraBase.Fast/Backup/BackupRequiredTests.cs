@@ -28,7 +28,7 @@ public sealed class BackupRequiredTests
         await Assert.That(after.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(body.GetProperty("status").GetString()).IsEqualTo("shipping");
         await Assert.That(after.Headers.CacheControl!.ToString()).IsEqualTo("no-store");
-        await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith("v1/_system/snapshots/", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith("v1/_system/nodes/local/snapshots/", StringComparison.Ordinal))).IsTrue();
     }
 
     [Test]
@@ -76,7 +76,6 @@ public sealed class BackupRequiredTests
             start.ArgumentList.Add("--internal-port=0");
             start.ArgumentList.Add("--metrics-port=0");
             start.ArgumentList.Add("--postgres-port=0");
-            start.ArgumentList.Add("--wire-port=0");
             start.ArgumentList.Add($"--data-directory={directory}");
 
             using var process = Process.Start(start) ?? throw new InvalidOperationException("the TerraBase process did not start");

@@ -27,7 +27,7 @@ internal static class ApiExamples
     private const string ImportJob = """
         {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA8","project":"01ARZ3NDEKTSV4RRFFQ69G5FA2","database":"import-01arz3ndektsv4rrffq69g5fa9","region":"gru-1","state":"ready","cancelRequested":false,"options":{"exclude":[]},"source":{"format":"postgres_plain","bytes":8165,"sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08","receivedBytes":8165,"staged":true,"retainedUntil":null},"preview":{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAA","tables":[{"source":"public.orgs","collection":"orgs","excluded":false,"rows":3,"primaryKey":["id"],"columns":[{"name":"id","sourceType":"bigint","mapping":"integer","nullable":false,"excluded":false},{"name":"name","sourceType":"text","mapping":"string","nullable":false,"excluded":false}],"constraints":[{"kind":"primary_key","name":"orgs_pkey","columns":["id"],"references":null,"enforced":false}],"issues":[]}],"skipped":[{"kind":"index","name":"public.users_org_idx"}],"skippedTruncated":false,"blocking":0,"warnings":0},"confirmedPreviewId":null,"progress":null,"validation":null,"error":null,"createdAt":"2026-10-12T12:00:00+00:00","updatedAt":"2026-10-12T12:00:05+00:00","startedAt":null,"finishedAt":null}
         """;
-    private const string Function = """{"name":"hello","source":"function handler(event) { return event.body; }","trigger":null,"cron":"*/5 * * * *","createdAt":"2026-10-07T12:00:00Z","updatedAt":"2026-10-07T12:00:00Z"}""";
+    private const string Function = """{"name":"hello","source":"function handler(event) { return event.body; }","cron":"*/5 * * * *","createdAt":"2026-10-07T12:00:00Z","updatedAt":"2026-10-07T12:00:00Z"}""";
     private const string Usage = """{"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FA1","storageBytes":40960,"logicalBytes":0,"collections":0,"documents":0,"reads":0,"writes":0,"period":PERIOD,"series":SERIES}""";
 
     public static void Apply(OpenApiOperation operation)
@@ -111,8 +111,7 @@ internal static class ApiExamples
         "setExportSchedule" => """{"cron":"0 3 * * *"}""",
         "createIndex" => """{"collection":"people","fields":["name"],"name":"people_name"}""",
         "createCollection" => """{"name":"people"}""",
-        "createCollectionWebhook" => """{"url":"https://receiver.example/events"}""",
-        "deployFunction" => """{"source":"function handler(event) { for (const c of event.changes) db.put(\"audit\", c.id, { source: c.id }); }","trigger":{"collection":"orders","events":["upsert"]},"cron":null}""",
+        "deployFunction" => """{"source":"function handler(event) { return event.body; }","cron":null}""",
         "invokeFunction" => """{"name":"Ada"}""",
         "putDeclaredCollectionSchema" or "previewCollectionSchema" => DeclaredSchema,
         "putCollectionRules" => CollectionRules,
@@ -169,14 +168,10 @@ internal static class ApiExamples
         "getDatabaseUsage" => Usage.Replace("PERIOD", Period, StringComparison.Ordinal).Replace("SERIES", Series, StringComparison.Ordinal),
         "getProjectUsage" => "{\"projectId\":\"01ARZ3NDEKTSV4RRFFQ69G5FA2\",\"databases\":0,\"collections\":0,\"storageBytes\":0,\"logicalBytes\":0,\"documents\":0,\"reads\":0,\"writes\":0,\"period\":" + Period + ",\"series\":" + Series + ",\"items\":[]}",
         "createCollection" or "getCollection" or "dropCollection" => Collection,
-        "createCollectionWebhook" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAA","url":"https://receiver.example/events","createdAt":"2026-10-07T12:00:00Z","status":"active","secret":"<creation-only base64url key>"}""",
         "deployFunction" or "getFunction" => Function,
         "listFunctions" => "[" + Function.Replace("\"source\":\"function handler(event) { return event.body; }\"", "\"source\":null", StringComparison.Ordinal) + "]",
         "listFunctionLogs" => """[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAC","at":"2026-10-07T12:00:00Z","trigger":"http","status":"ok","durationMs":3,"lines":["hello Ada"],"error":null}]""",
         "invokeFunction" => """{"hello":"Ada"}""",
-        "listFunctionDeliveries" => """[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAB","createdAt":"2026-10-07T12:00:00Z","status":"pending","attempts":2,"lastAttemptAt":"2026-10-07T12:00:01Z","nextAttemptAt":"2026-10-07T12:00:03Z","httpStatus":500,"errorCode":"function_error"}]""",
-        "listCollectionWebhooks" => """[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAA","url":"https://receiver.example/events","createdAt":"2026-10-07T12:00:00Z","status":"active"}]""",
-        "listCollectionWebhookDeliveries" => """[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAB","createdAt":"2026-10-07T12:00:00Z","status":"pending","attempts":1,"lastAttemptAt":"2026-10-07T12:00:00Z","nextAttemptAt":"2026-10-07T12:00:01Z","httpStatus":503,"errorCode":"http_error"}]""",
 
         "getCollectionRules" or "putCollectionRules" => "{\"rules\":" + CollectionRules + "}",
         "getDeclaredCollectionSchema" or "putDeclaredCollectionSchema" => "{\"schema\":" + DeclaredSchema + ",\"dialect\":\"https://json-schema.org/draft/2020-12/schema\"}",

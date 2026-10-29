@@ -98,7 +98,7 @@ public sealed class CustomerBackupResolutionTests
         window.EnsureSuccessStatusCode();
         var latest = (await window.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken)).GetProperty("latest").GetDateTimeOffset();
         var prefix = material == "snapshot"
-            ? $"v1/{database.Organization}/{database.Project}/{database.Id}/snapshots/"
+            ? $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local/snapshots/"
             : $"v1/keys/{database.Organization}/{database.Project}/";
         var key = s3.CustomerObjects.Keys.Single(value => value.StartsWith(prefix, StringComparison.Ordinal));
         var original = s3.CustomerObjects[key];

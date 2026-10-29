@@ -6,13 +6,6 @@ using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Store;
 
-/// <summary>
-/// The TerraBase built from this commit serves every route the pinned ts-dotnet clients call
-/// (<c>$(TsDotnetRoot)/contracts/terrabase/routes.json</c>; ts-dotnet's own tests check its clients send exactly those).
-/// An unknown route answers 404 and a known path with the wrong method 405, so an unauthenticated request that gets
-/// neither reached an endpoint. Documents and platform routes are tried on the public listener, management routes on the internal
-/// listener (HTTP/2), where the platform operator calls them.
-/// </summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class TerraBaseSdkContractTests(TerraBaseFixture fixture)
 {
@@ -41,7 +34,7 @@ public sealed class TerraBaseSdkContractTests(TerraBaseFixture fixture)
     };
 
     [Test]
-    public async Task TerraBase_serves_every_route_the_sdk_calls()
+    public async Task TerraBase_serves_retained_sdk_routes_and_rejects_removed_collection_hooks()
     {
         using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "contracts", "terrabase", "routes.json")));
         var operations = manifest.RootElement.GetProperty("operations").EnumerateArray().ToList();
@@ -66,7 +59,9 @@ public sealed class TerraBaseSdkContractTests(TerraBaseFixture fixture)
             }
 
             using var response = await (internalRoute ? fixture.Server.Http : fixture.Server.PublicHttp).SendAsync(request);
-            if (RetiredByPivotE2.Contains(operation.GetProperty("operation").GetString()!))
+            if (RetiredByPivotE2.Contains(operation.GetProperty("operation").GetString()!)
+                || template.Contains("/webhooks", StringComparison.Ordinal)
+                || template == "/v1/projects/{project}/databases/{database}/functions/{function}/deliveries")
             {
                 await Assert.That(response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed).IsTrue()
                     .Because(operation.GetProperty("operation").GetString()!);
