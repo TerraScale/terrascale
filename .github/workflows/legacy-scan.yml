@@ -1,0 +1,34 @@
+name: Legacy scan
+
+on:
+  pull_request:
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          path: target
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: TerraScale/terrascale
+          ref: 7a53ac89686cd6bbe2025aaeaa9d370c0efc331e
+          persist-credentials: false
+          path: legacy-scanner
+      - run: python3 legacy-scanner/scripts/legacy-scan/scan.py --repo ts-dotnet --root target --output legacy-hits.md
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: legacy-hits
+          path: legacy-hits.md
