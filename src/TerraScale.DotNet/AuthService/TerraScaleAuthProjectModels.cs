@@ -34,7 +34,8 @@ public sealed record TerraScaleAuthProjectFooterLink(
     [property: JsonPropertyName("url")] string Url);
 
 /// <summary>Project redirect allowlist and absolute session duration, in seconds. An empty list adds no
-/// restriction to the OAuth client's exact registered redirects; the default duration is fourteen days.</summary>
+/// restriction to the OAuth client's exact registered redirects; the default duration is fourteen days.
+/// Redirect URLs must be absolute https URLs (http only on loopback), without userinfo or fragments.</summary>
 public sealed record TerraScaleAuthProjectConfiguration(
     [property: JsonPropertyName("redirect_urls")] IReadOnlyList<string> RedirectUrls,
     [property: JsonPropertyName("session_lifetime_seconds")] int SessionLifetimeSeconds = 1209600);
@@ -142,7 +143,8 @@ public sealed record TerraScaleAuthProjectOAuthClient(
 }
 
 /// <summary>POST /clients body. Type is <c>public</c> or <c>confidential</c>; 1 to 10 absolute https redirect URIs
-/// (http only on localhost and loopback), without fragments.</summary>
+/// (http only on localhost and loopback), without userinfo (embedded username or password) or fragments.
+/// Each URI must also exactly match the project's redirect allowlist when nonempty.</summary>
 public sealed record TerraScaleAuthProjectCreateOAuthClient(
     [property: JsonPropertyName("name")] string? Name,
     [property: JsonPropertyName("type")] string? Type,
