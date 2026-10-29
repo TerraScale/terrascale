@@ -49,6 +49,8 @@
     <None Update="THIRD-PARTY-NOTICES" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Google.Protobuf" />
+    <PackageReference Include="Grpc.Tools" PrivateAssets="all" />
     <Protobuf Include="Features/Sync/Protos/*.proto" ProtoRoot="Features/Sync/Protos" GrpcServices="None" Access="Internal" />
   </ItemGroup>
   <ItemGroup>
