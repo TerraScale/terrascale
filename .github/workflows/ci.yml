@@ -94,7 +94,7 @@ jobs:
               # The published platform contract (OpenApiTests, auth-openapi-check); the Markdown docs are not inputs.
               - docs/auth/*.yaml
               - scripts/auth/**
-              - scripts/ci/auth-fast.sh
+              - scripts/ci/auth-build.sh
             auth-server:
               - src/TerraBase/**
             terrabase:
@@ -300,6 +300,7 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
+      statuses: read
     steps:
       - *checkout
       - *checkout-ts-dotnet
@@ -307,12 +308,30 @@ jobs:
       - *setup-dotnet
       - *nuget-cache
       - *locked-restore
+      - id: fast-proof
+        name: Verify exact-commit Auth Fast evidence
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if statuses=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/statuses") &&
+             jq -e '[.[][] | select(.context == "ts-ship/auth")] | max_by(.id) | .state == "success" and ((.creator.login // "" | ascii_downcase) == "mariogk")' <<< "$statuses" > /dev/null; then
+            echo 'verified=true' >> "$GITHUB_OUTPUT"
+            echo "Auth Fast passed on the dev host for $GITHUB_SHA, verified through ts-ship/auth by MarioGK." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'verified=false' >> "$GITHUB_OUTPUT"
+          fi
       - name: Install Auth browser dependencies
+        if: steps.fast-proof.outputs.verified != 'true'
         working-directory: terrascale
         run: npx --yes playwright@1.63.0 install --with-deps chromium
-      - name: Checked Auth build and Fast
+      - name: Checked Auth build
         working-directory: terrascale
-        run: bash scripts/ci/auth-fast.sh
+        run: bash scripts/ci/auth-build.sh
+      - name: Auth Fast
+        if: steps.fast-proof.outputs.verified != 'true'
+        working-directory: terrascale
+        run: env -u DOTNET_PROCESSOR_COUNT -u DOTNET_GCHeapCount make -o restore auth-test-fast CONFIGURATION=Release
 
   auth-package:
     needs: [changes, native]

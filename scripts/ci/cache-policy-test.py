@@ -31,14 +31,19 @@ assert 'bash scripts/ci/test-area.sh fast "$AREA"' in workflow
 assert "no-cache-filters: slow-${{ env.AREA }}-run" in workflow
 assert "steps: *slow-steps" in workflow
 auth_job = workflow.split("\n  auth:\n", 1)[1].split("\n  auth-package:\n", 1)[0]
-assert "bash scripts/ci/auth-fast.sh" in auth_job
+assert "bash scripts/ci/auth-build.sh" in auth_job
 assert "docker/build-push-action" not in auth_job
 assert "*nuget-cache" in auth_job and "*locked-restore" in auth_job
-auth_fast = (root / "scripts/ci/auth-fast.sh").read_text()
+auth_fast = (root / "scripts/ci/auth-build.sh").read_text()
 assert "fmt-check SOLUTION=auth.slnf" in auth_fast
 assert "dotnet build tests/TerraScale.Authentication.Fast/" in auth_fast
 assert "-o auth-build auth-check" in auth_fast
-assert "make -o restore auth-test-fast" in auth_fast
+assert "make -o restore auth-test-fast CONFIGURATION=Release" in auth_job
+assert "statuses: read" in auth_job
+assert "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/statuses" in auth_job
+assert 'select(.context == "ts-ship/auth")' in auth_job
+assert 'max_by(.id)' in auth_job and 'ascii_downcase) == "mariogk"' in auth_job
+assert auth_job.count("if: steps.fast-proof.outputs.verified != 'true'") == 2
 assert "auth-publish" not in auth_fast
 package_job = workflow.split("\n  auth-package:\n", 1)[1].split("\n  terrabase-build:\n", 1)[0]
 assert "make auth-publish RUNTIME=linux-x64" in package_job
