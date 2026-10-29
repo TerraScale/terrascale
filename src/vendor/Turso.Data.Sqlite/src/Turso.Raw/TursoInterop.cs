@@ -76,6 +76,10 @@ internal static class TursoInterop
     internal static extern unsafe TursoStatusCode SnapshotReadPage(
         TursoDatabaseHandle connection, uint pageNumber, byte* page, nuint pageLength, out int found, out IntPtr errorPtr);
 
+    [DllImport(DllName, EntryPoint = "turso_terrascale_wal_checkpoint_truncate", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern TursoStatusCode WalCheckpointTruncate(
+        TursoDatabaseHandle connection, ulong upperBound, out int truncated, out IntPtr errorPtr);
+
     [DllImport(DllName, EntryPoint = "turso_terrascale_page_size", CallingConvention = CallingConvention.Cdecl)]
     internal static extern uint PageSize(TursoDatabaseHandle connection);
 

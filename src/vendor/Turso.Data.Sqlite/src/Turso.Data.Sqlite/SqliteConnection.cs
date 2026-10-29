@@ -722,6 +722,8 @@ public partial class SqliteConnection : DbConnection
     public bool TryReadSnapshotPage(uint pageNumber, Span<byte> page)
         => TursoBindings.TryReadSnapshotPage(DatabaseHandle, pageNumber, page);
 
+    public bool TryCheckpointTruncate(ulong upperBound) => TursoBindings.TryCheckpointTruncate(DatabaseHandle, upperBound);
+
     public int PageSize => TursoBindings.GetPageSize(DatabaseHandle);
 
     internal TursoDatabaseHandle DatabaseHandle

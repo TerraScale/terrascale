@@ -163,6 +163,16 @@ public static class TursoBindings
         }
     }
 
+    public static bool TryCheckpointTruncate(TursoDatabaseHandle db, ulong upperBound)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        db.ThrowIfInvalid();
+        RequireWalContract();
+        var status = TursoInterop.WalCheckpointTruncate(db, upperBound, out var truncated, out var errorPtr);
+        ThrowIfError(status, errorPtr);
+        return truncated != 0;
+    }
+
     public static int GetPageSize(TursoDatabaseHandle db)
     {
         ArgumentNullException.ThrowIfNull(db);

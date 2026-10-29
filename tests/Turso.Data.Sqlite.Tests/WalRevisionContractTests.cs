@@ -7,7 +7,7 @@ namespace Turso.Data.Sqlite.Tests;
 /// <summary>The native WAL revision contract through the driver: manual WAL, frame metadata and snapshot page reads.</summary>
 public sealed class WalRevisionContractTests
 {
-    /// <summary>Manual WAL keeps every frame and the database file untouched until an explicit TRUNCATE; snapshot reads decrypt.</summary>
+    /// <summary>Manual WAL keeps every frame and the database file untouched until a bounded truncate; snapshot reads decrypt; busy or stale truncates keep the WAL.</summary>
     [Test]
     public async Task ManualWalKeepsFramesUntilAnExplicitTruncate()
     {
@@ -65,7 +65,11 @@ public sealed class WalRevisionContractTests
             using (var reader = Open(builder.ConnectionString))
             {
                 await Assert.That(writer.GetWalState().MaxFrame).IsEqualTo(written);
-                Execute(writer, "PRAGMA wal_checkpoint(TRUNCATE);");
+                Execute(reader, "BEGIN; SELECT count(*) FROM sqlite_schema;");
+                await Assert.That(writer.TryCheckpointTruncate(written)).IsFalse();
+                Execute(reader, "ROLLBACK;");
+                await Assert.That(writer.TryCheckpointTruncate(written - 1)).IsFalse();
+                await Assert.That(writer.TryCheckpointTruncate(written)).IsTrue();
                 await Assert.That(writer.GetWalState().MaxFrame).IsEqualTo(0UL);
                 Execute(reader, "BEGIN; SELECT count(*) FROM sqlite_schema;");
                 var page = new byte[reader.PageSize];
