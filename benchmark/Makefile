@@ -23,7 +23,7 @@ test-fast:
 	go test -race -count=1 -timeout=240s ./...
 # The exhaustive region/lane/payload/concurrency matrix is independent of Fast.
 test-slow:
-	go test -race -count=1 -tags slow -run '^TestSlow' -timeout=10m ./clients/go
+	go test -race -count=1 -tags slow -run '^TestSlow' -timeout=10m ./...
 test: test-fast test-slow
 fast: fmt-check build test-fast
 check:
