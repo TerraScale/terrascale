@@ -35,8 +35,7 @@ jobs:
         run: bash benchmark/lag-lab/build.sh
       - name: Audit published full-matrix evidence
         run: |
-          python3 benchmark/lag-lab/summarize.py benchmark/bench/2026-10-29-lag-lab-full.json.gz benchmark/bench/2026-10-29-lag-lab-normal.json.gz
-          git diff --exit-code -- benchmark/bench/2026-10-29-lag-lab-summary.json.gz
+          python3 benchmark/lag-lab/summarize.py benchmark/bench/2026-10-29-lag-lab-full.json.gz benchmark/bench/2026-10-29-lag-lab-normal.json.gz --check
       - name: Run real page, push, provisional and combined namespace cases
         run: |
           sudo apt-get update

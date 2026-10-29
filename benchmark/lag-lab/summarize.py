@@ -58,7 +58,8 @@ def audit(path):
 
 
 if __name__ == '__main__':
-    results = [r for path in sys.argv[1:] for r in audit(path)]
+    paths = [path for path in sys.argv[1:] if path != '--check']
+    results = [r for path in paths for r in audit(path)]
     print('| Profile | One-way ms | Offered commits/s | Path | Samples/repeat | Source commits/s R1 / R2 / R3 | Lag p50 / p99 ms R1; R2; R3 | Scheduled p99 ms R1 / R2 / R3 |')
     print('|---|---:|---:|---|---:|---|---|---|')
     for key in sorted({(r['profile'], r['delay'], r['rate'], r['mode']) for r in results}):
@@ -67,5 +68,10 @@ if __name__ == '__main__':
         lag = '; '.join(f"{r['p50_ms']:.1f} / {r['p99_ms']:.1f}" for r in rows)
         due = ' / '.join(f"{r['due_p99_ms']:.1f}" for r in rows)
         print(f'| {key[0]} | {key[1]} | {key[2]} | {key[3]} | {rows[0]["n"]} | {cps} | {lag} | {due} |')
-    destination = Path(sys.argv[1]).parent / '2026-10-29-lag-lab-summary.json.gz'
-    destination.write_bytes(gzip.compress(json.dumps(results, separators=(',', ':')).encode(), mtime=0))
+    destination = Path(paths[0]).parent / '2026-10-29-lag-lab-summary.json.gz'
+    if '--check' in sys.argv[1:]:
+        with gzip.open(destination, 'rt') as stream:
+            if json.load(stream) != results:
+                raise ValueError('Published summary differs from audited evidence')
+    else:
+        destination.write_bytes(gzip.compress(json.dumps(results, separators=(',', ':')).encode(), compresslevel=9, mtime=0))
