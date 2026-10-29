@@ -171,10 +171,10 @@ namespace TerraScale.Dashboard.E2E
                     if (command == "read-capacity")
                     {
                         return Results.Json(new
-                    {
-                        client = await state.GetAsync(clients, key, ct),
-                        grants = await Task.WhenAll(Enumerable.Range(0, 3).Select(index => state.GetAsync(grants, key + "/" + index, ct)))
-                    });
+                        {
+                            client = await state.GetAsync(clients, key, ct),
+                            grants = await Task.WhenAll(Enumerable.Range(0, 3).Select(index => state.GetAsync(grants, key + "/" + index, ct)))
+                        });
                     }
 
                     if (command == "remove")
@@ -850,31 +850,31 @@ namespace TerraScale.Dashboard.E2E
                 lock (gate)
                 {
                     return Results.Json(new
-                {
-                    databaseId,
-                    databasePuts,
-                    databaseCreates,
-                    collectionPosts,
-                    collectionConflicts,
-                    documentWrites,
-                    preconditionFailures,
-                    pausedCreates,
-                    pausedWrites,
-                    collectionLists,
-                    privateRequests,
-                    pausedTransactions,
-                    redirectTargetRequests,
-                    cleanupQueries = cleanupQueries.ToArray(),
-                    sqlWorkspaceLists,
-                    failures = failures.ToArray(),
-                    organizationPlans = organizationPlans.ToDictionary(),
-                    planPublishes = Volatile.Read(ref planPublishes),
-                    collections = collections.OrderBy(item => item.Key, StringComparer.Ordinal).Select(item => new
-                    { name = item.Key, id = item.Value.Id, createdAt = item.Value.CreatedAt, documents = item.Value.Documents.Count(entry => !entry.Value.Deleted) }).ToArray(),
-                    documentDigest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', collections.OrderBy(item => item.Key, StringComparer.Ordinal)
+                    {
+                        databaseId,
+                        databasePuts,
+                        databaseCreates,
+                        collectionPosts,
+                        collectionConflicts,
+                        documentWrites,
+                        preconditionFailures,
+                        pausedCreates,
+                        pausedWrites,
+                        collectionLists,
+                        privateRequests,
+                        pausedTransactions,
+                        redirectTargetRequests,
+                        cleanupQueries = cleanupQueries.ToArray(),
+                        sqlWorkspaceLists,
+                        failures = failures.ToArray(),
+                        organizationPlans = organizationPlans.ToDictionary(),
+                        planPublishes = Volatile.Read(ref planPublishes),
+                        collections = collections.OrderBy(item => item.Key, StringComparer.Ordinal).Select(item => new
+                        { name = item.Key, id = item.Value.Id, createdAt = item.Value.CreatedAt, documents = item.Value.Documents.Count(entry => !entry.Value.Deleted) }).ToArray(),
+                        documentDigest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', collections.OrderBy(item => item.Key, StringComparer.Ordinal)
                         .SelectMany(collection => collection.Value.Documents.OrderBy(document => document.Key, StringComparer.Ordinal)
                             .Select(document => collection.Key + "/" + document.Key + ":" + document.Value.Version + ":" + document.Value.Deleted + ":" + document.Value.Value.GetRawText()))))))
-                });
+                    });
                 }
             }
 
@@ -883,7 +883,9 @@ namespace TerraScale.Dashboard.E2E
                 return Results.Json(new { error = new { code, message = "Test-only state producer refusal.", op = index } }, statusCode: status);
             }
 
-            private static void Require(bool condition, string message) { if (!condition)
+            private static void Require(bool condition, string message)
+            {
+                if (!condition)
                 {
                     throw new InvalidOperationException(message);
                 }

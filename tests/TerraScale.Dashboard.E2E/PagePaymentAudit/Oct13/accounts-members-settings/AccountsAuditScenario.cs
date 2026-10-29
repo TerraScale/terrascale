@@ -164,7 +164,9 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.AccountsMembersSetting
         public async ValueTask DisposeAsync()
         {
             if (app is not null) { await app.StopAsync(); await app.DisposeAsync(); app = null; }
-            if (workspace is not null) { lock (workspace.Gate)
+            if (workspace is not null)
+            {
+                lock (workspace.Gate)
                 {
                     workspace.Organizations.Remove(OrganizationId);
                 }

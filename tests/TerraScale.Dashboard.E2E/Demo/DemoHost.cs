@@ -657,13 +657,15 @@ namespace TerraScale.Dashboard.E2E.Demo
         }
 
         public Task<IReadOnlyList<TerraScaleAuthPlatformOrganization>> ListOrganizationsAsync(SessionRecord session, CancellationToken cancellationToken)
-        { lock (Gate)
+        {
+            lock (Gate)
             {
                 return Task.FromResult<IReadOnlyList<TerraScaleAuthPlatformOrganization>>(Organizations.Values.Where(org => ScopedRole(session.UserId, org.Id).Length > 0).Select(org => Wire(org, session.UserId)).ToArray());
             }
         }
         public Task<TerraScaleAuthPlatformOrganization> CreateOrganizationAsync(SessionRecord session, string name, CancellationToken cancellationToken)
-        { lock (Gate)
+        {
+            lock (Gate)
             {
                 return Task.FromResult(Wire(Create(session, name), session.UserId));
             }
@@ -1293,7 +1295,8 @@ namespace TerraScale.Dashboard.E2E.Demo
             }
         }
         public Task<TerraBaseDocument?> GetAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, string id, CancellationToken cancellationToken)
-        { lock (collections)
+        {
+            lock (collections)
             {
                 return Task.FromResult(collections.GetValueOrDefault(Key(scope, databaseName, collection))?.GetValueOrDefault(id));
             }
@@ -1381,7 +1384,9 @@ namespace TerraScale.Dashboard.E2E.Demo
             }
 
             var value = target as JsonObject ?? new JsonObject();
-            foreach (var (key, change) in changes) { if (change is null)
+            foreach (var (key, change) in changes)
+            {
+                if (change is null)
                 {
                     value.Remove(key);
                 }

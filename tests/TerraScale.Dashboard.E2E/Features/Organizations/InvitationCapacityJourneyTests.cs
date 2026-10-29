@@ -23,7 +23,9 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             var invites = Enumerable.Range(0, 8).Select(index => scenario.InviteAsync(index % 4, "stampede-" + index + "@example.test")).ToArray();
             var responses = await Task.WhenAll(invites);
             try { await Assert.That(responses.Count(response => response.StatusCode == HttpStatusCode.OK)).IsEqualTo(1); }
-            finally { foreach (var response in responses)
+            finally
+            {
+                foreach (var response in responses)
                 {
                     response.Dispose();
                 }
@@ -365,7 +367,9 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             scenario.Platform.Release[2].TrySetResult();
             var pair = await Task.WhenAll(first, second).WaitAsync(CapacityScenario.RequestBudget);
             try { await Assert.That(pair.Count(response => response.StatusCode == HttpStatusCode.OK)).IsEqualTo(1); }
-            finally { foreach (var response in pair)
+            finally
+            {
+                foreach (var response in pair)
                 {
                     response.Dispose();
                 }

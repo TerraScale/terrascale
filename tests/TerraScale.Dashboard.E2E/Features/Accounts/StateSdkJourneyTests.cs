@@ -579,7 +579,9 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             "The external state producer observed no contract violation: " + observation.GetProperty("failures").GetRawText());
         }
 
-        private static void Check(bool condition, string message) { if (!condition)
+        private static void Check(bool condition, string message)
+        {
+            if (!condition)
             {
                 throw new InvalidOperationException(message);
             }
