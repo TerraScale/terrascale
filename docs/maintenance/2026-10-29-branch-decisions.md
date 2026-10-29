@@ -62,12 +62,30 @@ markers preserve recovery via `ROLLBACK TO`. Auth assertions and browser fixture
 are adapted to the recovered form IDs/names, resend controls and current limiter.
 The complete MobileAccessibility browser test port (four cases) and its axe/WebKit-only assets are also held: fails on current main, needs its own fix. WebKit authenticated device navigation still times out in the forwarding fixture after the browser has a valid new session. Existing Chromium UI and retained continuation/consent coverage remain. Before the corrective push, all 84 retained cases in PostgresSavepointTests (8), SqlTransactionTests (8), MfaSignInTests (17), AuthThrottleTests (9), and HostedSignInTests (42) passed locally with no skips under ts-heavy-any. The savepoint class passed five consecutive runs. Both affected Fast project builds passed with warnings-as-errors enabled (0 warnings/errors), using CI-pinned SDK source 2dda37f08abe7497b35dc431895960e70f3c3611. These focused results do not replace current-head CI or the security/review holds.
 
+Catalog restart CI disposition (`00fc25f3d`, run `40884974629`): stop treating
+`Twenty_rolling_restarts_under_write_load_keep_the_catalog_and_reopen_the_gate`
+as unrelated. It failed in three of four PR runs, including both attempts on
+this head, while the parent verified eight recent green main CI runs. The only
+changed runtime on its replication path is `fix/replica-writer-bounds`: apply
+adds a 256-delta cap and changes its elapsed clock, repair splits pages into
+256-state/250-ms transactions, and rebuild uses the same bound. `CatalogGate`,
+its revocation-membership path, `AntiEntropy`, directory membership and the
+rolling-restart fixtures/test are unchanged. The CI's last-stage string alone
+does not identify the blocked primitive.
+
+Hold the complete additional batching port and its supporting tests/document;
+restore the exact main implementations. This preserves #877's existing 250-ms
+apply writer hold budget and current repair/import semantics. The historical
+#789 signature does not waive current PR failures. Main and published-head
+five-run comparisons and the final five-run proof are recorded in the PR; local
+isolated passes do not establish the cause of the pressure-dependent CI timeout.
+
 | Additional salvage source | Decision | Hold / evidence |
 | --- | --- | --- |
 | beta `fix/sql-http-boundary-coverage` (`f9bbc5be4`) | held: fails on current main, needs its own fix | Entire 16-case test port removed after sql/v2/v3 exactly-1-MiB chunked acceptance returned 413; source bundle retained. |
 | delta `fix-dependency-advisories-3086c1c81.bundle` (native upgrade) | held, not ported | Publication, ARM64 and storage-format holds remain. Source bundle stays in `~/Backups/worktree-salvage-20261029/terrascale/`; no upgrade or activation in this PR. |
 
-Decisions: 45 already in main, 23 dropped evidence, 14 ported, 3 ported subset, 109 superseded.
+Decisions: 45 already in main, 23 dropped evidence, 13 ported, 3 ported subset, 109 superseded, 1 held (not ported).
 
 | Branch | Original tip | Decision | Evidence / retained behavior |
 | --- | --- | --- | --- |
@@ -156,9 +174,9 @@ Decisions: 45 already in main, 23 dropped evidence, 14 ported, 3 ported subset, 
 | `fix/r9-benchmark-b-20261022` | `8c9959595864` | superseded | Current internal/repllocal harness #367 replaces flat command helpers; R2 envelope/cursor #376, R3 capture #370, R5 #364/#782, R7 #384 and R9 #399 already integrated. Frozen comparison baselines omitted. |
 | `fix/r9-merkle-reset` | `d9c524c4aa24` | superseded | Coordinated format11 batch #399 and subsequent Turso engine #499 replace SQLite-era paths; no feature format bump or migration. |
 | `fix/r9-repair-forget-no-format` | `030ca766dcb0` | superseded | Projection cleanup/incarnation fixes folded into coordinated #399 and current Turso repair; do not restore old no-format fork. |
-| `fix/replica-writer-bounds` | `4db6957f7d49` | ported | Newest 4db6957f7 writer batch bound (256 items/250 ms); retain #877 intent and current repair optimizations #782/#849. |
+| `fix/replica-writer-bounds` | `4db6957f7d49` | held, not ported | Repeated PR catalog-gate restart failures require a separate fix. Remove its apply/repair/rebuild batching, helper, supporting tests and qualification document. Restore exact main #877 writer hold behavior and #782/#849 repair optimizations; source retained in recovery bundle. |
 | `fix/replication-a6-proof-152d17be` | `152d17be3a77` | superseded | Renewed sender refill and concurrent fixture fixes integrated #346; later production repair coverage #678. Proof checkpoints omitted. |
-| `fix/replication-idle-churn` | `6d9b441813e0` | already in main | Idle timers and repairs integrated by #782/#849; latest writer bound ported separately. |
+| `fix/replication-idle-churn` | `6d9b441813e0` | already in main | Idle timers and repairs integrated by #782/#849; the additional writer batching experiment is held separately. |
 | `fix/replication-main-baseline` | `e7fa366ddb28` | already in main | Inventory merge adds no changes; existing main implementation takes precedence. |
 | `fix/replication-proof-36681092` | `36681092d149` | superseded | Renewed sender refill and concurrent fixture fixes integrated #346; later production repair coverage #678. Proof checkpoints omitted. |
 | `fix/replication-proof-6b6cd95f` | `6b6cd95f8ee4` | superseded | Renewed sender refill and concurrent fixture fixes integrated #346; later production repair coverage #678. Proof checkpoints omitted. |
@@ -172,7 +190,7 @@ Decisions: 45 already in main, 23 dropped evidence, 14 ported, 3 ported subset, 
 | `fix/ship-dirty-measurement` | `988ebdee5320` | already in main | Inventory merge adds no changes; existing main implementation takes precedence. |
 | `fix/ship-dirty-stage-proof` | `0a08551e26bf` | dropped evidence | Historical ship qualification checkpoints; current bootstrap/readiness and internal/repllocal paths supersede old proof fixtures. |
 | `fix/ship-dirty-telemetry-proof` | `988ebdee5320` | already in main | Inventory merge adds no changes; existing main implementation takes precedence. |
-| `fix/sink-bounded-transactions` | `332fbe37f32d` | superseded | Newer fix/replica-writer-bounds 4db6957f7 ported once, including atomic importer preservation. |
+| `fix/sink-bounded-transactions` | `332fbe37f32d` | superseded | Superseded by fix/replica-writer-bounds 4db6957f7, now held and not ported after repeated catalog restart failures. Keep current main #877 and its atomic importer. |
 | `fix/slow-catalog-evidence` | `e7fa366ddb28` | already in main | Inventory merge adds no changes; existing main implementation takes precedence. |
 | `fix/slow-catalog-gate-baseline-fce45959` | `fce45959070d` | already in main | Inventory merge adds no changes; existing main implementation takes precedence. |
 | `fix/slow-http-baseline-e7fa366d` | `e7fa366ddb28` | already in main | Inventory merge adds no changes; existing main implementation takes precedence. |

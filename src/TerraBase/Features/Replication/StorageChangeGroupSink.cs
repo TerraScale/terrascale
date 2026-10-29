@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Errors;
@@ -17,6 +18,12 @@ namespace TerraBase.Features.Replication;
 internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirectory tenants, DatabaseLifecycleCheckpoint checkpoint,
     IWebhookReplicaAdmission webhooks, ReplicationTimings timings, IClosureCancellation cancellations) : IChangeGroupSink
 {
+    // How long one apply transaction may hold a database's writer before the groups left wait for the next one. Writers queue
+    // in order, so a catalog anchor (a revocation's 10 s deadline) waits for at most about this much per transaction ahead of
+    // it: a restarted region's catch-up joined up to 16,384 system deltas in one transaction and held the catalog's writer
+    // 5 s on average, 22 s at most, on a loaded runner, and its anchors missed their deadline (#733).
+    internal static readonly TimeSpan HoldBudget = TimeSpan.FromMilliseconds(250);
+
     public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken, ApplyProgress? progress = null)
     {
         ArgumentNullException.ThrowIfNull(groups);
@@ -32,18 +39,23 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
         var next = 0;
         while (next < groups.Count)
         {
+            // A group never splits; a single group holds at most one transaction's documents.
+            var end = next;
+            for (var deltas = 0; end < groups.Count && (end == next || deltas + groups[end].Deltas.Count <= ChangeGroups.MaxDeltasOf(database)); end++)
+            {
+                deltas += groups[end].Deltas.Count;
+            }
+
             await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
-            var started = timings.Now;
+            var held = Stopwatch.GetTimestamp();
             progress?.Attach(transaction);
             await transaction.RequireAppliedAsync(origin, expected, cancellationToken).ConfigureAwait(false);
             step = timings.Record(ReplicationTimings.ReceiveBegin, step);
             List<(string, string, DocumentState, EntryVersion)>? deferred = null;
             HashSet<(string Collection, string Id)> closureChanges = [];
             List<(string Id, DocumentState State, EntryVersion At)> closureJobs = [];
-            // Check between whole groups; deferred admission and closure observation still finish before each commit.
-            for (var deltas = 0; next < groups.Count && ReplicationWriteBatch.CanAdd(deltas, groups[next].Deltas.Count, timings.Elapsed(started)); next++)
+            for (; next < end; next++)
             {
-                deltas += groups[next].Deltas.Count;
                 foreach (var delta in groups[next].Deltas)
                 {
                     var at = new EntryVersion(delta.Stamp, origin);
@@ -65,6 +77,12 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
                     applied = applied.Value < delta.Stamp.Value ? delta.Stamp : applied;
                 }
 
+                // Whole groups only: past the hold budget, the groups left commit in the next transaction.
+                if (next + 1 < end && Stopwatch.GetElapsedTime(held) >= HoldBudget)
+                {
+                    next++;
+                    break;
+                }
             }
 
             _ = await JoinAdmittedAsync(transaction, deferred, cancellationToken).ConfigureAwait(false);
@@ -123,30 +141,20 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
                 return null;
             }
 
-            var next = 0;
-            while (next < changing.Count)
+            if (changing.Count == 0)
             {
-                await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
-                var started = timings.Now;
-                if (await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false) != incarnation)
-                {
-                    return null;
-                }
-
-                changed += await RepairPageAsync(transaction, database, Page(), baseline: false, cancellationToken).ConfigureAwait(false);
-
-                _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-
-                // The shared join/admission path also serves atomic snapshot replay; bound only this repair's input.
-                IEnumerable<RepairState> Page()
-                {
-                    var start = next;
-                    while (next < changing.Count && ReplicationWriteBatch.CanAdd(next - start, 1, timings.Elapsed(started)))
-                    {
-                        yield return changing[next++];
-                    }
-                }
+                continue;
             }
+
+            await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+            if (await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false) != incarnation)
+            {
+                return null;
+            }
+
+            changed += await RepairPageAsync(transaction, database, changing, baseline: false, cancellationToken).ConfigureAwait(false);
+
+            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
 
         return changed;
@@ -179,7 +187,7 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
     }
 
     internal async ValueTask<int> RepairPageAsync(IStorageTransaction transaction, TenantContext database,
-        IEnumerable<RepairState> states, bool baseline, CancellationToken cancellationToken)
+        IReadOnlyList<RepairState> states, bool baseline, CancellationToken cancellationToken)
     {
         var changed = 0;
         List<(string, string, DocumentState, EntryVersion)>? deferred = null;

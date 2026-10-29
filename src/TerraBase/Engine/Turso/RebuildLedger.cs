@@ -842,25 +842,17 @@ internal sealed class RebuildLedger(TursoStorageEngine engine, ILogger logger, I
         }
 
         var changed = 0;
-        for (var next = 0; next < states.Count;)
+        foreach (var chunk in states.Where(state => state.State.MaxStamp.Value != 0).Chunk(ChangeGroups.MaxDeltasOf(database)))
         {
             await using var transaction = await store.BeginRebuildTransactionAsync(cancellationToken).ConfigureAwait(false);
-            var started = Stopwatch.GetTimestamp();
             // Under the writer: a fault or a new record since the check above refuses this repair.
             if (!UnderRebuild(store, newIncarnation) || !await InPlaceAsync(transaction, newIncarnation, cancellationToken).ConfigureAwait(false))
             {
                 return null;
             }
 
-            var start = next;
-            for (; next < states.Count && ReplicationWriteBatch.CanAdd(next - start, 1, Stopwatch.GetElapsedTime(started)); next++)
+            foreach (var state in chunk)
             {
-                var state = states[next];
-                if (state.State.MaxStamp.Value == 0)
-                {
-                    continue;
-                }
-
                 // Keep the side copies until every live entry survives without relying on an inferred deletion.
                 if (!await transaction.CanSalvageAsync(state.Collection, state.Id, state.State, cancellationToken).ConfigureAwait(false))
                 {
