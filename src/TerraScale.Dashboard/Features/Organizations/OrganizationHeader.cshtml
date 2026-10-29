@@ -1,0 +1,35 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.OrganizationPage>
+@{ var org = Model.Shell.Context.Organization; var access = Model.Tab is "members" or "invitations"; }
+<header class="ts-org-header">
+    <div class="ts-org-identity">
+        @if (org is not null) { <span class="ts-org-mark" aria-hidden="true">@string.Concat(org.Name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(part => char.ToUpperInvariant(part[0])))</span> }
+        <div class="ts-org-heading">
+            <div class="ts-org-title-row"><h1 class="ts-org-title">@(org?.Name ?? "Organization")</h1>@if (org is not null) { var plan = org.BillingStatus == "billing_required" ? null : TerraScale.Dashboard.Common.Accounts.PlanCatalog.For(org); <span class="ts-badge ts-badge-neutral">@(plan is not null ? plan.Name + " plan" : org.BillingStatus == "billing_required" ? "No active plan" : "Plan not reported")</span><span class="ts-badge @(org.Status == "active" ? "ts-badge-success" : "ts-badge-warning")"><span class="ts-dot" aria-hidden="true"></span>@TerraScale.Dashboard.Features.Organizations.OrganizationPage.RoleLabel(org.Status)</span> }</div>
+            @if (org is not null)
+            {
+                <p class="ts-org-meta"><span class="ts-org-id"><code id="organization-id">@org.Id</code><button class="ts-icon-btn" type="button" aria-label="Copy organization ID" title="Copy ID" data-signals="{_idCopy: ''}" data-on:click="(navigator.clipboard?.writeText(document.getElementById('organization-id').textContent) ?? Promise.reject()).then(() => { $_idCopy = 'Copied'; setTimeout(() => $_idCopy = '', 2000) }, () => $_idCopy = 'Copy failed')">@Icons.Render("Copy", 14)</button><span class="ts-sr-only" role="status" data-text="$_idCopy"></span></span><span aria-hidden="true">·</span><span>@(org.Kind == "personal" ? "Personal organization" : "Business organization")</span><span aria-hidden="true">·</span>@if (access) { <span>@Model.MemberTotal @(Model.MemberTotal == 1 ? "member" : "members") · @Model.InvitationRows.Count(item => item.Status == "pending") pending @(Model.InvitationRows.Count(item => item.Status == "pending") == 1 ? "invitation" : "invitations")</span> } else { <span>Created @org.CreatedAt.ToString("MMM d, yyyy", System.Globalization.CultureInfo.InvariantCulture)</span> }</p>
+            }
+        </div>
+    </div>
+    @if (!access) { <a class="ts-btn ts-btn-primary" href="/organization?newOrganization=organization">@Icons.Render("Plus", 16)<span>Create organization</span></a> }
+    else if (Model.CanManage) { <a class="ts-btn ts-btn-primary" href="#team-invite">@Icons.Render("UserPlus", 16)<span>Invite member</span></a> }
+</header>
+@* An open create-project dialog shows its own refusal; repeating it behind the dialog said it twice. *@
+@if (Model.Error.Length > 0 && !(Model.OpenCreateProject && Model.Tab == "projects" && Model.CanProvision))
+{
+    @if (access) { <div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-title">Could not update access</p><p class="ts-alert-body">@Model.Error</p></div> }
+    else { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }
+}
+@if (Model.Status.Length > 0) { <p role="status" aria-live="polite" class="ts-alert ts-alert-success" data-init="history.replaceState(null, '', '/organization')">@Model.Status</p> }
+@if (Model.InvitationLink.Length > 0)
+{
+    <section class="ts-alert ts-alert-success" aria-labelledby="invitation-link-title" data-init="@("history.replaceState(null, '', '/organization?tab=" + (access ? Model.Tab : "members") + "')")">
+        <p class="ts-alert-title" id="invitation-link-title">Invitation created</p><p class="ts-alert-body">Copy this link and send it to the invitee. It works once and expires in seven days; resending the invitation replaces it.</p>
+        <div class="ts-row"><a id="invitation-link" class="ts-link ts-break" href="@Model.InvitationLink" rel="noreferrer" data-text="el.href">@Model.InvitationLink</a><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-signals="{_copy: ''}" data-on:click="(navigator.clipboard?.writeText(document.getElementById('invitation-link').href) ?? Promise.reject()).then(() => { $_copy = 'Copied'; setTimeout(() => $_copy = '', 2000) }, () => $_copy = 'Copy failed: select the link')">@Icons.Render("Copy", 14)<span data-text="$_copy || 'Copy link'">Copy link</span></button></div>
+    </section>
+}
+<nav class="ts-tabs" aria-label="Organization sections">@foreach (var tab in Tabs) { <a class="ts-tab" href="@tab.Url" aria-current="@(Model.Tab == tab.Key || Model.Tab == "invitations" && tab.Key == "members" ? "page" : null)"><span>@tab.Label</span>@if (tab.Key == "members" && Model.MemberTotal > 0) { <span class="ts-tab-count">@Model.MemberTotal</span> }@if (tab.Key == "projects" && org is { Projects.Count: > 0 } counted) { <span class="ts-tab-count">@counted.Projects.Count</span> }</a> }</nav>
+@functions {
+    // Danger zone stays last.
+    private static readonly (string Key, string Label, string Url)[] Tabs = [("organization", "Organization", "/organization"), ("members", "Members", "/organization?tab=members"), ("projects", "Projects", "/organization?tab=projects"), ("billing", "Billing", "/organization?tab=billing"), ("audit", "Audit", "/organization?tab=audit"), ("sso", "Single sign-on", "/organization?tab=sso"), ("danger", "Danger zone", "/organization?tab=danger")];
+}

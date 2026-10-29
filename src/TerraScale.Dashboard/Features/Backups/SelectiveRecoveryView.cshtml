@@ -1,0 +1,38 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Backups.SelectiveRecoveryPage>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
+@using System.Globalization
+@using System.Text.Json
+@using TerraScale.Dashboard.Features.Databases
+@using TerraScale.Dashboard.Features.Backups
+<main class="ts-page">
+@(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame, DatabaseFrameModel>(new(Model.Database, "backups")))
+<section class="ts-card" aria-labelledby="recovery-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="recovery-title">Recover selected records</h2><p class="ts-card-description">Compare retained records with current data, then approve the records to restore into @Model.Database.Name.</p></div></header><div class="ts-card-body ts-stack-lg">
+@if(Model.Error.Length > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p><p class="ts-meta">Request ID: <code>@RequestIdentity.Id</code></p></div>}
+@if(Model.Applied is { } count){<div class="ts-alert ts-alert-success" role="status"><p class="ts-alert-body">Restored @count approved record(s) into @Model.Database.Name.</p></div>}
+@if(Model.Window is not { } window){<p role="status">@(Model.Error.Length == 0 ? "No retained PITR history is available for this database yet." : "The PITR window is unavailable. Try again shortly.")</p>}
+else{
+<form method="post" action="@("/databases/" + Model.Database.Id + "/recovery")" class="ts-form" aria-label="Preview selective recovery">
+<input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+<div class="ts-field"><label class="ts-label" for="recovery-point">Retained UTC timestamp</label><input class="ts-input" id="recovery-point" name="point" type="datetime-local" step="0.001" value="@Model.Point" min="@RecoveryWindow.Input(window.Earliest)" max="@RecoveryWindow.Input(window.Latest)" aria-describedby="recovery-window" required /><p class="ts-hint" id="recovery-window">PITR window: @RecoveryWindow.Input(window.Earliest) UTC to @RecoveryWindow.Input(window.Latest) UTC. Defaults to the latest retained point. Enter UTC; your browser's local time zone is not applied. History inside the window is verified during preview.</p></div>
+<div class="ts-field"><label class="ts-label" for="recovery-collection">Collection</label><input class="ts-input ts-mono" id="recovery-collection" name="collection" value="@Model.Collection" maxlength="128" required /><p class="ts-hint">The collection must currently exist. Recreate a dropped collection explicitly before previewing; historical access rules and schemas are not restored.</p></div>
+<div class="ts-field"><label class="ts-label" for="recovery-ids">Record IDs (optional)</label><textarea class="ts-input ts-mono" id="recovery-ids" name="ids" rows="4" maxlength="2800" aria-describedby="recovery-ids-hint">@Model.Ids</textarea><p class="ts-hint" id="recovery-ids-hint">One ULID per line. Leave empty to preview all historical live records in this collection. Limit: 100 records and 1 MiB of combined current and historical data. Use explicit ID batches for larger selections.</p></div>
+<div class="ts-form-actions"><button class="ts-btn ts-btn-secondary" type="submit" name="operation" value="preview">Preview differences</button></div>
+</form>}
+@if(Model.Preview is { } preview){
+<section aria-labelledby="recovery-differences"><h3 id="recovery-differences">Review differences</h3><p class="ts-meta">Point: @Model.Point · Collection: @Model.Collection · Target: @Model.Database.Name</p>
+@if(preview.Records.Count == 0){<p role="status">No historical live records matched this selection. Nothing can be restored.</p>}
+else{
+<p>Approve each record you want to restore. Approval expires at @preview.ExpiresAt.UtcDateTime.ToString("HH:mm:ss 'UTC'", CultureInfo.InvariantCulture). Changes since this preview refuse the entire apply; preview again after a conflict or service restart.</p>
+<form method="post" action="@("/databases/" + Model.Database.Id + "/recovery")" class="ts-form" aria-label="Approve selected recovery records">
+<input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="approval" value="@preview.Approval" /><input type="hidden" name="collection" value="@Model.Collection" />
+<div class="ts-table-wrap"><table class="ts-table"><caption>Current and retained values for @Model.Collection</caption><thead><tr><th scope="col">Approve record</th><th scope="col">Current value</th><th scope="col">Retained value to restore</th></tr></thead><tbody>
+@foreach(var record in preview.Records){var present = record.Current is { ValueKind: not JsonValueKind.Null }; var same = present && JsonElement.DeepEquals(record.Historical, record.Current!.Value);
+<tr><th scope="row"><label class="ts-check"><input type="checkbox" name="approved" value="@record.Id" /><span class="ts-mono">@record.Id</span></label><p class="ts-meta">@(same ? "Unchanged" : present ? "Changed" : "Currently absent")</p></th><td><pre class="ts-mono">@(present ? record.Current!.Value.GetRawText() : "No live record")</pre><p class="ts-meta">Current version: @(record.CurrentVersion ?? "None")</p></td><td><pre class="ts-mono">@record.Historical.GetRawText()</pre></td></tr>}
+</tbody></table></div>
+<p class="ts-hint">Only checked records are approved. Current-version checks use the accepting region's applied state; unseen writes in other regions follow normal conflict rules. Existing access, schema, storage limits, retention, and erasure rules apply.</p>
+<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit" name="operation" value="apply">Restore approved records into @Model.Database.Name</button></div>
+</form>}
+</section>}
+<a class="ts-link" href="@DatabaseService.Path(Model.Database.Id, "backups")">Back to backups</a>
+</div></section></main>
+@functions { public ShellModel LayoutModel => Model.Shell; }

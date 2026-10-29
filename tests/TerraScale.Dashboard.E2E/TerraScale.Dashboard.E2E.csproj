@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <PublishAot>false</PublishAot>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Microsoft.Playwright" />
+    <PackageReference Include="Stripe.net" />
+    <None Update="Support/axe-core/axe.min.js" CopyToOutputDirectory="PreserveNewest" />
+    <PackageReference Include="Bogus" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <Using Include="TerraScale.Dashboard.E2E.Demo" />
+    <!-- TUnit.Core also has a TestState. -->
+    <Using Include="TerraScale.Dashboard.E2E.Demo.TestState" Alias="TestState" />
+  </ItemGroup>
+</Project>

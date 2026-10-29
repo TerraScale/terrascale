@@ -1,0 +1,6 @@
+# The checked portable IL serves both supported architectures without recompiling.
+FROM mcr.microsoft.com/dotnet/aspnet:11.0.0-rc.1-resolute-chiseled@sha256:af930df2f1e6da76666d818c5922534cc7f2a4077adfae27e7c81c28a6406d29
+WORKDIR /app
+COPY . .
+EXPOSE 8080
+ENTRYPOINT ["dotnet", "TerraScale.Dashboard.dll"]
