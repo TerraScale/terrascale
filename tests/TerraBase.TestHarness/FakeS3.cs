@@ -317,8 +317,12 @@ public sealed partial class FakeS3
     {
         services.AddSingleton(new ShapeStorageSettings
         {
-            Endpoint = new Uri(ObjectStorage), Region = "test-region-1", Bucket = Bucket,
-            AccessKeyId = ShapeAccessKey, SecretKey = ShapeSecretKey, CloudflareApiToken = FakeCloudflare.Token,
+            Endpoint = new Uri(ObjectStorage),
+            Region = "test-region-1",
+            Bucket = Bucket,
+            AccessKeyId = ShapeAccessKey,
+            SecretKey = ShapeSecretKey,
+            CloudflareApiToken = FakeCloudflare.Token,
             Cdn = R2 ? new Uri("https://" + ShapeStorageSettings.CdnHost + "/") : null,
         });
         services.AddHttpClient("shapes-s3").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));

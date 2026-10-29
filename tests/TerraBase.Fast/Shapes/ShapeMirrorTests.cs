@@ -10,7 +10,6 @@ using TerraBase.Engine;
 using TerraBase.Configuration;
 using TerraBase.Engine.Turso;
 using TerraBase.Errors;
-using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;

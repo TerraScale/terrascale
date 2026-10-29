@@ -46,8 +46,11 @@ public sealed class S3ShapeMirrorTests
                         var settings = provider.GetRequiredService<BackupSettings>();
                         return new ShapeStorageSettings
                         {
-                            Endpoint = settings.Endpoint, Region = settings.Region, Bucket = settings.Bucket,
-                            AccessKeyId = settings.AccessKeyId, SecretKey = settings.SecretKey,
+                            Endpoint = settings.Endpoint,
+                            Region = settings.Region,
+                            Bucket = settings.Bucket,
+                            AccessKeyId = settings.AccessKeyId,
+                            SecretKey = settings.SecretKey,
                             CloudflareApiToken = settings.CloudflareApiToken ?? string.Empty,
                             Cdn = TigrisCiBucket.R2 ? new Uri($"https://shapes-{settings.Bucket}.terrascale.tech/") : null,
                         };

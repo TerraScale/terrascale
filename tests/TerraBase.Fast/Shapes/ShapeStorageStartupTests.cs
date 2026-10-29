@@ -34,7 +34,9 @@ public sealed class ShapeStorageStartupTests
             }
             var start = new ProcessStartInfo("dotnet")
             {
-                UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
             };
             foreach (var key in start.Environment.Keys.Where(key => key.StartsWith("TERRABASE_", StringComparison.Ordinal)
                 || key.StartsWith("AWS_", StringComparison.Ordinal) || key.StartsWith("TS_", StringComparison.Ordinal) || key == "BUCKET_NAME").ToArray())
