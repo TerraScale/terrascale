@@ -1,5 +1,5 @@
-using System.Runtime.InteropServices;
 using ZLogger;
+using TerraBase.Engine.Revisions;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
@@ -217,7 +217,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
         RejectDatabaseLinks(scratch);
         foreach (var file in new[] { path, scratch })
         {
-            foreach (var sidecar in Sidecars.Where(sidecar => sidecar != DatabaseKeys.Suffix))
+            foreach (var sidecar in Sidecars.Where(sidecar => sidecar is not (DatabaseKeys.Suffix or RevisionManifestFile.Suffix or RevisionManifestFile.StagedSuffix)))
             {
                 // A log or journal still holding frames belongs to its file: never removed.
                 if (new FileInfo(file + sidecar) is { Exists: true } log && log.Length != 0 && sidecar != "-shm")
@@ -292,46 +292,5 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
         return name.Split('.') is ["", var id, var nonce, RewriteSuffix] && EntityIds.IsValid(nonce) ? id : null;
     }
 
-    // Durably records the directory's entries (a removal or a rename): .NET opens no directory handle.
-    private static void SyncDirectory(string directory)
-    {
-        if (!OperatingSystem.IsLinux())
-        {
-            // shortcut: Linux only, where TerraBase runs; add the platform's directory flush before serving elsewhere.
-            throw new PlatformNotSupportedException("a healthy rewrite syncs directories on Linux only");
-        }
-
-        var descriptor = Native.Open(directory, 0);
-        if (descriptor < 0)
-        {
-            throw new IOException($"opening a database directory to sync it failed (errno {Marshal.GetLastPInvokeError()})");
-        }
-
-        try
-        {
-            if (Native.Fsync(descriptor) != 0)
-            {
-                throw new IOException($"syncing a database directory failed (errno {Marshal.GetLastPInvokeError()})");
-            }
-        }
-        finally
-        {
-            _ = Native.Close(descriptor);
-        }
-    }
-
-    private static class Native
-    {
-        [DllImport("libc", EntryPoint = "open", SetLastError = true)]
-        [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
-        internal static extern int Open([MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags);
-
-        [DllImport("libc", EntryPoint = "fsync", SetLastError = true)]
-        [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
-        internal static extern int Fsync(int descriptor);
-
-        [DllImport("libc", EntryPoint = "close", SetLastError = true)]
-        [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
-        internal static extern int Close(int descriptor);
-    }
+    private static void SyncDirectory(string directory) => TerraBase.Primitives.DirectorySync.Sync(directory);
 }
