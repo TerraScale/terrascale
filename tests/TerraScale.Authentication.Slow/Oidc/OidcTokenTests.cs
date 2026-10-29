@@ -255,53 +255,6 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
         }
     }
 
-    private static Task<HttpResponseMessage> RefreshAsync(OidcHarness oidc, string token, bool publicClient, HttpClient? client = null) =>
-        publicClient ? (client ?? oidc.Client).PostAsync($"/{OidcIssuer.Slug}/oauth/token", new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["grant_type"] = "refresh_token",
-            ["refresh_token"] = token,
-            ["client_id"] = OidcIssuer.CliClientId,
-        })) : oidc.RefreshAsync(token, client);
-
-    private static async Task<JsonElement> IssueTokensAsync(OidcHarness oidc, string session, bool publicClient)
-    {
-        if (!publicClient)
-        {
-            var (verifier, challenge) = OidcHarness.Pkce();
-            using var redeemed = await oidc.RedeemCodeAsync(await oidc.CodeAsync(session, challenge), verifier);
-            await Assert.That(redeemed.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            return await OidcHarness.JsonAsync(redeemed);
-        }
-
-        using var issued = await oidc.Client.PostAsync($"/{OidcIssuer.Slug}/oauth/device", new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["client_id"] = OidcIssuer.CliClientId,
-            ["scope"] = "openid email offline_access",
-        }));
-        await Assert.That(issued.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var device = await OidcHarness.JsonAsync(issued);
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"/ui/{OidcIssuer.Slug}/device")
-        {
-            Content = new FormUrlEncodedContent(new Dictionary<string, string>
-            {
-                ["user_code"] = device.GetProperty("user_code").GetString()!,
-                ["decision"] = "approve",
-            }),
-        };
-        request.Headers.Add("Origin", OidcHarness.PublicOrigin);
-        request.Headers.Add("Cookie", $"tsauth_session={session}");
-        using var approved = await oidc.Client.SendAsync(request);
-        await Assert.That(approved.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        using var polled = await oidc.Client.PostAsync($"/{OidcIssuer.Slug}/oauth/token", new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["grant_type"] = "urn:ietf:params:oauth:grant-type:device_code",
-            ["device_code"] = device.GetProperty("device_code").GetString()!,
-            ["client_id"] = OidcIssuer.CliClientId,
-        }));
-        await Assert.That(polled.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        return await OidcHarness.JsonAsync(polled);
-    }
-
     private static async Task AssertConflictNoticeAsync(JsonElement error)
     {
         await Assert.That(error.GetProperty("error").GetString()).IsEqualTo("invalid_grant");
