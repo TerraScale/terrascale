@@ -15,6 +15,7 @@ ts --version
 ```
 
 The installer supports Linux and macOS, amd64/x86_64 and arm64/aarch64. It
+pages through all monorepo releases to find the highest stable Go version,
 checks SHA-256 before extracting only `ts`, installs to `~/.local/bin` without
 sudo, and preserves an existing binary if downloading or validation fails.
 Checksums detect corruption; trust still depends on GitHub's HTTPS delivery

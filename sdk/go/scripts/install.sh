@@ -28,11 +28,20 @@ else
 fi
 base=https://github.com/TerraScale/terrascale/releases
 if [ "$release" = latest ]; then
-  # Other monorepo areas also release; select only stable Go SDK tags.
-  release=$(curl --proto '=https' --tlsv1.2 -fsSL 'https://api.github.com/repos/TerraScale/terrascale/releases?per_page=100' |
-    tr ',' '\n' |
-    sed -n 's/.*"tag_name":[[:space:]]*"sdk\/go\/v\(0\.0\.[0-9][0-9]*\)".*/\1/p' |
-    sort -t. -k3,3n | tail -n 1)
+  # Search every page: other areas and qualification records share these releases.
+  page=1
+  release=''
+  while :; do
+    response=$(curl --proto '=https' --tlsv1.2 -fsSL "https://api.github.com/repos/TerraScale/terrascale/releases?per_page=100&page=$page")
+    [ "$(printf '%s' "$response" | tr -d '[:space:]')" != '[]' ] || break
+    candidate=$(printf '%s' "$response" |
+      tr ',' '\n' |
+      sed -n 's/.*"tag_name":[[:space:]]*"sdk\/go\/v\(0\.0\.[0-9][0-9]*\)".*/\1/p' |
+      LC_ALL=C grep -E '^0\.0\.(0|[1-9][0-9]*)$' |
+      sort -t. -k3,3n | tail -n 1)
+    release=$(printf '%s\n%s\n' "$release" "$candidate" | sort -t. -k3,3n | tail -n 1)
+    page=$((page + 1))
+  done
   printf '%s\n' "$release" | LC_ALL=C grep -Eq '^0\.0\.(0|[1-9][0-9]*)$' || fail 'no published Go SDK 0.0.X release found'
 fi
 # Released CLI archives retain their historical namespace after repository cutover.

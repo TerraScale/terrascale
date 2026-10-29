@@ -38,15 +38,27 @@ with tempfile.TemporaryDirectory() as directory:
     checksum_file = tmp / "checksums.txt"
     shutil.copyfile(dist / "checksums.txt", checksum_file)
     (mocks / "uname").write_text('#!/bin/sh\ncase "$1" in -s) echo "$TEST_OS";; -m) echo "$TEST_ARCH";; esac\n')
-    (mocks / "curl").write_text("#!" + sys.executable + "\n" + '''import os, pathlib, shutil, sys
+    (mocks / "curl").write_text("#!" + sys.executable + "\n" + '''import json, os, pathlib, shutil, sys
 args = sys.argv[1:]
 url = next(arg for arg in args if arg.startswith("https://"))
 with open(os.environ["TEST_REQUESTS"], "a") as log:
     log.write(url + "\\n")
-if url == "https://api.github.com/repos/TerraScale/terrascale/releases?per_page=100":
-    print('[{"tag_name":"sdk/js/v0.0.99"},{"tag_name":"sdk/go/v0.0.11"},{"tag_name":"sdk/go/v0.0.10"},{"tag_name":"history/ts-go/v0.0.1"}]', end="")
+if url.startswith("https://api.github.com/repos/TerraScale/terrascale/releases?per_page=100&page="):
+    page = int(url.rsplit("=", 1)[1])
+    if str(page) == os.environ.get("TEST_FAIL_RELEASE_PAGE"):
+        sys.exit(22)
+    if page == 1:
+        releases = [{"tag_name": f"sdk/js/qualified-{index:040x}"} for index in range(100)]
+    elif page == 2:
+        releases = [{"tag_name": tag} for tag in ("sdk/go/v0.0.11", "sdk/go/v0.0.9", "history/ts-go/v0.0.1")]
+    elif page == 3:
+        releases = [{"tag_name": tag} for tag in ("sdk/go/v0.0.12", "sdk/go/v0.0.0013", "sdk/go/v0.0.99-beta")]
+    else:
+        assert page == 4, page
+        releases = []
+    print(json.dumps(releases), end="")
 else:
-    assert any(tag in url for tag in ("/download/sdk/go/v0.0.11/", "/download/history/ts-go/v0.0.1/", "/download/history/ts-go/v0.0.10/")), url
+    assert any(tag in url for tag in ("/download/sdk/go/v0.0.12/", "/download/sdk/go/v0.0.11/", "/download/history/ts-go/v0.0.1/", "/download/history/ts-go/v0.0.10/")), url
     name = url.rsplit("/", 1)[1]
     source = pathlib.Path(os.environ["TEST_DIST"]) / name
     if name == "checksums.txt":
@@ -61,9 +73,9 @@ else:
            "TEST_DIST": str(dist), "TEST_CHECKSUMS": str(checksum_file),
            "TEST_REQUESTS": str(requests)}
 
-    def install(system, arch, *args):
+    def install(system, arch, *args, failed_page=""):
         return subprocess.run(["sh", root / "scripts/install.sh", *args],
-                              env={**env, "TEST_OS": system, "TEST_ARCH": arch},
+                              env={**env, "TEST_OS": system, "TEST_ARCH": arch, "TEST_FAIL_RELEASE_PAGE": failed_page},
                               text=True, capture_output=True)
 
     binary = home / ".local/bin/ts"
@@ -73,10 +85,17 @@ else:
                                            ("Darwin", "arm64", "darwin", "arm64")):
         result = install(system, machine)
         assert result.returncode == 0, result.stderr
+        assert "Installed ts 0.0.12 " in result.stdout, result.stdout
         with tarfile.open(dist / f"ts_{platform}_{arch}.tar.gz") as archive:
             assert binary.read_bytes() == archive.extractfile("ts").read()
         assert binary.stat().st_mode & 0o111
-    assert requests.read_text().splitlines().count("https://api.github.com/repos/TerraScale/terrascale/releases?per_page=100") == 4
+    for page in range(1, 5):
+        url = f"https://api.github.com/repos/TerraScale/terrascale/releases?per_page=100&page={page}"
+        assert requests.read_text().splitlines().count(url) == 4
+    original = binary.read_bytes()
+    result = install("Linux", "x86_64", failed_page="3")
+    assert result.returncode != 0, "failed release-page request accepted"
+    assert binary.read_bytes() == original, "pagination failure changed existing installation"
     result = install("Linux", "x86_64", "0.0.1")
     assert result.returncode == 0, result.stderr
     original = binary.read_bytes()

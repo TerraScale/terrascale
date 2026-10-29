@@ -11,16 +11,16 @@ for the current contract; [migration status](csharp-migration.md) retains histor
 
 ## Local development
 
-Install the versions pinned in `global.json` and `.mise.toml`, then install
+Install the .NET SDK pinned in root `global.json` and the asset tooling pinned in `src/TerraScale.Dashboard/web/package-lock.json`, then install
 the asset build's dependencies with `npm ci` in `src/TerraScale.Dashboard/web`
 (the project build also does this when they are missing). Run local builds, lint, tests and
 watchers with low CPU priority:
 
 ```sh
-nice -n 19 make build
-nice -n 19 make lint
-nice -n 19 make dev
-nice -n 19 make demo
+nice -n 19 make dashboard-build
+nice -n 19 make dashboard-lint
+nice -n 19 make -f scripts/dashboard/Makefile dev
+nice -n 19 make -f scripts/dashboard/Makefile demo
 ```
 
 The dotted region map, `web/static/brand/region-map.svg`, is committed. Only
@@ -51,17 +51,22 @@ Scenario and protocol controls belong under
 Node browser journeys are in `tests/TerraScale.Dashboard.E2E/browser`.
 
 ```sh
-nice -n 19 make test-e2e
-nice -n 19 make test-hot-reload
-nice -n 19 make test-live-readiness
-nice -n 19 make perf
+nice -n 19 make -f scripts/dashboard/Makefile test-e2e
+nice -n 19 make -f scripts/dashboard/Makefile test-hot-reload
+nice -n 19 make -f scripts/dashboard/Makefile test-live-readiness
+nice -n 19 make -f scripts/dashboard/Makefile perf
 ```
 
 `test-fast` runs the HTTP, MCP, CLI and customer-SDK journeys; `test-slow` runs the
 browser journeys and the internal-billing policy suites (`[Category("Slow")]`);
-`test-e2e` runs both for local investigation. GitHub Actions is the PR gate; no local test/check run is required before pushing or opening a PR. Use `nice -n 19 make check` (formatting, build, security and Fast) for local investigation. Slow runs independently in GitHub Actions; failures remain red and create or update a GitHub issue.
-CI does not run the explicit hot-reload journey. For changes to `scripts/demo.sh`, `scripts/dev.sh`, the asset scripts or the demo host,
-use `nice -n 19 make test-hot-reload` on a tailnet machine when investigating hot reload locally.
+`test-e2e` runs both for local investigation. Ship with `ts-ship` from the monorepo root;
+its dashboard Fast command runs on a dev host and must finish within five minutes.
+GitHub Actions verifies that exact revision's Fast proof. Heavy validation runs through
+`ts-heavy-any`; qualification uses `scripts/dashboard/prepare-deployment.sh` before
+image publication from green main. Slow failures remain visible and create or update a
+matching GitHub issue.
+CI does not run the explicit hot-reload journey. For changes to `scripts/dashboard/demo.sh`, `scripts/dashboard/dev.sh`, the asset scripts or the demo host,
+use `nice -n 19 make -f scripts/dashboard/Makefile test-hot-reload` on a tailnet machine when investigating hot reload locally.
 `check-e2e-shards` lists the discovered tests. The solution contains one
 production application and its E2E project; the test executable owns
 TUnit discovery, assertions, fixtures and TRX reports. Fixtures start real
