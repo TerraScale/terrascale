@@ -18,7 +18,7 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
 
     public ManagedDatabaseRef Database { get; } = database;
 
-    public string File => $"v1/{Database.Organization}/{Database.Project}/{Database.Id}";
+    public string File => $"v1/{Database.Organization}/{Database.Project}/{Database.Id}/nodes/local";
 
     private IContinuousBackup Backup => Api.Server.Services.GetRequiredService<IContinuousBackup>();
     public static async Task<BackupShippingHost> StartAsync(Action<IServiceCollection>? services = null)

@@ -56,7 +56,7 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
     public async Task<RestoredBackup> BuildAsync(
         string file, string scope, SnapshotKey snapshot, DateTimeOffset at, long? until, SnapshotKey? next, CancellationToken cancellationToken)
     {
-        if (until is null && file == BackupLayout.File(null) && !PointInTimeRestore.Covers(snapshot.At, at))
+        if (until is null && file.StartsWith(BackupLayout.FileRoot(null) + "/", StringComparison.Ordinal) && !PointInTimeRestore.Covers(snapshot.At, at))
         {
             // A catalog follower applies the leader's writes to its system database without capture, so neither its log
             // nor a later snapshot at the same position shows what was written after a snapshot: only snapshot times hold.

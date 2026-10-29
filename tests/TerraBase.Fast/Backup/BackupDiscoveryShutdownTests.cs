@@ -188,7 +188,7 @@ public sealed class BackupDiscoveryShutdownTests
         response.EnsureSuccessStatusCode();
     }
 
-    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
+    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
 
     private sealed class BackupLifetime(ContinuousBackup backup, bool manual) : IHostedService
     {

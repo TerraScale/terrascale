@@ -171,9 +171,9 @@ public sealed partial class HistoryErasureBackupTests
         await Host.DeleteAsync(api, Users, subject);
         await Host.PutAsync(api, HistoryErasure.MarkCollection, erasure, $$"""{"kind":"request","erasureId":"{{erasure}}","fenceId":"{{fence}}"}""");
         await backup.RunOnceAsync(CancellationToken.None);
-        await Assert.That(host.S3.Objects.Keys.Any(key => key.StartsWith(BackupLayout.Snapshots(BackupLayout.File(Auth)), StringComparison.Ordinal))).IsTrue();
+        await Assert.That(host.S3.Objects.Keys.Any(key => key.StartsWith(BackupLayout.Snapshots(BackupLayout.File(Auth, "local")), StringComparison.Ordinal))).IsTrue();
 
-        var preErasureGeneration = host.S3.Objects.Keys.Where(key => key.StartsWith(BackupLayout.Snapshots(BackupLayout.File(Auth)), StringComparison.Ordinal))
+        var preErasureGeneration = host.S3.Objects.Keys.Where(key => key.StartsWith(BackupLayout.Snapshots(BackupLayout.File(Auth, "local")), StringComparison.Ordinal))
             .Select(BackupLayout.ParseSnapshot).First()!.Generation;
 
         host.Clock.Advance(TimeSpan.FromMilliseconds(1));
@@ -193,20 +193,20 @@ public sealed partial class HistoryErasureBackupTests
         {
             var receipt = await Host.OwnAsync(api, erasure);
             await Assert.That(host.S3.Objects.Keys.Where(key => key.Contains("/snapshots/", StringComparison.Ordinal)).Select(BackupLayout.ParseSnapshot).Any(snapshot => snapshot is not null
-                && snapshot.Key.StartsWith(BackupLayout.Snapshots(BackupLayout.File(Auth)), StringComparison.Ordinal)
+                && snapshot.Key.StartsWith(BackupLayout.Snapshots(BackupLayout.File(Auth, "local")), StringComparison.Ordinal)
                 && snapshot.Generation.Time < receipt.ResidueAt && snapshot.At < receipt.ResidueAt)).IsTrue()
                 .Because("a real generation was pinned on the rewritten file before its receipt was published");
         }
 
         await DaysOfBackupAsync(host, backup, 3);
-        await Assert.That(host.S3.Objects.ContainsKey(BackupLayout.GenerationProof(BackupLayout.File(Auth), preErasureGeneration))).IsFalse()
+        await Assert.That(host.S3.Objects.ContainsKey(BackupLayout.GenerationProof(BackupLayout.File(Auth, "local"), preErasureGeneration))).IsFalse()
             .Because("retention removes obsolete certificates after their snapshots and WAL are gone");
 
-        host.S3.SeedVersion(customer: false, BackupLayout.File(Auth) + "/snapshots/hidden", "v-old", [1]);
+        host.S3.SeedVersion(customer: false, BackupLayout.File(Auth, "local") + "/snapshots/hidden", "v-old", [1]);
         await Host.PassWithBackupAsync(api, backup);
         await Assert.That((await Host.RequestAsync(api, erasure, requested)).Status).IsEqualTo(HistoryErasure.Backup);
         await Assert.That((await Host.RecordAsync(api, erasure)).BackupCleanAt).IsNull();
-        await Assert.That(host.S3.ExpireVersion(customer: false, BackupLayout.File(Auth) + "/snapshots/hidden", "v-old")).IsTrue();
+        await Assert.That(host.S3.ExpireVersion(customer: false, BackupLayout.File(Auth, "local") + "/snapshots/hidden", "v-old")).IsTrue();
 
         await Host.PassWithBackupAsync(api, backup);
         var clean = (await Host.RecordAsync(api, erasure)).BackupCleanAt;
@@ -338,7 +338,7 @@ public sealed partial class HistoryErasureBackupTests
             offset = await read.GetOffsetAsync(CancellationToken.None);
         }
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
-        var file = BackupLayout.File(Auth);
+        var file = BackupLayout.File(Auth, "local");
         var snapshot = host.S3.Objects.Keys.Where(key => key.StartsWith(BackupLayout.Snapshots(file), StringComparison.Ordinal))
             .Select(BackupLayout.ParseSnapshot).First()!;
         var proof = BackupLayout.GenerationProof(file, snapshot.Generation);

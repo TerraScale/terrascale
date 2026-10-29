@@ -188,7 +188,7 @@ public sealed class DatabaseBackupPurgeTests
         // Tigris lists an unversioned bucket's objects as version "null" and truncates with only NextKeyMarker (2026-10-28).
         for (var index = 0; index < 257; index++)
         {
-            state.S3.SeedObject(false, prefix + index.ToString("D4", CultureInfo.InvariantCulture), [1]);
+            state.S3.SeedObject(false, prefix + (index < 129 ? "nodes/node-a/" : "nodes/node-b/") + index.ToString("D4", CultureInfo.InvariantCulture), [1]);
         }
 
         state.S3.SeedObject(false, Prefix(neighbor) + "snapshot", [1]);
@@ -211,7 +211,7 @@ public sealed class DatabaseBackupPurgeTests
         await Assert.That(age).IsBetween(600, 601);
 
         await PassAsync(api, token);
-        await Assert.That(markers.Last()).IsEqualTo((prefix + "0127", (string?)null));
+        await Assert.That(markers.Last()).IsEqualTo((prefix + "nodes/node-a/0127", (string?)null));
         await Assert.That(Remaining(state, prefix)).IsEqualTo(1);
         for (var pass = 0; pass < 4 && !await VerifiedAsync(api, token); pass++)
         {

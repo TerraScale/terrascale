@@ -347,7 +347,7 @@ internal static class PitrSelfCheck
         time.Advance(TimeSpan.FromSeconds(1));
         await backup.RunOnceAsync(cancellationToken);
 
-        var file = $"v1/{database.Organization}/{database.Project}/{database.Id}";
+        var file = $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
         var status = backup.Status.Files.Single(item => item.File == file);
         using var restore = await api.Client.PostAsJsonAsync(ManagementApi.Uri($"{database.Path}/point-in-time/restore"),
             new { pointInTime = status.LastShippedAt!.Value, name = "main-restored" }, cancellationToken);
@@ -374,7 +374,7 @@ internal static class PitrSelfCheck
             && original.Totals.Upserts >= texts.Count,
             $"{original.Verdict}: {original.Totals.Snapshots} snapshots, {original.Totals.Segments} segments, {original.Totals.Upserts} upserts, {original.Totals.Commits} commits, " +
             $"problems: {string.Join("; ", original.Problems.Select(problem => problem.Kind + " " + problem.Detail))}");
-        var system = await AuditAsync(root, "v1/_system/", "v1/keys/_system/", masterKey, scratch, Path.Combine(work, "audit-system.json"), cancellationToken);
+        var system = await AuditAsync(root, "v1/_system/nodes/local/", "v1/keys/_system/", masterKey, scratch, Path.Combine(work, "audit-system.json"), cancellationToken);
         check("audit.system", system.Verdict == "ok" && system.Totals.Snapshots >= 1, $"{system.Verdict}: the system database's {system.Totals.Snapshots} snapshots, {system.Totals.Segments} segments");
         if (generation is null || generation.Segments.Count < 4)
         {

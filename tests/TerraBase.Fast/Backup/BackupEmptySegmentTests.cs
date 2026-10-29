@@ -38,7 +38,7 @@ public sealed class BackupEmptySegmentTests
         time.Advance(TimeSpan.FromSeconds(10));
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(cancellationToken);
 
-        var file = $"v1/{database.Organization}/{database.Project}/{database.Id}";
+        var file = $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
         var snapshot = s3.Objects.Single(item => item.Key.StartsWith(file + "/snapshots/", StringComparison.Ordinal));
         var parts = snapshot.Key[(snapshot.Key.LastIndexOf('/') + 1)..].Split('-');
         await Assert.That(parts[2]).IsEqualTo("0000000000000000");

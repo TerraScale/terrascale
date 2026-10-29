@@ -39,7 +39,7 @@ public sealed class CustomerBackupUnicodeTests
         var text = new Faker().Lorem.Sentence(12);
         using var written = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "kept")), new { text }, cancellationToken);
         written.EnsureSuccessStatusCode();
-        var file = $"v1/{database.Organization}/{database.Project}/{database.Id}";
+        var file = $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
         var prefix = file + "/snapshots/";
         var bmp = prefix + "\uE000-junk-";
         var supplementary = prefix + "\U00010000-junk-";

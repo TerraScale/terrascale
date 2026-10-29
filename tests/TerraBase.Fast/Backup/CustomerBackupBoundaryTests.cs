@@ -237,7 +237,7 @@ public sealed class CustomerBackupBoundaryTests
             .GetProperty("document").GetProperty("text").GetString()).IsEqualTo(text);
     }
 
-    private static string FilePrefix(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
+    private static string FilePrefix(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
 
     private sealed class PaddedMasterKey(MasterKey inner, int wrappedBytes) : IMasterKey
     {

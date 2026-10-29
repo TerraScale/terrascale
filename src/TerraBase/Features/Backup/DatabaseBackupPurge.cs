@@ -126,7 +126,7 @@ internal sealed class DatabaseBackupPurge(
             return progress with { ObjectsAbsentAt = null, Failure = "active_copies_pending" };
         }
 
-        var prefix = BackupLayout.File(job.Database) + "/";
+        var prefix = BackupLayout.FileRoot(job.Database) + "/";
         var failed = progress.InventoryFailed;
         failed |= !await AttemptAsync(job, BackupDestinationNames.Platform, null, prefix, progress.ObjectsAbsentAt, token).ConfigureAwait(false);
         var destinations = await catalog.ReadUncheckedAsync(transaction =>

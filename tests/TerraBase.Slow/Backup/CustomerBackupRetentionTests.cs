@@ -194,7 +194,7 @@ public sealed class CustomerBackupRetentionTests
         await Assert.That(body.GetProperty("document").GetProperty("text").GetString()).IsEqualTo(text);
     }
 
-    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
+    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
 
     private static Uri Uri(string path) => ManagementApi.Uri(path);
 }

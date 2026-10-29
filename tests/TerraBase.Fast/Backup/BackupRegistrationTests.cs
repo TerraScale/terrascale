@@ -48,14 +48,14 @@ public sealed class BackupRegistrationTests
                 await backup.RunOnceAsync(cancellationToken);
             }
 
-            var orphanPrefix = BackupLayout.File(orphan);
-            var registeredPrefix = BackupLayout.File(orphan with { DatabaseId = database.Id });
-            var snapshotPrefix = BackupLayout.File(orphan with { DatabaseId = snapshot });
+            var orphanPrefix = BackupLayout.File(orphan, "local");
+            var registeredPrefix = BackupLayout.File(orphan with { DatabaseId = database.Id }, "local");
+            var snapshotPrefix = BackupLayout.File(orphan with { DatabaseId = snapshot }, "local");
             await Assert.That(opened.Contains(orphan.DatabaseId!)).IsFalse();
             await Assert.That(backup.Status.Files.Any(file => file.File == orphanPrefix)).IsFalse();
             await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(orphanPrefix + "/", StringComparison.Ordinal))).IsFalse();
             await Assert.That(File.Exists(Path.Combine(directory, orphan.OrganizationId, orphan.ProjectId!, orphan.DatabaseId + ".db"))).IsTrue();
-            foreach (var prefix in new[] { registeredPrefix, snapshotPrefix, BackupLayout.File(null) })
+            foreach (var prefix in new[] { registeredPrefix, snapshotPrefix, BackupLayout.File(null, "local") })
             {
                 await Assert.That(backup.Status.Files.Any(file => file.File == prefix && file.Generation is not null)).IsTrue();
                 await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(prefix + "/snapshots/", StringComparison.Ordinal))).IsTrue();

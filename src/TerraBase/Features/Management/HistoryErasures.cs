@@ -710,10 +710,16 @@ internal sealed partial class HistoryErasures(
             bool snapshots;
             try
             {
-                clean = await OlderAbsentAsync(store, BackupLayout.File(AuthDatabase), cut, cancellationToken, [.. receipts.Select(receipt => receipt.Residue!)], services.GetRequiredService<DataKeys>(), BackupLayout.KeyScope(AuthDatabase)).ConfigureAwait(false)
-                    && await OlderAbsentAsync(store, BackupLayout.File(null), systemCut, cancellationToken, [.. receipts.Select(receipt => receipt.System!)], services.GetRequiredService<DataKeys>(), BackupLayout.KeyScope(null)).ConfigureAwait(false)
-                    && !await store.HoldsHiddenVersionsAsync(BackupLayout.File(AuthDatabase) + "/", cut, MaxBackupObjects, cancellationToken).ConfigureAwait(false)
-                    && !await store.HoldsHiddenVersionsAsync(BackupLayout.File(null) + "/", systemCut, MaxBackupObjects, cancellationToken).ConfigureAwait(false);
+                clean = true;
+                foreach (var receipt in receipts)
+                {
+                    var authFile = BackupLayout.File(AuthDatabase, receipt.MachineId);
+                    var systemFile = BackupLayout.File(null, receipt.MachineId);
+                    clean &= await OlderAbsentAsync(store, authFile, cut, cancellationToken, [receipt.Residue!], services.GetRequiredService<DataKeys>(), BackupLayout.KeyScope(AuthDatabase)).ConfigureAwait(false)
+                        && await OlderAbsentAsync(store, systemFile, systemCut, cancellationToken, [receipt.System!], services.GetRequiredService<DataKeys>(), BackupLayout.KeyScope(null)).ConfigureAwait(false)
+                        && !await store.HoldsHiddenVersionsAsync(authFile + "/", cut, MaxBackupObjects, cancellationToken).ConfigureAwait(false)
+                        && !await store.HoldsHiddenVersionsAsync(systemFile + "/", systemCut, MaxBackupObjects, cancellationToken).ConfigureAwait(false);
+                }
                 snapshots = clean && record.BackupCleanAt is { } since && record.BackupFinalId == record.FinalId
                     && await store.SnapshotsEnabledAsync(cancellationToken).ConfigureAwait(false)
                     && (await store.ListSnapshotsAsync(cancellationToken).ConfigureAwait(false)).Any(snapshot => snapshot.At <= since);

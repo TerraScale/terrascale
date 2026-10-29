@@ -119,7 +119,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     }
 
     public DateTimeOffset? LastShipped(TenantContext database, Ulid? generation = null) =>
-        _files.TryGetValue(BackupLayout.File(database), out var file) && file.Shipping && file.PlatformProgress is { } progress
+        _files.TryGetValue(BackupLayout.File(database, _node), out var file) && file.Shipping && file.PlatformProgress is { } progress
             && (generation is null || progress.Generation == generation) ? progress.At : null;
 
     public async Task RunOnceAsync(CancellationToken cancellationToken)
@@ -501,7 +501,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             }
             else if (registered is not false)
             {
-                present.Add(BackupLayout.File(database));
+                present.Add(BackupLayout.File(database, _node));
             }
         }
 
@@ -525,7 +525,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     private async Task OpenAsync(TenantContext? database, HashSet<string> present, CancellationToken cancellationToken)
     {
-        var prefix = BackupLayout.File(database);
+        var prefix = BackupLayout.File(database, _node);
         present.Add(prefix);
         if (_files.ContainsKey(prefix))
         {

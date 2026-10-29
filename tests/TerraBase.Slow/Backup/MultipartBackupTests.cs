@@ -359,7 +359,7 @@ public sealed class MultipartBackupTests
     private static BackupFileStatus Status(IContinuousBackup backup, ManagedDatabaseRef database) =>
         backup.Status.Files.Single(file => file.File == File(database));
 
-    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
+    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
 
     private static string DocumentPath(ManagedDatabaseRef database, string name, string document) =>
         $"/v1/projects/{database.Project}/databases/{name}/collections/items/documents/by-key?id={ManagementApi.DocumentId(document)}";

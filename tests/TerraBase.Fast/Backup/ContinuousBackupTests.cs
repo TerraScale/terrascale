@@ -74,8 +74,8 @@ public sealed class ContinuousBackupTests
         await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         var files = status.RootElement.GetProperty("files").EnumerateArray().ToList();
         await Assert.That(status.RootElement.GetProperty("shipping").GetBoolean()).IsTrue();
-        await Assert.That(files.Select(file => file.GetProperty("file").GetString())).Contains("v1/_system");
-        await Assert.That(files.Select(file => file.GetProperty("file").GetString())).Contains($"v1/{database.Organization}/{database.Project}/{database.Id}");
+        await Assert.That(files.Select(file => file.GetProperty("file").GetString())).Contains("v1/_system/nodes/local");
+        await Assert.That(files.Select(file => file.GetProperty("file").GetString())).Contains($"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local");
         await Assert.That(files.All(file => file.GetProperty("generation").GetString() is not null && file.GetProperty("lagSeconds").GetDouble() == 0)).IsTrue();
 
         foreach (var metric in new[] { "terrabase_backup_lag_seconds", "terrabase_backup_last_success_seconds", "terrabase_backup_uploaded_bytes_total", "terrabase_backup_files" })
@@ -360,9 +360,9 @@ public sealed class ContinuousBackupTests
     }
 
     private static string? Generation(IContinuousBackup backup, ManagedDatabaseRef database) =>
-        backup.Status.Files.Single(file => file.File == $"v1/{database.Organization}/{database.Project}/{database.Id}").Generation;
+        backup.Status.Files.Single(file => file.File == $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local").Generation;
 
-    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
+    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
     private static List<(DateTimeOffset At, long Position)> Snapshots(FakeS3 s3, ManagedDatabaseRef database) =>
         [.. s3.Objects.Keys.Where(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal)).Order(StringComparer.Ordinal)
             .Select(key => key.Split('/')[^1].Split('-'))

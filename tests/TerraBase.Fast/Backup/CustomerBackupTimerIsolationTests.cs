@@ -269,7 +269,7 @@ public sealed class CustomerBackupTimerIsolationTests
         await Assert.That(json.Contains("wrappedKey", StringComparison.Ordinal)).IsFalse();
     }
 
-    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
+    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
 
     private sealed class TimerTime(FakeTimeProvider time) : TimeProvider, IDisposable
     {
@@ -338,7 +338,7 @@ public sealed class CustomerBackupTimerIsolationTests
             }
 
             var tracked = new TrackedTap(tap);
-            Taps[BackupLayout.File(database)] = tracked;
+            Taps[BackupLayout.File(database, "local")] = tracked;
             return tracked;
         }
 

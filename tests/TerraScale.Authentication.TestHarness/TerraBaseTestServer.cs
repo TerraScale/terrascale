@@ -90,20 +90,13 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     public Uri MetricsAddress => new($"http://127.0.0.1:{this.backendPorts.Metrics}/");
 
     /// <summary>A client that never follows redirects and sends the peer credential. Owned by the server.</summary>
-    public HttpClient Http { get; } = AsTsAuth(new(new PeerCredentialHandler(PeerSecret)
+    public HttpClient Http { get; } = new(new PeerCredentialHandler(PeerSecret)
     {
         InnerHandler = new BackendErrorDiagnostics { InnerHandler = new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false } },
-    }));
+    });
 
     /// <summary>A plain client for the public listener. It never carries the internal credential.</summary>
-    public HttpClient PublicHttp { get; } = AsTsAuth(new(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false }));
-
-    // ts-auth's storage writes wait for another region's durable ack, as its production transport asks (TerraBaseTransport).
-    private static HttpClient AsTsAuth(HttpClient client)
-    {
-        client.DefaultRequestHeaders.Add(TerraBaseTransport.DurabilityHeader, "remote_durable");
-        return client;
-    }
+    public HttpClient PublicHttp { get; } = new(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false });
 
     /// <summary>Starts <c>TERRABASE_BINARY</c>; returns the reason instead when it names no file.</summary>
     public static Task<(TerraBaseTestServer? Server, string? Unavailable)> StartAsync(CancellationToken cancellationToken = default) =>

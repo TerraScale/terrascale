@@ -306,7 +306,7 @@ public sealed class BackupKeyRotationTests
                 await Assert.That(s3.Objects.ContainsKey(oldKey)).IsTrue();
                 await Assert.That(s3.Objects.ContainsKey(oldSystemKey)).IsTrue();
                 var newSystemKey = s3.Objects.Keys.Single(key => key.StartsWith("v1/keys/_system/", StringComparison.Ordinal) && key != oldSystemKey);
-                await Assert.That(s3.Objects.Any(item => item.Key.StartsWith("v1/_system/", StringComparison.Ordinal)
+                await Assert.That(s3.Objects.Any(item => item.Key.StartsWith("v1/_system/nodes/local/", StringComparison.Ordinal)
                     && KeyId(item.Value) == newSystemKey["v1/keys/_system/".Length..])).IsTrue();
                 await Assert.That(s3.Objects.Where(item => item.Key.StartsWith(FilePrefix(database) + "/", StringComparison.Ordinal))
                     .All(item => s3.Objects.ContainsKey(keys + KeyId(item.Value)) && !rejected.ContainsKey(keys + KeyId(item.Value)))).IsTrue();
@@ -352,7 +352,7 @@ public sealed class BackupKeyRotationTests
             }
             time.Advance(TimeSpan.FromSeconds(10));
             await cold.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-            var restoredPrefix = $"v1/{database.Organization}/{database.Project}/{restoredDatabase.GetProperty("id").GetString()}/snapshots/";
+            var restoredPrefix = $"v1/{database.Organization}/{database.Project}/{restoredDatabase.GetProperty("id").GetString()}/nodes/local/snapshots/";
             await Assert.That(s3.Objects.Where(item => item.Key.StartsWith(restoredPrefix, StringComparison.Ordinal))
                 .Select(item => KeyId(item.Value))).IsEquivalentTo([newKey[keys.Length..]]);
             await Assert.That(s3.GeneratedKeys).IsEqualTo(generated);
@@ -543,7 +543,7 @@ public sealed class BackupKeyRotationTests
     private static string DatabaseFile(string directory, ManagedDatabaseRef database) =>
         Path.Combine(directory, database.Organization, database.Project, database.Id + ".db");
 
-    private static string FilePrefix(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
+    private static string FilePrefix(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
 
     private static string Keys(ManagedDatabaseRef database) => $"v1/keys/{database.Organization}/{database.Project}/";
 

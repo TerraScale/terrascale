@@ -120,7 +120,7 @@ public sealed class CustomerBackupMaintenanceTests
         await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
-    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
+    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
 
     private static async Task SetAsync(ManagementApi api, ManagedDatabaseRef database, CancellationToken token)
     {

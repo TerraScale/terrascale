@@ -64,7 +64,7 @@ public sealed class TigrisBackupTests
                     : response.StatusCode.ToString();
             }
 
-            var objects = await ListAsync(s3, $"{prefix}v1/{database.Organization}/{database.Project}/{database.Id}/", cancellationToken);
+            var objects = await ListAsync(s3, $"{prefix}v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local/", cancellationToken);
             var plain = Encoding.UTF8.GetBytes(written.Values.First());
             var sealedOnly = true;
             foreach (var key in objects)

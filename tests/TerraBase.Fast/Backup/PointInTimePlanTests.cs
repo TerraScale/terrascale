@@ -436,7 +436,7 @@ public sealed class PointInTimePlanTests
 
     private static Uri Uri(string path) => ManagementApi.Uri(path);
 
-    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
+    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
 
     private static string[] Snapshot(FakeS3 s3, ManagedDatabaseRef database, DateTimeOffset at) =>
         s3.Objects.Keys.Where(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))

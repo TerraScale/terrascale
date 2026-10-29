@@ -43,7 +43,7 @@ internal sealed class ReproHost(ManagementApi api, FakeS3 s3, FakeTimeProvider t
         return new ReproHost(api, s3, time);
     }
 
-    public static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
+    public static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
 
     public static void Log(string line) => Console.WriteLine("[pitr-repro] " + line);
 
