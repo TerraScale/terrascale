@@ -1,0 +1,28 @@
+name: SDK dotnet Fast
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sdk/dotnet/**'
+      - '.github/workflows/sdk-dotnet-*.yml'
+      - '.github/workflows/sdk-fast.yml'
+      - 'scripts/sdk/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'sdk/dotnet/**'
+      - '.github/workflows/sdk-dotnet-*.yml'
+      - '.github/workflows/sdk-fast.yml'
+      - 'scripts/sdk/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: read
+
+jobs:
+  fast:
+    uses: ./.github/workflows/sdk-fast.yml
+    with:
+      area: sdk-dotnet

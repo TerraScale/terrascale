@@ -12,6 +12,7 @@ import zipfile
 
 root = Path(__file__).resolve().parents[1]
 dist = root / "dist"
+expected_version = os.environ.get("TS_GO_VERSION", "0.0.0-dev")
 checksums = dict(line.split()[::-1] for line in (dist / "checksums.txt").read_text().splitlines())
 for platform in ("linux", "darwin", "windows"):
     for arch in ("amd64", "arm64"):
@@ -26,9 +27,9 @@ for platform in ("linux", "darwin", "windows"):
 formula = (dist / "homebrew/Formula/ts.rb").read_text()
 assert "class Ts < Formula" in formula
 assert 'bin.install "ts"' in formula
-assert "0.0.0-dev" in formula
+assert expected_version in formula
 native = dist / "ts_linux_amd64_v1/ts"
-assert subprocess.check_output([native, "--version"], text=True) == "ts 0.0.0-dev\n"
+assert subprocess.check_output([native, "--version"], text=True) == f"ts {expected_version}\n"
 
 with tempfile.TemporaryDirectory() as directory:
     tmp = Path(directory)
