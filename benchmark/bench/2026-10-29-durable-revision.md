@@ -8,11 +8,11 @@ Source: [`benchmark/turso-sync-host/`](../turso-sync-host/README.md). Regenerate
 
 | Item | Value |
 | --- | --- |
-| TerraScale commit | `52147d7308b0847a0a929d79f4d3ed4e4da186ae` |
+| TerraScale commit | `564957954745cd238ebe98c639b5d27bb35a12a5` |
 | Turso source | [`5c168be5ef6a32ac966daf5983502a4f694b37ad`](https://github.com/tursodatabase/turso/tree/5c168be5ef6a32ac966daf5983502a4f694b37ad) (0.8.2, tarball SHA-256 `7ea83d5e28577cf9d8655b77705902379e06b82fb29424f6ea328b5f26f17ecb`) |
 | Rust toolchain | 1.88.0 |
-| `ts-sync-revision-host` SHA-256 | `b0f86f781240fe523233e28e13ecb8340313c4967621ea944ee4503e0d7ab0ec` |
-| `tursodb` (control) SHA-256 | `617226dbe6872b15133ec26ef58320ae8735f36fd07b87780817382ad44bb750` |
+| `ts-sync-revision-host` SHA-256 | `402a7e0569c161dc93cfe629cc2cd774f52dd81d13b354bd2811da4db8b599f3` |
+| `tursodb` (control) SHA-256 | `7614fc3772238cdf8cbf9762fdb7bef644a3b861297626ae191c74bcdebebdb0` |
 | Official client | `@tursodatabase/sync` 0.8.2, Node v24.22.2 |
 | Machine | mariogk-dev (Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz, 46 CPUs), Linux 7.3.0 |
 | Network | loopback; client, host and control on one machine |
@@ -41,27 +41,27 @@ Each row is the first `/pull-updates` response the official client received afte
 
 | Event / client | Expected | Repeat 1 | Repeat 2 | Repeat 3 |
 | --- | --- | --- | --- | --- |
-| coordinated-checkpoint / a | `incremental` | ok: `incremental` 18/40 pages | ok: `incremental` 21/41 pages | ok: `incremental` 19/40 pages |
-| sql-sandbox / a | `incremental` | ok: `incremental` 8/41 pages | ok: `incremental` 8/42 pages | ok: `incremental` 9/41 pages |
-| retained-history-window / a | `incremental` | ok: `incremental` 25/48 pages (x10) | ok: `incremental` 23/47 pages (x10) | ok: `incremental` 23/47 pages (x10) |
-| retained-history-window / c | `incremental` | ok: `incremental` 32/52 pages (x2) | ok: `incremental` 31/51 pages (x2) | ok: `incremental` 30/50 pages (x2) |
-| retained-history-window / b | `incremental` | ok: `incremental` 65/65 pages | ok: `incremental` 64/64 pages | ok: `incremental` 63/63 pages |
-| history-horizon-expires / a | `incremental` | ok: `incremental` 25/68 pages (x11) | ok: `incremental` 26/68 pages (x11) | ok: `incremental` 25/67 pages (x11) |
-| history-horizon-expires / c | `incremental` | ok: `incremental` 25/68 pages (x10) | ok: `incremental` 26/68 pages (x10) | ok: `incremental` 25/67 pages (x10) |
-| history-horizon-expires / e | `full;expired` | ok: `full;expired` 101/101 pages | ok: `full;expired` 98/98 pages | ok: `full;expired` 97/97 pages |
-| automatic-checkpoint-policy / a | `incremental` | ok: `incremental` 2771/2849 pages | ok: `incremental` 2769/2846 pages | ok: `incremental` 2771/2845 pages |
-| graceful-restart / a | `incremental` | ok: `incremental` 27/2854 pages | ok: `incremental` 24/2851 pages | ok: `incremental` 27/2851 pages |
-| graceful-restart / c | `incremental` | ok: `incremental` 2789/2854 pages | ok: `incremental` 2784/2851 pages | ok: `incremental` 2786/2851 pages |
-| crash-restart / a | `incremental` | ok: `incremental` 20/2858 pages | ok: `incremental` 23/2855 pages | ok: `incremental` 26/2855 pages |
-| external-checkpoint-while-down / a | `full;rewritten` | ok: `full;rewritten` 2861/2861 pages | ok: `full;rewritten` 2862/2862 pages | ok: `full;rewritten` 2858/2858 pages |
-| external-change-after-clean-stop / a | `full;rewritten` | ok: `full;rewritten` 2862/2862 pages | ok: `full;rewritten` 2862/2862 pages | ok: `full;rewritten` 2858/2858 pages |
-| manifest-write-failure-fences / a | `incremental` | ok: `incremental` 22/2865 pages | ok: `incremental` 24/2866 pages | ok: `incremental` 25/2862 pages |
-| rewrite-vacuum-swap / a | `full;rewritten` | ok: `full;rewritten` 106/106 pages | ok: `full;rewritten` 107/107 pages | ok: `full;rewritten` 105/105 pages |
-| rewrite-vacuum-swap / c | `full;rewritten` | ok: `full;rewritten` 106/106 pages | ok: `full;rewritten` 108/108 pages | ok: `full;rewritten` 106/106 pages |
-| restore-backup-new-incarnation / a | `full;other-incarnation` | ok: `full;other-incarnation` 108/108 pages | ok: `full;other-incarnation` 109/109 pages | ok: `full;other-incarnation` 109/109 pages |
-| restore-backup-new-incarnation / c | `full;other-incarnation` | ok: `full;other-incarnation` 109/109 pages | ok: `full;other-incarnation` 109/109 pages | ok: `full;other-incarnation` 109/109 pages |
-| restore-rolls-back-unbacked-writes / a | `incremental` | ok: `incremental` 22/112 pages | ok: `incremental` 21/112 pages | ok: `incremental` 25/114 pages |
-| restore-rolls-back-unbacked-writes / a | `full;other-incarnation` | ok: `full;other-incarnation` 107/107 pages | ok: `full;other-incarnation` 108/108 pages | ok: `full;other-incarnation` 107/107 pages |
+| coordinated-checkpoint / a | `incremental` | ok: `incremental` 19/40 pages | ok: `incremental` 22/41 pages | ok: `incremental` 20/40 pages |
+| sql-sandbox / a | `incremental` | ok: `incremental` 7/41 pages | ok: `incremental` 9/42 pages | ok: `incremental` 9/41 pages |
+| retained-history-window / a | `incremental` | ok: `incremental` 23/47 pages (x10) | ok: `incremental` 25/49 pages (x10) | ok: `incremental` 26/48 pages (x10) |
+| retained-history-window / c | `incremental` | ok: `incremental` 32/51 pages (x2) | ok: `incremental` 35/52 pages (x2) | ok: `incremental` 33/51 pages (x2) |
+| retained-history-window / b | `incremental` | ok: `incremental` 65/65 pages | ok: `incremental` 65/65 pages | ok: `incremental` 64/64 pages |
+| history-horizon-expires / a | `incremental` | ok: `incremental` 26/69 pages (x11) | ok: `incremental` 20/68 pages (x11) | ok: `incremental` 27/68 pages (x11) |
+| history-horizon-expires / c | `incremental` | ok: `incremental` 26/69 pages (x10) | ok: `incremental` 20/68 pages (x10) | ok: `incremental` 27/68 pages (x10) |
+| history-horizon-expires / e | `full;expired` | ok: `full;expired` 97/97 pages | ok: `full;expired` 98/98 pages | ok: `full;expired` 100/100 pages |
+| automatic-checkpoint-policy / a | `incremental` | ok: `incremental` 2766/2845 pages | ok: `incremental` 2767/2846 pages | ok: `incremental` 2770/2848 pages |
+| graceful-restart / a | `incremental` | ok: `incremental` 25/2850 pages | ok: `incremental` 24/2851 pages | ok: `incremental` 27/2853 pages |
+| graceful-restart / c | `incremental` | ok: `incremental` 2780/2850 pages | ok: `incremental` 2783/2851 pages | ok: `incremental` 2787/2853 pages |
+| crash-restart / a | `incremental` | ok: `incremental` 28/2854 pages | ok: `incremental` 28/2856 pages | ok: `incremental` 27/2858 pages |
+| external-checkpoint-while-down / a | `full;rewritten` | ok: `full;rewritten` 2858/2858 pages | ok: `full;rewritten` 2861/2861 pages | ok: `full;rewritten` 2861/2861 pages |
+| external-change-after-clean-stop / a | `full;rewritten` | ok: `full;rewritten` 2858/2858 pages | ok: `full;rewritten` 2861/2861 pages | ok: `full;rewritten` 2861/2861 pages |
+| manifest-write-failure-fences / a | `incremental` | ok: `incremental` 25/2862 pages | ok: `incremental` 21/2865 pages | ok: `incremental` 22/2865 pages |
+| rewrite-vacuum-swap / a | `full;rewritten` | ok: `full;rewritten` 106/106 pages | ok: `full;rewritten` 106/106 pages | ok: `full;rewritten` 107/107 pages |
+| rewrite-vacuum-swap / c | `full;rewritten` | ok: `full;rewritten` 106/106 pages | ok: `full;rewritten` 106/106 pages | ok: `full;rewritten` 107/107 pages |
+| restore-backup-new-incarnation / a | `full;other-incarnation` | ok: `full;other-incarnation` 107/107 pages | ok: `full;other-incarnation` 107/107 pages | ok: `full;other-incarnation` 108/108 pages |
+| restore-backup-new-incarnation / c | `full;other-incarnation` | ok: `full;other-incarnation` 107/107 pages | ok: `full;other-incarnation` 108/108 pages | ok: `full;other-incarnation` 108/108 pages |
+| restore-rolls-back-unbacked-writes / a | `incremental` | ok: `incremental` 18/110 pages | ok: `incremental` 26/112 pages | ok: `incremental` 23/112 pages |
+| restore-rolls-back-unbacked-writes / a | `full;other-incarnation` | ok: `full;other-incarnation` 107/107 pages | ok: `full;other-incarnation` 107/107 pages | ok: `full;other-incarnation` 107/107 pages |
 
 Explicit expiry: a chunked bootstrap (`pullBytesThreshold`) pins its first revision. The harness checkpoints between chunks; the next pinned chunk must fail loudly, and a retry on the same path must bootstrap.
 
@@ -75,17 +75,17 @@ Explicit expiry: a chunked bootstrap (`pullBytesThreshold`) pins its first revis
 
 | Measure | Repeat 1 | Repeat 2 | Repeat 3 |
 | --- | ---: | ---: | ---: |
-| Peak WAL bytes | 4470232 | 4470232 | 4466112 |
+| Peak WAL bytes | 4474352 | 4466112 | 4470232 |
 | Largest single pipeline item, frames | 80 | 80 | 80 |
 | WAL bound: 32 + (1024 + largest item) frames x 4120 B | 4548512 | 4548512 | 4548512 |
 | Peak exact generations retained (limit 8) | 8 | 8 | 8 |
 | Peak compacted buckets (limit 8 x 8 generations) | 8 | 8 | 8 |
-| Peak manifest bytes | 43359 | 43384 | 43392 |
+| Peak manifest bytes | 43406 | 43424 | 43437 |
 | Automatic checkpoints during the 8,000-row burst | 24 | 24 | 24 |
 | Coordinated checkpoints counted before each stop (shutdown checkpoints not included) | 127 | 127 | 127 |
 | Checkpoints detected outside the coordinator | 1 | 1 | 1 |
-| Rewrite: database pages before / after | 2866 / 103 | 2866 / 105 | 2862 / 104 |
-| Acked row changes rolled back by restoring an older backup | 27 | 27 | 27 |
+| Rewrite: database pages before / after | 2862 / 104 | 2865 / 103 | 2865 / 104 |
+| Acked row changes rolled back by restoring an older backup | 26 | 27 | 27 |
 
 The host checks the WAL policy after every pipeline item (one execute, or one batch), so the WAL can exceed 1,024 frames by at most the largest item. The rolled-back changes (inserts, updates and deletes) were acked after backup `b2` was taken. Restoring `b2` reverts them by definition (recovery point); the gate is that every client converges to the restored rows (0 skipped, 0 phantom). They are not counted as lost acked writes.
 
@@ -93,9 +93,9 @@ The host checks the WAL policy after every pipeline item (one execute, or one ba
 
 | Pull kind | Repeat 1 | Repeat 2 | Repeat 3 |
 | --- | ---: | ---: | ---: |
-| Incremental, p50 / max ms | 23.0 / 186.5 (n=43) | 19.9 / 221.5 (n=43) | 19.5 / 242.1 (n=43) |
-| Full resend, p50 / max ms | 28.9 / 208.9 (n=12) | 31.2 / 242.0 (n=12) | 53.8 / 402.4 (n=12) |
-| Empty, p50 / max ms | 4.7 / 6.1 (n=9) | 4.9 / 6.0 (n=9) | 4.8 / 28.1 (n=9) |
+| Incremental, p50 / max ms | 20.5 / 212.8 (n=43) | 22.2 / 236.1 (n=43) | 23.4 / 201.8 (n=43) |
+| Full resend, p50 / max ms | 26.3 / 208.3 (n=12) | 27.7 / 266.8 (n=12) | 30.4 / 326.7 (n=12) |
+| Empty, p50 / max ms | 5.6 / 12.4 (n=9) | 5.8 / 7.5 (n=9) | 5.4 / 7.3 (n=9) |
 
 ## Control: unchanged upstream sync server
 
