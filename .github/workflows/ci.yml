@@ -1,8 +1,10 @@
 name: ci
 
 on:
+  push:
+    branches: [main]
+  workflow_call:
   pull_request:
-  merge_group:
   schedule:
     # Recheck every supported interpreter and refresh main caches weekly.
     - cron: '23 4 * * 2'
@@ -12,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -22,7 +24,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.11", "3.12", "3.13"]
+        # One fast trunk lane; the weekly run retains the supported-version sweep.
+        python: ${{ fromJSON(github.event_name == 'schedule' && '["3.10", "3.11", "3.12", "3.13"]' || '["3.12"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
