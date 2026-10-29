@@ -33,7 +33,7 @@ print(f"Shard {shard}: {filter_value}", flush=True)
 subprocess.run([
     "dotnet", "tests/TerraBase.Fast/bin/Release/net11.0/TerraBase.Fast.dll",
     "--treenode-filter", filter_value, "--minimum-expected-tests", "1",
-    "--maximum-parallel-tests", "16", "--report-trx",
+    "--maximum-parallel-tests", str(len(os.sched_getaffinity(0))), "--report-trx",
     "--results-directory", str(results.resolve()),
     "--report-trx-filename", f"terrabase-{shard}.trx", "--no-ansi",
 ], check=True)

@@ -26,8 +26,6 @@ env:
   # ts-dotnet revision ts-auth builds against (TerraScale/ts-dotnet is private; read-only deploy key).
   TS_DOTNET_REV: 2dda37f08abe7497b35dc431895960e70f3c3611
   TERRABASE_REVISION: ${{ github.sha }}
-  DOTNET_PROCESSOR_COUNT: 8
-  DOTNET_GCHeapCount: 8
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
   ASPNETCORE_HTTP_PORTS: ''
   # Keep CallerFilePath fixture lookups on disk, as in Docker (which excludes .git).
@@ -378,7 +376,14 @@ jobs:
         run: bash scripts/ci/test-area.sh build terrabase
       - name: Pack this commit's build outputs
         working-directory: terrascale
-        run: find src tests -type d -name bin -prune -print0 | tar --null -T - -czf "$RUNNER_TEMP/terrabase-build.tar.gz"
+        # Only shard executables are consumed: their output directories contain every referenced assembly and native asset.
+        # RID-specific publish outputs are packaging proofs, not shard inputs. Fast gzip avoids spending a runner CPU on them.
+        run: >-
+          tar --exclude='*/net11.0/linux-*' -cf -
+          tests/TerraBase.Fast/bin/Release/net11.0
+          tests/Turso.Data.Sqlite.Tests/bin/Release/net11.0
+          tests/TerraBase.E2E/bin/Release/net11.0
+          | gzip -1 > "$RUNNER_TEMP/terrabase-build.tar.gz"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: terrabase-build
