@@ -39,6 +39,7 @@
 
 ## Product rules
 
+- Never fork Turso: no TerraScale/turso repo. Use upstream tursodatabase/turso at a pinned commit, with the tarball verified by SHA-256 at build time (see benchmark/turso-sync-host/turso-pin.env) or the vendored driver in src/vendor/Turso.Data.Sqlite.
 - Every feature is always on. No feature flags, opt-in settings, enabled booleans, deploy toggles or kill switches. Delete their guarded paths. Values have one correct setting in code; expose no tuning knobs. Fakes, demo stores and skip-auth belong only in test binaries.
 - Derive region, node and peers from `TS_REGION`, `TS_NODE` and `TS_PEERS_FILE` (one `<node> <region> <netbird-ipv4>` line per peer). Every region serves automatically. Libraries must preserve automatic discovery for services and benchmarks.
 - CI rejects switch-style configuration; unavoidable third-party names need a narrow allowance and one-line reason. Always-on behavior preserves authentication, consent, permissions, revocation, validation, isolation, backups and recovery safeguards. Preserve CI branch/event identity, quality gates and cleanup conditions.

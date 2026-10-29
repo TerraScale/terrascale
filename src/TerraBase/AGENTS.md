@@ -1,11 +1,12 @@
 # TerraBase
 
-Read the root [AGENTS.md](../../AGENTS.md). Shipping: follow the workspace [Shipping code section](/home/mariogk/Projects/TerraScale/AGENTS.md#shipping-code-user-2026-10-29-go-fast-break-things-fast-q-trunk-q-local-check).
+Read the root [AGENTS.md](../../AGENTS.md), including its shared shipping rules.
 
 TerraBase is a leaderless, multi-region document database. Current contracts and decisions live in `docs/terrabase/`; do not rely on a removed Rust checkout.
 
 ## Structure and storage
 
+- Never fork Turso: no TerraScale/turso repo. Use upstream tursodatabase/turso at a pinned commit, with the tarball verified by SHA-256 at build time (see benchmark/turso-sync-host/turso-pin.env) or the vendored driver in src/vendor/Turso.Data.Sqlite.
 - Ship one self-contained JIT binary, `terrabase`. No native AOT or trimming. Stay single-file compatible: no `Assembly.Location` or dependence on adjacent assembly files; preserve the single-file analyzer.
 - Keep one server project, `src/TerraBase`. Analyzers live in `src/TerraBase.Analyzers` and its BuildCheck project. Separate projects require a real boundary, such as native interop, generated gRPC contracts or an externally consumed library.
 - Group related endpoints, records, services, options, storage, metrics and registration by feature under `Features/<Feature>/`. Namespaces follow folders under `TerraBase`. Features communicate through small public types; keep unused internals internal. Share primitives only when two features need them.
