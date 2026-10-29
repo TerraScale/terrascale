@@ -68,17 +68,15 @@ internal sealed class TursoRevisionLedger(string path)
                 _manifest ??= RevisionManifest.NewIncarnation();
             }
 
-            Execute(writer, "SELECT count(*) FROM sqlite_schema;");
-            var state = writer.GetWalState();
-            _live = LiveGeneration.After(0, state.CheckpointSequence, PageCount(writer));
-            var salt = ReadWalSalt(path + "-wal");
-            if ((_manifest.WalSalt is not null && _manifest.WalSalt != salt)
-                || (_manifest.DatabaseFile is { } known && known != Stamp(path)))
+            var full = (_manifest.WalSalt is not null && _manifest.WalSalt != ReadWalSalt(path + "-wal"))
+                || (_manifest.DatabaseFile is { } known && known != Stamp(path));
+            Snapshot(writer, () =>
             {
-                _live.Full = true;
-            }
-
-            Index(writer, state.MaxFrame);
+                var state = writer.GetWalState();
+                _live = LiveGeneration.After(0, state.CheckpointSequence, PageCount(writer));
+                _live.Full = full;
+                Index(writer, state.MaxFrame);
+            });
             _attached = writer;
             CheckpointLocked(writer);
             _manifest.DatabaseFile = Stamp(path);
@@ -116,7 +114,6 @@ internal sealed class TursoRevisionLedger(string path)
         lock (_gate)
         {
             ThrowIfFenced();
-            Execute(writer, "SELECT count(*) FROM sqlite_schema;");
             Refresh(writer);
         }
     }
@@ -235,10 +232,10 @@ internal sealed class TursoRevisionLedger(string path)
         {
         }
 
-        var state = writer.GetWalState();
+        var (state, size) = Snapshot(writer, () => (writer.GetWalState(), PageCount(writer)));
         var truncated = state.MaxFrame == 0;
         _live = truncated
-            ? LiveGeneration.After(0, state.CheckpointSequence, PageCount(writer))
+            ? LiveGeneration.After(0, state.CheckpointSequence, size)
             : LiveGeneration.After(end, state.CheckpointSequence, _live.DatabaseSize);
         manifest.DatabaseFile = Stamp(path);
         Store();
@@ -248,16 +245,26 @@ internal sealed class TursoRevisionLedger(string path)
     private void Refresh(SqliteConnection writer)
     {
         var manifest = _manifest!;
-        var state = writer.GetWalState();
-        if (state.CheckpointSequence != _live.CheckpointSequence || state.MaxFrame < _live.MaxFrame)
+        var restarted = Snapshot(writer, () =>
         {
+            var state = writer.GetWalState();
+            if (state.CheckpointSequence == _live.CheckpointSequence && state.MaxFrame >= _live.MaxFrame)
+            {
+                Index(writer, state.MaxFrame);
+                return false;
+            }
+
             _live.Full = true;
             manifest.Seal(_live);
             _live = LiveGeneration.After(0, state.CheckpointSequence, PageCount(writer));
+            Index(writer, state.MaxFrame);
+            return true;
+        });
+        if (restarted)
+        {
             Store();
         }
 
-        Index(writer, state.MaxFrame);
         if (_live.MaxFrame > 0 && manifest.WalSalt is null)
         {
             manifest.WalSalt = ReadWalSalt(path + "-wal");
@@ -317,6 +324,26 @@ internal sealed class TursoRevisionLedger(string path)
         if (_fenced is not null)
         {
             throw new IOException("the database is fenced after a failed revision manifest write");
+        }
+    }
+
+    private static void Snapshot(SqliteConnection connection, Action body) =>
+        Snapshot(connection, () =>
+        {
+            body();
+            return true;
+        });
+
+    private static T Snapshot<T>(SqliteConnection connection, Func<T> body)
+    {
+        Execute(connection, "BEGIN; SELECT count(*) FROM sqlite_schema;");
+        try
+        {
+            return body();
+        }
+        finally
+        {
+            Execute(connection, "ROLLBACK;");
         }
     }
 
