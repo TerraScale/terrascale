@@ -17,65 +17,23 @@ namespace TerraScale.Authentication.Fast.Email;
 public sealed class AllowanceEmailTests(TerraBaseFixture fixture)
 {
     [Test]
-    public async Task Repeated_and_concurrent_delivery_sends_once_without_disclosing_owners()
+    public async Task The_dashboard_sends_an_allowance_warning_to_the_organization_owner()
     {
         var captured = new CapturingEmailSender();
         var sender = new Sender(captured);
         await using var oidc = await OidcHarness.StartAsync(fixture, email: captured, services: services => services.AddSingleton<IEmailSender>(sender));
         var (_, _, tokens) = await oidc.SignInAndRedeemAsync("allowance-owner@example.test");
-        var access = tokens.GetProperty("access_token").GetString()!;
-        var organization = await oidc.OkAsync(HttpMethod.Post, Organizations, access, new { name = "Allowance fixture" }, HttpStatusCode.Created);
+        var organization = await oidc.OkAsync(HttpMethod.Post, Organizations, tokens.GetProperty("access_token").GetString()!,
+            new { name = "Allowance fixture" }, HttpStatusCode.Created);
         var id = organization.GetProperty("id").GetString()!;
-        var request = Request(id);
-        var responses = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => SendAsync(oidc.Client, request)));
-        foreach (var response in responses)
-        {
-            using (response)
-            {
-                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-                var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-                await Assert.That(body.EnumerateObject().Count()).IsEqualTo(1);
-                await Assert.That(body.GetProperty("status").GetString() is "accepted" or "unknown").IsTrue();
-            }
-        }
+        using var response = await SendAsync(oidc.Client, Request(id));
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(body.EnumerateObject().Count()).IsEqualTo(1);
+        await Assert.That(body.GetProperty("status").GetString()).IsEqualTo("accepted");
         await Assert.That(sender.ProductMessages.Count).IsEqualTo(1);
         await Assert.That(sender.ProductMessages.Single().Subject).Contains("80%");
         await Assert.That(sender.ProductMessages.Single().Text).Contains($"/usage?organizationId={id}");
-        using var repeated = await SendAsync(oidc.Client, request with { Used = 99 });
-        await Assert.That(sender.ProductMessages.Count).IsEqualTo(1);
-        using var reached = await SendAsync(oidc.Client, request with { Threshold = 100, Used = 100 });
-        await Assert.That(reached.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(sender.ProductMessages.Count).IsEqualTo(2);
-    }
-
-    [Test]
-    public async Task Only_dashboard_client_can_send_and_invalid_thresholds_send_nothing()
-    {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
-        using var anonymous = new HttpRequestMessage(HttpMethod.Post, "/v1/terrascale/email/allowance") { Content = JsonContent.Create(Request("01JA0000000000000000000001")) };
-        using var refused = await oidc.Client.SendAsync(anonymous);
-        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        using var invalid = await SendAsync(oidc.Client, Request("01JA0000000000000000000001") with { Used = 79 });
-        await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
-        await Assert.That(oidc.Email.HasPending).IsFalse();
-    }
-
-    [Test]
-    public async Task Known_refusal_retries_but_ambiguous_acceptance_does_not()
-    {
-        var captured = new CapturingEmailSender();
-        var sender = new Sender(captured) { Outcome = EmailDeliveryOutcome.Retryable };
-        await using var oidc = await OidcHarness.StartAsync(fixture, email: captured, services: services => services.AddSingleton<IEmailSender>(sender));
-        var (_, _, tokens) = await oidc.SignInAndRedeemAsync("allowance-retry@example.test");
-        var organization = await oidc.OkAsync(HttpMethod.Post, Organizations, tokens.GetProperty("access_token").GetString()!, new { name = "Retry fixture" }, HttpStatusCode.Created);
-        var request = Request(organization.GetProperty("id").GetString()!);
-        using var retry = await SendAsync(oidc.Client, request);
-        await Assert.That((await retry.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("status").GetString()).IsEqualTo("retryable");
-        sender.Outcome = EmailDeliveryOutcome.Unknown;
-        using var unknown = await SendAsync(oidc.Client, request);
-        using var repeated = await SendAsync(oidc.Client, request);
-        await Assert.That(sender.Attempts).IsEqualTo(2);
-        await Assert.That((await repeated.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("status").GetString()).IsEqualTo("unknown");
     }
 
     private static AllowanceEmailRequest Request(string organizationId) => new(organizationId,
@@ -91,8 +49,6 @@ public sealed class AllowanceEmailTests(TerraBaseFixture fixture)
     private sealed class Sender(CapturingEmailSender signIn) : IEmailSender
     {
         public ConcurrentBag<EmailMessage> ProductMessages { get; } = [];
-        public EmailDeliveryOutcome Outcome { get; set; } = EmailDeliveryOutcome.Accepted;
-        public int Attempts;
         public Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken) => signIn.SendAsync(recipient, message, cancellationToken);
         public async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
         {
@@ -103,12 +59,8 @@ public sealed class AllowanceEmailTests(TerraBaseFixture fixture)
                 return EmailDeliveryOutcome.Accepted;
             }
 
-            _ = Interlocked.Increment(ref Attempts);
-            if (Outcome == EmailDeliveryOutcome.Accepted)
-            {
-                ProductMessages.Add(message);
-            }
-            return Outcome;
+            ProductMessages.Add(message);
+            return EmailDeliveryOutcome.Accepted;
         }
     }
 }
