@@ -25,7 +25,8 @@ public static class OrganizationEndpoints
         .AddSingleton<OrganizationSsoService>()
         .AddSingleton<OrganizationLifecycleService>()
         .AddSingleton<OrganizationOperations>()
-        .AddSingleton<Projects.ProjectGrantService>();
+        .AddSingleton<Projects.ProjectGrantService>()
+        .AddSingleton<Projects.ProjectInvitationService>();
     public static IEndpointRouteBuilder MapOrganizations(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/organization", async Task<IResult> (HttpContext http, DashboardSessions sessions, AccountService accounts, IWorkspacePlacement placement,
@@ -140,6 +141,7 @@ public static class OrganizationEndpoints
         endpoints.MapOrganizationAudit();
         endpoints.MapOrganizationSso();
         endpoints.MapProjectSettings();
+        Projects.ProjectInvitationEndpoints.MapProjectInvitations(endpoints);
         return endpoints;
     }
 

@@ -1272,6 +1272,7 @@ public sealed partial class TsAuthPlatformJourneyTests
                 return Error(HttpStatusCode.NotFound, "not_found", "Organization not found.");
             if (organization.RequireMfa && !enrolled.ContainsKey(caller.UserId))
                 return Error(HttpStatusCode.Forbidden, "mfa_required", "This organization requires two-factor authentication.");
+            if (ProjectInvitationRoute(organization, caller, method, parts, query) is { } projectInvitations) return projectInvitations;
             if (ProjectGrantRoute(organization, caller, method, parts, query, body) is { } projectGrants) return projectGrants;
             // PlatformDirectory.RenameProjectAsync checks current effective project authority, not organization admin.
             if (method == "PATCH" && parts[2..] is ["projects", var renamedProject])
