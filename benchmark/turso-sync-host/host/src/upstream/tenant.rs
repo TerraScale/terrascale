@@ -92,6 +92,7 @@ struct State {
     manifest: Manifest,
     live: Live,
     stats: Stats,
+    failed: Option<String>,
 }
 
 pub struct Tenant {
@@ -180,6 +181,7 @@ impl Tenant {
                 manifest,
                 live: Live::default(),
                 stats: Stats::default(),
+                failed: None,
             }),
         };
         {
@@ -213,7 +215,13 @@ impl Tenant {
     }
 
     fn store(&self, st: &mut State) -> Result<()> {
-        let bytes = st.manifest.store(&self.dir)?;
+        let bytes = match st.manifest.store(&self.dir) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                st.failed = Some(format!("{e:#}"));
+                return Err(e.context("sync manifest write failed; the database is fenced until restart"));
+            }
+        };
         st.stats.max_manifest_bytes = st.stats.max_manifest_bytes.max(bytes);
         st.stats.max_sealed_generations =
             st.stats.max_sealed_generations.max(st.manifest.sealed.len());
@@ -222,6 +230,9 @@ impl Tenant {
     }
 
     fn handle(st: &State) -> Result<Arc<DbHandle>> {
+        if let Some(reason) = &st.failed {
+            bail!("database is fenced after a failed sync manifest write: {reason}");
+        }
         st.handle
             .clone()
             .ok_or_else(|| anyhow!("database is closed"))

@@ -2,7 +2,7 @@ import { connect } from '@tursodatabase/sync';
 import { spawn, execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -550,6 +550,33 @@ class Repeat {
         this.truth.set(id, row);
         await host.start();
         await this.pull(a, 'full;rewritten');
+        await this.push(a);
+      });
+      await this.phaseRun('manifest-write-failure-fences', async () => {
+        await a.offlineChange({ inserts: 2, updates: 1 });
+        await this.churn();
+        const tenantDir = join(root, 'data', DB);
+        await chmod(tenantDir, 0o555);
+        let checkpointFailed = false;
+        try {
+          await this.remote.admin('checkpoint');
+        } catch {
+          checkpointFailed = true;
+        }
+        const write = await this.remote.raw([`INSERT INTO t(id, origin, v) VALUES ('${ulid()}', 's', 'never')`]);
+        let pullFailed = false;
+        try {
+          await a.db.pull();
+        } catch {
+          pullFailed = true;
+        }
+        await chmod(tenantDir, 0o755);
+        this.check(checkpointFailed && write.status === 500 && pullFailed, 'failed manifest write fences checkpoint, writes and pulls');
+        this.notes.push({ phase: this.phase, checkpoint_failed: checkpointFailed, write_status: write.status, pull_failed: pullFailed });
+        await host.stop('SIGKILL');
+        await host.start();
+        await this.churn();
+        await this.pull(a, 'incremental');
         await this.push(a);
       });
       await this.phaseRun('rewrite-vacuum-swap', async () => {

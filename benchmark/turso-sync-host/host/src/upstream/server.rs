@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -15,6 +15,7 @@ use tracing::error;
 use tracing_subscriber::EnvFilter;
 use turso_core::{DatabaseOpts, OpenFlags};
 
+use super::revision::sync_dir;
 use super::tenant::{Reply, Tenant};
 use super::{
     find_header_end, parse_content_length, parse_http_request, request_end, validate_db_name,
@@ -219,6 +220,19 @@ impl Server {
     }
 }
 
+fn create_dir_durably(path: &Path) -> Result<()> {
+    if path.is_dir() {
+        return Ok(());
+    }
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    create_dir_durably(parent)?;
+    std::fs::create_dir(path)?;
+    sync_dir(parent)
+}
+
 fn arg(args: &[String], name: &str) -> Result<String> {
     args.iter()
         .position(|a| a == name)
@@ -238,7 +252,7 @@ pub fn run() -> Result<()> {
     let tokens: Tokens = serde_json::from_slice(
         &std::fs::read(arg(&args, "--tokens")?).context("reading the token file")?,
     )?;
-    std::fs::create_dir_all(&base)?;
+    create_dir_durably(&base)?;
     let base = base.canonicalize()?;
     if base.to_string_lossy().contains('\'') {
         bail!("the data directory path must not contain quotes");

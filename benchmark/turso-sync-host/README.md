@@ -42,7 +42,8 @@ History stays bounded:
 | Transaction left open | A request that ends inside a transaction is rolled back and gets HTTP 400 `transaction_left_open`. Every request therefore ends in autocommit, the page index is refreshed after every item, and one client's open transaction can never absorb another client's write. |
 | Change while the host was down | At startup, the manifest's WAL salt and database file identity (size, inode, mtime) must match what the host recorded after its last checkpoint or close. If either differs, the generation is sealed as full. |
 | Graceful restart | SIGTERM drains requests, then seals and checkpoints every open database. |
-| Crash | On open, WAL frames are indexed into the current generation, then a startup checkpoint seals them. New tenant directories and the manifest directory are fsynced. |
+| Crash | On open, WAL frames are indexed into the current generation, then a startup checkpoint seals them. The data root, tenant directories and the manifest directory are fsynced. |
+| Manifest write fails | The database is fenced: every later pipeline, pull and checkpoint fails until a restart reloads the last durable manifest. No revision is ever issued from history that was not persisted. |
 | Rewrite | `VACUUM INTO` a staged file. The generation is marked full in the manifest before the file swap, so a crash in between stays safe. |
 | Restore | A new incarnation is written before the file swap. Every client rebootstraps (D18). |
 

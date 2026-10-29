@@ -54,7 +54,7 @@ const totals = [
   ['`pull()` returned false while rows were missing', 'stale_false_pulls'],
   ['Unexpected server rows', 'unexpected_server_rows'],
   ['Plan mismatches (wrong incremental/full/expired decision)', 'plan_mismatches'],
-  ['SQL sandbox failures (PRAGMA, VACUUM INTO, ATTACH, open transaction)', 'sandbox_failures'],
+  ['Safety check failures (SQL sandbox, open transaction, fence after a failed manifest write)', 'sandbox_failures'],
 ];
 for (const [label, key] of totals) perRepeat(label, (r) => String(r.totals[key]));
 perRepeat('History bounded', (r) => yes(r.bounded.pass));
