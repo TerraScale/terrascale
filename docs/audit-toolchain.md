@@ -1,7 +1,7 @@
 # Isolated dependency audit toolchain
 
 `requirements-audit.txt` pins the pip-audit CLI and its complete graph for Linux
-Python 3.12. CI and publication install it into `.audit-venv`, separate from the
+Python 3.12. CI and publication install it into `$RUNNER_TEMP/ts-audit` outside the source tree, separate from the
 SDK's Python 3.10–3.13 test/build environment. Both exact hashed locks are audited
 at every severity, without advisory exclusions. Both input graphs are checked.
 

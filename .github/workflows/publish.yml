@@ -39,9 +39,9 @@ jobs:
           restore-keys: pip-audit-${{ runner.os }}-
       - name: install isolated audit toolchain
         run: |
-          uv venv --python 3.12 .audit-venv
-          uv pip sync --python .audit-venv/bin/python --require-hashes --only-binary :all: requirements-audit.txt
+          uv venv --python 3.12 "$RUNNER_TEMP/ts-audit"
+          uv pip sync --python "$RUNNER_TEMP/ts-audit"/bin/python --require-hashes --only-binary :all: requirements-audit.txt
       - name: audit runtime, dev, build and audit graphs (all severities)
-        run: .audit-venv/bin/pip-audit --strict --disable-pip --require-hashes -r requirements-ci.txt -r requirements-audit.txt --cache-dir ~/.cache/pip-audit
+        run: "$RUNNER_TEMP/ts-audit"/bin/pip-audit --strict --disable-pip --require-hashes -r requirements-ci.txt -r requirements-audit.txt --cache-dir ~/.cache/pip-audit
       - run: uv build --no-build-isolation && twine check dist/*
       - uses: pypa/gh-action-pypi-publish@release/v1
