@@ -36,6 +36,10 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
 
     public SqliteConnection Connection => connection;
 
+    internal global::Turso.Raw.Public.Handles.TursoDatabaseHandle Native =>
+        NativeHandle?.GetValue(connection) as global::Turso.Raw.Public.Handles.TursoDatabaseHandle
+        ?? throw new InvalidOperationException("the Turso driver no longer exposes its native connection handle");
+
     /// <summary>The store's statistics generation when this connection opened (<see cref="TursoDatabaseStore.StatisticsChanged"/>).</summary>
     public int Statistics { get; set; }
 
@@ -87,9 +91,7 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
             ThrowIfStopped();
             return 1;
         });
-        // One evaluated row combination of a relational read (SqlProgram.RowGuard): engine work only, no scanned bytes.
-        // Its argument names a column of every joined table, so Turso evaluates it per combination, not once.
-        connection.CreateFunction<object?, long>(SqlProgram.RowGuard, _ =>
+        connection.CreateFunction<object?, long>("tb_sql_row", _ =>
         {
             if (_rowCharge?.Invoke() == true)
             {
@@ -99,7 +101,6 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
             ThrowIfStopped();
             return 1;
         }, isDeterministic: false);
-        connection.CreateFunction<object?, object?, string?>(SqlProgram.Concat, TursoText.Concat, isDeterministic: true);
         // Outside a near query no statement names it; a stray call sorts last, as a document without the vector does.
         connection.CreateFunction<object?, double>("tb_near",
             document => _near is { } near ? near(document) : double.PositiveInfinity, isDeterministic: false);
@@ -154,6 +155,7 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
         return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"""
             PRAGMA synchronous = NORMAL;
             PRAGMA cache_size = -{cacheKib};
+            PRAGMA foreign_keys = ON;
             """);
     }
 

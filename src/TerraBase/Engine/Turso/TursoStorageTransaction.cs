@@ -1334,6 +1334,11 @@ internal sealed partial class TursoStorageTransaction(
                 offset = _offset ?? GetOffset();
                 cancellationToken.ThrowIfCancellationRequested();
                 RefuseKnownFault();
+                if (store.Tenant is { } committer)
+                {
+                    store.Checkpoint?.Invoke("writer.commit", committer);
+                }
+
                 committing = true;
                 transaction.Commit();
                 _committed = true;
@@ -1346,6 +1351,11 @@ internal sealed partial class TursoStorageTransaction(
                 {
                     store.UncapturedCommit(_uncapturedBy);
                 }
+            }
+            catch (SqliteException error) when (committing && !_committed && TursoSession.Stopped(error))
+            {
+                _faulted = true;
+                throw new SqlStatementException(SqlFailure.Interrupted, "the commit was interrupted before it took effect", transactionEnded: true, error);
             }
             catch
             {

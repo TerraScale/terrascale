@@ -180,6 +180,26 @@ internal static class TursoInterop
         out IntPtr statement,
         out IntPtr errorPtr);
 
+    [DllImport(DllName, EntryPoint = "turso_connection_prepare_first", CallingConvention = CallingConvention.Cdecl)]
+    public static extern TursoStatusCode ConnectionPrepareFirst(
+        TursoDatabaseHandle connection,
+        byte[] sql,
+        out IntPtr statement,
+        out UIntPtr tailIndex,
+        out IntPtr errorPtr);
+
+    [DllImport(DllName, EntryPoint = "turso_connection_interrupt", CallingConvention = CallingConvention.Cdecl)]
+    public static extern TursoStatusCode ConnectionInterrupt(TursoDatabaseHandle connection, out IntPtr errorPtr);
+
+    [DllImport(DllName, EntryPoint = "turso_connection_clear_interrupt", CallingConvention = CallingConvention.Cdecl)]
+    public static extern TursoStatusCode ConnectionClearInterrupt(TursoDatabaseHandle connection, out IntPtr errorPtr);
+
+    [DllImport(DllName, EntryPoint = "turso_connection_set_query_timeout_ms", CallingConvention = CallingConvention.Cdecl)]
+    public static extern TursoStatusCode ConnectionSetQueryTimeout(TursoDatabaseHandle connection, ulong timeoutMs, out IntPtr errorPtr);
+
+    [DllImport(DllName, EntryPoint = "turso_connection_set_max_value_length", CallingConvention = CallingConvention.Cdecl)]
+    public static extern TursoStatusCode ConnectionSetMaxValueLength(TursoDatabaseHandle connection, long length, out IntPtr errorPtr);
+
     [DllImport(DllName, EntryPoint = "turso_statement_reset", CallingConvention = CallingConvention.Cdecl)]
     public static extern TursoStatusCode StatementReset(TursoStatementHandle statement, out IntPtr errorPtr);
 

@@ -720,7 +720,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     private async ValueTask<PgOutcome> RunAsync(Session session, PgStatement statement, IReadOnlyList<SqlValue> args, CancellationToken cancellationToken,
         Counting counting = Counting.All)
     {
-        if (session.Failed && statement.Kind is not (PgKind.Commit or PgKind.Rollback or PgKind.Empty))
+        if (session.Failed && statement.Kind is not (PgKind.Commit or PgKind.Rollback or PgKind.Empty)
+            && !(statement.Kind == PgKind.Savepoint && PostgresStatements.RollsBackTo(statement.Text)))
         {
             return new PgError("25P02", "current transaction is aborted, commands ignored until end of transaction block");
         }
@@ -754,12 +755,24 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             PgKind.Catalog => PgCatalog.Answer(statement.Text, session.Database, session.User,
                 await services.GetRequiredService<ISqlService>().ListTablesAsync(database, token).ConfigureAwait(false)),
             PgKind.Begin or PgKind.Commit or PgKind.Rollback => await TransactionAsync(session, statement.Kind, token).ConfigureAwait(false),
+            PgKind.Savepoint => await SavepointAsync(session, statement.Text, token).ConfigureAwait(false),
             _ => await session.Sql.ExecuteAsync(new SqlCommand(statement.Sql, args, NoNamed), token).ConfigureAwait(false) switch
             {
                 SqlResult result => new[] { PostgresStatements.Result(statement, result) with { ReadCharge = result.ReadCharge } },
                 SqlError error => PostgresStatements.Error(error),
             },
         }, cancellationToken, counting).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<PgOutcome> SavepointAsync(Session session, string text, CancellationToken cancellationToken)
+    {
+        if (await session.Sql.ExecuteAsync(new SqlCommand(text, [], NoNamed), cancellationToken).ConfigureAwait(false) is SqlError error)
+        {
+            return PostgresStatements.Error(error);
+        }
+
+        session.Failed &= !PostgresStatements.RollsBackTo(text);
+        return new[] { new PgResult(null, [], text.Split(' ', 2)[0].ToUpperInvariant()) };
     }
 
     // PostgreSQL's transaction verbs on the session: BEGIN inside a transaction and COMMIT or ROLLBACK outside one only

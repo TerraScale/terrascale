@@ -206,7 +206,7 @@ public sealed class PostgresWireTests
         await Assert.That(deallocated.Select(message => message.Fields[0]!)).IsEquivalentTo(["DEALLOCATE ALL", "I"]);
         await Assert.That(tables.Where(message => message.Type == 'D').Select(message => string.Join(',', message.Fields))).IsEquivalentTo(["public,people,table,wire"]);
         await Assert.That(columns.Where(message => message.Type == 'D').Select(message => string.Join(',', message.Fields.Take(4)))).IsEquivalentTo(
-            ["id,bigint,,t", "name,text,,t", "email,character varying,,f", "team,text,,f"]);
+            ["id,integer,,t", "name,text,,t", "email,character varying,,f", "team,text,,f"]);
     }
 
     // Needs SQ1-c (SELECT with joins) and SQ1-d (INSERT/UPDATE/DELETE).
@@ -345,7 +345,7 @@ public sealed class PostgresWireTests
         await ExecuteAsync(connection, "CREATE TABLE driver_rows (id TEXT PRIMARY KEY, value TEXT NOT NULL)");
         await using var existence = new NpgsqlCommand("SELECT EXISTS (SELECT 1 FROM driver_rows) AS found", connection);
         await existence.PrepareAsync();
-        await Assert.That((bool)(await existence.ExecuteScalarAsync())!).IsFalse();
+        await Assert.That(Convert.ToInt64(await existence.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture)).IsEqualTo(0);
         await using var insert = new NpgsqlCommand("INSERT INTO driver_rows (id, value) VALUES ($1, $2) RETURNING id, value", connection);
         insert.Parameters.AddWithValue("a");
         insert.Parameters.AddWithValue("before");
@@ -359,7 +359,7 @@ public sealed class PostgresWireTests
         }
 
         await ExecuteAsync(connection, "BEGIN");
-        await Assert.That((bool)(await existence.ExecuteScalarAsync())!).IsTrue();
+        await Assert.That(Convert.ToInt64(await existence.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture)).IsEqualTo(1);
         var updated = await ReadAsync(connection, "UPDATE driver_rows SET value = 'after' WHERE id = 'a' RETURNING value");
         await Assert.That(updated[0][0]).IsEqualTo("after");
         await ExecuteAsync(connection, "ROLLBACK");

@@ -1,128 +1,132 @@
-using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using TerraBase.Features.Qos;
-using Turso.Data.Sqlite;
+using Turso.Raw.Public;
+using Turso.Raw.Public.Handles;
+using Turso.Raw.Public.Value;
 
 namespace TerraBase.Engine.Turso;
 
-/// <remarks>
-/// A relational read (docs/terrabase/sql/relational-sql.md section 4): each table becomes a CTE of the same name over its
-/// collection's table, written <c>main."t"</c> so the CTE shadows it, with one <c>json_extract</c> column per field and the
-/// scan guard that charges the work budget. Column names are identifiers, so they embed safely.
-/// shortcut: CTEs are not flattened by Turso, so every read scans each referenced table and no index serves it, except a
-/// point read by a single TEXT key, whose CTE also filters on the indexed id (docs/terrabase/sql/key-point-reads.md); the
-/// row guard (SqlProgram.RowGuard) charges each evaluated join combination, so the budget bounds joins, but the scans make
-/// reads cap at roughly 150,000 table rows. Rewrite columns to json_extract over the tables (index-served) when a customer
-/// table passes that.
-/// </remarks>
 internal sealed partial class TursoStorageTransaction
 {
-    // SQLite and Turso messages quote the statement; only these phrases of them are reported.
-    private static readonly string[] SqlFailures =
+    private static readonly string[] SqlPhrases =
     [
-        "no such column", "no such table", "no such function", "ambiguous column", "syntax error", "misuse of aggregate",
-        "misuse of window function", "circular reference", "wrong number of arguments", "datatype mismatch", "too many",
-        "integer overflow", "not supported", "must be",
+        "no such function", "ambiguous column", "misuse of aggregate", "misuse of window function", "circular reference",
+        "wrong number of arguments", "datatype mismatch", "integer overflow", "not supported", "not allowed", "cannot",
+        "malformed JSON", "must be",
     ];
 
-    public ValueTask<SqlProgramResult> ExecuteSqlAsync(SqlProgram program, CancellationToken cancellationToken)
+    private long _pageSize;
+
+    ValueTask<SqlStatementResult> IStorageTransaction.ExecuteStatementAsync(SqlStatement statement, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(program);
-        return RunAsync(() => WithQueryBudget(() => RunProgram(program, cancellationToken), cancellationToken), cancellationToken);
+        ArgumentNullException.ThrowIfNull(statement);
+        return RunAsync(() => WithQueryBudget(() => RunStatement(statement, cancellationToken), cancellationToken), cancellationToken);
     }
 
-    // Whether `sql` has no statement separator outside SQLite's quotes ('…', "…", [ ], `…`) and comments.
-    private static bool IsOneStatement(string sql)
+    ValueTask<SqlStatementShape> IStorageTransaction.DescribeStatementAsync(string sql, CancellationToken cancellationToken)
     {
-        for (var i = 0; i < sql.Length; i++)
+        ArgumentNullException.ThrowIfNull(sql);
+        return RunAsync(() => DescribeStatement(sql), cancellationToken);
+    }
+
+    private readonly Lock _interruptGate = new();
+    private TursoDatabaseHandle? _interruptible;
+
+    void IStorageTransaction.InterruptStatement() => InterruptCustomerStatement();
+
+    private void InterruptCustomerStatement()
+    {
+        lock (_interruptGate)
         {
-            switch (sql[i])
+            if (_interruptible is not { } native)
             {
-                case ';':
-                    return false;
-                case '\'' or '"' or '`' or '[':
-                    var close = sql[i] == '[' ? ']' : sql[i];
-                    // A doubled quote stays inside the literal.
-                    do
-                    {
-                        i = sql.IndexOf(close, i + 1);
-                    }
-                    while (i >= 0 && close != ']' && i + 1 < sql.Length && sql[i + 1] == close && ++i > 0);
+                return;
+            }
 
-                    if (i < 0)
-                    {
-                        return false;
-                    }
-
-                    break;
-                case '-' when i + 1 < sql.Length && sql[i + 1] == '-':
-                    i = sql.IndexOf('\n', i);
-                    if (i < 0)
-                    {
-                        return true;
-                    }
-
-                    break;
-                case '/' when i + 1 < sql.Length && sql[i + 1] == '*':
-                    i = sql.IndexOf("*/", i + 2, StringComparison.Ordinal);
-                    if (i < 0)
-                    {
-                        return false;
-                    }
-
-                    i++;
-                    break;
+            try
+            {
+                TursoBindings.Interrupt(native);
+            }
+            catch (TursoException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
             }
         }
-
-        return true;
     }
 
-    // Worker-only.
-    private SqlProgramResult RunProgram(SqlProgram program, CancellationToken cancellationToken)
+    private void OpenInterruptWindow(TursoDatabaseHandle native)
     {
-        // A point read's key (SqlProgramTable.KeyParameter) filters its table's CTE on the indexed id before the scan guard.
-        var ctes = program.Tables.Select(table => string.Create(CultureInfo.InvariantCulture,
-            $"{Table(table.Name)} AS (SELECT {(table.WithId ? "id AS \"_id\", " : "")}{string.Join(", ", table.Columns.Select(column => column == table.KeyColumn ? $"id AS \"{column}\"" : $"json_extract(doc, '$.{column}') AS \"{column}\""))} FROM main.{Table(table.Name)} WHERE {(table is { KeyColumn: not null, KeyParameter: { } key } ? $"id = $p{key} AND " : "")}tb_qos_scan(octet_length(doc)))")).ToList();
-        if (program.Ctes is { } own)
+        lock (_interruptGate)
         {
-            ctes.Add(own);
+            _interruptible = native;
+        }
+    }
+
+    private void CloseInterruptWindow(TursoDatabaseHandle native)
+    {
+        lock (_interruptGate)
+        {
+            _interruptible = null;
         }
 
-        var sql = new StringBuilder();
-        if (ctes.Count > 0)
-        {
-            sql.Append("WITH ").AppendJoin(", ", ctes).Append(' ');
-        }
+        TursoBindings.ClearInterrupt(native);
+    }
 
-        var commandText = sql.Append(program.Statement).ToString();
-        // Defense in depth: Turso runs every statement of a command text, so a program must be exactly one.
-        if (!IsOneStatement(commandText))
-        {
-            throw new SqlProgramException("a program runs exactly one statement");
-        }
-
-        using var command = session.Connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = commandText;
-        for (var i = 0; i < program.Parameters.Count; i++)
-        {
-            command.Parameters.AddWithValue("$p" + (i + 1).ToString(CultureInfo.InvariantCulture), program.Parameters[i] ?? DBNull.Value);
-        }
-
-        _queryBudget!.Charge(command.CommandText);
+    private SqlStatementResult RunStatement(SqlStatement statement, CancellationToken cancellationToken)
+    {
+        RequireOneStatement(statement.Sql);
+        var native = session.Native;
+        _ranPlain |= write;
+        _queryBudget!.Charge(statement.Sql);
         CountRead("query");
         try
         {
-            using var reader = command.ExecuteReader();
-            var columns = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToList();
+            var (changes, pages) = write ? (Counter(native, "SELECT total_changes();"), Counter(native, "PRAGMA page_count;")) : (0L, 0L);
+            (List<SqlStatementColumn> Columns, List<object?[]> Rows, long Affected, bool Truncated) stepped;
+            TursoBindings.SetQueryTimeout(native, statement.Timeout);
+            OpenInterruptWindow(native);
+            try
+            {
+                using (cancellationToken.Register(static state => ((TursoStorageTransaction)state!).InterruptCustomerStatement(), this))
+                {
+                    stepped = Step(native, statement, cancellationToken);
+                }
+            }
+            finally
+            {
+                CloseInterruptWindow(native);
+                TursoBindings.SetQueryTimeout(native, TimeSpan.Zero);
+            }
+
+            var (columns, rows, affected, truncated) = stepped;
+            var rowid = Counter(native, "SELECT last_insert_rowid();");
+            var (changed, grown) = write ? (Counter(native, "SELECT total_changes();") - changes, Counter(native, "PRAGMA page_count;") - pages) : (0L, 0L);
+            return new SqlStatementResult(columns, rows, affected, changed, rowid, grown * PageSize(native), truncated);
+        }
+        catch (TursoException error)
+        {
+            throw Failure(native, error);
+        }
+    }
+
+    private (List<SqlStatementColumn> Columns, List<object?[]> Rows, long Affected, bool Truncated) Step(
+        TursoDatabaseHandle native, SqlStatement statement, CancellationToken cancellationToken)
+    {
+        var prepared = TursoBindings.PrepareStatement(native, statement.Sql);
+        try
+        {
+            Bind(prepared, statement);
+            var columns = Columns(prepared);
             var rows = new List<object?[]>();
             long bytes = 0;
             long reserved = 0;
-            while (reader.Read())
+            while (TursoBindings.Read(prepared))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (_queryBudget.Exceeded)
+                if (_queryBudget!.Exceeded)
                 {
                     throw new QueryCapacityException("query execution budget exceeded");
                 }
@@ -131,28 +135,28 @@ internal sealed partial class TursoStorageTransaction
                 long size = 0;
                 for (var i = 0; i < row.Length; i++)
                 {
-                    row[i] = reader.GetValue(i) switch
+                    row[i] = TursoBindings.GetValue(prepared, i) switch
                     {
-                        DBNull => null,
-                        var value => value,
+                        { ValueType: TursoValueType.Integer } value => value.IntValue,
+                        { ValueType: TursoValueType.Real } value => value.RealValue,
+                        { ValueType: TursoValueType.Text } value => value.StringValue,
+                        { ValueType: TursoValueType.Blob } value => value.BlobValue,
+                        _ => null,
                     };
                     size += row[i] switch
                     {
                         string text => Encoding.UTF8.GetByteCount(text),
                         byte[] blob => blob.Length,
+                        null => 0,
                         _ => 8,
                     };
                 }
 
-                if (rows.Count == program.MaxRows || bytes + size > program.MaxBytes)
+                if (rows.Count == statement.MaxRows || bytes + size > statement.MaxBytes)
                 {
-                    // Reset rather than drain: the rest of the statement is not needed.
-                    reader.Abort();
-                    return new SqlProgramResult(columns, rows, Truncated: true);
+                    return (columns, rows, TursoBindings.RowsAffected(prepared), true);
                 }
 
-                // Strings in memory take two bytes a character, each value a box or reference; reserved in blocks, so
-                // ten thousand rows do not hold ten thousand leases.
                 var held = checked((2 * size) + (16L * row.Length) + 64);
                 if (held > reserved)
                 {
@@ -166,16 +170,260 @@ internal sealed partial class TursoStorageTransaction
                 rows.Add(row);
             }
 
-            return new SqlProgramResult(columns, rows, Truncated: false);
+            return (columns, rows, TursoBindings.RowsAffected(prepared), false);
         }
-        catch (SqliteException error) when (error.Message.Contains(TursoText.TooLarge, StringComparison.Ordinal))
+        finally
         {
-            throw new SqlValueTooLargeException("a string value is larger than 1 MiB", error);
-        }
-        catch (SqliteException error) when (!TursoSession.Stopped(error))
-        {
-            var phrase = SqlFailures.FirstOrDefault(failure => error.Message.Contains(failure, StringComparison.OrdinalIgnoreCase));
-            throw new SqlProgramException(phrase ?? "the statement failed to run", error);
+            Release(prepared);
         }
     }
+
+    private SqlStatementShape DescribeStatement(string sql)
+    {
+        RequireOneStatement(sql);
+        var native = session.Native;
+        try
+        {
+            var prepared = TursoBindings.PrepareStatement(native, sql);
+            try
+            {
+                var parameters = new string?[TursoBindings.GetParameterCount(prepared)];
+                for (var i = 0; i < parameters.Length; i++)
+                {
+                    parameters[i] = TursoBindings.GetParameterName(prepared, i + 1);
+                }
+
+                return new SqlStatementShape(parameters, Columns(prepared));
+            }
+            finally
+            {
+                Release(prepared);
+            }
+        }
+        catch (TursoException error)
+        {
+            throw Failure(native, error);
+        }
+    }
+
+    private static void RequireOneStatement(string sql)
+    {
+        if (!SqlText.IsOneStatement(sql))
+        {
+            throw new SqlStatementException(SqlFailure.Error, "an engine call runs exactly one SQL statement", transactionEnded: false);
+        }
+    }
+
+    private static void Bind(TursoStatementHandle prepared, SqlStatement statement)
+    {
+        var count = TursoBindings.GetParameterCount(prepared);
+        for (var i = 1; i <= count; i++)
+        {
+            var value = TursoBindings.GetParameterName(prepared, i) switch
+            {
+                null or ['?', ..] => i <= statement.Args.Count ? statement.Args[i - 1] : null,
+                var name => statement.Named.TryGetValue(name, out var exact) ? exact : statement.Named.GetValueOrDefault(name[1..]),
+            };
+            TursoBindings.BindParameter(prepared, i, value switch
+            {
+                null => TursoValue.Null(),
+                long integer => TursoValue.Int(integer),
+                double real => TursoValue.Real(real),
+                string text => TursoValue.String(text),
+                byte[] blob => TursoValue.Blob(blob),
+                _ => throw new ArgumentException("arguments are null, long, double, string or byte[]", nameof(statement)),
+            });
+        }
+    }
+
+    private static List<SqlStatementColumn> Columns(TursoStatementHandle prepared)
+    {
+        var count = TursoBindings.GetFieldCount(prepared);
+        var columns = new List<SqlStatementColumn>(count);
+        for (var i = 0; i < count; i++)
+        {
+            var declared = TursoBindings.GetDeclaredTypeName(prepared, i);
+            columns.Add(new SqlStatementColumn(TursoBindings.GetName(prepared, i), declared.Length == 0 ? null : declared));
+        }
+
+        return columns;
+    }
+
+    private static long Counter(TursoDatabaseHandle native, string sql)
+    {
+        var prepared = TursoBindings.PrepareStatement(native, sql);
+        try
+        {
+            return TursoBindings.Read(prepared) ? TursoBindings.GetValue(prepared, 0).IntValue : 0;
+        }
+        finally
+        {
+            Release(prepared);
+        }
+    }
+
+    private long PageSize(TursoDatabaseHandle native) => _pageSize > 0 ? _pageSize : _pageSize = Counter(native, "PRAGMA page_size;");
+
+    private static void Release(TursoStatementHandle prepared)
+    {
+        try
+        {
+            TursoBindings.ResetStatement(prepared);
+        }
+        catch (TursoException)
+        {
+        }
+        finally
+        {
+            prepared.Dispose();
+        }
+    }
+
+    private SqlStatementException Failure(TursoDatabaseHandle native, TursoException error)
+    {
+        var damaged = error is TursoNativeException { StatusCode: 132 or 133 or 134 };
+        if (damaged)
+        {
+            NoteCopyFault("the file or its log reported an I/O error or corruption");
+        }
+
+        var ended = EndedByFailure(native);
+        if (damaged)
+        {
+            return new SqlStatementException(SqlFailure.Error, "the database reported an I/O error or corruption", ended, error);
+        }
+
+        var message = error.Message;
+        var parse = false;
+        foreach (var prefix in (ReadOnlySpan<string>)["Unable to prepare statement: ", "Parse error: ", "Extension error: "])
+        {
+            if (message.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                parse |= prefix != "Extension error: ";
+                message = message[prefix.Length..];
+            }
+        }
+
+        if (SqliteCoded().Match(message) is { Success: true } coded)
+        {
+            message = coded.Groups[1].Value;
+        }
+
+        var (failure, reported) = message switch
+        {
+            _ when Has(message, "UNIQUE constraint failed") => (SqlFailure.Unique, "UNIQUE constraint failed" + Names(message)),
+            _ when Has(message, "NOT NULL constraint failed") => (SqlFailure.NotNull, "NOT NULL constraint failed" + Names(message)),
+            _ when Has(message, "CHECK constraint failed") => (SqlFailure.Check, "CHECK constraint failed" + Names(message)),
+            _ when Has(message, "FOREIGN KEY constraint failed") => (SqlFailure.ForeignKey, "FOREIGN KEY constraint failed"),
+            _ when Has(message, "constraint failed") => (SqlFailure.Constraint, "constraint failed"),
+            _ when Has(message, "no such table") => (SqlFailure.NoSuchTable, "no such table" + Names(message)),
+            _ when Has(message, "no such column") => (SqlFailure.NoSuchColumn, "no such column" + Names(message)),
+            _ when Has(message, "already exists") => (SqlFailure.AlreadyExists, "already exists" + Existing(message)),
+            _ when Has(message, "database is locked") || Has(message, "busy") || Has(message, "schema changed") || Has(message, "schema conflict")
+                || Has(message, "write-write conflict") => (SqlFailure.Busy, "the database is busy; retry"),
+            _ when error is TursoNativeException { StatusCode: 5 } || Has(message, "interrupt") => (SqlFailure.Interrupted, "the statement was interrupted"),
+            _ when Has(message, "readonly") || Has(message, "read-only") || Has(message, "query_only") => (SqlFailure.ReadOnly, "attempt to write a readonly database"),
+            _ when Has(message, "too big") || Has(message, "too large") || Has(message, "too many") => (SqlFailure.TooBig, "a value or statement is too big"),
+            _ when Has(message, "syntax error") || Has(message, "near \"") || Has(message, "unexpected") || Has(message, "unrecognized token") =>
+                (SqlFailure.Syntax, "SQL syntax error"),
+            _ when SqlPhrases.FirstOrDefault(phrase => Has(message, phrase)) is { } phrase => (SqlFailure.Error, phrase),
+            _ when parse => (SqlFailure.Syntax, "SQL syntax error"),
+            _ => (SqlFailure.Error, "the statement failed to run"),
+        };
+        if (failure == SqlFailure.Unique && IsPrimaryKey(native, message))
+        {
+            failure = SqlFailure.PrimaryKey;
+        }
+
+        return new SqlStatementException(failure, reported, ended, error);
+    }
+
+    private bool EndedByFailure(TursoDatabaseHandle native)
+    {
+        try
+        {
+            using var begin = TursoBindings.PrepareStatement(native, "BEGIN;");
+            while (TursoBindings.Read(begin))
+            {
+            }
+        }
+        catch (TursoException)
+        {
+            return false;
+        }
+
+        Aborted = _faulted = true;
+        return true;
+    }
+
+    private static bool IsPrimaryKey(TursoDatabaseHandle native, string message)
+    {
+        var named = ConstraintColumns(message);
+        if (named.Count == 0 || named.Select(column => column.Table).Distinct(StringComparer.OrdinalIgnoreCase).ToList() is not [var table])
+        {
+            return false;
+        }
+
+        try
+        {
+            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var prepared = TursoBindings.PrepareStatement(native, $"PRAGMA table_info(\"{table.Replace("\"", "\"\"", StringComparison.Ordinal)}\");");
+            try
+            {
+                while (TursoBindings.Read(prepared))
+                {
+                    if (TursoBindings.GetValue(prepared, 5).IntValue > 0)
+                    {
+                        keys.Add(TursoBindings.GetValue(prepared, 1).StringValue);
+                    }
+                }
+            }
+            finally
+            {
+                Release(prepared);
+            }
+
+            return keys.SetEquals(named.Select(column => column.Name));
+        }
+        catch (TursoException)
+        {
+            return false;
+        }
+    }
+
+    private static bool Has(string message, string phrase) => message.Contains(phrase, StringComparison.OrdinalIgnoreCase);
+
+    private static string Names(string message)
+    {
+        var colon = message.IndexOf(": ", StringComparison.Ordinal);
+        if (colon < 0)
+        {
+            return "";
+        }
+
+        var names = message[(colon + 2)..];
+        var end = names.IndexOf(" (", StringComparison.Ordinal);
+        names = (end < 0 ? names : names[..end]).Trim();
+        return names.Length is > 0 and <= 512 && NamePattern().IsMatch(names) ? ": " + names : "";
+    }
+
+    private static List<(string Table, string Name)> ConstraintColumns(string message)
+    {
+        var names = Names(message);
+        return names.Length == 0 ? [] : [.. names[2..].Split(", ").Select(name => name.Split('.')).Where(parts => parts.Length == 2).Select(parts => (parts[0], parts[1]))];
+    }
+
+    private static string Existing(string message) =>
+        ExistingPattern().Match(message) is { Success: true } match && NamePattern().IsMatch(match.Groups[2].Value)
+            ? $": {match.Groups[1].Value.ToLowerInvariant()} {match.Groups[2].Value}"
+            : "";
+
+    [GeneratedRegex(@"\A__turso_sqlite_error__:\d+:(.*)\z", RegexOptions.CultureInvariant | RegexOptions.Singleline)]
+    private static partial Regex SqliteCoded();
+
+    [GeneratedRegex(@"\A[\p{L}\p{N}_$.]+(?:, [\p{L}\p{N}_$.]+)*\z", RegexOptions.CultureInvariant)]
+    private static partial Regex NamePattern();
+
+    [GeneratedRegex(@"\b(table|index|view|trigger)\s+[""'`\[]?([^\s""'`\]]+)[""'`\]]?\s+already exists", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex ExistingPattern();
 }

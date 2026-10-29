@@ -56,8 +56,26 @@ internal static class SqlJson
         JsonValueKind.String => SqlValue.Of(value.GetString()!),
         JsonValueKind.Number when value.TryGetInt64(out var integer) => SqlValue.Of(integer),
         JsonValueKind.Number when value.TryGetDouble(out var real) && double.IsFinite(real) => SqlValue.Of(real),
-        _ => new Validation("arguments are null, finite numbers, booleans or strings"),
+        JsonValueKind.Object when Blob(value) is { } blob => SqlValue.Of(blob),
+        _ => new Validation("arguments are null, finite numbers, booleans, strings or {\"base64\": …} blobs"),
     };
+
+    private static byte[]? Blob(JsonElement value)
+    {
+        if (!value.TryGetProperty("base64", out var encoded) || encoded.ValueKind != JsonValueKind.String || value.EnumerateObject().Count() != 1)
+        {
+            return null;
+        }
+
+        try
+        {
+            return Convert.FromBase64String(encoded.GetString()!);
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
 
     public static Valid<SqlCommand> Command(SqlExecuteStatement statement)
     {
@@ -115,6 +133,11 @@ internal sealed class SqlRowsConverter : JsonConverter<IReadOnlyList<IReadOnlyLi
                         break;
                     case SqlValueKind.Text:
                         writer.WriteStringValue(cell.Text);
+                        break;
+                    case SqlValueKind.Blob:
+                        writer.WriteStartObject();
+                        writer.WriteBase64String("base64", cell.Blob);
+                        writer.WriteEndObject();
                         break;
                     default:
                         writer.WriteNullValue();

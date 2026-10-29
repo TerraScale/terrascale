@@ -413,8 +413,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
         public ValueTask<JsonElement?> GetCollectionSchemaAsync(string name, CancellationToken cancellationToken) => inner.GetCollectionSchemaAsync(name, cancellationToken);
         public ValueTask<bool> SetCollectionSchemaAsync(string name, JsonElement? schema, CancellationToken cancellationToken) => inner.SetCollectionSchemaAsync(name, schema, cancellationToken);
-        public ValueTask<JsonElement?> GetCollectionTableAsync(string name, CancellationToken cancellationToken) => inner.GetCollectionTableAsync(name, cancellationToken);
-        public ValueTask<bool> SetCollectionTableAsync(string name, JsonElement definition, CancellationToken cancellationToken) => inner.SetCollectionTableAsync(name, definition, cancellationToken);
         public ValueTask<string?> GetCollectionTtlAsync(string name, CancellationToken cancellationToken) => inner.GetCollectionTtlAsync(name, cancellationToken);
         public ValueTask<bool> SetCollectionTtlAsync(string name, string? path, CancellationToken cancellationToken) => inner.SetCollectionTtlAsync(name, path, cancellationToken);
 
@@ -425,7 +423,9 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<IReadOnlyList<CollectionStats>> ListCollectionStatsAsync(CancellationToken cancellationToken) => inner.ListCollectionStatsAsync(cancellationToken);
         public IAsyncEnumerable<StoredDocument> QuerySqlAsync(SqlQuery query, CancellationToken cancellationToken, QueryObservation? observation = null) => inner.QuerySqlAsync(query, cancellationToken, observation);
         public ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken) => inner.ExplainSqlAsync(query, cancellationToken);
-        public ValueTask<SqlProgramResult> ExecuteSqlAsync(SqlProgram program, CancellationToken cancellationToken) => inner.ExecuteSqlAsync(program, cancellationToken);
+        ValueTask<SqlStatementResult> IStorageTransaction.ExecuteStatementAsync(SqlStatement statement, CancellationToken cancellationToken) => inner.ExecuteStatementAsync(statement, cancellationToken);
+        ValueTask<SqlStatementShape> IStorageTransaction.DescribeStatementAsync(string sql, CancellationToken cancellationToken) => inner.DescribeStatementAsync(sql, cancellationToken);
+        void IStorageTransaction.InterruptStatement() => inner.InterruptStatement();
         public ValueTask<long> DeleteCollectionsAsync(string prefix, CancellationToken cancellationToken) => inner.DeleteCollectionsAsync(prefix, cancellationToken);
         public ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(CancellationToken cancellationToken) => inner.ListIndexesAsync(cancellationToken);
         public ValueTask<bool> CreateIndexAsync(IndexDefinition index, CancellationToken cancellationToken) => inner.CreateIndexAsync(index, cancellationToken);
@@ -433,7 +433,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<bool> BuildVectorIndexAsync(CancellationToken cancellationToken) => inner.BuildVectorIndexAsync(cancellationToken);
         public ValueTask<bool> DropIndexAsync(string name, CancellationToken cancellationToken) => inner.DropIndexAsync(name, cancellationToken);
         public ValueTask<IReadOnlyList<UniqueConstraint>> GetUniqueConstraintsAsync(string collection, CancellationToken cancellationToken) => inner.GetUniqueConstraintsAsync(collection, cancellationToken);
-        public ValueTask<IReadOnlyList<(string Constraint, string Id)>> GetUniqueConflictsAsync(string collection, ReadOnlyMemory<byte> json, int limit, CancellationToken cancellationToken) => inner.GetUniqueConflictsAsync(collection, json, limit, cancellationToken);
         public ValueTask SetUniqueConstraintsAsync(string collection, IReadOnlyList<UniqueConstraint> constraints, bool reindex, CancellationToken cancellationToken) => inner.SetUniqueConstraintsAsync(collection, constraints, reindex, cancellationToken);
         public ValueTask DisposeAsync() => inner.DisposeAsync();
 

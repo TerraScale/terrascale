@@ -26,7 +26,7 @@ internal sealed record PgError(string Code, string Message, bool Fatal = false);
 internal readonly union PgOutcome(PgResult[], PgError);
 
 /// <summary>What a statement is, decided from its text.</summary>
-internal enum PgKind { Empty, Sql, Catalog, Set, Show, Discard, Deallocate, Begin, Commit, Rollback }
+internal enum PgKind { Empty, Sql, Catalog, Set, Show, Discard, Deallocate, Begin, Commit, Rollback, Savepoint }
 
 /// <summary>One statement: its PostgreSQL text, and for <see cref="PgKind.Sql"/> the SQLite text with <c>$n</c> as <c>?n</c>.</summary>
 internal sealed record PgStatement(PgKind Kind, string Text, string Sql, int Parameters);
@@ -119,9 +119,9 @@ internal static partial class PostgresStatements
             return Unsupported(refused.Groups[1].Success ? "LISTEN, NOTIFY and UNLISTEN" : "extensions");
         }
 
-        PgKind? kind = text switch
+        var kind = text switch
         {
-            _ when SavepointPattern().IsMatch(text) => null,
+            _ when SavepointPattern().IsMatch(text) => PgKind.Savepoint,
             _ when SetPattern().IsMatch(text) => PgKind.Set,
             _ when ShowPattern().IsMatch(text) => PgKind.Show,
             _ when DiscardPattern().IsMatch(text) => PgKind.Discard,
@@ -134,9 +134,8 @@ internal static partial class PostgresStatements
         };
         return kind switch
         {
-            null => new PgError("0A000", "savepoints are not supported"),
             PgKind.Sql => Translate(text, tokens),
-            _ => new PgStatement(kind.Value, text, text, 0),
+            _ => new PgStatement(kind, text, text, 0),
         };
     }
 
@@ -167,8 +166,7 @@ internal static partial class PostgresStatements
                     output[at[s]] = "LIKE";
                     break;
                 case Word { QuoteStyle: null } word when create && (Is(word, "SERIAL") || Is(word, "BIGSERIAL") || Is(word, "SMALLSERIAL")):
-                    // BIGINT, not PostgreSQL's int4: generated integer keys pass 2^31 (relational-sql.md section 3).
-                    output[at[s]] = "BIGINT";
+                    output[at[s]] = "INTEGER";
                     break;
                 case Word { QuoteStyle: null } word when Is(word, "now") && s + 2 < at.Length && tokens[at[s + 1]] is LeftParen && tokens[at[s + 2]] is RightParen:
                     output[at[s]] = "CURRENT_TIMESTAMP";
@@ -406,6 +404,7 @@ internal static partial class PostgresStatements
             {
                 SqlValueKind.Integer => 20,
                 SqlValueKind.Real => 701,
+                SqlValueKind.Blob => 17,
                 _ => TextOid,
             }))];
         var verb = VerbPattern().Match(statement.Sql);
@@ -433,6 +432,7 @@ internal static partial class PostgresStatements
         "BOOLEAN" or "BOOL" => 16,
         "JSON" => 114,
         "JSONB" => 3802,
+        "BLOB" or "BYTEA" => 17,
         "DATE" => 1082,
         "TIMESTAMP" or "TIMESTAMP WITHOUT TIME ZONE" => 1114,
         "TIMESTAMPTZ" or "TIMESTAMP WITH TIME ZONE" => 1184,
@@ -451,16 +451,21 @@ internal static partial class PostgresStatements
     [GeneratedRegex(@"\A(?:((?:count|length|instr|unicode|row_number|rank|dense_rank|ntile)\()|((?:avg|total)\()|CAST\(.+\bAS\s+(\w+)\)\z)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline)]
     private static partial Regex ExpressionPattern();
 
+    public static bool RollsBackTo(string text) => text.StartsWith("ROLLBACK", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>The SQLSTATE of a <see cref="SqlError"/>; SQLITE_BUSY is always 40001, which drivers and ORMs retry.</summary>
     public static PgError Error(SqlError error) => new(error.Code switch
     {
         "SQLITE_CONSTRAINT_PRIMARYKEY" or "SQLITE_CONSTRAINT_UNIQUE" => "23505",
         "SQLITE_CONSTRAINT_NOTNULL" => "23502",
+        "SQLITE_CONSTRAINT_CHECK" => "23514",
+        "SQLITE_CONSTRAINT_FOREIGNKEY" => "23503",
         var code when code.StartsWith("SQLITE_CONSTRAINT", StringComparison.Ordinal) => "23000",
         "SQLITE_AUTH" => "42501",
         "SQLITE_BUSY" => "40001",
         "SQLITE_TOOBIG" => "54000",
         "SQLITE_INTERRUPT" => "57014",
+        "SQLITE_ABORT" => "40000",
         _ => error.Kind switch
         {
             "no_such_table" => "42P01",
@@ -472,7 +477,7 @@ internal static partial class PostgresStatements
     }, error.Message);
 
     /// <summary>Whether a column of the type is sent in binary when the client asks; others are always text.</summary>
-    public static bool Binary(int oid) => oid is 16 or 20 or 21 or 23 or TextOid or 114 or 701 or 1043 or 1082 or 1114 or 1184 or 3802;
+    public static bool Binary(int oid) => oid is 16 or 17 or 20 or 21 or 23 or TextOid or 114 or 701 or 1043 or 1082 or 1114 or 1184 or 3802;
 
     /// <summary>
     /// A value in the column's format; false when it does not fit the binary type (SQLite keeps 64-bit integers in an int4
@@ -483,6 +488,12 @@ internal static partial class PostgresStatements
         bytes = null;
         if (value.Kind == SqlValueKind.Null)
         {
+            return true;
+        }
+
+        if (value.Kind == SqlValueKind.Blob)
+        {
+            bytes = oid == 17 && binary ? value.Blob : Utf8.GetBytes("\\x" + Convert.ToHexStringLower(value.Blob!));
             return true;
         }
 
@@ -590,12 +601,14 @@ internal static partial class PostgresStatements
                     (701, 8) => Real(BinaryPrimitives.ReadDoubleBigEndian(value)),
                     (1082 or 1114 or 1184, _) => PostgresTemporal.Decode(oid, value),
                     (3802, > 0) when value[0] == 1 => Text(Utf8.GetString(value.AsSpan(1))),
+                    (17, _) => SqlValue.Of(value),
                     (0 or TextOid or 114 or 705 or 1042 or 1043, _) => Text(Utf8.GetString(value)),
                     _ => null,
                 }
                 : (oid, Utf8.GetString(value)) switch
                 {
                     (1082 or 1114 or 1184, var text) => PostgresTemporal.Parse(oid, text),
+                    (17, var text) => Bytea(text),
                     (16, var text) => Bool(text) is { } flag ? SqlValue.Of(flag ? 1L : 0L) : null,
                     (20 or 21 or 23, var text) => long.TryParse(text, NumberStyles.AllowLeadingSign, Invariant, out var integer) ? SqlValue.Of(integer) : null,
                     (700 or 701, var text) => double.TryParse(text, NumberStyles.Float, Invariant, out var real) ? Real(real) : null,
@@ -612,6 +625,23 @@ internal static partial class PostgresStatements
                 };
         }
         catch (DecoderFallbackException)
+        {
+            return null;
+        }
+    }
+
+    private static SqlValue? Bytea(string text)
+    {
+        if (!text.StartsWith("\\x", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        try
+        {
+            return SqlValue.Of(Convert.FromHexString(text.AsSpan(2)));
+        }
+        catch (FormatException)
         {
             return null;
         }

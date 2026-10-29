@@ -1,0 +1,131 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mariogk <mariogk@terrascale.tech>
+Date: Thu, 29 Oct 2026 16:00:00 -0300
+Subject: [PATCH] Turso driver: binds connection interrupt, query timeout, value
+ length bound, prepare_first and value kinds
+
+P/Invoke for the TerraScale native exports turso_connection_interrupt, turso_connection_clear_interrupt,
+turso_connection_set_query_timeout_ms and turso_connection_set_max_value_length,
+plus turso_connection_prepare_first (one statement and the length of the rest)
+and row value kinds and byte counts read without copying the value.
+
+Test: TerraBase.Fast SqlNativeHardeningTests (interrupt and query timeout).
+---
+diff --git a/src/Turso.Raw/Public/TursoBindings.cs b/src/Turso.Raw/Public/TursoBindings.cs
+diff --git a/src/Turso.Raw/Public/TursoBindings.cs b/src/Turso.Raw/Public/TursoBindings.cs
+index 8d6776b07..a02004613 100644
+--- a/src/Turso.Raw/Public/TursoBindings.cs
++++ b/src/Turso.Raw/Public/TursoBindings.cs
+@@ -121,6 +121,78 @@ public static class TursoBindings
+         return db.OwnStatement(statementPtr);
+     }
+ 
++    public static TursoStatementHandle? PrepareFirst(TursoDatabaseHandle db, string sql, out int tailLength)
++    {
++        db.ThrowIfInvalid();
++        ArgumentNullException.ThrowIfNull(sql);
++
++        var utf8 = new byte[Encoding.UTF8.GetByteCount(sql) + 1];
++        Encoding.UTF8.GetBytes(sql, utf8);
++        var status = TursoInterop.ConnectionPrepareFirst(db, utf8, out var statementPtr, out var tailIndex, out var errorPtr);
++        ThrowIfError(status, errorPtr, "Unable to prepare statement: ");
++        if (statementPtr == IntPtr.Zero)
++        {
++            tailLength = 0;
++            return null;
++        }
++
++        var consumed = checked((int)(ulong)tailIndex);
++        tailLength = sql.Length - Encoding.UTF8.GetCharCount(utf8, 0, Math.Min(consumed, utf8.Length - 1));
++        return db.OwnStatement(statementPtr);
++    }
++
++    public static void Interrupt(TursoDatabaseHandle db)
++    {
++        db.ThrowIfInvalid();
++        var status = TursoInterop.ConnectionInterrupt(db, out var errorPtr);
++        ThrowIfError(status, errorPtr);
++    }
++
++    public static void ClearInterrupt(TursoDatabaseHandle db)
++    {
++        db.ThrowIfInvalid();
++        var status = TursoInterop.ConnectionClearInterrupt(db, out var errorPtr);
++        ThrowIfError(status, errorPtr);
++    }
++
++    public static void SetQueryTimeout(TursoDatabaseHandle db, TimeSpan timeout)
++    {
++        db.ThrowIfInvalid();
++        var status = TursoInterop.ConnectionSetQueryTimeout(db, checked((ulong)Math.Max(0, Math.Ceiling(timeout.TotalMilliseconds))), out var errorPtr);
++        ThrowIfError(status, errorPtr);
++    }
++
++    public static void SetMaxValueLength(TursoDatabaseHandle db, long length)
++    {
++        db.ThrowIfInvalid();
++        var status = TursoInterop.ConnectionSetMaxValueLength(db, length, out var errorPtr);
++        ThrowIfError(status, errorPtr);
++    }
++
++    public static TursoValueType GetValueType(TursoStatementHandle statement, int columnIndex)
++    {
++        statement.ThrowIfInvalid();
++        ArgumentOutOfRangeException.ThrowIfNegative(columnIndex);
++
++        return TursoInterop.StatementRowValueKind(statement, ToNativeIndex(columnIndex)) switch
++        {
++            TursoNativeValueType.Null => TursoValueType.Null,
++            TursoNativeValueType.Integer => TursoValueType.Integer,
++            TursoNativeValueType.Real => TursoValueType.Real,
++            TursoNativeValueType.Text => TursoValueType.Text,
++            TursoNativeValueType.Blob => TursoValueType.Blob,
++            _ => TursoValueType.Empty,
++        };
++    }
++
++    public static long GetValueByteCount(TursoStatementHandle statement, int columnIndex)
++    {
++        statement.ThrowIfInvalid();
++        ArgumentOutOfRangeException.ThrowIfNegative(columnIndex);
++
++        return TursoInterop.StatementRowValueBytesCount(statement, ToNativeIndex(columnIndex));
++    }
++
+     public static void ResetStatement(TursoStatementHandle statement)
+     {
+         statement.ThrowIfInvalid();
+diff --git a/src/Turso.Raw/TursoInterop.cs b/src/Turso.Raw/TursoInterop.cs
+index d1119181c..015a2b01f 100644
+--- a/src/Turso.Raw/TursoInterop.cs
++++ b/src/Turso.Raw/TursoInterop.cs
+@@ -155,6 +155,26 @@ internal static class TursoInterop
+         out IntPtr statement,
+         out IntPtr errorPtr);
+ 
++    [DllImport(DllName, EntryPoint = "turso_connection_prepare_first", CallingConvention = CallingConvention.Cdecl)]
++    public static extern TursoStatusCode ConnectionPrepareFirst(
++        TursoDatabaseHandle connection,
++        byte[] sql,
++        out IntPtr statement,
++        out UIntPtr tailIndex,
++        out IntPtr errorPtr);
++
++    [DllImport(DllName, EntryPoint = "turso_connection_interrupt", CallingConvention = CallingConvention.Cdecl)]
++    public static extern TursoStatusCode ConnectionInterrupt(TursoDatabaseHandle connection, out IntPtr errorPtr);
++
++    [DllImport(DllName, EntryPoint = "turso_connection_clear_interrupt", CallingConvention = CallingConvention.Cdecl)]
++    public static extern TursoStatusCode ConnectionClearInterrupt(TursoDatabaseHandle connection, out IntPtr errorPtr);
++
++    [DllImport(DllName, EntryPoint = "turso_connection_set_query_timeout_ms", CallingConvention = CallingConvention.Cdecl)]
++    public static extern TursoStatusCode ConnectionSetQueryTimeout(TursoDatabaseHandle connection, ulong timeoutMs, out IntPtr errorPtr);
++
++    [DllImport(DllName, EntryPoint = "turso_connection_set_max_value_length", CallingConvention = CallingConvention.Cdecl)]
++    public static extern TursoStatusCode ConnectionSetMaxValueLength(TursoDatabaseHandle connection, long length, out IntPtr errorPtr);
++
+     [DllImport(DllName, EntryPoint = "turso_statement_reset", CallingConvention = CallingConvention.Cdecl)]
+     public static extern TursoStatusCode StatementReset(TursoStatementHandle statement, out IntPtr errorPtr);
+ 
+-- 
+2.47.0
+

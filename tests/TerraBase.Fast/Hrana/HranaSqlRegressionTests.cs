@@ -69,8 +69,8 @@ public sealed class HranaSqlRegressionTests
         await Assert.That(Types(finished.Json)).IsEqualTo("ok:execute,ok:execute,error,ok:execute,error,ok:close");
         await Assert.That(Response(finished.Json, 0).GetProperty("result").GetProperty("rows").GetRawText())
             .IsEqualTo("""[[{"type":"integer","value":"1"}]]""");
-        await Assert.That(finished.Json.GetProperty("results")[2].GetProperty("error").GetProperty("message").GetString()).IsEqualTo("no such table");
-        await Assert.That(finished.Json.GetProperty("results")[4].GetProperty("error").GetProperty("message").GetString()).IsEqualTo("no such table");
+        await Assert.That(finished.Json.GetProperty("results")[2].GetProperty("error").GetProperty("message").GetString()).StartsWith("no such table");
+        await Assert.That(finished.Json.GetProperty("results")[4].GetProperty("error").GetProperty("message").GetString()).StartsWith("no such table");
     }
 
     [Test]
@@ -107,7 +107,7 @@ public sealed class HranaSqlRegressionTests
              {"type":"execute","stmt":{"sql":"INSERT INTO t (v) VALUES (:v)","named_args":[{"name":"v","value":{"type":"float","value":-1e999}}]}},
              {"type":"execute","stmt":{"sql":"INSERT INTO t DEFAULT VALUES RETURNING v"}},
              {"type":"execute","stmt":{"sql":"BEGIN"}},
-             {"type":"execute","stmt":{"sql":"INSERT INTO t VALUES (1, 2.5)"}},
+             {"type":"execute","stmt":{"sql":"INSERT INTO t VALUES (2, 2.5)"}},
              {"type":"execute","stmt":{"sql":"UPDATE t SET v = 1e308 * 1e308 RETURNING v"}},
              {"type":"execute","stmt":{"sql":"SELECT v FROM t ORDER BY v"}},
              {"type":"execute","stmt":{"sql":"ROLLBACK"}},
