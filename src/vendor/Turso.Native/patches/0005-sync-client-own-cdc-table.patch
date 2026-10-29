@@ -1,0 +1,75 @@
+diff --git a/sync/engine/src/database_sync_engine.rs b/sync/engine/src/database_sync_engine.rs
+index bebfeb2..51522c4 100644
+--- a/sync/engine/src/database_sync_engine.rs
++++ b/sync/engine/src/database_sync_engine.rs
+@@ -26,7 +26,7 @@ use crate::{
+     database_tape::{
+         run_stmt_ignore_rows, try_wal_watermark_read_page, DatabaseChangesIteratorMode,
+         DatabaseChangesIteratorOpts, DatabaseReplaySession, DatabaseReplaySessionOpts,
+-        DatabaseTape, DatabaseTapeOpts, DatabaseWalSession, CDC_PRAGMA_NAME,
++        DatabaseTape, DatabaseTapeOpts, DatabaseWalSession, CDC_PRAGMA_NAME, DEFAULT_CDC_TABLE_NAME,
+     },
+     errors::Error,
+     io_operations::IoOperations,
+@@ -1959,7 +1959,7 @@ impl<IO: SyncEngineIo> DatabaseSyncEngine<IO> {
+         tracing::info!("apply_logical_mvcc_changes(path={})", self.main_db_path);
+ 
+         let conn = connect_untracked(&self.main_tape)?;
+-        let had_cdc_table = has_table(coro, &conn, "turso_cdc").await?;
++        let had_cdc_table = has_table(coro, &conn, DEFAULT_CDC_TABLE_NAME).await?;
+         let (local_pull_gen, local_last_change_id) =
+             read_last_change_id(coro, &conn, &self.client_unique_id).await?;
+         let mut precollected_local_changes = Vec::new();
+@@ -2162,7 +2162,7 @@ impl<IO: SyncEngineIo> DatabaseSyncEngine<IO> {
+         coro: &Coro<Ctx>,
+     ) -> Result<()> {
+         let conn = connect_untracked(&self.main_tape)?;
+-        if has_table(coro, &conn, "turso_cdc").await? {
++        if has_table(coro, &conn, DEFAULT_CDC_TABLE_NAME).await? {
+             let (_, local_last_change_id) =
+                 read_last_change_id(coro, &conn, &self.client_unique_id).await?;
+             let pending_local_changes =
+@@ -2212,7 +2212,7 @@ impl<IO: SyncEngineIo> DatabaseSyncEngine<IO> {
+         // that's why nested executed was chosen instead of auto-commit=false mode
+         main_conn.start_nested();
+ 
+-        let had_cdc_table = has_table(coro, &main_conn, "turso_cdc").await?;
++        let had_cdc_table = has_table(coro, &main_conn, DEFAULT_CDC_TABLE_NAME).await?;
+         let pre_apply_local_change_id = if had_cdc_table {
+             max_local_change_id(coro, &main_conn).await?
+         } else {
+diff --git a/sync/engine/src/database_sync_operations.rs b/sync/engine/src/database_sync_operations.rs
+index 07dc358..0a92540 100644
+--- a/sync/engine/src/database_sync_operations.rs
++++ b/sync/engine/src/database_sync_operations.rs
+@@ -77,7 +77,7 @@ const PORTABLE_TXN_META_CLIENT_KEY: &str = "client";
+ const SQLITE_INTERNAL_PREFIX: &str = "sqlite_";
+ const SQLITE_SCHEMA_TABLE: &str = "sqlite_schema";
+ const TURSO_INTERNAL_PREFIX: &str = "__turso_internal_";
+-const TURSO_CDC_TABLE_NAME: &str = "turso_cdc";
++const TURSO_CDC_TABLE_NAME: &str = crate::database_tape::DEFAULT_CDC_TABLE_NAME;
+ const TURSO_CDC_VERSION_TABLE_NAME: &str = "turso_cdc_version";
+ const CDC_COMMIT_CHANGE_TYPE: i64 = 2;
+ 
+@@ -2580,7 +2580,7 @@ pub async fn max_local_change_id<Ctx>(
+     coro: &Coro<Ctx>,
+     conn: &Arc<turso_core::Connection>,
+ ) -> Result<Option<i64>> {
+-    let mut stmt = match conn.prepare("SELECT MAX(change_id) FROM turso_cdc") {
++    let mut stmt = match conn.prepare(format!("SELECT MAX(change_id) FROM {TURSO_CDC_TABLE_NAME}")) {
+         Ok(stmt) => stmt,
+         Err(LimboError::ParseError(err)) if err.contains("no such table") => return Ok(None),
+         Err(err) => return Err(err.into()),
+diff --git a/sync/engine/src/database_tape.rs b/sync/engine/src/database_tape.rs
+index b4be398..df4dfbb 100644
+--- a/sync/engine/src/database_tape.rs
++++ b/sync/engine/src/database_tape.rs
+@@ -27,7 +27,7 @@ pub struct DatabaseTape {
+     disable_auto_checkpoint: bool,
+ }
+ 
+-const DEFAULT_CDC_TABLE_NAME: &str = "turso_cdc";
++pub(crate) const DEFAULT_CDC_TABLE_NAME: &str = "turso_sync_cdc";
+ const DEFAULT_CDC_MODE: &str = "full";
+ const DEFAULT_CHANGES_BATCH_SIZE: usize = 100;
+ pub const CDC_PRAGMA_NAME: &str = "capture_data_changes_conn";

@@ -49,6 +49,9 @@
     <None Update="THIRD-PARTY-NOTICES" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
+    <Protobuf Include="Features/Sync/Protos/*.proto" ProtoRoot="Features/Sync/Protos" GrpcServices="None" Access="Internal" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj" />
   </ItemGroup>
 </Project>
