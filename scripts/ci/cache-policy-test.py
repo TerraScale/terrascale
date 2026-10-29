@@ -77,7 +77,7 @@ for area in ("auth", "terrabase"):
     slow = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split(f"\n  slow-{area}-main:\n", 1)[1], maxsplit=1)[0]
     assert "needs: [changes, native]" in slow, "Slow must not wait for image publication or rollout"
     assert "cancel-in-progress: true" not in slow, "Main results must survive superseding pushes"
-assert "restore-keys: ${{ runner.os }}-nuget-${{ env.TS_DOTNET_REV }}-" in workflow
+assert "restore-keys: ${{ runner.os }}-nuget-monorepo-" in workflow
 
 inputs = dockerfile.split("FROM base AS restore-inputs\n", 1)[1].split("\nFROM base AS restored", 1)[0]
 command = inputs.split("\nRUN ", 1)[1].split("\n\n", 1)[0].replace("\\\n", " ")
