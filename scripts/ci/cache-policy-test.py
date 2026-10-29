@@ -28,11 +28,17 @@ assert "DeterministicSourcePaths: false" in workflow, "CallerFilePath fixtures n
 assert "ContinuousIntegrationBuild: false" not in workflow
 assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workflow.split("\npermissions:", 1)[0]
 assert 'bash scripts/ci/test-area.sh fast "$AREA"' in workflow
-assert "no-cache-filters: test-${{ env.AREA }}" in workflow
 assert "no-cache-filters: slow-${{ env.AREA }}-run" in workflow
 assert "steps: *slow-steps" in workflow
-assert "if: env.AREA != 'auth'" in workflow
-assert "if: env.AREA == 'auth'" in workflow
+auth_job = workflow.split("\n  auth:\n", 1)[1].split("\n  terrabase-build:\n", 1)[0]
+assert "bash scripts/ci/auth-fast.sh" in auth_job
+assert "docker/build-push-action" not in auth_job
+assert "*nuget-cache" in auth_job and "*locked-restore" in auth_job
+auth_fast = (root / "scripts/ci/auth-fast.sh").read_text()
+assert "fmt-check SOLUTION=auth.slnf" in auth_fast
+assert "dotnet build tests/TerraScale.Authentication.Fast/" in auth_fast
+assert "-o auth-build auth-check" in auth_fast
+assert auth_fast.index("make -o restore auth-test-fast") < auth_fast.index("make auth-publish")
 assert "native-audit:" not in workflow, "Remove the temporary executor comparison"
 
 # Guard behavior at the build graph boundary: publishing and Slow must never rerun checked Fast stages.
@@ -108,4 +114,4 @@ def filtered(change=None):
 baseline = filtered()
 for path in fixtures:
     assert (filtered(path) != baseline) == (path in expected), path
-print(f"cache-policy-test: ok (main-only package/base writers, fresh hybrid suites, {len(fixtures)} restore invalidation controls)")
+print(f"cache-policy-test: ok (main-only package/base writers, fresh host Fast suites, {len(fixtures)} restore invalidation controls)")
