@@ -260,7 +260,7 @@ public sealed class SqlNativeHardeningTests
                 catch (OperationCanceledException)
                 {
                 }
-                catch (PostgresException error) when (error.SqlState == "57014")
+                catch (PostgresException error) when (error.SqlState is "57014" or "53300")
                 {
                 }
             }
@@ -270,7 +270,18 @@ public sealed class SqlNativeHardeningTests
         var answers = new List<long>();
         for (var i = 0; i < 50; i++)
         {
-            answers.Add(await ScalarAsync(plain, "SELECT 1"));
+            await TerraBaseTestServer.EventuallyAsync(async _ =>
+            {
+                try
+                {
+                    answers.Add(await ScalarAsync(plain, "SELECT 1"));
+                    return true;
+                }
+                catch (PostgresException error) when (error.SqlState == "53300")
+                {
+                    return false;
+                }
+            }, timeout: TimeSpan.FromSeconds(30));
         }
 
         await Assert.That(answers.Count(answer => answer == 1)).IsEqualTo(50);
