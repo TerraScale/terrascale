@@ -2,23 +2,23 @@
 
 Standalone Linux process integration benchmark using real Turso files. All traffic stays inside three newly created network namespaces. Veth links form a triangle; **only namespace interfaces** receive netem. Root links and qdiscs are recorded before and after, and compared. The runner removes only its own processes and namespaces, retaining source, database files and results in its owned scratch directory.
 
-Requirements: passwordless sudo on an authorized development host, Linux network namespaces, `ip`, `tc`, `ping`, `chattr`, Python 3.14+, Node 24, npm, and Rust **1.99.1**. Measured versions and hashes are in the evidence. Native source/home Btrfs database directories use `chattr +C` before file creation; the official replica inherits the scratch directory filesystem settings. No host network interface or canonical checkout is changed.
+Requirements: passwordless sudo on an authorized development host, Linux network namespaces, `ip`, `tc`, `ping`, `chattr`, Python 3.14+, Node 24, npm, and Rust **1.99.1**. Exact measured interpreters: NORMAL used Node 24.21.0/Python 3.14.8; FULL used Node 24.22.2/Python 3.15.2. Versions and hashes are retained in the evidence. Native source/home Btrfs database directories use `chattr +C` before file creation; the official replica inherits the scratch directory filesystem settings. No host network interface or canonical checkout is changed.
 
 Turso source is pinned to `5c168be5ef6a32ac966daf5983502a4f694b37ad` (0.8.2); downloaded tar SHA-256 is `7ea83d5e28577cf9d8655b77705902379e06b82fb29424f6ea328b5f26f17ecb`. `prepare.py` verifies the cached archive on every run and regenerates the source tree and discards previous compiled artifacts. It retains the original MIT license, and appends the spike's C ABI to the unmodified upstream `cli/sync_server.rs`. The archived Cargo lock and npm lock pin every dependency, including sync's Linux x64 native client 0.8.2 and common packages 0.8.3. `build.sh` requires the explicit Rust 1.99.1 compiler and Cargo binaries and uses locked Cargo and npm restores. The upstream server is a prototype, not production code.
 
-From the task checkout, with `feat/lag-lab` already published for the admission wrapper:
+From a checkout containing this harness. The admission wrapper fetches `main`; staged scratch inputs come from your current checkout:
 
 ```bash
 LAB_HOST=$(ssh delta ts-host -v)
 LAB_SCRATCH=/home/mariogk/lag-lab-w0-4-repro/benchmark/lag-lab
 ssh "$LAB_HOST" mkdir -p "$LAB_SCRATCH"
 scp benchmark/lag-lab/* "$LAB_HOST:$LAB_SCRATCH/"
-ssh delta env TS_HEAVY_HOST="$LAB_HOST" ts-heavy-any nice -n 19 bash "$LAB_SCRATCH/build.sh" --repo terrascale --branch feat/lag-lab
+ssh delta env TS_HEAVY_HOST="$LAB_HOST" ts-heavy-any nice -n 19 bash "$LAB_SCRATCH/build.sh" --repo terrascale --branch main
 LAB_PYTHON=$(ssh "$LAB_HOST" "python3 -c 'import sys; print(sys.executable)'")
 LAB_NODE=$(ssh "$LAB_HOST" "node -p 'process.execPath'")
 LAB_TOOL_PATH="$(dirname "$LAB_PYTHON"):$(dirname "$LAB_NODE"):/run/current-system/sw/bin:/usr/bin:/bin"
-ssh delta env TS_HEAVY_HOST="$LAB_HOST" ts-heavy-any sudo -n env PATH="$LAB_TOOL_PATH" nice -n 19 "$LAB_PYTHON" "$LAB_SCRATCH/lab.py" run 10 normal --repo terrascale --branch feat/lag-lab
-ssh delta env TS_HEAVY_HOST="$LAB_HOST" ts-heavy-any sudo -n env PATH="$LAB_TOOL_PATH" nice -n 19 "$LAB_PYTHON" "$LAB_SCRATCH/lab.py" run 5 --repo terrascale --branch feat/lag-lab
+ssh delta env TS_HEAVY_HOST="$LAB_HOST" ts-heavy-any sudo -n env PATH="$LAB_TOOL_PATH" nice -n 19 "$LAB_PYTHON" "$LAB_SCRATCH/lab.py" run 10 normal --repo terrascale --branch main
+ssh delta env TS_HEAVY_HOST="$LAB_HOST" ts-heavy-any sudo -n env PATH="$LAB_TOOL_PATH" nice -n 19 "$LAB_PYTHON" "$LAB_SCRATCH/lab.py" run 5 --repo terrascale --branch main
 ```
 
 Resolve the user's actual Python and Node binaries before sudo; root's mise shims are not configured on every host. Reselect with `ts-host -v` before each heavy invocation; if the least-loaded host changes, stage the scratch inputs there and rebuild through the wrapper. Do not run simultaneous jobs under this branch: admission supersedes the previous job. `run 2 smoke normal` runs one repeat, 70 ms only; smoke data is not published as the full matrix.
