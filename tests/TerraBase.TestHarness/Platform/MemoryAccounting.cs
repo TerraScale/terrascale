@@ -2,9 +2,8 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.Memory;
 using TerraBase.Tenancy;
-using TerraBase.Testing;
 
-namespace TerraBase.Fast.Platform;
+namespace TerraBase.Testing;
 
 // Only revision indexes outlive requests after observations and caches have been drained.
 // Subtract their actual admitted bytes, preserving exact assertions for every operation lease.
