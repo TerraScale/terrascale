@@ -165,10 +165,12 @@ terrabase-test-fast: restore
 terrabase-test-slow: terrabase-build
 	dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
 
+TERRABASE_E2E_RUN = dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build --
+
 # Six writes, six deletes, one three-way conflict and each of the three region outages. No expected failures.
 # CI's required TerraBase test stage runs it locally; the deploy E2E job runs the same non-outage tests on ts-orch.
 terrabase-replication-matrix: terrabase-build
-	dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build -- --treenode-filter '/*/*/*/*[Category=replication-matrix]' --minimum-expected-tests 16 --output detailed --no-ansi $(TEST_ARGS)
+	$(TERRABASE_E2E_RUN) --treenode-filter '/*/*/*/*[Category=replication-matrix]' --minimum-expected-tests 16 --output detailed --no-ansi $(TEST_ARGS)
 
 # The local-only category: scenarios that only local nodes may run (every node stopped at once, whole databases created
 # and restored, a cursor's issuer stopped, a canceled outage's recovery) and the routing and outage harness checks.
@@ -177,7 +179,7 @@ terrabase-replication-matrix: terrabase-build
 E2E_LOCAL_TESTS := 67
 terrabase-e2e-local: terrabase-build
 	rm -f "$(E2E_RESULTS)"
-	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL -u TERRABASE_E2E_ORCH_NODES TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build -- --treenode-filter '/*/*/*/*[Category=local-only]' --minimum-expected-tests $(E2E_LOCAL_TESTS) --output detailed --no-ansi $(TEST_ARGS) || status=$$?; \
+	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL -u TERRABASE_E2E_ORCH_NODES TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" $(TERRABASE_E2E_RUN) --treenode-filter '/*/*/*/*[Category=local-only]' --minimum-expected-tests $(E2E_LOCAL_TESTS) --output detailed --no-ansi $(TEST_ARGS) || status=$$?; \
 	jq -r 'select(.category == "fail" or .category == "skip") | "E2E \(.category): \(.test)\n\(.detail)"' "$(E2E_RESULTS)" || status=1; exit $$status
 	jq -se 'length == $(E2E_LOCAL_TESTS) and all(.[]; .category == "pass" or .category == "harness")' "$(E2E_RESULTS)"
 
@@ -251,3 +253,7 @@ benchmark-repl-chunks:
 	$(MAKE) terrabase-build CONFIGURATION=Release
 	$(MAKE) -C benchmark repl-bench-build
 	benchmark/scripts/repl-chunks.sh
+
+.PHONY: terrabase-test-shard
+terrabase-test-shard:
+	python3 scripts/ci/terrabase-shard.py $(SHARD)
