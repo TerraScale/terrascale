@@ -64,7 +64,7 @@ public sealed class ShapeFilterTests
     [Test]
     public async Task A_filter_matches_a_materialized_document_exactly_as_the_query_endpoint_does()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var ids = new List<string>();
         foreach (var document in Documents)
         {
@@ -94,7 +94,7 @@ public sealed class ShapeFilterTests
     [Test]
     public async Task Equivalent_spellings_share_one_canonical_filter_that_queries_the_same_documents()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         foreach (var document in Documents)
         {
             (await api.SendRawAsync(HttpMethod.Put, api.Document(DocumentApi.NewId()), document, "application/json")).Status.ShouldBe(HttpStatusCode.Created);
@@ -154,7 +154,7 @@ public sealed class ShapeFilterTests
     [Test]
     public async Task Flattening_beyond_64_children_regroups_into_a_valid_order_independent_where()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         (await api.SendRawAsync(HttpMethod.Put, api.Document(DocumentApi.NewId()), """{"n":1}""", "application/json")).Status.ShouldBe(HttpStatusCode.Created);
         var faker = new Faker();
         var terms = Enumerable.Range(0, 120).Select(i => $$"""{"ne":["/n",{{i + 2}}]}""").ToList();
@@ -181,7 +181,7 @@ public sealed class ShapeFilterTests
     [Test]
     public async Task Unsupported_filters_are_rejected_with_the_query_endpoints_400()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         string[] invalid =
         [
             """{"regex":["/s","a"]}""",
@@ -214,7 +214,7 @@ public sealed class ShapeFilterTests
     [Test]
     public async Task The_65th_filtered_shape_evicts_the_least_recently_used_of_its_own_database_only()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var first = await api.TenantOfAsync();
         (await api.SendAsync(HttpMethod.Put, api.DatabasePath("other"))).Status.ShouldBe(HttpStatusCode.Created);
         var second = await api.TenantOfAsync("other");
@@ -259,7 +259,7 @@ public sealed class ShapeFilterTests
     [Test]
     public async Task A_duplicate_member_matches_by_its_first_occurrence_as_the_query_endpoint_does()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { d = 1 })).Status.ShouldBe(HttpStatusCode.Created);
         var store = (TursoDatabaseStore)(await api.Server.Services.GetRequiredService<TursoStorageEngine>()
@@ -296,7 +296,7 @@ public sealed class ShapeFilterTests
     [Test]
     public async Task A_document_changed_out_of_the_filter_by_seal_time_no_longer_matches()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var id = DocumentApi.NewId();
         var kept = DocumentApi.NewId();
         var excluded = DocumentApi.NewId();

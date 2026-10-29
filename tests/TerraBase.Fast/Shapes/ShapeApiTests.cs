@@ -144,7 +144,7 @@ public sealed class ShapeApiTests
     [Test]
     public async Task Unknown_parameters_duplicates_and_empty_values_are_400_invalid_request()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
 
         foreach (var query in new[] { "?offset=-1&bogus=1", "?offset=-1&offset=-1", "?offset=", "", "?offset=-1&where=" })
         {
@@ -157,7 +157,7 @@ public sealed class ShapeApiTests
     [Test]
     public async Task Non_canonical_decimal_offsets_and_snapshot_pages_are_400_invalid_request()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
 
         foreach (var offset in new[]
         {
@@ -176,7 +176,7 @@ public sealed class ShapeApiTests
     [Test]
     public async Task Live_needs_a_decimal_offset_and_the_cursor_bucket_must_stay_below_the_maximum()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
 
         foreach (var query in new[]
         {
@@ -195,7 +195,7 @@ public sealed class ShapeApiTests
     [Test]
     public async Task A_cursor_is_only_valid_for_a_resume_or_a_live_request()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
 
         var reply = await GetShapeAsync(api.Client, Shape(api, $"?handle={Handle}&offset=0&cursor=5"));
 
@@ -206,7 +206,7 @@ public sealed class ShapeApiTests
     [Test]
     public async Task A_resume_envelope_that_does_not_decode_canonically_is_400_invalid_request()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
 
         var query = await GetShapeAsync(api.Client, Shape(api, "?offset=-1&cursor=AQ%3D%3D"));
         var header = await GetShapeAsync(api.Client, Shape(api, "?offset=-1"), ("TB-Shape-Resume", "AQ=="));
@@ -224,7 +224,7 @@ public sealed class ShapeApiTests
     [Test]
     public async Task A_resume_sent_with_both_the_header_and_the_cursor_is_400_invalid_request()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
 
         var reply = await GetShapeAsync(api.Client, Shape(api, $"?offset=-1&cursor={ResumeToken()}"), ("TB-Shape-Resume", ResumeToken()));
 
@@ -235,7 +235,7 @@ public sealed class ShapeApiTests
     [Test]
     public async Task An_invalid_where_is_400_invalid_query_and_a_non_json_where_too()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
 
         var notJson = await GetShapeAsync(api.Client, Shape(api, "?offset=-1&where=%7Bnope"));
         var notFilter = await GetShapeAsync(api.Client, Shape(api, "?offset=-1&where=%7B%22bogus%22%3A1%7D"));
@@ -286,7 +286,7 @@ public sealed class ShapeApiTests
     [Test]
     public async Task An_unknown_database_or_collection_is_404_before_the_query_string_is_checked()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
 
         var database = await GetShapeAsync(api.Client, $"{api.Project}/databases/missing/collections/{DocumentApi.Collection}/shape?offset=bad");
         var collection = await GetShapeAsync(api.Client, $"{api.Collections}/missing/shape?offset=bad");
@@ -300,7 +300,7 @@ public sealed class ShapeApiTests
     [Test]
     public async Task The_production_backend_bootstraps_a_real_lineage_and_refuses_fixture_handles()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var bootstrap = await GetShapeAsync(api.Client, Shape(api, "?offset=-1"));
         await Assert.That(bootstrap.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
         await Assert.That(bootstrap.Handle).IsNotNull();
@@ -488,7 +488,7 @@ public sealed class ShapeApiTests
     [Test]
     public async Task The_shape_needs_documents_read_and_is_not_served_on_the_internal_listener()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         using var writeOnly = await api.ClientWithScopesAsync("documents:write");
 
         var denied = await GetShapeAsync(writeOnly, Shape(api, "?offset=-1"));

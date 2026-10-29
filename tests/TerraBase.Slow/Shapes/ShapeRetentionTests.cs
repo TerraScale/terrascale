@@ -81,7 +81,7 @@ public sealed class ShapeRetentionTests
     [Test]
     public async Task The_floor_covers_feed_gaps_and_the_counter_when_the_feed_becomes_empty()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         var retention = Retention(api.Server, new FakeTimeProvider(Now));
         for (var i = 0; i < 4; i++)
@@ -114,7 +114,7 @@ public sealed class ShapeRetentionTests
     [Test]
     public async Task Advancing_the_fake_clock_expires_a_chunk_without_changing_feed_retention()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         var time = new FakeTimeProvider(Now);
         var retention = Retention(api.Server, time);
@@ -128,7 +128,7 @@ public sealed class ShapeRetentionTests
     [Test]
     public async Task A_damaged_oversized_body_fails_the_pass_instead_of_reporting_cleanup_complete()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         var retention = Retention(api.Server, new FakeTimeProvider(Now));
         await WriteAsync(store, connection => Chunk(connection, H1, 0, 10, Now.AddDays(-8), 8 * Mi + 1));
@@ -141,7 +141,7 @@ public sealed class ShapeRetentionTests
     [Test]
     public async Task A_partial_rotation_drop_keeps_its_floor_and_shares_the_byte_budget()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         var retention = Retention(api.Server, new FakeTimeProvider(Now));
         await WriteAsync(store, connection =>
@@ -165,7 +165,7 @@ public sealed class ShapeRetentionTests
     [Test]
     public async Task Chunks_older_than_seven_days_leave_and_set_the_floor_while_the_boundary_and_recent_chunks_stay()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         var time = new FakeTimeProvider(Now);
         var retention = Retention(api.Server, time);
@@ -205,7 +205,7 @@ public sealed class ShapeRetentionTests
     [Test]
     public async Task Obsolete_snapshots_below_the_floor_go_but_the_newest_offset_keeps_every_page()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         var time = new FakeTimeProvider(Now);
         var retention = Retention(api.Server, time);
@@ -232,7 +232,7 @@ public sealed class ShapeRetentionTests
     [Test]
     public async Task The_newest_complete_snapshot_keeps_every_page_while_a_newer_one_is_still_being_sealed()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         var time = new FakeTimeProvider(Now);
         var retention = Retention(api.Server, time);
@@ -254,7 +254,7 @@ public sealed class ShapeRetentionTests
     [Test]
     public async Task Dropping_a_handle_removes_chunks_and_snapshots_of_every_age_and_only_that_handle()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         var time = new FakeTimeProvider(Now);
         var retention = Retention(api.Server, time);
@@ -290,7 +290,7 @@ public sealed class ShapeRetentionTests
     [Test]
     public async Task A_pass_deletes_at_most_1024_rows_across_chunks_and_snapshots_and_the_rest_follow_in_later_passes()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         var time = new FakeTimeProvider(Now);
         var retention = Retention(api.Server, time);
@@ -325,7 +325,7 @@ public sealed class ShapeRetentionTests
     [Test]
     public async Task A_pass_stops_within_the_8_mebibyte_budget_shared_by_chunks_and_snapshots()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         var time = new FakeTimeProvider(Now);
         var retention = Retention(api.Server, time);

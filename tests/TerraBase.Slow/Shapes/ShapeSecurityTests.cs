@@ -24,7 +24,7 @@ public sealed class ShapeSecurityTests
     [Test]
     public async Task No_other_organization_project_or_database_key_reaches_a_shape_its_key_or_its_etag()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await Assert.That((await api.PutAsync(DocumentApi.NewId(), Item("open"))).Status).IsEqualTo(HttpStatusCode.Created);
         var shape = ShapeOf(api);
         using var bootstrap = await api.Client.GetAsync(Relative($"{shape}?offset=-1"));
@@ -70,7 +70,7 @@ public sealed class ShapeSecurityTests
     [Test]
     public async Task A_handle_from_another_tenant_collection_or_filter_is_refused_and_answers_only_the_callers_own_handle()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await Assert.That((await api.PutAsync(DocumentApi.NewId(), Item("open"))).Status).IsEqualTo(HttpStatusCode.Created);
         (await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "other" })).Status.ShouldBe(HttpStatusCode.Created);
         var items = ShapeOf(api);
@@ -114,7 +114,7 @@ public sealed class ShapeSecurityTests
     [Test]
     public async Task A_database_deleted_and_recreated_under_the_same_name_refuses_the_old_handle_on_the_shape_and_key_routes()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await Assert.That((await api.PutAsync(DocumentApi.NewId(), Item("open"))).Status).IsEqualTo(HttpStatusCode.Created);
         var shape = ShapeOf(api);
         var old = await BootstrapAsync(api.Client, shape);
@@ -142,7 +142,7 @@ public sealed class ShapeSecurityTests
     [Test]
     public async Task Every_shape_response_class_carries_its_cache_policy_and_no_two_tenants_or_filters_share_a_cache_key()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         using var stranger = await api.Management.CreateTenantAsync("documents:read", "documents:write");
         await CreateCollectionAsync(stranger.Data, stranger.ProjectId);
         // Identical documents in both tenants, so only the tenant can tell their responses apart.
@@ -206,7 +206,7 @@ public sealed class ShapeSecurityTests
     [Test]
     public async Task A_live_poll_admitted_before_its_key_is_revoked_delivers_at_most_one_answer_within_the_live_timeout()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await Assert.That((await api.PutAsync(DocumentApi.NewId(), Item("open"))).Status).IsEqualTo(HttpStatusCode.Created);
         var owner = api.Server.Client;
         const string Keys = "/admin/api-keys";

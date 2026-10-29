@@ -29,7 +29,7 @@ public sealed class ShapeSnapshotTests
     [Test]
     public async Task A_snapshot_definition_cannot_read_a_recreated_collection_under_its_old_handle()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await using var fixture = await Fixture.OpenAsync(api);
         var shape = await ShapeAsync(fixture.Store);
         await api.SendAsync(HttpMethod.Delete, api.Collections + "/" + DocumentApi.Collection);
@@ -44,7 +44,7 @@ public sealed class ShapeSnapshotTests
     [Test]
     public async Task A_read_transaction_keeps_its_feed_head_and_page_bytes_while_http_writes_commit()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await using var fixture = await Fixture.OpenAsync(api);
         var ids = Ids(5);
         var model = Model();
@@ -167,7 +167,7 @@ public sealed class ShapeSnapshotTests
     [Test]
     public async Task A_snapshot_at_S_equals_the_replayed_write_history_and_feed_through_S()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await StorageFixture.CreateCollectionAsync(api.Tenant, DocumentApi.Database, "other");
         await using var fixture = await Fixture.OpenAsync(api);
         var ids = Ids(10);
@@ -220,7 +220,7 @@ public sealed class ShapeSnapshotTests
     [Test]
     public async Task An_empty_collection_seals_one_page_without_ops_and_a_second_seal_reuses_it()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await using var fixture = await Fixture.OpenAsync(api);
         var shape = await ShapeAsync(fixture.Store);
 
@@ -244,7 +244,7 @@ public sealed class ShapeSnapshotTests
     [Test]
     public async Task A_filtered_scan_stops_after_10000_examined_ids_and_still_advances()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await using var fixture = await Fixture.OpenAsync(api);
         var ids = Ids(ShapeSnapshots.PageExamined + 1);
         _ = await WriteAsync(api, Model(), [.. ids.Select((id, n) => (id, (JsonObject?)Doc(n)))]);
@@ -263,7 +263,7 @@ public sealed class ShapeSnapshotTests
     [Test]
     public async Task A_cancelled_seal_publishes_no_partial_snapshot_and_the_next_seal_replaces_its_pages()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await using var fixture = await Fixture.OpenAsync(api);
         var ids = Ids(3);
         var model = Model();
@@ -301,7 +301,7 @@ public sealed class ShapeSnapshotTests
     [Test]
     public async Task A_seal_without_memory_admission_or_after_cancellation_publishes_nothing()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await using var fixture = await Fixture.OpenAsync(api, limit: 16L * 1024 * 1024);
         _ = await WriteAsync(api, Model(), (DocumentApi.NewId(), Doc(1)));
         var shape = await ShapeAsync(fixture.Store);
@@ -319,7 +319,7 @@ public sealed class ShapeSnapshotTests
     [Test]
     public async Task A_read_page_keeps_its_memory_admission_until_the_page_is_disposed()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await using var fixture = await Fixture.OpenAsync(api);
         _ = await WriteAsync(api, Model(), (DocumentApi.NewId(), Doc(1, new string('y', 64 * 1024))));
         var shape = await ShapeAsync(fixture.Store);
@@ -339,7 +339,7 @@ public sealed class ShapeSnapshotTests
     [Test]
     public async Task A_page_holds_at_most_1000_documents()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await using var fixture = await Fixture.OpenAsync(api);
         var ids = Ids(ShapeSnapshots.PageDocuments + 1);
         var model = Model();
@@ -357,7 +357,7 @@ public sealed class ShapeSnapshotTests
     [Test]
     public async Task A_filtered_out_id_advances_the_continuation_within_the_page_byte_limit()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await using var fixture = await Fixture.OpenAsync(api);
         var ids = Ids(3);
         var excluded = ids[1];
@@ -390,7 +390,7 @@ public sealed class ShapeSnapshotTests
     [Test]
     public async Task A_document_too_large_to_share_a_page_travels_alone_past_1_MiB()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await using var fixture = await Fixture.OpenAsync(api);
         var ids = Ids(3);
         var model = Model();
@@ -408,7 +408,7 @@ public sealed class ShapeSnapshotTests
     [Test]
     public async Task A_page_closes_after_its_5_second_deadline_and_the_next_page_continues()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await using var fixture = await Fixture.OpenAsync(api);
         var ids = Ids(5);
         var model = Model();
@@ -436,7 +436,7 @@ public sealed class ShapeSnapshotTests
     [Arguments("7B226E223A")]
     public async Task A_damaged_stored_document_fails_the_seal_and_publishes_nothing(string damaged)
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await using var fixture = await Fixture.OpenAsync(api);
         var ids = Ids(2);
         _ = await WriteAsync(api, Model(), (ids[0], Doc(0)), (ids[1], Doc(1)));
@@ -454,7 +454,7 @@ public sealed class ShapeSnapshotTests
     [Test]
     public async Task A_one_page_snapshot_reseals_at_16_chunks_past_its_offset_but_not_at_15()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await using var fixture = await Fixture.OpenAsync(api);
         _ = await WriteAsync(api, Model(), (DocumentApi.NewId(), Doc(1)));
         var shape = await ShapeAsync(fixture.Store);
@@ -478,7 +478,7 @@ public sealed class ShapeSnapshotTests
     [Test]
     public async Task A_snapshot_reseals_at_4096_chunks_past_its_offset_but_not_at_4095()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await using var fixture = await Fixture.OpenAsync(api);
         _ = await WriteAsync(api, Model(), (DocumentApi.NewId(), Doc(1)));
         var shape = await ShapeAsync(fixture.Store);
@@ -506,7 +506,7 @@ public sealed class ShapeSnapshotTests
     [Test]
     public async Task A_snapshot_reseals_one_hour_after_sealing_and_the_older_one_stays_servable()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await using var fixture = await Fixture.OpenAsync(api);
         _ = await WriteAsync(api, Model(), (DocumentApi.NewId(), Doc(1)));
         var shape = await ShapeAsync(fixture.Store);

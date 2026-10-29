@@ -15,7 +15,7 @@ public sealed class ShapeHandleTests
     [Test]
     public async Task Repeated_calls_for_the_same_shape_return_the_same_handle()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api);
 
         var collection = await CollectionAsync(store);
@@ -35,7 +35,7 @@ public sealed class ShapeHandleTests
     [Test]
     public async Task IsCurrent_compares_the_handle_exactly()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api);
         var shape = ShapeHandle.Compute(store, await CollectionAsync(store), Parse(Filter));
 
@@ -50,7 +50,7 @@ public sealed class ShapeHandleTests
     [Test]
     public async Task Different_filters_give_different_handles()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api);
 
         var collection = await CollectionAsync(store);
@@ -68,7 +68,7 @@ public sealed class ShapeHandleTests
     [Test]
     public async Task Whitespace_and_escape_forms_of_one_filter_share_a_handle()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api);
 
         var collection = await CollectionAsync(store);
@@ -90,7 +90,7 @@ public sealed class ShapeHandleTests
     [Arguments("or")]
     public async Task Commutative_children_have_order_independent_encoding(string op)
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api);
 
         var collection = await CollectionAsync(store);
@@ -108,7 +108,7 @@ public sealed class ShapeHandleTests
     [Arguments("nin")]
     public async Task Membership_values_have_order_independent_encoding(string op)
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api);
 
         var collection = await CollectionAsync(store);
@@ -123,7 +123,7 @@ public sealed class ShapeHandleTests
     [Test]
     public async Task Positional_operands_are_preserved()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api);
 
         var collection = await CollectionAsync(store);
@@ -137,7 +137,7 @@ public sealed class ShapeHandleTests
     [Test]
     public async Task A_different_collection_gets_a_different_handle()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api);
 
         var items = await CollectionAsync(store);
@@ -153,7 +153,7 @@ public sealed class ShapeHandleTests
     [Test]
     public async Task A_different_database_gets_a_different_handle()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         var tenant = await api.TenantOfAsync();
         var store = await StoreAsync(api);
@@ -175,7 +175,7 @@ public sealed class ShapeHandleTests
     [Test]
     public async Task Dropping_and_recreating_a_collection_rotates_the_handle()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api);
 
         var before = await CollectionAsync(store);
@@ -200,7 +200,7 @@ public sealed class ShapeHandleTests
     [Test]
     public async Task Recreating_a_database_under_the_same_tenant_rotates_the_handle()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         var tenant = await api.TenantOfAsync();
         var store = await StoreAsync(api);
@@ -222,7 +222,7 @@ public sealed class ShapeHandleTests
     [Test]
     public async Task Copying_a_database_renews_its_incarnation_and_handle()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         var tenant = await api.TenantOfAsync();
         var store = await StoreAsync(api);
@@ -249,7 +249,7 @@ public sealed class ShapeHandleTests
         var directory = Directory.CreateTempSubdirectory("terrabase-shape-restore-").FullName;
         try
         {
-            await using var api = await DocumentApi.StartAsync();
+            await using var api = await DocumentApi.StartIsolatedAsync();
             var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
             var backup = api.Server.Services.GetRequiredService<IWalBackup>();
             var tenant = await api.TenantOfAsync();
@@ -321,7 +321,7 @@ public sealed class ShapeHandleTests
         var directory = Directory.CreateTempSubdirectory("terrabase-shape-import-").FullName;
         try
         {
-            await using var sourceApi = await DocumentApi.StartAsync();
+            await using var sourceApi = await DocumentApi.StartIsolatedAsync();
             var backup = sourceApi.Server.Services.GetRequiredService<IWalBackup>();
             var tenant = await sourceApi.TenantOfAsync();
             var source = await StoreAsync(sourceApi);
@@ -334,7 +334,7 @@ public sealed class ShapeHandleTests
                 _ = await tap.SnapshotAsync(Stream.Null, snapshot, CancellationToken.None);
             }
 
-            await using var targetApi = await DocumentApi.StartAsync();
+            await using var targetApi = await DocumentApi.StartIsolatedAsync();
             await targetApi.Server.Services.GetRequiredService<IWalBackup>().ImportDatabaseAsync(tenant, snapshot, CancellationToken.None);
             var copy = (await targetApi.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
             var copyCollection = await CollectionAsync(copy);

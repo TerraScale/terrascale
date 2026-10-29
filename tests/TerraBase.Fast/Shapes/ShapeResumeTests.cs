@@ -75,7 +75,7 @@ public sealed partial class ShapeResumeTests
     [Test]
     public async Task A_cross_machine_resume_proves_a_chunk_cursor_issued_above_a_feed_retention_baseline()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var path = $"{api.Collections}/{DocumentApi.Collection}/shape";
         _ = await api.PutAsync(DocumentApi.NewId(), new { index = 0 });
         _ = await api.PutAsync(DocumentApi.NewId(), new { index = 1 });
@@ -103,7 +103,7 @@ public sealed partial class ShapeResumeTests
     [Test]
     public async Task A_resume_target_below_the_retention_floor_is_409()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var path = $"{api.Collections}/{DocumentApi.Collection}/shape";
         _ = await api.PutAsync(DocumentApi.NewId(), new { index = 0 });
         var synced = await SyncAsync(api.Client, path, null, []);

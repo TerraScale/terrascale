@@ -52,7 +52,7 @@ public sealed class FeedSequenceTests
     [Test]
     public async Task The_documents_of_one_transaction_take_contiguous_sequence_numbers_and_share_one_commit_offset()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         var before = await CounterAsync(store);
 
@@ -81,7 +81,7 @@ public sealed class FeedSequenceTests
     [Test]
     public async Task A_rolled_back_transaction_leaves_no_gap_in_the_sequence()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         var feedBefore = await FeedSeqsAsync(store);
         var before = await CounterAsync(store);
@@ -107,7 +107,7 @@ public sealed class FeedSequenceTests
     [Test]
     public async Task An_exhausted_sequence_fails_the_commit_with_overflow_and_stores_nothing()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         await RawWriteAsync(store, $"UPDATE _tb_feed_sequence SET seq = {long.MaxValue} WHERE id = 1;");
         var id = DocumentApi.NewId();
@@ -121,7 +121,7 @@ public sealed class FeedSequenceTests
     [Test]
     public async Task Shape_rows_written_uncaptured_never_reach_change_capture()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var tenant = await api.TenantOfAsync();
         var store = await StoreAsync(api.Server, tenant);
         var document = DocumentApi.NewId();
@@ -136,7 +136,7 @@ public sealed class FeedSequenceTests
     [Test]
     public async Task A_database_copy_keeps_the_feed_and_counter_but_not_shape_rows()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var source = await api.TenantOfAsync();
         var store = await StoreAsync(api.Server, source);
         _ = await api.PutAsync(DocumentApi.NewId(), new { n = 1 });
@@ -160,7 +160,7 @@ public sealed class FeedSequenceTests
         var directory = Directory.CreateTempSubdirectory("terrabase-feed-snapshot-").FullName;
         try
         {
-            await using var api = await DocumentApi.StartAsync();
+            await using var api = await DocumentApi.StartIsolatedAsync();
             var tenant = await api.TenantOfAsync();
             var store = await StoreAsync(api.Server, tenant);
             var faker = new Faker();

@@ -28,7 +28,7 @@ public sealed class ShapeSealTests
     [Test]
     public async Task Chunks_hold_whole_commits_and_close_at_4096_rows()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
         var faker = new Faker();
         var start = await db.HeadAsync();
@@ -64,7 +64,7 @@ public sealed class ShapeSealTests
     [Test]
     public async Task Chunks_close_before_1_MiB_of_body_and_a_larger_commit_travels_alone()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
         var faker = new Faker();
         var start = await db.HeadAsync();
@@ -97,7 +97,7 @@ public sealed class ShapeSealTests
     [Test]
     public async Task A_commit_materializing_past_8_MiB_is_refused_until_it_fits()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
         var faker = new Faker();
         var start = await db.HeadAsync();
@@ -136,7 +136,7 @@ public sealed class ShapeSealTests
     [Test]
     public async Task Ops_carry_current_stored_documents_and_deletes_for_absent_or_nonmatching_ones()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
         var faker = new Faker();
         var start = await db.HeadAsync();
@@ -187,7 +187,7 @@ public sealed class ShapeSealTests
     [Test]
     public async Task A_deleted_then_recreated_document_is_an_upsert_in_both_changes_at_values_at()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
         var id = DocumentApi.NewId();
         var start = await db.PutAsync(id, new { v = 1 });
@@ -211,7 +211,7 @@ public sealed class ShapeSealTests
     [Test]
     public async Task A_stale_collection_generation_is_refused_without_sealing_a_chunk()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
         var stale = await ShapeAsync(db);
         var start = await db.HeadAsync();
@@ -236,7 +236,7 @@ public sealed class ShapeSealTests
     [Test]
     public async Task Retention_cutting_inside_a_commit_refuses_the_first_retained_rows_predecessor()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
         var start = await db.HeadAsync();
         var head = await db.CommitAsync(async transaction =>
@@ -260,7 +260,7 @@ public sealed class ShapeSealTests
     [Arguments(true)]
     public async Task A_missing_commit_tail_cannot_publish_an_oversized_partial_chunk(bool laterCommit)
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
         _ = await db.CapturedHeadAsync();
         var start = await db.HeadAsync();
@@ -292,7 +292,7 @@ public sealed class ShapeSealTests
     [Arguments(true)]
     public async Task Zero_feed_stamps_in_the_range_or_older_resume_prefix_refuse_sealing(bool olderPrefix)
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
         var start = await db.HeadAsync();
         var damaged = await db.PutAsync(DocumentApi.NewId(), new { n = 1 });
@@ -312,7 +312,7 @@ public sealed class ShapeSealTests
     [Test]
     public async Task A_feed_row_whose_stamp_differs_from_the_document_stamp_still_carries_the_current_document()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
         var start = await db.HeadAsync();
         var id = DocumentApi.NewId();
@@ -330,7 +330,7 @@ public sealed class ShapeSealTests
     [Test]
     public async Task A_sealed_chunk_keeps_its_bytes_after_later_writes_and_is_never_captured()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
         var start = await db.HeadAsync();
         var x = DocumentApi.NewId();
@@ -362,7 +362,7 @@ public sealed class ShapeSealTests
     [Test]
     public async Task A_refused_memory_reservation_seals_nothing()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
         var start = await db.HeadAsync();
         var head = await db.PutAsync(DocumentApi.NewId(), new { n = 1 });
@@ -377,7 +377,7 @@ public sealed class ShapeSealTests
     [Test]
     public async Task A_sealed_chunk_is_published_from_its_committed_bytes_without_rereading_them()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
         var start = await db.HeadAsync();
         var head = await db.PutAsync(DocumentApi.NewId(), new { n = new Faker().Random.Int() });
@@ -403,7 +403,7 @@ public sealed class ShapeSealTests
     [Test]
     public async Task Escaped_ids_are_admitted_for_the_simultaneously_live_output_arrays()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
         var start = await db.HeadAsync();
         var head = await db.CommitAsync(async transaction =>
@@ -439,7 +439,7 @@ public sealed class ShapeSealTests
     [Test]
     public async Task Worker_keeps_active_frontiers_and_releases_memory_when_requests_leave_or_it_stops()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
         var start = await db.HeadAsync();
         var first = await db.PutAsync(DocumentApi.NewId(), new { n = 1 });
@@ -491,7 +491,7 @@ public sealed class ShapeSealTests
     [Arguments("oversized-state-header")]
     public async Task Damaged_cdc_refuses_its_database_and_does_not_hold_back_another(string fixture)
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         (await api.SendAsync(HttpMethod.Put, api.DatabasePath("other"))).Status.ShouldBe(System.Net.HttpStatusCode.Created);
         (await api.SendAsync(HttpMethod.Post, $"{api.DatabasePath("other")}/collections", new { name = Collection }))
             .Status.ShouldBe(System.Net.HttpStatusCode.Created);
@@ -531,7 +531,7 @@ public sealed class ShapeSealTests
     [Test]
     public async Task Captured_unique_invalid_identifiers_are_bookkeeping_not_document_json()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
         var change = await db.CapturedHeadAsync();
         var start = await db.HeadAsync();
@@ -561,7 +561,7 @@ public sealed class ShapeSealTests
     public async Task Captured_json_token_amplification_is_refused_before_decode_and_releases_admission(string collection, string capturedTable)
     {
         const int values = 500_000;
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         if (collection != Collection)
         {
             (await api.SendAsync(HttpMethod.Post, api.Collections, new { name = collection }))

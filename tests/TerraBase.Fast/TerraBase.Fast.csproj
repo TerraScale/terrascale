@@ -13,6 +13,5 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Npgsql" />
-    <Compile Include="../../benchmark/dotnet/TerraBase.LiveRestoreDrill/ScratchCleanup.cs" Link="Backup/ScratchCleanup.cs" />
   </ItemGroup>
 </Project>

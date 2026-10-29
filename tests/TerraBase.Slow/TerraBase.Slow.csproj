@@ -10,7 +10,9 @@
     <DefineConstants>$(DefineConstants);TSAUTH_ALIAS</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
+    <None Include="../TerraBase.Fast/Import/Fixtures/**" Link="Import/Fixtures/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="Npgsql" />
+    <Compile Include="../../benchmark/dotnet/TerraBase.LiveRestoreDrill/ScratchCleanup.cs" Link="Backup/ScratchCleanup.cs" />
     <!-- The real ts-auth, run in process, for the token interoperability test (Management/RealAuthFixture.cs). The alias
          keeps its generated Program apart from TerraBase's. -->
     <ProjectReference Include="../../src/TerraScale.Authentication/TerraScale.Authentication.csproj" Aliases="tsauth" />

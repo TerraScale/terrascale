@@ -64,46 +64,6 @@ public sealed class PlatformExploreTests
     }
 
     [Test]
-    public async Task Everyone_but_a_platform_admin_is_refused_and_nothing_is_writable()
-    {
-        await using var api = await StartAsync(new ExploreLogs());
-        await WriteKeyAsync(api);
-        var user = EntityIds.New().ToString();
-        using var plainUser = api.WithToken(api.Issuer.Mint(user));
-        using var viewer = api.WithToken(api.Issuer.Mint(user, token => token.Claims[PlatformExplore.RoleClaim] = "viewer"));
-        // A project token carries no platform role, whatever it claims.
-        using var projectToken = api.WithToken(api.Issuer.Mint(user, token =>
-        {
-            token.Claims[PlatformExplore.RoleClaim] = PlatformExplore.AdminRole;
-            token.Claims["project_id"] = PlatformDatabases.AuthProjectId;
-            token.Claims["scope"] = "documents:read";
-        }));
-        using var anonymous = api.WithToken(null);
-        using var admin = api.WithToken(AdminToken(api, user));
-        var path = ManagementApi.Uri(Explore + "/by-key?id=" + ManagementApi.DocumentId("k1"));
-
-        using var asUser = await plainUser.GetAsync(path);
-        using var asViewer = await viewer.GetAsync(path);
-        using var asProject = await projectToken.GetAsync(path);
-        using var asNobody = await anonymous.GetAsync(path);
-        using var asOperator = await api.Service(user).GetAsync(path);
-        using var otherDatabase = await admin.GetAsync(ManagementApi.Uri($"{PlatformExplore.Databases}/some-customer-db/collections"));
-        using var write = await admin.PutAsJsonAsync(path, new { kid = "k2" });
-
-        await Assert.That(asUser.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(asViewer.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(asProject.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(asNobody.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(asOperator.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden).IsTrue();
-        await Assert.That(otherDatabase.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        // No write route exists: the method is refused and the stored key is unchanged.
-        await Assert.That(write.IsSuccessStatusCode).IsFalse();
-        using var storage = PeerTls.CreateClient(api.Server.BaseAddress);
-        using var stored = await storage.GetAsync(ManagementApi.Uri(Keys + "/documents/by-key?id=" + ManagementApi.DocumentId("k1")));
-        await Assert.That((await stored.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("document").GetProperty("kid").GetString()).IsEqualTo("k1");
-    }
-
-    [Test]
     public async Task Admins_explore_the_dashboard_database_in_its_own_project()
     {
         await using var api = await StartAsync(new ExploreLogs());

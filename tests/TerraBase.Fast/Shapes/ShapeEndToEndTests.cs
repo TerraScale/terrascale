@@ -23,7 +23,7 @@ public sealed class ShapeEndToEndTests
     [Test]
     public async Task The_filter_vectors_have_canonical_continuation_urls_and_shared_handles_per_equivalence_group()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var client = new ShapeClient(api, query: null);
         using var vectors = await LoadVectorsAsync();
         Dictionary<string, string> handles = [with(StringComparer.Ordinal)];
@@ -76,7 +76,7 @@ public sealed class ShapeEndToEndTests
     [Test]
     public async Task The_http_resume_validation_vectors_return_their_exact_error_bodies_and_cache_headers()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var client = new ShapeClient(api, query: null);
         using var vectors = await LoadVectorsAsync();
         var cases = vectors.RootElement.GetProperty("http_vectors").EnumerateArray()
@@ -103,7 +103,7 @@ public sealed class ShapeEndToEndTests
     [Test]
     public async Task A_client_syncs_snapshot_then_chunks_then_parks_live_and_converges_on_writes_and_deletes()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var faker = new Faker();
         for (var index = 0; index < 5; index++)
         {
@@ -142,7 +142,7 @@ public sealed class ShapeEndToEndTests
     [Test]
     public async Task A_filtered_shape_converges_across_transitions_out_of_the_filter_and_deletes()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var moving = DocumentApi.NewId();
         var removed = DocumentApi.NewId();
         var version = (await PutAsync(api, moving, new { status = "open" })).Version;
@@ -171,7 +171,7 @@ public sealed class ShapeEndToEndTests
     [Test]
     public async Task A_repeated_chunk_and_snapshot_page_answer_304_with_the_same_headers_and_no_body()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
         var client = new ShapeClient(api, query: null);
         var bootstrap = await client.Get($"{api.Collections}/{DocumentApi.Collection}/shape?offset=-1");
@@ -229,7 +229,7 @@ public sealed class ShapeEndToEndTests
     [Test]
     public async Task Fresh_bodies_carry_the_reached_r8_cursor_and_plaintext_metadata_headers()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
         var client = new ShapeClient(api, query: null);
         var synced = await client.SyncAsync();
@@ -262,7 +262,7 @@ public sealed class ShapeEndToEndTests
     [Test]
     public async Task A_collection_recreated_under_a_client_rotates_the_handle_and_refuses_the_old_one_with_409()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
         var client = new ShapeClient(api, query: null);
         var synced = await client.SyncAsync();
@@ -286,7 +286,7 @@ public sealed class ShapeEndToEndTests
     [Test]
     public async Task A_parked_live_reader_refetches_when_its_collection_is_recreated()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
         var client = new ShapeClient(api, query: null);
         var synced = await client.SyncAsync();
@@ -308,7 +308,7 @@ public sealed class ShapeEndToEndTests
     [Test]
     public async Task Retention_refuses_an_old_offset_and_bootstrap_uses_a_snapshot_at_or_above_the_floor()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
         var client = new ShapeClient(api, query: null);
         var initial = await client.Get($"{api.Collections}/{DocumentApi.Collection}/shape?offset=-1");
@@ -342,7 +342,7 @@ public sealed class ShapeEndToEndTests
     [Test]
     public async Task An_oversized_shape_does_not_fail_another_collections_parked_reader()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "large" });
         var client = new ShapeClient(api, query: null);
         var admitted = await client.Get($"{api.Collections}/large/shape?offset=-1");
@@ -374,7 +374,7 @@ public sealed class ShapeEndToEndTests
     [Test]
     public async Task Parked_live_readers_share_one_seal_and_one_payload_read()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
         var client = new ShapeClient(api, query: null);
@@ -476,7 +476,7 @@ public sealed class ShapeEndToEndTests
     [Test]
     public async Task The_metrics_scrape_retains_all_five_storage_paths_after_feed_query_and_shape_reads()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var token = TestContext.Current!.Execution.CancellationToken;
         var id = DocumentApi.NewId();
         await PutAsync(api, id, new { status = "open" });
