@@ -1,34 +1,20 @@
-AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
+# ts-go
 
-# Rules
+Follow [workspace Shipping code](/home/mariogk/Projects/TerraScale/AGENTS.md#shipping-code-user-2026-10-29-go-fast-break-things-fast-q-trunk-q-local-check).
+## Layout and checks
 
-- Never add AI attribution to commits, PR titles, or PR descriptions: no `Co-Authored-By:` trailers, no `🤖 Generated with [Claude Code]` or similar notices.
-- This project must use Go and the go-modern-guidelines plugin.
+- Go module: `terrascale.tech/sdk`. Root files implement clients; `v1/` holds database contracts, `tsauth/` identity support, `cmd/` command-line tools and `contracts/` fixtures.
+- Use Go and the go-modern-guidelines plugin.
+- Fast: `go test ./...`.
+- Full tests: `go test -race -count=1 ./...`; build: `go build ./...`.
 
-## Agent model routing
+## API rules
 
-- Short, bounded delegated agent work: Claude Haiku 5.5 (`claude-haiku-5-5`).
-- If `claude-haiku-5-5` is unavailable: Codex GPT-6.1-Sol (`gpt-6.1-sol`), after confirming the ID in the live model catalog.
-- Advisor work and tasks expected to take more than 10 minutes: Claude Opus 5.5 (`claude-opus-5-5`). The Haiku rule covers only short, bounded work.
-- Never use Haiku 4.5 (`claude-haiku-4-5`, including dated IDs such as `claude-haiku-4-5-20251001`), and never fall back silently to an older Haiku. If no allowed model is available, report it instead of substituting one.
-- Run every T3 Code thread in full-access mode, within the existing tool safety rules.
+- Use one fixed global API and auth origin, with no regional discovery or failover. `ListRegions` reads the placement catalog, not an endpoint discovery service.
 
-## Local CPU Priority
+## Configuration
 
-- Prefix every local build, test, lint, benchmark, dev server, and watcher with `nice -n 19`, for example `nice -n 19 make test-fast`.
-- In CI (`CI=true`), use full CPU priority. Never add `nice` or `renice` to CI workflows, Makefiles, scripts, or Containerfiles.
-
-## Pull requests
-
-- **Start from latest main.** Base every change on the most recent `main`: before starting, `git fetch origin` and branch from `origin/main`, never from a stale local `main`, another feature branch or an old worktree. Before every push, `git fetch origin && git rebase origin/main` again; right before merging, rebase once more and merge only when CI is green on that exact head.
-
-## Zero configuration (user decision 2026-10-09, do not revert)
-
-- Every feature is always on. No feature flags, on/off variables, opt-in settings, boolean enabled configuration keys, deploy toggles or kill switches in code, config or CI. Delete switches and their guarded paths.
-- Every region always serves. ts-orch discovers regional nodes through NetBird and manages workloads on OCI.
-- One fixed global API and auth origin, with no regional discovery or failover.
-- Production service credentials arrive from OCI Vault in gru via instance principal. Nobody copies secrets by hand. Customer credentials authorize access.
-- Values have one correct setting in code. Expose no tuning knobs. Fakes, demo stores and skip-auth belong only in test code and test binaries.
-- CI rejects new switch-style configuration. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
-
-This section is the operating contract, not evidence that every runtime flow has shipped. See [README.md](README.md) for current SDK and qualification gaps. Existing production switches are inventoried for their owning implementation threads. Documentation changes must not invent APIs or bypass authorization, tenant scope, registered callbacks, payment consent, or safety guards.
+- Keep features always on; no feature flags, enable switches, opt-ins or kill switches. Keep one correct value in code, with no new tuning knobs.
+- Fakes, demo stores and skip-auth belong only in test code and test binaries.
+- Keep the switch-style configuration check; unavoidable third-party names need a narrow allowance and a one-line reason.
+- README.md records implementation and qualification gaps. Do not claim unshipped behavior or bypass authorization, tenant scope, registered callbacks, payment consent or safety guards.
