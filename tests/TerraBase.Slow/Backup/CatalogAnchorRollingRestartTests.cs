@@ -23,7 +23,6 @@ public sealed class CatalogAnchorRollingRestartTests
     private static readonly TimeSpan GateOpens = TimeSpan.FromMinutes(3);
 
     [Test]
-    [AnchorDeadlineQuarantine]
     public async Task Anchors_stay_within_their_deadline_while_a_region_restarts_under_catalog_writes()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
@@ -205,14 +204,4 @@ public sealed class CatalogAnchorRollingRestartTests
             }
         }
     }
-}
-
-// The CI task permits a named-owner quarantine for at most 24 h. #733: fra's anchors miss 10 s after a restart under the
-// parallel suite, with no single long writer hold or wait to blame. Its per-step timing reports the rest when it returns.
-[AttributeUsage(AttributeTargets.Method)]
-internal sealed class AnchorDeadlineQuarantineAttribute()
-    : SkipAttribute("#733: fra anchors miss their 10 s deadline after a restart; owner MarioGK / WRK slow-flakes; expires 2026-10-29T21:30:00Z")
-{
-    public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(DateTimeOffset.UtcNow < new DateTimeOffset(2026, 10, 29, 21, 30, 0, TimeSpan.Zero));
 }

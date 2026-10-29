@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Errors;
@@ -17,6 +18,12 @@ namespace TerraBase.Features.Replication;
 internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirectory tenants, DatabaseLifecycleCheckpoint checkpoint,
     IWebhookReplicaAdmission webhooks, ReplicationTimings timings, IClosureCancellation cancellations) : IChangeGroupSink
 {
+    // How long one apply transaction may hold a database's writer before the groups left wait for the next one. Writers queue
+    // in order, so a catalog anchor (a revocation's 10 s deadline) waits for at most about this much per transaction ahead of
+    // it: a restarted region's catch-up joined up to 16,384 system deltas in one transaction and held the catalog's writer
+    // 5 s on average, 22 s at most, on a loaded runner, and its anchors missed their deadline (#733).
+    internal static readonly TimeSpan HoldBudget = TimeSpan.FromMilliseconds(250);
+
     public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken, ApplyProgress? progress = null)
     {
         ArgumentNullException.ThrowIfNull(groups);
@@ -40,6 +47,7 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
             }
 
             await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+            var held = Stopwatch.GetTimestamp();
             progress?.Attach(transaction);
             await transaction.RequireAppliedAsync(origin, expected, cancellationToken).ConfigureAwait(false);
             step = timings.Record(ReplicationTimings.ReceiveBegin, step);
@@ -67,6 +75,13 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
 
                     // A refused state still counts as applied: the origin's stream moves on and never resends it.
                     applied = applied.Value < delta.Stamp.Value ? delta.Stamp : applied;
+                }
+
+                // Whole groups only: past the hold budget, the groups left commit in the next transaction.
+                if (next + 1 < end && Stopwatch.GetElapsedTime(held) >= HoldBudget)
+                {
+                    next++;
+                    break;
                 }
             }
 
