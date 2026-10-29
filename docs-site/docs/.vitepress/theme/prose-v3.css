@@ -1,0 +1,64 @@
+/* Design v3 article and API presentation. Loads after style.css; changes look only, not markup. */
+
+/* Content spans the column; running text keeps an ~80ch measure, so code, tables and callouts run full width. */
+.VPDoc .content-container { max-width: none !important; }
+.vp-doc > div > :is(p, ul, ol, blockquote) { max-width: 80ch; }
+.vp-doc { font-size: 15px; }
+.vp-doc p, .vp-doc li { line-height: 1.7; }
+
+/* Flat sections: hairline above each h2, no bottom rule. */
+.vp-doc h2 { margin-top: 48px; padding-top: 32px; border-top: 1px solid var(--ts-line); border-bottom: 0; }
+.vp-doc h2 + * { margin-top: 12px; }
+.vp-doc h3 { margin-top: 32px; }
+
+/* Links use --ts-link (dark spec #6b93ff) with a soft underline. */
+.vp-doc a:not(.header-anchor) { text-decoration: underline; text-decoration-color: color-mix(in oklab, var(--ts-link) 40%, transparent); text-underline-offset: 3px; }
+.vp-doc :not(pre) > code { overflow-wrap: anywhere; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-sm); }
+
+/* Tables: full width, hairline rows. */
+.vp-doc table { width: 100%; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-lg); }
+.vp-doc td { line-height: 1.5; padding-block: 8px; }
+
+/* Code groups: tabs on a hairline header, native radio + label behaviour unchanged. */
+.vp-code-group { margin: 16px 0; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-lg); background: var(--ts-surface); overflow: hidden; }
+.vp-code-group .tabs { background: var(--ts-surface); border-bottom: 1px solid var(--ts-line); }
+.vp-code-group .tabs label { height: 39px; padding: 0 var(--ts-s3); color: var(--ts-ink-3); font: 400 var(--ts-fs-sm) / 1 var(--ts-font-sans); transition: color var(--ts-fast) var(--ts-ease); }
+.vp-code-group .tabs label:hover { color: var(--ts-ink); }
+.vp-code-group .tabs input:checked + label { color: var(--ts-ink); box-shadow: inset 0 -2px 0 var(--ts-link); }
+.vp-code-group div[class*='language-'] { margin: 0; border-radius: 0; background: var(--ts-surface); }
+.vp-code-group div[class*='language-'] pre { font-size: var(--ts-fs-sm); line-height: 1.7; }
+
+/* Callouts: warning and danger take full amber or red border and title over a 12% tint; others stay flat. */
+.vp-doc .custom-block { border: 1px solid var(--ts-line); border-radius: var(--ts-radius); background: var(--ts-surface); color: var(--ts-ink-2); }
+.vp-doc .custom-block.warning { --cb: var(--ts-warning); }
+.vp-doc .custom-block.danger { --cb: var(--ts-danger); }
+.vp-doc .custom-block:is(.warning, .danger) { border-color: var(--cb); background: color-mix(in oklab, var(--cb) 12%, transparent); }
+.vp-doc .custom-block:is(.warning, .danger) .custom-block-title { color: var(--cb); }
+
+
+.vp-doc div[class*='language-'] { border: 1px solid var(--ts-line); }
+.vp-doc div[class*='language-'] > button.copy { opacity: 1; border-color: var(--ts-line-strong); }
+.vp-doc div[class*='language-'] pre { padding: 20px 0; }
+.vp-doc div[class*='language-'] code { padding: 0 16px; }
+.vp-code-group .tabs { margin: 0; padding: 0 8px; box-shadow: none; }
+.vp-code-group .tabs label::after { display: none; }
+.vp-code-group .tabs input:checked + label { box-shadow: inset 0 -2px 0 var(--ts-ink); }
+.vp-doc .custom-block code { background: transparent; }
+
+.vp-doc code.docs-method {
+  --method: var(--ts-ink-2); color: var(--method);
+  background: color-mix(in oklab, var(--method) 12%, transparent);
+  font-weight: 600; border-color: color-mix(in oklab, var(--method) 24%, transparent);
+}
+.vp-doc code.docs-method[data-method="POST"] { --method: var(--ts-link); }
+.vp-doc code.docs-method:is([data-method="PUT"], [data-method="PATCH"]) { --method: var(--ts-tone-violet); }
+.vp-doc code.docs-method[data-method="DELETE"] { --method: var(--ts-danger); }
+
+.docs-breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; font-size: 12px; color: var(--ts-ink-3); }
+.docs-breadcrumb a { color: var(--ts-ink-3); }
+.docs-breadcrumb a:hover { color: var(--ts-ink); }
+.docs-breadcrumb [aria-current] { color: var(--ts-ink-2); }
+
+@media (max-width: 767px) {
+  .Layout .vp-doc div[class*='language-'] { margin-inline: 0; }
+}

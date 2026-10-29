@@ -1,0 +1,113 @@
+/* Design tokens (v3 graphite). Light is the default; .dark sets the dark values. */
+
+:root {
+  color-scheme: light;
+
+  /* Canvas and surfaces. */
+  --ts-canvas: #ffffff;
+  --ts-sidebar: rgb(250 250 250 / 0.92);
+  --ts-surface: #fafafa;
+  --ts-surface-2: #f4f4f5;
+  --ts-line: rgb(0 0 0 / 0.08);
+  --ts-line-strong: rgb(0 0 0 / 0.14);
+  /* Form borders reach 3:1 against the canvas (WCAG 1.4.11). */
+  --ts-control-line: #8c8c8c;
+
+  /* Text. Each ink keeps 4.5:1 or more on the canvas and surfaces. */
+  --ts-ink: #0a0a0a;
+  --ts-ink-2: #4d4d4d;
+  --ts-ink-3: #666666;
+
+  /* Accent: the logo blue fills and marks; text and focus use --ts-link. */
+  --ts-accent: #2158e8;
+  --ts-accent-soft: rgb(33 88 232 / 0.10);
+  --ts-accent-fill: #2158e8;
+  --ts-accent-fill-hover: #1a4bd0;
+  --ts-on-accent: #ffffff;
+  --ts-link: #2158e8;
+  --ts-success: #1e7c48;
+  --ts-warning: #a35200;
+
+  /* Section tones: non-semantic hues only. Red, amber, yellow and green stay status-only. */
+  --ts-tone-blue: #1c6cbb;
+  --ts-tone-cyan: #007697;
+  --ts-tone-violet: #693196;
+  --ts-tone-indigo: #4955a1;
+
+  /* Default content tone. Navigation stays neutral. */
+  --tone: var(--ts-accent);
+
+  /* Prototype typography. */
+  --ts-font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --ts-font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --ts-fs-md: 14px;
+
+  /* Shape. */
+  --ts-radius: 6px;
+
+  /* Shell. */
+  --ts-header-h: 56px;
+  --ts-sidebar-width: 240px;
+  --ts-control-h-sm: 32px; --ts-control-h: 36px;
+}
+
+.dark {
+  color-scheme: dark;
+
+  --ts-canvas: #151515;
+  --ts-sidebar: rgb(21 21 21 / 0.92);
+  --ts-surface: #1b1b1b;
+  --ts-surface-2: #222222;
+  --ts-line: rgb(255 255 255 / 0.08);
+  --ts-line-strong: rgb(255 255 255 / 0.14);
+  --ts-control-line: #6b6b6b;
+
+  --ts-ink: #f2f2f2;
+  --ts-ink-2: #a8a8a8;
+  --ts-ink-3: #919191;
+
+  --ts-accent-soft: rgb(33 88 232 / 0.18);
+  --ts-link: #6b93ff;
+  --ts-success: #6bca92;
+  --ts-warning: #ffa726;
+
+  --ts-tone-blue: #4797e4;
+  --ts-tone-cyan: #00a7bf;
+  --ts-tone-violet: #b2a0ec;
+  --ts-tone-indigo: #a1bbfe;
+}
+
+/* Section tones: every navigation destination owns one, and the page it
+   opens inherits it for headers and highlights. */
+[data-tone="blue"] { --tone: var(--ts-tone-blue); }
+[data-tone="cyan"] { --tone: var(--ts-tone-cyan); }
+[data-tone="violet"] { --tone: var(--ts-tone-violet); }
+[data-tone="indigo"] { --tone: var(--ts-tone-indigo); }
+
+:root {
+  --ts-surface-3: light-dark(#e8e8ea, #2c2c2c);
+  --ts-control-line-hover: light-dark(#707070, #888888);
+  --ts-nav-active-bg: light-dark(rgb(0 0 0 / .06), rgb(255 255 255 / .08));
+  --ts-nav-hover-bg: light-dark(rgb(0 0 0 / .035), rgb(255 255 255 / .04));
+  --ts-glass: light-dark(rgb(255 255 255 / .90), rgb(21 21 21 / .90));
+  --ts-glass-strong: light-dark(rgb(255 255 255 / .94), rgb(32 32 32 / .94));
+  --ts-scrim: light-dark(rgb(10 10 10 / .32), rgb(0 0 0 / .52));
+  --ts-danger: light-dark(#c81e1e, #ff5c5c);
+  --ts-info: light-dark(#3659bd, #84b4f8);
+  --ts-syn-keyword: light-dark(#3659bd, #a1bbfe);
+  --ts-syn-string: light-dark(#007697, #6cc6dc);
+  --ts-syn-number: light-dark(#b45309, #fdba74);
+  --ts-syn-comment: light-dark(#666666, #8f8f8f);
+  --ts-syn-fn: light-dark(#0a0a0a, #fafafa);
+  --ts-syn-punct: light-dark(#4d4d4d, #a3a3a3);
+  --ts-primary: var(--ts-accent-fill);
+  --ts-primary-hover: var(--ts-accent-fill-hover);
+  --ts-on-primary: var(--ts-on-accent);
+  --ts-blur: 16px; --ts-blur-lg: 24px; --ts-saturate: 1.5;
+  --ts-tint-badge: 14%;
+  --ts-s1: 4px; --ts-s2: 8px; --ts-s3: 12px; --ts-s4: 16px;
+  --ts-s5: 20px; --ts-s6: 24px; --ts-s8: 32px; --ts-s10: 40px; --ts-s12: 48px;
+  --ts-fs-xs: 12px; --ts-fs-sm: 13px; --ts-fs-lg: 16px; --ts-fs-xl: 20px; --ts-fs-4xl: 40px;
+  --ts-radius-sm: 4px; --ts-radius-lg: 10px;
+  --ts-fast: 150ms; --ts-ease: cubic-bezier(.2, .8, .2, 1);
+}
