@@ -23,8 +23,9 @@ permissions:
   contents: read
 
 env:
-  # ts-dotnet revision ts-auth builds against (TerraScale/ts-dotnet is private; read-only deploy key).
-  TS_DOTNET_REV: 2dda37f08abe7497b35dc431895960e70f3c3611
+  # SDK source is part of the same checked revision as its consumers.
+  TS_DOTNET_DIR: sdk/dotnet
+  TsDotnetRoot: ${{ github.workspace }}/terrascale/sdk/dotnet
   TERRABASE_REVISION: ${{ github.sha }}
   DOTNET_PROCESSOR_COUNT: 8
   DOTNET_GCHeapCount: 8
@@ -255,14 +256,6 @@ jobs:
         with:
           path: terrascale
           persist-credentials: false
-      - &checkout-ts-dotnet
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          repository: TerraScale/ts-dotnet
-          ref: ${{ env.TS_DOTNET_REV }}
-          ssh-key: ${{ secrets.TS_DOTNET_DEPLOY_KEY }}
-          path: ts-dotnet
-          persist-credentials: false
       - &native-artifacts
         name: Download this run's verified pinned release cores
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -279,8 +272,8 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.nuget/packages
-          restore-keys: ${{ runner.os }}-nuget-${{ env.TS_DOTNET_REV }}-
-          key: ${{ runner.os }}-nuget-${{ env.TS_DOTNET_REV }}-${{ hashFiles('terrascale/global.json', 'terrascale/NuGet.config', 'terrascale/Directory.*', 'terrascale/**/packages.lock.json', 'ts-dotnet/**/packages.lock.json') }}
+          restore-keys: ${{ runner.os }}-nuget-monorepo-
+          key: ${{ runner.os }}-nuget-monorepo-${{ hashFiles('terrascale/global.json', 'terrascale/NuGet.config', 'terrascale/Directory.*', 'terrascale/**/packages.lock.json') }}
       - &locked-restore
         name: Locked restore
         working-directory: terrascale
@@ -368,7 +361,6 @@ jobs:
       contents: read
     steps:
       - *checkout
-      - *checkout-ts-dotnet
       - *native-artifacts
       - *setup-dotnet
       - *nuget-cache
@@ -563,7 +555,6 @@ jobs:
       contents: read
     steps: &slow-steps
       - *checkout
-      - *checkout-ts-dotnet
       - *native-artifacts
       - *setup-builder
       - name: Supply bucket-scoped CI storage credentials
@@ -581,7 +572,7 @@ jobs:
         with:
           context: terrascale
           file: terrascale/Dockerfile
-          build-contexts: ts-dotnet=ts-dotnet
+          build-contexts: ts-dotnet=terrascale/sdk/dotnet
           target: test-slow-${{ env.AREA }}
           secret-files: ${{ env.AREA == 'terrabase' && format('tigris-ci={0}/tigris-ci.env', runner.temp) || '' }}
           build-args: *build-args
@@ -698,7 +689,7 @@ jobs:
       - name: Fork PRs cannot qualify without Fast
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
         run: |
-          echo 'Fast requires the private SDK checkout; fork PRs cannot receive its deploy key. Qualify the changes on a branch in this repository.' >&2
+          echo 'Fast qualification currently runs for branches in this repository. Qualify these changes on a repository branch.' >&2
           exit 1
       - name: Native and every affected Fast area passed
         env:
