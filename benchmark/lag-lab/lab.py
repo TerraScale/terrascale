@@ -1,3 +1,4 @@
+import base64
 import ctypes as C
 import gzip
 import hashlib
@@ -201,6 +202,8 @@ def orchestrate(seconds, smoke=False, synchronous=2):
     processes, created = [], []
     root_network = {c: cmd(*c.split()) for c in ('ip -j link show', 'tc qdisc show')}
     evidence = {'started_utc': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'root_network_before': root_network, 'sources_sha256': {f.name: hashlib.sha256(f.read_bytes()).hexdigest() for f in ROOT.iterdir() if f.is_file()}, 'host': socket.gethostname(), 'uname': cmd('uname', '-a'), 'clock': time.get_clock_info('monotonic').__dict__, 'seconds': seconds, 'synchronous': synchronous, 'cases': []}
+    measured_sources = ('lab.py', 'pull.mjs', 'bridge.rs', 'prepare.py', 'shim.toml', 'Cargo.lock.gz', 'package-lock.json', 'package.json', 'build.sh')
+    evidence['source_snapshots_base64'] = {name: base64.b64encode((ROOT / name).read_bytes()).decode() for name in measured_sources}
     try:
         for name in names:
             cmd('ip', 'netns', 'add', name)
