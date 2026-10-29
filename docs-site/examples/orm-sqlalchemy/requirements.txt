@@ -1,0 +1,2 @@
+sqlalchemy==2.0.44
+sqlalchemy-libsql==0.2.0
