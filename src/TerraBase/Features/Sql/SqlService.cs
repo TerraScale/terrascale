@@ -193,7 +193,7 @@ internal sealed class SqlSession(
                 return pinned is null ? refused! : await DescribeInAsync(pinned.Transaction, plan, cancellationToken).ConfigureAwait(false);
             }
 
-            var (transaction, _, failed) = await OpenAsync(plan.Kind == SqlStatementKind.Write && canWrite, cancellationToken, admitted: false).ConfigureAwait(false);
+            var (transaction, _, failed) = await OpenAsync(plan.Kind == SqlStatementKind.Write && canWrite, cancellationToken, enterQuota: false).ConfigureAwait(false);
             if (transaction is null)
             {
                 return failed!;
@@ -665,7 +665,7 @@ internal sealed class SqlSession(
     }
 
     private async ValueTask<(IStorageTransaction? Transaction, StorageQuotaLease? Lease, SqlError? Error)> OpenAsync(
-        bool write, CancellationToken cancellationToken, bool admitted = true)
+        bool write, CancellationToken cancellationToken, bool enterQuota = true)
     {
         if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
@@ -673,7 +673,7 @@ internal sealed class SqlSession(
         }
 
         StorageQuotaLease? lease = null;
-        if (write && admitted)
+        if (write && enterQuota)
         {
             switch (await quota.EnterAsync(database, store, cancellationToken).ConfigureAwait(false))
             {
