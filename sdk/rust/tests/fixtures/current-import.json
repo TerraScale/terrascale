@@ -1,0 +1,80 @@
+{
+  "id": "01ARZ3NDEKTSV4RRFFQ69G5FA8",
+  "project": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
+  "database": "import-01arz3ndektsv4rrffq69g5fa9",
+  "region": "gru-1",
+  "state": "ready",
+  "cancelRequested": false,
+  "options": {
+    "missingPrimaryKey": "reject",
+    "exclude": []
+  },
+  "source": {
+    "format": "postgres_plain",
+    "bytes": 8165,
+    "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    "receivedBytes": 8165,
+    "staged": true,
+    "retainedUntil": null
+  },
+  "preview": {
+    "id": "01ARZ3NDEKTSV4RRFFQ69G5FAA",
+    "tables": [
+      {
+        "source": "public.orgs",
+        "collection": "orgs",
+        "excluded": false,
+        "rows": 3,
+        "idPolicy": "primary_key",
+        "primaryKey": [
+          "id"
+        ],
+        "columns": [
+          {
+            "name": "id",
+            "sourceType": "bigint",
+            "mapping": "integer",
+            "nullable": false,
+            "excluded": false
+          },
+          {
+            "name": "name",
+            "sourceType": "text",
+            "mapping": "string",
+            "nullable": false,
+            "excluded": false
+          }
+        ],
+        "constraints": [
+          {
+            "kind": "primary_key",
+            "name": "orgs_pkey",
+            "columns": [
+              "id"
+            ],
+            "references": null,
+            "enforced": false
+          }
+        ],
+        "issues": []
+      }
+    ],
+    "skipped": [
+      {
+        "kind": "index",
+        "name": "public.users_org_idx"
+      }
+    ],
+    "skippedTruncated": false,
+    "blocking": 0,
+    "warnings": 0
+  },
+  "confirmedPreviewId": null,
+  "progress": null,
+  "validation": null,
+  "error": null,
+  "createdAt": "2026-10-12T12:00:00+00:00",
+  "updatedAt": "2026-10-12T12:00:05+00:00",
+  "startedAt": null,
+  "finishedAt": null
+}
