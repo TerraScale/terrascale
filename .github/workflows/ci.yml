@@ -1,16 +1,18 @@
-# Fast proof is produced before merge. Main packaging consumes only exact-tree success.
+# Fast tests run on every main push and before trusted image publication.
 name: CI
 
 on:
   pull_request:
-  merge_group:
+  push:
+    branches: [main]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: fast-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -57,51 +59,45 @@ jobs:
           chmod +x "$scanner"
           python3 scripts/ci/audit-dependencies.py "$scanner"
           python3 scripts/ci/audit-runtime-images.py "$scanner"
-      - name: Select affected checks (required test still reports for docs)
-        id: changes
+      - uses: ./.github/actions/dashboard-setup
+        id: dependencies
+      - name: Build and run Fast tests
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-        run: |
-          changed=true
-          if [ -n "$BASE_SHA" ] && git diff --quiet "$BASE_SHA" HEAD -- . ':!**/*.md' ':!docs/**' ':!benchmark/**'; then
-            changed=false
-          fi
-          echo "changed=$changed" >> "$GITHUB_OUTPUT"
-      - if: steps.changes.outputs.changed == 'true'
-        uses: ./.github/actions/dashboard-setup
-      - name: Build and check once
-        if: steps.changes.outputs.changed == 'true'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/ci/check.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always() && steps.changes.outputs.changed == 'true'
+        if: always()
         with:
           name: fast-results
           path: test-results/tunit/fast.trx
           if-no-files-found: warn
       - name: Publish the already-built application
-        if: steps.changes.outputs.changed == 'true'
         run: |
           dotnet publish src/TerraScale.Dashboard --configuration Release --no-build --no-restore \
             --output "$RUNNER_TEMP/dashboard-publish" \
             -p:ContinuousIntegrationBuild=true -p:SourceRevisionId="$GITHUB_SHA"
       - name: Package and smoke-test the checked build
-        if: steps.changes.outputs.changed == 'true'
         run: |
           docker build -f scripts/ci/Dockerfile.runtime -t "ts-dashboard:$GITHUB_SHA" "$RUNNER_TEMP/dashboard-publish"
           bash scripts/ci/smoke.sh
-      # A tiny result receipt, never executable PR artifacts. The name is the actual tested merge tree.
-      - name: Record the tested tree
-        id: tree
-        if: steps.changes.outputs.changed == 'true'
-        run: |
-          git rev-parse 'HEAD^{tree}' > "$RUNNER_TEMP/tree.txt"
-          echo "sha=$(cat "$RUNNER_TEMP/tree.txt")" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: steps.changes.outputs.changed == 'true'
+      - name: Retain the tested application for gated publication
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: checked-tree-${{ steps.tree.outputs.sha }}
-          path: ${{ runner.temp }}/tree.txt
-          retention-days: 7
+          name: dashboard-publish
+          path: ${{ runner.temp }}/dashboard-publish
+          retention-days: 1
           if-no-files-found: error
+      - name: Cache main dependencies after successful checks
+        if: github.ref == 'refs/heads/main' && steps.dependencies.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.temp }}/nuget
+            ~/.npm
+          key: ${{ steps.dependencies.outputs.cache-key }}
+      - name: Cache the verified advisory scanner on main
+        if: github.ref == 'refs/heads/main' && steps.advisory.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/osv-scanner-bin
+          key: advisory-osv-2.7.0-go1.27.3-linux-amd64

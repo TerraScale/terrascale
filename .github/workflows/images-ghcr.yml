@@ -1,11 +1,10 @@
 # Preserve this workflow path and push identity: ts-orch trusts it for OIDC releases.
-# Reuse exact-tree PR proof; direct pushes must pass the full checks here before publishing.
+# Every push runs Fast tests; publishing and release require that job to succeed.
 name: Images (GHCR)
 
 on:
   push:
     branches: [main]
-    paths-ignore: ["**/*.md", "docs/**", "benchmark/**"]
   workflow_dispatch:
 
 # Serialize main publishes and releases. Keep the active deployment intact;
@@ -22,8 +21,11 @@ env:
   DOTNET_NOLOGO: "1"
 
 jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
   image:
-    name: test
+    needs: test
+    name: Publish and release
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -36,72 +38,11 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-      - name: Restore the pinned advisory scanner
-        id: advisory
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      - name: Download the application built and smoke-tested by Fast CI
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          path: ~/.cache/osv-scanner-bin
-          key: advisory-osv-2.7.0-go1.27.3-linux-amd64
-      - name: Select the patched scanner compiler on a cache miss
-        if: steps.advisory.outputs.cache-hit != 'true'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.3'
-          cache: false
-      - name: Audit every committed dependency graph
-        run: |
-          mkdir -p ~/.cache/osv-scanner-bin
-          scanner=~/.cache/osv-scanner-bin/osv-scanner
-          if [[ ! -f "$scanner" ]]; then
-            GOBIN="$HOME/.cache/osv-scanner-bin" CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOAMD64=v1 GOFLAGS='' GOTOOLCHAIN=go1.27.3 go install -trimpath github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.7.0
-          fi
-          echo "1a7e2584c17db2e523c13f41ae4a4d1d13ee221dbc4abc19a6bba00aac3f40f2  $scanner" | sha256sum --check
-          chmod +x "$scanner"
-          python3 scripts/ci/audit-dependencies.py "$scanner"
-          python3 scripts/ci/audit-runtime-images.py "$scanner"
-      - name: Reuse only a successful check of this exact tree
-        id: proof
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci/tree-proof.py >> "$GITHUB_OUTPUT"
-      - uses: ./.github/actions/dashboard-setup
-        id: dependencies
-      - name: Check unproved pushes before publishing
-        if: steps.proof.outputs.proof == ''
-        run: bash scripts/ci/check.sh
-      - name: Build the application once when PR checks are reused
-        if: steps.proof.outputs.proof != ''
-        env:
-          PROOF_URL: ${{ steps.proof.outputs.proof }}
-        run: |
-          echo "Reusing exact-tree checks: $PROOF_URL" >> "$GITHUB_STEP_SUMMARY"
-          make security
-          dotnet build src/TerraScale.Dashboard --configuration Release --no-restore \
-            -p:ContinuousIntegrationBuild=true -p:SourceRevisionId="$GITHUB_SHA"
-      - name: Publish the already-built application
-        run: |
-          dotnet publish src/TerraScale.Dashboard --configuration Release --no-build --no-restore \
-            --output "$RUNNER_TEMP/dashboard-publish" \
-            -p:ContinuousIntegrationBuild=true -p:SourceRevisionId="$GITHUB_SHA"
-      - name: Smoke-test unproved pushes before publishing
-        if: steps.proof.outputs.proof == ''
-        run: |
-          docker build -f scripts/ci/Dockerfile.runtime -t "ts-dashboard:$GITHUB_SHA" "$RUNNER_TEMP/dashboard-publish"
-          bash scripts/ci/smoke.sh
-      - name: Cache the verified advisory scanner on main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.advisory.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ~/.cache/osv-scanner-bin
-          key: advisory-osv-2.7.0-go1.27.3-linux-amd64
-      - name: Save main's locked dependency cache
-        if: steps.dependencies.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ${{ runner.temp }}/nuget
-            ~/.npm
-          key: ${{ steps.dependencies.outputs.cache-key }}
+          name: dashboard-publish
+          path: ${{ runner.temp }}/dashboard-publish
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:

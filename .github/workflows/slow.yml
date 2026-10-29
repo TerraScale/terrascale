@@ -1,104 +1,18 @@
-# Browser/policy Slow coverage runs on affected main changes, never automatically on PRs.
-# Investigate repeats on dev hosts; dispatch is for a missing natural main run.
+# Browser/policy suites run on dev hosts, never on GitHub-hosted runners.
 name: Slow
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'vendor/dotnet/**'
-      - 'contracts/**'
-      - 'scripts/**'
-      - '.github/actions/**'
-      - '.github/workflows/slow.yml'
-      - 'Directory.*.props'
-      - 'NuGet.Config'
-      - 'global.json'
-      - 'Makefile'
-      - '!**/*.md'
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# Finish active main coverage; GitHub replaces an older pending run with the newest.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
-env:
-  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
-  DOTNET_NOLOGO: "1"
-
 jobs:
-  slow:
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+  instructions:
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
-    permissions:
-      contents: read
-      issues: write
+    timeout-minutes: 1
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        timeout-minutes: 2
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/dashboard-setup
-        id: dependencies
-        timeout-minutes: 5
-      - run: make build
-        timeout-minutes: 5
-      - uses: ./.github/actions/dashboard-browser
-      - timeout-minutes: 15
+      - name: Document the dev-host Slow command
         run: |
-          dotnet run --configuration Release --no-build --no-restore \
-            --project tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj -- \
-            --treenode-filter '/*/*/*/*[Category=Slow]' --report-trx \
-            --results-directory "$PWD/test-results/tunit" --report-trx-filename slow.trx
-      - name: Save main's locked dependency cache
-        if: github.ref == 'refs/heads/main' && steps.dependencies.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        timeout-minutes: 1
-        with:
-          path: |
-            ${{ runner.temp }}/nuget
-            ~/.npm
-          key: ${{ steps.dependencies.outputs.cache-key }}
-      - name: Write redacted failure report
-        timeout-minutes: 1
-        if: failure()
-        run: python3 scripts/report-slow-failure.py --prepare
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        timeout-minutes: 1
-        if: always()
-        with:
-          name: slow-results
-          path: |
-            test-results/tunit/slow.trx
-            test-results/slow-failure.json
-          if-no-files-found: warn
-      - name: Upload running-app screenshots and videos for the tested commit
-        timeout-minutes: 1
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always()
-        with:
-          name: dashboard-flow-evidence-${{ github.sha }}
-          path: |
-            **/test-results/dotnet/q03-project-invitation-list/
-            **/test-results/dotnet/q03-project-invitation-revoke/
-            test-results/dotnet/directory-export-browser/
-            test-results/dotnet/code-editor-styling/
-            test-results/dotnet/hosted-auth-v3/
-            docs/reviews/2026-10-13/onboarding-projects/test-results/pr-head/browser/*.png
-            docs/reviews/2026-10-13/onboarding-projects/test-results/pr-head/browser/*-project-flow.webm
-          if-no-files-found: warn
-
-      # Main-only workflow: retain issue reporting without a setup job or artifact round trip.
-      - name: Create or update the matching failure issue
-        timeout-minutes: 2
-        if: failure() && github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/report-slow-failure.py
+          echo 'Run on a dev host: ts-heavy-any nice -n 19 make test-slow --repo ts-dashboard --branch main' >> "$GITHUB_STEP_SUMMARY"
+          echo 'This workflow does not claim test success; retain the dev-host command result as proof.' >> "$GITHUB_STEP_SUMMARY"
