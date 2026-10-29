@@ -40,8 +40,8 @@ public sealed partial class MfaSignInTests
         {
             for (var attempt = 0; attempt < HostedAuth.PerIp; attempt++)
             {
-                await limiter.AcquireAsync(OidcIssuer.InstanceId, "headless-ip", limiter.Fold("127.0.0.1"), HostedAuth.PerIp,
-                    TimeSpan.FromMinutes(1), CancellationToken.None);
+                await limiter.AcquireTokenAsync(OidcIssuer.InstanceId, "hosted-ip", limiter.Fold("127.0.0.1"), HostedAuth.PerIp,
+                    HostedAuth.IpInterval, CancellationToken.None);
             }
         }
 

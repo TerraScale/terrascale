@@ -415,7 +415,7 @@ internal sealed class SqlSession(
         var (opened, error) = await OpenAsync(write: _readOnly != true, cancellationToken).ConfigureAwait(false);
         if (opened is not { } request)
         {
-            await EndRequestAsync().ConfigureAwait(false);
+            await DiscardReplayAsync().ConfigureAwait(false);
             return error;
         }
 
@@ -428,14 +428,16 @@ internal sealed class SqlSession(
                 : SqlErrors.Error("the statement no longer parses");
             if (replayed is not SqlResult result || !Hash(result).AsSpan().SequenceEqual(hash))
             {
-                // A statement failure preserves markers so ROLLBACK TO can discard conflicting reads.
-                await EndRequestAsync().ConfigureAwait(false);
+                await DiscardReplayAsync().ConfigureAwait(false);
                 return replayed is SqlError { Code: "SQLITE_BUSY" } busy ? busy : Conflict;
             }
         }
 
         return null;
     }
+
+    // Ordinary replay failures end the transaction. Markers keep only the log needed for ROLLBACK TO to recover.
+    private ValueTask DiscardReplayAsync() => _savepoints.Count == 0 ? AbortAsync() : EndRequestAsync();
 
     private async ValueTask<SqlOutcome> CommitAsync(CancellationToken cancellationToken)
     {

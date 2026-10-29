@@ -33,8 +33,11 @@ matcher remains excluded.
 Additional local-only salvage: beta's `fix/sql-http-boundary-coverage` at
 `f9bbc5be4c4a0558ed49d00e87af2106bd0cb0a0` contributes 16 real HTTP SQL/Hrana
 boundary cases: exact/over-limit fixed and chunked bodies, statement/request
-counts, row/change-group limits, rollback and recovery. Port the tests, without
-the dated qualification report; the folded PR's current CI must qualify them.
+counts, row/change-group limits, rollback and recovery. The complete test port is
+held: fails on current main, needs its own fix. Current CI returns 413 for
+exactly-1-MiB chunked bodies on sql/v2/v3; the fixed-length cases pass. Remove
+SqlHttpBoundaryTests from this fold and preserve the source bundle for a separate
+HTTP body-limit fix; the dated qualification report remains omitted.
 
 Additional local-only salvage: delta's standalone escrow fixture commit
 `fd820e875279f23b28c9f3f097c6fd58e3ba5e70` preserves donor discovery while
@@ -47,17 +50,30 @@ only the missing closure storage-failure-during-shutdown regression in auth
 `HealthTests`. The closure worker runtime fix already exists on main. Do not port
 the patch's file-storage identity, settings, runtime or unrelated tests.
 
+Fourth-round CI disposition (`88813daeb`, run `40870341991`): the complete
+`UsageWriterTests` port is held after preflush-error and abort/start attribution
+failures against unchanged main runtime #854. Keep `UsageBodyBytesTests`; do not
+restore the rejected native writer. The complete 16-case SQL/HTTP boundary port
+is held as described above. The source bundles preserve both for their own fixes.
+The retained savepoint-capacity test sends each marker as a real round trip,
+advancing its injected clock between operations without disabling admission.
+SQL replay failures without markers again return to autocommit as main requires;
+markers preserve recovery via `ROLLBACK TO`. Auth assertions and browser fixtures
+are adapted to the recovered form IDs/names, resend controls and current limiter.
+The complete MobileAccessibility browser test port (four cases) and its axe/WebKit-only assets are also held: fails on current main, needs its own fix. WebKit authenticated device navigation still times out in the forwarding fixture after the browser has a valid new session. Existing Chromium UI and retained continuation/consent coverage remain. Before the corrective push, all 84 retained cases in PostgresSavepointTests (8), SqlTransactionTests (8), MfaSignInTests (17), AuthThrottleTests (9), and HostedSignInTests (42) passed locally with no skips under ts-heavy-any. The savepoint class passed five consecutive runs. Both affected Fast project builds passed with warnings-as-errors enabled (0 warnings/errors), using CI-pinned SDK source 2dda37f08abe7497b35dc431895960e70f3c3611. These focused results do not replace current-head CI or the security/review holds.
+
 | Additional salvage source | Decision | Hold / evidence |
 | --- | --- | --- |
+| beta `fix/sql-http-boundary-coverage` (`f9bbc5be4`) | held: fails on current main, needs its own fix | Entire 16-case test port removed after sql/v2/v3 exactly-1-MiB chunked acceptance returned 413; source bundle retained. |
 | delta `fix-dependency-advisories-3086c1c81.bundle` (native upgrade) | held, not ported | Publication, ARM64 and storage-format holds remain. Source bundle stays in `~/Backups/worktree-salvage-20261029/terrascale/`; no upgrade or activation in this PR. |
 
-Decisions: 45 already in main, 23 dropped evidence, 17 ported, 109 superseded.
+Decisions: 45 already in main, 23 dropped evidence, 14 ported, 3 ported subset, 109 superseded.
 
 | Branch | Original tip | Decision | Evidence / retained behavior |
 | --- | --- | --- | --- |
 | `bench/api-cors-span-report` | `3bd231513731` | dropped evidence | Latest tail recheck 1352e2bfc remains UNRESOLVED: regression not excluded. Do not ship span matcher. Shared external CPU observer retained once. |
 | `bench/cached-system-open-r1-report` | `6c3bd20d828c` | superseded | Cached-open runtime remains held for CPU/p50/p99 concerns recorded by merged #836; no activation. Shared external CPU observer retained once. |
-| `feat/auth-oidc-mfa-hardening` | `ec6f83bfc12d` | ported | Remaining OIDC replay/retention, consent, continuation, signup resend and accessible hosted forms; integrated with current durable outbox, lineage, rate limits and #882 copy. No retired credential binding restored. |
+| `feat/auth-oidc-mfa-hardening` | `ec6f83bfc12d` | ported subset | Remaining OIDC replay/retention, consent, continuation, signup resend and accessible forms integrated with current outbox, lineage, rate limits and #882 copy. MobileAccessibility browser test port held: fails on current main, needs its own fix (WebKit authenticated-navigation forwarding timeout). No retired credential binding restored. |
 | `feat/bench-sdk-http2-pin` | `d49d18055026` | already in main | Measured HTTP/2 SDK pin superseded by current sibling SDK ProjectReference and merged #820. |
 | `feat/perf-suite-runner` | `f7380eec30a3` | already in main | Unified runner and baseline comparison evolved in #775/#819; current benchmark/scripts/perf-suite.sh retained. |
 | `feat/postgres-orm-compat` | `91188f7639d8` | ported | Bounded savepoints including 91188f763 aborted portal/Describe fixes; retained current billing, deadlines and revocation. |
@@ -113,7 +129,7 @@ Decisions: 45 already in main, 23 dropped evidence, 17 ported, 109 superseded.
 | `fix/api-runtime-budget-evidence` | `89a7e530f22f` | dropped evidence | Historical observations/measurement audit only; no missing product implementation or reusable tool to port. Original commit retained in branch audit/bundle. |
 | `fix/api-runtime-budget-publication` | `a03bc48d0ebd` | dropped evidence | Historical observations/measurement audit only; no missing product implementation or reusable tool to port. Original commit retained in branch audit/bundle. |
 | `fix/api-token-hash-allocation` | `b774760f3c60` | superseded | Candidate rejected by merged #816; retain current token hashing/cache behavior. |
-| `fix/archive-native-writer-metering-rejection` | `3bb0f9c7cbcc` | dropped evidence | Rejected runtime remains rejected; #854 and ported real HTTP usage-writer controls cover the durable behavior. |
+| `fix/archive-native-writer-metering-rejection` | `3bb0f9c7cbcc` | dropped evidence | Rejected runtime remains rejected; current #854 runtime retained. UsageBodyBytesTests retained; incompatible UsageWriterTests held for a separate fix. |
 | `fix/b8-revert-engine-write-perf` | `2fca16a45e07` | superseded | Broad revert replaced by narrow idle-linger revert #654. Keep accepted collection/JSON/ETag improvements #644/#645/#647. |
 | `fix/backup-slow-tigris-baseline` | `e7fa366ddb28` | already in main | Inventory merge adds no changes; existing main implementation takes precedence. |
 | `fix/changes-shutdown-eof` | `a71e1e7ee8f5` | already in main | Current BoundedShutdownTests and bounded streaming shutdown cover cancellation/EOF; closed #527 old fixture not restored. |
@@ -170,10 +186,10 @@ Decisions: 45 already in main, 23 dropped evidence, 17 ported, 109 superseded.
 | `fix/terrabase-qos-fixture-clock` | `5f5c00014980` | already in main | Inventory merge adds no changes; existing main implementation takes precedence. |
 | `fix/ts1132-http-region-guidance` | `e706ca8fb109` | already in main | Current HTTP listener/pin error contract #810 takes precedence; only missing socket guidance ported. |
 | `fix/ts994-backup-registered-only` | `172864bb9235` | already in main | Registered-file background admission integrated #653 and recovery safeguards #704; current fail-closed recovery retained. |
-| `fix/usage-native-response-writer` | `47053ce23b89` | superseded | Native writer candidate rejected for preflush error corruption; current runtime #854 wins. Durable regressions retained from usage-writer controls. |
-| `fix/usage-native-writer-metering` | `328256573985` | superseded | Native writer candidate rejected for preflush error corruption; current runtime #854 wins. Durable regressions retained from usage-writer controls. |
-| `fix/usage-writer-error-controls` | `5e089494c1b1` | ported | Retain real HTTP body-byte, preflush exception, abort and minute-boundary regressions; current runtime #854 preserved. Duplicate UsageWriterTests retained once. |
-| `fix/usage-writer-metering-controls` | `73bec762f795` | ported | Retain real HTTP body-byte, preflush exception, abort and minute-boundary regressions; current runtime #854 preserved. Duplicate UsageWriterTests retained once. |
+| `fix/usage-native-response-writer` | `47053ce23b89` | superseded | Native writer candidate rejected for preflush error corruption; current runtime #854 wins. UsageBodyBytesTests retained; incompatible UsageWriterTests held for a separate fix. |
+| `fix/usage-native-writer-metering` | `328256573985` | superseded | Native writer candidate rejected for preflush error corruption; current runtime #854 wins. UsageBodyBytesTests retained; incompatible UsageWriterTests held for a separate fix. |
+| `fix/usage-writer-error-controls` | `5e089494c1b1` | ported subset | Retain UsageBodyBytesTests against current runtime #854. UsageWriterTests held: fails on current main, needs its own fix. Preflush errors include buffered bytes; abort/start byte attribution differs. Do not restore the rejected native writer. |
+| `fix/usage-writer-metering-controls` | `73bec762f795` | ported subset | Retain UsageBodyBytesTests against current runtime #854. UsageWriterTests held: fails on current main, needs its own fix. Preflush errors include buffered bytes; abort/start byte attribution differs. Do not restore the rejected native writer. |
 | `gh-readonly-queue/main/pr-740-74073afa8eb9cc44efd9fd71e2462b4ba9187963` | `7ac834060c15` | already in main | Inventory merge adds no changes; existing main implementation takes precedence. |
 | `hotfix/legacy-key-secret-bindings` | `de2f143ac913` | already in main | Inventory merge adds no changes; existing main implementation takes precedence. |
 | `perf/api-speedup` | `30022135f633` | already in main | Inventory merge adds no changes; existing main implementation takes precedence. |

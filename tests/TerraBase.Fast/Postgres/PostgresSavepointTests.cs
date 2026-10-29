@@ -149,7 +149,8 @@ public sealed class PostgresSavepointTests
     [Arguments(97, 63)]
     public async Task Savepoints_are_bounded_by_count_and_bytes_and_release_reclaims_capacity(int count, int length)
     {
-        await using var api = await ManagementApi.StartAsync();
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var api = await ManagementApi.StartAsync(time: clock);
         await using var source = await SourceAsync(api);
         await using var connection = await source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
@@ -157,13 +158,17 @@ public sealed class PostgresSavepointTests
         await transaction.SaveAsync("root");
         for (var i = 1; i < count; i++)
         {
-            await transaction.SaveAsync(name);
+            // Npgsql's SaveAsync buffers markers until the next command. Round-trip each marker so advancing the clock
+            // refills real admission between statements, without bypassing it or using real-time delays.
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await ExecuteAsync(connection, $"SAVEPOINT {name}");
         }
         await StateAsync(connection, $"SAVEPOINT {name}", "54000");
         await transaction.RollbackAsync("root");
         for (var i = 1; i < count; i++)
         {
-            await transaction.SaveAsync(name);
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await ExecuteAsync(connection, $"SAVEPOINT {name}");
         }
         await transaction.ReleaseAsync("root");
         await transaction.SaveAsync("root");

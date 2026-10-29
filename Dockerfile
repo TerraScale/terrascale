@@ -24,9 +24,9 @@ ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 ASPNETCORE_HTTP_PORTS=
 RUN apt-get update \
     && apt-get install -y --no-install-recommends make nodejs npm jq gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/*
-# Chromium and WebKit for the ts-auth browser tests: the npm playwright matching Microsoft.Playwright in Directory.Packages.props
+# Chromium for the ts-auth browser tests: the npm playwright matching Microsoft.Playwright in Directory.Packages.props
 # installs the same browser revision. Redocly (auth-openapi-check) is fetched once here too.
-RUN npx --yes playwright@1.63.0 install --with-deps chromium webkit \
+RUN npx --yes playwright@1.63.0 install --with-deps chromium \
     && npx --yes @redocly/cli@2.57.0 --version \
     && rm -rf /var/lib/apt/lists/*
 # .git is excluded: its packs and index differ per clone and would invalidate every later cached layer.

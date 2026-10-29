@@ -181,7 +181,9 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         {
             await Assert.That(wrong.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
             await Assert.That(OidcHarness.SessionCookie(wrong)).IsNull();
-            await Assert.That(await wrong.Content.ReadAsStringAsync()).Contains(">Start over for a new code</a>");
+            var wrongPage = await wrong.Content.ReadAsStringAsync();
+            await Assert.That(wrongPage).Contains("id=\"sign-up-code-resend-form\"");
+            await Assert.That(wrongPage).Contains("Change email</a>");
         }
 
         using (var created = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up/verify", new(verify) { ["code"] = code }))
@@ -420,7 +422,7 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         await Assert.That(resend.Headers.CacheControl!.NoStore).IsTrue();
         await Assert.That(OidcHarness.SessionCookie(resend)).IsNull();
         var page = await resend.Content.ReadAsStringAsync();
-        await Assert.That(page).Contains($"<form method=\"post\" action=\"{SignIn}/verify\">");
+        await Assert.That(page).Contains($"method=\"post\" action=\"{SignIn}/verify\"");
         await Assert.That(page).Contains("id=\"sign-in-code\"");
         await Assert.That(page).Contains($"name=\"email\" value=\"{Email}\"");
         await Assert.That(page).Contains($"name=\"next\" value=\"{WebUtility.HtmlEncode(Next)}\"");
