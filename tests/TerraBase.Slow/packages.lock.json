@@ -597,6 +597,7 @@
         "dependencies": {
           "AWSSDK.S3": "[4.0.104.1, )",
           "Cronos": "[0.13.0, )",
+          "Google.Protobuf": "[3.36.2, )",
           "Jint": "[4.17.0, )",
           "JsonSchema.Net": "[8.0.5, )",
           "Microsoft.AspNetCore.OpenApi": "[11.0.0-rc.1.26425.128, )",
@@ -629,7 +630,7 @@
         "type": "Project",
         "dependencies": {
           "TerraScale.Authentication.Contracts": "[1.0.0, )",
-          "TerraScale.DotNet": "[0.0.6, )"
+          "TerraScale.DotNet": "[0.0.20, )"
         }
       },
       "terrascale.dotnet": {
@@ -718,6 +719,12 @@
         "dependencies": {
           "libsodium": "[1.0.22, 1.0.23)"
         }
+      },
+      "Google.Protobuf": {
+        "type": "CentralTransitive",
+        "requested": "[3.36.2, )",
+        "resolved": "3.36.2",
+        "contentHash": "Ci1q1iJg74qAE5riTA2FbMS0wPbpruPQI/JQ9DrAsRo2VsSxgt1e/pmxGxgrci+pXJEgrSYg2vPl8rrStZkclQ=="
       },
       "Jint": {
         "type": "CentralTransitive",

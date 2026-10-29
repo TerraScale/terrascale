@@ -293,7 +293,7 @@
         "type": "Project",
         "dependencies": {
           "TerraScale.Authentication.Contracts": "[1.0.0, )",
-          "TerraScale.DotNet": "[0.0.6, )"
+          "TerraScale.DotNet": "[0.0.20, )"
         }
       },
       "terrascale.dotnet": {
