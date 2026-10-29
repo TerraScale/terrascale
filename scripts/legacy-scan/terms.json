@@ -1,12 +1,12 @@
 [
   {
     "id": "collections",
-    "pattern": "(?i)\\bcollections?\\b|\\b(?:I?CollectionService|CollectionInfo|CollectionSchema|CollectionAccessRules)\\b",
+    "pattern": "(?i:\\bcollections?\\b)|\\b(?:[A-Za-z_]\\w*)?Collections?(?:[A-Z_]\\w*)?\\b|\\b[a-z_]+_collections?(?:_[a-z_]+)?\\b",
     "owner": "E4"
   },
   {
     "id": "documents",
-    "pattern": "(?i)\\bdocuments?\\b|\\b(?:I?DocumentService|StoredDocument|DocumentState|DocumentFeed|DocumentQuery|DocumentMutation|DocumentClient)\\w*",
+    "pattern": "(?i:\\bdocuments?\\b)|\\b(?:[A-Za-z_]\\w*)?Documents?(?:[A-Z_]\\w*)?\\b|\\b[a-z_]+_documents?(?:_[a-z_]+)?\\b",
     "owner": "E4"
   },
   {

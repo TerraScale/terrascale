@@ -34,9 +34,7 @@ def main():
     for name in sorted(set(paths) - {""}):
         path = root / name
         data = os.readlink(path).encode("utf-8") if path.is_symlink() else path.read_bytes()
-        if b"\0" in data:
-            continue
-        content = data.decode("utf-8", errors="replace")
+        content = "" if b"\0" in data else data.decode("utf-8", errors="replace")
         scoped = [(r, match) for r, pattern, match in rules if pattern.search(name)]
         for number, line in [(0, name), *enumerate(content.splitlines(), 1)]:
             for term, pattern in terms:
@@ -48,7 +46,7 @@ def main():
                 for match in pattern.finditer(line):
                     if any(start <= match.start() and match.end() <= end for start, end in spans):
                         continue
-                    owner = owners.get(args.repo, "P1" if name.startswith(("src/TerraScale.Authentication", "tests/TerraScale.Authentication")) else "C3" if name.startswith("docs/") else term["owner"])
+                    owner = owners.get(args.repo, "P8" if name.startswith("benchmark/") else "P1" if name.startswith(("src/TerraScale.Authentication", "tests/TerraScale.Authentication")) else "C3" if name.startswith("docs/") else term["owner"])
                     hits.append((name, number, term["id"], match.group(), owner))
     sha = git(root, "rev-parse", "HEAD").decode().strip()
     print(f"Legacy scan: {args.repo} {sha} mode={mode} hits={len(hits)}")
