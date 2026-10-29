@@ -5,15 +5,15 @@ using System.Text.Json;
 
 namespace TerraScale.Dashboard.E2E.Platform;
 
-// The built production program: DEMO=true serves the in-memory public demo; any other value keeps the real providers.
+// Synthetic subprocesses use the test executable; the production program always requires real providers.
 [ClassDataSource<DashboardRootFixture>]
 public sealed class DemoModeJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
-    public async Task DemoTrueServesTheSignedInPublicDemoWithoutProviders()
+    public async Task TestExecutableServesSyntheticJourneysWithoutProviders()
     {
         var port = FreePort();
-        using var process = Start("true", port);
+        using var process = StartFixture(port);
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
         try
@@ -41,7 +41,7 @@ public sealed class DemoModeJourneyTests(DashboardRootFixture fixture)
             var collected = false;
             try { Stop(process); if (process.HasExited) { log = await output + await error; collected = true; } }
             catch (Exception) { } // Diagnostic collection must never replace the original failure.
-            var announcement = log.Contains($"DEMO (synthetic data) on port {port};", StringComparison.Ordinal);
+            var announcement = log.Contains($"Synthetic fixture on port {port};", StringComparison.Ordinal);
             var bindFailure = log.Contains("Failed to bind", StringComparison.OrdinalIgnoreCase);
             var addressInUse = log.Contains("AddressInUseException", StringComparison.Ordinal) ||
                 log.Contains("address already in use", StringComparison.OrdinalIgnoreCase) || log.Contains("EADDRINUSE", StringComparison.Ordinal);
@@ -55,7 +55,8 @@ public sealed class DemoModeJourneyTests(DashboardRootFixture fixture)
     [Arguments(null)]
     [Arguments("1")]
     [Arguments("TRUE")]
-    public async Task WithoutExactlyTrueTheRealStartupRequiresItsDeliveredCredentials(string? demo)
+    [Arguments("true")]
+    public async Task ProductionStartupAlwaysRequiresItsDeliveredCredentials(string? demo)
     {
         // Development reaches the loopback TerraBase origin, so the identity check is what stops it.
         using var process = Start(demo, FreePort(), "--environment", "Development");
@@ -73,6 +74,16 @@ public sealed class DemoModeJourneyTests(DashboardRootFixture fixture)
         {
             Stop(process);
         }
+    }
+
+    private Process StartFixture(int port)
+    {
+        var start = new ProcessStartInfo("dotnet") { WorkingDirectory = fixture.Root, RedirectStandardOutput = true, RedirectStandardError = true };
+        start.ArgumentList.Add(typeof(DemoModeJourneyTests).Assembly.Location);
+        start.ArgumentList.Add("--dashboard-fixture-host");
+        start.ArgumentList.Add(Path.Combine(fixture.Root, "src", "TerraScale.Dashboard"));
+        start.ArgumentList.Add(port.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        return Process.Start(start) ?? throw new IOException("Could not launch the synthetic fixture.");
     }
 
     private Process Start(string? demo, int port, params string[] arguments)

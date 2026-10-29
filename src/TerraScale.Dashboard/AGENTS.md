@@ -13,3 +13,5 @@
 - Discover authentication, database and orchestrator endpoints automatically. Every region serves automatically after NetBird admission, discovers all regions and infers its own region without an enable step.
 
 - The existing official Stripe.net dependency may transitively bring Newtonsoft.Json; direct Newtonsoft package references and API usage remain banned.
+
+- Synthetic provider and subprocess fixtures live only in `tests/TerraScale.Dashboard.E2E/Demo/`; the production executable always builds the real application.
