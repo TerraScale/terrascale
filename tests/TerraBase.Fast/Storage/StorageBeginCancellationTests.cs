@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Testing;
@@ -18,8 +19,9 @@ public sealed class StorageBeginCancellationTests
         {
             settings["storage-threads"] = "1";
             settings["storage-queue"] = "2";
-        }, StorageTransactionTests.ConfigurePool);
+        }, StorageTransactionTests.ConfigurePool, time: new FakeTimeProvider());
         var server = management.Server;
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
         var client = tenant.Data;
         foreach (var database in new[] { "idle" })
@@ -29,6 +31,9 @@ public sealed class StorageBeginCancellationTests
             await StorageFixture.CreateCollectionAsync(tenant, database, "items", deadline.Token);
         }
 
+        // The owned clock holds periodic maintenance between ticks. Drain fixture storage before warming
+        // authentication, so it cannot compete for the single Hobby admission in this deliberately tiny pool.
+        await WaitUntilAsync(() => engine.Io.Admitted == 0 && engine.Io.Queued == 0 && engine.Io.Running == 0, deadline.Token);
         // Collection creation invalidates authentication. Warm it before using native counters to
         // identify the externally blocked BEGIN rather than an earlier API-key storage read.
         using (var warmed = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/idle/collections/items", UriKind.Relative), deadline.Token))
@@ -36,9 +41,9 @@ public sealed class StorageBeginCancellationTests
             warmed.EnsureSuccessStatusCode();
         }
 
-        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         var name = await tenant.ContextAsync(management.Server, "idle", deadline.Token);
         var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(name, deadline.Token))!;
+        await WaitUntilAsync(() => engine.Io.Admitted == 0 && engine.Io.Queued == 0 && engine.Io.Running == 0, deadline.Token);
         await Assert.That(store.IdleCount).IsEqualTo(1);
         var begins = new List<Task<IStorageTransaction>>();
         var requests = new List<Task<HttpResponseMessage>>();
