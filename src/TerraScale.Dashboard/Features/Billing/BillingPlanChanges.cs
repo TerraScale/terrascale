@@ -33,7 +33,7 @@ namespace TerraScale.Dashboard.Features.Billing
             context = await OwnerAsync(context, cancellationToken);
             (key, interval) = NormalizeChange(context, key, interval);
             var snapshot = await PlanSnapshotAsync(context, cancellationToken) ?? throw Conflict("Choose a paid plan through checkout first.");
-            ValidateChange(snapshot.State, key, interval);
+            ValidateChange(snapshot.State);
             if (key == snapshot.State.PlanKey && interval == snapshot.State.Interval)
             {
                 throw Conflict("This is already the current plan.");
@@ -83,7 +83,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 return "pending";
             }
 
-            ValidateChange(snapshot.State, key, interval);
+            ValidateChange(snapshot.State);
             if (snapshot.State.PlanKey == key && snapshot.State.Interval == interval)
             {
                 return "current";
@@ -94,12 +94,12 @@ namespace TerraScale.Dashboard.Features.Billing
             context = await OwnerAsync(context, cancellationToken);
             snapshot = await PlanSnapshotAsync(context, cancellationToken) ?? throw Conflict("The subscription changed. Reload billing.");
             if (Realized(receipt, snapshot.State)) { await FinishChangeAsync(context.Organization!.Id, receipt, cancellationToken); return Rank(key) > Rank(receipt.SourcePlanKey) ? "pending" : "scheduled"; }
-            await ValidateSourceAsync(context.Organization!.Id, receipt, snapshot, cancellationToken);
+            await ValidateSourceAsync(context.Organization!.Id, receipt, snapshot);
             if (receipt.Status == "reserved")
             {
                 try
                 {
-                    ValidateChange(snapshot.State, key, interval);
+                    ValidateChange(snapshot.State);
                     if (snapshot.Subscription.ScheduleId is { Length: > 0 })
                     {
                         throw Conflict("The subscription changed in Stripe. Reload billing before retrying.");
@@ -183,7 +183,7 @@ namespace TerraScale.Dashboard.Features.Billing
             context = await OwnerAsync(context, cancellationToken);
             snapshot = await PlanSnapshotAsync(context, cancellationToken) ?? throw Conflict("The subscription changed. Reload billing.");
             if (Realized(receipt, snapshot.State)) { await FinishChangeAsync(context.Organization!.Id, receipt, cancellationToken); return "undone"; }
-            await ValidateSourceAsync(context.Organization!.Id, receipt, snapshot, cancellationToken);
+            await ValidateSourceAsync(context.Organization!.Id, receipt, snapshot);
             if (snapshot.State.ScheduledPlanKey != receipt.Plan || snapshot.State.ScheduledInterval != receipt.Interval)
             {
                 await AbandonReservationAsync(context.Organization.Id, receipt);
@@ -319,14 +319,14 @@ namespace TerraScale.Dashboard.Features.Billing
                 if (next is not null)
                 {
                     var nextMapped = (next.Items is { Count: 1 } phaseItems && phaseItems[0].Quantity == 1 ? EffectivePlan(phaseItems[0].Price) : null) ?? throw Conflict("The scheduled plan needs billing attention.");
-                    (scheduledKey, scheduledInterval) = (nextMapped.Value.Plan.Key, nextMapped.Value.Interval); scheduledAt = next.StartDate;
+                    (scheduledKey, scheduledInterval) = (nextMapped.Plan.Key, nextMapped.Interval); scheduledAt = next.StartDate;
                 }
             }
             var pendingKey = ""; var pendingInterval = ""; var paymentUrl = "";
             if (subscription.PendingUpdate is { } pending)
             {
                 var pendingMapped = (pending.SubscriptionItems is { Count: 1 } pendingItems && pendingItems[0].Quantity == 1 ? EffectivePlan(pendingItems[0].Price) : null) ?? throw Conflict("The pending plan needs billing attention.");
-                (pendingKey, pendingInterval) = (pendingMapped.Value.Plan.Key, pendingMapped.Value.Interval);
+                (pendingKey, pendingInterval) = (pendingMapped.Plan.Key, pendingMapped.Interval);
                 // The update's open invoice is where the customer authenticates (3D Secure) or retries its payment.
                 if (subscription.LatestInvoice is { Status: "open" } invoice && invoice.CustomerId == binding.CustomerId)
                 {
@@ -531,7 +531,7 @@ namespace TerraScale.Dashboard.Features.Billing
             return receipt.SubscriptionId == snapshot.Subscription.Id && receipt.SourcePriceId == snapshot.Item.Price.Id && receipt.PeriodEnd == snapshot.Item.CurrentPeriodEnd;
         }
 
-        private async Task ValidateSourceAsync(string orgId, BillingChangeReceipt receipt, PlanSnapshot snapshot, CancellationToken cancellationToken)
+        private async Task ValidateSourceAsync(string orgId, BillingChangeReceipt receipt, PlanSnapshot snapshot)
         {
             if (!SourceMatches(receipt, snapshot))
             {
@@ -539,7 +539,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 throw Conflict("The subscription changed in Stripe. Reload billing before retrying.");
             }
         }
-        private static void ValidateChange(BillingPlanState state, string key, string interval)
+        private static void ValidateChange(BillingPlanState state)
         {
             if (!state.Entitled)
             {

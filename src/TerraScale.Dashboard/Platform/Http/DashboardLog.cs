@@ -45,7 +45,7 @@ namespace TerraScale.Dashboard.Platform.Http
         internal static partial void DashboardStateIsNotInitializedAt(this ILogger logger, object? errorType, object? error);
 
         [LoggerMessage(EventId = 14, Level = LogLevel.Information, Message = "Dashboard state initialized after {Attempts} attempts.")]
-        internal static partial void DashboardStateInitializedAfterAttempts(this ILogger logger, object? attempts);
+        internal static partial void DashboardStateInitializedAfterAttempts(this ILogger logger, int attempts);
 
         [LoggerMessage(EventId = 15, Level = LogLevel.Warning, Message = "Dashboard state is not initialized after {Attempts} attempts ({ErrorType}: {Error}); retrying.")]
         internal static partial void DashboardStateIsNotInitializedAfter(this ILogger logger, object? attempts, object? errorType, object? error);

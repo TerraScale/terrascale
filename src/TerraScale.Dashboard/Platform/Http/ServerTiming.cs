@@ -185,7 +185,7 @@ namespace TerraScale.Dashboard.Platform.Http
                     called = timing.upstreams.Count > 0;
                 }
 
-                if (context.GetEndpoint() is not null && called)
+                if (context.GetEndpoint() is not null && called && logger.IsEnabled(LogLevel.Information))
                 {
                     logger.PageTiming(SafeHttpLogging.Method(context.Request.Method),
                         (context.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]", context.Response.StatusCode, timing.Header());
@@ -225,9 +225,9 @@ namespace TerraScale.Dashboard.Platform.Http
                     timing.Record(upstream, started, ended);
                     // Only fixed operation names escape: no URL, query, token, document ID or customer name.
                     var operation = Operation(request.RequestUri);
-                    if (!timing.probe)
+                    if (!timing.probe && timing.logger is { } logger && logger.IsEnabled(LogLevel.Information))
                     {
-                        timing.logger?.UpstreamTimingStartMsDurationMs(upstream, upstream == "other" ? "[other]" : request.RequestUri?.Host, SafeHttpLogging.Method(request.Method.Method), operation,
+                        logger.UpstreamTimingStartMsDurationMs(upstream, upstream == "other" ? "[other]" : request.RequestUri?.Host, SafeHttpLogging.Method(request.Method.Method), operation,
                         response is null ? 0 : (int)response.StatusCode, started, ended - started);
                     }
                 }

@@ -19,7 +19,7 @@ namespace TerraScale.Dashboard.Features.Billing
         }
 
         public static async Task<BillingPage> LoadAsync(ShellModel shell, StripeBilling billing, SpendingService spending,
-            IQueryCollection query, DateTimeOffset now, CancellationToken cancellationToken, InternalBillingService internalBilling)
+            IQueryCollection query, DateTimeOffset now, InternalBillingService internalBilling, CancellationToken cancellationToken)
         {
             // All provider work finishes before Razor starts the response. A
             // corrupt binding can then produce a complete service error page.

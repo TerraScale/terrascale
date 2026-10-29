@@ -26,7 +26,7 @@ namespace TerraScale.Dashboard.Features.Billing
             "invoice.payment_failed", "invoice.payment_action_required", "invoice.marked_uncollectible", "invoice.voided"
         };
 
-        public Task<IReadOnlyList<BillingPlan>> PlansAsync(CancellationToken cancellationToken)
+        public Task<IReadOnlyList<BillingPlan>> PlansAsync(CancellationToken _)
         {
             return Task.FromResult(PlanCatalog.Plans);
         }

@@ -12,8 +12,8 @@ namespace TerraScale.Dashboard.Platform.Development
         private static long revision;
         private static readonly string Boot = Guid.NewGuid().ToString("N");
 
-        public static void ClearCache(Type[]? updatedTypes) { }
-        public static void UpdateApplication(Type[]? updatedTypes)
+        public static void ClearCache(Type[]? _) { }
+        public static void UpdateApplication(Type[]? _)
         {
             Interlocked.Increment(ref revision);
         }

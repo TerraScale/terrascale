@@ -230,7 +230,7 @@ namespace TerraScale.Dashboard
                         await Results.Problem("A TerraScale service is temporarily unavailable. Try again shortly.", statusCode: StatusCodes.Status503ServiceUnavailable).ExecuteAsync(context);
                         return;
                     }
-                    var view = Shared.UI.Slices.ServiceUnavailable.Create(new DocumentModel("Service unavailable", nonce));
+                    var view = Common.UI.Slices.ServiceUnavailable.Create(new DocumentModel("Service unavailable", nonce));
                     view.StatusCode = StatusCodes.Status503ServiceUnavailable;
                     await ((IResult)view).ExecuteAsync(context);
                 }
