@@ -12,7 +12,7 @@ public sealed partial class TsAuthPlatformJourneyTests
         var user = platform.Principal("invitation-revoke-browser");
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        var login = await browser.NewPageAsync();
+        var login = await browser.NewPageAsync(new() { IgnoreHTTPSErrors = true });
         await BrowserAudit.SignInAsync(login, platform.Origin, "/project/invitations", user.Email, user.Password);
         var destination = login.Url;
         var scope = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(destination).Query);
@@ -22,6 +22,7 @@ public sealed partial class TsAuthPlatformJourneyTests
         var output = BrowserAudit.Output(Directory.GetCurrentDirectory(), "q03-project-invitation-revoke");
         await using var recording = await browser.NewContextAsync(new()
         {
+            IgnoreHTTPSErrors = true,
             StorageState = await login.Context.StorageStateAsync(),
             RecordVideoDir = output,
             ViewportSize = new() { Width = 1440, Height = 1000 },
