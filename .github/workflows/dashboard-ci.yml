@@ -7,7 +7,6 @@ on:
       - 'src/TerraScale.Dashboard/**'
       - 'tests/TerraScale.Dashboard*/**'
       - 'scripts/dashboard/**'
-      - 'sdk/dotnet/**'
       - 'Directory.*'
       - '.editorconfig'
       - 'BannedSymbols.txt'

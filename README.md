@@ -1,6 +1,6 @@
 # TerraScale
 
-TerraScale is one monorepo for the platform's core code: **TerraBase** (leaderless, multi-region document database), **ts-auth** (hosted identity provider), the shared .NET libraries (endpoints, logging) and the benchmarks. The ts-dashboard and the SDKs (ts-go, ts-dotnet, ts-js, ts-rust, ts-cli) live in separate repositories.
+TerraScale is the public monorepo for **TerraBase** (a leaderless, multi-region document database), hosted authentication, the dashboard, the .NET, JavaScript, Go, Python and Rust SDKs, documentation, shared .NET libraries and benchmarks.
 
 Agent and contributor rules: [`AGENTS.md`](AGENTS.md). Shipping from a dev host: [`ts-ship`](docs/dev/shipping.md).
 
@@ -8,19 +8,21 @@ Agent and contributor rules: [`AGENTS.md`](AGENTS.md). Shipping from a dev host:
 
 | Path | What |
 |---|---|
-| `src/` | Projects: libs (`TerraScale.Endpoints*`, `TerraScale.Logging`), auth (`TerraScale.Authentication*`), terrabase (`TerraBase*`) |
+| `src/` | Shared libraries, authentication, TerraBase and `TerraScale.Dashboard` |
 | `tests/` | Integration suites (`*.Fast`, `*.Slow`), TestHarness projects, and the libs test projects |
 | `benchmark/` | Go benchmark code and `benchmark/bench/` results; `benchmark/dotnet/` for .NET library benchmarks |
-| `docs/` | `docs/terrabase/` and `docs/auth/`, each with a `README.md` |
-| `scripts/` | `scripts/libs`, `scripts/auth`, `scripts/terrabase` |
-| `.github/workflows/` | CI (GitHub Actions, GitHub-hosted runners); `Dockerfile` holds its build and test stages |
+| `sdk/` | Published SDKs in `dotnet/`, `js/`, `go/`, `python/` and `rust/` |
+| `docs-site/` | Public documentation site deployed to Cloudflare |
+| `docs/` | Engineering documentation for TerraBase, authentication and dashboard |
+| `scripts/` | Build, test and release commands for each area |
+| `.github/workflows/` | Scoped CI, dev-host test proof verification, package releases and deployments |
 
 ## Production
 
 Production is moving to OCI `gru` (`sa-saopaulo-1`, host `ts-gru-1`) under
 [`ts-orch`](https://github.com/TerraScale/ts-orchestrator). The regional footprint also includes
 `sjc` (`us-sanjose-1`) and `fra` (`eu-frankfurt-1`); a region token alone does not prove a service is ready.
-GitHub Actions builds and checks on GitHub-hosted runners and publishes images to GHCR.
+Fast and release qualification run on dev hosts; GitHub Actions verifies their source-bound proof and publishes images to GHCR.
 The orchestrator owns artifact admission and rollout authority, private NetBird networking, and
 OCI Vault credential delivery using instance principals. See its
 [region contract](https://github.com/TerraScale/ts-orchestrator/blob/main/docs/automatic-regions.md) and
@@ -39,7 +41,9 @@ Run them from the repository root. Locally, prefix each with `nice -n 19`.
 | `make test-slow` | Run the non-blocking integration suites |
 | `make check` | Formatting, build and the Fast suite; CI is the gate, so running it locally is optional |
 | `make dev` | Run TerraBase and ts-auth locally under Aspire (see below) |
-| `make libs-*`, `make auth-*`, `make terrabase-*`, `make benchmark-*` | Per-area targets |
+| `make libs-*`, `make auth-*`, `make terrabase-*`, `make benchmark-*` | Platform area targets |
+| `make sdk-<lang>-test-fast` | Fast for one SDK (`dotnet`, `js`, `go`, `python`, `rust`) |
+| `make docs-test-fast`, `make dashboard-test-fast` | Documentation or dashboard Fast |
 
 ## Local development with Aspire
 
@@ -47,20 +51,9 @@ Run them from the repository root. Locally, prefix each with `nice -n 19`.
 `aspire/apphost.mts`, with the Aspire dashboard for their logs, traces and health. It is local development only; nothing
 here deploys or touches production.
 
-- Needs Node.js 20.19+ and ts-dotnet at the revision pinned in `.github/workflows/ci.yml` (`TS_DOTNET_REV`). The Aspire
-  CLI is a local dotnet tool (`dotnet-tools.json`), run as `dotnet aspire` after `dotnet tool restore` (`make dev` runs
-  it). The dashboard is HTTPS: trust the development certificate once with `dotnet aspire certs trust`.
-- From a worktree, or when `../ts-dotnet` is on another revision, clone the pinned revision on its own instead of moving
-  that checkout, and point `TS_DOTNET_DIR` at it:
-
-  ```sh
-  git clone --no-checkout ../ts-dotnet /tmp/ts-dotnet-pinned   # or the GitHub repository
-  git -C /tmp/ts-dotnet-pinned checkout --detach <TS_DOTNET_REV>
-  nice -n 19 make dev TS_DOTNET_DIR=/tmp/ts-dotnet-pinned
-  ```
-
-  Direct `dotnet` and `make` commands take the same checkout as `TsDotnetRoot` (`-p:TsDotnetRoot=<dir>` or the
-  environment variable).
+- Needs Node.js 20.19+ and the .NET SDK pinned in `global.json`. Services use the SDK source in `sdk/dotnet`.
+  The Aspire CLI is a local dotnet tool (`dotnet-tools.json`), run as `dotnet aspire` after `dotnet tool restore`
+  (`make dev` runs it). Trust the development certificate once with `dotnet aspire certs trust`.
 - Every listener stays on loopback: TerraBase binds `127.0.0.1` in Development (8080 public, 8081 internal,
   9091 metrics) and ts-auth listens on `127.0.0.1:8090` (metrics 9092). Locally, ts-auth stores in the TerraBase at
   `127.0.0.1:8081`.
@@ -77,3 +70,7 @@ here deploys or touches production.
 - TerraBase: [`docs/terrabase/README.md`](docs/terrabase/README.md)
 - ts-auth: [`docs/auth/README.md`](docs/auth/README.md)
 - Benchmarks: [`benchmark/README.md`](benchmark/README.md)
+
+- Dashboard: [`docs/dashboard/README.md`](docs/dashboard/README.md)
+- Public documentation: [`docs-site/README.md`](docs-site/README.md)
+- SDKs: [`sdk/dotnet`](sdk/dotnet), [`sdk/js`](sdk/js), [`sdk/go`](sdk/go), [`sdk/python`](sdk/python), [`sdk/rust`](sdk/rust)

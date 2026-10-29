@@ -15,7 +15,7 @@ session-authenticated contract and links its interactive reference.
 ## Layout
 - `src/TerraScale.Dashboard/`: the application (`Features/`, `Platform/`, `UI/`).
   CSS/JS sources are in `web/assets/`, feature CSS sits beside its slice in `Features/`; served files are in `web/static/`.
-- `src/TerraScale.Dashboard/Demo/`: in-memory providers for `DEMO=true` and the E2E suite.
+- `tests/TerraScale.Dashboard.E2E/Demo/`: synthetic providers compiled only into test binaries.
 - `tests/TerraScale.Dashboard.E2E/`: TUnit E2E journeys; scenario and protocol controls in `Demo/`.
 - `scripts/dashboard/`: dev/demo launchers, asset builds, SDK and E2E lint checks.
 - `sdk/dotnet/`: the official SDK source, consumed from the same monorepo revision through ProjectReference.
@@ -31,10 +31,9 @@ ts-heavy-any make dashboard-test-slow --repo terrascale --branch main
 bash scripts/dashboard/dev.sh   # development host with hot reload
 bash scripts/dashboard/demo.sh  # local synthetic demo host
 ```
-## Demo mode
-`DEMO=true` (exactly) makes the one image serve the public synthetic demo: in-memory
-providers instead of TerraBase, ts-auth and Stripe, with admin, MCP and destructive
-routes blocked. Production uses ts-orch's persistent service contract.
+## Synthetic development host
+The local demo launcher references the E2E project for synthetic protocol providers.
+The production image always uses ts-orch's persistent service contract.
 
 ## OCI production
 Production needs `TS_DASHBOARD_TERRABASE_URL` (TerraBase's private listener, `http://127.0.0.1:8081`) and
