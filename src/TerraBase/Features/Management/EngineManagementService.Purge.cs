@@ -1,7 +1,5 @@
 using System.Diagnostics.Metrics;
-using System.Text.Json;
 using TerraBase.Engine;
-using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -33,7 +31,6 @@ internal sealed partial class EngineManagementService
 
     private async ValueTask RecordDatabasePurgeAsync(IStorageTransaction transaction, TenantContext storage, ManagedDatabase database, CancellationToken cancellationToken)
     {
-        // Every customer deletion participates in a later account closure, even after its database row is gone.
         await PutAsync(transaction, ProjectClosure.Purges(storage.ProjectId!), database.Id, storage, TerraBaseJsonContext.Default.TenantContext, cancellationToken).ConfigureAwait(false);
         if (await GetAsync(transaction, DatabasePurge.Collection, database.Id, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false) is { } existing)
         {
@@ -45,50 +42,13 @@ internal sealed partial class EngineManagementService
             return;
         }
 
-        // Membership includes retired nodes; no unavailable holder is silently dropped from completion.
-        var holders = new HashSet<string>(StringComparer.Ordinal) { options.MachineId };
-        var regions = new HashSet<string>(StringComparer.Ordinal) { options.Region };
-        string? after = null;
-        DocumentPage page;
-        do
-        {
-            page = await transaction.ListAsync(CatalogGate.Members, after, MemberPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-            foreach (var member in page.Documents)
-            {
-                holders.Add(member.Id);
-                using var body = JsonDocument.Parse(member.Json);
-                regions.Add(body.RootElement.GetProperty("region").GetString() ?? throw new InvalidOperationException("a catalog member has no region"));
-            }
-
-            if (holders.Count > 1024)
-            {
-                throw new InvalidOperationException("database purge membership exceeds its bound");
-            }
-            after = page.Documents.Count == 0 ? after : page.Documents[^1].Id;
-        }
-        while (page.HasMore);
-
-        foreach (var region in database.Replicas.Prepend(database.Home(options.Region)))
-        {
-            if (!regions.Contains(region))
-            {
-                // No known node can prove this placement absent; retain the unresolved holder.
-                holders.Add("region:" + region);
-            }
-        }
-
-        if (holders.Count > 1024)
-        {
-            throw new InvalidOperationException("database purge membership exceeds its bound");
-        }
-
+        var holders = new[] { options.MachineId };
         var requested = time.GetUtcNow();
         var record = new DatabasePurgeRecord(storage, requested, requested.AddDays(30),
             requested.AddDays((options.Backup?.RetentionDays[storage.Plan] ?? 0) + 30), null, [.. holders.Order(StringComparer.Ordinal)]);
         await PutAsync(transaction, DatabasePurge.Collection, database.Id, record, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
     }
 
-    // One bounded page per pass; retain the cursor so permanent fences cannot starve later work.
     private async ValueTask ConvergePurgesAsync(CancellationToken cancellationToken)
     {
         var page = await ReadAsync<DocumentPage?>(async transaction => await transaction.ListAsync(DatabasePurge.Collection, _purgeAfter,

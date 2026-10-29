@@ -6,30 +6,19 @@ using TerraBase.Primitives;
 
 namespace TerraBase.E2E;
 
-/// <summary>
-/// FR-24 through the public shape API (FR-20) and its mirror (FR-22): from each serving region, a sealed chunk listed by the
-/// manifest is fetched through its presigned URL without a TerraBase credential, and every answer is the listed TBS1 bytes
-/// with <c>public, max-age=31536000, immutable</c>, while every origin answer, the live tail included, is
-/// <c>private, no-store</c>. V3 (#305) separately measures cache efficiency and origin storage reads.
-/// </summary>
 public sealed class ShapeCacheE2ETests
 {
     [Test]
     [Category("local-only")]
     [Scenario(Nodes.InProcess)]
     [Arguments(Cluster.Gru)]
-    [Arguments(Cluster.Sjc)]
-    [Arguments(Cluster.Fra)]
     public async Task A_mirrored_sealed_chunk_is_immutable_public_ciphertext_while_the_origin_and_live_tail_are_private_no_store(string region)
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var cluster = await Cluster.StartMirroredAsync();
-        // One node owns the handle and its shapes for the whole lifetime.
         var origin = cluster[region];
         var shape = $"{cluster.DatabasePath}/collections/{cluster.Collection}/shape";
         await Docs.PutAsync(origin, cluster.Document(EntityIds.New().ToString()), new JsonObject { ["value"] = "before" }, token);
-
-        // offset=-1 answers 307 to snap.<S>.0, whose one page names the decimal snapshot offset S.
         using var bootstrap = await origin.GetAsync(Target($"{shape}?offset=-1"), token);
         await Assert.That(bootstrap.StatusCode).IsEqualTo(HttpStatusCode.TemporaryRedirect);
         await PrivateNoStoreAsync(bootstrap);
@@ -41,8 +30,6 @@ public sealed class ShapeCacheE2ETests
         await PrivateNoStoreAsync(page);
         var snapshot = (await page.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("next_offset").GetString()!;
         await Assert.That(snapshot.StartsWith("snap.", StringComparison.Ordinal)).IsFalse().Because("the snapshot fits one page");
-
-        // A write after the snapshot closes chunk S once remotely durable; the origin seals it and the mirror uploads it.
         await Docs.PutAsync(origin, cluster.Document(EntityIds.New().ToString()), new JsonObject { ["value"] = "after" }, token);
         var next = await Converge.UntilAsync(async () =>
         {
@@ -71,15 +58,12 @@ public sealed class ShapeCacheE2ETests
             await Assert.That(bytes.AsSpan().StartsWith("TBS1"u8)).IsTrue().Because("only TBS1 ciphertext is shared-cacheable");
             await Assert.That(first is null || first.AsSpan().SequenceEqual(bytes)).IsTrue().Because("an immutable object answers the same bytes");
             first = bytes;
-            // Evidence for the run's log: the host and cache headers only, never the presigned query.
             Console.WriteLine($"FR-24 {region} object fetch {fetch}: host {url.Host}, Cache-Control {cache}");
         }
 
         using var invalid = await origin.GetAsync(Target($"{shape}?offset=invalid"), token);
         await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await PrivateNoStoreAsync(invalid);
-
-        // The live tail at the chunk's end parks until a commit, bounded so a lost wake fails instead of hanging.
         using var bound = CancellationTokenSource.CreateLinkedTokenSource(token);
         bound.CancelAfter(Converge.Deadline);
         var live = origin.GetAsync(Target($"{shape}?handle={handle}&offset={next}&live=true"), bound.Token);
@@ -99,13 +83,10 @@ public sealed class ShapeCacheE2ETests
             }
             catch (OperationCanceledException) when (bound.IsCancellationRequested)
             {
-                // Cancel and observe the parked read if the waking write failed.
             }
         }
     }
 
-    // The manifest of snap.<S>.0 once it lists the page and chunk S after it, both uploaded; answers chunk S's entry. Elements,
-    // not JSON: a convergence failure prints its last read, and presigned URLs stay out of the log.
     private static async Task<JsonElement> SealedChunkAsync(HttpClient origin, string shape, string handle, string firstPage, string snapshot, string region, CancellationToken token)
     {
         var objects = await Converge.UntilAsync<JsonElement[]>(async () =>
@@ -126,8 +107,6 @@ public sealed class ShapeCacheE2ETests
         return objects[1];
     }
 
-    // A 503 with Retry-After (catalog_stale, remote_region_unavailable, confirmation_busy) is a GET to send again; any other
-    // failure stops the test.
     private static async Task<bool> ReadyAsync(HttpResponseMessage response)
     {
         var ready = response.StatusCode != HttpStatusCode.ServiceUnavailable || response.Headers.RetryAfter is null;

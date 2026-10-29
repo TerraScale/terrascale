@@ -12,7 +12,7 @@ namespace TerraBase.Fast.Management;
 
 public sealed class CatalogCleanupRaceTests
 {
-    private static readonly string[] Replicas = ["sjc"];
+    private static readonly string[] Replicas = [];
 
     [Test]
     public async Task Startup_preserves_a_registered_database_with_a_pending_shared_creation_intent()
@@ -34,7 +34,7 @@ public sealed class CatalogCleanupRaceTests
                 incarnation = (await engine.OpenDatabaseAsync(tenant, token))!.Incarnation;
                 var catalog = await engine.OpenSystemDatabaseAsync(token);
                 await using var write = await catalog.BeginTransactionAsync(write: true, token);
-                // A peer's snapshot may precede clearing its creation intent while another peer has the registration.
+
                 _ = await write.PutAsync("pending_database_cleanup", database.Id,
                     JsonSerializer.SerializeToUtf8Bytes(tenant, TerraBaseJsonContext.Default.TenantContext), token);
                 _ = await write.CommitAsync(token);
@@ -50,7 +50,6 @@ public sealed class CatalogCleanupRaceTests
                 await Assert.That(await read.GetAsync("pending_database_cleanup", database.Id, token)).IsNotNull();
             }
 
-            // A subsequent real deletion still owns and clears the intent; startup never certified any absence.
             using var removed = await restarted.Client.DeleteAsync(ManagementApi.Uri(
                 $"/v1/management/organizations/{database.Organization}/projects/{database.Project}/databases/{database.Id}"), token);
             await Assert.That(removed.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
@@ -114,7 +113,7 @@ public sealed class CatalogCleanupRaceTests
 
             if (afterAbandonCheck)
             {
-                // Hold the absent registration captured by abandonment's first catalog snapshot.
+
                 hook.AfterGet = async (collection, id, token) =>
                 {
                     if (collection == $"projects/{project}/databases" && id == database)

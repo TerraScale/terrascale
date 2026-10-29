@@ -8,13 +8,6 @@ using Turso.Data.Sqlite;
 
 namespace TerraBase.Engine.Turso;
 
-/// <remarks>
-/// SQL-subset queries and indexes compile to SQL over a client collection's table, which holds its live documents only.
-/// Fields become <c>id</c>, the version from <c>_tb_state</c>, or <c>json_extract(doc, '$.path')</c>, and every index is an
-/// expression index on the collection's table. The collection and the paths are embedded as literals, never as
-/// parameters: Turso uses an expression index only for a textually equal expression. Both are safe to embed because
-/// <see cref="DatabaseName"/> and <see cref="DocumentField"/> admit no quotes.
-/// </remarks>
 internal sealed partial class TursoStorageTransaction
 {
     private const string IndexPrefix = "tb_index_";
@@ -24,14 +17,12 @@ internal sealed partial class TursoStorageTransaction
         {
             var rows = Rows(collection);
             using var command = Uncached(collection);
-            // tb_qos_scan accounts each row against the plan and stops the count once its budget is spent.
+
             command.CommandText = $"SELECT count(*) FROM {rows.From} WHERE {rows.Live} AND tb_qos_scan(octet_length({rows.Json}));";
             CountRead("query");
             return (long)command.ExecuteScalar()!;
         }, cancellationToken), cancellationToken);
 
-    // A client database reads its counts from _tb_collection_stats, one row per collection whatever its size, so only the
-    // query's time budget can refuse it; the system database still counts its documents table under the scan budget.
     public ValueTask<IReadOnlyList<CollectionStats>> ListCollectionStatsAsync(CancellationToken cancellationToken) =>
         RunAsync(() => WithQueryBudget<IReadOnlyList<CollectionStats>>(() =>
         {
@@ -89,11 +80,9 @@ internal sealed partial class TursoStorageTransaction
                 throw new NotSupportedException("a client database drops collections one at a time, with tombstones");
             }
 
-            // The key range covers every collection with this prefix. A purge, not tombstones: CDC ships no deletes, so it
-            // stays on this machine (see IStorageTransaction.DeleteCollectionsAsync).
             var to = prefix[..^1] + (char)(prefix[^1] + 1);
             var deleted = 0;
-            RemoveMerkleStates(prefix, to);
+
             foreach (var sql in (ReadOnlySpan<string>)[TursoStatements.DeleteCollectionDocuments, TursoStatements.DeleteCollectionStates, TursoStatements.DeleteCollectionNames])
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -104,7 +93,6 @@ internal sealed partial class TursoStorageTransaction
                 deleted = sql == TursoStatements.DeleteCollectionDocuments ? rows : deleted;
             }
 
-            // The purged names leave the store's loaded collection names at commit.
             ChangedReaderState = true;
             return (long)deleted;
         }, cancellationToken, mutation: true);
@@ -112,7 +100,6 @@ internal sealed partial class TursoStorageTransaction
     public ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(CancellationToken cancellationToken) =>
         RunAsync<IReadOnlyList<IndexDefinition>>(() => ReadIndexes(cancellationToken), cancellationToken);
 
-    // Worker-only.
     private List<IndexDefinition> ReadIndexes(CancellationToken cancellationToken)
     {
         var indexes = new List<IndexDefinition>();
@@ -131,12 +118,10 @@ internal sealed partial class TursoStorageTransaction
             indexes.AddRange(ReadVectorIndexes());
         }
 
-        // The schema table has no name index; sort here instead of a temporary B-tree.
         indexes.Sort((left, right) => string.CompareOrdinal(left.Name, right.Name));
         return indexes;
     }
 
-    /// <remarks>ponytail: builds synchronously inside the write transaction, so writers wait for the build; build in the background if collections get large.</remarks>
     public ValueTask<bool> CreateIndexAsync(IndexDefinition index, CancellationToken cancellationToken)
     {
         return RunAsync(() =>
@@ -153,7 +138,6 @@ internal sealed partial class TursoStorageTransaction
         }, cancellationToken, mutation: true);
     }
 
-    // Worker-only, inside a mutation.
     private bool CreateIndex(IndexDefinition index, CancellationToken cancellationToken)
     {
         if (!IndexName().IsMatch(index.Name) || !DatabaseName.TryParse(index.Collection, out _) || index.Fields.Count is < 1 or > 4 || index.Kind is not ("btree" or "text" or "vector"))
@@ -166,7 +150,6 @@ internal sealed partial class TursoStorageTransaction
             return false;
         }
 
-        // An expression index on the collection's own table; versions live in _tb_state, so no key reads them.
         if (store.IsSystem || index.Fields.Any(field => field == DocumentField.Version))
         {
             throw new ArgumentException("an index is built on a client collection's id and fields", nameof(index));
@@ -195,9 +178,6 @@ internal sealed partial class TursoStorageTransaction
             return true;
         }
 
-        // ANALYZE of the new index alone reads only that index, so the write lock is held for its collection's size.
-        // ponytail: statistics are refreshed only when an index is built; run PRAGMA optimize periodically if data shifts a lot.
-        // The id closes the key: queries break ties by id, so the index also serves their whole ORDER BY.
         var keys = string.Join(", ", index.Fields.Select(field => Column(field, "doc"))) + ", id";
         var name = IndexPrefix + index.Name;
         var command = PlainCommand($"""
@@ -239,7 +219,6 @@ internal sealed partial class TursoStorageTransaction
         }, cancellationToken, mutation: true);
     }
 
-    // Worker-only, inside a mutation.
     private bool DropIndex(string name, CancellationToken cancellationToken)
     {
         if (!IndexName().IsMatch(name) || !IndexExists(name))
@@ -277,7 +256,6 @@ internal sealed partial class TursoStorageTransaction
         return true;
     }
 
-    // The replicated definition of an index, as ReadMetadata reads it back.
     private static string IndexMetadata(IndexDefinition index)
     {
         var buffer = new ArrayBufferWriter<byte>();
@@ -311,12 +289,11 @@ internal sealed partial class TursoStorageTransaction
         return command.ExecuteScalar() is not null || (!store.IsSystem && (TextIndexExists(name) || ReadVectorIndexes().Exists(index => index.Name == name)));
     }
 
-    // Recovers a definition from the CREATE INDEX statement CreateIndexAsync wrote.
     private static IndexDefinition ParseIndex(string name, string sql)
     {
-        // The key ends with the id every index carries as its tie-break (CreateIndex).
+
         var keys = sql[(sql.IndexOf('(', StringComparison.Ordinal) + 1)..sql.LastIndexOf(", id)", StringComparison.Ordinal)];
-        // Not a split on ", ": json_extract(doc, '$.path') contains one.
+
         var fields = IndexKey().Matches(keys).Select(key => key.Value switch
         {
             "id" => DocumentField.Id,
@@ -339,14 +316,12 @@ internal sealed partial class TursoStorageTransaction
 
         var rows = Rows(query.Collection);
         var command = Uncached(query.Collection);
-        // The visit runs before residual rejection, without wrapping predicates that Turso can use as index constraints.
-        // A using variable cannot be passed by ref, so the builder is disposed in finally.
+
         var sql = ZString.CreateStringBuilder();
         try
         {
             sql.AppendFormat("{0}SELECT id, {1} AS version FROM {2}", explain ? "EXPLAIN QUERY PLAN " : "", rows.Version, rows.From);
-            // Turso's planner ignores LIMIT: an unfiltered sort on an indexed field reads every row and sorts them instead
-            // of walking that index. Name the index then; with a filter the planner chooses.
+
             if (query.Filter is null && query.Order is [{ Field: var first }, ..] && !first.IsMetadata && !store.IsSystem
                 && ReadIndexes(CancellationToken.None).FirstOrDefault(index => index.Kind == "btree" && index.Collection == query.Collection && index.Fields[0] == first) is { } sorted)
             {
@@ -354,8 +329,7 @@ internal sealed partial class TursoStorageTransaction
             }
 
             sql.AppendFormat(" WHERE {0}{1}", observe ? "tb_query_scan(id) AND " : "", rows.Live);
-            // Keep indexable predicates visible to the planner. Index seeks narrow the candidates;
-            // the scan guard precedes residual JSON predicates in Turso's WHERE evaluation.
+
             sql.AppendFormat(" AND tb_qos_scan(octet_length({0}))", rows.Json);
 
             if (query.Filter is not null)
@@ -371,8 +345,6 @@ internal sealed partial class TursoStorageTransaction
                 sql.Append(order.Descending ? " DESC, " : ", ");
             }
 
-            // Ties break by id in the sort's direction, like the document query compiler, so an index on the sort fields read
-            // backwards also serves a descending order and its tie-break instead of a temporary sort.
             sql.Append(query.Order is [{ Descending: true }, ..] ? "id DESC LIMIT $limit;" : "id LIMIT $limit;");
             command.Parameters.AddWithValue("$limit", query.Limit);
             command.CommandText = sql.ToString();
@@ -410,11 +382,11 @@ internal sealed partial class TursoStorageTransaction
                         sql.Append($"{column} IS NOT NULL");
                         break;
                     case SqlOperator.In:
-                        // Equalities joined by OR: the Turso planner uses an expression index for OR, not for IN.
+
                         sql.Append(TursoQueryCompiler.Balanced([.. compare.Values.Select(value => $"{column} = {Parameter(command, value)}")], " OR "));
                         break;
                     case SqlOperator.Prefix:
-                        // A half-open range, which an index can seek (TursoQueryCompiler.PrefixSuccessor).
+
                         var prefix = (string)compare.Values[0];
                         sql.Append(TursoQueryCompiler.PrefixSuccessor(prefix) is { } successor
                             ? $"({column} >= {Parameter(command, prefix)} AND {column} < {Parameter(command, successor)})"
@@ -442,7 +414,6 @@ internal sealed partial class TursoStorageTransaction
         }
     }
 
-    // A balanced tree of terms: Turso refuses an expression deeper than 100, and a flat chain of 256 parses 256 deep.
     private static void AppendGroup(ref Utf16ValueStringBuilder sql, SqliteCommand command, IReadOnlyList<SqlFilter> filters, string separator, string json)
     {
         if (filters.Count == 1)
@@ -458,7 +429,6 @@ internal sealed partial class TursoStorageTransaction
         sql.Append(')');
     }
 
-    // JSON true and false extract as 1 and 0, so booleans compare as those integers.
     private static string Parameter(SqliteCommand command, object value)
     {
         var name = "$p" + command.Parameters.Count.ToString(CultureInfo.InvariantCulture);
@@ -475,7 +445,7 @@ internal sealed partial class TursoStorageTransaction
 
     private SqliteCommand PlainCommand(string sql)
     {
-        // Not cached on the session: these statements embed collections and paths, so their text varies.
+
         _ranPlain = true;
         var command = session.Connection.CreateCommand();
         command.Transaction = transaction;
@@ -489,15 +459,12 @@ internal sealed partial class TursoStorageTransaction
     [GeneratedRegex(@"\bON ""([^""]*)"" \(", RegexOptions.CultureInvariant)]
     private static partial Regex IndexCollection();
 
-    // Turso stores the SQL it parsed, with a space after a function name.
     [GeneratedRegex(@"json_extract\s*\(doc, '\$\.([^']*)'\)|\bid\b|\bversion\b", RegexOptions.CultureInvariant)]
     private static partial Regex IndexKey();
 
-    // The JSON reads a statement may evaluate per candidate row, which the query work budget charges.
     [GeneratedRegex(@"\b(?:json_(?:type|extract)|tb_near)\(", RegexOptions.CultureInvariant)]
     private static partial Regex JsonRead();
 
-    // Also inside Turso's "MULTI-INDEX OR people (tb_index_a, tb_index_a)", its plan for an IN list rewritten to OR.
     [GeneratedRegex(@"\btb_index_([a-z0-9_]+)", RegexOptions.CultureInvariant)]
     private static partial Regex UsedIndex();
 }

@@ -14,39 +14,20 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>A committed commit as stored with its user: the request it answered and its response.</summary>
-/// <param name="RequestHash">Lowercase hex SHA-256 of the request body.</param>
-/// <param name="CommittedAt">Commit time; the record is kept for <c>CommitRetention</c> after it.</param>
-/// <param name="Body">The response, UTF-8 JSON text.</param>
 internal sealed record CommitRecord(string RequestHash, DateTimeOffset CommittedAt, string Body);
 
-/// <summary>Which commit record a <c>commit_expiry</c> entry purges.</summary>
-/// <param name="UserId">The committing user.</param>
-/// <param name="CommitId">The commit id.</param>
 internal sealed record CommitExpiry(string UserId, string CommitId);
 
-/// <summary>A failed operation of a commit, before the commit names its index.</summary>
-/// <param name="Error">The failure.</param>
 internal sealed record OperationFailed(Failure Error);
 
-/// <summary>One operation of a commit: its result, or why the commit stops.</summary>
 internal readonly union CommitStep(CommitResultBody, OperationFailed);
 
-/// <summary>
-/// Commits (docs/management-commits.md): every operation runs in one write transaction of the system database. The
-/// Management methods run unchanged inside it, because <see cref="CommitTransaction"/> makes their reads and writes
-/// use the commit's transaction instead of their own. Database files are created under cleanup intents before the
-/// transaction and removed after it, as the single-operation routes do. Expected failures are values: a rejected
-/// commit leaves its transaction uncommitted, so nothing it wrote is published.
-/// </summary>
 internal sealed partial class EngineManagementService
 {
-    // Every organization and account has a version document whose engine version (a commit offset) is its version.
     private const string OrganizationVersions = "organization_versions";
     private const string AccountVersions = "account_versions";
     private const string CommitExpiries = "commit_expiry";
 
-    // Collections of the dashboard document space are this prefix and a data API collection name.
     private const string DashboardSpace = "dashboard/";
 
     private const int CommitPurgeBatch = 100;
@@ -54,18 +35,14 @@ internal sealed partial class EngineManagementService
     private static readonly TimeSpan CommitRetention = TimeSpan.FromDays(7);
     private static readonly byte[] VersionDocument = "{}"u8.ToArray();
 
-    /// <summary>The databases a commit created files for, or why it stopped before its transaction.</summary>
     private readonly union PreparedDatabases(Dictionary<int, AddedDatabase>, CommitRejected);
 
-    // The authorized project and optional branch source before database files are prepared.
     private readonly union PreparedDatabaseTarget((TenantContext Tenant, ManagedDatabase? Source), AddedDatabase, NotFound, Forbidden, Conflict, Unavailable);
 
     private readonly union RecordedCommit(CommitRecord, NotFound, Unavailable);
 
-    // The transaction of the commit running on this async flow, if any.
     private static readonly AsyncLocal<IStorageTransaction?> CommitTransaction = new();
 
-    // Inside a commit, a transaction of its own would wait for the writer the commit holds, or read around its writes.
     private static void RequireNoCommit()
     {
         if (CommitTransaction.Value is not null)
@@ -108,7 +85,6 @@ internal sealed partial class EngineManagementService
         }
 
         using var admission = granted;
-        // A duplicate may have committed while these gates were queued, even deleting its own branch source.
         if (organizations.Length > 0)
         {
             var afterAdmission = await ReadAsync<RecordedCommit>(async transaction =>
@@ -144,8 +120,6 @@ internal sealed partial class EngineManagementService
                 return await AbandonAsync(created, exceeded).ConfigureAwait(false);
             }
 
-            await AcquireCommitUnitsAsync(created.Values, cancellationToken).ConfigureAwait(false);
-
             result = await WriteCatalogAsync(
                 transaction => ApplyCommitAsync(transaction, userId, email, commitId, requestHash, operations, created, deleted, cancellationToken), cancellationToken,
                 keep: applied => applied is CommitOutcome { Replayed: false })
@@ -179,7 +153,6 @@ internal sealed partial class EngineManagementService
             }
         }
 
-        // The recorded outcome is durable; unavailable cleanup keeps its intent for the next supported start.
         if (committed)
         {
             foreach (var storage in deleted)
@@ -208,7 +181,6 @@ internal sealed partial class EngineManagementService
         return result;
     }
 
-    // Read staged growth and registered deletions before taking the system writer: quota accounting reads the catalog.
     private async ValueTask<CommitRejected?> CheckPreparedQuotaAsync(
         string userId, IReadOnlyList<CommitOperation> operations, IReadOnlyDictionary<int, AddedDatabase> created,
         StorageQuotaGroupLease admission, CancellationToken cancellationToken)
@@ -340,19 +312,15 @@ internal sealed partial class EngineManagementService
         }
     }
 
-    /// <summary>The version of a dashboard document as the commit and read routes report it.</summary>
     internal static string DocumentVersion(StoredDocument document, string collection) =>
         ETags.Version(document.Scope, DashboardSpace + collection, document.Id, document.Version, document.Json, document.Deleted);
 
-    /// <summary>Advances an organization's version, in the caller's write transaction; every Management change to it calls this.</summary>
     internal static async ValueTask TouchOrganizationAsync(IStorageTransaction transaction, string organizationId, CancellationToken cancellationToken) =>
         await transaction.PutAsync(OrganizationVersions, organizationId, VersionDocument, cancellationToken).ConfigureAwait(false);
 
-    // Advances a user's account version: membership, role and current organization changes.
     private static async ValueTask TouchAccountAsync(IStorageTransaction transaction, string userId, CancellationToken cancellationToken) =>
         await transaction.PutAsync(AccountVersions, userId, VersionDocument, cancellationToken).ConfigureAwait(false);
 
-    // "0" until the first change.
     private static async ValueTask<string> VersionAsync(IStorageTransaction transaction, string collection, string id, CancellationToken cancellationToken) =>
         ((await transaction.GetVersionAsync(collection, id, cancellationToken).ConfigureAwait(false))?.Version ?? 0).ToString(CultureInfo.InvariantCulture);
 
@@ -365,7 +333,6 @@ internal sealed partial class EngineManagementService
             return new CommitRejected(refused, Op: null);
         }
 
-        // Duplicates serialize on the write transaction: only the first applies.
         var existing = await RecordedAsync(transaction, userId, commitId, cancellationToken).ConfigureAwait(false);
         if (existing is not NotFound)
         {
@@ -381,8 +348,6 @@ internal sealed partial class EngineManagementService
         var named = new List<string>();
         var before = new Dictionary<int, (long Count, bool Member)>();
         var fenced = new Dictionary<(string Collection, string Id), string>();
-        // Fences, assertions and the counts limits compare with see the state before the commit. The first failure
-        // returns, and the caller does not commit the transaction.
         foreach (var checks in new[] { true, false })
         {
             for (var i = 0; i < operations.Count; i++)
@@ -422,7 +387,6 @@ internal sealed partial class EngineManagementService
             }
         }
 
-        // A limit needs membership before or after the commit: an operation may end it (leave) or start it (accept).
         foreach (var (i, (count, member)) in before)
         {
             var limit = ((ManagementCommitOperation)operations[i]).Request;
@@ -458,7 +422,6 @@ internal sealed partial class EngineManagementService
         return new CommitOutcome(body, Replayed: false);
     }
 
-    // Document operations keep the Documents API's failures, with their codes, as failures of the commit.
     private async ValueTask<CommitStep> ApplyDocumentAsync(IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken)
     {
         var stored = operation with { Collection = DashboardSpace + operation.Collection };
@@ -471,8 +434,6 @@ internal sealed partial class EngineManagementService
         };
     }
 
-    // A compare-and-set: the version must be current, and the fence advances it. Every fence compares with the version
-    // before the commit, in fenced, even after an earlier fence of the commit advanced it.
     private static async ValueTask<CommitStep> FenceAsync(
         IStorageTransaction transaction, string userId, ManagementOpRequest fence, Dictionary<(string Collection, string Id), string> fenced,
         CancellationToken cancellationToken)
@@ -503,8 +464,6 @@ internal sealed partial class EngineManagementService
             : new OperationFailed(new PreconditionFailed("the version is stale"));
     }
 
-    // Counts what a limit bounds before the commit, and whether the user was a member then; nothing is revealed
-    // until the user's membership is checked after the commit.
     private async ValueTask<CommitStep> CountBeforeAsync(
         IStorageTransaction transaction, string userId, ManagementOpRequest limit, int index, Dictionary<int, (long Count, bool Member)> before,
         CancellationToken cancellationToken)
@@ -514,7 +473,6 @@ internal sealed partial class EngineManagementService
         return new CommitResultBody(Asserted: true);
     }
 
-    // The count a limit bounds; an organization that does not exist (yet, or any more) has none.
     private async ValueTask<long> CountAsync(IStorageTransaction transaction, ManagementOpRequest limit, CancellationToken cancellationToken)
     {
         var organizationId = limit.Organization!;
@@ -553,7 +511,6 @@ internal sealed partial class EngineManagementService
         return occupied;
     }
 
-    // ponytail: limits count by listing (organizations are bounded by their plans); keep counters if limits grow large.
     private static async ValueTask<long> CountAllAsync(IStorageTransaction transaction, string collection, CancellationToken cancellationToken) =>
         (await transaction.CountAsync(collection, filter: null, long.MaxValue - 1, cancellationToken).ConfigureAwait(false)).Count;
 
@@ -651,7 +608,6 @@ internal sealed partial class EngineManagementService
                         };
                     }
 
-                    // The copy was taken before the commit: its source must still exist where the operation runs.
                     if (added.Database.BranchedFrom is { } source
                         && await GetAsync(transaction, Databases(op.Project!), source, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is null)
                     {
@@ -666,7 +622,7 @@ internal sealed partial class EngineManagementService
 
                     var registered = await RegisterDatabaseAsync(
                         transaction, project => MemberProjectAsync(project, userId, organization, op.Project!, cancellationToken), added.Database,
-                        new AllowanceCheck(databaseAllowance.Limit, options.Region, _serving, time.GetUtcNow()), cancellationToken).ConfigureAwait(false);
+                        new AllowanceCheck(databaseAllowance.Limit, options.Region, [options.Region], time.GetUtcNow()), cancellationToken).ConfigureAwait(false);
                     return registered switch
                     {
                         TenantContext => Body(ManagedDatabaseBody.From(added.Database, options.Region), TerraBaseJsonContext.Default.ManagedDatabaseBody),
@@ -678,7 +634,7 @@ internal sealed partial class EngineManagementService
 
             case "set_database_regions":
                 {
-                    if (DatabaseRegions.Check(options.Region, op.ReplicaRegions!, created: false) is Validation invalid)
+                    if (DatabaseRegions.Check(op.ReplicaRegions!) is Validation invalid)
                     {
                         return new OperationFailed(invalid);
                     }
@@ -760,7 +716,6 @@ internal sealed partial class EngineManagementService
                 };
             case "accept_invitation":
                 {
-                    // Redeeming proves the invitee by the access token's verified email, never by the request body.
                     if (email is null)
                     {
                         return new OperationFailed(new Forbidden("the access token has no verified email"));
@@ -843,7 +798,6 @@ internal sealed partial class EngineManagementService
         return new CommitResultBody();
     }
 
-    // The plan of a set_plan operation, validated by the endpoint.
     private static PlanTier Plan(string plan) => plan switch
     {
         "starter" => PlanTier.Starter,
@@ -853,9 +807,6 @@ internal sealed partial class EngineManagementService
         _ => PlanTier.Hobby,
     };
 
-    // Creates the files of every created or branched database under its cleanup intent, after checking the user may
-    // create in the project. An organization or project the commit itself creates (and that does not exist yet) is
-    // checked only inside the transaction, where creating it makes the user its owner.
     private async ValueTask<PreparedDatabases> PrepareDatabasesAsync(
         string userId, IReadOnlyList<CommitOperation> operations, CancellationToken cancellationToken)
     {
@@ -872,11 +823,9 @@ internal sealed partial class EngineManagementService
                 var earlier = operations.Take(i).OfType<ManagementCommitOperation>().Select(operation => operation.Request).ToList();
                 var createsOrganization = earlier.Any(create => create is { Op: "create_organization" } && create.Id == op.Organization);
                 var createsProject = earlier.Any(create => create is { Op: "create_project" } && create.Id == op.Project);
-                // Earlier operations that can make the user a member, or raise a viewer, before this one runs.
                 var mayGrant = earlier.Any(grant => grant is { Op: "accept_invitation" } || (grant is { Op: "confirm_transfer" } && grant.Organization == op.Organization));
                 var target = await ReadAsync<PreparedDatabaseTarget>(async transaction =>
                 {
-                    // A chosen id registers a database another region holds under the same ids (docs/cross-region.md).
                     if (op.Id is { } id && prepared.Values.Any(added => added.Database.Id == id))
                     {
                         return ManagementErrors.IdTaken;
@@ -903,12 +852,9 @@ internal sealed partial class EngineManagementService
                     var organization = await GetAsync(transaction, Organizations, op.Organization!, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false);
                     if (organization is null && createsOrganization)
                     {
-                        // A new organization has no database to branch.
                         return op.Op == "create_database" ? (new TenantContext(op.Organization!, PlanTier.Hobby, op.Project), null) : ManagementErrors.NotFound;
                     }
 
-                    // The transaction authorizes again, after the earlier operations; this only keeps files away from users
-                    // who cannot become writers in this commit.
                     if (!(mayGrant && organization is not null))
                     {
                         var actor = await AuthorizeAsync(transaction, userId, op.Organization!, OrganizationRole.Member, cancellationToken).ConfigureAwait(false);
@@ -943,7 +889,6 @@ internal sealed partial class EngineManagementService
                         return (tenant, null);
                     }
 
-                    // A branch copies the home region's file and lives there only (docs/cross-region.md).
                     return await GetAsync(transaction, Databases(op.Project!), op.Database!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is not { } source
                         ? ManagementErrors.NotFound
                         : source.Home(options.Region) != options.Region ? ManagementErrors.WrongRegion
@@ -970,18 +915,14 @@ internal sealed partial class EngineManagementService
                 }
 
                 var (project, source) = resolved;
-                // A database is created in its home region, the one the commit is sent to (docs/cross-region.md).
                 if ((op.HomeRegion ?? options.Region) != options.Region)
                 {
                     return await AbandonAsync(prepared, new CommitRejected(ManagementErrors.WrongRegion, i)).ConfigureAwait(false);
                 }
 
-                if ((op.ReplicaRegions ?? await DefaultReplicasAsync(cancellationToken).ConfigureAwait(false)) is not { } replicas)
-                {
-                    return await AbandonAsync(prepared, new CommitRejected(DatabaseRegions.NoOtherRegion, i)).ConfigureAwait(false);
-                }
+                IReadOnlyList<string> replicas = op.ReplicaRegions ?? [];
 
-                if (DatabaseRegions.Check(options.Region, replicas, durability.Value.Confirms) is Validation invalid)
+                if (DatabaseRegions.Check(replicas) is Validation invalid)
                 {
                     return await AbandonAsync(prepared, new CommitRejected(invalid, i)).ConfigureAwait(false);
                 }
@@ -1016,7 +957,6 @@ internal sealed partial class EngineManagementService
         return prepared;
     }
 
-    // Removes the files of databases prepared for a commit that stops before its transaction.
     private async ValueTask<CommitRejected> AbandonAsync(Dictionary<int, AddedDatabase> prepared, CommitRejected rejected)
     {
         foreach (var database in prepared.Values.Where(database => !database.Existing))
@@ -1027,7 +967,6 @@ internal sealed partial class EngineManagementService
         return rejected;
     }
 
-    // A replicated registration is reused, never rewritten into a new home or revived from a tombstone.
     private bool SameDatabaseCreation(ManagedDatabase database, ManagementOpRequest op) =>
         op.Op == "create_database" && database.BranchedFrom is null && database.ProjectId == op.Project
         && (database.Name == op.Name || (database.ConflictOf is not null && database.PreviousName == op.Name))
@@ -1035,7 +974,6 @@ internal sealed partial class EngineManagementService
         && !database.AllRegions && (op.ReplicaRegions is null || database.Placement(options.Region).Regions.Order(StringComparer.Ordinal)
             .SequenceEqual(new[] { options.Region }.Concat(op.ReplicaRegions).Order(StringComparer.Ordinal), StringComparer.Ordinal));
 
-    // The user's record of a commit within the retention.
     private async ValueTask<Found<CommitRecord>> RecordedAsync(IStorageTransaction transaction, string userId, string commitId, CancellationToken cancellationToken) =>
         await GetAsync(transaction, Commits(userId), commitId, TerraBaseJsonContext.Default.CommitRecord, cancellationToken).ConfigureAwait(false) is { } recorded
         && recorded.CommittedAt > time.GetUtcNow() - CommitRetention
@@ -1047,9 +985,6 @@ internal sealed partial class EngineManagementService
             ? new CommitOutcome(Encoding.UTF8.GetBytes(recorded.Body), Replayed: true)
             : new CommitRejected(new Conflict("the commit id was used for a different request", "commit_id_reused"), Op: null);
 
-    // Records the response in the commit's transaction and purges a batch of expired records, oldest first. The
-    // expiry entry is written first: its write allocates this transaction's offset even when no operation wrote,
-    // so the response reports the offset the commit actually has.
     private async ValueTask<byte[]> RecordCommitAsync(
         IStorageTransaction transaction, string userId, string commitId, string requestHash, Func<long, byte[]> response, CancellationToken cancellationToken)
     {
@@ -1065,7 +1000,6 @@ internal sealed partial class EngineManagementService
         foreach (var entry in oldest.Documents.TakeWhile(entry => string.CompareOrdinal(entry.Id, cutoff) < 0))
         {
             var expired = JsonSerializer.Deserialize(entry.Json.Span, TerraBaseJsonContext.Default.CommitExpiry)!;
-            // A record rewritten after it expired has a newer entry of its own.
             if (await GetAsync(transaction, Commits(expired.UserId), expired.CommitId, TerraBaseJsonContext.Default.CommitRecord, cancellationToken).ConfigureAwait(false) is { } record
                 && record.CommittedAt <= now - CommitRetention)
             {

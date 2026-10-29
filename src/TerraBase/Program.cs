@@ -1,7 +1,6 @@
 using System.Net;
 using TerraBase.Configuration;
 using TerraBase.Engine;
-using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.ApiReference;
@@ -16,29 +15,27 @@ using TerraBase.Features.Platform;
 using TerraBase.Features.Pressure;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Regions;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Features.Sql;
 using TerraBase.Features.Stats;
 using TerraBase.Features.UserAuth;
 using TerraBase.Features.Functions;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
-
 if (args is ["--storage-format"])
 {
     Console.WriteLine(StorageFormat.Id);
     return 0;
 }
-
 var environmentName = TerraBaseOptions.EnvironmentName(args);
 TerraBaseOptions options;
-PeerCredential peerCredential;
+InternalCredential internalCredential;
 IPAddress internalAddress;
 try
 {
     TerraBaseOptions.ReadSecretFiles();
     options = TerraBaseOptions.FromProcess(args);
-    peerCredential = PeerCredential.FromProcess(options);
+    internalCredential = InternalCredential.FromProcess(options);
     internalAddress = Listeners.InternalAddress(options);
 }
 catch (TerraBaseConfigurationException error)
@@ -46,13 +43,11 @@ catch (TerraBaseConfigurationException error)
     await Console.Error.WriteLineAsync($"terrabase: {error.Message}");
     return 2;
 }
-
 if (options.Backup is null && environmentName != Environments.Development)
 {
     await Console.Error.WriteLineAsync($"terrabase: backup requires {string.Join(", ", BackupSettings.TigrisVariables.Select(variable => variable.Variable))} (attach the Tigris bucket) and TERRABASE_MASTER_KEY outside Development");
     return 2;
 }
-
 var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], EnvironmentName = environmentName });
 builder.Configuration.Sources.Clear();
 builder.WebHost.ConfigureKestrel(kestrel => kestrel.AddTerraBaseListeners(options, internalAddress, environmentName));
@@ -63,8 +58,7 @@ builder.Services.AddSingleton(runCompletion);
 builder.Services.AddSingleton<Shutdown>();
 builder.Services.Configure<HostOptions>(host => host.ShutdownTimeout = Shutdown.HostedBudget);
 builder.Services.AddSingleton(options);
-builder.Services.AddSingleton(new BoundPeerAddress(internalAddress));
-builder.Services.AddSingleton(peerCredential);
+builder.Services.AddSingleton(internalCredential);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.ConfigureHttpClientDefaults(http => http
     .SetHandlerLifetime(Timeout.InfiniteTimeSpan)
@@ -98,7 +92,7 @@ builder.Services.AddTerraBaseManagement();
 builder.Services.AddTerraBaseRegions();
 builder.Services.AddTerraBasePlatform();
 builder.Services.AddTerraBasePlatformExplore();
-builder.Services.AddTerraBaseCluster(options);
+builder.Services.AddSingleton<IShipperLeases, LocalShipperLeases>();
 builder.Services.AddTerraBaseBackup(options);
 builder.Services.AddTerraBaseHealth();
 builder.Services.AddTerraBasePressure();
@@ -106,7 +100,7 @@ builder.Services.AddTerraBaseStats();
 builder.Services.AddTerraBaseImport();
 TerraBase.Features.Shapes.ShapesExtensions.AddTerraBaseShapes(builder.Services);
 TerraBase.Features.Shapes.ShapeResumeExtensions.AddTerraBaseShapeResume(builder.Services);
-builder.AddTerraBaseReplication();
+builder.Services.AddTerraBaseCatalog();
 
 try
 {
@@ -123,7 +117,7 @@ try
 
     var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
     app.UseTerraScaleRequestIdentity(() => TerraBase.Primitives.EntityIds.New().ToString(),
-        app.Services.GetRequiredService<PeerCredential>().CorrelationKey);
+        app.Services.GetRequiredService<InternalCredential>().CorrelationKey);
     app.UseTerraBasePrivateResponses();
     app.UseTerraBasePressure();
     app.UseTerraBaseUsage();
@@ -145,20 +139,6 @@ try
         return next(context);
     });
     app.UseTerraBaseQosMemory();
-    app.Use(async (context, next) =>
-    {
-        if (!context.RequestServices.GetRequiredService<IPeerTopology>().IsCurrent
-            && (Listeners.ArrivedOn(context) == TerraBaseListener.Client
-                && !ReferenceEquals(context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>(), ListenerMetadata.Probe)
-                || context.GetEndpoint()?.Metadata.GetMetadata<Microsoft.AspNetCore.Authorization.IAuthorizeData>() is not null))
-        {
-            await BadRequests.WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "peer_topology_mismatch",
-                "this machine's peer topology is not verified", op: null).ConfigureAwait(false);
-            return;
-        }
-
-        await next(context).ConfigureAwait(false);
-    });
     app.UseTerraBaseCatalogGate();
     app.UseAuthentication();
     app.UseTerraBaseProjectCheck();
@@ -170,7 +150,6 @@ try
     app.MapTerraScaleEndpoints();
     app.MapTerraScaleOpenApi().WithMetadata(new ListenerMetadata(TerraBaseListener.Client));
     app.MapTerraBaseMetrics();
-    app.MapTerraBaseReplication();
     await ApplicationRunCompletion.RunAsync(app);
     return 0;
 }

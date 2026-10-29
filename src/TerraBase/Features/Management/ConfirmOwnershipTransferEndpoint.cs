@@ -1,15 +1,13 @@
 using TerraBase.Errors;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary><c>POST …/organizations/{organization}/ownership-transfer/confirm</c>: the nominee accepts ownership.</summary>
 public sealed class ConfirmOwnershipTransferEndpoint(IAccessService access) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(ManagementRoute.OwnershipTransfer + "/confirm");
@@ -27,7 +25,6 @@ public sealed class ConfirmOwnershipTransferEndpoint(IAccessService access) : En
         Metadata(ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         await access.ConfirmTransferAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), cancellationToken) switch
         {

@@ -13,12 +13,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Fast.Shapes;
 
-/// <summary>
-/// The always-on shape sweep (#277): each object writer publishes a durable lineage record, and a minute scheduler retires
-/// handles whose lineage changed with no shape request, registry entry or retirement queue involved. Unknown, damaged or
-/// missing lineage stays, and so does every current handle. Each test owns its server and clock, advances the clock one
-/// interval per pass, and checks the result through the engine.
-/// </summary>
 public sealed class ShapeSweepTests
 {
     [Test]
@@ -34,7 +28,7 @@ public sealed class ShapeSweepTests
                 await first.PutAsync(3);
                 unfiltered = await first.BootstrapAsync();
                 filtered = await first.BootstrapAsync("""{"eq":["/n",1]}""");
-                // Bootstraps write snapshot pages only: the sweep must find snapshot-only handles.
+
                 await Assert.That(await first.RowsAsync(unfiltered)).IsEqualTo(new Rows(0, 1, 0, 1));
                 await Assert.That(await first.RowsAsync(filtered)).IsEqualTo(new Rows(0, 1, 0, 1));
                 await first.DropAsync();
@@ -59,7 +53,7 @@ public sealed class ShapeSweepTests
         await using var node = await Node.StartAsync();
         await node.PutAsync(2);
         List<string> handles = [];
-        // One more than a database admits: the first filtered shape is evicted from the registry.
+
         for (var i = 0; i <= ShapeFilterRegistry.MaxPerDatabase; i++)
         {
             handles.Add(await node.BootstrapAsync($$"""{"eq":["/n",{{i}}]}"""));
@@ -93,7 +87,7 @@ public sealed class ShapeSweepTests
         await node.PutAsync(1);
         var sealedHandle = (await node.SealAsync("")).Handle;
         var count = ShapeRegistry.MaxRetired + 1;
-        // One real seal, and the rest written as it writes them, never tracked by the registry: a chunk and the same lineage record.
+
         await node.WriteAsync(connection =>
         {
             for (var i = 1; i < count; i++)
@@ -119,7 +113,7 @@ public sealed class ShapeSweepTests
         while (remaining > 0 && deleted.Count < 4);
 
         await Assert.That(remaining).IsEqualTo(0L);
-        // One budget per database per pass across all of its handles, then the cursor resumes where it stopped.
+
         await Assert.That(deleted).IsEquivalentTo([ShapeRetention.BatchRows, ShapeRetention.BatchRows, 2L * count - 2 * ShapeRetention.BatchRows]);
     }
 
@@ -132,8 +126,7 @@ public sealed class ShapeSweepTests
         long end = 0;
         await node.WriteAsync(connection =>
         {
-            // The chunk was sealed before the feed's retention; snapshot 0 is older than the newest complete one at 1, and a seal
-            // of a later offset published its first page only.
+
             Execute(connection, "UPDATE _tb_shape_chunk SET sealed_at = 0 WHERE handle = $h;", ("$h", handle));
             end = Scalar(connection, "SELECT end_offset FROM _tb_shape_chunk WHERE handle = $h;", ("$h", handle));
             Snapshot(connection, handle, 0, 0);
@@ -167,7 +160,7 @@ public sealed class ShapeSweepTests
         Array.Sort(handles, StringComparer.Ordinal);
         var (damaged, healthy) = (handles[0], handles[1]);
         var floor = (await node.SealAsync("""{"eq":["/n",2]}""")).Handle;
-        // A body over the 8 MiB object bound fails every batch that reaches it, a floor sentinel's included.
+
         await node.WriteAsync(connection =>
         {
             Execute(connection, "UPDATE _tb_shape_chunk SET body = $b WHERE handle = $h;", ("$h", damaged), ("$b", new byte[ShapeRetention.BatchBytes + 1]));
@@ -232,7 +225,7 @@ public sealed class ShapeSweepTests
         await node.PutAsync(1);
         var floorOnly = (await node.SealAsync("")).Handle;
         var lineageOnly = (await node.SealAsync("""{"eq":["/n",1]}""")).Handle;
-        // What a partial drop leaves: the floor and lineage once every object is gone, or the lineage alone.
+
         await node.WriteAsync(connection =>
         {
             Execute(connection, "DELETE FROM _tb_shape_chunk WHERE handle IN ($a, $b);", ("$a", floorOnly), ("$b", lineageOnly));
@@ -260,10 +253,10 @@ public sealed class ShapeSweepTests
             shape.Incarnation);
         var transactions = node.Api.Server.Services.GetRequiredService<IShapeSnapshotTransactions>();
         var memory = node.Api.Server.Services.GetRequiredService<IMemoryBudget>();
-        // A long-lived snapshot reader builds its page before the drop commits.
+
         await using var reader = await transactions.BeginAsync(node.Store, write: false, CancellationToken.None);
         var storage = (IShapeSnapshotStorage)reader;
-        var (offset, cursor) = await storage.ShapeSnapshotHeadAsync(false, shape.ResumeScope, node.Time.GetUtcNow(), CancellationToken.None);
+        var (offset, cursor) = await storage.ShapeSnapshotHeadAsync(shape.ResumeScope, node.Time.GetUtcNow(), CancellationToken.None);
         using var page = await storage.BuildShapeSnapshotPageAsync(snapshot, offset, null, cursor, memory, node.Time, CancellationToken.None);
 
         await node.DropAsync();
@@ -288,7 +281,7 @@ public sealed class ShapeSweepTests
         await using var node = await Node.StartAsync();
         await node.PutAsync(1);
         var handle = (await node.SealAsync("")).Handle;
-        // The same unfiltered handle: a chunk, a snapshot page and one lineage record.
+
         await Assert.That(await node.BootstrapAsync()).IsEqualTo(handle);
         await node.DropAsync();
         var bodies = await node.ReadAsync(connection => Scalar(connection, """
@@ -318,7 +311,7 @@ public sealed class ShapeSweepTests
         await using var node = await Node.StartAsync();
         await node.PutAsync(1);
         var handle = (await node.SealAsync("")).Handle;
-        // A chunk that spends the whole byte budget, then a one-byte floor and the lineage record behind it.
+
         await node.WriteAsync(connection =>
         {
             Execute(connection, "UPDATE _tb_shape_chunk SET body = $b WHERE handle = $h;", ("$h", handle), ("$b", new byte[ShapeRetention.BatchBytes]));
@@ -345,7 +338,7 @@ public sealed class ShapeSweepTests
         await Assert.That(await StepAsync(ShapeRetention.BatchBytes, commit: true)).IsEqualTo(new ShapeSweepStep(ShapeHandleState.Retired, 1,
             ShapeRetention.BatchBytes, 0, true));
         await Assert.That(await node.RowsAsync(handle)).IsEqualTo(new Rows(0, 0, 1, 1));
-        // The floor fits a budget the lineage does not, and only the floor is charged; this batch rolls back.
+
         await Assert.That(await StepAsync(lineage, commit: false)).IsEqualTo(new ShapeSweepStep(ShapeHandleState.Retired, 1, 1, 0, true));
         await Assert.That(await node.RowsAsync(handle)).IsEqualTo(new Rows(0, 0, 1, 1));
         await Assert.That(await StepAsync(ShapeRetention.BatchBytes, commit: true)).IsEqualTo(new ShapeSweepStep(ShapeHandleState.Retired, 2,
@@ -407,7 +400,6 @@ public sealed class ShapeSweepTests
         return command;
     }
 
-    /// <summary>A handle's chunks, snapshot pages, floor sentinel and lineage record.</summary>
     private sealed record Rows(long Chunks, long Pages, long Floor, long Lineage)
     {
         public static readonly Rows None = new(0, 0, 0, 0);
@@ -462,7 +454,6 @@ public sealed class ShapeSweepTests
         public async Task CreateAsync() =>
             (await Api.SendAsync(HttpMethod.Post, Api.Collections, new { name = DocumentApi.Collection })).Status.ShouldBe(HttpStatusCode.Created);
 
-        /// <summary>An <c>offset=-1</c> shape request, which seals the snapshot it redirects to; returns the handle.</summary>
         public async Task<string> BootstrapAsync(string? where = null)
         {
             using var response = await Api.Client.GetAsync(new Uri($"{Api.Collections}/{DocumentApi.Collection}/shape?offset=-1"
@@ -471,7 +462,6 @@ public sealed class ShapeSweepTests
             return response.Headers.GetValues("TB-Shape-Handle").Single();
         }
 
-        /// <summary>Seals the first chunk of the shape with this canonical filter through the production sealer.</summary>
         public async Task<ShapeSealDefinition> SealAsync(string canonical)
         {
             CollectionInfo collection;
@@ -481,14 +471,13 @@ public sealed class ShapeSweepTests
                     ?? throw new InvalidOperationException("the collection is missing");
             }
 
-            var identity = ShapeHandle.ComputeCanonical(Store, Api.Server.Services.GetRequiredService<LocalReplica>().Id, collection, canonical);
+            var identity = ShapeHandle.ComputeCanonical(Store, collection, canonical);
             var shape = new ShapeSealDefinition(identity.ShapeId, identity.Handle, collection.Name, collection.Id,
                 ShapeService.ResumeScope(Tenant, collection, canonical), Store.Incarnation);
             _ = await Sealer.SealUpToHeadAsync(Store, shape, 0, CancellationToken.None);
             return shape;
         }
 
-        /// <summary>Advances the clock one interval and waits for the scheduled pass.</summary>
         public async Task<ShapeSweepPass> PassAsync()
         {
             var pass = Api.Server.Services.GetRequiredService<ShapeSweeper>().NextPassAsync();
@@ -512,7 +501,6 @@ public sealed class ShapeSweepTests
         public Task<T> ReadAsync<T>(Func<SqliteConnection, T> read) =>
             turso.WithWriterAsync(session => read(session.Connection), "a test reading shape rows", CancellationToken.None);
 
-        /// <summary>Every shape row except the durable frontier's.</summary>
         public Task<long> ShapeRowsAsync() => turso.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
@@ -522,7 +510,6 @@ public sealed class ShapeSweepTests
             return (long)command.ExecuteScalar()!;
         }, "a test counting shape rows", CancellationToken.None);
 
-        // Shape rows are derived data written uncaptured, as the engine writes them.
         public Task<bool> WriteAsync(Action<SqliteConnection> write) => turso.WithWriterAsync(session =>
         {
             Execute(session.Connection, TursoSession.CaptureOff);
@@ -543,7 +530,6 @@ public sealed class ShapeSweepTests
         public ValueTask DisposeAsync() => Api.DisposeAsync();
     }
 
-    /// <summary>The production budget, refusing one tenant's bulk reservations while a refusal is held.</summary>
     private sealed class RefusingBudget(IMemoryBudget inner) : IMemoryBudget
     {
         private TenantContext? _refused;

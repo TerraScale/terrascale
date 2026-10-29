@@ -9,8 +9,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Fast.Management;
 
-// Decorates the real engine. Only the catalog commits that put a matching document (usage, unless told otherwise) or one
-// explicitly armed write start are intercepted.
 internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>, bool>? intercepts = null, Func<PlanTier, long>? storageLimit = null)
 {
     private readonly Func<string, string, ReadOnlyMemory<byte>, bool> _intercepts = intercepts ?? IsUsage;
@@ -20,7 +18,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
     public Func<TenantContext, CancellationToken, ValueTask>? BeforeCopy { get; set; }
 
-    // Lifecycle prechecks complete before quota takes the organization gate.
     public Func<CancellationToken, ValueTask>? BeforeQuota { get; set; }
 
     public Func<TenantContext, CancellationToken, ValueTask>? BeforeDocumentQuota { get; set; }
@@ -29,35 +26,26 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
     public Func<TenantContext, CancellationToken, ValueTask>? BeforeDelete { get; set; }
 
-    // Runs when a transaction starts on an opened user database, before the store hands out a session.
     public Func<TenantContext, CancellationToken, ValueTask>? BeforeBegin { get; set; }
 
-    // Runs before opening a catalog transaction, so mutations finish before its snapshot or write lock is acquired.
     public Func<bool, CancellationToken, ValueTask>? BeforeCatalogBegin { get; set; }
 
-    // Runs before a user database's size is read.
     public Func<TenantContext, CancellationToken, ValueTask>? BeforeSize { get; set; }
 
-    // Runs before a page of a catalog collection is listed; while it is set, catalog reads go through the hook too.
     public Action<string>? BeforeList { get; set; }
 
-    // Runs after a catalog row is captured, so tests can change its mapping before the next lookup.
     public Func<string, string, CancellationToken, ValueTask>? AfterGet { get; set; }
 
-    // Observes detached catalog rows from real reads, including pages, before lookup hooks run.
     public Action<StoredDocument>? AfterRead { get; set; }
 
-    // Lists databases in reverse engine order while set, as an unordered listing may.
     public bool ReverseDatabases
     {
         get => Volatile.Read(ref field);
         set => Volatile.Write(ref field, value);
     }
 
-    // Observes catalog materialization; used to prove memory refusal precedes tenant resolution.
     public Action<string>? BeforeGet { get; set; }
 
-    // A user database for which this returns true opens as missing storage, while the catalog still lists it.
     public Func<TenantContext, bool>? Hidden { get; set; }
 
     public Gate PauseCommit(bool fail = false)
@@ -178,7 +166,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             return await inner.CopyDatabaseAsync(source, target, cancellationToken);
         }
 
-        // Restores and branches copy their source here.
         public async ValueTask<bool> CreateDatabaseWithIntentAsync(
             TenantContext database, TenantContext? source, Func<CancellationToken, ValueTask<bool>> recordIntent, CancellationToken cancellationToken)
         {
@@ -254,7 +241,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             remove => inner.DatabaseDeleted -= value;
         }
 
-        // Only the system database, where the catalog lives, is intercepted.
         public async ValueTask<IDatabaseStore> OpenSystemDatabaseAsync(CancellationToken cancellationToken) =>
             new Store(await inner.OpenSystemDatabaseAsync(cancellationToken), hook);
     }
@@ -265,7 +251,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public TenantContext? Tenant => inner.Tenant;
         public bool IsClosed => inner.IsClosed;
         public long CommitSequence => inner.CommitSequence;
-
 
         public Task WaitForCommitAsync(long sequence, CancellationToken cancellationToken) => inner.WaitForCommitAsync(sequence, cancellationToken);
         public async ValueTask<IStorageTransaction> BeginDurableTransactionAsync(
@@ -309,7 +294,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public TenantContext? Tenant => inner.Tenant;
         public bool IsClosed => inner.IsClosed;
         public long CommitSequence => inner.CommitSequence;
-
 
         public Task WaitForCommitAsync(long sequence, CancellationToken cancellationToken) => inner.WaitForCommitAsync(sequence, cancellationToken);
         public ValueTask<IStorageTransaction> BeginDurableTransactionAsync(
@@ -366,19 +350,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken) => inner.DeleteAsync(collection, id, cancellationToken);
         public ValueTask<long?> TombstoneAsync(string collection, string id, CancellationToken cancellationToken) => inner.TombstoneAsync(collection, id, cancellationToken);
 
-        public ValueTask<bool> JoinBaselineAsync(string collection, string id, DocumentState state, EntryVersion at, CancellationToken cancellationToken) =>
-            inner.JoinBaselineAsync(collection, id, state, at, cancellationToken);
-
-        public ValueTask<bool> JoinAsync(string collection, string id, DocumentState delta, EntryVersion at, CancellationToken cancellationToken) =>
-            inner.JoinAsync(collection, id, delta, at, cancellationToken);
-
-        public ValueTask<bool> WouldJoinAsync(string collection, string id, DocumentState delta, CancellationToken cancellationToken) =>
-            inner.WouldJoinAsync(collection, id, delta, cancellationToken);
-
-        public ValueTask RecordAppliedAsync(ReplicaId origin, Hlc applied, CancellationToken cancellationToken) =>
-            inner.RecordAppliedAsync(origin, applied, cancellationToken);
-        public ValueTask RequireAppliedAsync(ReplicaId origin, Hlc expected, CancellationToken cancellationToken) =>
-            inner.RequireAppliedAsync(origin, expected, cancellationToken);
         public ValueTask<FeedPage> ReadFeedAsync(
             FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
             inner.ReadFeedAsync(cursor, collections, maxEvents, maxBytes, cancellationToken);
@@ -386,8 +357,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
             inner.ReadFeedMetadataAsync(cursor, collections, maxEvents, maxBytes, cancellationToken);
         public ValueTask<IReadOnlyDictionary<ReplicaId, Hlc>> GetFeedHeadAsync(CancellationToken cancellationToken) => inner.GetFeedHeadAsync(cancellationToken);
-
-        public ValueTask<IReadOnlyDictionary<ReplicaId, Hlc>> GetAppliedAsync(CancellationToken cancellationToken) => inner.GetAppliedAsync(cancellationToken);
 
         public ValueTask<bool> HoldsHistoryAtOrBelowAsync(Hlc cut, CancellationToken cancellationToken) => inner.HoldsHistoryAtOrBelowAsync(cut, cancellationToken);
         public ValueTask<int> TrimFeedAsync(Hlc before, int limit, CancellationToken cancellationToken) => inner.TrimFeedAsync(before, limit, cancellationToken);

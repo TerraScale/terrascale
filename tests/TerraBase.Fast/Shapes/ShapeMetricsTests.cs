@@ -7,12 +7,9 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using TerraBase.Engine;
-using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.Memory;
 using TerraBase.Fast.Documents;
-using TerraBase.Features.Documents;
-using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -24,8 +21,6 @@ namespace TerraBase.Fast.Shapes;
 public sealed class ShapeMetricsTests
 {
     private const long Budget = 4 * 1024 * 1024;
-
-    // Hobby's MemoryShare in QosPolicy: the largest share of the process budget one organization holds.
     private const double HobbyShare = .0625;
 
     [Test]
@@ -83,8 +78,6 @@ public sealed class ShapeMetricsTests
             metrics.RecordMirrorLag(TimeSpan.FromSeconds(-1));
             await Task.CompletedTask;
         }).Throws<ArgumentOutOfRangeException>();
-
-        // A refused seal records nothing: no seal counter sample exists at all.
         var scrape = await ScrapeAsync(server);
         await Assert.That(scrape).DoesNotContain("terrabase_shape_seals_total");
         await Assert.That(scrape).DoesNotContain("terrabase_shape_mirror_lag_seconds_count");
@@ -120,8 +113,6 @@ public sealed class ShapeMetricsTests
         await canceled.CancelAsync();
         var cancelledFlight = Flight(metrics, ct => new TaskCompletionSource().Task.WaitAsync(ct), canceled.Token);
         await Assert.That(async () => await cancelledFlight).Throws<OperationCanceledException>();
-
-        // Only the held flight remains: the error and cancelled flights have already given their slots back.
         await Assert.That(Sample(await ScrapeAsync(server), "terrabase_shape_flights_active")).IsEqualTo(1d);
         release.SetResult();
         await held;
@@ -153,8 +144,6 @@ public sealed class ShapeMetricsTests
             await Assert.That(async () => await Admitted(metrics, 1024, ct => new TaskCompletionSource().Task.WaitAsync(ct), canceled.Token))
                 .Throws<OperationCanceledException>();
         }
-
-        // Both admitted flights disposed their leases, so the full budget is available again.
         using var all = metrics.TryReserve(Budget, null);
         await Assert.That(all).IsNotNull();
         await Assert.That(Sample(await ScrapeAsync(server), "terrabase_memory_reserved_bytes")).IsEqualTo((double)Budget);
@@ -175,8 +164,6 @@ public sealed class ShapeMetricsTests
 
         using var second = metrics.TryReserve(share, other);
         await Assert.That(second).IsNotNull();
-
-        // The process limit still applies to the explicit tenant's neighbours: system work takes the remainder.
         using var rest = metrics.TryReserve(Budget - 2 * share, null);
         await Assert.That(rest).IsNotNull();
         await Assert.That(metrics.TryReserve(1, null)).IsNull();
@@ -199,7 +186,6 @@ public sealed class ShapeMetricsTests
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, subscribe) =>
         {
-            // Only this host's instruments: the process-wide meter name is shared with every other test host.
             if (instrument.Meter.Name == Telemetry.MeterName && ReferenceEquals(instrument.Meter.Scope, factory)
                 && (instrument.Name.StartsWith("terrabase.shape.", StringComparison.Ordinal)
                     || instrument.Name == "terrabase.storage.reads"))
@@ -262,7 +248,6 @@ public sealed class ShapeMetricsTests
 
         foreach (var (name, keys, values) in measured)
         {
-            // Shape instruments take no tags at all. Storage reads may carry only the bounded `path` tag.
             var allowed = name == "terrabase.storage.reads" ? "path" : string.Empty;
             await Assert.That(keys).IsEqualTo(allowed);
             await Assert.That(values).DoesNotContain(tenant.OrganizationId);
@@ -297,14 +282,10 @@ public sealed class ShapeMetricsTests
         var stored = DocumentApi.NewId();
         var absent = DocumentApi.NewId();
         await Assert.That((await api.PutAsync(stored, new { a = 1 })).Status).IsEqualTo(HttpStatusCode.Created);
-
-        // A missing document still runs its SELECT: misses and empty results count (docs/terrabase/shape-metrics.md).
         var beforeMiss = PointReads(await ScrapeAsync(api.Server));
         await Assert.That((await api.GetAsync(absent)).Status).IsEqualTo(HttpStatusCode.NotFound);
         var afterMiss = PointReads(await ScrapeAsync(api.Server));
         await Assert.That(afterMiss - beforeMiss).IsGreaterThanOrEqualTo(1d);
-
-        // The first read may warm the cache on the write; the second is served from it, executing no SELECT.
         await Assert.That((await api.GetAsync(stored)).Status).IsEqualTo(HttpStatusCode.OK);
         var beforeHit = PointReads(await ScrapeAsync(api.Server));
         await Assert.That((await api.GetAsync(stored)).Status).IsEqualTo(HttpStatusCode.OK);
@@ -331,11 +312,9 @@ public sealed class ShapeMetricsTests
         var before = PointReads(await ScrapeAsync(api.Server));
         await transaction.PutAsync(DocumentApi.Collection, id, """{"a":2,"owner":"middle"}"""u8.ToArray(), token);
         var afterFirst = PointReads(await ScrapeAsync(api.Server));
-        // Preflight and payload for the shared collection state, then for the document's stored state.
         await Assert.That(afterFirst - before).IsEqualTo(4d);
 
         await transaction.PutAsync(DocumentApi.Collection, id, """{"a":3,"owner":"last"}"""u8.ToArray(), token);
-        // Pending document state skips its two SELECTs; only the collection state's preflight and payload are read again.
         await Assert.That(PointReads(await ScrapeAsync(api.Server)) - afterFirst).IsEqualTo(2d);
         await transaction.CommitAsync(token);
 
@@ -349,9 +328,7 @@ public sealed class ShapeMetricsTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task Pending_feed_proofs_use_current_collection_metadata(bool joined)
+    public async Task Pending_feed_proofs_use_current_collection_metadata()
     {
         await using var api = await DocumentApi.StartAsync();
         var original = CollectionAccessRulesTests.OwnerRules();
@@ -364,19 +341,7 @@ public sealed class ShapeMetricsTests
         await using (var write = await store.BeginTransactionAsync(write: true, token))
         {
             await write.PutAsync(DocumentApi.Collection, id, """{"owner":"first","nextOwner":"last","value":2}"""u8.ToArray(), token);
-            if (joined)
-            {
-                var metadata = (await write.GetAsync(DocumentDelta.Collections, DocumentApi.Collection, token))!;
-                using var body = JsonDocument.Parse(metadata.Json);
-                using var rules = JsonDocument.Parse(JsonSerializer.Serialize(current, CollectionRulesJsonContext.Default.CollectionAccessRules));
-                var at = new EntryVersion(new Hlc(((ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16) + 1000), ReplicaId.Of(4113, 7, 1));
-                var state = DocumentState.Bottom.Put(at, body.RootElement).Set(at, "rules", rules.RootElement);
-                await Assert.That(await write.JoinAsync(DocumentDelta.Collections, DocumentApi.Collection, state, at, token)).IsTrue();
-            }
-            else
-            {
-                await Assert.That(await write.SetCollectionRulesAsync(DocumentApi.Collection, current, token)).IsTrue();
-            }
+            await Assert.That(await write.SetCollectionRulesAsync(DocumentApi.Collection, current, token)).IsTrue();
             await write.CommitAsync(token);
         }
 
@@ -459,7 +424,7 @@ public sealed class ShapeMetricsTests
 
         var shapeStorage = new TursoShapeStorage(api.Server.Services.GetRequiredService<TursoStorageEngine>());
         var sealer = new ShapeSealer(api.Server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<ShapeSealer>.Instance,
-            shapeStorage, new LocalDurability());
+            shapeStorage);
         var before = ShapeStorageReads(await ScrapeAsync(api.Server));
         var head = await sealer.SealUpToHeadAsync(store, shape, 0, token);
         var sealedReads = ShapeStorageReads(await ScrapeAsync(api.Server));
@@ -488,13 +453,10 @@ public sealed class ShapeMetricsTests
             .Because("the retained floor reads its sentinel, sequence, head and first feed row");
     }
 
-    // Shape SQL is counted under path="shape" (metadata and proofs) and path="shape_body" (the stored payload SELECT).
     private static double ShapeStorageReads(string scrape) => scrape.Split('\n')
         .Where(line => !string.IsNullOrWhiteSpace(line) && !line.StartsWith('#') && MetricName(line) == "terrabase_storage_reads_total"
             && (line.Contains("path=\"shape\"", StringComparison.Ordinal) || line.Contains("path=\"shape_body\"", StringComparison.Ordinal)))
         .Sum(line => double.Parse(line.Split(' ')[^1], CultureInfo.InvariantCulture));
-
-    // The sum of terrabase_storage_reads point samples, which every document, version, size and system lookup feeds.
     private static double PointReads(string scrape) => scrape.Split('\n')
         .Where(line => !string.IsNullOrWhiteSpace(line) && !line.StartsWith('#') && MetricName(line) == "terrabase_storage_reads_total"
             && line.Contains("path=\"point\"", StringComparison.Ordinal))
@@ -509,8 +471,6 @@ public sealed class ShapeMetricsTests
 
     private static Task<string> ScrapeAsync(TerraBaseTestServer server) =>
         server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative), TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-
-    // Callers balance entry and exit in finally, as ShapeMetrics documents.
     private static async Task Flight(IShapeMetrics metrics, Func<CancellationToken, Task> work, CancellationToken token)
     {
         metrics.ChangeFlights(1);
@@ -537,7 +497,6 @@ public sealed class ShapeMetricsTests
         }
     }
 
-    // The lease covers the whole admitted work and is disposed on completion, cancellation and error.
     private static async Task Admitted(IShapeMetrics metrics, long bytes, Func<CancellationToken, Task> work, CancellationToken token)
     {
         using var reservation = metrics.TryReserve(bytes, null) ?? throw new InvalidOperationException("admission refused");
@@ -552,7 +511,6 @@ public sealed class ShapeMetricsTests
             string.Join(',', entries.Select(entry => Convert.ToString(entry.Value, CultureInfo.InvariantCulture))));
     }
 
-    // The value of the one exported sample whose metric name is exactly `name`. Exporter labels are not compared here.
     private static double Sample(string scrape, string name) =>
         double.Parse(
             scrape.Split('\n').Single(line => !string.IsNullOrWhiteSpace(line) && !line.StartsWith('#') && MetricName(line) == name).Split(' ')[^1],

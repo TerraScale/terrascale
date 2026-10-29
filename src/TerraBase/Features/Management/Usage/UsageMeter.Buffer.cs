@@ -4,13 +4,9 @@ namespace TerraBase.Features.Management.Usage;
 
 internal sealed partial class UsageMeter
 {
-    // A stripe holds at most this many distinct entries before it is published inline; a database's reads, writes and
-    // request meters of one minute are a handful of entries.
+
     private const int MaxBuffered = 256;
 
-    // Every read, write and request counts here first: in-place sums per processor, so the hot path takes an uncontended
-    // lock and allocates nothing once its entry exists. Published into _pending in batches, under _flush before every read
-    // of it (totals, flushes, month counts) and when a stripe is full.
     private readonly Stripe[] _stripes = [.. Enumerable.Range(0, Environment.ProcessorCount).Select(_ => new Stripe())];
 
     private sealed class Stripe
@@ -19,7 +15,6 @@ internal sealed partial class UsageMeter
         public Dictionary<(UsageKey Key, UsageDimension? Dimension), Sums> Entries = [];
     }
 
-    // Additive counts of one key, or of one meter dimension of a minute key. Saturating, as UsageReading.Add.
     private sealed class Sums
     {
         public long Reads, Writes, ReadUnits, WriteUnits, Count, Value;
@@ -41,14 +36,12 @@ internal sealed partial class UsageMeter
         PublishIfFull(stripe);
     }
 
-    // This node's dimension of a meter and kind, built once; null when it is not a valid dimension (an unknown region).
     private readonly System.Collections.Concurrent.ConcurrentDictionary<(string Meter, string Kind), UsageDimension?> _dimensions = new();
 
     private UsageDimension? Dimension(string meter, string kind) =>
         _dimensions.GetOrAdd((meter, kind), static (key, region) =>
-            new UsageDimension(key.Meter, region, "", key.Kind) is var dimension && ValidDimension(dimension) ? dimension : null, options.Region);
+            new UsageDimension(key.Meter, region, key.Kind) is var dimension && ValidDimension(dimension) ? dimension : null, options.Region);
 
-    // A minute's additive reading; readings that carry replication state go straight to _pending, which keeps the newest.
     private void Buffer(TenantContext database, DateTimeOffset? at, UsageReading reading)
     {
         var stripe = Current();
@@ -61,7 +54,6 @@ internal sealed partial class UsageMeter
         PublishIfFull(stripe);
     }
 
-    // One reading, its latency as the index of its one histogram bucket (or -1 for none).
     private void Buffer(TenantContext database, DateTimeOffset? at, UsageDimension dimension, long count, long value, int latencyIndex)
     {
         var stripe = Current();
@@ -73,7 +65,6 @@ internal sealed partial class UsageMeter
         PublishIfFull(stripe);
     }
 
-    // A request and its bytes under one lock, as one update of the stripe.
     private void BufferRequest(
         TenantContext database, UsageDimension? requests, long errors, int latencyIndex, UsageDimension? received, long receivedBytes, UsageDimension? sent, long sentBytes)
     {
@@ -129,7 +120,6 @@ internal sealed partial class UsageMeter
         }
     }
 
-    /// <summary>Moves every buffered count into the pending counts. Callers that read the pending counts hold _flush.</summary>
     private void Publish()
     {
         foreach (var stripe in _stripes)

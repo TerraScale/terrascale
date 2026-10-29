@@ -6,71 +6,35 @@ using Turso;
 
 namespace TerraBase.Engine.Turso;
 
-/// <summary>
-/// The log continuous backup ships for one database file (TS-633, <c>docs/terrabase/backup.md</c>): the changes Turso
-/// captured in <c>turso_cdc</c> on the file's writer connection (mode <c>after</c>), in commit order. Turso checkpoints
-/// its write-ahead log on its own (it ignores <c>wal_autocheckpoint</c>), so its log file cannot be shipped as SQLite's
-/// was; the captured changes are what every commit adds instead.
-/// </summary>
-/// <remarks>
-/// <para>
-/// The tap reads rows after the last one it read (its anchor) on its own <see cref="TursoConnection"/>, up to the last
-/// commit row or the first commit past <see cref="ReadBudget"/>, and appends them as <see cref="ChangeLog"/> records. It
-/// then deletes the rows before its anchor on the writer, always keeping the newest: an empty <c>turso_cdc</c> restarts
-/// its ids at 1 after a reopen. An anchor that is gone means someone else deleted rows the tap never read: a hole, so the
-/// backup starts a new generation.
-/// </para>
-/// <para>
-/// A delete in mode <c>after</c> carries only the rowid. For <c>sqlite_schema</c> that is not enough, because Turso does
-/// not capture every schema row (<c>ANALYZE</c> adds <c>sqlite_stat1</c> uncaptured), so rowids differ between the file
-/// and a restore of it. The tap keeps the live schema's rowid → name map, as of its anchor, and logs a dropped object by
-/// name. A schema row it cannot place (an update, an unknown rowid) is a hole too.
-/// </para>
-/// <para>
-/// A snapshot holds the writer, so nothing commits, while it reads what is left and opens a read transaction. Then writers
-/// go on, and <see cref="TursoCopy"/> copies the database as of that transaction: exactly as of the last record appended.
-/// </para>
-/// </remarks>
 internal sealed class TursoChangeTap : IWalTap
 {
-    // Rows read per call, and bytes appended per call before the rest of the page is left for the next one.
+
     private const int PageRows = 1024;
     private const int PageBytes = 4 << 20;
 
-    // Log bytes one ReadAsync appends before it stops at the next commit and leaves the rest to the next call: a segment
-    // holds about this much, and a backlog (after a long snapshot upload) ships as several segments at upload speed.
     private const long ReadBudget = 32L << 20;
 
     private readonly TursoDatabaseStore _store;
     private readonly TursoIoPool _io;
     private readonly TimeProvider _time;
-    // Replaced when a snapshot's read transaction may be left open (ReplaceReaderAsync).
+
     private TursoConnection _reader;
     private int _disposed;
 
-    // The store's lineage this tap reads: a healthy rewrite replaces the file, so the tap ends and its owner opens another.
     private readonly int _lineage;
 
-    // The change_id of the last row read, kept in turso_cdc; 0 before anything was captured.
     private long _anchor;
 
-    // The file's sqlite_schema as of _anchor: rowid -> (type, name).
     private Dictionary<long, (string Type, string Name)> _schema = [];
 
-    // The Turso times (change_time, Unix seconds) of the open transaction's first and latest rows, and whether every row
-    // had one no earlier than the row before; null between transactions.
     private (long First, long Latest, bool Ordered)? _open;
 
-    /// <summary>Runs after a snapshot is pinned and writers are released, before the file is copied; for integration tests.</summary>
     internal Func<CancellationToken, Task>? AfterSnapshotPinned { get; set; }
 
-    /// <summary>Runs after a read, before its change-log cleanup on the writer; for integration tests.</summary>
     internal Func<CancellationToken, Task>? BeforeTrim { get; set; }
 
-    /// <summary>Runs as a snapshot's read transaction ends, before its rollback; for integration tests.</summary>
     internal Func<CancellationToken, Task>? BeforeSnapshotEnd { get; set; }
 
-    /// <summary>Runs after a snapshot's read transaction begins, before the read that pins it; for integration tests.</summary>
     internal Func<CancellationToken, Task>? AfterSnapshotBegin { get; set; }
 
     private TursoChangeTap(TursoDatabaseStore store, TursoIoPool io, TimeProvider time, TursoConnection reader, int lineage)
@@ -82,7 +46,6 @@ internal sealed class TursoChangeTap : IWalTap
         _lineage = lineage;
     }
 
-    /// <summary>Opens a tap on <paramref name="store"/> that starts at the newest change; the caller holds an admission.</summary>
     public static async Task<TursoChangeTap> OpenAsync(TursoDatabaseStore store, TursoIoPool io, TimeProvider time, CancellationToken cancellationToken)
     {
         await using var operation = await store.BeginOperationAsync(cancellationToken).ConfigureAwait(false);
@@ -90,16 +53,13 @@ internal sealed class TursoChangeTap : IWalTap
         TursoChangeTap? tap = null;
         try
         {
-            // The reader is counted only under the writer: a healthy rewrite holds the writer while this store's handles drain,
-            // so a reader counted while waiting for it would hold that drain until the rewrite gave up (TS-982). Under the
-            // writer, too, the anchor and the schema map describe the same commit; this also opens the writer, whose capture
-            // creates turso_cdc.
+
             await store.WithWriterAsync(writer =>
             {
                 var lineage = store.Lineage;
                 if (store.Quiescing)
                 {
-                    // The lineage already moved: a tap opened now would not end, and would hold the file the rewrite drains.
+
                     throw new InvalidOperationException("a healthy rewrite of this database waits for its handles; the tap opens after it");
                 }
 
@@ -128,7 +88,6 @@ internal sealed class TursoChangeTap : IWalTap
         }
     }
 
-    /// <inheritdoc />
     public bool Ended => _lineage != _store.Lineage;
 
     public async ValueTask<WalRead> ReadAsync(Stream destination, CancellationToken cancellationToken)
@@ -155,13 +114,11 @@ internal sealed class TursoChangeTap : IWalTap
                 }
                 catch
                 {
-                    // A call that throws has not moved the tap (IWalTap.ReadAsync): the next one reads the same changes
-                    // again, or finds a hole if the delete ran.
+
                     (_anchor, _schema) = (anchor, schema);
                     throw;
                 }
 
-                // Only now may CDC retention for peer streams move past the old anchor.
                 _store.BackupAnchor = _anchor;
             }
 
@@ -175,19 +132,18 @@ internal sealed class TursoChangeTap : IWalTap
         ArgumentException.ThrowIfNullOrEmpty(snapshotPath);
         return await AdmittedAsync(async () =>
         {
-            // Inside the hold every call runs on the database's own write lane, idle while the writer is held, never on the
-            // shared I/O pool: a pool starved by other databases' reads would keep this writer held (batch 8, 2026-10-25).
+
             var lane = _store.WriteLane;
             var snapshot = await _store.WithWritersHeldAsync(async () =>
             {
                 var read = await ReadCoreAsync(destination, long.MaxValue, cancellationToken, lane).ConfigureAwait(false);
                 await _store.OnWriterAsync(writer =>
                 {
-                    // Nothing commits meanwhile: the anchor is the newest row, and after a hole the next generation starts here.
+
                     Reset(writer);
                     return Truncate(writer);
                 }, cancellationToken).ConfigureAwait(false);
-                // The read transaction the copy is made in, pinned at the anchor.
+
                 await lane.RunAsync(() => Execute("BEGIN;"), cancellationToken).ConfigureAwait(false);
                 try
                 {
@@ -200,7 +156,7 @@ internal sealed class TursoChangeTap : IWalTap
                 }
                 catch
                 {
-                    // The transaction is open but not pinned: the next read would pin it, and every later read keep that state.
+
                     await ReplaceReaderAsync().ConfigureAwait(false);
                     throw;
                 }
@@ -238,8 +194,6 @@ internal sealed class TursoChangeTap : IWalTap
         }).ConfigureAwait(false);
     }
 
-    // Ends the snapshot's read transaction. Left open, it would serve every later read from the pinned state, and a read
-    // mark would claim commits that read cannot see: when the rollback fails, the reader is replaced by a new connection.
     private async Task EndSnapshotAsync()
     {
         try
@@ -258,12 +212,10 @@ internal sealed class TursoChangeTap : IWalTap
         }
     }
 
-    // A reader that may still be in a snapshot's read transaction is disposed and a new connection opened on the file; if
-    // that open fails, later reads fail instead of reading a pinned state.
     private async Task ReplaceReaderAsync()
     {
         var stale = _reader;
-        // End the old snapshot even when reading or unwrapping the replacement's key fails.
+
         await _io.RunAsync(stale.Dispose, CancellationToken.None).ConfigureAwait(false);
         _reader = new TursoConnection(await _store.ConnectionStringAsync(_io, CancellationToken.None).ConfigureAwait(false))
         {
@@ -286,7 +238,7 @@ internal sealed class TursoChangeTap : IWalTap
 
     private async Task<T> AdmittedAsync<T>(Func<Task<T>> call)
     {
-        // Before the operation, which a rewrite holds: the owner disposes this tap and releases the old file.
+
         ObjectDisposedException.ThrowIf(_lineage != _store.Lineage, _store);
         _io.Admit();
         try
@@ -322,15 +274,13 @@ internal sealed class TursoChangeTap : IWalTap
         }
     }
 
-    // Appends the records committed after the anchor, up to the first commit past `budget` bytes, and moves the anchor to
-    // the last of them. Its calls run on `runner`: the I/O pool, or the write lane of a caller that holds the writer.
     private async Task<WalRead> ReadCoreAsync(Stream destination, long budget, CancellationToken cancellationToken, TursoRunner? runner = null)
     {
         ObjectDisposedException.ThrowIf(_store.Closed, _store);
         runner ??= _io;
         var (end, started) = await runner.RunAsync(() =>
         {
-            // Every commit that completed before this time is visible to the query below.
+
             var now = _time.GetUtcNow();
             if (_anchor > 0 && Scalar("SELECT 1 FROM turso_cdc WHERE change_id = $anchor;", _anchor) is null)
             {
@@ -366,20 +316,17 @@ internal sealed class TursoChangeTap : IWalTap
         DateTimeOffset? mark = null;
         if (after == end && bytes > 0)
         {
-            // This read appended through the newest commit when it started: mark when that was.
+
             ChangeLog.WriteReadMark(buffer, started);
             await destination.WriteAsync(buffer.WrittenMemory, cancellationToken).ConfigureAwait(false);
             bytes += buffer.WrittenCount;
             mark = started;
         }
 
-        // The caller publishes the anchor to CDC retention (BackupAnchor) once its cleanup is done.
         (_anchor, _schema) = (after, schema);
         return new(bytes, true, after < end, mark);
     }
 
-    // Appends rows after `after`, up to `end`, and returns the last one read; Placed is false when a schema row cannot be
-    // placed, and Spent true when the page stopped at the first commit that reached `allowance` bytes.
     private (long Next, bool Placed, bool Spent) ReadPage(
         long after, long end, long allowance, Dictionary<long, (string Type, string Name)> schema, ArrayBufferWriter<byte> buffer)
     {
@@ -388,12 +335,12 @@ internal sealed class TursoChangeTap : IWalTap
         command.Parameters.Add(new TursoParameter("$after", after));
         command.Parameters.Add(new TursoParameter("$end", end));
         command.Parameters.Add(new TursoParameter("$limit", (long)PageRows));
-        // Aborted, not disposed, when the page stops early: finalize would step the SELECT through its unread rows.
+
         using var rows = command.ExecuteReader();
         var last = after;
         if (after == _anchor)
         {
-            // A read starts between transactions.
+
             _open = null;
         }
 
@@ -401,13 +348,13 @@ internal sealed class TursoChangeTap : IWalTap
         {
             last = rows.GetInt64(0);
             var type = rows.GetInt64(1);
-            // Turso stamps every row, the commit row too, with the wall clock in whole seconds (unixepoch()).
+
             long? time = rows.IsDBNull(5) ? null : rows.GetInt64(5);
             _open = _open is not { } open ? (time ?? 0, time ?? 0, time is not null)
                 : (open.First, Math.Max(open.Latest, time ?? open.Latest), open.Ordered && time >= open.Latest);
             if (type == 2)
             {
-                // A transaction whose times go back or are missing is logged without them: a restore cannot place a time in it.
+
                 if (_open is (var first, var latest, true))
                 {
                     ChangeLog.WriteCommit(buffer, first, latest);
@@ -429,7 +376,7 @@ internal sealed class TursoChangeTap : IWalTap
 
             var table = rows.GetString(2);
             var rowid = rows.GetInt64(3);
-            // IsDBNull materializes blobs in this driver; fetch the image only once.
+
             var value = rows.GetValue(4);
             var image = value is DBNull ? null : (byte[])value;
             if (table == "sqlite_schema")
@@ -461,13 +408,12 @@ internal sealed class TursoChangeTap : IWalTap
         return (last, true, false);
     }
 
-    // Logs a schema change by name: a created object with its SQL, a dropped one by type and name.
     private static bool Place(long type, long rowid, byte[]? image, Dictionary<long, (string Type, string Name)> schema, ArrayBufferWriter<byte> buffer)
     {
         if (type == 1 && image is not null && SqliteRecord.Decode(image) is [string kind, string name, _, _, var sql, ..])
         {
             schema[rowid] = (kind, name);
-            // Recreating the native index recreates its reserved backing objects too.
+
             if (sql is string statement && !ChangeLog.EngineTable(name))
             {
                 ChangeLog.WriteCreate(buffer, statement);
@@ -485,11 +431,9 @@ internal sealed class TursoChangeTap : IWalTap
             return true;
         }
 
-        // An update (ALTER), or a row the map does not know.
         return false;
     }
 
-    // On the writer, with the writer held: the anchor becomes the newest change and the schema map the file's.
     private bool Reset(TursoSession writer) => Reset(writer.Connection);
 
     private bool Reset(System.Data.Common.DbConnection connection, bool publish = true)
@@ -517,8 +461,6 @@ internal sealed class TursoChangeTap : IWalTap
         return true;
     }
 
-    // Uses the backup encoder and restore replay, retaining the snapshot's schema map across rounds. This private cursor
-    // is never disposed as a backup tap: its caller owns the reader and it neither registers nor publishes BackupAnchor.
     internal static TursoChangeTap RewriteFrom(TursoDatabaseStore store, TursoIoPool io, TursoConnection source)
     {
         var tap = new TursoChangeTap(store, io, TimeProvider.System, source, store.Lineage);
@@ -537,7 +479,6 @@ internal sealed class TursoChangeTap : IWalTap
             throw new RewriteRefusedException("the rewrite's change-log anchor was trimmed");
         }
 
-        // The final cut never scans past its bounded range, even just to find the commit marker.
         var end = _anchor;
         if (final)
         {
@@ -605,17 +546,11 @@ internal sealed class TursoChangeTap : IWalTap
         return _anchor - first;
     }
 
-    // Deletes the rows before the anchor that the peer streams also let go of: the rows they have not acknowledged stay
-    // (TursoStorageTransaction.Trim, a bounded batch a call). Turso does not capture changes to turso_cdc itself.
     private bool Truncate(TursoSession writer)
     {
-        var now = _time.GetUtcNow().ToUnixTimeSeconds();
-        // Nor the rows the shape frontier has not walked yet, for a bounded time (FR-25); the catalog has no shapes.
-        var hold = _store.RequiresRemoteProof && !_store.IsSystem ? TursoStorageTransaction.ShapeFrontierHold(writer.Connection, null, now) : null;
         var rewrite = _store.RewriteAnchor;
         var below = rewrite < 0 ? _anchor : Math.Min(_anchor, rewrite);
-        _ = TursoStorageTransaction.Trim(writer.Connection, null, Math.Min(below, hold ?? long.MaxValue), now,
-            _store.Member is { } member ? member.GoneBefore(_time.GetUtcNow().ToUnixTimeMilliseconds()) : long.MinValue);
+        _ = TursoStorageTransaction.Trim(writer.Connection, null, below);
         return true;
     }
 
@@ -638,14 +573,6 @@ internal sealed class TursoChangeTap : IWalTap
     }
 }
 
-/// <summary>
-/// The records of a change log segment, format 1. Each starts with its kind: <c>1</c> upsert (table, rowid, the row's
-/// SQLite record), <c>2</c> delete (table, rowid), <c>3</c> commit, <c>4</c> create (the object's SQL), <c>5</c> drop (type,
-/// name), <c>6</c> timed commit (the Turso times of the transaction's first row and of its commit row, Unix seconds),
-/// <c>7</c> read mark (Unix milliseconds: every transaction committed before then comes before the mark). Strings and
-/// records are length-prefixed (unsigned LEB128); rowids and times are 8 bytes, big-endian. A log written before timed
-/// commits has only <c>3</c>: its transactions have no known time.
-/// </summary>
 internal static class ChangeLog
 {
     private const byte Upsert = 1;
@@ -656,16 +583,14 @@ internal static class ChangeLog
     private const byte TimedCommit = 6;
     private const byte ReadMark = 7;
 
-    // Bounds a single length field: no record, name or statement of a valid log is near this.
     private const int MaxLength = 1 << 30;
 
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
-    /// <summary>Tables the engine maintains itself: their changes are not logged and a restore never writes them.</summary>
     public static bool EngineTable(string table) =>
-        table.StartsWith("sqlite_", StringComparison.Ordinal) || table.StartsWith("turso_", StringComparison.Ordinal)
-        || table.StartsWith("__turso_", StringComparison.Ordinal)
-        || table.StartsWith("fts_dir__tb_fts_index_", StringComparison.Ordinal);
+    table.StartsWith("sqlite_", StringComparison.Ordinal) || table.StartsWith("turso_", StringComparison.Ordinal)
+    || table.StartsWith("__turso_", StringComparison.Ordinal)
+    || table.StartsWith("fts_dir__tb_fts_index_", StringComparison.Ordinal);
 
     public static void WriteUpsert(IBufferWriter<byte> buffer, string table, long rowid, byte[] record)
     {
@@ -685,7 +610,6 @@ internal static class ChangeLog
 
     public static void WriteCommit(IBufferWriter<byte> buffer) => buffer.Write([Commit]);
 
-    /// <summary>A commit whose rows Turso stamped from <paramref name="first"/> to <paramref name="last"/> (its commit row), never going back.</summary>
     public static void WriteCommit(IBufferWriter<byte> buffer, long first, long last)
     {
         buffer.Write([TimedCommit]);
@@ -693,7 +617,6 @@ internal static class ChangeLog
         WriteInt64(buffer, last);
     }
 
-    /// <summary>A mark after the last commit of a read that reached the newest commit when it started at <paramref name="started"/>.</summary>
     public static void WriteReadMark(IBufferWriter<byte> buffer, DateTimeOffset started)
     {
         buffer.Write([ReadMark]);
@@ -713,10 +636,6 @@ internal static class ChangeLog
         WriteString(buffer, name);
     }
 
-    /// <summary>
-    /// Replays <paramref name="segments"/> on <paramref name="file"/>, a snapshot, one transaction per commit record. Returns
-    /// <see langword="false"/> for a malformed log, one that ends inside a transaction, or a change the file refuses.
-    /// </summary>
     public static async Task<bool> ApplyAsync(string file, IAsyncEnumerable<Stream> segments, TursoRunner io, string connectionString, CancellationToken cancellationToken)
     {
         var connection = new TursoConnection(connectionString);
@@ -740,7 +659,6 @@ internal static class ChangeLog
                 return false;
             }
 
-            // Turso leaves the log next to the file when the connection closes: copy it in, so the file alone is the result.
             await io.RunAsync(replay.Checkpoint, cancellationToken).ConfigureAwait(false);
             return true;
         }
@@ -750,13 +668,6 @@ internal static class ChangeLog
         }
     }
 
-    /// <summary>
-    /// Places a restore at <paramref name="at"/> (to the millisecond) in <paramref name="segment"/>, whose transactions come
-    /// after ones that ran before it, the last committed in second <paramref name="previous"/> when known. A transaction is
-    /// before the time when its commit row's second ends by it, and after it when that second starts at or after it; a read
-    /// mark at or after the time also ends the history the restore needs.
-    /// </summary>
-    /// <exception cref="InvalidDataException">The log is malformed.</exception>
     public static LogCut Cut(Stream segment, DateTimeOffset at, long? previous)
     {
         var time = at.ToUnixTimeMilliseconds();
@@ -798,7 +709,6 @@ internal static class ChangeLog
                             return new(before, false, previous, "the database's clock went back between two of its transactions");
                         }
 
-                        // Once reached, the rest of the segment is still read, so a later transaction stamped before it is caught.
                         previous = last;
                         if (reached || last * 1000 >= time)
                         {
@@ -833,8 +743,6 @@ internal static class ChangeLog
         }
     }
 
-    /// <summary>The read mark <paramref name="segment"/> ends with, or null when its last record is not one.</summary>
-    /// <exception cref="InvalidDataException">The log is malformed.</exception>
     public static DateTimeOffset? EndMark(Stream segment)
     {
         DateTimeOffset? mark = null;
@@ -886,7 +794,7 @@ internal static class ChangeLog
 
     internal sealed class Replay(TursoConnection connection)
     {
-        // Per table: its columns in order and the ordinal of its rowid alias (INTEGER PRIMARY KEY), or -1.
+
         private readonly Dictionary<string, (string[] Columns, int Alias)> _tables = [with(StringComparer.Ordinal)];
 
         public bool Open { get; private set; }
@@ -948,7 +856,6 @@ internal static class ChangeLog
                                 return false;
                             }
 
-                            // A table's indexes go with it, so a later drop of one may find nothing.
                             Execute($"DROP {type.ToUpperInvariant()} IF EXISTS {TableShape.Quote(name)};");
                             _tables.Clear();
                             break;
@@ -981,7 +888,7 @@ internal static class ChangeLog
             var parameters = new List<(string, object?)> { ("$rowid", rowid) };
             for (var i = 0; i < values.Length; i++)
             {
-                // The record stores NULL for the rowid alias; the rowid fills it.
+
                 if (i != alias)
                 {
                     names.Add(TableShape.Quote(columns[i]));
@@ -1080,10 +987,9 @@ internal static class ChangeLog
     }
 }
 
-/// <summary>Decodes a row in SQLite's record format (<c>https://sqlite.org/fileformat.html#record_format</c>).</summary>
 internal static class SqliteRecord
 {
-    // At most `columns` values: the rest are not decoded.
+
     public static object?[] Decode(ReadOnlySpan<byte> record, int columns = int.MaxValue, bool materializeContent = true)
     {
         var headerSize = Varint(record, out var used);
@@ -1118,7 +1024,7 @@ internal static class SqliteRecord
 
             var value = body[..size];
             body = body[size..];
-            // Type-only payloads let proof readers validate the record without copying unused content.
+
             values.Add(type switch
             {
                 0 => null,
@@ -1134,7 +1040,6 @@ internal static class SqliteRecord
         return [.. values];
     }
 
-    // A big-endian two's-complement integer of 1 to 8 bytes.
     private static long Integer(ReadOnlySpan<byte> bytes)
     {
         long value = (sbyte)bytes[0];
@@ -1146,7 +1051,6 @@ internal static class SqliteRecord
         return value;
     }
 
-    // SQLite's varint: big-endian groups of 7 bits, high bit set on all but the last; a ninth byte carries 8 bits.
     private static long Varint(ReadOnlySpan<byte> bytes, out int read)
     {
         long value = 0;

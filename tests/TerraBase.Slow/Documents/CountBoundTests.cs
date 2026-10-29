@@ -20,7 +20,6 @@ public sealed class CountBoundTests
         using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
         await api.SetPlanAsync(tenant.User, tenant.OrganizationId, "enterprise");
         var client = tenant.Data;
-        // Seed a current-format snapshot, then exercise bounded count through the real listener.
         using var registered = await client.PutAsync(tenant.Database("count"), null);
         registered.EnsureSuccessStatusCode();
         var id = (await registered.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
@@ -28,7 +27,6 @@ public sealed class CountBoundTests
         await api.Server.Services.GetRequiredService<IStorageEngine>().DeleteDatabaseAsync(database, CancellationToken.None);
         var path = Path.Combine(api.Server.DataDirectory, tenant.OrganizationId, tenant.ProjectId, id + ".db");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        // This build's schema with 100001 documents, written in one statement instead of 100001 requests.
         await DocumentFiles.WriteAsync(path);
         await using (var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false })))
         {
@@ -40,8 +38,8 @@ public sealed class CountBoundTests
                 WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 100001),
                     bodies(n, body) AS (SELECT n, CASE WHEN n = 100001 THEN $last ELSE '{"n":1}' END FROM rows)
                 INSERT INTO "items" (id, doc) SELECT printf('%026d', n), body FROM bodies;
-                INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2)
-                    SELECT 'items', id, 0, '', {{StoredStates.Version}}, 0, 1, 0, 0 FROM "items";
+                INSERT INTO _tb_state (collection, id, state, stamp, origin, live, h1, h2)
+                    SELECT 'items', id, '', {{StoredStates.Version}}, 0, 1, 0, 0 FROM "items";
                 """;
             command.Parameters.AddWithValue("$collectionId", TerraBase.Primitives.EntityIds.New().ToString());
             command.Parameters.AddWithValue("$last", overflowMatches ? "{\"n\":1}" : "{\"n\":0}");
@@ -73,11 +71,8 @@ public sealed class CountBoundTests
             created.EnsureSuccessStatusCode();
             someId ??= (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("results")[0].GetProperty("id").GetString();
         }
-
-        // A filter that matches nothing still examines every row; exactly 10000 rows is within the bound.
         object sparse = new { ops = new[] { new { op = "assert_count", collection = "items", filter = new { exists = "/missing" }, lte = 0 } } };
         using var atBound = await client.PostAsJsonAsync(transactions, sparse);
-        // One delete and one create: 10000 live documents, but 10001 rows, because a tombstone is a row too.
         var churn = new object[]
         {
             new { op = "delete", collection = "items", id = someId },
@@ -90,9 +85,6 @@ public sealed class CountBoundTests
         counted.EnsureSuccessStatusCode();
         var error = (await pastBound.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error");
         var count = (await counted.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("count");
-
-        // Selective filters still consume VM work despite limit=1. This bounded filter must hit the
-        // instruction budget, and the next query must work on the reused session after its handler is cleared.
         var expensive = new
         {
             or = Enumerable.Range(0, 64).Select(_ => new
@@ -136,7 +128,6 @@ public sealed class CountBoundTests
         await Assert.That((exhaustedCount.StatusCode, countError.GetProperty("code").GetString(), countError.GetProperty("op").GetInt32()))
             .IsEqualTo((HttpStatusCode.BadRequest, "invalid_query", 0));
         await Assert.That(resumed.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        // Exactly 10000 live rows still sort; tombstones do not consume that candidate bound.
         await Assert.That(sorted.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That((tooManyToSort.StatusCode, sortError.GetProperty("code").GetString()))
             .IsEqualTo((HttpStatusCode.BadRequest, "sort_requires_index"));
@@ -154,13 +145,10 @@ public sealed class CountBoundTests
         registered.EnsureSuccessStatusCode();
         var databaseId = (await registered.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("id").GetString()!;
         var database = new TenantContext(tenant.OrganizationId, PlanTier.Enterprise, tenant.ProjectId, databaseId);
-        // Ids in index order, so the document written last is also the last one count examines.
         static string Id(int index)
         {
             return index.ToString("D26", System.Globalization.CultureInfo.InvariantCulture);
         }
-
-        // Seed a current-format snapshot: the write workflow otherwise consumes almost the entire count-test timeout.
         await api.Server.Services.GetRequiredService<IStorageEngine>().DeleteDatabaseAsync(database, cancellationToken);
         var path = Path.Combine(api.Server.DataDirectory, tenant.OrganizationId, tenant.ProjectId, databaseId + ".db");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -170,7 +158,6 @@ public sealed class CountBoundTests
             await connection.OpenAsync(cancellationToken);
             using var body = JsonDocument.Parse("""{"n":1}""");
             var state = DocumentState.Bottom.Put(new EntryVersion(new Hlc((ulong)StoredStates.Version), StoredStates.Replica), body.RootElement);
-            connection.CreateFunction<string, long>("seed_bucket", id => DocumentStateEncoding.Bucket("items", id));
             connection.CreateFunction<string, long, long>("seed_digest", (id, part) =>
             {
                 var digest = DocumentStateEncoding.Digest("items", id, state);
@@ -180,8 +167,8 @@ public sealed class CountBoundTests
             command.CommandText = """
                 WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 99999)
                 INSERT INTO "items" (id, doc) SELECT printf('%026d', n), '{"n":1}' FROM rows;
-                INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2)
-                    SELECT 'items', items.id, seed_bucket(items.id), template.state, template.stamp, template.origin,
+                INSERT INTO _tb_state (collection, id, state, stamp, origin, live, h1, h2)
+                    SELECT 'items', items.id, template.state, template.stamp, template.origin,
                         1, seed_digest(items.id, 0), seed_digest(items.id, 1)
                     FROM "items" AS items CROSS JOIN (
                         SELECT state, stamp, origin FROM _tb_state WHERE collection = 'items' AND id = $first
@@ -203,16 +190,11 @@ public sealed class CountBoundTests
         var matches = new { eq = new object[] { "/n", 1 } };
         var atLimit = await CountAsync(null);
         var atLimitFiltered = await CountAsync(matches);
-
-        // One document beyond the bound, which the selective filter does not match.
         (await client.PutAsJsonAsync(tenant.Database("db", $"/collections/items/documents/by-key?id={Id(100_000)}"), new { n = 2 }))
             .EnsureSuccessStatusCode();
         var (beyondValue, beyondExact) = await CountAsync(null);
         var beyondFiltered = await CountAsync(matches);
         var (noneValue, noneExact) = await CountAsync(new { eq = new object[] { "/n", 2 } });
-
-        // Exact up to the bound; beyond it, exact is false and value is a lower bound of the true count
-        // (100001, 100000 and 1 here) that covers at least the first 100000 documents.
         await Assert.That(atLimit).IsEqualTo((100_000L, true));
         await Assert.That(atLimitFiltered).IsEqualTo((100_000L, true));
         await Assert.That(beyondExact).IsFalse();

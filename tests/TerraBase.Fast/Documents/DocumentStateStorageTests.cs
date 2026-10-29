@@ -5,14 +5,9 @@ using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Turso;
 
 namespace TerraBase.Fast.Documents;
 
-/// <summary>
-/// Client documents are stored as a DocumentState in <c>_tb_state</c> beside their materialized row
-/// (docs/terrabase/multi-region-replication.md sections 4 to 6).
-/// </summary>
 public sealed class DocumentStateStorageTests
 {
     [Test]
@@ -31,7 +26,6 @@ public sealed class DocumentStateStorageTests
         await Assert.That(patched.State.Fields["b"].Base!.Value.Version.Stamp.Value).IsEqualTo((ulong)patched.Stamp);
         await Assert.That(patched.State.Clear!.Value.Version.Stamp.Value).IsEqualTo((ulong)put.Stamp);
         await Assert.That(patched.Live).IsTrue();
-        await Assert.That(patched.Bucket).IsEqualTo(TursoStorageTransaction.Bucket(DocumentApi.Collection, id));
         await Assert.That(patched.Digest).IsEqualTo(DocumentStateEncoding.Digest(DocumentApi.Collection, id, patched.State));
     }
 
@@ -125,15 +119,13 @@ public sealed class DocumentStateStorageTests
     }
 
     private static async Task<Stored> ReadAsync(DocumentApi api, string id) => await ReadAsync(await api.DatabaseFileAsync(), id);
-
-    // The state row of document `id` of `items` in the database file at `path`, with its materialized row.
     internal static async Task<Stored> ReadAsync(string path, string id)
     {
         await using var connection = new SqliteConnection(DocumentApi.ConnectionString(path, readOnly: true));
         await connection.OpenAsync();
         await using var read = connection.CreateCommand();
         read.CommandText = """
-            SELECT s.state, d.doc, s.stamp, s.live, s.bucket, s.h1, s.h2 FROM _tb_state s
+            SELECT s.state, d.doc, s.stamp, s.live, s.h1, s.h2 FROM _tb_state s
             LEFT JOIN "items" d ON d.id = s.id
             WHERE s.collection = $collection AND s.id = $id;
             """;
@@ -147,9 +139,9 @@ public sealed class DocumentStateStorageTests
 
         var body = reader.IsDBNull(1) ? null : reader.GetString(1);
         var state = DocumentStateEncoding.DecodeStored(Base64Url.DecodeFromChars(reader.GetString(0)), body is null ? [] : System.Text.Encoding.UTF8.GetBytes(body));
-        var digest = ((UInt128)unchecked((ulong)reader.GetInt64(5)) << 64) | unchecked((ulong)reader.GetInt64(6));
-        return new Stored(state, body, reader.GetInt64(2), reader.GetInt64(3) == 1, reader.GetInt32(4), digest);
+        var digest = ((UInt128)unchecked((ulong)reader.GetInt64(4)) << 64) | unchecked((ulong)reader.GetInt64(5));
+        return new Stored(state, body, reader.GetInt64(2), reader.GetInt64(3) == 1, digest);
     }
 
-    internal sealed record Stored(DocumentState State, string? Body, long Stamp, bool Live, int Bucket, UInt128 Digest);
+    internal sealed record Stored(DocumentState State, string? Body, long Stamp, bool Live, UInt128 Digest);
 }

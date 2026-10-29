@@ -18,50 +18,37 @@ import (
 	"sync/atomic"
 	"time"
 
-	"terrascale.tech/ts-benchmark/internal/replbench"
+	"terrascale.tech/ts-benchmark/internal/benchclient"
 )
 
-// VerifyConfig checks one database (the source or a restore) against the oracle at one cut.
 type VerifyConfig struct {
-	Database string // database name in the run's project
+	Database string
 	Cut      string
 	Workers  int
-	// Versions: "exact" compares every version with the ledger (the source database, whose versions the writes
-	// returned); "logical" checks the revision and content only (a restore: its ETag versions include its own database
-	// identity) and records a version digest per partition, compared across restarts (Compare).
+
 	Versions string
-	// Audit, when set, is the PitrLab bucket audit of the restored database's backup: every problem it lists is a verify
-	// problem, and every observed shipped read up to the audit must be one of its segment or snapshot times.
+
 	Audit *Audit
-	// Shipped, when set, are the distinct LastShippedAt values (ms) the node reported while the run was written (the
-	// shipped recorder), independent of the bucket the restore reads. The pass that ended at the latest observed value
-	// before a bounded cut began after the pass that ended at the second-latest one, so every batch acknowledged by that
-	// second-latest value must be restored. Requires Audit.
+
 	Shipped []int64
-	// Compare, when set, is an earlier verification JSON of the same database at the same cut: every partition's
-	// version digest must match it (a restore's versions, compared across a restart of its node).
+
 	Compare string
-	Label   string // evidence file name suffix
-	// SkewMs is the A-7 clock allowance: the most the node's clock may differ from this host's, which timed the ledger.
-	// 0 when both share one host clock (local runs); a remote node needs a measured allowance.
+	Label   string
+
 	SkewMs int64
-	// requireAcked (reconcile): every batch of the partial phase proven before the scan must be wholly in place.
+
 	requireAcked bool
 }
 
-// Audit is what verify uses of a PitrLab bucket audit.
 type Audit struct {
-	Times    []int64  // every segment and snapshot time (ms)
-	Problems []string // every problem the audit found, but those on the injected key
-	// Expected are the problems on a fault case's injected object (its stray, duplicate or corrupted key): recorded,
-	// never failing. A fault case is judged by the restore's content, and fails on any other audit problem.
+	Times    []int64
+	Problems []string
+
 	Expected []string
-	// AtMs is when the audit was written (0: unknown, every shipped read is checked). Audits are taken over a quiescent
-	// bucket (the source stopped or idle), so every value shipped before it must be in the bucket.
+
 	AtMs int64
 }
 
-// Partition is one id range's result. Digests are SHA-256 over "id\tsha256(canonical body)\n" in id order.
 type Partition struct {
 	Index       int   `json:"p"`
 	Expected    int64 `json:"expected_live"`
@@ -74,8 +61,7 @@ type Partition struct {
 	Content     int64 `json:"content_mismatch,omitempty"`
 	Version     int64 `json:"version_mismatch,omitempty"`
 	Resurrected int64 `json:"resurrected,omitempty"`
-	// ResurrectedLate: resurrected documents whose content a batch with an ambiguous attempt wrote, so a harness
-	// attempt the server applied late is possible (still a failure).
+
 	ResurrectedLate int64  `json:"resurrected_possible_late_attempt,omitempty"`
 	ExpectedDigest  string `json:"expected_digest"`
 	ActualDigest    string `json:"actual_digest"`
@@ -83,8 +69,6 @@ type Partition struct {
 	Pages           int    `json:"pages"`
 }
 
-// Verification is the evidence of one verify: totals, every partition, examples of each failure and the bounded-cut
-// analysis.
 type Verification struct {
 	Run            string              `json:"run"`
 	Database       string              `json:"database"`
@@ -103,16 +87,13 @@ type Verification struct {
 	Shipped        *ShippedCheck       `json:"shipped,omitempty"`
 	Compare        *CompareCheck       `json:"compare,omitempty"`
 	AuditProblems  []string            `json:"audit_problems,omitempty"`
-	AuditExpected  []string            `json:"audit_expected_problems,omitempty"` // a fault case's injected object
+	AuditExpected  []string            `json:"audit_expected_problems,omitempty"`
 	Seconds        float64             `json:"seconds"`
 	DocsPerSec     float64             `json:"docs_per_sec"`
 	Partitions     []Partition         `json:"partitions"`
 	Problems       []string            `json:"problems,omitempty"`
 }
 
-// MarkerCheck: every marker-writing (exact or unshipped) cut at or before this cut has its marker present; a marker
-// sent after this cut is absent; a marker sent at or before this cut whose cut is later (a bounded cut taken between
-// the two) may be either.
 type MarkerCheck struct {
 	Want     []string `json:"want"`
 	Optional []string `json:"optional,omitempty"`
@@ -120,10 +101,6 @@ type MarkerCheck struct {
 	Passed   bool     `json:"passed"`
 }
 
-// AcctIndexCheck: for every one of the AcctValues acct values, the indexed equality query (projected to /acct) pages
-// exactly the oracle's live documents with that value, in id order, each carrying it. Counts are not used: a count
-// examines at most 100,000 documents of the collection in id order, not the index
-// (src/TerraBase/Engine/Turso/TursoQueryCompiler.cs CompileCount), so at scale it is a lower bound.
 type AcctIndexCheck struct {
 	Values     int      `json:"values_queried"`
 	Documents  int64    `json:"documents_matched"`
@@ -133,48 +110,34 @@ type AcctIndexCheck struct {
 	Examples   []string `json:"examples,omitempty"`
 }
 
-// ShippedCheck: every observed shipped read up to the audit, each of which the bucket must hold as a segment or
-// snapshot time (the node sets LastShippedAt only once a segment or snapshot is stored). It is independent of the
-// bucket, so it sees what the audit cannot: a generation's final segment that is missing (no later segment shows a gap).
 type ShippedCheck struct {
 	Observed          int     `json:"observed_before_audit"`
 	MissingFromBucket []int64 `json:"observed_missing_from_bucket,omitempty"`
 }
 
-// CompareCheck: per-partition version digests against an earlier verification.
 type CompareCheck struct {
 	File       string `json:"file"`
 	Partitions int    `json:"partitions"`
 	Mismatched []int  `json:"mismatched,omitempty"`
 }
 
-// BoundedCheck is the analysis of an unquiesced cut's partial phase. Every document of the phase must be in its state
-// before the phase (the oracle without it) or after it (its body, or absent after a delete), all or nothing per batch.
 type BoundedCheck struct {
 	Phase           string `json:"phase"`
 	Batches         int64  `json:"batches"`
-	Present         int64  `json:"present"`                    // batches wholly after the phase
-	PartialBatches  int64  `json:"partial_batches"`            // atomicity violations (or documents in neither state)
-	PrefixGaps      int64  `json:"prefix_gaps"`                // a present batch after an absent one, per invocation and stream
-	PresentRejected int64  `json:"present_but_rejected"`       // rejected (applied nothing), yet present
-	MissingRequired int64  `json:"missing_required"`           // acknowledged by the include bound, yet absent
-	IncludeBoundMs  int64  `json:"include_bound_ms,omitempty"` // second-latest observed shipped read before the cut
+	Present         int64  `json:"present"`
+	PartialBatches  int64  `json:"partial_batches"`
+	PrefixGaps      int64  `json:"prefix_gaps"`
+	PresentRejected int64  `json:"present_but_rejected"`
+	MissingRequired int64  `json:"missing_required"`
+	IncludeBoundMs  int64  `json:"include_bound_ms,omitempty"`
 	LastIncludedAck int64  `json:"last_included_ack_ms"`
 	FirstExcluded   int64  `json:"first_excluded_ack_ms,omitempty"`
-	PresentDocs     int64  `json:"present_docs"` // the phase's documents alive in the restore, in batches wholly before or after it
-	// The realized loss window if the cut were the disaster time: batches acknowledged at or before the cut that the
-	// restore does not hold (continuous backup is asynchronous), and the age of the oldest of them at the cut.
+	PresentDocs     int64  `json:"present_docs"`
+
 	AckedNotRestored int64   `json:"acked_before_cut_not_restored_batches"`
 	RPOSeconds       float64 `json:"oldest_acked_not_restored_age_seconds"`
 }
 
-// A7Check is decision A-7 (2026-10-12) at the cut's time T: a restore at T holds every batch acknowledged before T
-// (its 2xx, or its proof by read, received before T-SkewMs) wholly, at its revision, and no part of a batch first sent
-// at or after T+SkewMs; a batch in flight between the two may be either, all or nothing and as a per-stream prefix
-// (BoundedCheck). An unresolved batch (no proven outcome) is never counted as written: it is in flight or sent after.
-// Batches of the partial phase are judged by what the scan observed. The applied phases are the exact comparison with
-// the oracle, which is what A-7 requires only while the ledger agrees with the cut: every applied batch acknowledged
-// before T-SkewMs and no batch of a later phase sent before T+SkewMs; each disagreement is a conflict.
 type A7Check struct {
 	AtMs            int64   `json:"t_ms"`
 	SkewMs          int64   `json:"skew_ms"`
@@ -182,9 +145,9 @@ type A7Check struct {
 	InFlight        int64   `json:"in_flight_batches"`
 	InFlightPresent int64   `json:"in_flight_present_batches"`
 	SentAfter       int64   `json:"sent_at_or_after_t_batches"`
-	Unresolved      int64   `json:"unresolved_batches"`                   // among the batches above, never counted as written
-	MissingAcked    []int64 `json:"acked_before_t_missing,omitempty"`     // partial-phase batches not wholly present
-	PresentLate     []int64 `json:"sent_at_or_after_t_present,omitempty"` // partial-phase batches not wholly absent
+	Unresolved      int64   `json:"unresolved_batches"`
+	MissingAcked    []int64 `json:"acked_before_t_missing,omitempty"`
+	PresentLate     []int64 `json:"sent_at_or_after_t_present,omitempty"`
 	Conflicts       int64   `json:"ledger_conflicts,omitempty"`
 }
 
@@ -194,23 +157,22 @@ type verifier struct {
 	r        *Run
 	cfg      VerifyConfig
 	cut      Cut
-	oracle   *Oracle // the applied phases; a bounded cut's partial phase is never among them
+	oracle   *Oracle
 	partial  *Phase
-	pmembers []int64 // the partial phase's members, when it is a mutation phase
+	pmembers []int64
 	pslots   int64
-	post     []atomic.Uint64 // a bit per partial slot: observed in the state after the phase
-	postN    []atomic.Int32  // per partial batch: documents observed after the phase
-	preN     []atomic.Int32  // per partial batch: documents observed before it
+	post     []atomic.Uint64
+	postN    []atomic.Int32
+	preN     []atomic.Int32
 	versions map[string]*Versions
 	ledgers  map[string]map[int64]*BatchState
 	client   *Client
 	path     string
 	mu       sync.Mutex
 	examples map[string][]string
-	members  map[string][]int64 // mutation phases' members, built on demand for resurrected documents
+	members  map[string][]int64
 }
 
-// Verify streams every document of the database in parallel id ranges and merge-joins it with the oracle.
 func Verify(ctx context.Context, r *Run, cfg VerifyConfig) (Verification, error) {
 	cut, err := r.Cut(cfg.Cut)
 	if err != nil {
@@ -219,10 +181,6 @@ func Verify(ctx context.Context, r *Run, cfg VerifyConfig) (Verification, error)
 	return verifyAt(ctx, r, cfg, cut)
 }
 
-// Reconcile is required after any node restart, before the next fence, phase or exact cut: an unclean host crash
-// (synchronous=NORMAL) can lose acknowledged commits, fences included. It reads back every proven fence and verifies
-// the source exactly against the ledger: the complete phases as an exact cut, and every proven batch of a phase in
-// progress wholly in place. A mismatch is reported as possible local-durability loss, never repaired by rewriting.
 func Reconcile(ctx context.Context, r *Run, workers int) (Verification, error) {
 	n, err := LoadNode(r)
 	if err != nil {
@@ -509,7 +467,6 @@ type queryPage struct {
 	NextCursor *string     `json:"next_cursor"`
 }
 
-// page runs one query page with retries on transport errors and 5xx.
 func (v *verifier) page(ctx context.Context, body map[string]any) (queryPage, error) {
 	for attempt := 1; ; attempt++ {
 		resp, err := v.client.Do(ctx, http.MethodPost, v.path, mustJSON(body))
@@ -530,7 +487,6 @@ func (v *verifier) page(ctx context.Context, body map[string]any) (queryPage, er
 	}
 }
 
-// partialSlot is document i's slot in the bounded cut's partial phase, if it belongs to it.
 func (v *verifier) partialSlot(i int64) (int64, bool) {
 	if v.partial == nil || !v.partial.Contains(i) {
 		return 0, false
@@ -549,7 +505,6 @@ func (v *verifier) partialIndex(slot int64) int64 {
 	return v.pmembers[slot]
 }
 
-// postState is a partial-phase document's state after the phase.
 func (v *verifier) postState(slot int64) Expected {
 	if v.partial.Op == "delete" {
 		return Expected{Deleted: true, Phase: v.partial.Name, Slot: slot}
@@ -566,8 +521,6 @@ func (v *verifier) observe(slot int64, post bool) {
 	}
 }
 
-// alive is whether document i should be live in the database: the oracle's answer, or for a partial-phase document,
-// the state it was observed in.
 func (v *verifier) alive(i int64) bool {
 	if slot, ok := v.partialSlot(i); ok {
 		if v.post[slot/64].Load()&(1<<(slot%64)) != 0 {
@@ -597,13 +550,13 @@ func (v *verifier) partition(ctx context.Context, p int) (Partition, error) {
 	}
 	res := Partition{Index: p}
 	exp, act, ver := sha256.New(), sha256.New(), sha256.New()
-	nextExpected := lo // expected documents below this index are accounted for
+	nextExpected := lo
 	prev := ""
-	account := func(upTo int64) { // every document in [nextExpected, upTo) is absent
+	account := func(upTo int64) {
 		for ; nextExpected < upTo; nextExpected++ {
 			i := nextExpected
 			if slot, ok := v.partialSlot(i); ok {
-				// Absent is the state after a delete, or before a phase that creates the document; missing otherwise.
+
 				pre, post := v.oracle.At(i), v.postState(slot)
 				switch {
 				case !post.Alive:
@@ -643,7 +596,7 @@ func (v *verifier) partition(ctx context.Context, p int) (Partition, error) {
 			}
 			prev = item.ID
 			res.Actual++
-			canonical, err := replbench.Canonical(item.Document)
+			canonical, err := benchclient.Canonical(item.Document)
 			if err != nil {
 				return res, fmt.Errorf("document %s: %w", item.ID, err)
 			}
@@ -658,7 +611,7 @@ func (v *verifier) partition(ctx context.Context, p int) (Partition, error) {
 			account(i)
 			nextExpected = i + 1
 			if slot, ok := v.partialSlot(i); ok {
-				// An unquiesced cut: the state before or after the phase, decided per batch after the scan.
+
 				pre, post := v.oracle.At(i), v.postState(slot)
 				var e Expected
 				switch {
@@ -713,14 +666,12 @@ func (v *verifier) partition(ctx context.Context, p int) (Partition, error) {
 	account(hi)
 	res.ExpectedDigest, res.ActualDigest, res.VersionDigest = hex.EncodeToString(exp.Sum(nil)), hex.EncodeToString(act.Sum(nil)), hex.EncodeToString(ver.Sum(nil))
 	if v.partial != nil {
-		// With a partial phase, the expected digest only covers the complete phases; the actual one covers everything.
+
 		res.ExpectedDigest = ""
 	}
 	return res, nil
 }
 
-// checkVersion compares a document's version with the one its last write recorded (exact mode). A complete phase must
-// have recorded it; only a partial phase's unresolved batch may lack one.
 func (v *verifier) checkVersion(res *Partition, i int64, got string, e Expected) error {
 	if v.cfg.Versions != "exact" {
 		return nil
@@ -740,8 +691,6 @@ func (v *verifier) checkVersion(res *Partition, i int64, got string, e Expected)
 	return nil
 }
 
-// resurrected names the write that could have produced a resurrected document's content, and whether that write's
-// batch had an ambiguous attempt (one that might have reached the server late).
 func (v *verifier) resurrected(i int64, canonical []byte) (string, bool) {
 	for _, p := range v.r.Phases() {
 		if p.Op == "delete" || !p.Contains(i) || !bytes.Equal(canonical, Body(v.r.Seed, i, p.Rev)) {
@@ -775,7 +724,6 @@ func writeDigest(h hash.Hash, id string, canonical []byte) {
 	h.Write([]byte{'\n'})
 }
 
-// a7 classifies every sent batch of the phases other than the partial one by its ledger times against T (A7Check).
 func (v *verifier) a7() A7Check {
 	t, skew := v.cut.AtMs, v.cfg.SkewMs
 	a := A7Check{AtMs: t, SkewMs: skew}
@@ -799,7 +747,6 @@ func (v *verifier) a7() A7Check {
 	return a
 }
 
-// classify counts one sent batch as acknowledged before T-skew, first sent at or after T+skew, or in flight.
 func (a *A7Check) classify(st *BatchState) (acked, late bool) {
 	acked = (st.Terminal == EvAck || st.Terminal == EvPresent) && st.EndMs < a.AtMs-a.SkewMs
 	late = st.FirstMs >= a.AtMs+a.SkewMs
@@ -817,15 +764,12 @@ func (a *A7Check) classify(st *BatchState) (acked, late bool) {
 	return acked, late
 }
 
-// bounded decides, per batch of the partial phase, whether the restore holds it (every document after the phase) or
-// not (every document before it), and checks atomicity, the per-stream prefix, A-7 (into a) and, with the observed
-// shipped-read history, the inclusion bound.
 func (v *verifier) bounded(a *A7Check) (BoundedCheck, error) {
 	states := v.ledgers[v.partial.Name]
 	b := BoundedCheck{Phase: v.partial.Name, Batches: int64(len(v.postN))}
 	var before []int64
 	for _, at := range v.cfg.Shipped {
-		if at < v.cut.AtMs { // strictly: the values are ms-truncated
+		if at < v.cut.AtMs {
 			before = append(before, at)
 		}
 	}
@@ -849,7 +793,7 @@ func (v *verifier) bounded(a *A7Check) (BoundedCheck, error) {
 		post, pre := int64(v.postN[k].Load()), int64(v.preN[k].Load())
 		st := states[batch]
 		proven := st != nil && (st.Terminal == EvAck || st.Terminal == EvPresent)
-		acked, late := false, true // never sent: as if first sent after T
+		acked, late := false, true
 		if st != nil {
 			acked, late = a.classify(st)
 		}
@@ -892,7 +836,7 @@ func (v *verifier) bounded(a *A7Check) (BoundedCheck, error) {
 			b.PartialBatches++
 		}
 		if st != nil {
-			// Within one invocation's stream batches ran one at a time, in the order of their last start.
+
 			streams[key{st.Inv, st.Stream}] = append(streams[key{st.Inv, st.Stream}], entry{st.LastStart, post == full})
 		}
 	}
@@ -913,7 +857,6 @@ func (v *verifier) bounded(a *A7Check) (BoundedCheck, error) {
 	return b, nil
 }
 
-// markers checks the markers collection against the marker-writing cuts recorded before this one.
 func (v *verifier) markers(ctx context.Context) (MarkerCheck, error) {
 	cuts, err := v.r.Cuts()
 	if err != nil {
@@ -923,7 +866,7 @@ func (v *verifier) markers(ctx context.Context) (MarkerCheck, error) {
 	for _, c := range cuts {
 		sent := c.MarkerMs
 		if sent == 0 {
-			// Cuts recorded before marker_ms carry it in their note; older ones have no window.
+
 			if _, err := fmt.Sscanf(c.Note, "marker written at %d", &sent); err != nil {
 				sent = c.AtMs
 			}
@@ -955,7 +898,6 @@ func (v *verifier) markers(ctx context.Context) (MarkerCheck, error) {
 	return m, nil
 }
 
-// acctIndex pages the indexed equality query of every acct value and merge-joins its ids with the oracle's.
 func (v *verifier) acctIndex(ctx context.Context) (AcctIndexCheck, error) {
 	var c AcctIndexCheck
 	var values, docs, mismatched, missing, extra atomic.Int64
@@ -999,8 +941,6 @@ func (v *verifier) acctIndex(ctx context.Context) (AcctIndexCheck, error) {
 	return c, nil
 }
 
-// acctValue compares one acct value's indexed matches with the oracle's live documents of that value (indexes a,
-// a+AcctValues, ...), both in id order.
 func (v *verifier) acctValue(ctx context.Context, a int64) (matched, missing, extra int64, why string, err error) {
 	k := a
 	expected := func() (string, bool) {

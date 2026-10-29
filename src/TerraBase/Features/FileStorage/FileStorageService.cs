@@ -6,7 +6,7 @@ using TerraBase.Errors;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management;
 using TerraBase.Features.Qos;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -71,7 +71,6 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             {
                 return Missing;
             }
-            // A bounded number of buckets also bounds usage scans and project cleanup.
             var page = await SystemCatalog.ListAsync(transaction, Buckets, null, 100, TerraBaseJsonContext.Default.FileBucket, b => b.Id, cancellationToken).ConfigureAwait(false);
             if (page.Items.Count >= 100)
             {
@@ -83,8 +82,6 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             }
             var bucket = new FileBucket(EntityIds.New().ToString(), request.Name!, options.Region, request.Rules);
             await SystemCatalog.PutAsync(transaction, Buckets, bucket.Id, bucket, TerraBaseJsonContext.Default.FileBucket, cancellationToken).ConfigureAwait(false);
-            // System document writes do not implicitly register collections. Persist their identity so
-            // usage accounting and cleanup discover the same reservation collection on every replica.
             _ = await transaction.CreateCollectionAsync(new CollectionInfo(Files(bucket.Id), time.GetUtcNow().ToUnixTimeMilliseconds()), cancellationToken).ConfigureAwait(false);
             return bucket;
         }, static error => error, cancellationToken);
@@ -117,7 +114,6 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             {
                 return Missing;
             }
-            // Changing the owner pointer would transfer existing identities; recreate an empty bucket instead.
             if (saved.Rules.Owner != request.Rules.Owner)
             {
                 return new Conflict("the owner pointer is immutable");
@@ -154,7 +150,6 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             return new Validation("provide name, contentType, size (1–104857600), base64 SHA-256 and object metadata (at most 16 KiB)");
         }
         var file = new FileObject(EntityIds.New().ToString(), request.Name, request.ContentType, request.Size, request.Sha256!, request.Metadata.Clone(), "pending", time.GetUtcNow().AddMinutes(5));
-        // Check permission before the commercial scan and again in the committing transaction.
         var authorized = await catalog.ReadAsync<FileStorageResult>(async transaction =>
         {
             var saved = await BucketAsync(transaction, bucket, cancellationToken).ConfigureAwait(false);
@@ -353,7 +348,6 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             catch (OperationCanceledException) { /* One bounded cleanup pass expired; retry on the next tick. */ }
             catch (Exception error) when (StoreFailure(error) || error is QueryCapacityException)
             {
-                // Object-store errors can contain signed URLs. Only a fixed outcome is logged.
                 CleanupIncomplete(logger, null);
             }
         }
@@ -391,7 +385,6 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             tx => SystemCatalog.GetAsync(tx, FileStorageUsage.Buckets(parts[2]), parts[3], TerraBaseJsonContext.Default.FileBucket, token), static _ => null, token).ConfigureAwait(false);
         if (definition is null)
         {
-            // A concurrently deleted empty bucket must not pin subsequent cleanup passes.
             _sweepCollection = null;
             return;
         }

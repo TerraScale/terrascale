@@ -1,15 +1,13 @@
 using TerraBase.Errors;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary><c>POST …/organizations/{organization}/leave</c>: the acting user leaves the organization.</summary>
 public sealed class LeaveOrganizationEndpoint(IAccessService access) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(ManagementRoute.Leave);
@@ -27,7 +25,6 @@ public sealed class LeaveOrganizationEndpoint(IAccessService access) : EndpointW
         Metadata(ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         await access.LeaveAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), cancellationToken) switch
         {

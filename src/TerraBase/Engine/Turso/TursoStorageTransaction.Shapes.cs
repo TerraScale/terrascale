@@ -17,17 +17,17 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
     private const int ShapeRows = 4096;
     private const int ShapeBodyBytes = 1024 * 1024;
     private const int ShapeCommitBytes = 8 * 1024 * 1024;
-    // A JSON-escaped id can expand sixfold; output buffers and persisted copies coexist during sealing.
+
     private const int ShapeIdMemoryPerByte = 6 * 8;
-    // Capture retains raw images, UTF-16 document strings and output copies.
+
     private const int ShapeCaptureMemoryPerByte = 16;
-    // Compact state fields expand into field objects and maps, including normalization's second map.
+
     private const int ShapeCaptureStateMemoryPerByte = 64;
-    // JsonDocument uses 12 bytes per token; three capacities can coexist while its metadata buffer grows.
+
     private const int ShapeCaptureMemoryPerToken = 12 * 3;
 
     public async ValueTask<(long Offset, long Head, ShapeSealedChunk? Chunk)> SealShapeChunkAsync(ShapeSealDefinition shape, long offset, long? through,
-        bool remote, IMemoryBudget memory, CancellationToken cancellationToken)
+        IMemoryBudget memory, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(offset);
         if (shape.ResumeScope.Length != 16 || shape.ShapeId.Length != 32 || shape.Handle.Length != 19
@@ -37,14 +37,12 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         }
 
         await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
-        return await RunAsync(() => SealShapeChunk(shape, offset, through, remote, memory, cancellationToken), cancellationToken,
+        return await RunAsync(() => SealShapeChunk(shape, offset, through, memory, cancellationToken), cancellationToken,
             mutation: true).ConfigureAwait(false);
     }
 
-    // With `remote`, seals only while the remote durable frontier is the head this transaction materializes at, so the
-    // chunk's covered offset and values_at are both durable when it is stored (shape-reads.md section 10).
     private (long Offset, long Head, ShapeSealedChunk? Chunk) SealShapeChunk(ShapeSealDefinition shape, long offset, long? through,
-        bool remote, IMemoryBudget memory, CancellationToken cancellationToken)
+        IMemoryBudget memory, CancellationToken cancellationToken)
     {
         CountRead("shape");
         if (Command("SELECT entity_id FROM collections WHERE name = $collection;", shape.Collection).ExecuteScalar()
@@ -67,15 +65,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
             return (offset, head, null);
         }
 
-        // In a cell, values read at the head are durable for a document with no feed row above F, so a chunk covers commits
-        // through F whose documents have none, at values_at = F. Under steady writes the head never equals F.
-        var frontier = remote ? ShapeFrontierOrHead(remote: true) : head;
-        if (frontier < head && (frontier <= offset || head - frontier > ShapeRows))
-        {
-            // Nothing sealed: no commit past offset is held by another region yet, or too many are unheld to check.
-            return (offset, head, null);
-        }
-
+        var frontier = head;
         var end = Math.Min(through ?? head, frontier);
         if (offset > end || !ShapeBoundary(offset))
         {
@@ -85,17 +75,11 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         ValidateShapeCapture(memory, cancellationToken);
         using var admission = new ShapeMemory(memory, store.Tenant);
         admission.Reserve(256 * 1024);
-        var unsettled = frontier < head ? ShapeUnsettled(shape.Collection, frontier, admission) : null;
-        if (unsettled is { Count: > 0 } && ReadUniqueConstraints(shape.Collection).Count > 0)
-        {
-            // A uniqueness write can hide or show another document of its collection without that document's own feed row.
-            return (offset, head, null);
-        }
         var changes = new ArrayBufferWriter<byte>();
         var covered = offset;
         var count = 0;
         var emitted = 0;
-        // Account for the largest v1 resume envelope without rehashing retained history for every candidate commit.
+
         var resumeSize = new string('0', Base64Url.GetEncodedLength(17 + ChangeCursor.MaxBytes));
         var envelopeBytes = ShapeEnvelope(shape, offset, head, frontier, resumeSize, []).Length;
         while (covered < end)
@@ -107,23 +91,18 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
                 break;
             }
             using var candidate = new ShapeMemory(memory, store.Tenant);
-            byte[]? change;
+            byte[] change;
             try
             {
                 candidate.Reserve(ShapeChangeBytes(shape, covered, next.End));
-                change = ShapeChange(shape, covered, next.End, unsettled, cancellationToken);
+                change = ShapeChange(shape, covered, next.End, cancellationToken);
             }
             catch (Exception error) when (count > 0 && error is ShapeTooLargeException or QosMemoryException)
             {
-                // Publish the fitting prefix first; the next seal refuses at the oversized commit itself.
+
                 break;
             }
-            if (change is null)
-            {
-                // A document of this commit has a write above F: publish the prefix, and the rest waits for F.
-                break;
-            }
-            // Include envelope and cursor overhead in the limit, not only document bytes.
+
             var size = envelopeBytes + changes.WrittenCount + change.Length + (emitted > 0 && change.Length > 0 ? 1 : 0);
             if (count > 0 && size > ShapeBodyBytes)
             {
@@ -131,7 +110,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
             }
             if (count == 0 && size > ShapeCommitBytes)
             {
-                // The singleton bound is exact: a smaller real cursor must not turn a fitting commit into a refusal.
+
                 var exact = ShapeEnvelope(shape, offset, next.End, frontier, ShapeResume(shape.ResumeScope.Span, next.End, cancellationToken),
                     change);
                 if (exact.Length > ShapeCommitBytes)
@@ -174,34 +153,10 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         insert.Parameters.AddWithValue("$at", sealedAt);
         insert.ExecuteNonQuery();
         insert.Parameters.Clear();
-        // The caller keeps the inserted bytes and their admission through commit, so publication never rereads the body.
+
         var retained = new ShapeMemory(memory, store.Tenant);
         admission.TransferTo(retained);
         return (covered, head, new ShapeSealedChunk(offset, covered, frontier, body, retained, sealedAt));
-    }
-
-    // The ids of this collection with a feed row above the frontier: their values at the head are not held elsewhere yet.
-    private HashSet<string> ShapeUnsettled(string collection, long frontier, ShapeMemory admission)
-    {
-        var size = Command("SELECT coalesce(sum(octet_length(id)), 0), count(*) FROM _tb_feed WHERE seq > $frontier AND collection = $collection;", collection);
-        size.Parameters.AddWithValue("$frontier", frontier);
-        CountRead("shape");
-        using (var reader = size.ExecuteReader())
-        {
-            reader.Read();
-            admission.Reserve(checked(reader.GetInt64(0) * ShapeIdMemoryPerByte + reader.GetInt64(1) * 64));
-        }
-
-        var command = Command("SELECT id FROM _tb_feed WHERE seq > $frontier AND collection = $collection;", collection);
-        command.Parameters.AddWithValue("$frontier", frontier);
-        HashSet<string> ids = [with(StringComparer.Ordinal)];
-        CountRead("shape");
-        using var rows = command.ExecuteReader();
-        while (rows.Read())
-        {
-            ids.Add(rows.GetString(0));
-        }
-        return ids;
     }
 
     private bool ShapeBoundary(long offset)
@@ -220,7 +175,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         var commit = reader.GetInt64(1);
         if (seq != offset)
         {
-            // Retention can remove part of a commit, so its first row's predecessor is not a proven boundary.
+
             return offset == 0 && seq == 1;
         }
         return !reader.Read() || reader.GetInt64(1) != commit;
@@ -277,8 +232,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         return count > 0 ? (commit, end, count) : throw new ShapeSealOffsetException();
     }
 
-    // Null when a document of the range is in `unsettled`.
-    private byte[]? ShapeChange(ShapeSealDefinition shape, long start, long end, HashSet<string>? unsettled, CancellationToken cancellationToken)
+    private byte[] ShapeChange(ShapeSealDefinition shape, long start, long end, CancellationToken cancellationToken)
     {
         var command = Command("""
             SELECT id, access_before, access_after FROM _tb_feed
@@ -303,10 +257,6 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         {
             return [];
         }
-        if (unsettled is not null && rows.Keys.Any(unsettled.Contains))
-        {
-            return null;
-        }
 
         var buffer = new ArrayBufferWriter<byte>();
         using var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { MaxDepth = DocumentJson.MaxStoredDepth + 4 });
@@ -327,7 +277,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
                     document = null;
                 }
             }
-            // A client where filter never grants permission to learn a tombstone's id.
+
             if (document is null && !owned)
             {
                 continue;
@@ -357,7 +307,6 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
     private static bool MatchesOwnerProof(string? json, DocumentOwnerProof owner) =>
         json is not null && JsonSerializer.Deserialize(json, ShapeJsonContext.Default.DocumentOwnerProof) == owner;
 
-    // Project sizes before reading bodies; cover the candidate, growing output buffers and the persisted copy.
     private long ShapeChangeBytes(ShapeSealDefinition shape, long start, long end)
     {
         var collection = shape.Collection;
@@ -405,7 +354,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         {
             return null;
         }
-        // Only visible documents belong in a shape; hidden uniqueness contenders become deletes.
+
         CountRead("shape");
         using var reader = TableCommand("""
             SELECT (SELECT stamp FROM _tb_state WHERE collection = $collection AND id = $id), doc FROM {0} WHERE id = $id;
@@ -429,7 +378,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         writer.WriteString("cursor_resume", resume);
         writer.WriteStartArray("changes");
         writer.Flush();
-        // Changes are already validated JSON objects, comma-separated; preserve their stored document bytes.
+
         buffer.Write(changes);
         writer.WriteEndArray();
         writer.WriteEndObject();
@@ -439,7 +388,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
 
     private string ShapeResume(ReadOnlySpan<byte> scope, long covered, CancellationToken cancellationToken)
     {
-        // Each origin stops below its first row past covered: the persisted chain then holds covered rows only.
+
         var command = Command("""
             SELECT f.origin, max(f.stamp), min(f.stamp) FROM _tb_feed f
             LEFT JOIN (SELECT origin, min(stamp) AS stamp FROM _tb_feed WHERE seq > $covered GROUP BY origin) u ON u.origin = f.origin
@@ -534,7 +483,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
             using var admission = memory.TryReserve(MemoryLane.Bulk, bytes, store.Tenant) ?? throw new QosMemoryException();
             using var tokenAdmission = new ShapeMemory(memory, store.Tenant);
             long tokenBytes = 0;
-            var capture = new TailTransaction(store.IsSystem);
+            var capture = new ShapeCaptureTransaction();
             var rows = Command("""
                 SELECT change_type, table_name, after FROM turso_cdc
                 WHERE change_id > $after AND change_id <= $end ORDER BY change_id;
@@ -548,7 +497,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var type = reader.GetInt64(0);
-                    // Match ReadChangeGroups' row-shape checks before reusing its state/image decoder.
+
                     if ((type == 2 && (!reader.IsDBNull(1) || !reader.IsDBNull(2))) || (type == -1 && !reader.IsDBNull(2)))
                     {
                         throw new InvalidDataException($"a captured change of type {type} has the shape of another type");
@@ -575,7 +524,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
                             tokenAdmission.Reserve(required - tokenBytes);
                             tokenBytes = required;
                         }
-                        capture.Add(table, image, Member.Id);
+                        capture.Add(table, image);
                     }
                 }
             }
@@ -583,7 +532,6 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         }
     }
 
-    // The state row has nine columns; other captured client/metadata rows have at most nine.
     private static long MeasureShapeRecord(ReadOnlySpan<byte> image, string table, CancellationToken cancellationToken)
     {
         var size = ShapeRecordVarint(image, out var used);
@@ -632,7 +580,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
             }
             body = body[(int)bytes..];
         }
-        if (table == "_tb_state" && columns != 9)
+        if (table == "_tb_state" && columns != 8)
         {
             throw new InvalidDataException("a captured state record has the wrong column count");
         }
@@ -640,9 +588,9 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         {
             return 0;
         }
-        // Match the sender's two-text branch even for a client collection named documents.
+
         var document = columns == 2 ? second : third;
-        // Bookkeeping text is normally an id, but damaged state can reference it as a document in the sender.
+
         if (!(DatabaseName.TryParse(table, out _) || IsMetadata(table)))
         {
             return checked((long)document.Length * ShapeCaptureMemoryPerToken);
@@ -706,7 +654,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
             var command = Command("SELECT end_offset, body, sealed_at FROM _tb_shape_chunk WHERE handle = $handle AND offset = $offset;");
             command.Parameters.AddWithValue("$handle", handle);
             command.Parameters.AddWithValue("$offset", offset);
-            // The payload read: the one SELECT a served chunk costs, counted apart from the size probe and other shape SQL.
+
             CountRead("shape_body");
             using var reader = command.ExecuteReader();
             if (!reader.Read())

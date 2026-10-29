@@ -2,17 +2,12 @@ using TerraBase.Features.Stats;
 
 namespace TerraBase.Features.Management.Usage;
 
-/// <summary>A usage meter's bounded dimensions. Region is the observing node; PeerRegion names the other end.</summary>
-internal sealed record UsageDimension(string Meter, string Region, string PeerRegion, string Kind)
+internal sealed record UsageDimension(string Meter, string Region, string Kind)
 {
-    public string Key => $"{Meter}|{Region}|{PeerRegion}|{Kind}";
+    public string Key => $"{Meter}|{Region}|{Kind}";
 }
 
-/// <summary>The latest observed replication state; lag is the age of an outstanding backlog, in milliseconds.</summary>
-internal sealed record UsageReplicationState(DateTimeOffset ObservedAt, double LagMs, bool Diverged, double? ConvergenceMs, DateTimeOffset? LastApplied, long Remaining = 0);
-
-/// <summary>Additive meter values and mergeable request latency histogram; replication state keeps the newest observation.</summary>
-internal sealed record UsageReading(UsageDimension Dimension, long Count, long Value = 0, long[]? Latency = null, UsageReplicationState? State = null)
+internal sealed record UsageReading(UsageDimension Dimension, long Count, long Value = 0, long[]? Latency = null)
 {
     public static IReadOnlyList<double> LatencyBounds => StatsLatency.BoundsMs;
 
@@ -24,13 +19,9 @@ internal sealed record UsageReading(UsageDimension Dimension, long Count, long V
         var value = Merge(Value, other.Value, sign);
         var latency = Latency is null && other.Latency is null ? null
             : Enumerable.Range(0, LatencyBounds.Count).Select(i => Merge(Latency?[i] ?? 0, other.Latency?[i] ?? 0, sign)).ToArray();
-        var state = sign > 0 && other.State is { } newer && (State is null || newer.ObservedAt >= State.ObservedAt)
-            ? newer with { ConvergenceMs = newer.ConvergenceMs ?? State?.ConvergenceMs, LastApplied = newer.LastApplied ?? State?.LastApplied } : State;
-        return new(Dimension, count, value, latency, count == 0 && value == 0 ? null : state);
+        return new(Dimension, count, value, latency);
     }
 
-    // Readings are non-negative. Adding saturates at long.MaxValue, so accepted byte aggregates never wrap negative; taking away
-    // an acknowledged snapshot stays exact below saturation (pending always holds at least the snapshot) and never goes below 0.
     private static long Merge(long left, long right, int sign) =>
         sign > 0 ? (right > long.MaxValue - left ? long.MaxValue : left + right) : Math.Max(0, left - right);
 
@@ -46,7 +37,6 @@ internal sealed record UsageReading(UsageDimension Dimension, long Count, long V
         foreach (var (key, reading) in right)
         {
             var combined = result.TryGetValue(key, out var saved) ? saved.Add(reading, sign) : reading;
-            // No cap here: (a + b) - b must equal a. Admission bounds pending keys; aggregates hold the deployed dimensions.
             if (combined.IsZero)
             {
                 result.Remove(key);

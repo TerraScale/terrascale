@@ -1,5 +1,0 @@
-<Project>
-  <ItemGroup Condition="'$(MSBuildProjectName)' == 'TerraBase.Fast'">
-    <Compile Include="$(MSBuildThisFileDirectory)RebuildWorkload.cs" Link="Benchmark/RebuildWorkload.cs" />
-  </ItemGroup>
-</Project>

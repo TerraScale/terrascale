@@ -8,29 +8,18 @@ using System.Text.Json.Nodes;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Cluster;
-using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
-using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
-using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Shapes;
 
-/// <summary>
-/// The shape chunk sealer (docs/terrabase/free-reads.md 3.4, shape-reads.md 3.3 and 6): closed chunks cover whole commits
-/// of the feed, at most 4096 rows or 1 MiB of body, a larger single commit alone up to 8 MiB. Values are the current
-/// documents, never older than their events; bodies are stored once, uncaptured, and never recomputed. Damaged CDC holds
-/// only its own database. Every seal goes through the production <see cref="IStorageEngine"/> store.
-/// </summary>
 public sealed class ShapeSealTests
 {
     private const string Collection = DocumentApi.Collection;
@@ -105,8 +94,6 @@ public sealed class ShapeSealTests
         await Assert.That(chunks.Where(chunk => chunk != single).All(chunk => chunk.Body.Length <= MiB)).IsTrue();
     }
 
-    // Commit A writes ten small documents; later commits enlarge each, so A materializes past 8 MiB. Nothing is sealed and
-    // the offset does not advance. Once five are deleted, A fits and is sealed alone with five deletes.
     [Test]
     public async Task A_commit_materializing_past_8_MiB_is_refused_until_it_fits()
     {
@@ -146,8 +133,6 @@ public sealed class ShapeSealTests
         await Assert.That(first.Ops.Count(op => op.Kind == "delete")).IsEqualTo(5);
     }
 
-    // a is rewritten, b deleted, f stops matching; never fails the JSON predicate and excluded fails its id check. Each op carries
-    // the value at values_at, as stored bytes with the Document API version; deletes and nonmatches are delete ops.
     [Test]
     public async Task Ops_carry_current_stored_documents_and_deletes_for_absent_or_nonmatching_ones()
     {
@@ -277,7 +262,7 @@ public sealed class ShapeSealTests
     {
         await using var api = await DocumentApi.StartAsync();
         var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
-        _ = await db.HoldCdcAsync();
+        _ = await db.CapturedHeadAsync();
         var start = await db.HeadAsync();
         var faker = new Faker();
         var tail = await db.CommitAsync(async transaction =>
@@ -324,7 +309,6 @@ public sealed class ShapeSealTests
         await Assert.That(await db.ScalarAsync("SELECT COUNT(*) FROM _tb_shape_chunk;")).IsEqualTo(0L);
     }
 
-    // Repair can file a feed row whose stamp is not the document's own stamp; the current document is still its value.
     [Test]
     public async Task A_feed_row_whose_stamp_differs_from_the_document_stamp_still_carries_the_current_document()
     {
@@ -384,7 +368,7 @@ public sealed class ShapeSealTests
         var head = await db.PutAsync(DocumentApi.NewId(), new { n = 1 });
         var shape = await ShapeAsync(db);
 
-        var refusing = new ShapeSealer(new RefusingBudget(), NullLogger<ShapeSealer>.Instance, db.Storage, new LocalDurability());
+        var refusing = new ShapeSealer(new RefusingBudget(), NullLogger<ShapeSealer>.Instance, db.Storage);
         await Assert.That(async () => await refusing.SealUpToHeadAsync(db.Store, shape, start, CancellationToken.None)).Throws<QosMemoryException>();
         await Assert.That(await db.ReadAsync(shape.Handle, start)).IsNull();
         await Assert.That(await db.SealAsync(shape, start)).IsEqualTo(head).Because("admission refusal leaves the range sealable");
@@ -401,7 +385,7 @@ public sealed class ShapeSealTests
         var memory = new ObservedBudget(api.Server.Services.GetRequiredService<IMemoryBudget>());
         var storage = new ObservedShapeStorage(db.Storage);
         var published = new List<(long Offset, long EndOffset, byte[] Body, long SealedAt, long Admitted)>();
-        var sealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, storage, new LocalDurability(),
+        var sealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, storage,
             onSealed: (_, _, chunk) => published.Add((chunk.Offset, chunk.EndOffset, chunk.Body.ToArray(), chunk.SealedAt, memory.ReservedBytes)));
 
         await Assert.That(await sealer.SealUpToHeadAsync(db.Store, shape, start, CancellationToken.None)).IsEqualTo(head);
@@ -435,12 +419,11 @@ public sealed class ShapeSealTests
         var materialized = 0;
         var shape = await ShapeAsync(db, _ =>
         {
-            // CDC admission has already been released when the predicate observes materialization admission.
             materializationBytes = Math.Min(materializationBytes, memory.ReservedBytes);
             materialized++;
             return true;
         });
-        var sealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, db.Storage, new LocalDurability());
+        var sealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, db.Storage);
 
         await Assert.That(await sealer.SealUpToHeadAsync(db.Store, shape, start, CancellationToken.None)).IsEqualTo(head);
         var chunk = (await db.ReadAllAsync(shape.Handle, start, head)).Single();
@@ -463,7 +446,7 @@ public sealed class ShapeSealTests
         var shape = await ShapeAsync(db);
         var memory = new ObservedBudget(api.Server.Services.GetRequiredService<IMemoryBudget>());
         var storage = new ObservedShapeStorage(db.Storage);
-        var sealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, storage, new LocalDurability());
+        var sealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, storage);
         ShapeSealRequest[] active = [new(shape, start)];
         using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var worker = sealer.RunDatabaseAsync(db.Store, () => Volatile.Read(ref active), stop.Token);
@@ -501,8 +484,6 @@ public sealed class ShapeSealTests
         await Assert.That(memory.ReservedBytes).IsEqualTo(0L);
     }
 
-    // One database's state row is damaged in turso_cdc as a sender fixture says; another database on the same server is
-    // healthy. A direct seal of the damaged one is refused, and the background workers hold only that database.
     [Test]
     [Arguments("truncated-state-image")]
     [Arguments("unknown-change-type-on-state-row")]
@@ -518,7 +499,7 @@ public sealed class ShapeSealTests
         var healthy = await Database.OpenAsync(api.Server, await api.TenantOfAsync("other"));
         var (damagedStart, healthyStart) = (await damaged.HeadAsync(), await healthy.HeadAsync());
 
-        var change = await damaged.HoldCdcAsync();
+        var change = await damaged.CapturedHeadAsync();
         _ = await damaged.PutAsync(DocumentApi.NewId(), new { n = 1 });
         await damaged.DamageAsync(change, fixture);
         _ = await healthy.PutAsync(DocumentApi.NewId(), new { n = 2 });
@@ -552,12 +533,11 @@ public sealed class ShapeSealTests
     {
         await using var api = await DocumentApi.StartAsync();
         var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
-        var change = await db.HoldCdcAsync();
+        var change = await db.CapturedHeadAsync();
         var start = await db.HeadAsync();
         var id = DocumentApi.NewId();
         var head = await db.PutAsync(id, new { a = 0 });
         var image = SqliteTextRecord(Collection, id);
-        // Reuse a bookkeeping slot, keeping the document, local state and commit boundary intact.
         await db.RawWriteAsync($"""
             UPDATE turso_cdc SET table_name = '_tb_unique_invalid', after = X'{Convert.ToHexString(image)}'
             WHERE change_id = (SELECT MIN(change_id) FROM turso_cdc
@@ -593,7 +573,7 @@ public sealed class ShapeSealTests
         var damaged = await Database.OpenAsync(api.Server, await api.TenantOfAsync(), collection);
         var healthy = await Database.OpenAsync(api.Server, await api.TenantOfAsync("other"));
         var (damagedStart, healthyStart) = (await damaged.HeadAsync(), await healthy.HeadAsync());
-        var change = await damaged.HoldCdcAsync();
+        var change = await damaged.CapturedHeadAsync();
         _ = await damaged.PutAsync(DocumentApi.NewId(), new { a = 0 });
 
         var document = new StringBuilder(2 * values + 7).Append("{\"a\":[");
@@ -606,9 +586,8 @@ public sealed class ShapeSealTests
         await damaged.ReplaceCapturedDocumentAsync(change, document.ToString(), capturedTable);
         var healthyHead = await healthy.PutAsync(DocumentApi.NewId(), new { a = 0 });
         var (shapeDamaged, shapeHealthy) = (await ShapeAsync(damaged), await ShapeAsync(healthy));
-        // The 16 MB image allowance fits; token admission (or bookkeeping's byte upper bound) exceeds the remainder.
         var memory = new ObservedBudget(api.Server.Services.GetRequiredService<IMemoryBudget>(), 20 * MiB);
-        var sealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, damaged.Storage, new LocalDurability());
+        var sealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, damaged.Storage);
 
         await Assert.That(async () => await sealer.SealUpToHeadAsync(damaged.Store, shapeDamaged, damagedStart, CancellationToken.None))
             .Throws<QosMemoryException>();
@@ -619,139 +598,11 @@ public sealed class ShapeSealTests
         await Assert.That(await damaged.ReadAsync(shapeDamaged.Handle, damagedStart)).IsNull();
         await Assert.That(await damaged.ScalarAsync("SELECT COUNT(*) FROM _tb_shape_chunk;")).IsEqualTo(0L);
 
-        var healthySealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, healthy.Storage, new LocalDurability());
+        var healthySealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, healthy.Storage);
         await Assert.That(await healthySealer.SealUpToHeadAsync(healthy.Store, shapeHealthy, healthyStart, CancellationToken.None))
             .IsEqualTo(healthyHead).Because("the refused database does not retain admission or stop another database from sealing");
         await Assert.That(await healthy.ReadAsync(shapeHealthy.Handle, healthyStart)).IsNotNull();
         await Assert.That(memory.ReservedBytes).IsEqualTo(0L);
-        await Assert.That(memory.ActiveReservations).IsEqualTo(0);
-    }
-
-    // gru and sjc write the same document concurrently plus one each; after replication each machine seals its own feed.
-    // Each covers every joined change with its converged value, its bytes differ from the other's (handles are per machine),
-    // and later replicated writes leave its sealed chunks byte for byte unchanged.
-    [Test]
-    public async Task Two_machines_seal_joined_writes_with_their_own_immutable_bytes()
-    {
-        await using var pair = await Pair.StartAsync();
-        var (gru, sjc) = (pair.Gru, pair.Sjc);
-        await pair.SeedCollectionAsync();
-        foreach (var machine in new[] { gru, sjc })
-        {
-            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(machine.Api.Server.Services.GetRequiredService<IReplicationStatus>()
-                .Snapshot().Peers.Any(peer => peer.Region == (machine == gru ? "sjc" : "gru"))), timeout: TimeSpan.FromSeconds(30));
-        }
-
-        var (warm, a, b, x) = (DocumentApi.NewId(), DocumentApi.NewId(), DocumentApi.NewId(), DocumentApi.NewId());
-        await gru.PutAsync(warm, """{"n":0}""");
-        await TerraBaseTestServer.EventuallyAsync(async token => await sjc.ReadAsync(warm, token) is not null);
-        await Task.WhenAll(gru.PutAsync(x, """{"from":"gru"}"""), sjc.PutAsync(x, """{"from":"sjc"}"""), gru.PutAsync(a, """{"n":1}"""), sjc.PutAsync(b, """{"n":2}"""));
-        await TerraBaseTestServer.EventuallyAsync(async token => await gru.ReadAsync(b, token) is not null
-            && await sjc.ReadAsync(a, token) is not null
-            && await sjc.ReadAsync(x, token) is { } value && value == await gru.ReadAsync(x, token));
-
-        Dictionary<Machine, (ShapeSealDefinition Shape, long Head, Sealed[] Chunks)> sealedBy = [];
-        foreach (var machine in new[] { gru, sjc })
-        {
-            var db = await machine.DatabaseAsync();
-            await Assert.That(await db.ScalarAsync($"SELECT COUNT(DISTINCT origin) FROM _tb_feed WHERE collection = '{Collection}';"))
-                .IsGreaterThanOrEqualTo(2L).Because("both local and joined writes are committed before sealing");
-            var shape = await ShapeAsync(db);
-            var head = await db.SealAsync(shape, 0);
-            await Assert.That(head).IsEqualTo(await db.HeadAsync());
-            var chunks = await db.ReadAllAsync(shape.Handle, 0, head);
-            var ops = chunks.SelectMany(chunk => chunk.Ops).ToArray();
-            await Assert.That(new[] { warm, a, b, x }.All(id => ops.Any(op => op.Id == id && op.Kind == "upsert"))).IsTrue()
-                .Because($"{machine.Region} covers every joined change");
-            var current = await db.StoredAsync(x);
-            await Assert.That(ops.Where(op => op.Id == x).All(op => op.Document == current)).IsTrue().Because("x carries its converged value");
-            sealedBy[machine] = (shape, head, chunks);
-        }
-
-        await Assert.That(sealedBy[gru].Chunks[0].Body.AsSpan().SequenceEqual(sealedBy[sjc].Chunks[0].Body)).IsFalse()
-            .Because("each machine's chunk carries its own handle and cursor");
-
-        var y = DocumentApi.NewId();
-        await gru.PutAsync(y, """{"n":3}""");
-        foreach (var machine in new[] { gru, sjc })
-        {
-            await TerraBaseTestServer.EventuallyAsync(async token => await machine.ReadAsync(y, token) is not null);
-            var db = await machine.DatabaseAsync();
-            var (shape, head, chunks) = sealedBy[machine];
-            var next = await db.SealAsync(shape, 0);
-            var again = await db.ReadAllAsync(shape.Handle, 0, head);
-            await Assert.That(again.Length).IsEqualTo(chunks.Length);
-            for (var n = 0; n < chunks.Length; n++)
-            {
-                await Assert.That(again[n].Body.AsSpan().SequenceEqual(chunks[n].Body)).IsTrue().Because($"{machine.Region}'s sealed bytes are immutable");
-            }
-
-            await Assert.That((await db.ReadAllAsync(shape.Handle, head, next)).SelectMany(chunk => chunk.Ops).Any(op => op.Id == y)).IsTrue();
-        }
-    }
-
-    // In a cell whose frontier never covers the head, a seal ends at its proof bound: no chunk, no admission held.
-    [Test]
-    public async Task A_seal_above_a_stalled_frontier_ends_undurable_at_its_bound_and_keeps_cancellation()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
-        var start = await db.HeadAsync();
-        _ = await db.PutAsync(DocumentApi.NewId(), new { n = 1 });
-        var shape = await ShapeAsync(db);
-        var memory = new ObservedBudget(api.Server.Services.GetRequiredService<IMemoryBudget>());
-        var time = new FakeTimeProvider();
-        var sealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, db.Storage, new UnprovenDurability(), time: time);
-
-        using (var stop = new CancellationTokenSource())
-        {
-            var cancelled = sealer.SealUpToHeadAsync(db.Store, shape, start, stop.Token).AsTask();
-            await stop.CancelAsync();
-            await Assert.That(async () => await cancelled).Throws<OperationCanceledException>()
-                .Because("the caller's cancellation stays cancellation, never proof lag");
-        }
-
-        // The bound starts on entry, so the clock can pass it as soon as the call returns.
-        var sealing = sealer.SealUpToHeadAsync(db.Store, shape, start, CancellationToken.None).AsTask();
-        time.Advance(ShapeSealer.ProofTimeout);
-        await Assert.That(async () => await sealing).Throws<ShapeUndurableException>();
-        await Assert.That(await db.ScalarAsync($"SELECT COUNT(*) FROM _tb_shape_chunk WHERE handle = '{shape.Handle}';")).IsEqualTo(0L)
-            .Because("nothing above the frontier is persisted");
-        await Assert.That(memory.ActiveReservations).IsEqualTo(0);
-    }
-
-    // A live wake seals every shape of the database; a stalled frontier stalls them all, so the wake waits one bound, not one per shape.
-    [Test]
-    public async Task A_wake_seal_above_a_stalled_frontier_answers_unavailable_after_one_bound()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        var tenant = await api.TenantOfAsync();
-        var db = await Database.OpenAsync(api.Server, tenant);
-        var start = await db.HeadAsync();
-        var memory = new ObservedBudget(api.Server.Services.GetRequiredService<IMemoryBudget>());
-        var time = new FakeTimeProvider();
-        var sealer = new EnteredSealer(new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, db.Storage, new UnprovenDurability(), time: time));
-        var registry = new ShapeRegistry(sealer, db.Storage, memory, time);
-        try
-        {
-            for (var n = 0; n < 3; n++)
-            {
-                await Assert.That(registry.Track(tenant, $"key-{n}", ShapeFilter.All, await ShapeAsync(db), start)).IsNull();
-            }
-
-            _ = await db.PutAsync(DocumentApi.NewId(), new { n = 1 });
-            var wake = registry.SealAsync(db.Store, CancellationToken.None).AsTask();
-            await sealer.Entered.Task;
-            time.Advance(ShapeSealer.ProofTimeout);
-            await Assert.That((await wake) is TerraBase.Errors.Unavailable { Code: "unavailable" }).IsTrue();
-            await Assert.That(sealer.Seals).IsEqualTo(1).Because("the frontier is the database's, so later shapes are not each waited on");
-            await Assert.That(await db.ScalarAsync("SELECT COUNT(*) FROM _tb_shape_chunk WHERE handle <> '~frontier';")).IsEqualTo(0L);
-        }
-        finally
-        {
-            registry.Dispose();
-        }
-
         await Assert.That(memory.ActiveReservations).IsEqualTo(0);
     }
 
@@ -773,7 +624,6 @@ public sealed class ShapeSealTests
         var documentBytes = Encoding.UTF8.GetBytes(document);
         var idType = SqliteVarint(13 + 2 * idBytes.Length);
         var documentType = SqliteVarint(13 + 2 * documentBytes.Length);
-        // Two int-sized TEXT serial types always leave the header size within a single varint byte.
         return [(byte)(1 + idType.Length + documentType.Length), .. idType, .. documentType, .. idBytes, .. documentBytes];
     }
 
@@ -791,8 +641,6 @@ public sealed class ShapeSealTests
 
     private static string FixtureDirectory([CallerFilePath] string source = "") =>
         Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(source))!, "Fixtures", "CorruptCdc");
-
-    /// <summary>One sealed chunk, copied out of its reservation, with its ops parsed from the stored body.</summary>
     private sealed record Sealed(long Offset, long EndOffset, long ValuesAt, byte[] Body)
     {
         public Op[] Ops { get; } = Parse(Body);
@@ -810,9 +658,7 @@ public sealed class ShapeSealTests
     }
 
     private sealed record Op(long Commit, string Kind, string Id, string? Version, string? Document);
-
-    /// <summary>One database of a server: its production store, its Turso store for direct reads, and a sealer.</summary>
-    private sealed class Database(TerraBaseTestServer server, TenantContext tenant, IDatabaseStore store, TursoDatabaseStore turso, string collectionName)
+    private sealed class Database(TerraBaseTestServer server, IDatabaseStore store, TursoDatabaseStore turso, string collectionName)
     {
         public string CollectionName { get; } = collectionName;
 
@@ -820,17 +666,14 @@ public sealed class ShapeSealTests
 
         public TursoShapeStorage Storage { get; } = new(server.Services.GetRequiredService<TursoStorageEngine>());
 
-        public ShapeSealer Sealer => new(server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<ShapeSealer>.Instance, Storage,
-            server.Services.GetRequiredService<IRemoteDurability>());
-
-        private IChangeGroupSource Groups => server.Services.GetRequiredService<IChangeGroupSource>();
+        public ShapeSealer Sealer => new(server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<ShapeSealer>.Instance, Storage);
 
         public static async Task<Database> OpenAsync(TerraBaseTestServer server, TenantContext tenant, string collection = Collection)
         {
             var store = await server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None)
                 ?? throw new InvalidOperationException("the database is missing");
             var turso = (TursoDatabaseStore)(await server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
-            return new Database(server, tenant, store, turso, collection);
+            return new Database(server, store, turso, collection);
         }
 
         public async Task<long> SealAsync(ShapeSealDefinition shape, long offset) =>
@@ -853,8 +696,6 @@ public sealed class ShapeSealTests
             await Assert.That(ChangeCursor.Encode(cursor!)).IsEqualTo(r8);
             return new Sealed(chunk.Offset, chunk.EndOffset, chunk.ValuesAt, chunk.Body.ToArray());
         }
-
-        // The chain of closed chunks from `from` to `to`, each starting where the previous one ended.
         public async Task<Sealed[]> ReadAllAsync(string handle, long from, long to)
         {
             List<Sealed> chunks = [];
@@ -869,8 +710,6 @@ public sealed class ShapeSealTests
             await Assert.That(from).IsEqualTo(to).Because("chunks end on the sealed boundary");
             return [.. chunks];
         }
-
-        // Commits one transaction through the production store and returns its commit boundary.
         public async Task<long> CommitAsync(Func<IStorageTransaction, Task> work)
         {
             await using (var transaction = await Store.BeginTransactionAsync(write: true, CancellationToken.None))
@@ -900,8 +739,6 @@ public sealed class ShapeSealTests
             command.CommandText = sql;
             return (long)command.ExecuteScalar()!;
         }, "a test reading a scalar", CancellationToken.None);
-
-        // Runs statements on the writer with capture off, as the engine writes derived rows.
         public Task<bool> RawWriteAsync(string sql) => turso.WithWriterAsync(session =>
         {
             using (var off = session.Connection.CreateCommand())
@@ -925,13 +762,7 @@ public sealed class ShapeSealTests
 
             return true;
         }, "a test writing feed rows uncaptured", CancellationToken.None);
-
-        // A peer row at 0 keeps every CDC row from retention, as a peer's first contact does; returns the change head.
-        public async Task<long> HoldCdcAsync()
-        {
-            _ = await Groups.AckedAsync(tenant, ReplicaId.Of(99, 1, 0), CancellationToken.None);
-            return await Groups.HeadAsync(tenant, turso.Incarnation, CancellationToken.None) ?? throw new InvalidOperationException("the copy refused its own incarnation");
-        }
+        public Task<long> CapturedHeadAsync() => ScalarAsync("SELECT COALESCE(MAX(change_id), 0) FROM turso_cdc;");
 
         public async Task ReplaceCapturedDocumentAsync(long after, string document, string table)
         {
@@ -965,7 +796,7 @@ public sealed class ShapeSealTests
                 while (reader.Read())
                 {
                     var candidate = TursoSession.Bytes(reader, 1);
-                    if (SqliteRecord.Decode(candidate) is [string collection, string id, _, string, long, long, 1L, _, _]
+                    if (SqliteRecord.Decode(candidate) is [string collection, string id, string, long, long, 1L, _, _]
                         && collection == CollectionName && id == capturedId)
                     {
                         return (ChangeId: reader.GetInt64(0), Image: candidate);
@@ -975,7 +806,6 @@ public sealed class ShapeSealTests
             }, "a test reading a captured state", CancellationToken.None);
             var collectionBytes = Encoding.UTF8.GetBytes(CollectionName);
             var tableBytes = Encoding.UTF8.GetBytes(table);
-            // These fixture names and the nine-column state header use single-byte varints; copy every other field verbatim.
             await Assert.That(stateImage[0]).IsLessThan((byte)128);
             await Assert.That(stateImage[1]).IsEqualTo((byte)(13 + 2 * collectionBytes.Length));
             await Assert.That(13 + 2 * tableBytes.Length).IsLessThan(128);
@@ -986,15 +816,12 @@ public sealed class ShapeSealTests
                 .Because("only the collection reference changes; id, live, state, stamp and origin stay intact");
             await RawWriteAsync($"UPDATE turso_cdc SET after = X'{Convert.ToHexString(image)}' WHERE change_id = {stateChangeId};");
         }
-
-        // Damages the first _tb_state row of this collection after change id `after` as the fixture's mutation says.
         public async Task DamageAsync(long after, string fixture)
         {
             if (fixture is "oversized-table-name" or "oversized-state-header")
             {
                 var id = await ScalarAsync($"SELECT MIN(change_id) FROM turso_cdc WHERE change_id > {after} AND table_name = '_tb_state' AND change_type IN (0, 1);");
                 await Assert.That(id).IsGreaterThan(after);
-                // 86 8d 23 encodes header size 100003: three varint bytes followed by 100000 NULL serial types.
                 var assignment = fixture == "oversized-table-name"
                     ? $"table_name = 'sqlite_{new string('x', MiB)}'"
                     : $"after = X'868d23{new string('0', 200_000)}'";
@@ -1121,7 +948,6 @@ public sealed class ShapeSealTests
         }
     }
 
-    /// <summary>A budget that admits only empty reservations.</summary>
     private sealed class RefusingBudget : IMemoryBudget
     {
         public IMemoryReservation? TryReserve(MemoryLane lane, long bytes) => TryReserve(lane, bytes, null);
@@ -1135,163 +961,6 @@ public sealed class ShapeSealTests
             public void Dispose()
             {
             }
-        }
-    }
-
-    // A cell whose other region never acknowledges: the frontier stays below every new head.
-    private sealed class UnprovenDurability : IRemoteDurability
-    {
-        public bool Confirms => true;
-        public ValueTask<IReadOnlyList<string>> OtherRegionsAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
-        public ValueTask<RemoteAdmission> AdmitAsync(TenantContext database, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public ValueTask<bool> WaitAsync(TenantContext database, CommitMarker marker, CancellationToken cancellationToken) => throw new NotSupportedException();
-    }
-
-    // Counts seals and signals the first once its proof bound has started, which the call does before it returns.
-    private sealed class EnteredSealer(IShapeSealer inner) : IShapeSealer
-    {
-        private int _seals;
-
-        public int Seals => Volatile.Read(ref _seals);
-
-        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public ValueTask<long> SealUpToHeadAsync(IDatabaseStore store, ShapeSealDefinition shape, long offset, CancellationToken cancellationToken)
-        {
-            _ = Interlocked.Increment(ref _seals);
-            var sealing = inner.SealUpToHeadAsync(store, shape, offset, cancellationToken);
-            _ = Entered.TrySetResult();
-            return sealing;
-        }
-
-        public ValueTask<ShapeSealedChunk?> ReadChunkAsync(IDatabaseStore store, string handle, long offset, CancellationToken cancellationToken) =>
-            inner.ReadChunkAsync(store, handle, offset, cancellationToken);
-
-        public ValueTask<long> FrontierAsync(IDatabaseStore store, CancellationToken cancellationToken) => inner.FrontierAsync(store, cancellationToken);
-
-        public Task RunDatabaseAsync(IDatabaseStore store, Func<IReadOnlyList<ShapeSealRequest>> shapes, CancellationToken cancellationToken) =>
-            inner.RunDatabaseAsync(store, shapes, cancellationToken);
-    }
-
-    /// <summary>gru and sjc in one fake DNS, both placing the pair's database.</summary>
-    private sealed class Pair : IAsyncDisposable
-    {
-        public FakeMemberStore Members { get; } = new();
-
-        public string User { get; } = EntityIds.New().ToString();
-
-        public TenantContext Tenant { get; } = new(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
-
-        public ManagedDatabaseRef Managed => new(Tenant.OrganizationId, Tenant.ProjectId!, Tenant.DatabaseId!, "main");
-
-        public Machine Gru { get; private set; } = null!;
-
-        public Machine Sjc { get; private set; } = null!;
-
-        public static async Task<Pair> StartAsync()
-        {
-            var pair = new Pair();
-            try
-            {
-                pair.Gru = await Machine.StartAsync(pair, "gru", ["sjc"]);
-                pair.Sjc = await Machine.StartAsync(pair, "sjc", ["gru"]);
-                return pair;
-            }
-            catch
-            {
-                await pair.DisposeAsync();
-                throw;
-            }
-        }
-
-        // The collection is created through gru's data API; sjc gets it with the first replicated document.
-        public async Task SeedCollectionAsync()
-        {
-            using var data = await Gru.DataAsync();
-            await ManagementApi.CreateCollectionAsync(data, Managed, Collection);
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            foreach (var machine in new[] { Sjc, Gru })
-            {
-                if (machine is not null)
-                {
-                    await machine.DisposeAsync();
-                }
-            }
-        }
-    }
-
-    private sealed class Machine(Pair pair, string region, ManagementApi api, string directory) : IAsyncDisposable
-    {
-        public string Region { get; } = region;
-
-        public ManagementApi Api { get; } = api;
-
-        public static async Task<Machine> StartAsync(Pair pair, string region, string[] replicas)
-        {
-            var directory = Directory.CreateTempSubdirectory("terrabase-shape-seal-").FullName;
-            var api = await ManagementApi.StartAsync(settings =>
-            {
-                settings["region"] = region;
-                settings["node-name"] = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
-                settings["data-directory"] = directory;
-            }, services => services.AddSingleton<IMemberDirectory>(pair.Members), userId: pair.User);
-            var machine = new Machine(pair, region, api, directory);
-            await machine.RegisterAsync(replicas);
-            return machine;
-        }
-
-        public Task<HttpClient> DataAsync() => Api.CreateClientAsync(pair.Tenant.OrganizationId, "documents:read", "documents:write");
-
-        public Task<Database> DatabaseAsync() => Database.OpenAsync(Api.Server, pair.Tenant);
-
-        public async Task PutAsync(string id, string json)
-        {
-            using var data = await DataAsync();
-            using var content = new StringContent(json, Encoding.UTF8, "application/json");
-            using var response = await data.PutAsync(ManagementApi.Uri(ManagementApi.DocumentPath(pair.Managed, Collection, id)), content);
-            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
-        }
-
-        // The document's JSON as this machine's data API reads it, or null when absent.
-        public async Task<string?> ReadAsync(string id, CancellationToken cancellationToken)
-        {
-            using var data = await DataAsync();
-            using var response = await data.GetAsync(ManagementApi.Uri(ManagementApi.DocumentPath(pair.Managed, Collection, id)), cancellationToken);
-            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-            {
-                return null;
-            }
-
-            response.EnsureSuccessStatusCode();
-            return JsonElement.Parse(await response.Content.ReadAsStringAsync(cancellationToken)).GetProperty("document").GetRawText();
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            await Api.DisposeAsync();
-            Directory.Delete(directory, recursive: true);
-        }
-
-        // The organization, project and database under the pair's ids, placed in both regions.
-        private async Task RegisterAsync(string[] replicas)
-        {
-            var tenant = pair.Tenant;
-            var commit = JsonSerializer.Serialize(new
-            {
-                id = EntityIds.New().ToString(),
-                ops = new object[]
-                {
-                    new { op = "create_organization", id = tenant.OrganizationId, name = $"shape-{tenant.OrganizationId}" },
-                    new { op = "create_project", organization = tenant.OrganizationId, id = tenant.ProjectId, name = "shape" },
-                    new { op = "create_database", organization = tenant.OrganizationId, project = tenant.ProjectId, name = "main", id = tenant.DatabaseId, replica_regions = replicas },
-                },
-            });
-            using var service = Api.Service(Api.User);
-            using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
-            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
         }
     }
 }

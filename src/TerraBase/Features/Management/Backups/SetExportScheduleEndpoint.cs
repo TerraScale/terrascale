@@ -1,17 +1,15 @@
 using Cronos;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Backups;
 
-/// <summary><c>PUT …/databases/{database}/export-schedule</c>: saves when a database is exported to its project's customer bucket.</summary>
 public sealed class SetExportScheduleEndpoint(IManagementService management, IScheduledExports exports) : Endpoint<ExportScheduleRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Put(ProjectApiRoute.Database + "/export-schedule");
@@ -30,7 +28,6 @@ public sealed class SetExportScheduleEndpoint(IManagementService management, ISc
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(ExportScheduleRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);

@@ -8,16 +8,11 @@ using Amazon.S3.Model;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.Backup;
-using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow.Backup;
 
-/// <summary>
-/// Continuous backup and point-in-time restore against the private Tigris CI bucket (<c>make terrabase-test-slow</c>).
-/// Requires its bucket-scoped credentials; every invocation owns and deletes a unique object prefix.
-/// </summary>
 public sealed class TigrisBackupTests
 {
     private static readonly TimeSpan ShippingDeadline = TimeSpan.FromMinutes(2);
@@ -36,22 +31,15 @@ public sealed class TigrisBackupTests
                 services: services => services.AddSingleton<IObjectStore>(provider =>
                     new PrefixedStore(provider.GetRequiredService<S3ObjectStore>(), prefix)),
                 cancellationToken: cancellationToken, failedStartCleanup: cleanup => failedStartCleanup = cleanup);
-            // Ready first, as ts-orch routes only to ready machines: the catalog gate opens once this machine's anchor is read
-            // from the bucket, which can outlast the gate's start budget and leave the first requests catalog_unverified.
-            var gate = api.Server.Services.GetRequiredService<ICatalogGate>();
-            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(gate.IsOpen), ShippingDeadline);
             var database = await api.CreateManagedDatabaseAsync("main");
             using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
             await ManagementApi.CreateCollectionAsync(data, database, "people", cancellationToken);
-            // Discovery must capture the baseline before the requested restore point.
             await ShippedAsync(api, database, null, cancellationToken);
             var written = Enumerable.Range(0, 50).ToDictionary(i => $"p{i:D3}", _ => faker.Lorem.Paragraph(4));
             foreach (var (id, text) in written)
             {
                 (await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", id)), new { text }, cancellationToken)).EnsureSuccessStatusCode();
             }
-
-            // Turso records commit seconds: separate the writes from the deletes at a whole-second restore boundary.
             var writtenAt = DateTimeOffset.UtcNow;
             var shipped = DateTimeOffset.FromUnixTimeSeconds(writtenAt.ToUnixTimeSeconds() + 1);
             while (shipped - DateTimeOffset.UtcNow is { Ticks: > 0 } wait)
@@ -96,7 +84,6 @@ public sealed class TigrisBackupTests
         }
         finally
         {
-            // Join startup/shutdown first: its shipper must stop before deleting this invocation's objects.
             try
             {
                 if (api is not null)
@@ -125,7 +112,6 @@ public sealed class TigrisBackupTests
         }
     }
 
-    // Waits for the background shipper's proven window; an upload timestamp alone cannot place its transactions.
     private static async Task ShippedAsync(ManagementApi api, ManagedDatabaseRef database, DateTimeOffset? at, CancellationToken cancellationToken)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -169,7 +155,6 @@ public sealed class TigrisBackupTests
         return keys;
     }
 
-    // Test-only namespace adapter: the real S3 store still performs signing, uploads, reads and deletes.
     internal sealed class PrefixedStore(IObjectStore inner, string prefix) : IObjectStore
     {
         public Task PutAsync(string key, Stream content, CancellationToken cancellationToken) =>
@@ -191,18 +176,11 @@ public sealed class TigrisBackupTests
             inner.DeleteAsync(prefix + key, cancellationToken);
     }
 }
-
-/// <summary>
-/// Bucket-scoped credentials for a private S3-compatible test bucket (Tigris or R2: endpoint, bucket and keys only);
-/// missing credentials fail the test. Only the CI bucket or a bucket named ts-*-test is accepted, never a production one.
-/// </summary>
 internal static class TigrisCiBucket
 {
     public static string Bucket => Variable("BUCKET_NAME") is var name
         && (name == "ts-terrabase-ci" || (name.StartsWith("ts-", StringComparison.Ordinal) && name.EndsWith("-test", StringComparison.Ordinal)))
         ? name : throw new InvalidOperationException("BUCKET_NAME must name the private ts-terrabase-ci bucket or a ts-*-test bucket");
-
-    /// <summary>Whether the endpoint is Cloudflare R2, whose bucket serves shape objects through its CDN custom domain.</summary>
     public static bool R2 => new Uri(Variable("AWS_ENDPOINT_URL_S3")).Host.EndsWith(".r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase);
 
     public static void Configure(Dictionary<string, string> settings)
@@ -215,7 +193,6 @@ internal static class TigrisCiBucket
         settings["master-key"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         if (R2)
         {
-            // An R2 bucket's CDN copies are purged through this token (Zone Cache Purge on terrascale.tech).
             settings["cloudflare-api-token"] = Variable("CLOUDFLARE_API_TOKEN");
         }
     }

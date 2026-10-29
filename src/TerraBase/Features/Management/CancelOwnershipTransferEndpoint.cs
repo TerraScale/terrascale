@@ -1,15 +1,13 @@
 using TerraBase.Errors;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary><c>DELETE …/organizations/{organization}/ownership-transfer</c>: cancels the pending ownership transfer.</summary>
 public sealed class CancelOwnershipTransferEndpoint(IAccessService access) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Delete(ManagementRoute.OwnershipTransfer);
@@ -26,7 +24,6 @@ public sealed class CancelOwnershipTransferEndpoint(IAccessService access) : End
         Metadata(ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         await access.CancelTransferAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), cancellationToken) switch
         {

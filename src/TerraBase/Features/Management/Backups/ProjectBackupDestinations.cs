@@ -5,7 +5,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Backup;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using static TerraBase.Features.Management.SystemCatalog;
 
@@ -19,10 +19,8 @@ internal sealed class ProjectBackupDestinations(
     private const string Current = "current";
     private const int MaxSaves = 4;
     private readonly Lock _savingLock = new();
-    // At most four entries, one per organization; rejected callers never form a queue.
     private readonly HashSet<string> _saving = [with(StringComparer.Ordinal)];
 
-    // Still not_found, so callers that test the code keep working; the message says nothing is configured.
     private static readonly NotFound NotSet = new("no backup destination is set for this project; set one with setBackupDestination");
 
     public ValueTask<ReadBackupDestinationResult> ReadAsync(string organizationId, string projectId, CancellationToken cancellationToken) =>
@@ -77,7 +75,6 @@ internal sealed class ProjectBackupDestinations(
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is HttpRequestException or AmazonS3Exception or IOException or InvalidDataException or OperationCanceledException)
         {
-            // Bucket errors can include tenant input and credentials. Only a fixed error reaches HTTP.
             return new Unavailable("customer backup bucket could not be accessed");
         }
         finally
@@ -107,13 +104,11 @@ internal sealed class ProjectBackupDestinations(
                 };
             }
 
-            // A closing project takes no destination (or its credentials) once this transaction sees its fence.
             if (await ProjectClosure.IsClosedAsync(transaction, projectId, cancellationToken).ConfigureAwait(false))
             {
                 return ManagementErrors.NotFound;
             }
 
-            // Decide inside the write: another region may have supplied a destination while the bucket was probed.
             var previous = await GetAsync(transaction, Collection(projectId), Current, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
             replaced = previous is not null;
             if (previous is not null)
@@ -145,7 +140,6 @@ internal sealed class ProjectBackupDestinations(
                 };
             }
 
-            // Keep sealed cleanup authority outside authorization state until owed deletion is verified.
             if (await GetAsync(transaction, Collection(projectId), Current, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false) is { } previous)
             {
                 await BackupDestinationHistory.SaveAsync(transaction, projectId, previous, cancellationToken).ConfigureAwait(false);
@@ -156,7 +150,6 @@ internal sealed class ProjectBackupDestinations(
             return new Done();
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
-    // Recheck both the project and membership in the transaction that changes its configuration.
     private static async ValueTask<WritableProject> WritableAsync(
         IStorageTransaction transaction, string userId, string organizationId, string projectId, CancellationToken cancellationToken)
     {
@@ -209,12 +202,10 @@ internal sealed class ProjectBackupDestinations(
             using var cleanup = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, lifetime.ApplicationStopping);
             try
             {
-                // An object lock may retain this tiny probe; it contains no database or secret material.
                 await bucket.DeleteAsync(key, cleanup.Token).ConfigureAwait(false);
             }
             catch (Exception) when (!verified)
             {
-                // Preserve the probe failure; a successful check must still verify delete permission.
             }
         }
     }

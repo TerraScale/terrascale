@@ -4,11 +4,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.E2E.WalFaults;
 
-/// <summary>
-/// The system database's acknowledged writes survive a power loss of their node: its commits sync the write-ahead log
-/// (<c>synchronous = FULL</c>), unlike a tenant database's (decision 0003). Its organization, project, database
-/// registration and API key are all still there after every unsynced byte of every log is dropped.
-/// </summary>
 public sealed class SystemDatabasePowerLossTests
 {
     [Test]
@@ -25,7 +20,7 @@ public sealed class SystemDatabasePowerLossTests
             ["ops"] = new JsonArray(
                 new JsonObject { ["op"] = "create_organization", ["id"] = organization, ["name"] = $"power-{organization}" },
                 new JsonObject { ["op"] = "create_project", ["organization"] = organization, ["id"] = project, ["name"] = "power" },
-                new JsonObject { ["op"] = "create_database", ["organization"] = organization, ["project"] = project, ["name"] = "canary", ["id"] = EntityIds.New().ToString(), ["replica_regions"] = new JsonArray(Cluster.Sjc) }),
+                new JsonObject { ["op"] = "create_database", ["organization"] = organization, ["project"] = project, ["name"] = "canary", ["id"] = EntityIds.New().ToString(), ["replica_regions"] = new JsonArray() }),
         });
         var path = $"/v1/projects/{project}/databases/canary";
         await Cluster.CreateCollectionAsync(new(StringComparer.Ordinal) { [Cluster.Gru] = node.Client }, path, "items");

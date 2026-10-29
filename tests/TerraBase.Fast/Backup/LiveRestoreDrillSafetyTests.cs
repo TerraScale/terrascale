@@ -1,7 +1,6 @@
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
-using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.LiveRestoreDrill;
@@ -13,14 +12,12 @@ namespace TerraBase.Fast.Backup;
 public sealed class LiveRestoreDrillSafetyTests
 {
     [Test]
-    public async Task Replay_normalizes_uncaptured_peer_reports_but_detects_captured_state_damage(CancellationToken token)
+    public async Task Replay_preserves_captured_state_and_detects_damage(CancellationToken token)
     {
         await using var api = await DocumentApi.StartAsync(cancellationToken: token);
         var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         var database = await api.TenantOfAsync(cancellationToken: token);
         var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(database, token))!;
-        var peer = new ReplicaId(1UL << 16);
-        await AppliedAsync(1);
         var scratch = Directory.CreateTempSubdirectory("terrabase-drill-checksum-").FullName;
         try
         {
@@ -33,30 +30,17 @@ public sealed class LiveRestoreDrillSafetyTests
             log.Position = 0;
             var written = await api.PutAsync(DocumentApi.NewId(), new { value = "captured" }, cancellationToken: token);
             await Assert.That((int)written.Status).IsBetween(200, 299);
-            await AppliedAsync(2);
-            await using (var report = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, token))
-            {
-                await report.RecordStableAsync(peer, new Hlc(3), DateTimeOffset.UtcNow, token);
-                await report.RecordStableAsync(new ReplicaId(2UL << 16), new Hlc(4), DateTimeOffset.UtcNow, token);
-                _ = await report.RecordAckedAsync(peer, store.Incarnation, 7, new Hlc(5), store.BackupAnchor, DateTimeOffset.UtcNow, members: null, token);
-                _ = await report.RecordAckedAsync(new ReplicaId(3UL << 16), store.Incarnation, 8, new Hlc(6), store.BackupAnchor, DateTimeOffset.UtcNow, members: null, token);
-                _ = await report.CommitAsync(token);
-            }
-
             var latest = await tap.SnapshotAsync(log, reference, token);
             await Assert.That(latest.Read.Bytes).IsGreaterThan(0);
             log.Position = 0;
             await Assert.That(await engine.RollForwardAsync(replayed, SegmentsAsync(), token)).IsTrue();
             var expected = Convert.ToHexString(await engine.RestoreDrillChecksumAsync(reference, token));
             await Assert.That(Convert.ToHexString(await engine.RestoreDrillChecksumAsync(replayed, token))).IsEqualTo(expected);
-            await Assert.That(Convert.ToHexString(await engine.ChecksumAsync(replayed, token)))
-                .IsNotEqualTo(Convert.ToHexString(await engine.ChecksumAsync(reference, token)));
 
             foreach (var mutation in new[]
             {
-                "UPDATE _tb_peers SET applied = applied + 1;",
                 "UPDATE _tb_state SET stamp = stamp + 1;",
-                "UPDATE _tb_merkle SET h1 = h1 + 1;",
+                "UPDATE _tb_state SET h1 = h1 + 1;",
                 "UPDATE commit_offset SET value = value + 1;",
             })
             {
@@ -76,13 +60,6 @@ public sealed class LiveRestoreDrillSafetyTests
         finally
         {
             Directory.Delete(scratch, recursive: true);
-        }
-
-        async Task AppliedAsync(ulong value)
-        {
-            await using var write = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, token);
-            await write.RecordAppliedAsync(peer, new Hlc(value), token);
-            _ = await write.CommitAsync(token);
         }
     }
 
@@ -172,7 +149,6 @@ public sealed class LiveRestoreDrillSafetyTests
             }
             catch (AggregateException)
             {
-                // The deliberately damaged identity has already failed the proof; native cleanup has finished.
             }
 
             Directory.Delete(scratch, recursive: true);

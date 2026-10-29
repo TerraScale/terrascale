@@ -1,102 +1,35 @@
-using System.Collections.Immutable;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Configuration;
-using TerraBase.Engine.Cluster;
 
 namespace TerraBase.Testing;
 
-/// <summary>
-/// A test server's identity and cell. In production ts-orch supplies identity and a peers file; a test
-/// names them with these harness keys instead, which never reach the server as settings:
-/// <list type="bullet">
-/// <item><c>region</c> and <c>node-name</c>: the machine's region and ID.</item>
-/// <item><c>peers</c>: <c>name=host:port</c> members of the cell, this one included; <c>peer-addresses</c>: the other members' peer listeners.</item>
-/// </list>
-/// The harness applies the identity to the registered options and registers a static membership of the listed members,
-/// unless the test registered a <see cref="FakeMemberStore"/>: that fake test directory lists the server while it runs.
-/// </summary>
 internal sealed class TestTopology
 {
-    private static readonly string[] Keys = ["region", "node-name", "peers", "peer-addresses"];
-
     private readonly string _region;
     private readonly string? _machineId;
-    private readonly ImmutableArray<ClusterMember> _members;
-    private readonly string? _ownAddress;
-    private readonly bool _static;
-    private FakeMemberStore? _store;
-    private string _self = "local";
 
     private TestTopology(Dictionary<string, string> values)
     {
         _region = values.GetValueOrDefault("region", "test-region");
         _machineId = values.GetValueOrDefault("node-name");
-        var self = _machineId ?? "local";
-        var members = new List<ClusterMember>();
-        if (values.TryGetValue("peers", out var peers))
-        {
-            foreach (var entry in peers.Split(',', StringSplitOptions.TrimEntries))
-            {
-                var separator = entry.IndexOf('=', StringComparison.Ordinal);
-                members.Add(new ClusterMember(entry[..separator], $"http://{entry[(separator + 1)..]}/", _region, string.Empty));
-            }
-        }
-
-        if (values.TryGetValue("peer-addresses", out var addresses))
-        {
-            members.AddRange(addresses.Split(',', StringSplitOptions.TrimEntries)
-                .Select((address, index) => new ClusterMember($"peer-{index}", new Uri(address).ToString(), _region, string.Empty)));
-        }
-
-        _ownAddress = members.FirstOrDefault(member => member.Name == self)?.PeerAddress;
-        _members = [.. members.Where(member => member.Name != self)];
-        _static = members.Count > 0;
     }
 
-    /// <summary>Takes the topology keys out of <paramref name="values"/>, leaving only settings.</summary>
     public static TestTopology Take(Dictionary<string, string> values)
     {
         var topology = new TestTopology(values);
-        foreach (var key in Keys)
-        {
-            _ = values.Remove(key);
-        }
-
+        _ = values.Remove("region");
+        _ = values.Remove("node-name");
         return topology;
     }
 
-    /// <summary>Gives the server's registered options this identity; before the test's own service changes.</summary>
     public void ApplyIdentity(IServiceCollection services)
     {
         var registered = services.Single(service => service.ServiceType == typeof(TerraBaseOptions));
         var options = (TerraBaseOptions)registered.ImplementationInstance!;
-        var identified = options with
+        services[services.IndexOf(registered)] = ServiceDescriptor.Singleton(options with
         {
             Region = _region,
             MachineId = _machineId ?? options.MachineId,
-        };
-        _self = identified.MachineId;
-        services[services.IndexOf(registered)] = ServiceDescriptor.Singleton(identified);
+        });
     }
-
-    /// <summary>Registers the membership; after the test's own service changes.</summary>
-    public void ApplyMembership(IServiceCollection services)
-    {
-        if (services.LastOrDefault(service => service.ServiceType == typeof(IMemberDirectory)) is { ImplementationInstance: FakeMemberStore store } registered)
-        {
-            _store = store;
-            services[services.IndexOf(registered)] = ServiceDescriptor.Singleton(store.For(_self));
-        }
-        else if (_static)
-        {
-            services.AddSingleton<IMembership>(provider => new StaticMembership(provider.GetRequiredService<TerraBaseOptions>(), _members));
-        }
-    }
-
-    /// <summary>Lists the started server in the test's <see cref="FakeMemberStore"/>, with its peer listener.</summary>
-    public void Started(Uri? peerAddress) =>
-        _store?.Join(new ClusterMember(_self, _ownAddress ?? peerAddress?.ToString() ?? string.Empty, _region, string.Empty));
-
-    /// <summary>Drops the stopping server from the test's <see cref="FakeMemberStore"/>.</summary>
-    public void Stopping() => _store?.Leave(_self);
 }

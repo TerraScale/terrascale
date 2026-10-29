@@ -23,8 +23,6 @@ public sealed class CollectionAuthorizationAdmissionTests
         using var empty = CollectionAccessRulesTests.Reader(api, DocumentApi.NewId());
         await CheckReadsAsync(api, owner, ownId);
         await CheckReadsAsync(api, empty, null);
-
-        // Cross collection-wide row/byte admission separately, without HTTP write loops.
         var store = await StoreAsync(api);
         await SeedAsync(store, DocumentApi.NewId(), hiddenCount, payloadBytes);
         if (indexed)
@@ -34,8 +32,6 @@ public sealed class CollectionAuthorizationAdmissionTests
 
         await CheckReadsAsync(api, owner, ownId);
         await CheckReadsAsync(api, empty, null);
-
-        // Service/project callers retain collection-wide admission, even with a selective submitted predicate.
         var filter = new { eq = new object[] { "$id", ownId } };
         var sorted = await api.QueryAsync(new { filter, sort = new[] { new { path = "/rank" } }, limit = 1 });
         await Assert.That((sorted.Status, sorted.Code)).IsEqualTo((HttpStatusCode.BadRequest, "sort_requires_index"));
@@ -59,14 +55,11 @@ public sealed class CollectionAuthorizationAdmissionTests
         (await api.PutAsync(ownId, new { owner = actor, rank = 7 })).Status.ShouldBe(HttpStatusCode.Created);
         var store = await StoreAsync(api);
         await SeedAsync(store, DocumentApi.NewId(), 100_001, 0);
-        // The trusted owner equality uses the existing expression-index architecture.
         await IndexOwnerAsync(store);
         using var owner = CollectionAccessRulesTests.Reader(api, actor);
         using var empty = CollectionAccessRulesTests.Reader(api, DocumentApi.NewId());
         await CheckReadsAsync(api, owner, ownId);
         await CheckReadsAsync(api, empty, null);
-
-        // The same store still reports incomplete counts to an unrestricted engine caller.
         await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
         await Assert.That(await read.CountAsync("items", null, 100_000, CancellationToken.None)).IsEqualTo((100_000L, false));
     }
@@ -170,7 +163,6 @@ public sealed class CollectionAuthorizationAdmissionTests
 
     private static async Task<DocumentApi> StartAsync()
     {
-        // Admission thresholds must not depend on machine speed; work/row/byte limits remain real.
         var api = await DocumentApi.StartAsync(services: services =>
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()));
         try
@@ -206,11 +198,11 @@ public sealed class CollectionAuthorizationAdmissionTests
             command.CommandText = """
                 WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < $count)
                 INSERT INTO "items" (id, doc) SELECT printf('%026d', n), $body FROM rows;
-                INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2)
-                    SELECT 'items', id, 0, '', 65536, 0, 1, 0, 0 FROM "items" WHERE id <= printf('%026d', $count);
+                INSERT INTO _tb_state (collection, id, state, stamp, origin, live, h1, h2)
+                    SELECT 'items', id, '', 65536, 0, 1, 0, 0 FROM "items" WHERE id <= printf('%026d', $count);
                 WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < $count)
-                INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2)
-                    SELECT 'items', printf('1%025d', n), 0, '', 65536, 0, 0, 0, 0 FROM rows;
+                INSERT INTO _tb_state (collection, id, state, stamp, origin, live, h1, h2)
+                    SELECT 'items', printf('1%025d', n), '', 65536, 0, 0, 0, 0 FROM rows;
                 """;
             command.Parameters.AddWithValue("$count", count);
             command.Parameters.AddWithValue("$body", JsonSerializer.Serialize(new { owner, rank = 1, payload = new string('x', payloadBytes) }));

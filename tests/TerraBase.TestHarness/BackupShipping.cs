@@ -8,7 +8,6 @@ using TerraBase.Features.Backup;
 
 namespace TerraBase.Testing;
 
-/// <summary>One in-process node backing up to the in-memory bucket, shipped only when a test runs a pass.</summary>
 internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeProvider time, ManagedDatabaseRef database, HttpClient data) : IAsyncDisposable
 {
     public ManagementApi Api { get; } = api;
@@ -22,11 +21,6 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
     public string File => $"v1/{Database.Organization}/{Database.Project}/{Database.Id}";
 
     private IContinuousBackup Backup => Api.Server.Services.GetRequiredService<IContinuousBackup>();
-
-    /// <summary>
-    /// A node with the database "main" and its collections "people" and "load", on Enterprise so the frozen test clock never
-    /// exhausts a request budget.
-    /// </summary>
     public static async Task<BackupShippingHost> StartAsync(Action<IServiceCollection>? services = null)
     {
         var s3 = new FakeS3();
@@ -39,7 +33,7 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
         }, time);
         try
         {
-            await api.VerifyCatalogAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+
             var database = await api.CreateManagedDatabaseAsync("main");
             await api.SetPlanAsync(api.User, database.Organization, "enterprise");
             var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -54,19 +48,15 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
         }
     }
 
-    /// <summary>Advances the clock, then runs one shipping pass of every file.</summary>
     public async Task ShipAsync(TimeSpan advance, CancellationToken cancellationToken)
     {
         Time.Advance(advance);
         await Backup.RunOnceAsync(cancellationToken);
     }
 
-    /// <summary>Starts a shipping pass of every file without waiting for it.</summary>
     public Task StartPassAsync(CancellationToken cancellationToken) => Backup.RunOnceAsync(cancellationToken);
 
     public BackupFileStatus Status() => Backup.Status.Files.Single(file => file.File == File);
-
-    /// <summary>Every segment of a generation in the bucket, in key (start, then time) order.</summary>
     public IReadOnlyList<SegmentKey> Segments(string generation) =>
         [.. S3.Objects.Keys.Where(key => key.StartsWith($"{File}/wal/{generation}/", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal).Select(key => BackupLayout.ParseSegment(key)!)];
@@ -77,7 +67,6 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
         response.EnsureSuccessStatusCode();
     }
 
-    /// <summary>The text of a document of the database named <paramref name="databaseName"/>; null when it does not exist.</summary>
     public async Task<string?> ReadAsync(string databaseName, string collection, string name, CancellationToken cancellationToken)
     {
         using var response = await data.GetAsync(ManagementApi.Uri(ManagementApi.DocumentPath(Database with { Name = databaseName }, collection, name)), cancellationToken);
@@ -90,7 +79,6 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
         return (await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("document").GetProperty("text").GetString();
     }
 
-    /// <summary>Restores the database as of <paramref name="at"/> into a new database named <paramref name="name"/>; it must succeed.</summary>
     public async Task RestoreAsync(DateTimeOffset at, string name, CancellationToken cancellationToken)
     {
         using var response = await Api.Client.PostAsJsonAsync(ManagementApi.Uri($"{Database.Path}/point-in-time/restore"), new { pointInTime = at, name }, cancellationToken);
@@ -98,7 +86,6 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(string.Create(CultureInfo.InvariantCulture, $"restore at {at:O}: {body}"));
     }
 
-    /// <summary>The id of the project's database named <paramref name="name"/>, such as a restore.</summary>
     public async Task<string> DatabaseIdAsync(string name, CancellationToken cancellationToken)
     {
         using var response = await Api.Client.GetAsync(ManagementApi.Uri($"/v1/management/organizations/{Database.Organization}/projects/{Database.Project}/databases"), cancellationToken);
@@ -108,11 +95,6 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
     }
 
     public Task<string> MetricsAsync(CancellationToken cancellationToken) => Api.Server.Client.GetStringAsync(ManagementApi.Uri("/metrics"), cancellationToken);
-
-    /// <summary>
-    /// Segments start at 0 and ascend in start, never back in time: no two share a start, so none overlaps another. Reads
-    /// in one pass (a shutdown flush) can share a time.
-    /// </summary>
     public static async Task AssertContiguousAsync(IReadOnlyList<SegmentKey> segments)
     {
         await Assert.That(segments.Count).IsGreaterThan(0);
@@ -130,12 +112,6 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
         await Api.DisposeAsync();
     }
 }
-
-/// <summary>
-/// Writes a backlog of large document updates while the database's first snapshot upload is held, then ships it: the
-/// generation persists, the backlog ships as several segments that each end between transactions, and a restore at the
-/// last write is exact. Fast runs it over one read budget; Slow over the 256 MiB that used to drop every generation.
-/// </summary>
 internal static class BackupBacklogScenario
 {
     private const int Documents = 8;
@@ -161,15 +137,12 @@ internal static class BackupBacklogScenario
         }
         finally
         {
-            // Shutdown ships every file once more; never hold that upload.
             host.S3.BeforePut = null;
             upload.Release();
         }
 
         var generation = host.Status().Generation;
         await Assert.That(generation).IsNotNull();
-
-        // One read budget per pass: lag stays above zero while the backlog remains, and no pass drops the generation.
         var behind = 0;
         for (var pass = 0; pass < 2 * minimumSegments + 10; pass++)
         {
@@ -193,8 +166,6 @@ internal static class BackupBacklogScenario
         await Assert.That(segments.Count).IsGreaterThanOrEqualTo(minimumSegments);
         await BackupShippingHost.AssertContiguousAsync(segments);
         await Assert.That(await host.MetricsAsync(cancellationToken)).DoesNotContain("terrabase_backup_abandoned");
-
-        // The first segment ends between transactions: its restore holds every document as of one cut of the writes.
         await host.RestoreAsync(segments[0].At, "backlog-first", cancellationToken);
         var cut = new int[Documents];
         for (var document = 0; document < Documents; document++)
@@ -206,8 +177,6 @@ internal static class BackupBacklogScenario
         var last = cut.Max();
         await Assert.That(last).IsLessThan(writes - 1);
         await Assert.That(string.Join(',', cut)).IsEqualTo(string.Join(',', Enumerable.Range(0, Documents).Select(document => LastWrite(document, last + 1))));
-
-        // The last segment holds every write: its restore is exact.
         await host.RestoreAsync(segments[^1].At, "backlog-last", cancellationToken);
         for (var document = 0; document < Documents; document++)
         {
@@ -216,14 +185,8 @@ internal static class BackupBacklogScenario
     }
 
     private static string Document(int write) => $"doc-{write % Documents}";
-
-    // Every update differs from every other, so a restore that misses one cannot match by accident.
     private static string Text(int write, string bulk) => string.Create(CultureInfo.InvariantCulture, $"{write:D4}") + bulk[4..];
-
-    // The last of the first `writes` writes that updated `document`, or -1.
     private static int LastWrite(int document, int writes) => writes <= document ? -1 : writes - 1 - (writes - 1 - document) % Documents;
-
-    // Holds each PUT under the prefix until released: a snapshot upload as slow as the test's writes.
     private sealed class HeldUpload(string prefix)
     {
         private readonly TaskCompletionSource<string> _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);

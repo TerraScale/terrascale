@@ -7,16 +7,11 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Import;
 
-/// <summary>
-/// The refusals and recoveries an independent review asked for: crafted SQLite and PostgreSQL inputs, records changed
-/// outside the import, cancellation of a running copy, staging shares and replicated destinations.
-/// </summary>
 public sealed class ImportHardeningTests
 {
     private const int ImportCancellationDeadlineMilliseconds = 540_000;
 
     private static readonly string Fixtures = Path.Combine(AppContext.BaseDirectory, "Import", "Fixtures");
-    private static readonly string[] ReplicaRegions = ["sjc"];
 
     public static IEnumerable<Func<(string Name, string Format, byte[] Bytes, string Code)>> CraftedSources()
     {
@@ -69,7 +64,6 @@ public sealed class ImportHardeningTests
         var done = await client.WaitAsync(import, "completed", "failed");
         await Assert.That(done.GetProperty("state").GetString()).IsEqualTo("completed").Because(done.GetRawText());
         await Assert.That((await client.DocumentAsync(import, "notes_tags", ("id", "1"))).GetProperty("tag").GetString()).IsEqualTo("kept");
-        // A row written before ALTER TABLE … ADD COLUMN reads the default with the column's affinity, as SQLite does.
         var old = await client.DocumentAsync(import, "typed", ("id", "1"));
         await Assert.That(old.GetProperty("n").ValueKind).IsEqualTo(JsonValueKind.Number);
         await Assert.That(old.GetProperty("n").GetInt64()).IsEqualTo(5);
@@ -106,8 +100,6 @@ public sealed class ImportHardeningTests
     {
         await using var client = await ImportClient.StartAsync();
         var bytes = await File.ReadAllBytesAsync(Path.Combine(Fixtures, "pg17-inserts.sql"));
-
-        // A create whose record write failed leaves only the record collection: the retry is accepted.
         var retried = await client.CreateDestinationAsync();
         using (var collection = await client.Client.PostAsJsonAsync(new Uri($"{ImportClient.Data(retried)}/collections", UriKind.Relative), new { name = "terrascale-import" }))
         {
@@ -121,8 +113,6 @@ public sealed class ImportHardeningTests
         _ = await client.UploadAsync(import, bytes);
         var rejected = await client.WaitAsync(import, "ready", "rejected");
         await Assert.That(rejected.GetProperty("state").GetString()).IsEqualTo("rejected");
-
-        // A forged state record: "queued" under the rejected preview.
         var forged = JsonSerializer.Serialize(new
         {
             v = 1,
@@ -151,7 +141,6 @@ public sealed class ImportHardeningTests
         await Assert.That(await client.IdsAsync(import, "readings")).IsEmpty();
     }
 
-    // Five imports sharing one CPU measured 484s, plus one 500-row batch of headroom.
     [Test]
     [Timeout(ImportCancellationDeadlineMilliseconds)]
     public async Task Cancelling_a_running_copy_stops_it_and_resume_continues_to_a_validated_import(CancellationToken _1)
@@ -198,9 +187,9 @@ public sealed class ImportHardeningTests
     }
 
     [Test]
-    public async Task One_organization_cannot_take_the_whole_staging_budget_and_replicated_destinations_import()
+    public async Task One_organization_cannot_take_the_whole_staging_budget_and_another_destination_can_import()
     {
-        await using var client = await ImportClient.StartAsync(new OtherRegions(ReplicaRegions).Register);
+        await using var client = await ImportClient.StartAsync();
         const long Declared = 600L * 1024 * 1024;
         var first = await client.CreateDestinationAsync();
         var second = await client.CreateDestinationAsync();
@@ -216,27 +205,23 @@ public sealed class ImportHardeningTests
         await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("capacity");
 
         var name = "import-" + Primitives.EntityIds.New().ToString().ToLowerInvariant();
-        using (var created = await client.Client.PostAsJsonAsync(new Uri($"/v1/projects/{client.Project}/databases", UriKind.Relative), new { name, replicaRegions = ReplicaRegions }))
+        using (var created = await client.Client.PostAsJsonAsync(new Uri($"/v1/projects/{client.Project}/databases", UriKind.Relative), new { name }))
         {
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         }
-
-        // Every production database has replica regions (decision 0013); the home region imports into it.
-        var replicated = $"/v1/projects/{client.Project}/databases/{name}/import";
+        var destination = $"/v1/projects/{client.Project}/databases/{name}/import";
         var source = Text("{\"_id\":{\"$oid\":\"0123456789abcdef01234567\"},\"n\":1}\n{\"n\":2}\n");
-        await Assert.That((await client.CreateAsync(replicated, "ndjson", source, new { collection = "items" })).Status).IsEqualTo(HttpStatusCode.Created);
-        await Assert.That((await client.UploadAsync(replicated, source)).Status).IsEqualTo(HttpStatusCode.OK);
-        var ready = await client.WaitAsync(replicated, "ready", "rejected");
+        await Assert.That((await client.CreateAsync(destination, "ndjson", source, new { collection = "items" })).Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((await client.UploadAsync(destination, source)).Status).IsEqualTo(HttpStatusCode.OK);
+        var ready = await client.WaitAsync(destination, "ready", "rejected");
         await Assert.That(ready.GetProperty("state").GetString()).IsEqualTo("ready").Because(ready.GetRawText());
-        await client.StartAsync(replicated, ready.GetProperty("preview").GetProperty("id").GetString());
-        var done = await client.WaitAsync(replicated, "completed", "failed");
+        await client.StartAsync(destination, ready.GetProperty("preview").GetProperty("id").GetString());
+        var done = await client.WaitAsync(destination, "completed", "failed");
         await Assert.That(done.GetProperty("state").GetString()).IsEqualTo("completed").Because(done.GetRawText());
-        await Assert.That((await client.IdsAsync(replicated, "items")).Count).IsEqualTo(2);
+        await Assert.That((await client.IdsAsync(destination, "items")).Count).IsEqualTo(2);
     }
 
     private static byte[] Text(string text) => Encoding.UTF8.GetBytes(text);
-
-    // Points the second cell of the schema page at the first one's bytes.
     private static byte[] Overlapping(byte[] file)
     {
         var copy = (byte[])file.Clone();

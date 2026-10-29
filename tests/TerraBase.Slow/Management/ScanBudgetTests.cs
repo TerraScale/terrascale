@@ -16,12 +16,11 @@ public sealed class ScanBudgetTests
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "items");
         await ManagementApi.CreateCollectionAsync(data, database, "probe");
-        // Enough rows to exhaust a counting scan's work/scan budget. Since #531, collection lists and usage read
-        // maintained counts instead. Direct fixture writes must populate those counts as PutRow would.
+
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 1100000)
             INSERT INTO "items" (id, doc) SELECT printf('00000000-0000-7000-8000-%012x', n), '{"n":1}' FROM rows;
-            INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2) SELECT 'items', id, 0, '', 65536, 0, 1, 0, 0 FROM "items";
+            INSERT INTO _tb_state (collection, id, state, stamp, origin, live, h1, h2) SELECT 'items', id, '', 65536, 0, 1, 0, 0 FROM "items";
             INSERT INTO _tb_collection_stats (collection, documents, bytes) SELECT 'items', count(*), sum(octet_length(doc)) FROM "items";
             """);
         using var collections = await api.Client.GetAsync(ManagementApi.Uri($"{database.Path}/collections"));
@@ -57,7 +56,7 @@ public sealed class ScanBudgetTests
     [Test]
     public async Task Project_usage_refuses_more_databases_than_one_request_reads()
     {
-        // Test the database-count boundary independently of the request's five-second execution budget.
+
         await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider());
         var first = await api.CreateManagedDatabaseAsync("db-0");
         await api.SetPlanAsync(api.User, first.Organization, "enterprise");
@@ -76,7 +75,6 @@ public sealed class ScanBudgetTests
         await ErrorAssert.ErrorAsync(more, HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
     }
 
-    // Follow the rejected scan with a write through the real listener to verify the database remains usable.
     private static async Task AssertWriteAfterRejectionAsync(HttpClient data, ManagedDatabaseRef database, string rejected)
     {
         var ops = Enumerable.Range(0, 50)

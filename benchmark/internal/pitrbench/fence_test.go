@@ -10,15 +10,11 @@ import (
 	"time"
 )
 
-// Tiny runs for the phase fence: load-a is documents 0 to 12 (one batch), load-b is document 13 alone, u1 updates 7,
-// d1 deletes 7 and 13, r1 re-creates 13. So a held load-b attempt is a batch whose every document d1 deletes: without
-// the fence, its create would apply over the tombstone.
 const (
 	fenceDocs  = 14
 	fenceSplit = 13
 )
 
-// holdNext holds the next k transactions at the server until their channel is closed; each reports its status.
 func holdNext(db *fakeDB, k int) ([]chan struct{}, chan int) {
 	db.mu.Lock()
 	base := db.tx
@@ -37,7 +33,6 @@ func holdNext(db *fakeDB, k int) ([]chan struct{}, chan int) {
 	return holds, evaluated
 }
 
-// checkOracle asserts every document of the fake equals the oracle after the phases.
 func checkOracle(t *testing.T, r *Run, db *fakeDB, phases ...string) {
 	t.Helper()
 	o, _ := NewOracle(r, phases)
@@ -63,11 +58,11 @@ func TestFenceRejectsALoadAttemptHeldPastTheDelete(t *testing.T) {
 			db.ignoreAsserts = control
 			write(t, r, "load-a", WriteConfig{})
 			holds, evaluated := holdNext(db, 1)
-			write(t, r, "load-b", WriteConfig{Writers: 1, Timeout: 500 * time.Millisecond}) // the retry applies
+			write(t, r, "load-b", WriteConfig{Writers: 1, Timeout: 500 * time.Millisecond})
 			db.setFault(nil)
 			write(t, r, "u1", WriteConfig{})
 			write(t, r, "d1", WriteConfig{})
-			close(holds[0]) // the first load-b attempt reaches the database only now
+			close(holds[0])
 			status := <-evaluated
 			id := DocID(r.Seed, 13)
 			db.mu.Lock()
@@ -93,7 +88,7 @@ func TestFenceRejectsAnUpdateAttemptHeldPastDeleteAndRecreate(t *testing.T) {
 	write(t, r, "load-a", WriteConfig{})
 	write(t, r, "load-b", WriteConfig{})
 	holds, evaluated := holdNext(db, 2)
-	write(t, r, "u1", WriteConfig{Writers: 1, Timeout: 500 * time.Millisecond}) // the third attempt applies
+	write(t, r, "u1", WriteConfig{Writers: 1, Timeout: 500 * time.Millisecond})
 	db.setFault(nil)
 	write(t, r, "d1", WriteConfig{})
 	close(holds[0])
@@ -118,14 +113,14 @@ func TestFenceRejectsLoadAttemptsHeldAcrossDeleteAndRecreate(t *testing.T) {
 	db.setFault(nil)
 	write(t, r, "u1", WriteConfig{})
 	write(t, r, "d1", WriteConfig{})
-	close(holds[0]) // between d1 and r1: 13 is a tombstone, a create would apply
+	close(holds[0])
 	if status := <-evaluated; status != 412 {
 		t.Fatalf("a load-b attempt released between d1 and r1 answered %d, want 412", status)
 	}
 	write(t, r, "r1", WriteConfig{})
 	versions, _ := OpenVersions(r, "r1")
 	before, _ := versions.Get(0)
-	close(holds[1]) // after r1
+	close(holds[1])
 	if status := <-evaluated; status != 412 {
 		t.Fatalf("a load-b attempt released after r1 answered %d, want 412", status)
 	}
@@ -141,7 +136,7 @@ func TestFenceRejectsLoadAttemptsHeldAcrossDeleteAndRecreate(t *testing.T) {
 
 func TestAnUnresolvedBatchBlocksTheFenceTheNextPhaseAndCuts(t *testing.T) {
 	r, db := newTestRun(t, testDocs, testSplit)
-	db.setFault(func(n int) *fault { return &fault{reject: 503} }) // never applies, never answers a proof
+	db.setFault(func(n int) *fault { return &fault{reject: 503} })
 	if _, err := Write(context.Background(), r, WriteConfig{Phase: "load-a", Writers: 1, MaxAttempts: 1, Timeout: time.Second}); err == nil {
 		t.Fatal("load-a with no proven outcome succeeded")
 	}
@@ -164,25 +159,20 @@ func TestAnUnresolvedBatchBlocksTheFenceTheNextPhaseAndCuts(t *testing.T) {
 	}
 }
 
-func TestAFencedPhaseNeverRunsAgainAndPeersRefuseWrites(t *testing.T) {
-	r, db := newTestRun(t, testDocs, testSplit)
+func TestAFencedPhaseNeverRunsAgain(t *testing.T) {
+	r, _ := newTestRun(t, testDocs, testSplit)
 	if stats := write(t, r, "load-a", WriteConfig{}); !stats.Fenced {
 		t.Fatalf("a complete load-a was not fenced: %+v", stats)
 	}
 	if _, err := Write(context.Background(), r, WriteConfig{Phase: "load-a", Writers: 1}); err == nil || !strings.Contains(err.Error(), "fenced") {
 		t.Fatalf("rerunning a fenced phase: %v", err)
 	}
-	db.mu.Lock()
-	db.peers = true
-	db.mu.Unlock()
-	if _, err := Write(context.Background(), r, WriteConfig{Phase: "load-b", Writers: 1}); err == nil || !strings.Contains(err.Error(), "peers") {
-		t.Fatalf("writing with a replication peer: %v", err)
-	}
+
 }
 
 func TestALostFenceAcknowledgementIsRetriedAndProvenByRead(t *testing.T) {
 	r, db := newTestRun(t, testDocs, testSplit)
-	// load-a's 2 batches are transactions 1 and 2; the fence create is 3: it commits, its answer is lost.
+
 	db.setFault(func(n int) *fault { return map[bool]*fault{true: {abortAfter: true}}[n == 3] })
 	if stats := write(t, r, "load-a", WriteConfig{Writers: 1}); !stats.Fenced {
 		t.Fatalf("load-a was not fenced after a lost fence answer: %+v", stats)

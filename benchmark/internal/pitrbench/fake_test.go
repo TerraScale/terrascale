@@ -14,44 +14,35 @@ import (
 	"testing"
 	"time"
 
-	"terrascale.tech/ts-benchmark/internal/replbench"
+	"terrascale.tech/ts-benchmark/internal/benchclient"
 )
 
-// fakeDB is the subset of a TerraBase database the harness uses, with the precondition semantics of
-// src/TerraBase/Features/Documents/ETags.cs (CheckVersion: if_match matches the current version, a tombstone's
-// included; create fails on a live document), assert-absent evaluated before any write (DocumentService.cs), atomic
-// transactions from one writer, $id-range and acct queries with counts, markers, fences, nudges, a replication status
-// and a simulated continuous-backup shipper, plus fault injection. The pinned binary's actual semantics are checked
-// separately by the semantics probe (pitr-bench probe); this fake only makes the harness's own logic testable
-// deterministically.
 type fakeDB struct {
 	mu         sync.Mutex
-	docs       map[string]*fakeDoc            // the events collection
-	other      map[string]map[string]*fakeDoc // every other collection (markers, fences, nudges)
-	byAcct     map[string]map[string]bool     // live ids per acct value
-	applied    map[string]int                 // writes applied per id: exactly-once is checked against this
+	docs       map[string]*fakeDoc
+	other      map[string]map[string]*fakeDoc
+	byAcct     map[string]map[string]bool
+	applied    map[string]int
 	seq        int
 	tx         int
 	gets       int
-	dropDelete map[string]bool // simulated server bug: a delete answered 200 that did not apply
+	dropDelete map[string]bool
 	fault      func(n int) *fault
-	noBackup   bool // a node without backup: /v1/backup lists no files
-	// ignoreAsserts is the control: the fake drops assertions, as if the writer had sent none.
+	noBackup   bool
+
 	ignoreAsserts bool
 	nudges        []fakeNudge
-	peers         bool            // the node reports a replication peer
-	indexHides    map[string]bool // simulated index bug: these ids are missing from acct queries
-	// The shipper: a pass (run on a /v1/backup poll, at most every 5 ms, only when something was written since the last)
-	// stores every write so far (shippedSeq) and sets lastShipped, the time it finished reading.
-	writes       int // write sequence number: transactions and nudges
+	indexHides    map[string]bool
+
+	writes       int
 	shippedSeq   int
 	lastShipped  time.Time
 	lastPass     time.Time
-	racyMarker   bool   // a pass finishes as the marker is written, having read everything but the marker
-	stopAtMarker bool   // ... and the shipper then stops for good
-	stopOnNudge  string // the shipper stops for good once a nudge with this why is written
+	racyMarker   bool
+	stopAtMarker bool
+	stopOnNudge  string
 	stopped      bool
-	// restoreStatus and restoreBody answer POST …/point-in-time/restore (nothing is restored); window GET …/point-in-time.
+
 	restoreStatus int
 	restoreBody   string
 	window        string
@@ -62,7 +53,7 @@ type fakeDoc struct {
 	version string
 	body    []byte
 	acct    string
-	write   int // the write sequence number that set this state
+	write   int
 }
 
 type fakeNudge struct {
@@ -70,18 +61,16 @@ type fakeNudge struct {
 	at  time.Time
 }
 
-// fault changes how transaction request n is handled.
 type fault struct {
-	hold         chan struct{} // evaluate only once closed (the client may have timed out long before)
-	evaluated    chan int      // receives the status once evaluated
-	abortAfter   bool          // reset the stream after applying: a lost acknowledgement
-	failAfter    bool          // answer 500 after applying
-	afterCommit  func()        // called after applying, before answering, under the database's lock
-	reject       int           // answer this status without evaluating anything
-	partialApply int           // simulated atomicity bug: apply only the first n ops, answer as if all applied
+	hold         chan struct{}
+	evaluated    chan int
+	abortAfter   bool
+	failAfter    bool
+	afterCommit  func()
+	reject       int
+	partialApply int
 }
 
-// setFault replaces the fault function under the lock.
 func (f *fakeDB) setFault(fn func(n int) *fault) {
 	f.mu.Lock()
 	f.fault = fn
@@ -102,7 +91,6 @@ type fakeOp struct {
 	Document   json.RawMessage `json:"document"`
 }
 
-// coll is a collection's documents; the caller holds the lock.
 func (f *fakeDB) coll(name string) map[string]*fakeDoc {
 	if name == "events" {
 		return f.docs
@@ -113,7 +101,6 @@ func (f *fakeDB) coll(name string) map[string]*fakeDoc {
 	return f.other[name]
 }
 
-// live is the live ids of a collection, sorted.
 func (f *fakeDB) live(name string) []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -128,9 +115,9 @@ func (f *fakeDB) live(name string) []string {
 }
 
 func (f *fakeDB) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Tests change these between or during requests, so read them under the same lock.
+
 	f.mu.Lock()
-	peers, noBackup, window, restoreStatus, restoreBody := f.peers, f.noBackup, f.window, f.restoreStatus, f.restoreBody
+	noBackup, window, restoreStatus, restoreBody := f.noBackup, f.window, f.restoreStatus, f.restoreBody
 	f.mu.Unlock()
 	switch {
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/transactions"):
@@ -140,12 +127,8 @@ func (f *fakeDB) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/collections"):
 		w.WriteHeader(http.StatusCreated)
 		fmt.Fprint(w, `{}`)
-	case r.Method == http.MethodGet && r.URL.Path == "/replication":
-		if peers {
-			fmt.Fprint(w, `{"initialized":true,"peers":[{"region":"sjc"}]}`)
-		} else {
-			fmt.Fprint(w, `{"initialized":true,"peers":[]}`)
-		}
+	case r.Method == http.MethodGet && r.URL.Path == "/healthz":
+		fmt.Fprint(w, `{"status":"ok"}`)
 	case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/collections/nudges/documents/by-key"):
 		var body struct {
 			Why string `json:"why"`
@@ -206,14 +189,14 @@ func (f *fakeDB) transaction(w http.ResponseWriter, r *http.Request) {
 	f.mu.Unlock()
 	var flt *fault
 	if faultOf != nil {
-		flt = faultOf(n) // outside the lock: a fault may wait for another request to be evaluated
+		flt = faultOf(n)
 	}
 	if flt != nil && flt.reject != 0 {
 		http.Error(w, `{"error":{"code":"rejected_by_fault"}}`, flt.reject)
 		return
 	}
 	if flt != nil && flt.hold != nil {
-		<-flt.hold // deliberately ignores the client having gone away: a late commit
+		<-flt.hold
 	}
 	limit := len(req.Ops)
 	if flt != nil && flt.partialApply > 0 {
@@ -244,8 +227,6 @@ func (f *fakeDB) transaction(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"offset": fmt.Sprint(n), "durability": "local_durable", "results": results})
 }
 
-// apply evaluates every precondition and assertion first and applies all ops or none (the first limit, with the
-// atomicity bug), as one writer: transactions are strictly ordered.
 func (f *fakeDB) apply(ops []fakeOp, limit int) (int, []map[string]any) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -278,7 +259,7 @@ func (f *fakeDB) apply(ops []fakeOp, limit int) (int, []map[string]any) {
 	}
 	for _, op := range ops {
 		if op.Collection == "markers" && f.racyMarker {
-			// A pass that began before the marker committed finishes now: it reports a time at the marker's, without it.
+
 			f.lastShipped, f.lastPass, f.shippedSeq = time.Now(), time.Now(), f.writes
 			f.stopped = f.stopAtMarker
 		}
@@ -296,14 +277,14 @@ func (f *fakeDB) apply(ops []fakeOp, limit int) (int, []map[string]any) {
 		case op.Collection != "events":
 			f.coll(op.Collection)[op.ID] = &fakeDoc{live: op.Op != "delete", version: version, body: op.Document, write: f.writes}
 		case k >= limit:
-			// The bug: answered as applied, nothing changes.
+
 		case op.Op == "delete" && f.dropDelete[op.ID]:
-			// The bug: a version is answered, nothing changes.
+
 		case op.Op == "delete":
 			f.set(op.ID, &fakeDoc{version: version})
 			f.applied[op.ID]++
 		default:
-			canonical, _ := replbench.Canonical(op.Document)
+			canonical, _ := benchclient.Canonical(op.Document)
 			f.set(op.ID, &fakeDoc{live: true, version: version, body: canonical})
 			f.applied[op.ID]++
 		}
@@ -312,7 +293,6 @@ func (f *fakeDB) apply(ops []fakeOp, limit int) (int, []map[string]any) {
 	return http.StatusOK, results
 }
 
-// set stores a document state and keeps the acct index; the caller holds the lock.
 func (f *fakeDB) set(id string, d *fakeDoc) {
 	d.write = f.writes
 	if old := f.docs[id]; old != nil && old.live {
@@ -350,7 +330,6 @@ func (f *fakeDB) get(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// query answers the filters the harness sends: an and of $id gte/lt bounds, or eq on /acct; limit, cursor, project.
 func (f *fakeDB) query(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Filter  json.RawMessage `json:"filter"`
@@ -362,7 +341,7 @@ func (f *fakeDB) query(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	var conds [][3]string // op, path, value
+	var conds [][3]string
 	var parse func(raw json.RawMessage) error
 	parse = func(raw json.RawMessage) error {
 		var node map[string]json.RawMessage
@@ -450,7 +429,6 @@ func (f *fakeDB) query(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(out)
 }
 
-// newTestRun is a run directory whose node.json points at a fake database over h2c, as the real internal listener.
 func newTestRun(t *testing.T, docs, split int64) (*Run, *fakeDB) {
 	t.Helper()
 	db := newFakeDB()

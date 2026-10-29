@@ -9,21 +9,13 @@ using TerraBase.Engine.Turso;
 using TerraBase.Errors;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Memory;
-using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Fast.Shapes;
 
-/// <summary>
-/// Filtered shapes (FR-15, shape-reads.md section 2): a <c>where</c> parses as the query v1 filter of
-/// <c>POST …/query</c>, canonicalizes so equivalent spellings share one handle, matches a materialized document exactly
-/// as the query endpoint does, and at most 64 filtered shapes per database stay admitted.
-/// </summary>
 public sealed class ShapeFilterTests
 {
-    // Values that separate Turso's comparison rules from .NET defaults: exact integer/real comparison beyond 2^53,
-    // UTF-8 byte order of astral characters against U+E000..U+FFFF, arrays holding null, nested and missing members.
     private static readonly string[] Documents =
     [
         """{"n":1,"s":"a","b":true,"tags":["x",null,2],"o":{"k":"v"}}""",
@@ -82,7 +74,6 @@ public sealed class ShapeFilterTests
         }
 
         var stored = await StoredAsync(api, ids);
-        // More than 64 values switches the SQL translation to json_each; the predicate must not change with it.
         var many = $$"""{"in":["/n",[{{string.Join(',', Enumerable.Range(2, 70))}},1.0,"1"]]}""";
         foreach (var where in Filters.Append(many))
         {
@@ -97,7 +88,7 @@ public sealed class ShapeFilterTests
         await Assert.That(Parsed("""{"exists":"$id"}""").Matches(stored[0] with { Deleted = true })).IsFalse()
             .Because("a document deleted by seal time is sent as a delete");
         await Assert.That(all.Matches(stored[0] with { UniqueConflict = true })).IsFalse()
-            .Because("queries exclude documents that lost a replicated uniqueness conflict");
+            .Because("queries exclude documents that have a uniqueness conflict");
     }
 
     [Test]
@@ -151,8 +142,6 @@ public sealed class ShapeFilterTests
         await Assert.That(Parsed("""{ "eq" : [ "/s" , "<b>" ] }""").Canonical).IsEqualTo("""{"eq":["/s","<b>"]}""")
             .Because("compact JSON with relaxed escaping keeps < literal");
         await Assert.That(ShapeFilter.All.Canonical).IsEmpty();
-
-        // Literals keep their JSON type and value: none of these may share a handle.
         string[] distinct =
         [
             """{"eq":["/n",1]}""", """{"eq":["/n","1"]}""", """{"eq":["/n",true]}""", """{"eq":["/n",null]}""",
@@ -179,8 +168,6 @@ public sealed class ShapeFilterTests
         await Assert.That(Parsed(canonical).Canonical).IsEqualTo(canonical);
         await Assert.That((await QueryIdsAsync(api, canonical)).Length).IsEqualTo(1)
             .Because("the regrouped canonical form is a valid query filter with the same meaning");
-
-        // Exactly 256 syntax nodes: the root, four groups, and 251 distinct leaves. Every group has at most 64 children.
         string Group(string op, int start, int count)
         {
             return $$"""{"{{op}}":[{{string.Join(',', Enumerable.Range(start, count).Select(i => $$"""{"ne":["/n",{{i}}]}"""))}}]}""";
@@ -239,8 +226,6 @@ public sealed class ShapeFilterTests
             await Assert.That(Evicted(registry.Admit(first, DocumentApi.Collection, shape))).IsEmpty();
             await Assert.That(Evicted(registry.Admit(second, DocumentApi.Collection, shape))).IsEmpty();
         }
-
-        // Touching shape 0 makes shape 1 the least recently used of the first database.
         await Assert.That(registry.Check(first, DocumentApi.Collection, shapes[0])).IsNull();
         await Assert.That(Evicted(registry.Admit(first, DocumentApi.Collection, shapes[^1])))
             .IsEquivalentTo([new ShapeFilterKey(first.DatabaseId!, DocumentApi.Collection, shapes[1].Canonical)]);
@@ -257,14 +242,10 @@ public sealed class ShapeFilterTests
         await Assert.That(registry.Check(first, "other", shapes[0])?.Code).IsEqualTo("must_refetch").Because("a shape is one collection");
         await Assert.That(Evicted(registry.Admit(first, DocumentApi.Collection, ShapeFilter.All))).IsEmpty();
         await Assert.That(registry.Check(first, DocumentApi.Collection, ShapeFilter.All)).IsNull().Because("unfiltered shapes are not counted");
-
-        // A new bootstrap admits it again, evicting the next least recently used.
         await Assert.That(Evicted(registry.Admit(first, DocumentApi.Collection, shapes[1])))
             .IsEquivalentTo([new ShapeFilterKey(first.DatabaseId!, DocumentApi.Collection, shapes[2].Canonical)]);
         await Assert.That(registry.Check(first, DocumentApi.Collection, shapes[1])).IsNull();
         await Assert.That(budget.Outstanding).IsEqualTo(2 * ShapeFilterRegistry.MaxPerDatabase).Because("every admitted shape holds one reservation");
-
-        // An exhausted budget refuses a new shape without evicting anything; admitted shapes keep serving.
         budget.Refuse = true;
         var refused = registry.Admit(first, DocumentApi.Collection, Parsed("""{"eq":["/n","new"]}"""));
         await Assert.That(refused is QuotaExceeded { Code: "shape_busy" }).IsTrue();
@@ -281,7 +262,6 @@ public sealed class ShapeFilterTests
         await using var api = await DocumentApi.StartAsync();
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { d = 1 })).Status.ShouldBe(HttpStatusCode.Created);
-        // Both API and engine reject new duplicates; inject a retained legacy body on this test's writer.
         var store = (TursoDatabaseStore)(await api.Server.Services.GetRequiredService<TursoStorageEngine>()
             .OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
         _ = await store.WithWriterAsync(session =>
@@ -349,13 +329,13 @@ public sealed class ShapeFilterTests
             var collection = await transaction.GetCollectionAsync(DocumentApi.Collection, CancellationToken.None)
                 ?? throw new InvalidOperationException("the collection is missing");
             using var canonical = JsonDocument.Parse(filter.Canonical);
-            var identity = ShapeHandle.Compute(store, engine.ReplicaId, collection, canonical.RootElement);
+            var identity = ShapeHandle.Compute(store, collection, canonical.RootElement);
             shape = new ShapeSealDefinition(identity.ShapeId, identity.Handle, collection.Name, collection.Id,
                 RandomNumberGenerator.GetBytes(16), store.Incarnation, filter.Matches);
         }
 
         var sealer = new ShapeSealer(api.Server.Services.GetRequiredService<IMemoryBudget>(),
-            NullLogger<ShapeSealer>.Instance, new TursoShapeStorage(engine), new LocalDurability());
+            NullLogger<ShapeSealer>.Instance, new TursoShapeStorage(engine));
         var end = await sealer.SealUpToHeadAsync(store, shape, start, CancellationToken.None);
         using var chunk = await sealer.ReadChunkAsync(store, shape.Handle, start, CancellationToken.None)
             ?? throw new InvalidOperationException("the filtered chunk is missing");
@@ -416,7 +396,6 @@ public sealed class ShapeFilterTests
         return stored;
     }
 
-    // Counts the real budget's outstanding reservations, and can refuse as an exhausted budget does.
     private sealed class ProbeBudget(IMemoryBudget inner) : IMemoryBudget
     {
         private int _outstanding;

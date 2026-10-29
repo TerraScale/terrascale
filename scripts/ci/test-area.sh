@@ -15,7 +15,7 @@ case "$1:$2" in
     dotnet publish src/TerraBase --configuration Release --runtime linux-x64 --self-contained --no-restore --output "$RUNNER_TEMP/terrabase-publish"
     make -o restore terrabase-test-fast CONFIGURATION=Release
     scripts/vendor/test-turso-native-singlefile.sh
-    make -j2 -o restore -o terrabase-build terrabase-replication-matrix terrabase-e2e-local CONFIGURATION=Release
+    make -j2 -o restore -o terrabase-build terrabase-e2e-local CONFIGURATION=Release
     ;;
   *)
     echo 'Expected fast and libs|terrabase' >&2

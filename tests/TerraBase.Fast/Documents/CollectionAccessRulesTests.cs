@@ -1,9 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
-using TerraBase.Engine.Lattices;
 
 namespace TerraBase.Fast.Documents;
 
@@ -23,13 +21,10 @@ public sealed class CollectionAccessRulesTests
         {
             (await api.PutAsync(DocumentApi.NewId(), new { owner = actor, body = new string('x', 2049) })).Status.ShouldBe(HttpStatusCode.Created);
         }
-
-        // Writes' internal authorization/precondition reads do not count as client reads.
         await Assert.That(await api.ReadUsageAsync()).IsEqualTo((0L, 0L));
         using var user = Reader(api, actor);
         foreach (var client in new[] { api.Client, user, api.Client, user })
         {
-            // Repeated project requests exercise both cache fill and cache hit. Explain bypasses that cache.
             var before = await api.ReadUsageAsync();
             await Assert.That((await SendAsync(client, HttpMethod.Get, api.Document(id))).Status).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(await api.ReadUsageAsync()).IsEqualTo((before.Units + 3, before.Reads + 1));
@@ -40,14 +35,13 @@ public sealed class CollectionAccessRulesTests
                 var page = await SendAsync(client, request.Item1, request.Item2, request.Item3);
                 await Assert.That(page.Status).IsEqualTo(HttpStatusCode.OK);
                 await Assert.That(page.Ids.Count).IsEqualTo(4);
-                // 3 + 1 + 1 + 1, independently rounded; count/scan/explain are not extra reads.
                 await Assert.That(await api.ReadUsageAsync()).IsEqualTo((before.Units + 6, before.Reads + 1));
             }
         }
     }
 
     [Test]
-    public async Task Rules_are_strict_replicated_metadata_preserving_schema_and_ttl()
+    public async Task Rules_are_strict_metadata_preserving_schema_and_ttl()
     {
         await using var source = await CollectionAccessRulesTests.StartAsync();
         var path = Rules(source);
@@ -72,23 +66,8 @@ public sealed class CollectionAccessRulesTests
         await DeclareAsync(source, OwnerRules());
         await Assert.That((await source.SendAsync(HttpMethod.Get, $"{source.Collections}/items/schema")).Json.GetProperty("schema").GetProperty("type").GetString()).IsEqualTo("object");
         await Assert.That((await source.SendAsync(HttpMethod.Get, $"{source.Collections}/items/ttl")).Json.GetProperty("path").GetString()).IsEqualTo("/expiresAt");
-        var sourceStore = (await source.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await source.TenantOfAsync(), CancellationToken.None))!;
-        await using var sourceTransaction = await sourceStore.BeginTransactionAsync(write: false, CancellationToken.None);
-        var metadata = (await sourceTransaction.GetAsync(DocumentDelta.Collections, "items", CancellationToken.None))!;
-        using var body = JsonDocument.Parse(metadata.Json);
-        var at = new EntryVersion(new Hlc(((ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16) + 1000), ReplicaId.Of(4111, 7, 1));
-        var state = DocumentState.Bottom.Put(at, body.RootElement);
-        await using var replica = await CollectionAccessRulesTests.StartAsync();
-        var replicaStore = (await replica.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await replica.TenantOfAsync(), CancellationToken.None))!;
-        await using (var write = await replicaStore.BeginTransactionAsync(write: true, CancellationToken.None))
-        {
-            await Assert.That(await write.JoinAsync(DocumentDelta.Collections, "items", state, at, CancellationToken.None)).IsTrue();
-            await write.CommitAsync(CancellationToken.None);
-        }
-
-        var copied = await replica.SendAsync(HttpMethod.Get, Rules(replica));
-        await Assert.That(copied.Json.GetProperty("rules").GetProperty("owner").GetString()).IsEqualTo("/owner");
-        await Assert.That((await replica.SendAsync(HttpMethod.Get, $"{replica.Collections}/items/ttl")).Json.GetProperty("path").GetString()).IsEqualTo("/expiresAt");
+        var rules = await source.SendAsync(HttpMethod.Get, Rules(source));
+        await Assert.That(rules.Json.GetProperty("rules").GetProperty("owner").GetString()).IsEqualTo("/owner");
     }
 
     [Test]
@@ -99,7 +78,6 @@ public sealed class CollectionAccessRulesTests
         var other = DocumentApi.NewId();
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { owner = other, secret = "hidden" })).Status.ShouldBe(HttpStatusCode.Created);
-        // Populate the ordinary shared caches before an end-user request.
         (await api.GetAsync(id)).Status.ShouldBe(HttpStatusCode.OK);
         (await api.QueryAsync(new { })).Status.ShouldBe(HttpStatusCode.OK);
         var beforeDenied = await api.ReadUsageAsync();
@@ -198,7 +176,6 @@ public sealed class CollectionAccessRulesTests
         await Assert.That((await SendAsync(wrongCase, HttpMethod.Get, api.Documents)).Ids).IsEmpty();
         var near = await SendAsync(user, HttpMethod.Post, api.Query, new { sort = new[] { new { near = new { path = "/vector", vector = Vector } } } });
         await Assert.That(near.Ids.Count).IsEqualTo(2);
-        // Counts and scans include no hidden-document units; a successful empty page still counts one read.
         await Assert.That(await api.ReadUsageAsync()).IsEqualTo((9L, 5L));
         await DeclareAsync(api, rules with { Read = new CollectionAccessPolicy(true, true, []) });
         await Assert.That((await SendAsync(user, HttpMethod.Post, api.Query, continuation)).Code).IsEqualTo("invalid_cursor");

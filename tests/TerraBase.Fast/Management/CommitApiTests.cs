@@ -24,7 +24,8 @@ public sealed class CommitApiTests
     private const string ReplayedHeader = "TerraBase-Commit-Replayed";
     private static readonly Faker Faker = new();
     private static readonly string[] StatusField = ["status"];
-    private static readonly string[] RecoveryReplicas = ["sjc"];
+    private static readonly string[] RecoveryReplicas = [];
+    private static readonly string[] ConflictingReplicas = ["fra"];
 
     [Test]
     public async Task Identical_catalog_creates_initialize_missing_storage_without_rewriting_the_registration()
@@ -102,7 +103,7 @@ public sealed class CommitApiTests
                 project,
                 id = database,
                 name = conflict == "database" ? "changed" : "original",
-                replica_regions = new[] { conflict == "placement" ? "fra" : "sjc" }
+                replica_regions = conflict == "placement" ? ConflictingReplicas : RecoveryReplicas
             });
         await Assert.That((attempted.Status, attempted.Code)).IsEqualTo((HttpStatusCode.Conflict, "id_taken"));
         await Assert.That(attempted.Op).IsEqualTo((int?)(conflict == "organization" ? 0 : conflict == "project" ? 1 : 2));
@@ -145,7 +146,7 @@ public sealed class CommitApiTests
     public async Task A_commit_creates_an_organization_a_project_and_a_document_naming_both()
     {
         await using var api = await ManagementApi.StartAsync();
-        // Dashboard documents need the trusted service: the platform operator acting as the user.
+
         using var service = api.Service(api.User);
         var (organization, project, document) = (NewId(), NewId(), NewId());
         var (organizationName, projectName) = (OrganizationName(), ProjectName());
@@ -171,14 +172,14 @@ public sealed class CommitApiTests
         await Assert.That(readOrganization.Json.GetProperty("name").GetString()).IsEqualTo(organizationName);
         await Assert.That(readProject.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(readProject.Json.GetProperty("name").GetString()).IsEqualTo(projectName);
-        // The acting user owns the organization created in the commit.
+
         await Assert.That(Roles(members.Json)).IsEquivalentTo([$"{api.User}=owner"]);
         await Assert.That(readDocument.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(readDocument.ETag).IsEqualTo(commit.Result(2).GetProperty("version").GetString());
         await Assert.That(readDocument.Json.GetProperty("document").GetProperty("organization").GetString()).IsEqualTo(organization);
         await Assert.That(readDocument.Json.GetProperty("document").GetProperty("project").GetString()).IsEqualTo(project);
         await Assert.That(Strings(queried.Json, "id")).IsEquivalentTo([document]);
-        // Nothing changed since the commit, so its versions are the current ones.
+
         await Assert.That(versions.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(OrganizationVersion(versions.Json, organization)).IsEqualTo(OrganizationVersion(commit.Json.GetProperty("versions"), organization));
         await Assert.That(versions.Json.GetProperty("account").GetString())
@@ -202,7 +203,6 @@ public sealed class CommitApiTests
             await Assert.That(read.ETag).IsEqualTo(Version(written, i));
         }
 
-        // Caller-chosen keys and other id formats are not document ids: writes and reads refuse them.
         string[] invalid = ["settings", "doc_existing", "00112233-4455-6677-8899-aabbccddeeff", keys[0].ToLowerInvariant(), "a/b", "%", "雪😀", "e\u0301"];
         foreach (var key in invalid)
         {
@@ -226,7 +226,7 @@ public sealed class CommitApiTests
     public async Task A_failing_last_operation_publishes_nothing()
     {
         await using var api = await ManagementApi.StartAsync();
-        // Dashboard documents need the trusted service: the platform operator acting as the user.
+
         using var service = api.Service(api.User);
         var organization = await api.CreateOrganizationAsync(OrganizationName());
         var originalName = ProjectName();
@@ -256,7 +256,7 @@ public sealed class CommitApiTests
         var addedAfter = await GetAsync(service, $"{Documents}/notes/by-key?id={System.Uri.EscapeDataString(added)}");
         var existingAfter = await GetAsync(service, $"{Documents}/notes/by-key?id={System.Uri.EscapeDataString(existing)}");
         var versionAfter = await VersionAsync(service, organization);
-        // The same update with current preconditions commits.
+
         var committed = await CommitAsync(service,
             new { op = "fence", organization, version = current },
             rename,
@@ -270,7 +270,7 @@ public sealed class CommitApiTests
         await Assert.That(projectAfter.Json.GetProperty("name").GetString()).IsEqualTo(originalName);
         await Assert.That(addedAfter.Status).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(existingAfter.ETag).IsEqualTo(Version(updated, 0));
-        // Neither failed fence advanced the version.
+
         await Assert.That(versionAfter).IsEqualTo(current);
         await Assert.That(committed.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(projectCommitted.Json.GetProperty("name").GetString()).IsEqualTo(renamedTo);
@@ -286,7 +286,6 @@ public sealed class CommitApiTests
         var half = new string('x', 600 * 1024);
         var seeded = await CommitAsync(service, new { op = "create", collection = "notes", id = existing, document = new { a = half } });
 
-        // Each request fits; the patched document does not.
         var grown = await CommitAsync(service,
             new { op = "create", collection = "notes", id = added, document = new { n = 1 } },
             new { op = "patch", collection = "notes", id = existing, merge = new { b = half } });
@@ -304,7 +303,7 @@ public sealed class CommitApiTests
     public async Task A_rest_change_after_the_version_was_read_fails_the_fence_even_with_a_matching_document_version()
     {
         await using var api = await ManagementApi.StartAsync();
-        // Dashboard documents need the trusted service: the platform operator acting as the user.
+
         using var service = api.Service(api.User);
         var organization = await api.CreateOrganizationAsync(OrganizationName());
         var document = NewId();
@@ -321,11 +320,11 @@ public sealed class CommitApiTests
 
         await Assert.That(renamed.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(moved).IsNotEqualTo(loaded);
-        // Dashboard-only CAS (if_match) would have passed; the Management fence catches the REST rename.
+
         await Assert.That((fenced.Status, fenced.Code, fenced.Op)).IsEqualTo((HttpStatusCode.PreconditionFailed, "precondition_failed", 0));
         await Assert.That(unchanged.ETag).IsEqualTo(Version(created, 0));
         await Assert.That(retried.Status).IsEqualTo(HttpStatusCode.OK);
-        // A fence is a compare-and-set: it advances the version it checked.
+
         await Assert.That(advanced).IsNotEqualTo(moved);
         await Assert.That(OrganizationVersion(retried.Json.GetProperty("versions"), organization)).IsEqualTo(advanced);
     }
@@ -334,14 +333,13 @@ public sealed class CommitApiTests
     public async Task Concurrent_commits_fencing_the_same_version_commit_exactly_once()
     {
         await using var api = await ManagementApi.StartAsync();
-        // Dashboard documents need the trusted service: the platform operator acting as the user.
+
         using var service = api.Service(api.User);
         var organization = await api.CreateOrganizationAsync(OrganizationName());
         await api.SetPlanAsync(api.User, organization, "enterprise");
         var version = await VersionAsync(service, organization);
         var documents = Enumerable.Range(0, 8).Select(_ => NewId()).ToList();
 
-        // Disjoint documents: only the fence makes the commits conflict.
         var replies = await Task.WhenAll(documents.Select(id => CommitAsync(service,
             new { op = "fence", organization, version },
             new { op = "create", collection = "notes", id, document = new { writer = id } })));
@@ -359,7 +357,7 @@ public sealed class CommitApiTests
     public async Task A_commit_id_makes_a_lost_reply_observable_and_applies_once()
     {
         await using var api = await ManagementApi.StartAsync();
-        // Dashboard documents need the trusted service: the platform operator acting as the user.
+
         using var service = api.Service(api.User);
         var organization = await api.CreateOrganizationAsync(OrganizationName());
         using var stranger = api.As(User());
@@ -393,11 +391,11 @@ public sealed class CommitApiTests
         await Assert.That(JsonElement.DeepEquals(recorded.Json, first.Json)).IsTrue();
         await Assert.That(foreign.Status).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That((reused.Status, reused.Code)).IsEqualTo((HttpStatusCode.Conflict, "commit_id_reused"));
-        // Applied once: one invitation, and the document still has the version of the first reply.
+
         await Assert.That(Strings(invitations.Json, "email").Count(listed => string.Equals(listed, email, StringComparison.OrdinalIgnoreCase))).IsEqualTo(1);
         await Assert.That(read.ETag).IsEqualTo(Version(first, 1));
         await Assert.That((failed.Status, failed.Code, failed.Op)).IsEqualTo((HttpStatusCode.PreconditionFailed, "precondition_failed", 0));
-        // Failures record nothing: the id is unknown, and a retry is evaluated again rather than replayed.
+
         await Assert.That(failedLookup.Status).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That((failedAgain.Status, failedAgain.Replayed)).IsEqualTo((HttpStatusCode.PreconditionFailed, false));
         await Assert.That(later.Status).IsEqualTo(HttpStatusCode.OK);
@@ -433,7 +431,7 @@ public sealed class CommitApiTests
         var readProject = await GetAsync(viewer, $"{projects}/{project}");
         var listed = await GetAsync(viewer, projects);
         var databases = await GetAsync(viewer, $"{projects}/{project}/databases");
-        // Fences need only membership; the denied commit did not advance the version.
+
         var fenced = await CommitAsync(viewer, new { op = "fence", organization, version });
         var members = await GetAsync(api.Client, $"{Organizations}/{organization}/members");
 
@@ -464,7 +462,7 @@ public sealed class CommitApiTests
         var inviteeId = User();
         using var invitee = api.As(inviteeId);
         var (declinedEmail, resentEmail, revokedEmail) = (Email(), Email(), Email());
-        // The invitee proves an email only through its access token, whose verified email is compared ignoring case.
+
         using var asDeclined = api.As(inviteeId, declinedEmail.ToUpperInvariant());
         using var asResent = api.As(inviteeId, resentEmail);
         using var asRevoked = api.As(inviteeId, revokedEmail);
@@ -504,7 +502,7 @@ public sealed class CommitApiTests
         await Assert.That(resent.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(Id(resent.Value(0))).IsEqualTo(resentId);
         await Assert.That(resent.Value(0).GetProperty("status").GetString()).IsEqualTo("pending");
-        // Resending replaces the hash: the old one stops working.
+
         await Assert.That(lookupOld.Status).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(Id(lookupNew.Json.GetProperty("invitation"))).IsEqualTo(resentId);
         await Assert.That((acceptOld.Status, acceptOld.Code)).IsEqualTo((HttpStatusCode.NotFound, "not_found"));
@@ -514,7 +512,7 @@ public sealed class CommitApiTests
         await Assert.That(revoked.Result(0).GetRawText()).IsEqualTo("{}");
         await Assert.That(lookupRevoked.Status).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That((acceptRevoked.Status, acceptRevoked.Code)).IsEqualTo((HttpStatusCode.Conflict, "invitation_closed"));
-        // A token without a verified email cannot redeem: the body never names the email.
+
         await Assert.That((unverified.Status, unverified.Code, unverified.Op)).IsEqualTo((HttpStatusCode.Forbidden, "forbidden", (int?)0));
         await Assert.That(accepted.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(accepted.Value(0).GetProperty("member").GetProperty("userId").GetString()).IsEqualTo(inviteeId);
@@ -538,7 +536,7 @@ public sealed class CommitApiTests
             await CommitAsync(stranger, new { op = "rename_organization", organization, name = OrganizationName() }),
             await CommitAsync(stranger, new { op = "invite", organization, email = Email(), token_hash = Hash(Token()) }),
         ];
-        // An organization created earlier in the commit does not open the other one.
+
         var mixed = await CommitAsync(stranger,
             new { op = "create_organization", name = OrganizationName() },
             new { op = "create_project", organization, name = ProjectName() });
@@ -580,12 +578,12 @@ public sealed class CommitApiTests
         await Assert.That(transfer.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(confirmed.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(left.Status).IsEqualTo(HttpStatusCode.OK);
-        // Ownership moved and the starter became a member; the viewer who left is gone.
+
         await Assert.That(Roles(after.Json)).IsEquivalentTo([$"{api.User}=member", $"{nominee}=owner"]);
-        // The audit log names the viewer role, never a writable one.
+
         await Assert.That(Items(audit.Json).Where(item => item.GetProperty("action").GetString() == "invitation.created").Select(item => item.GetProperty("detail").GetString()!))
             .IsEquivalentTo(["viewer", "viewer"]);
-        // A limit on an organization that does not exist reads as one the user is not a member of.
+
         await Assert.That((unknownLimit.Status, unknownLimit.Code, unknownLimit.Op)).IsEqualTo((HttpStatusCode.NotFound, "not_found", (int?)0));
     }
 
@@ -602,7 +600,7 @@ public sealed class CommitApiTests
 
         var byAdmin = await CommitAsync(adminClient, new { op = "resend_invitation", organization, invitation, token_hash = third });
         var byOwner = await CommitAsync(api.Client, new { op = "resend_invitation", organization, invitation, token_hash = second });
-        // The first hash no longer names the invitation, and no other invitation can take it.
+
         var reused = await CommitAsync(api.Client, new { op = "invite", organization, email = Email(), token_hash = first });
         using var oldLookup = await api.Client.PostAsJsonAsync(Uri(Lookup), new { tokenHash = first });
         using var newLookup = await api.Client.PostAsJsonAsync(Uri(Lookup), new { tokenHash = second });
@@ -647,7 +645,7 @@ public sealed class CommitApiTests
 
         await Assert.That(fenced.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(counted.Status).IsEqualTo(HttpStatusCode.OK);
-        // A commit of checks only still commits its record at an offset of its own, after the previous commit's.
+
         await Assert.That(long.Parse(counted.Json.GetProperty("offset").GetString()!, CultureInfo.InvariantCulture))
             .IsGreaterThan(long.Parse(fenced.Json.GetProperty("offset").GetString()!, CultureInfo.InvariantCulture));
         await Assert.That(recorded.Body).IsEqualTo(counted.Body);
@@ -731,7 +729,7 @@ public sealed class CommitApiTests
         await Assert.That(denied).All().Satisfy(status => status.IsEqualTo(HttpStatusCode.Forbidden));
         await Assert.That(read).All().Satisfy(status => status.IsEqualTo(HttpStatusCode.OK));
         await Assert.That(saved.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        // Saved queries are organization state the dashboard fences: changing one advances the version.
+
         await Assert.That(after).IsNotEqualTo(before);
     }
 
@@ -756,7 +754,7 @@ public sealed class CommitApiTests
 
             await using var restarted = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory);
             using var stranger = restarted.Service(User());
-            // Another user's organization cannot take the existing project's id.
+
             var created = await CommitAsync(stranger, new { op = "create_organization", name = OrganizationName() });
             var strangerOrganization = Id(created.Value(0));
             var taken = await CommitAsync(stranger, new { op = "create_project", organization = strangerOrganization, id = project, name = ProjectName() });
@@ -783,21 +781,18 @@ public sealed class CommitApiTests
 
     private static string User() => EntityIds.New().ToString();
 
-    // The suffix keeps two addresses of one test from colliding by chance.
     private static string Email() => Faker.Internet.Email(uniqueSuffix: Faker.Random.AlphaNumeric(6));
 
     private static string OrganizationName() => Faker.Company.CompanyName() + " " + Faker.Random.AlphaNumeric(6);
 
     private static string ProjectName() => "Project " + Faker.Random.AlphaNumeric(8);
 
-    // An invitation token as the dashboard generates it; TerraBase only ever sees its hash.
     private static string Token() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
     private static string Hash(string token) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 
     private static string Id(JsonElement resource) => resource.GetProperty("id").GetString()!;
 
-    // The version of the document written by operation index of a commit.
     private static string Version(Reply commit, int index) => commit.Result(index).GetProperty("version").GetString()!;
 
     private static string? OrganizationVersion(JsonElement versions, string organization) =>
@@ -813,7 +808,6 @@ public sealed class CommitApiTests
 
     private static Task<Reply> CommitAsync(HttpClient client, params object[] ops) => SendAsync(client, Body(NewId(), ops));
 
-    // Posts a commit body exactly as given, so that a retry can resend the same bytes.
     private static async Task<Reply> SendAsync(HttpClient client, string body)
     {
         using var content = new StringContent(body, Encoding.UTF8, "application/json");
@@ -854,15 +848,12 @@ public sealed class CommitApiTests
     private static IEnumerable<string> Strings(JsonElement page, string property) =>
         page.GetProperty("items").EnumerateArray().Select(item => item.GetProperty(property).GetString()!);
 
-    // "userId=role" of every member on a page.
     private static IEnumerable<string> Roles(JsonElement page) =>
         page.GetProperty("items").EnumerateArray().Select(member => $"{member.GetProperty("userId").GetString()}={member.GetProperty("role").GetString()}");
 
-    // "id=status" of every invitation on a page.
     private static IEnumerable<string> Statuses(JsonElement page) =>
         page.GetProperty("items").EnumerateArray().Select(invitation => $"{Id(invitation)}={invitation.GetProperty("status").GetString()}");
 
-    /// <summary>A response read to the end; <see cref="Id"/> is the commit id that was sent, if any.</summary>
     private sealed record Reply(HttpStatusCode Status, string Body, JsonElement Json, string? ETag, bool Replayed, string? Id)
     {
         public string? Code => Error is { } error ? error.GetProperty("code").GetString() : null;

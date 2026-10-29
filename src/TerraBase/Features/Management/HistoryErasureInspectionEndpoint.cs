@@ -2,15 +2,13 @@ using System.Text.Json.Serialization;
 using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>Peer-authorized, read-only inspection of one existing history erasure.</summary>
 internal sealed class HistoryErasureInspectionEndpoint(HistoryErasures erasures, ICatalogGate gate) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/admin/history-erasures/{erasure}");
@@ -28,7 +26,6 @@ internal sealed class HistoryErasureInspectionEndpoint(HistoryErasures erasures,
         Metadata(ListenerMetadata.Internal);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         HttpContext.Response.Headers.CacheControl = "no-store";
@@ -38,7 +35,7 @@ internal sealed class HistoryErasureInspectionEndpoint(HistoryErasures erasures,
             return ErrorResponse.From(new Validation("erasure must be a canonical uppercase ULID"));
         }
 
-        if (!gate.IsOpen || !gate.Trusted)
+        if (!gate.IsOpen)
         {
             return ErrorResponse.From(new Unavailable("the catalog gate is not open and trusted", "catalog_unavailable"));
         }

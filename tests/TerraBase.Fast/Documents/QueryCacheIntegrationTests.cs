@@ -59,7 +59,6 @@ public sealed class QueryCacheIntegrationTests
         };
         if (kind == "system")
         {
-            // Rewriting the real key invalidates its warmed auth entry, exercising first admission too.
             var store = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
             await using var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
             var key = (await transaction.GetAsync("api_keys", keyId, CancellationToken.None))!;
@@ -124,7 +123,6 @@ public sealed class QueryCacheIntegrationTests
         var originalKeys = keys.ToArray();
         keys[0] = 999L;
         rows.Clear();
-        // The first caller owns its result; the cache retains a detached page.
         var (cached, cachedCount) = Ok(await service.QueryAsync(database, query, 100_000, deadline.Token));
         await Assert.That(ReferenceEquals(page, cached)).IsFalse();
         await Assert.That(cached.Rows[0].Document.Id).IsEqualTo(first);
@@ -234,7 +232,6 @@ public sealed class QueryCacheIntegrationTests
             }
         });
         listener.Start();
-        // Separately allocated filters, paths and lists normalize to the same key warmed by HTTPS.
         static DocumentQuery Query()
         {
             return new("items", new ExistsFilter(new DocumentPath(["n"])),
@@ -378,10 +375,10 @@ public sealed class QueryCacheIntegrationTests
         }
 
         public ValueTask<WriteOutcome> WriteConfirmedAsync(
-            TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, bool waitForRemote, CancellationToken cancellationToken)
+            TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken)
         {
             Writes++;
-            return inner.WriteConfirmedAsync(database, operations, indexErrors, waitForRemote, cancellationToken);
+            return inner.WriteConfirmedAsync(database, operations, indexErrors, cancellationToken);
         }
 
         public IAsyncEnumerable<ExportRow> ExportAsync(TenantContext database, string? afterCollection, string? afterId, CancellationToken cancellationToken) =>

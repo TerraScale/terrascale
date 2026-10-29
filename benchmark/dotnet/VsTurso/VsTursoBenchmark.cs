@@ -34,7 +34,7 @@ namespace TerraBase.E2E
                 .Where(type => typeof(IVsTursoLane).IsAssignableFrom(type) && type is { IsAbstract: false, IsInterface: false })
                 .Select(type => (IVsTursoLane)Activator.CreateInstance(type)!).ToList();
             var lanes = (Environment.GetEnvironmentVariable("TERRABASE_VS_TURSO_LANES")
-                ?? string.Join(',', ["turso", "turso-cdc", "engine", "api", "floor", .. plugins.Select(plugin => plugin.Name), "engine-3", "api-3"])).Split(',');
+                ?? string.Join(',', ["turso", "turso-cdc", "engine", "api", "floor", .. plugins.Select(plugin => plugin.Name)])).Split(',');
             var workloads = (Environment.GetEnvironmentVariable("TERRABASE_VS_TURSO_WORKLOADS") ?? string.Join(',', Workloads)).Split(',');
             int[] concurrencies = Environment.GetEnvironmentVariable("TERRABASE_VS_TURSO_CONCURRENCY") is { Length: > 0 } list
                 ? [.. list.Split(',').Select(value => int.Parse(value, CultureInfo.InvariantCulture))]
@@ -91,18 +91,6 @@ namespace TerraBase.E2E
                     }
 
                     await RunAsync(single, workloads, concurrencies, repeats, duration, cells, log, node is null ? null : attribution, cancellationToken);
-                }
-
-                await using (var cluster = lanes.Any(lane => lane.EndsWith("-3", StringComparison.Ordinal)) ? await Cluster.StartAsync([Cluster.Gru, Cluster.Sjc, Cluster.Fra]) : null)
-                {
-                    if (cluster is not null)
-                    {
-                        var (services, database) = cluster.Engine(Cluster.Gru);
-                        var (address, token, _) = cluster.Endpoint(Cluster.Gru);
-                        var targets = Targets(
-                            lanes, "-3", services, database, address, token, $"{cluster.DatabasePath}/collections/{cluster.Collection}/documents/by-key?id=", cluster.Collection);
-                        await RunAsync(targets, workloads, concurrencies, repeats, duration, cells, log, null, cancellationToken);
-                    }
                 }
 
                 foreach (var (_, target) in single)
@@ -202,7 +190,7 @@ namespace TerraBase.E2E
 
         private static async Task<Cell> MeasureAsync(ITarget target, Bodies body, string workload, int concurrency, TimeSpan duration, ServerAttribution? attribution, string lane)
         {
-            var countExceptions = lane is "api-exceptions" or "api-exceptions-3";
+            var countExceptions = lane is "api-exceptions";
             var warmup = TimeSpan.FromSeconds(10);
             var start = Stopwatch.GetTimestamp();
             var measureFrom = start + (long)(warmup.TotalSeconds * Stopwatch.Frequency);

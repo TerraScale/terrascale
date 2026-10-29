@@ -6,41 +6,26 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
-using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.UserAuth;
 
-/// <summary>Registers ts-auth user authentication and reads the authenticated user.</summary>
 public static class UserAuthExtensions
 {
-    /// <summary>Authorization policy of endpoints that act as a ts-auth user.</summary>
     public const string PolicyName = "user";
-
-    /// <summary>The scheme that validates ts-auth access tokens.</summary>
     public const string TokenScheme = "TsAuth";
-
-    /// <summary>The platform operator's scheme: the internal listener, acting as a named user.</summary>
     public const string OperatorScheme = "Operator";
-
-    /// <summary>
-    /// Registers <see cref="IIssuerKeys"/> with its background fetch, the <c>TsAuth</c> scheme (client listener), the
-    /// <c>Operator</c> scheme (internal listener) and the <see cref="PolicyName"/> policy that accepts
-    /// either. Without <c>auth-issuer</c> the token scheme authenticates no one.
-    /// </summary>
     public static IServiceCollection AddTerraBaseUserAuth(this IServiceCollection services)
     {
-        // No request logging: it would write auth-issuer's URL, and settings are never logged by value.
         services.AddHttpClient(TsAuthKeys.HttpClientName, client =>
         {
             client.Timeout = TsAuthKeys.FetchTimeout;
             client.MaxResponseContentBufferSize = TsAuthKeys.MaxDocumentBytes;
         })
-            // Discovery and JWKS are fetched where auth-issuer and jwks_uri say, never where a redirect points.
             .ConfigurePrimaryHttpMessageHandler((handler, _) => ((SocketsHttpHandler)handler).AllowAutoRedirect = false)
             .AddHttpMessageHandler(provider => RequestIdentity.CreatePropagationHandler(
-                provider.GetRequiredService<PeerCredential>().CorrelationKey,
+                provider.GetRequiredService<InternalCredential>().CorrelationKey,
                 new Uri(provider.GetRequiredService<TerraBaseOptions>().AuthIssuer ?? "about:blank")))
             .RemoveAllLoggers();
         services.AddSingleton<TsAuthKeys>();
@@ -58,36 +43,18 @@ public static class UserAuthExtensions
             .RequireAuthenticatedUser());
         return services;
     }
-
-    /// <summary>
-    /// The ts-auth user id of a request authorized by <see cref="PolicyName"/>: the token's <c>sub</c>, or the user the
-    /// platform operator names.
-    /// </summary>
     public static string UserId(this ClaimsPrincipal user) =>
         (Identity(user, UserAuthenticationHandler.SchemeName) ?? Identity(user, OperatorHandler.SchemeName))
             ?.FindFirst(ClaimTypes.NameIdentifier)?.Value
         ?? throw new InvalidOperationException("the request has no authenticated ts-auth user");
-
-    /// <summary>
-    /// Whether the request came from the platform operator (internal listener), which
-    /// the dashboard document space of Management commits needs: a ts-auth user token never reaches it.
-    /// </summary>
     public static bool IsOperator(this ClaimsPrincipal user) => Identity(user, OperatorHandler.SchemeName) is not null;
-
-    /// <summary>The user's email when its ts-auth token marks it verified; otherwise <see langword="null"/>.</summary>
     public static string? VerifiedEmail(this ClaimsPrincipal user) =>
         Identity(user, UserAuthenticationHandler.SchemeName)?.FindFirst(ClaimTypes.Email)?.Value;
-
-    // Only an identity these schemes authenticated, never one another scheme (an API key) added to the principal.
     private static ClaimsIdentity? Identity(ClaimsPrincipal user, string scheme) =>
         user?.Identities.FirstOrDefault(identity => identity.IsAuthenticated && identity.AuthenticationType == scheme);
-
-    // The project check's request states: serving, cut off by the key watch, answering that cut-off.
     private const int Serving = 0;
     private const int CutOff = 1;
     private const int Refusing = 2;
-
-    // ts-auth refuses the key, or cannot vouch for it right now: fail closed either way.
     private static Task RefuseKeyAsync(HttpContext context, KeyRefused? refused)
     {
         if (refused is not null)
@@ -99,15 +66,11 @@ public static class UserAuthExtensions
         context.Response.Headers.RetryAfter = "1";
         return BadRequests.WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "auth_unavailable", KeyAuthorityMessages.Unavailable, op: null);
     }
-
-    /// <summary>Checks signed project/database claims before scope authorization so cross-project calls answer 404.</summary>
     public static WebApplication UseTerraBaseProjectCheck(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
         app.Use(async (context, next) =>
         {
-            // An API key's token acts only while ts-auth says its key still does, and only as long as it does: a request
-            // still running (a slow body, a changes stream) is cut off once the key is refused (docs/terrabase/key-revocation.md).
             if (Identity(context.User, UserAuthenticationHandler.SchemeName) is null || context.Features.Get<ProjectToken>()?.Key is not { } key)
             {
                 await next(context).ConfigureAwait(false);
@@ -121,16 +84,11 @@ public static class UserAuthExtensions
                 await RefuseKeyAsync(context, answer as KeyRefused).ConfigureAwait(false);
                 return;
             }
-
-            // The work sees a cut-off as its cancellation. Until it has answered, the client gets the same refusal as a new
-            // request would; a response already under way (a changes stream) can only end with its connection. An empty
-            // connection reset reaches clients as an edge 502 with no body.
             var aborted = context.RequestAborted;
             using var refusal = CancellationTokenSource.CreateLinkedTokenSource(aborted);
             var state = Serving;
             context.Response.OnStarting(() =>
             {
-                // Work cut off before it answered must not answer afterwards: only the refusal below may.
                 if (Volatile.Read(ref state) == CutOff)
                 {
                     context.Abort();
@@ -157,7 +115,6 @@ public static class UserAuthExtensions
             }
             catch (OperationCanceledException) when (Volatile.Read(ref state) == CutOff && !context.Response.HasStarted)
             {
-                // The work stopped at the cut-off; it is answered below.
             }
             finally
             {
@@ -172,7 +129,6 @@ public static class UserAuthExtensions
         });
         app.Use(async (context, next) =>
         {
-            // An API key's token is used only from its key's and project's allowlists, on every route.
             if (Identity(context.User, UserAuthenticationHandler.SchemeName) is not null
                 && context.Features.Get<ProjectToken>() is { Allowlists.Count: > 0 } restricted
                 && IpAllowlists.ClientOf(context) is var client && !IpAllowlists.Admits(restricted.Allowlists, client))
@@ -191,8 +147,6 @@ public static class UserAuthExtensions
                 context.Response.StatusCode = StatusCodes.Status403Forbidden;
                 return;
             }
-
-            // Project tokens never enter the membership-based compatibility API: that would discard their narrowing.
             if (Identity(context.User, UserAuthenticationHandler.SchemeName)?.FindFirst("project_id") is not null
                 && (context.Features.Get<LegacyManagementRoute>() is not null
                     || context.Request.Path.StartsWithSegments(ManagementRoute.Prefix, StringComparison.OrdinalIgnoreCase)
@@ -216,7 +170,6 @@ public static class UserAuthExtensions
                 var jwt = Identity(context.User, UserAuthenticationHandler.SchemeName);
                 if (jwt is not null)
                 {
-                    // A platform user's session token names no project: it is not a data credential at all.
                     if (jwt.FindFirst("project_id") is null)
                     {
                         await BadRequests.WriteAsync(context, StatusCodes.Status401Unauthorized, "invalid_key",
@@ -241,8 +194,6 @@ public static class UserAuthExtensions
         });
         return app;
     }
-
-    /// <summary>Resolves authorized project tokens without moving production files or changing replication formats.</summary>
     public static WebApplication UseTerraBaseProjectCatalog(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -262,8 +213,6 @@ public static class UserAuthExtensions
                 await next(context).ConfigureAwait(false);
                 return;
             }
-
-            // Creation validates its bound body and signed database restriction before it can enroll a project.
             if (context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == CreateManagedDatabaseEndpoint.OperationName)
             {
                 await next(context).ConfigureAwait(false);
@@ -317,8 +266,6 @@ public static class UserAuthExtensions
             {
                 context.Request.RouteValues["organization"] = organization;
             }
-
-            // Check immutable narrowing before placement can disclose another database's serving regions.
             if (managementRoute || restricted is not null)
             {
                 if (context.Request.RouteValues["database"] is string name)
@@ -351,7 +298,6 @@ public static class UserAuthExtensions
                     {
                         context.Request.RouteValues["databaseName"] = record.Name;
                     }
-                    // Keep this admitted request on its authorized identity if the name is reused before placement.
                     context.Request.RouteValues["database"] = record.Id;
                 }
             }

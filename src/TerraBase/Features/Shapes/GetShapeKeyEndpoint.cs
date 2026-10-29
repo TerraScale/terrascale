@@ -10,7 +10,7 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Documents;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -18,25 +18,19 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Shapes;
 
-/// <summary>Releases only a shape's handle and epoch key to an authorized reader.</summary>
 internal sealed class GetShapeKeyEndpoint(
-    IDocumentService documents, ITenantDirectory tenants, IShapeLineages lineages, IShapeCrypto crypto, ICatalogFreshness catalog, IApiKeyStore keys,
+    IDocumentService documents, ITenantDirectory tenants, IShapeLineages lineages, IShapeCrypto crypto, ICatalogGate catalog, IApiKeyStore keys,
     TimeProvider time) : EndpointWithoutRequest<IResult>
 {
-    // One epoch: a revocation this machine cannot have seen stops key release within it, so a revoked credential reads
-    // nothing sealed after the epoch following the revocation's (docs/terrabase/shape-reads.md, revocation bound).
-    private static readonly TimeSpan CatalogWindow = TimeSpan.FromSeconds(ShapeCrypto.EpochSeconds);
     private static readonly Unavailable CatalogStale = new("this machine cannot confirm current credentials; retry later", "catalog_stale");
 
     private static readonly SearchValues<char> LowerHex = SearchValues.Create("0123456789abcdef");
-
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(DocumentRoute.Collections + "/{collection}/shape/keys");
         Name("getShapeKey");
         Summary("Gets a shape epoch key");
-        Description("Requires documents:read. End-user tokens cannot retrieve epoch keys; use the origin shape endpoint. Releases the AES-256 epoch key for the current handle and a served epoch/key_id pair. The key opens only that handle and epoch. Epochs last 10 minutes. Future epochs are refused; stale handles and unretained pairs answer 409 must_refetch. Responses are private, no-store. API key revocation prevents further key release; offline JWT acceptance lasts until expiry plus clock skew. Unless this machine listed itself in its last directory read and proved its catalog within one epoch against every listed machine and every other recorded region (checked before tenancy and again before the key is returned), it answers 503 catalog_stale with Retry-After and releases nothing. Previously released keys and read data remain usable.");
+        Description("Requires documents:read. End-user tokens cannot retrieve epoch keys; use the origin shape endpoint. Releases the AES-256 epoch key for the current handle and a served epoch/key_id pair. The key opens only that handle and epoch. Epochs last 10 minutes. Future epochs are refused; stale handles and unretained pairs answer 409 must_refetch. Responses are private, no-store. API key revocation prevents further key release; offline JWT acceptance lasts until expiry plus clock skew. A catalog whose local restore anchor is unverified answers 503 catalog_stale and releases nothing. The API key is revalidated against the local catalog immediately before key release. Previously released keys and read data remain usable.");
         Tags("Live");
         Produces<ShapeKeyResponse>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -60,8 +54,6 @@ internal sealed class GetShapeKeyEndpoint(
         Required = true,
         Schema = new OpenApiSchema { Type = JsonSchemaType.String },
     };
-
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (CollectionRuleAccess.EndUser)
@@ -69,7 +61,7 @@ internal sealed class GetShapeKeyEndpoint(
             return ErrorResponse.From(ShapeAccess.Denied);
         }
 
-        if (!await catalog.IsFreshAsync(CatalogWindow, cancellationToken))
+        if (!catalog.IsOpen)
         {
             return ErrorResponse.From(CatalogStale);
         }
@@ -139,14 +131,10 @@ internal sealed class GetShapeKeyEndpoint(
 
             try
             {
-                // Again after the lookups (up to the 30 s deadline): the catalog may have gone stale while they ran.
-                if (!await catalog.IsFreshAsync(CatalogWindow, cancellationToken))
+                if (!catalog.IsOpen)
                 {
                     return ErrorResponse.From(CatalogStale);
                 }
-
-                // Authentication read the catalog as it was when the request arrived, possibly before a healed partition
-                // delivered the key's revocation; the fresh catalog decides. Offline JWTs keep their documented expiry bound.
                 if (HttpContext.User.Identity?.AuthenticationType == ApiKeyAuthenticationHandler.SchemeName
                     && (ApiKeyAuthenticationHandler.Secret(HttpContext.Request) is not { } secret
                         || await keys.FindAsync(secret, cancellationToken) is not ApiKey current || current.Id != ApiKey.Of(HttpContext).Id))
@@ -176,11 +164,7 @@ internal sealed class GetShapeKeyEndpoint(
             ShapeJsonContext.Default.ShapeErrorBody, statusCode: StatusCodes.Status409Conflict);
     }
 }
-
-/// <summary>The handle and epoch key, never the project data key.</summary>
 internal sealed record ShapeKeyResponse(string Handle, string Epoch, string KeyId, string Key);
-
-/// <summary>Source-generated metadata for key responses.</summary>
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower)]
 [JsonSerializable(typeof(ShapeKeyResponse))]
 internal sealed partial class ShapeKeyJsonContext : JsonSerializerContext;
