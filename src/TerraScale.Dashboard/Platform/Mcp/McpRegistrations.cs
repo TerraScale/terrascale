@@ -155,7 +155,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
         private static bool Canonical(string? clientId)
         {
-            return clientId is { Length: 26 } && TerraScaleIds.IsValid(clientId) && clientId == clientId.ToUpperInvariant();
+            return clientId is { Length: 26 } && TerraScaleIds.IsValid(clientId) && !clientId.Any(char.IsLower);
         }
 
         private static void Validate(McpRegistration value, string clientId)

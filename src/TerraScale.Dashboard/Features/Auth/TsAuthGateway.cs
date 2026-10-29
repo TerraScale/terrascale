@@ -22,7 +22,7 @@ namespace TerraScale.Dashboard.Features.Auth
                 // does not serve an introspection endpoint.
                 var user = await SessionUserInfoAsync(client, session, cancellationToken);
                 return user.Subject == session.UserId && user.EmailVerified == true &&
-                    user.Email?.Trim().ToLowerInvariant() == session.Email.Trim().ToLowerInvariant();
+                    string.Equals(user.Email?.Trim(), session.Email.Trim(), StringComparison.OrdinalIgnoreCase);
             }
             catch (SignInRejectedException)
             {

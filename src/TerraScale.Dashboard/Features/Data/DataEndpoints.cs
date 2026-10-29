@@ -395,7 +395,7 @@ namespace TerraScale.Dashboard.Features.Data
                     // Default to a collection that exists; a database without collections has none selected.
                     if (collection.Length == 0)
                     {
-                        collection = collections.FirstOrDefault()?.Name ?? "";
+                        collection = (collections is [var firstCollection, ..] ? firstCollection?.Name ?? "" : "");
                     }
                 }
                 if (collection.Length > 0)

@@ -99,7 +99,7 @@ namespace TerraScale.Dashboard.Features.Backups
             }
 
             var listing = await ListAsync(context, databaseId, ct);
-            backupId = backupId.Length == 0 ? listing.Backups.FirstOrDefault()?.Id ?? "" : backupId;
+            backupId = backupId.Length == 0 ? (listing.Backups is [var firstBackup, ..] ? firstBackup?.Id ?? "" : "") : backupId;
             if (!TerraScaleIds.IsValid(backupId) || !listing.Backups.Any(backup => backup.Id == backupId))
             {
                 throw new AccountAccessException("That restore point is no longer available.", 404);
