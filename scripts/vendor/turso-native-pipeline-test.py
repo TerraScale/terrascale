@@ -134,7 +134,7 @@ with tempfile.TemporaryDirectory(prefix="native-pipeline-") as temporary:
         (release / f"{rid}-contract1-smoke.txt").write_text(
             "contract1 smoke: marker=1, aegis256 persisted FTS, SQL spoof constraint and page tamper TURSO_CORRUPT passed\n")
         (release / f"{rid}-wal-smoke.txt").write_text(
-            "wal contract smoke: marker=1, no automatic checkpoint over 1519 frames, close keeps the WAL, watermark page reads decrypt, explicit TRUNCATE resets frames\n")
+            "wal contract smoke: marker=1, 1519 frames with the database file untouched across close, snapshot page reads decrypt under a passive checkpoint, write transactions and bad ranges refused, explicit TRUNCATE resets frames\n")
 
         def manifest(directory, name):
             files = sorted(path for path in directory.rglob("*") if path.is_file() and path.name != name)
