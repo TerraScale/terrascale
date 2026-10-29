@@ -9,8 +9,8 @@
     <PackageId>TerraScale.DotNet</PackageId>
     <Version>0.0.20</Version>
     <Description>Official .NET SDK for TerraBase and ts-auth.</Description>
-    <PackageProjectUrl>https://github.com/TerraScale/ts-dotnet</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/TerraScale/ts-dotnet</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/TerraScale/terrascale/tree/main/sdk/dotnet</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/TerraScale/terrascale</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -30,7 +30,7 @@
     <EmbeddedResource Include="../../contracts/auth/error-codes.json" LogicalName="TerraScale.DotNet.Auth.error-codes.json" />
     <None Include="../../contracts/auth/**/*" Pack="true" PackagePath="contracts/auth/%(RecursiveDir)%(Filename)%(Extension)" />
     <None Include="../../contracts/terrabase/**/*" Pack="true" PackagePath="contracts/terrabase/%(RecursiveDir)%(Filename)%(Extension)" />
-    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.11" />
-    <PackageReference Include="NUlid" Version="1.7.3" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+    <PackageReference Include="NUlid" />
   </ItemGroup>
 </Project>

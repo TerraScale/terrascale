@@ -1,0 +1,12 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <!-- The distributed SDK supports .NET 10 and 11; its dependency graph stays independent of server-only .NET 11 packages. -->
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="5.0.0-1.25277.114" />
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.11" />
+    <PackageVersion Include="NUlid" Version="1.7.3" />
+    <PackageVersion Include="TUnit" Version="1.72.10" />
+  </ItemGroup>
+</Project>

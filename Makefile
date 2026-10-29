@@ -14,7 +14,7 @@ TERRABASE_TEST_PARALLEL ?= 16
 # Build revision shown by ts-auth /healthz (CI passes the commit SHA).
 TS_AUTH_REVISION ?=
 export TS_AUTH_REVISION
-TS_DOTNET_DIR ?= ../ts-dotnet
+TS_DOTNET_DIR ?= sdk/dotnet
 # ts-auth's tests start the TerraBase built from this same commit (ts-dotnet's TerraBaseTestServer runs TERRABASE_BINARY).
 TERRABASE_BINARY ?= $(CURDIR)/src/TerraBase/bin/$(CONFIGURATION)/net11.0/terrabase
 REDOCLY := npx --yes @redocly/cli@2.57.0
@@ -62,7 +62,7 @@ fmt-check: restore
 # Analyzers and code style run in the build with warnings as errors.
 lint: fmt-check build
 
-test-fast: libs-test auth-test-fast terrabase-test-fast
+test-fast: libs-test auth-test-fast terrabase-test-fast sdk-test-fast
 
 test-slow: auth-test-slow terrabase-test-slow
 
@@ -208,3 +208,23 @@ benchmark-smoke:
 .PHONY: terrabase-test-shard
 terrabase-test-shard:
 	python3 scripts/ci/terrabase-shard.py $(SHARD)
+
+# API-coupled SDKs retain independent Fast suites and release identities.
+.PHONY: sdk-test-fast sdk-dotnet-test-fast sdk-js-test-fast sdk-go-test-fast sdk-python-test-fast sdk-rust-test-fast
+sdk-test-fast: sdk-dotnet-test-fast sdk-js-test-fast sdk-go-test-fast sdk-python-test-fast sdk-rust-test-fast
+
+sdk-dotnet-test-fast:
+	cd sdk/dotnet && bash scripts/test-fast.sh
+
+sdk-js-test-fast:
+	cd sdk/js && npm ci --no-audit --no-fund && npm test
+
+sdk-go-test-fast:
+	cd sdk/go && go test -count=1 ./...
+
+sdk-python-test-fast:
+	cd sdk/python && uv venv --python 3.12 .venv && uv pip sync --python .venv/bin/python --require-hashes --only-binary :all: requirements-ci.txt
+	cd sdk/python && uv pip install --python .venv/bin/python --no-deps --no-build-isolation -e '.[dev]' && .venv/bin/pytest -q
+
+sdk-rust-test-fast:
+	cd sdk/rust && cargo test --locked

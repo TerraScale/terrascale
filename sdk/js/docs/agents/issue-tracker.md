@@ -1,15 +1,15 @@
 # Issue tracker: GitHub
 
-Issues for this repository live in GitHub Issues at `TerraScale/ts-js`.
+Issues for this repository live in GitHub Issues at `TerraScale/terrascale`.
 TerraScale product tickets live in Ku (`ku` MCP tools, ku.mariogk.com).
 Use `gh` for repository issues and pull requests. Never use Forgejo, `fj`, or `tea`.
 
 ## Conventions
 
 - Infer the GitHub repository from the current repository's `origin` remote.
-- Before any write, confirm that the selected repository is `TerraScale/ts-js`.
+- Before any write, confirm that the selected repository is `TerraScale/terrascale`.
 - Preserve existing issue content and labels unless the task calls for changing them.
-- Use `gh -R TerraScale/ts-js` when the command runs outside the repository.
+- Use `gh -R TerraScale/terrascale` when the command runs outside the repository.
 - Never put secrets, tokens, or private service details in an issue or comment.
 
 ## Repository issues (`gh`)

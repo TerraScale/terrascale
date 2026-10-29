@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Report suspected vulnerabilities privately using GitHub's advisory form:
-https://github.com/TerraScale/ts-rust/security/advisories/new
+https://github.com/TerraScale/terrascale/security/advisories/new
 
 Do not disclose vulnerabilities in public issues, pull requests, or discussions.
 Include the affected component, potential impact, and safe steps to reproduce.
