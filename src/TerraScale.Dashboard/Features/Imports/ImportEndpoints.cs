@@ -3,7 +3,6 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Dashboard.Shared.UI;
@@ -104,7 +103,7 @@ public static class ImportEndpoints
                     var job = action switch
                     {
                         "options" => await imports.UpdateAsync(context, database,
-                            form["exclude"].Select(value => value ?? "").Where(value => value.Length > 0).Distinct(StringComparer.Ordinal).ToArray(), http.RequestAborted),
+                            [.. form["exclude"].Select(value => value ?? "").Where(value => value.Length > 0).Distinct(StringComparer.Ordinal)], http.RequestAborted),
                         "start" => await imports.StartAsync(context, database, form["previewId"].ToString(), form["confirm"] == "1", http.RequestAborted),
                         "cancel" => await imports.CancelAsync(context, database, http.RequestAborted),
                         _ => await imports.ResumeAsync(context, database, http.RequestAborted)

@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Stripe;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.Dashboard.Shared.Accounts;
 using PortalConfiguration = Stripe.BillingPortal.Configuration;
 using PortalFeatures = Stripe.BillingPortal.ConfigurationFeaturesOptions;
 
@@ -10,22 +9,14 @@ namespace TerraScale.Dashboard.Features.Billing;
 /// <summary>Creates what StripeAuditCommand expects in the delivered identity's account: one product per paid plan, its
 /// approved billing cadence and prices from PlanCatalog, contact-only Enterprise support, and the default billing portal.
 /// A second run changes nothing.</summary>
-public sealed class StripeSetupCommand
+public sealed class StripeSetupCommand(IDashboardIdentity identity,
+    Func<string, StripeClient>? clientFactory = null, TextWriter? output = null, TextWriter? error = null)
 {
-    private readonly IDashboardIdentity identity;
-    private readonly Func<string, StripeClient> clientFactory;
-    private readonly TextWriter output;
-    private readonly TextWriter error;
-
-    public StripeSetupCommand(IDashboardIdentity identity,
-        Func<string, StripeClient>? clientFactory = null, TextWriter? output = null, TextWriter? error = null)
-    {
-        this.identity = identity;
-        this.clientFactory = clientFactory ?? (key => new StripeClient(key,
+    private readonly IDashboardIdentity identity = identity;
+    private readonly Func<string, StripeClient> clientFactory = clientFactory ?? (key => new StripeClient(key,
             httpClient: new SystemNetHttpClient(new HttpClient(), enableTelemetry: false)));
-        this.output = output ?? Console.Out;
-        this.error = error ?? Console.Error;
-    }
+    private readonly TextWriter output = output ?? Console.Out;
+    private readonly TextWriter error = error ?? Console.Error;
 
     public async Task<int> RunAsync(string[] args, CancellationToken cancellationToken = default)
     {
@@ -74,34 +65,34 @@ public sealed class StripeSetupCommand
         // Stripe support pricing does not make Enterprise a selectable dashboard plan.
         var setupPlans = PlanCatalog.Plans.Where(plan => plan.PriceCents > 0)
             .SelectMany(plan => plan.CheckoutIntervals.Select(interval => (plan.Key, plan.Name, Interval: interval, Amount: plan.IntervalPriceCents(interval))))
-            .Append((Key: enterprise.Key, Name: enterprise.Name + " support", Interval: "monthly", Amount: enterprise.PriceCents));
-        foreach (var plan in setupPlans)
+            .Append((enterprise.Key, Name: enterprise.Name + " support", Interval: "monthly", Amount: enterprise.PriceCents));
+        foreach (var (Key, Name, Interval, Amount) in setupPlans)
         {
-            var product = products.FirstOrDefault(product => product.Metadata.GetValueOrDefault("plan") == plan.Key);
+            var product = products.FirstOrDefault(product => product.Metadata.GetValueOrDefault("plan") == Key);
             if (product is null)
             {
                 product = await client.V1.Products.CreateAsync(new()
                 {
-                    Name = "TerraScale " + plan.Name,
-                    Metadata = new() { ["plan"] = plan.Key }
+                    Name = "TerraScale " + Name,
+                    Metadata = new() { ["plan"] = Key }
                 }, cancellationToken: cancellationToken);
-                changes.Add("product_" + plan.Key + "_created");
+                changes.Add("product_" + Key + "_created");
             }
             else if (!product.Active)
             {
                 product = await client.V1.Products.UpdateAsync(product.Id, new() { Active = true }, cancellationToken: cancellationToken);
-                changes.Add("product_" + plan.Key + "_activated");
+                changes.Add("product_" + Key + "_activated");
                 foreach (var price in prices.Where(price => price.ProductId == product.Id)) price.Product = product;
             }
             // Each plan has one product for both intervals: later intervals reuse the one just created or activated.
             products.RemoveAll(known => known.Id == product.Id);
             products.Add(product);
-            var interval = plan.Interval;
-            var name = plan.Key + "_" + interval;
-            var matches = prices.Where(price => price.Active && price.Currency == "usd" && price.UnitAmount == plan.Amount &&
+            var interval = Interval;
+            var name = Key + "_" + interval;
+            var matches = prices.Where(price => price.Active && price.Currency == "usd" && price.UnitAmount == Amount &&
                     price.Recurring is { UsageType: not "metered", IntervalCount: 1 } recurring && recurring.Interval == (interval == "annual" ? "year" : "month") &&
-                    price.Product is { Active: true } publishedProduct && (publishedProduct.Metadata.GetValueOrDefault("plan") == plan.Key ||
-                        publishedProduct.Name == plan.Name || publishedProduct.Name == "TerraScale " + plan.Name))
+                    price.Product is { Active: true } publishedProduct && (publishedProduct.Metadata.GetValueOrDefault("plan") == Key ||
+                        publishedProduct.Name == Name || publishedProduct.Name == "TerraScale " + Name))
                 .OrderByDescending(price => price.ProductId == product.Id).ToArray();
             if (matches.Length == 0)
             {
@@ -109,7 +100,7 @@ public sealed class StripeSetupCommand
                 {
                     Product = product.Id,
                     Currency = "usd",
-                    UnitAmount = plan.Amount,
+                    UnitAmount = Amount,
                     Recurring = new() { Interval = interval == "annual" ? "year" : "month", IntervalCount = 1 },
                     LookupKey = "terrascale_" + name,
                     TransferLookupKey = true

@@ -1,5 +1,3 @@
-using TerraScale.Dashboard.Features.Accounts;
-
 namespace TerraScale.Dashboard.Platform.Mcp;
 
 // Helpers shared by the MCP tool classes that each feature owns.

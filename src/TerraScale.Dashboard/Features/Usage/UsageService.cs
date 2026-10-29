@@ -1,7 +1,6 @@
 using System.Globalization;
 using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Features.Billing;
-using TerraScale.Dashboard.Features.Home;
 using TerraScale.Dashboard.Shared.Charts;
 using TerraScale.Dashboard.Shared.Formatting;
 using TerraScale.Dashboard.Shared.UI;
@@ -121,9 +120,9 @@ public sealed class UsageService(IUsageMeasurements measurements, SpendingServic
             selection.DatabaseId.Length > 0 ? scope : scopedDatabases.FirstOrDefault(reading => reading.DatabaseId == database.Id), 0,
             stored?.Projects.GetValueOrDefault(selection.Context.Project!.Id)?.Databases.GetValueOrDefault(database.Id))).ToArray();
         var knownDatabaseTotal = UsageStorageSnapshot.SumCounters(databaseRows.Select(database => database.LogicalBytes));
-        databaseRows = databaseRows.Select(database => database with { SharePercent = database.LogicalBytes is { } bytes && knownDatabaseTotal is { } total ? ValueFormat.Percent(bytes, total) : null }).ToArray();
-        var history = scope is { Series.Count: > 0 } ? AnalyticsLinePlot.For("Reads and writes, " + selection.RangeLabel, selection.Range, scope.Series.Select(point => point.Start).ToArray(),
-            [new("Reads", scope.Series.Select(point => (decimal)point.Reads).ToArray()), new("Writes", scope.Series.Select(point => (decimal)point.Writes).ToArray())]) : null;
+        databaseRows = [.. databaseRows.Select(database => database with { SharePercent = database.LogicalBytes is { } bytes && knownDatabaseTotal is { } total ? ValueFormat.Percent(bytes, total) : null })];
+        var history = scope is { Series.Count: > 0 } ? AnalyticsLinePlot.For("Reads and writes, " + selection.RangeLabel, selection.Range, [.. scope.Series.Select(point => point.Start)],
+            [new("Reads", [.. scope.Series.Select(point => (decimal)point.Reads)]), new("Writes", [.. scope.Series.Select(point => (decimal)point.Writes)])]) : null;
         return new(shell, selection, tab, saved, controls, projects, databaseRows, allowances, name, scope, history, source,
             result.Scope.State == UsageSourceState.Unavailable ? "Metered reads and writes could not be loaded. Try again shortly." : "", monthError,
             "Published allowances count 4 KiB operation units and storage across selected regions, and client egress. These document counters do not measure allowance utilization.", organizationStorage is not null, await replicationRead)

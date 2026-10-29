@@ -66,9 +66,9 @@ public sealed class DatabaseLogBackend(IHttpClientFactory factory, IProjectAcces
             item.P95LatencyMs is { } p95 && (!double.IsFinite(p95) || p95 < 0)))
             throw new JsonException("Query shapes returned invalid measurements.");
         var now = time.GetUtcNow();
-        return shapes.Items.Where(item => item.LastSeenAt >= now.AddHours(-24) && item.LastSeenAt <= now)
+        return [.. shapes.Items.Where(item => item.LastSeenAt >= now.AddHours(-24) && item.LastSeenAt <= now)
             .OrderByDescending(item => item.P95LatencyMs ?? item.MaxLatencyMs)
-            .ThenBy(item => item.Collection, StringComparer.Ordinal).ThenBy(item => item.Id, StringComparer.Ordinal).ToArray();
+            .ThenBy(item => item.Collection, StringComparer.Ordinal).ThenBy(item => item.Id, StringComparer.Ordinal)];
     }
 
     internal static void Validate(DatabaseLogBatch batch, string databaseId, string status, bool cursor = false)

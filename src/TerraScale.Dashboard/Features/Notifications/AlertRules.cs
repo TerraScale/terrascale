@@ -154,7 +154,7 @@ public sealed class AlertRules(IDashboardState state, IAlertSource source, ICust
         await state.UpdateAsync(Collection, projectId, () => throw new IOException("Alert rules disappeared."), current => Read(current, projectId), set =>
         {
             for (var index = 0; index < set.Rules.Count; index++)
-                set.Rules[index] = set.Rules[index] with { Events = set.Rules[index].Events.Select(item => results.GetValueOrDefault(item.DeliveryId) ?? item).Where(item => item.Pending).ToList() };
+                set.Rules[index] = set.Rules[index] with { Events = [.. set.Rules[index].Events.Select(item => results.GetValueOrDefault(item.DeliveryId) ?? item).Where(item => item.Pending)] };
             return set;
         }, cancellationToken);
     }

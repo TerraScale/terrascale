@@ -37,14 +37,14 @@ public sealed partial class TerraBaseHomeMeasurements
 
             var totals = AnalyticsService.Summarize(selection, batch.Points);
             result.Analytics = new(totals.Requests, totals.Errors, totals.WorstP95Ms, totals.StorageBytes, totals.Operations, totals.ClientBytes);
-            result.RequestPoints = batch.Points.GroupBy(point => point.Start).OrderBy(group => group.Key).Select(group =>
+            result.RequestPoints = [.. batch.Points.GroupBy(point => point.Start).OrderBy(group => group.Key).Select(group =>
             {
                 var counters = new SortedDictionary<string, long>(StringComparer.Ordinal);
                 foreach (var point in group)
                     foreach (var counter in point.Requests)
                         counters[counter.Key] = checked(counters.GetValueOrDefault(counter.Key) + counter.Value);
                 return new HomeRequestPoint(group.Key, counters);
-            }).ToArray();
+            })];
         }
         catch (Exception error) when (MeasurementFailure(error, cancellationToken))
         {

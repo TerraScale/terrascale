@@ -1,4 +1,3 @@
-using TerraScale.Dashboard.Features.Auth;
 using System.Text.Json.Serialization;
 
 namespace TerraScale.Dashboard.Features.Accounts;

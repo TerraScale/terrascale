@@ -17,7 +17,7 @@ public sealed class SavedQueryService(IDashboardState state, TimeProvider time, 
         context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
         if (databaseId.Length > 0) DatabaseService.Database(context, databaseId);
         var queries = await ReadAsync(context, cancellationToken);
-        return databaseId.Length == 0 ? queries : queries.Where(query => query.DatabaseId.Length == 0 || query.DatabaseId == databaseId).ToArray();
+        return databaseId.Length == 0 ? queries : [.. queries.Where(query => query.DatabaseId.Length == 0 || query.DatabaseId == databaseId)];
     }
 
     public async Task<IReadOnlyList<SavedQuery>> ListAsync(AccountContext context, CancellationToken cancellationToken)
@@ -31,7 +31,7 @@ public sealed class SavedQueryService(IDashboardState state, TimeProvider time, 
         var document = await state.GetAsync(Collection, Key(context), cancellationToken);
         if (document is null) return [];
         var record = Read(context, document);
-        return record.Queries.OrderBy(query => query.Name, StringComparer.Ordinal).ToArray();
+        return [.. record.Queries.OrderBy(query => query.Name, StringComparer.Ordinal)];
     }
 
     public async Task<SavedQuery> SaveAsync(AccountContext context, string databaseId, string name, string sql, CancellationToken cancellationToken)

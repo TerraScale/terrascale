@@ -1,7 +1,5 @@
 using System.Net;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.DotNet;
-using TerraScale.Dashboard.Platform.Http;
 
 namespace TerraScale.Dashboard.Features.Auth;
 

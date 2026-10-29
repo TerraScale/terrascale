@@ -1,5 +1,4 @@
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.Dashboard.Platform.Http;
 using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Features.Auth;

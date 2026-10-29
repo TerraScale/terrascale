@@ -1,6 +1,4 @@
 using System.Text.Json;
-using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Shared.Formatting;
 using TerraScale.Dashboard.Shared.UI;
 using TerraScale.DotNet.TerraBase;
@@ -21,7 +19,7 @@ public sealed record DataPage(ShellModel Shell, DatabaseRecord Database, string 
         ? name + " (" + TerraScale.Dashboard.Shared.Charts.ChartGeometry.Compact(count) + ")" : name;
     public string? CollectionTitle(string name) => CollectionCounts is not null && CollectionCounts.TryGetValue(name, out var count)
         ? count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " documents" : null;
-    public DataGrid Grid => DataGrid.Create(Browse.Documents.Select(document => new DatabaseSqlRow(document.Id, document.Document)).ToArray(), Browse.Matched, Browse.More);
+    public DataGrid Grid => DataGrid.Create([.. Browse.Documents.Select(document => new DatabaseSqlRow(document.Id, document.Document))], Browse.Matched, Browse.More);
     public string BrowsePath(params (string Key, string Value)[] changes)
     {
         var query = new Dictionary<string, string>();
@@ -31,7 +29,7 @@ public sealed record DataPage(ShellModel Shell, DatabaseRecord Database, string 
         if (Descending) query["order"] = "desc";
         if (Browse.Page > 1) query["page"] = Browse.Page.ToString(System.Globalization.CultureInfo.InvariantCulture);
         if (changes.Any(change => change.Key is "q" or "sort" or "order")) { query.Remove("cursor"); query.Remove("page"); }
-        foreach (var change in changes) { if (change.Value.Length == 0) query.Remove(change.Key); else query[change.Key] = change.Value; }
+        foreach (var (Key, Value) in changes) { if (Value.Length == 0) query.Remove(Key); else query[Key] = Value; }
         var path = "/databases/" + Uri.EscapeDataString(Database.Id) + "/documents/" + Uri.EscapeDataString(Collection);
         return path + (query.Count == 0 ? "" : "?" + string.Join('&', query.Select(pair => Uri.EscapeDataString(pair.Key) + "=" + Uri.EscapeDataString(pair.Value))));
     }
@@ -80,9 +78,9 @@ public sealed record DataGrid(IReadOnlyList<DataGridColumn> Columns, IReadOnlyLi
             values.Add(fields);
         }
         var hidden = Math.Max(0, names.Count - 24);
-        names = names.Take(24).ToList();
+        names = [.. names.Take(24)];
         var columns = names.Select(name => new DataGridColumn(name.Name, values.All(fields => !fields.TryGetValue(name, out var value) || value.ValueKind == JsonValueKind.Number), name.Root)).ToArray();
-        var laidOut = rows.Select((row, index) => new DataGridRow(row.Id, names.Select(name => values[index].TryGetValue(name, out var value) ? Cell(value) : new DataGridCell("", "missing")).ToArray())).ToArray();
+        var laidOut = rows.Select((row, index) => new DataGridRow(row.Id, [.. names.Select(name => values[index].TryGetValue(name, out var value) ? Cell(value) : new DataGridCell("", "missing"))])).ToArray();
         return new(columns, laidOut, Math.Max(input.Count, matched), more, hidden, JsonSerializer.Serialize(rows, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
     }
 

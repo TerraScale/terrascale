@@ -1,4 +1,3 @@
-using TerraScale.Dashboard.Shared.Databases;
 using TerraScale.Dashboard.Shared.UI;
 using TerraScale.Dashboard.Shared.Validation;
 
@@ -57,7 +56,7 @@ public static class OnboardingEndpoints
         // Offer exactly the regions the project step accepts: those TerraBase reports as serving.
         if (page.Step == "project")
         {
-            try { page = page with { Regions = (await backend.RegionsAsync(context.RequestAborted)).Where(region => region.Healthy).Select(region => region.Code).ToArray() }; }
+            try { page = page with { Regions = [.. (await backend.RegionsAsync(context.RequestAborted)).Where(region => region.Healthy).Select(region => region.Code)] }; }
             catch (HttpRequestException) { page = page with { Regions = [] }; }
         }
         var view = OnboardingView.Create(page);

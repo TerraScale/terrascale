@@ -1,4 +1,3 @@
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.QuerySubscriptions;

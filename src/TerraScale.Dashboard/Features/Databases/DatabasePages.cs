@@ -1,5 +1,4 @@
 using System.Text.Json;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Shared.Formatting;
 using TerraScale.Dashboard.Shared.UI;
@@ -16,8 +15,8 @@ public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecor
     public int Progress => All.Count(database => database.Status is "provisioning" or "accepted" or "pending");
     public int Failed => All.Count(database => database.Status == "failed");
     public IReadOnlyList<string> Serving(DatabaseRecord database) => DatabaseService.ServingRegions(database, Choices);
-    public IReadOnlyList<string> Regions => All.SelectMany(Serving).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(TerraScale.Dashboard.Shared.UI.Regions.Rank).ThenBy(code => code, StringComparer.OrdinalIgnoreCase).ToArray();
-    public IReadOnlyList<string> Selected => Selection ?? Choices.Select(region => region.Code).ToArray();
+    public IReadOnlyList<string> Regions => [.. All.SelectMany(Serving).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(TerraScale.Dashboard.Shared.UI.Regions.Rank).ThenBy(code => code, StringComparer.OrdinalIgnoreCase)];
+    public IReadOnlyList<string> Selected => Selection ?? [.. Choices.Select(region => region.Code)];
     public string? HomeSelection { get; init; }
     public bool AllRegions { get; init; }
     public string HomeRegion => HomeSelection ?? Choices.FirstOrDefault(region => region.Code.Equals(Context.Project?.Region, StringComparison.OrdinalIgnoreCase))?.Code ?? Choices.FirstOrDefault()?.Code ?? "";
@@ -122,7 +121,7 @@ public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Databas
     public string RangePath(string key, string range) => DatabaseService.Path(Database.Id) + "?" +
         string.Join('&', Activity!.Cards.Select(card => card.Key + "=" + (card.Key == key ? range : card.Range))) + "#activity";
     public AccountContext Context => Shell.Context;
-    public IReadOnlyList<DatabaseRecord> Branches => Context.Project!.Databases.Values.Where(database => database.BranchedFrom == Database.Id).OrderBy(database => database.Name, StringComparer.Ordinal).ToArray();
+    public IReadOnlyList<DatabaseRecord> Branches => [.. Context.Project!.Databases.Values.Where(database => database.BranchedFrom == Database.Id).OrderBy(database => database.Name, StringComparer.Ordinal)];
     // An all-regions database serves every region in TerraBase's catalog (Choices); its record names only the home.
     public IReadOnlyList<string> Serving => DatabaseService.ServingRegions(Database, Choices);
     public string Placement => Serving.Count == 0 ? DatabasesPage.RegionDisplay("")
@@ -169,7 +168,7 @@ public sealed record DatabaseActivity(IReadOnlyList<DatabaseActivityCard> Cards,
                 var first = batch.Points.Min(point => point.Start.ToUniversalTime());
                 var last = batch.Points.Max(point => point.Start.ToUniversalTime());
                 var starts = Enumerable.Range(0, checked((int)((last - first).TotalSeconds / bucket) + 1)).Select(index => first.AddSeconds((long)index * bucket)).ToArray();
-                var plots = cards.Where(card => card.Range == range).ToDictionary(card => card.Key, card => Plot(card, starts, regions.Select(region =>
+                var plots = cards.Where(card => card.Range == range).ToDictionary(card => card.Key, card => Plot(card, starts, [.. regions.Select(region =>
                 {
                     var values = new decimal[starts.Length];
                     var missing = Enumerable.Repeat(true, starts.Length).ToArray();
@@ -182,7 +181,7 @@ public sealed record DatabaseActivity(IReadOnlyList<DatabaseActivityCard> Cards,
                         missing[index] = false;
                     }
                     return new AnalyticsSeries(region.Code, values, missing);
-                }).Where(series => series.Missing!.Contains(false)).ToArray()));
+                }).Where(series => series.Missing!.Contains(false))]));
                 Set(card => card with { Plot = plots[card.Key], Message = "No " + card.Title.Split(' ')[0].ToLowerInvariant() + " samples in the last " + range + "." });
             }
             catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException or JsonException or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException ||
@@ -210,7 +209,7 @@ public sealed record DatabaseReplicationModel(TerraScale.Dashboard.Features.Usag
 {
     // Map hubs exist only where overlays.css positions a node; other regions stay in the cards and tables.
     public static readonly IReadOnlyDictionary<string, (double X, double Y)> Hubs = new Dictionary<string, (double, double)>(StringComparer.OrdinalIgnoreCase) { ["gru"] = (50.00, 59.76), ["fra"] = (71.16, 20.32), ["sjc"] = (21.21, 28.83), ["sfo"] = (21.00, 28.58) };
-    public IReadOnlyList<TerraScale.Dashboard.Features.Usage.UsageReplica> Replicas => Reading.Regions.Where(row => row.DatabaseId == DatabaseId).OrderBy(row => Regions.Rank(row.Region)).ToArray();
+    public IReadOnlyList<TerraScale.Dashboard.Features.Usage.UsageReplica> Replicas => [.. Reading.Regions.Where(row => row.DatabaseId == DatabaseId).OrderBy(row => Regions.Rank(row.Region))];
     public static string Tone(string status) => status switch { "healthy" or "operational" => "success", "lagging" or "degraded" => "warning", "diverged" or "stopped" or "down" => "danger", _ => "neutral" };
     public string Arc(string to)
     {

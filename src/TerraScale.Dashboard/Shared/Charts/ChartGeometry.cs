@@ -38,7 +38,7 @@ public static class ChartGeometry
         var path = new StringBuilder($"M {Coordinate(points[0].X)},{Coordinate(points[0].Y)}");
         if (points.Length < 3)
         {
-            foreach (var point in points.Skip(1)) path.Append($" L {Coordinate(point.X)},{Coordinate(point.Y)}");
+            foreach (var (X, Y) in points.Skip(1)) path.Append($" L {Coordinate(X)},{Coordinate(Y)}");
             return path.ToString();
         }
         var slopes = Enumerable.Range(0, points.Length - 1).Select(index => (points[index + 1].Y - points[index].Y) / (points[index + 1].X - points[index].X)).ToArray();

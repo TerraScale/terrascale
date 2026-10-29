@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Text.Json.Serialization;
 using ModelContextProtocol.Server;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Mcp;
 

@@ -1,5 +1,4 @@
 using System.Net.Mail;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.DotNet;
 
@@ -55,7 +54,7 @@ public sealed class TsOrganizationAccess(ITsAuthPlatform platform) : IOrganizati
         IReadOnlyList<AuditRecord> local = context.CanManage ? context.Organization!.AuditEvents : [];
         audit.RemoveAll(item => local.Any(own => own.Action == item.Action && own.Target == item.Target && (own.OccurredAt - item.OccurredAt).Duration() < TimeSpan.FromMinutes(5)));
         // The plan decides the window; ts-auth keeps its events at least 90 days (its list_audit_events contract).
-        return new(members, invitations, audit.Concat(local).OrderByDescending(item => item.OccurredAt).ToArray(),
+        return new(members, invitations, [.. audit.Concat(local).OrderByDescending(item => item.OccurredAt)],
             transfer is null ? null : new(transfer.FromUserId, transfer.ToUserId, transfer.CreatedAt, transfer.ExpiresAt),
             context.CanManage ? Audit.OrganizationAudit.RetentionDays(context.Organization!) : null);
     }

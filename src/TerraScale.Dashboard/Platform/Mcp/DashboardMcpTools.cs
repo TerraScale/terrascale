@@ -1,25 +1,16 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
-using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Billing;
 
 namespace TerraScale.Dashboard.Platform.Mcp;
 
 // Tools invoke the same feature services as native forms. The HTTP transport
 // authenticates each request and does not retain any connection state.
 [McpServerToolType]
-public sealed class DashboardMcpTools
+public sealed class DashboardMcpTools(IHttpContextAccessor http, AccountService accounts, TimeProvider time)
 {
-    private readonly IHttpContextAccessor http;
-    private readonly AccountService accounts;
-    private readonly TimeProvider time;
-
-    public DashboardMcpTools(IHttpContextAccessor http, AccountService accounts, TimeProvider time)
-    {
-        this.http = http;
-        this.accounts = accounts;
-        this.time = time;
-    }
+    private readonly IHttpContextAccessor http = http;
+    private readonly AccountService accounts = accounts;
+    private readonly TimeProvider time = time;
 
     private AccountContext Scope(string? organizationId, string? projectId) => DashboardMcp.Scope(http.HttpContext, organizationId, projectId);
     private AccountContext Account() => McpScope.Account(http.HttpContext);
@@ -31,7 +22,7 @@ public sealed class DashboardMcpTools
         var context = await accounts.GetContextAsync(Account().Session, Cancellation);
         return new(new(context.UserId, context.Account.Name, context.Account.Email, null),
             new(context.Account.ActiveOrganizationId, context.Account.ActiveProjectId),
-            context.Organizations.Select(org => OrganizationSummary(context with { Organization = org, Project = null })).ToArray());
+            [.. context.Organizations.Select(org => OrganizationSummary(context with { Organization = org, Project = null }))]);
     }
 
     [McpServerTool(Name = "get_organization", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read the selected organization's details and projects.")]
@@ -73,8 +64,8 @@ public sealed class DashboardMcpTools
         return new(org.Id, org.Name, org.Kind, org.Status, org.RoleFor(context.UserId), org.PlanId,
             PlanCatalog.For(org)?.Name ?? "", org.BillingStatus,
             org.CanManage(context.UserId), org.CanProvision(context.UserId), org.DeletionRequested,
-            org.Projects.Values.OrderBy(project => project.Name, StringComparer.Ordinal).Select(project =>
-                ProjectSummary(context, project)).ToArray(),
+            [.. org.Projects.Values.OrderBy(project => project.Name, StringComparer.Ordinal).Select(project =>
+                ProjectSummary(context, project))],
             org.Slug, org.CreatedAt == DateTimeOffset.MinValue ? null : org.CreatedAt,
             org.Members.Values.Count(member => member.Status == "active"),
             org.Invitations.Values.Count(invitation => invitation.Status == "pending" && invitation.ExpiresAt > time.GetUtcNow()),
@@ -91,12 +82,12 @@ public sealed class DashboardMcpTools
         return new(org.Id, org.Name, member ? org.Kind : null, member ? org.Status : null, member ? org.RoleFor(context.UserId) : null,
             member ? org.PlanId : null, member ? PlanCatalog.For(org)?.Name ?? "" : null, member ? org.BillingStatus : null,
             org.CanManage(context.UserId), org.CanProvision(context.UserId), member ? org.DeletionRequested : null,
-            org.Projects.Values.OrderBy(project => project.Name, StringComparer.Ordinal).Select(project =>
-                ProjectSummary(context, project)).ToArray());
+            [.. org.Projects.Values.OrderBy(project => project.Name, StringComparer.Ordinal).Select(project =>
+                ProjectSummary(context, project))]);
     }
 
     private static DashboardMcpProject ProjectSummary(AccountContext context, ProjectRecord project) =>
-        new(project.Id, project.Name, project.Region, project.BackupRegion, project.Regions.ToArray(), project.IsDefault, project.Databases.Count,
+        new(project.Id, project.Name, project.Region, project.BackupRegion, [.. project.Regions], project.IsDefault, project.Databases.Count,
             PlatformDatabases.IsPlatform(context.Organization?.Id) ? "viewer" : project.Role,
             (context with { Project = project }).CanWriteProjectData);
 }

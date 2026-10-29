@@ -1,27 +1,18 @@
 using System.Text.Json;
 using Stripe;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.Dashboard.Features.Billing.Invoices;
 
 namespace TerraScale.Dashboard.Features.Billing;
 
 /// <summary>Read-only Stripe configuration audit using the official Stripe.net V1 client.</summary>
-public sealed class StripeAuditCommand
+public sealed class StripeAuditCommand(IDashboardIdentity identity,
+    Func<string, StripeClient>? clientFactory = null, TextWriter? output = null, TextWriter? error = null)
 {
-    private readonly IDashboardIdentity identity;
-    private readonly Func<string, StripeClient> clientFactory;
-    private readonly TextWriter output;
-    private readonly TextWriter error;
-
-    public StripeAuditCommand(IDashboardIdentity identity,
-        Func<string, StripeClient>? clientFactory = null, TextWriter? output = null, TextWriter? error = null)
-    {
-        this.identity = identity;
-        this.clientFactory = clientFactory ?? (key => new StripeClient(key,
+    private readonly IDashboardIdentity identity = identity;
+    private readonly Func<string, StripeClient> clientFactory = clientFactory ?? (key => new StripeClient(key,
             httpClient: new SystemNetHttpClient(new HttpClient(), enableTelemetry: false)));
-        this.output = output ?? Console.Out;
-        this.error = error ?? Console.Error;
-    }
+    private readonly TextWriter output = output ?? Console.Out;
+    private readonly TextWriter error = error ?? Console.Error;
 
     public async Task<int> RunAsync(string[] args, CancellationToken cancellationToken = default)
     {

@@ -17,7 +17,7 @@ public sealed partial class OrganizationMcpTools
     {
         var context = Scope(organizationId, projectId);
         var page = await ProjectGrants.ReadAsync(context, after, Cancellation);
-        return new ProjectGrantMcpPage(context.Organization!.Id, context.Project!.Id, page.Items.Select(GrantView).ToArray(), page.Next);
+        return new ProjectGrantMcpPage(context.Organization!.Id, context.Project!.Id, [.. page.Items.Select(GrantView)], page.Next);
     });
 
     [McpServerTool(Name = "set_project_member_role", Title = "Set explicit project grant", ReadOnly = false, Idempotent = true, Destructive = true, OpenWorld = true, UseStructuredContent = true),

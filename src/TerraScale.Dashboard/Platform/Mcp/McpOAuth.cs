@@ -5,9 +5,7 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.Dashboard.Shared.Accounts;
 using TerraScale.Dashboard.Shared.UI;
-using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Platform.Mcp;
@@ -80,7 +78,7 @@ public static partial class McpOAuth
     // still needs the user's consent on the dashboard and a sign-in on ts-auth.
     private static async Task<IResult> RegisterAsync(HttpContext context, IDashboardState state, TimeProvider time)
     {
-        IResult TooLarge() => OAuthError("invalid_client_metadata", "Client metadata exceeds 16 KiB.", StatusCodes.Status413PayloadTooLarge);
+        static IResult TooLarge() => OAuthError("invalid_client_metadata", "Client metadata exceeds 16 KiB.", StatusCodes.Status413PayloadTooLarge);
         if (context.Request.ContentLength > MaxRegistrationBytes) return TooLarge();
         if (!context.Request.HasJsonContentType() ||
             !System.Net.Http.Headers.MediaTypeHeaderValue.TryParse(context.Request.ContentType, out var contentType) ||
@@ -119,7 +117,7 @@ public static partial class McpOAuth
         var name = metadata.TryGetProperty("client_name", out var named) && named.ValueKind == JsonValueKind.String ? named.GetString()!.Trim() : "";
         if (name.EnumerateRunes().Count() > 64 || name.Any(char.IsControl)) return OAuthError("invalid_client_metadata", "client_name uses at most 64 printable characters.");
         var id = AccountService.NewId();
-        var client = McpRegistrations.Create(id, name.Length == 0 ? "MCP client" : name, uris.EnumerateArray().Select(uri => uri.GetString()!).ToArray(), time.GetUtcNow());
+        var client = McpRegistrations.Create(id, name.Length == 0 ? "MCP client" : name, [.. uris.EnumerateArray().Select(uri => uri.GetString()!)], time.GetUtcNow());
         await state.PutAsync(ClientCollection, id, JsonSerializer.SerializeToElement(client), TerraBasePrecondition.Absent, context.RequestAborted);
         return Results.Json(new Dictionary<string, object>
         {
@@ -344,7 +342,7 @@ public static partial class McpOAuth
     }
 
     private static IReadOnlyList<KeyValuePair<string, string>> Fields(McpAuthorization authorization) =>
-        new Dictionary<string, string?>
+        [.. new Dictionary<string, string?>
         {
             ["response_type"] = "code",
             ["client_id"] = authorization.ClientId,
@@ -354,7 +352,7 @@ public static partial class McpOAuth
             ["state"] = authorization.State,
             ["resource"] = authorization.Resource,
             ["scope"] = Scope
-        }.Where(pair => pair.Value is not null).Select(pair => KeyValuePair.Create(pair.Key, pair.Value!)).ToArray();
+        }.Where(pair => pair.Value is not null).Select(pair => KeyValuePair.Create(pair.Key, pair.Value!))];
 
     private static IResult ErrorPage(HttpContext context, string message, int statusCode = 400)
     {

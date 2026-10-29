@@ -3,7 +3,6 @@ using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing.Internal;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet.TerraBase;
 using TerraScale.Dashboard.Shared.Validation;
 
 namespace TerraScale.Dashboard.Features.Billing;
@@ -114,7 +113,7 @@ public static class InternalBillingCommands
         var command = args[0];
         if (command is not (Configure or Report)) throw new CommandRejectedException("Unknown command.");
         var names = command == Report ? new[] { "org", "admin-email" }
-            : new[] { "org", "admin-email", "base-plan", "spend-cap-cents", "write-cents-per-million", "storage-cents-per-gb-month" };
+            : ["org", "admin-email", "base-plan", "spend-cap-cents", "write-cents-per-million", "storage-cents-per-gb-month"];
         var fields = new Dictionary<string, string>(StringComparer.Ordinal);
         for (var index = 1; index < args.Length; index++)
         {

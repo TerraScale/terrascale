@@ -224,16 +224,14 @@ public sealed partial class StripeBilling
             var next = schedule.Phases?.Where(phase => phase.StartDate >= schedule.CurrentPhase.EndDate).OrderBy(phase => phase.StartDate).FirstOrDefault();
             if (next is not null)
             {
-                var nextMapped = next.Items is { Count: 1 } phaseItems && phaseItems[0].Quantity == 1 ? EffectivePlan(phaseItems[0].Price) : null;
-                if (nextMapped is null) throw Conflict("The scheduled plan needs billing attention.");
+                var nextMapped = (next.Items is { Count: 1 } phaseItems && phaseItems[0].Quantity == 1 ? EffectivePlan(phaseItems[0].Price) : null) ?? throw Conflict("The scheduled plan needs billing attention.");
                 (scheduledKey, scheduledInterval) = (nextMapped.Value.Plan.Key, nextMapped.Value.Interval); scheduledAt = next.StartDate;
             }
         }
         var pendingKey = ""; var pendingInterval = ""; var paymentUrl = "";
         if (subscription.PendingUpdate is { } pending)
         {
-            var pendingMapped = pending.SubscriptionItems is { Count: 1 } pendingItems && pendingItems[0].Quantity == 1 ? EffectivePlan(pendingItems[0].Price) : null;
-            if (pendingMapped is null) throw Conflict("The pending plan needs billing attention.");
+            var pendingMapped = (pending.SubscriptionItems is { Count: 1 } pendingItems && pendingItems[0].Quantity == 1 ? EffectivePlan(pendingItems[0].Price) : null) ?? throw Conflict("The pending plan needs billing attention.");
             (pendingKey, pendingInterval) = (pendingMapped.Value.Plan.Key, pendingMapped.Value.Interval);
             // The update's open invoice is where the customer authenticates (3D Secure) or retries its payment.
             if (subscription.LatestInvoice is { Status: "open" } invoice && invoice.CustomerId == binding.CustomerId)

@@ -1,4 +1,3 @@
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Shared.UI;
 using TerraScale.DotNet;
 

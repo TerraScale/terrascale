@@ -25,7 +25,7 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
         context = await FreshManagerAsync(context, cancellationToken);
         name = AccountService.ValidName(name);
         CanCreate(context.Organization!, context.UserId, name);
-        var locations = await LocationsAsync(region, backupRegion, regions, cancellationToken);
+        var (Primary, Backup, Regions) = await LocationsAsync(region, backupRegion, regions, cancellationToken);
         // ts-auth refuses a duplicate name (409 name_taken), so a repeated submit fails clearly.
         var remote = await platform.CreateProjectAsync(context.Session, context.Organization!.Id, name, cancellationToken);
         var project = new ProjectRecord
@@ -35,9 +35,9 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
             Name = remote.Name,
             Slug = AccountService.Slug(remote.Name),
             CreatedAt = remote.CreatedAt,
-            Region = locations.Primary,
-            BackupRegion = locations.Backup,
-            Regions = locations.Regions
+            Region = Primary,
+            BackupRegion = Backup,
+            Regions = Regions
         };
         await accounts.UpdateOrganizationAsync(context, org =>
         {
@@ -83,7 +83,7 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
             if (region.Length == 0) region = project.Region;
             if (backupRegion.Length == 0) backupRegion = project.BackupRegion;
         }
-        var locations = await LocationsAsync(region, backupRegion, regions, cancellationToken);
+        var (Primary, Backup, Regions) = await LocationsAsync(region, backupRegion, regions, cancellationToken);
         if (project.Name != name) await platform.RenameProjectAsync(context.Session, context.Organization!.Id, project.Id, name, cancellationToken);
         await accounts.UpdateOrganizationAsync(context, org =>
         {
@@ -93,9 +93,9 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
             if (current.OrganizationId != org.Id) throw new AccountAccessException("Project is unavailable.", 404);
             current.Name = name;
             current.Slug = AccountService.Slug(name);
-            current.Region = locations.Primary;
-            current.BackupRegion = locations.Backup;
-            current.Regions = locations.Regions;
+            current.Region = Primary;
+            current.BackupRegion = Backup;
+            current.Regions = Regions;
             org.AuditEvents.Add(Event(context, "project.renamed", name, "project"));
         }, cancellationToken);
     }
@@ -205,7 +205,7 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
     {
         var catalog = await placement.RegionsAsync(cancellationToken);
         if (catalog.Count == 0) throw new IOException("Serving regions could not be discovered.");
-        var regions = requested is { Count: > 0 } ? requested.Select(value => value.Trim().ToUpperInvariant()).Distinct().ToList()
+        var regions = requested is { Count: > 0 } ? [.. requested.Select(value => value.Trim().ToUpperInvariant()).Distinct()]
             : new List<string> { string.IsNullOrWhiteSpace(primary) ? catalog[0] : primary.Trim().ToUpperInvariant() };
         if (regions.Any(region => !catalog.Contains(region))) throw new AccountAccessException("Choose serving project regions.", 422);
         primary = primary.Trim().ToUpperInvariant();

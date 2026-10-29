@@ -182,7 +182,7 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
             if (!org.CanManage(context.UserId)) throw new AccountAccessException("Organization management access is required.");
             var current = org.Projects.GetValueOrDefault(scope.ProjectId)?.Databases.GetValueOrDefault(id) ?? throw new AccountAccessException("Database is unavailable.", 404);
             current.Region = home.Code;
-            current.Regions = placement.Select(region => region.Code).ToList();
+            current.Regions = [.. placement.Select(region => region.Code)];
             current.AllRegions = allRegions;
             current.PlacementRevision = checked(current.PlacementRevision + 1);
         }, cancellationToken);
@@ -269,7 +269,7 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
                 (record.Name, record.ProjectId, record.PreviousName, record.ConflictOf, record.Region, Regions: Regions(record).ToArray(), record.AllRegions, record.PlacementRevision));
             var homes = seen.Select(database => database.Region).Prepend(project.Region)
                 .Select(code => DatabaseRegion.Resolve(catalog, code)).OfType<DatabaseRegion>().DistinctBy(region => region.Id).ToArray();
-            if (homes.Length == 0 && !context.Organization!.ContainsMember(context.UserId)) homes = catalog.ToArray();
+            if (homes.Length == 0 && !context.Organization!.ContainsMember(context.UserId)) homes = [.. catalog];
             var listings = await Task.WhenAll(homes.Select(async home =>
             {
                 try { return (home, Listed: await backend.ListAsync(scope, home, cancellationToken)); }
@@ -309,7 +309,7 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
                 foreach (var record in refreshed)
                     if (target.Databases.TryGetValue(record.Id, out var current) && Unchanged(current))
                     {
-                        current.Regions = record.Regions.ToList();
+                        current.Regions = [.. record.Regions];
                         current.AllRegions = record.AllRegions;
                         current.Endpoint = record.Endpoint;
                         current.PlacementRevision = checked(current.PlacementRevision + 1);
@@ -355,7 +355,7 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
     public static string Path(string id, string tab = "overview", string collection = "") => "/databases/" + Uri.EscapeDataString(id) + (tab == "overview" ? "" : "/" + tab) + (collection.Length == 0 ? "" : "?collection=" + Uri.EscapeDataString(collection));
     public static IReadOnlyList<string> Regions(DatabaseRecord record) => record.Regions.Count > 0 ? record.Regions : string.IsNullOrEmpty(record.Region) ? [] : [record.Region];
     public static IReadOnlyList<string> ServingRegions(DatabaseRecord record, IReadOnlyList<DatabaseRegion> catalog) => record.AllRegions
-        ? Regions(record).Concat(catalog.Select(region => region.Code)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() : Regions(record);
+        ? [.. Regions(record).Concat(catalog.Select(region => region.Code)).Distinct(StringComparer.OrdinalIgnoreCase)] : Regions(record);
     internal static void DemandName(ProjectRecord project, string name)
     {
         if (project.Databases.Values.Any(database => database.Name == name)) throw new AccountAccessException("A database with this name already exists.", 409);
@@ -385,7 +385,7 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
         CreatedAt = remote.CreatedAt,
         BranchedFrom = remote.BranchedFrom,
         Region = placement[0].Code,
-        Regions = placement.Select(region => region.Code).ToList(),
+        Regions = [.. placement.Select(region => region.Code)],
         AllRegions = remote.AllRegions,
         Endpoint = placement[0].Api.ToString(),
         Status = status
@@ -397,8 +397,8 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
         var ids = remote.ReplicaRegions.Prepend(remote.HomeRegion).ToArray();
         if (ids.Distinct(StringComparer.Ordinal).Count() != ids.Length) throw new HttpRequestException("The database service returned ambiguous placement.");
         var catalog = knownCatalog ?? await backend.RegionsAsync(cancellationToken);
-        return ids.Select(id => (catalog.SingleOrDefault(region => region.Id == id) ?? DatabaseRegion.FromId(id))
-            ?? throw new HttpRequestException("The database service returned an invalid region.")).ToArray();
+        return [.. ids.Select(id => (catalog.SingleOrDefault(region => region.Id == id) ?? DatabaseRegion.FromId(id))
+            ?? throw new HttpRequestException("The database service returned an invalid region."))];
     }
     private static bool SameReplicas(IReadOnlyList<DatabaseRegion> left, IReadOnlyList<DatabaseRegion> right) =>
         left.Skip(1).Select(region => region.Id).Order(StringComparer.Ordinal)

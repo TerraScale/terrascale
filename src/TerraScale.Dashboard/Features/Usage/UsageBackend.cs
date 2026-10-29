@@ -1,8 +1,6 @@
 using TerraScale.Dashboard.Platform.Observability;
 using System.Net;
 using System.Text.Json;
-using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Home;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet.TerraBase;
@@ -80,7 +78,7 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, 
                     throw new JsonException("Project usage totals disagree with database usage.");
                 return new(UsageSourceState.Measured, new(project.Id, "", Count(totals.LogicalBytes), Count(totals.Documents),
                     Period(totals.Period, first, now, bucket), Points(totals.Series, totals.Period, bucket),
-                    totals.Items.Select(item => DatabaseReading(item, project, first, now, bucket, true)).ToArray(), tap.Month));
+                    [.. totals.Items.Select(item => DatabaseReading(item, project, first, now, bucket, true))], tap.Month));
             }
             catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             { return new(UsageSourceState.Unauthorized); }

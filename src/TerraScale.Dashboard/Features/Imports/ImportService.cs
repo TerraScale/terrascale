@@ -1,7 +1,5 @@
 using System.Text.Json;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Features.Databases;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Imports;
@@ -137,14 +135,17 @@ public sealed partial class ImportService(DatabaseService databases, IHttpClient
     {
         var tables = job.Preview?.Tables.Where(table => !table.Excluded).ToArray() ?? [];
         return new(
-            tables.SelectMany(table => table.Columns.Where(column => !column.Excluded && Changes(column.Mapping))
-                .Select(column => $"{table.Source}.{column.Name}: {column.SourceType} is stored as a {Describe(column.Mapping)}.")).ToArray(),
-            tables.SelectMany(table => table.Constraints.Where(constraint => !constraint.Enforced).Select(constraint =>
-                $"{table.Source}: {Kind(constraint.Kind)} {constraint.Name ?? "(unnamed)"} ({string.Join(", ", constraint.Columns)}{(constraint.References is null ? "" : " → " + constraint.References)}) is recorded but not enforced.")).ToArray(),
-            (job.Preview?.Tables.Where(table => table.Excluded).Select(table => table.Source + " is not imported.") ?? [])
-                .Concat(tables.SelectMany(table => table.Columns.Where(column => column.Excluded).Select(column => $"{table.Source}.{column.Name} is not imported."))).ToArray(),
-            tables.Select(table => $"{table.Source}: {Ids(job.Source.Format)}.").ToArray(),
-            tables.SelectMany(table => table.Issues.Where(issue => issue.Severity != "blocking").Select(Issue(table))).ToArray());
+            [.. tables.SelectMany(table => table.Columns.Where(column => !column.Excluded && Changes(column.Mapping))
+                .Select(column => $"{table.Source}.{column.Name}: {column.SourceType} is stored as a {Describe(column.Mapping)}."))],
+            [.. tables.SelectMany(table => table.Constraints.Where(constraint => !constraint.Enforced).Select(constraint =>
+                $"{table.Source}: {Kind(constraint.Kind)} {constraint.Name ?? "(unnamed)"} ({string.Join(", ", constraint.Columns)}{(constraint.References is null ? "" : " → " + constraint.References)}) is recorded but not enforced."))],
+            [
+                .. (job.Preview?.Tables.Where(table => table.Excluded).Select(table => table.Source + " is not imported.") ?? [])
+,
+                .. tables.SelectMany(table => table.Columns.Where(column => column.Excluded).Select(column => $"{table.Source}.{column.Name} is not imported.")),
+            ],
+            [.. tables.Select(table => $"{table.Source}: {Ids(job.Source.Format)}.")],
+            [.. tables.SelectMany(table => table.Issues.Where(issue => issue.Severity != "blocking").Select(Issue(table)))]);
     }
 
     // NDJSON lines in the export shape keep their id (import-ndjson guide); every other row gets a generated ULID.

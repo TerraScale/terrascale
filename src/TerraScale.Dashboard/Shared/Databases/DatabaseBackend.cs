@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.Dashboard.Platform.Persistence;
@@ -110,7 +109,7 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
         var regions = ids.EnumerateArray().Select(id => id.ValueKind == JsonValueKind.String ? DatabaseRegion.FromId(id.GetString()) : null).ToArray();
         if (regions.Length == 0 || regions.Any(region => region is null) || regions.DistinctBy(region => region!.Id).Count() != regions.Length)
             throw new HttpRequestException("TerraBase returned an invalid region catalog.");
-        return regions.OfType<DatabaseRegion>().OrderBy(region => TerraScale.Dashboard.Shared.UI.Regions.Rank(region.Id)).ThenBy(region => region.Id, StringComparer.Ordinal).ToArray();
+        return [.. regions.OfType<DatabaseRegion>().OrderBy(region => TerraScale.Dashboard.Shared.UI.Regions.Rank(region.Id)).ThenBy(region => region.Id, StringComparer.Ordinal)];
     }
 
     // The region answering api.terrascale.tech, named by both its /healthz body and its X-TerraBase-Region header. It is not
@@ -210,14 +209,13 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
         var name = await NameAsync(scope, home, databaseId, cancellationToken);
         var project = (await ClientAsync(scope, home, "databases:write", cancellationToken)).Project(scope.ProjectId);
         return Map(await RunAsync(() => allRegions ? project.SetDatabaseAllRegionsAsync(name, cancellationToken)
-            : project.SetDatabaseRegionsAsync(name, placement.Skip(1).Select(region => region.Id).ToArray(), cancellationToken)));
+            : project.SetDatabaseRegionsAsync(name, [.. placement.Skip(1).Select(region => region.Id)], cancellationToken)));
     }
 
     public async Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
     {
         var database = await DatabaseAsync(scope, home, databaseId, "databases:read", cancellationToken);
-        return (await RunAsync(() => database.ListCollectionStatsAsync(cancellationToken))).Items
-            .Select(item => new CollectionStats(item.Name, item.Documents, item.Bytes)).ToArray();
+        return [.. (await RunAsync(() => database.ListCollectionStatsAsync(cancellationToken))).Items.Select(item => new CollectionStats(item.Name, item.Documents, item.Bytes))];
     }
 
     // SQL HTTP bridge (TS-907): execution and catalog batches share current-user authority, region pin and JSON bounds.
@@ -294,9 +292,9 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
             throw new HttpRequestException("TerraBase returned an invalid SQL catalog.");
         if (names.Length == 0) return new([], false);
         var columns = await SqlBatchAsync(scope, home, databaseId,
-            names.Take(100).Select(name => new SqlExecuteStatement("PRAGMA table_info('" + name.Replace("'", "''", StringComparison.Ordinal) + "')")).ToArray(), false, timeout.Token);
-        var tables = columns.Select((result, index) => new DatabaseSqlTable(names[index], result.Rows.Select(row =>
-            new DatabaseSqlColumn(CatalogText(result, row, "name"), CatalogText(result, row, "type"))).ToArray())).ToArray();
+            [.. names.Take(100).Select(name => new SqlExecuteStatement("PRAGMA table_info('" + name.Replace("'", "''", StringComparison.Ordinal) + "')"))], false, timeout.Token);
+        var tables = columns.Select((result, index) => new DatabaseSqlTable(names[index], [.. result.Rows.Select(row =>
+            new DatabaseSqlColumn(CatalogText(result, row, "name"), CatalogText(result, row, "type")))])).ToArray();
         // A dropped table answers no metadata; fail this snapshot instead of presenting stale tables as complete.
         if (tables.Any(table => table.Columns.Count == 0 || table.Columns.Any(column => string.IsNullOrWhiteSpace(column.Name)) ||
             table.Columns.Select(column => column.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() != table.Columns.Count))
@@ -314,7 +312,7 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
     public async Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
     {
         var database = await DatabaseAsync(scope, home, databaseId, "databases:read", cancellationToken);
-        return (await RunAsync(() => database.ListIndexesAsync(cancellationToken: cancellationToken))).Items.Select(Map).ToArray();
+        return [.. (await RunAsync(() => database.ListIndexesAsync(cancellationToken: cancellationToken))).Items.Select(Map)];
     }
 
     public async Task<DatabaseIndex> CreateIndexAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string collection, IReadOnlyList<string> fields, CancellationToken cancellationToken)
@@ -418,6 +416,6 @@ public sealed class DatabaseWrongRegionException(string? region, string? homeReg
         string? Header(string name) => response.Headers.TryGetValues(name, out var values) && values.Count() == 1 ? values.Single() : null;
         string? Valid(string? id) => DatabaseRegion.FromId(id)?.Id;
         return new(Valid(Header("X-TerraBase-Region")), Valid(Header("X-TerraBase-Database-Home")),
-            (Header("X-TerraBase-Database-Regions") ?? "").Split(',').Select(Valid).OfType<string>().ToArray());
+            [.. (Header("X-TerraBase-Database-Regions") ?? "").Split(',').Select(Valid).OfType<string>()]);
     }
 }

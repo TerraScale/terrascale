@@ -12,7 +12,7 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
 {
     [McpServerTool(Name = "list_collections", Title = "List collections", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List the collection names in a database.")]
     public async Task<McpCollectionList> Collections(string databaseId, string? organizationId = null, string? projectId = null) =>
-        new((await data.CollectionsAsync(Scope(organizationId, projectId), databaseId, Cancellation)).Select(collection => collection.Name).ToArray());
+        new([.. (await data.CollectionsAsync(Scope(organizationId, projectId), databaseId, Cancellation)).Select(collection => collection.Name)]);
 
     [McpServerTool(Name = "create_collection", Title = "Create collection", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create an empty collection in a database before writing documents to it. Names start with a lowercase letter and use up to 63 lowercase letters, digits, hyphens and underscores. Fails if the collection exists. Requires write access.")]
     public async Task<McpCollectionCreated> CreateCollection(string databaseId, string name, string? organizationId = null, string? projectId = null)
@@ -34,12 +34,12 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
         {
             var size = limit == 0 ? 25 : limit;
             var browse = await data.BrowseAsync(context, databaseId, collection, search, sort, descending, page, Cancellation, after, size);
-            return new(browse.Documents.Select(row => new McpDocument(row.Id, row.Document)).ToArray(),
+            return new([.. browse.Documents.Select(row => new McpDocument(row.Id, row.Document))],
                 browse.NextCursor.Length == 0 ? null : browse.NextCursor, browse.More, Page: browse.Page, Limit: size);
         }
         if (page != 1) throw new AccountAccessException("page applies only with sort or descending. In native ID order, omit page and continue with after set to the previous nextCursor.", 422);
         var result = await data.ListPageAsync(context, databaseId, collection, search, limit, after, Cancellation);
-        return new(result.Items.Select(row => new McpDocument(row.Id, row.Document)).ToArray(), result.NextCursor, !string.IsNullOrEmpty(result.NextCursor), Limit: limit == 0 ? 100 : limit);
+        return new([.. result.Items.Select(row => new McpDocument(row.Id, row.Document))], result.NextCursor, !string.IsNullOrEmpty(result.NextCursor), Limit: limit == 0 ? 100 : limit);
     }
 
     [McpServerTool(Name = "get_document", Title = "Get document", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read one document by its ULID ID. Set includeVersion for a conditional-write version.")]
@@ -91,7 +91,7 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
     {
         collection = DataService.ValidCollection(collection);
         var indexes = await data.IndexesAsync(Scope(organizationId, projectId), databaseId, Cancellation);
-        return new(collection, indexes.Where(index => index.Collection == collection).Select(index => new McpIndex(string.Join(", ", index.Fields), index.State)).ToArray());
+        return new(collection, [.. indexes.Where(index => index.Collection == collection).Select(index => new McpIndex(string.Join(", ", index.Fields), index.State))]);
     }
 
     [McpServerTool(Name = "create_index", Title = "Create index", Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Index one field of a collection. Requires an owner or admin role.")]

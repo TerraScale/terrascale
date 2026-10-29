@@ -54,9 +54,9 @@ public static class PlatformDatabases
     public static async Task<IReadOnlyList<TerraBaseCollection>> CollectionsAsync(HttpClient http, SessionRecord session, string database, CancellationToken cancellationToken)
     {
         using var document = await GetAsync(http, session, $"{Explore}/{Name(database)}/collections", cancellationToken) ?? throw new DatabaseProviderException(HttpStatusCode.NotFound);
-        return Items(document).Select(item => new TerraBaseCollection(item.GetProperty("name").GetString()!,
+        return [.. Items(document).Select(item => new TerraBaseCollection(item.GetProperty("name").GetString()!,
             DateTimeOffset.FromUnixTimeMilliseconds(long.Parse(item.GetProperty("created_at").GetString()!, System.Globalization.CultureInfo.InvariantCulture)),
-            item.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "")).ToArray();
+            item.TryGetProperty("id", out var id) ? id.GetString() ?? "" : ""))];
     }
 
     // Documents in id order only: explore has no filters or sorts.
@@ -72,7 +72,7 @@ public static class PlatformDatabases
         var path = $"{Explore}/{Name(database)}/collections/{Uri.EscapeDataString(collection)}/documents?limit={limit}" + (cursor is null ? "" : "&cursor=" + Uri.EscapeDataString(cursor));
         using var document = await GetAsync(http, session, path, cancellationToken) ?? throw new DatabaseProviderException(HttpStatusCode.NotFound);
         var next = document.RootElement.TryGetProperty("next_cursor", out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-        return new(Items(document).Select(Document).ToArray(), next);
+        return new([.. Items(document).Select(Document)], next);
     }
 
     public static async Task<TerraBaseDocument?> GetAsync(HttpClient http, SessionRecord session, string database, string collection, string id, CancellationToken cancellationToken)

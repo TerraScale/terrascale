@@ -1,7 +1,5 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Databases;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Data;
@@ -73,7 +71,7 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
         if (after.Length > 0 && result.NextCursor == after) throw new HttpRequestException("Document pagination did not advance.");
         search = search.Trim();
         // Search filters this native page only. Its cursor must survive even when no rows match.
-        return new(result.Items.Where(row => search.Length == 0 || (row.Id + " " + row.Document.GetRawText()).Contains(search, StringComparison.OrdinalIgnoreCase)).ToArray(), result.NextCursor);
+        return new([.. result.Items.Where(row => search.Length == 0 || (row.Id + " " + row.Document.GetRawText()).Contains(search, StringComparison.OrdinalIgnoreCase))], result.NextCursor);
     }
 
     public async Task CreateCollectionAsync(AccountContext context, string databaseId, string collection, CancellationToken cancellationToken)
@@ -179,8 +177,8 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
     {
         var database = DatabaseService.Database(context, databaseId);
         var tables = await backend.SqlTablesAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, cancellationToken), database.Id, cancellationToken);
-        return new(SqlCatalog.Empty.Keywords, tables.Tables.Select(table => new SqlCatalogTable(table.Name,
-            table.Columns.Select(column => new SqlCatalogField(column.Name, string.IsNullOrEmpty(column.Decltype) ? "No declared type" : column.Decltype)).ToArray())).ToArray(), tables.Truncated);
+        return new(SqlCatalog.Empty.Keywords, [.. tables.Tables.Select(table => new SqlCatalogTable(table.Name,
+            [.. table.Columns.Select(column => new SqlCatalogField(column.Name, string.IsNullOrEmpty(column.Decltype) ? "No declared type" : column.Decltype))]))], tables.Truncated);
     }
 
     public async Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(AccountContext context, string databaseId, CancellationToken cancellationToken)
@@ -190,7 +188,7 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
     }
 
     public async Task CreateIndexAsync(AccountContext context, string databaseId, string collection, string fields, CancellationToken cancellationToken)
-        => await CreateIndexFieldsAsync(context, databaseId, collection, fields.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.Ordinal).ToArray(), cancellationToken);
+        => await CreateIndexFieldsAsync(context, databaseId, collection, [.. fields.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.Ordinal)], cancellationToken);
 
     public async Task CreateIndexFieldAsync(AccountContext context, string databaseId, string collection, string field, CancellationToken cancellationToken)
         => await CreateIndexFieldsAsync(context, databaseId, collection, [field.Trim()], cancellationToken);

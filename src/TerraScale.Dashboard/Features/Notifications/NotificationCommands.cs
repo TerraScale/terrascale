@@ -21,7 +21,7 @@ public static class NotificationCommands
         var matching = visible.Where(item => filter != "unread" || item.Unread).OrderByDescending(item => item.CreatedAt).ToArray();
         var count = Math.Max(1, (matching.Length + 9) / 10);
         var page = Math.Clamp(requestedPage, 1, count);
-        return new(matching.Skip((page - 1) * 10).Take(10).ToArray(), filter,
+        return new([.. matching.Skip((page - 1) * 10).Take(10)], filter,
             visible.Count(item => item.Unread),
             visible.Count(item => item.Unread && (item.Severity.Equals("danger", StringComparison.OrdinalIgnoreCase) || item.Severity.Equals("critical", StringComparison.OrdinalIgnoreCase))),
             visible.Length, matching.Length, page, count);

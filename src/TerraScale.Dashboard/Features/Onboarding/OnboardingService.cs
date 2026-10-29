@@ -6,9 +6,9 @@ namespace TerraScale.Dashboard.Features.Onboarding;
 public sealed class OnboardingService(AccountService accounts, StripeBilling payments, IOnboardingProjectProvisioner projects)
 {
     public async Task<IReadOnlyList<BillingPlan>> PlansAsync(CancellationToken cancellationToken) =>
-        (await payments.PlansAsync(cancellationToken)).Where(plan => plan.PriceCents > 0)
+        [.. (await payments.PlansAsync(cancellationToken)).Where(plan => plan.PriceCents > 0)
             .OrderBy(plan => plan.PriceCents)
-            .ThenBy(plan => plan.Key, StringComparer.Ordinal).ToArray();
+            .ThenBy(plan => plan.Key, StringComparer.Ordinal)];
 
     public async Task ConfirmPaymentAsync(SessionRecord session, CancellationToken cancellationToken)
     {

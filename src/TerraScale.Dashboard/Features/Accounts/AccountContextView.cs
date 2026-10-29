@@ -3,7 +3,7 @@ namespace TerraScale.Dashboard.Features.Accounts;
 public sealed record AccountContextView(AccountContextUser User, AccountContextSelection Selection, IReadOnlyList<AccountContextOrganization> Organizations)
 {
     public static AccountContextView From(AccountContext context) => new(new(context.UserId, context.Account.Name, context.Account.Email),
-        new(context.Organization?.Id, context.Project?.Id), context.Organizations.Select(org => Organization(context, org)).ToArray());
+        new(context.Organization?.Id, context.Project?.Id), [.. context.Organizations.Select(org => Organization(context, org))]);
 
     private static AccountContextOrganization Organization(AccountContext context, OrganizationRecord org)
     {
@@ -21,9 +21,9 @@ public sealed record AccountContextView(AccountContextUser User, AccountContextS
     }
 
     private static AccountContextProject Project(ProjectRecord project, bool member) => new(project.Id, project.OrganizationId, project.Name, project.Slug,
-        project.Region, project.BackupRegion, project.Regions.ToArray(), project.Status, project.IsDefault,
+        project.Region, project.BackupRegion, [.. project.Regions], project.Status, project.IsDefault,
         member ? Limits(project.OperationLimits) : null, Date(project.CreatedAt), project.Databases.ToDictionary(item => item.Key, item =>
-            new AccountContextDatabase(item.Value.Id, item.Value.ProjectId, item.Value.Name, item.Value.Region, item.Value.Regions.ToArray(),
+            new AccountContextDatabase(item.Value.Id, item.Value.ProjectId, item.Value.Name, item.Value.Region, [.. item.Value.Regions],
                 item.Value.Status, member ? Limits(item.Value.OperationLimits) : null, Date(item.Value.CreatedAt))), project.Role);
     private static AccountContextLimits Limits(OperationLimits limits) => new(limits.ReadLimit, limits.WriteLimit, limits.ReplicationLimit);
     private static DateTimeOffset? Date(DateTimeOffset value) => value == DateTimeOffset.MinValue ? null : value;

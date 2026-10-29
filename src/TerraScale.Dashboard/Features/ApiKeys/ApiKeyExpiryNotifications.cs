@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text.Json;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Shared.Formatting;
 
 namespace TerraScale.Dashboard.Features.ApiKeys;
@@ -14,7 +13,7 @@ public static class ApiKeyExpiryNotifications
     public static NotificationRecord[] Due(AccountContext context, IEnumerable<ProjectCredential> keys, IEnumerable<NotificationRecord> inbox, DateTimeOffset now)
     {
         var known = inbox.Where(item => item.Type == Type).Select(item => item.Url).ToHashSet(StringComparer.Ordinal);
-        return keys.Where(key => ApiKeyService.ExpiresSoon(key, now) && !known.Contains(Url(key))).Select(key => new NotificationRecord
+        return [.. keys.Where(key => ApiKeyService.ExpiresSoon(key, now) && !known.Contains(Url(key))).Select(key => new NotificationRecord
         {
             Id = AccountService.NewId(),
             OrganizationId = context.Organization?.Id ?? "",
@@ -26,7 +25,7 @@ public static class ApiKeyExpiryNotifications
             Status = "Unread",
             Url = Url(key),
             CreatedAt = now
-        }).ToArray();
+        })];
     }
 
     public static async Task AddAsync(AccountService accounts, AccountContext context, IReadOnlyList<ProjectCredential> keys, DateTimeOffset now, CancellationToken cancellationToken)
