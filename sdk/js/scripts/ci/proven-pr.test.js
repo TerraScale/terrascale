@@ -25,17 +25,17 @@ function prove({ pulls = [pull], runs = [run], jobs = [job], fail = "" } = {}) {
 const fs = require('node:fs');
 const f = JSON.parse(fs.readFileSync(process.env.FIXTURE, 'utf8'));
 const endpoint = process.argv[3];
-if (process.argv[2] !== 'api' || !endpoint.startsWith('repos/TerraScale/ts-js/')) process.exit(1);
+if (process.argv[2] !== 'api' || !endpoint.startsWith('repos/TerraScale/terrascale/')) process.exit(1);
 let kind;
-if (endpoint === 'repos/TerraScale/ts-js/commits/${main}/pulls?per_page=100') kind = 'pulls';
-else if (endpoint === 'repos/TerraScale/ts-js/actions/runs/123/jobs?per_page=100') kind = 'jobs';
-else if (endpoint === 'repos/TerraScale/ts-js/actions/workflows/ci.yml/runs?event=pull_request&head_sha=${head}&status=success&per_page=1') kind = 'runs';
+if (endpoint === 'repos/TerraScale/terrascale/commits/${main}/pulls?per_page=100') kind = 'pulls';
+else if (endpoint === 'repos/TerraScale/terrascale/actions/runs/123/jobs?per_page=100') kind = 'jobs';
+else if (endpoint === 'repos/TerraScale/terrascale/actions/workflows/sdk-js-ci.yml/runs?event=pull_request&head_sha=${head}&status=success&per_page=1') kind = 'runs';
 else process.exit(1);
 if (f.fail === kind) process.exit(1);
 console.log(JSON.stringify(kind === 'pulls' ? f.pulls : kind === 'jobs' ? { jobs: f.jobs } : { workflow_runs: f.runs }));
 `, { mode: 0o755 });
     const output = path.join(dir, "output");
-    execFileSync("bash", [script], { env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, FIXTURE: path.join(dir, "fixture.json"), GITHUB_REPOSITORY: "TerraScale/ts-js", GITHUB_SHA: main, GITHUB_OUTPUT: output } });
+    execFileSync("bash", [script], { env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, FIXTURE: path.join(dir, "fixture.json"), GITHUB_REPOSITORY: "TerraScale/terrascale", GITHUB_SHA: main, GITHUB_OUTPUT: output } });
     return readFileSync(output, "utf8");
   } finally {
     rmSync(dir, { recursive: true, force: true });

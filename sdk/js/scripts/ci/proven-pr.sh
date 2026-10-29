@@ -14,7 +14,7 @@ heads=$(jq -er --arg sha "$GITHUB_SHA" '
 
 while IFS= read -r head; do
   [[ "$head" =~ ^[0-9a-f]{40}$ ]] || continue
-  runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=pull_request&head_sha=$head&status=success&per_page=1") || exit 0
+  runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/sdk-js-ci.yml/runs?event=pull_request&head_sha=$head&status=success&per_page=1") || exit 0
   run_id=$(jq -er --arg sha "$head" '.workflow_runs[0]
     | select(.event == "pull_request" and .head_sha == $sha
       and .status == "completed" and .conclusion == "success") | .id' <<< "$runs") || continue
