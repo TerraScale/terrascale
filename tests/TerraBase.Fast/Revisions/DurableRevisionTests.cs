@@ -195,9 +195,9 @@ public sealed class DurableRevisionTests
             file.SetLength(file.Length / 2);
         }
 
-        await Assert.That(() => new RevisionReplica().PullAsync(api.Server, database.Database)).Throws<InvalidDataException>();
+        await Assert.That(async () => { await new RevisionReplica().PullAsync(api.Server, database.Database); }).Throws<InvalidDataException>();
         await Assert.That(store.CloseRefusal).IsNotNull();
-        await Assert.That(() => new RevisionReplica().PullAsync(api.Server, database.Database)).Throws<InvalidOperationException>();
+        await Assert.That(async () => { await new RevisionReplica().PullAsync(api.Server, database.Database); }).Throws<InvalidOperationException>();
     }
 
     private static async Task AssertConvergedAsync(ManagementApi api, RevisionDatabase database, RevisionReplica replica, RevisionPullResult pull)
