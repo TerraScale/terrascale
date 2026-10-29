@@ -85,6 +85,8 @@ internal sealed class SqlSession(
     private bool _inTransaction;
     private bool _readOnlyTransaction;
     private Pinned? _pinned;
+    private IStorageTransaction? _running;
+    private int _expiring = -1;
     private SqlError? _lost;
     private int _generation;
     private string? _plannedSql;
@@ -218,6 +220,7 @@ internal sealed class SqlSession(
 
     public async ValueTask DisposeAsync()
     {
+        (Volatile.Read(ref _running) ?? Volatile.Read(ref _pinned)?.Transaction)?.InterruptStatement();
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -231,7 +234,7 @@ internal sealed class SqlSession(
         }
     }
 
-    internal static SqlStatement Internal(string sql) => new(sql, [], NoNamed, MaxRows, MaxBytes);
+    internal static SqlStatement Internal(string sql) => new(sql, [], NoNamed, MaxRows, MaxBytes, SqlLimits.MaxRequestTime);
 
     internal static async ValueTask<HashSet<string>> CollectionsAsync(IStorageTransaction transaction, CancellationToken cancellationToken)
     {
@@ -259,6 +262,27 @@ internal sealed class SqlSession(
     private bool RequestExpired =>
         Math.Min(_transportStarted ?? long.MaxValue, _scriptStarted ?? long.MaxValue) is var started && started != long.MaxValue
         && time.GetElapsedTime(started) > SqlLimits.MaxRequestTime;
+
+    private TimeSpan StatementTimeout()
+    {
+        var timeout = SqlLimits.MaxRequestTime;
+        if (Math.Min(_transportStarted ?? long.MaxValue, _scriptStarted ?? long.MaxValue) is var started && started != long.MaxValue)
+        {
+            timeout = Min(timeout, SqlLimits.MaxRequestTime - time.GetElapsedTime(started));
+        }
+
+        if (_pinned is { } pinned)
+        {
+            timeout = Min(timeout, SqlLimits.MaxTransactionTime - transactionTime.GetElapsedTime(pinned.Opened));
+        }
+
+        return timeout > TimeSpan.FromMilliseconds(1) ? timeout : TimeSpan.FromMilliseconds(1);
+    }
+
+    private static TimeSpan Min(TimeSpan left, TimeSpan right) => left < right ? left : right;
+
+    private SqlError LostReason() =>
+        _expiring == _generation || (_pinned is { } pinned && transactionTime.GetElapsedTime(pinned.Opened) >= SqlLimits.MaxTransactionTime) ? Expired : Aborted;
 
     private SqlPlanOutcome Plan(string sql)
     {
@@ -375,7 +399,7 @@ internal sealed class SqlSession(
         var (outcome, ended) = await RunAsync(pinned.Transaction, plan, command, pinned.Tally, admit, cancellationToken).ConfigureAwait(false);
         if (ended)
         {
-            await LoseAsync(Aborted).ConfigureAwait(false);
+            await LoseAsync(LostReason()).ConfigureAwait(false);
             return outcome;
         }
 
@@ -421,7 +445,7 @@ internal sealed class SqlSession(
         }
         catch (SqlStatementException error) when (error.TransactionEnded)
         {
-            await LoseAsync(Aborted).ConfigureAwait(false);
+            await LoseAsync(LostReason()).ConfigureAwait(false);
             return Map(error);
         }
         catch (SqlStatementException error)
@@ -438,17 +462,19 @@ internal sealed class SqlSession(
             return (SqlErrors.Interrupt, false);
         }
 
-        if (plan.Kind == SqlStatementKind.Write && plan.Tables.Count > 0
-            && (await CollectionsAsync(transaction, cancellationToken).ConfigureAwait(false)) is var collections && plan.Tables.Any(collections.Contains))
+        if (plan.Kind == SqlStatementKind.Write && plan.Names.Count > 0
+            && (await CollectionsAsync(transaction, cancellationToken).ConfigureAwait(false)) is var collections && plan.Names.Any(collections.Contains))
         {
             return (SqlErrors.Error("SQL statements cannot change a document collection's table; use the documents API"), false);
         }
 
         SqlStatementResult raw;
+        Volatile.Write(ref _running, transaction);
         try
         {
             raw = await transaction.ExecuteStatementAsync(
-                new SqlStatement(plan.Sql, [.. command.Args.Select(Bound)], command.Named.ToDictionary(pair => pair.Key, pair => Bound(pair.Value), StringComparer.Ordinal), MaxRows, MaxBytes),
+                new SqlStatement(plan.Sql, [.. command.Args.Select(Bound)], command.Named.ToDictionary(pair => pair.Key, pair => Bound(pair.Value), StringComparer.Ordinal),
+                    MaxRows, MaxBytes, StatementTimeout()),
                 cancellationToken).ConfigureAwait(false);
         }
         catch (SqlStatementException error)
@@ -458,6 +484,10 @@ internal sealed class SqlSession(
         catch (Exception error) when (Failure(error) is { } failure)
         {
             return (failure, false);
+        }
+        finally
+        {
+            Volatile.Write(ref _running, null);
         }
 
         if (raw.Truncated)
@@ -501,7 +531,7 @@ internal sealed class SqlSession(
         {
             if (error.TransactionEnded && _inTransaction)
             {
-                await LoseAsync(Aborted).ConfigureAwait(false);
+                await LoseAsync(LostReason()).ConfigureAwait(false);
             }
 
             return Map(error);
@@ -626,6 +656,12 @@ internal sealed class SqlSession(
 
     private async Task ExpireLaterAsync(int generation)
     {
+        if (Volatile.Read(ref _pinned) is { } pinned && generation == Volatile.Read(ref _generation))
+        {
+            Volatile.Write(ref _expiring, generation);
+            pinned.Transaction.InterruptStatement();
+        }
+
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {

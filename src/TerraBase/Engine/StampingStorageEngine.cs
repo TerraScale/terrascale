@@ -318,6 +318,8 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
         ValueTask<SqlStatementShape> IStorageTransaction.DescribeStatementAsync(string sql, CancellationToken cancellationToken) =>
             RunAsync(() => inner.DescribeStatementAsync(sql, cancellationToken), cancellationToken);
 
+        void IStorageTransaction.InterruptStatement() => inner.InterruptStatement();
+
         public ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken) =>
             RunAsync(() => inner.ExplainSqlAsync(query, cancellationToken), cancellationToken);
 

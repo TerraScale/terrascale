@@ -334,6 +334,8 @@ public interface IStorageTransaction : IAsyncDisposable
 
     internal ValueTask<SqlStatementShape> DescribeStatementAsync(string sql, CancellationToken cancellationToken);
 
+    internal void InterruptStatement();
+
     /// <summary>Describes how the engine would run <paramref name="query"/>, without running it.</summary>
     ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken);
 

@@ -1,6 +1,7 @@
 namespace TerraBase.Engine;
 
-internal sealed record SqlStatement(string Sql, IReadOnlyList<object?> Args, IReadOnlyDictionary<string, object?> Named, int MaxRows, long MaxBytes);
+internal sealed record SqlStatement(
+    string Sql, IReadOnlyList<object?> Args, IReadOnlyDictionary<string, object?> Named, int MaxRows, long MaxBytes, TimeSpan Timeout);
 
 internal sealed record SqlStatementColumn(string Name, string? DeclType);
 

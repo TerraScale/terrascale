@@ -30,6 +30,33 @@ internal sealed partial class TursoStorageTransaction
         return RunAsync(() => DescribeStatement(sql), cancellationToken);
     }
 
+    void IStorageTransaction.InterruptStatement()
+    {
+        lock (_disposalGate)
+        {
+            if (_disposal is not null)
+            {
+                return;
+            }
+        }
+
+        Interrupt(session.Native);
+    }
+
+    private static void Interrupt(TursoDatabaseHandle native)
+    {
+        try
+        {
+            TursoBindings.Interrupt(native);
+        }
+        catch (TursoException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
     private SqlStatementResult RunStatement(SqlStatement statement, CancellationToken cancellationToken)
     {
         RequireOneStatement(statement.Sql);
@@ -40,7 +67,21 @@ internal sealed partial class TursoStorageTransaction
         try
         {
             var (changes, pages) = write ? (Counter(native, "SELECT total_changes();"), Counter(native, "PRAGMA page_count;")) : (0L, 0L);
-            var (columns, rows, affected, truncated) = Step(native, statement, cancellationToken);
+            (List<SqlStatementColumn> Columns, List<object?[]> Rows, long Affected, bool Truncated) stepped;
+            TursoBindings.SetQueryTimeout(native, statement.Timeout);
+            try
+            {
+                using (cancellationToken.Register(static state => Interrupt((TursoDatabaseHandle)state!), native))
+                {
+                    stepped = Step(native, statement, cancellationToken);
+                }
+            }
+            finally
+            {
+                TursoBindings.SetQueryTimeout(native, TimeSpan.Zero);
+            }
+
+            var (columns, rows, affected, truncated) = stepped;
             var rowid = Counter(native, "SELECT last_insert_rowid();");
             var (changed, grown) = write ? (Counter(native, "SELECT total_changes();") - changes, Counter(native, "PRAGMA page_count;") - pages) : (0L, 0L);
             return new SqlStatementResult(columns, rows, affected, changed, rowid, grown * PageSize(native), truncated);
@@ -269,7 +310,7 @@ internal sealed partial class TursoStorageTransaction
             _ when parse => (SqlFailure.Syntax, "SQL syntax error"),
             _ => (SqlFailure.Error, "the statement failed to run"),
         };
-        if (failure == SqlFailure.Unique && !ended && IsPrimaryKey(native, message))
+        if (failure == SqlFailure.Unique && IsPrimaryKey(native, message))
         {
             failure = SqlFailure.PrimaryKey;
         }

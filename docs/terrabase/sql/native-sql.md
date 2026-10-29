@@ -29,9 +29,13 @@ text.
 - `BEGIN [DEFERRED|IMMEDIATE|EXCLUSIVE] [TRANSACTION]`, `START TRANSACTION`, `BEGIN READ ONLY`, `COMMIT`/`END` and
   `ROLLBACK` control one storage transaction pinned to the session across requests. It opens at the first statement
   after `BEGIN`: a write transaction unless the key cannot write or the transaction is read-only.
-- A pinned transaction lives at most 5 seconds (`SqlLimits.MaxTransactionTime`). A timer then rolls it back and
-  releases the writer even when the client is idle; the next statement, and `COMMIT`, answer `SQLITE_INTERRUPT`, and
-  `ROLLBACK` ends it.
+- A pinned transaction lives at most 5 seconds (`SqlLimits.MaxTransactionTime`). A timer then interrupts any running
+  statement, rolls the transaction back and releases the writer even when the client is idle; the next statement, and
+  `COMMIT`, answer `SQLITE_INTERRUPT`, and `ROLLBACK` ends it.
+- Every statement runs with a native query timeout of min(5 s, the request's remaining time, the transaction's
+  remaining life), and a cancelled request or a closing session interrupts it (`turso_connection_interrupt`,
+  sqlite3_interrupt semantics). An interrupted statement answers `SQLITE_INTERRUPT`. Turso clears the interrupt once the
+  connection is idle, so a pooled connection runs its next statement normally.
 - Inside a transaction every write runs under a savepoint: a failed statement undoes only itself. `SAVEPOINT`,
   `RELEASE` and `ROLLBACK TO` pass through inside a transaction, also over the PostgreSQL wire, where `ROLLBACK TO`
   clears the aborted state. If the engine itself ends the transaction after a failure, the session answers
@@ -41,13 +45,15 @@ text.
 
 ## Guard
 
-Until a real authorizer exists, statements are classified by a tokenizer that respects SQLite quoting, comments and
-trigger bodies (`src/TerraBase/Engine/SqlText.cs`, `src/TerraBase/Features/Sql/SqlScript.cs`). Refused: names starting
-with `_tb_`, `turso_`, `__turso_`, `tb_index_`, `fts_dir_`, `pragma_` or `sqlite_stat`; the engine tables
-`collections`, `commit_offset`, `_collections`, `_indexes` and `_unique`; writes naming a document collection's
-table; `ATTACH`, `DETACH`, `VACUUM`, `ANALYZE`, temporary and virtual tables; and every `PRAGMA` except `table_info`,
-`table_xinfo`, `table_list`, `index_list`, `index_info`, `index_xinfo`, `foreign_key_list`, `foreign_key_check` and
-`foreign_keys` (read, or set to on; off is refused). `sqlite_schema` is readable.
+Until a real authorizer exists, every name in a statement (bare and quoted identifiers and string literals, anywhere,
+trigger and view bodies included) is checked by a tokenizer that respects SQLite quoting, comments and trigger bodies
+(`src/TerraBase/Engine/SqlText.cs`, `src/TerraBase/Features/Sql/SqlScript.cs`). Refused: names starting with `_tb_`,
+`turso_`, `__turso_`, `tb_index_`, `fts_dir_`, `pragma_` or `sqlite_stat`; the engine tables `collections`,
+`commit_offset`, `_collections`, `_indexes` and `_unique`; and, in a write, any name equal to one of the database's
+document collections. A literal value equal to a reserved name is refused too: a rare false positive kept for safety.
+Also refused: `ATTACH`, `DETACH`, `VACUUM`, `ANALYZE`, temporary and virtual tables, and every `PRAGMA` except
+`table_info`, `table_xinfo`, `table_list`, `index_list`, `index_info`, `index_xinfo`, `foreign_key_list`,
+`foreign_key_check` and `foreign_keys` (read, or set to on; off is refused). `sqlite_schema` is readable.
 
 ## Values, errors and metering
 
@@ -61,8 +67,13 @@ table; `ATTACH`, `DETACH`, `VACUUM`, `ANALYZE`, temporary and virtual tables; an
   commit: one write unit per changed row, and one operation per inserted, updated or deleted row. The storage quota
   sees the file's page growth, and refuses a commit past it with `SQLITE_FULL`.
 
+## Native exports
+
+`src/vendor/Turso.Native/patches/0004-export-interrupt-query-timeout-and-value-length.patch` adds
+`turso_connection_interrupt`, `turso_connection_set_query_timeout_ms` and `turso_connection_set_max_value_length` to
+the pinned Turso 0.8.2 build; the vendored driver binds them (patch 0013). See `src/vendor/Turso.Native/README.md`
+for the release that carries them.
+
 ## Known limits
 
-- Turso 0.8.2 cannot interrupt a running statement: the row loop checks the deadline and work budget between rows,
-  but a statement that computes without returning rows runs to its end.
 - SQL table bytes are not yet part of the organization's measured storage; only each commit's growth is checked.

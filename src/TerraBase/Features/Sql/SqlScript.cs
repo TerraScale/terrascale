@@ -25,7 +25,7 @@ internal enum SqlWriteVerb
 }
 
 internal sealed record SqlStatementPlan(
-    string Sql, SqlStatementKind Kind, SqlWriteVerb Verb, bool ReadsTables, bool IsExplain, bool ReadOnly, IReadOnlyList<string?> Params, IReadOnlyList<string> Tables)
+    string Sql, SqlStatementKind Kind, SqlWriteVerb Verb, bool ReadsTables, bool IsExplain, bool ReadOnly, IReadOnlyList<string?> Params, IReadOnlyList<string> Names)
 {
     public bool IsControl => Kind is SqlStatementKind.Begin or SqlStatementKind.Commit or SqlStatementKind.Rollback;
 
@@ -43,11 +43,6 @@ internal static class SqlScript
     private static readonly string[] ReservedPrefixes = ["_tb_", "turso_", "__turso_", "tb_index_", "fts_dir_", "pragma_", "sqlite_stat"];
 
     private static readonly HashSet<string> ReservedTables = [with(StringComparer.OrdinalIgnoreCase), "collections", "commit_offset", "_collections", "_indexes", "_unique"];
-
-    private static readonly HashSet<string> TablePositions =
-    [
-        with(StringComparer.OrdinalIgnoreCase), "FROM", "JOIN", "INTO", "UPDATE", "TABLE", "EXISTS", "ON", "VIEW", "TRIGGER", "INDEX", "REFERENCES",
-    ];
 
     private static readonly HashSet<string> ReadPragmas =
     [
@@ -88,25 +83,20 @@ internal static class SqlScript
             return SqlErrors.Error(statements.Count == 0 ? "the statement is empty" : "run one statement at a time, or send a script");
         }
 
-        var tables = new List<string>();
-        var inTable = false;
-        for (var i = 0; i < tokens.Count; i++)
+        var names = new List<string>();
+        foreach (var token in tokens)
         {
-            var token = tokens[i];
-            var previous = i > 0 ? tokens[i - 1] : new SqlToken(SqlTokenKind.Symbol, 0, 0, "");
-            var name = token.Kind is SqlTokenKind.Word or SqlTokenKind.Quoted;
-            var tableName = (name || token.Kind == SqlTokenKind.String)
-                && ((previous.Kind == SqlTokenKind.Word && TablePositions.Contains(previous.Value)) || (previous.Kind == SqlTokenKind.Dot && inTable));
-            if ((name && HasReservedPrefix(token.Value)) || (tableName && IsReservedTable(token.Value)))
+            if (token.Kind is not (SqlTokenKind.Word or SqlTokenKind.Quoted or SqlTokenKind.String))
+            {
+                continue;
+            }
+
+            if (IsReservedTable(token.Value))
             {
                 return Reserved;
             }
 
-            inTable = tableName;
-            if (tableName)
-            {
-                tables.Add(token.Value.ToLowerInvariant());
-            }
+            names.Add(token.Value.ToLowerInvariant());
         }
 
         var text = SqlText.Text(sql, tokens);
@@ -115,7 +105,7 @@ internal static class SqlScript
         var verb = first.Kind == SqlTokenKind.Word ? first.Value.ToUpperInvariant() : "";
         SqlStatementPlan Plan(SqlStatementKind kind, SqlWriteVerb write = SqlWriteVerb.None, bool readsTables = false, bool explain = false, bool readOnly = false)
         {
-            return new(text, kind, write, readsTables, explain, readOnly, parameters, tables);
+            return new(text, kind, write, readsTables, explain, readOnly, parameters, names);
         }
 
         return verb switch
