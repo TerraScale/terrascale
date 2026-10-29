@@ -36,7 +36,7 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
     private static readonly TimeSpan MaxRetry = TimeSpan.FromMinutes(1);
     private readonly Channel<string> _queue = Channel.CreateBounded<string>(new BoundedChannelOptions(QueueItems) { SingleReader = true });
     private readonly Counter<long> _purges = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.shape.cdn.purges",
-        description: "Shape CDN URLs by purge outcome: purged, failed (Cloudflare refused or kept failing) or dropped (queue full).");
+        description: "Shape CDN handle prefixes by purge outcome: purged, failed (Cloudflare refused or kept failing) or dropped (queue full).");
 
     public bool Queue(string url)
     {
@@ -64,7 +64,7 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
         while (await _queue.Reader.WaitToReadAsync(stoppingToken).ConfigureAwait(false))
         {
             batch.Clear();
-            while (batch.Count < BatchUrls && _queue.Reader.TryRead(out var url))
+            for (var scanned = 0; scanned < BatchUrls && _queue.Reader.TryRead(out var url); scanned++)
             {
                 if (!batch.Contains(url, StringComparer.Ordinal))
                 {
