@@ -34,6 +34,8 @@ Every `sdk/go/v0.0.X` tag has these fixed asset names:
 | Windows | `ts_windows_amd64.zip` | `ts_windows_arm64.zip` |
 
 Other assets: `checksums.txt`, `install.sh` and the generated Homebrew `ts.rb`.
+
+The original `0.0.2`–`0.0.10` CLI downloads retain the `history/ts-go/v0.0.X` release namespace in the monorepo. The installer resolves explicitly requested old versions there; newer versions use `sdk/go/v0.0.X`. Module tags always use `sdk/go/v0.0.X`, with each historical module source tree preserved unchanged.
 `ts version` and `ts --version` print the embedded version; source builds print
 `ts dev`. Snapshot packages print `ts 0.0.0-dev`.
 

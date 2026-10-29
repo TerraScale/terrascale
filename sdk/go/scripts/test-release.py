@@ -44,9 +44,9 @@ url = next(arg for arg in args if arg.startswith("https://"))
 with open(os.environ["TEST_REQUESTS"], "a") as log:
     log.write(url + "\\n")
 if url == "https://api.github.com/repos/TerraScale/terrascale/releases?per_page=100":
-    print('[{"tag_name":"sdk/js/v0.0.99"},{"tag_name":"sdk/go/v0.0.1"},{"tag_name":"sdk/go/v0.0.0"}]', end="")
+    print('[{"tag_name":"sdk/js/v0.0.99"},{"tag_name":"sdk/go/v0.0.11"},{"tag_name":"sdk/go/v0.0.10"},{"tag_name":"history/ts-go/v0.0.1"}]', end="")
 else:
-    assert "/download/sdk/go/v0.0.1/" in url, url
+    assert any(tag in url for tag in ("/download/sdk/go/v0.0.11/", "/download/history/ts-go/v0.0.1/", "/download/history/ts-go/v0.0.10/")), url
     name = url.rsplit("/", 1)[1]
     source = pathlib.Path(os.environ["TEST_DIST"]) / name
     if name == "checksums.txt":
@@ -80,6 +80,10 @@ else:
     result = install("Linux", "x86_64", "0.0.1")
     assert result.returncode == 0, result.stderr
     original = binary.read_bytes()
+    for version in ("0.0.10", "0.0.11"):
+        result = install("Linux", "x86_64", version)
+        assert result.returncode == 0, result.stderr
+        assert binary.read_bytes() == original
     for bad in ("", "0" * 64 + "  ts_linux_amd64.tar.gz\n"):
         checksum_file.write_text(bad)
         result = install("Linux", "x86_64", "0.0.1")

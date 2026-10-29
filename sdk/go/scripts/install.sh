@@ -35,7 +35,12 @@ if [ "$release" = latest ]; then
     sort -t. -k3,3n | tail -n 1)
   printf '%s\n' "$release" | LC_ALL=C grep -Eq '^0\.0\.(0|[1-9][0-9]*)$' || fail 'no published Go SDK 0.0.X release found'
 fi
-base=$base/download/sdk/go/v$release
+# Released CLI archives retain their historical namespace after repository cutover.
+case "$release" in
+  0.0.[1-9]|0.0.10) tag=history/ts-go/v$release ;;
+  *) tag=sdk/go/v$release ;;
+esac
+base=$base/download/$tag
 archive=ts_${platform}_${arch}.tar.gz
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
