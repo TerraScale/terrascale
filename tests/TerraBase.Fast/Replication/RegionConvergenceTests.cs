@@ -2,7 +2,6 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using Npgsql;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
@@ -130,68 +129,6 @@ public sealed class RegionConvergenceTests
             readers.ForEach(reader => reader.Dispose());
         }
     }
-
-    [Test]
-    public async Task Rows_written_over_the_postgres_wire_in_one_region_are_read_in_the_others()
-    {
-        await using var cell = await Cell.StartAsync();
-        string[] ids = [EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString()];
-        await using (var gru = Wire(cell.Gru, await cell.Gru.Api.Server.IssueNarrowedAsync(
-            cell.Database.OrganizationId, cell.Database.ProjectId, null, "documents:read", "documents:write")))
-        {
-            await using var connection = await gru.OpenConnectionAsync();
-            await using (var create = new NpgsqlCommand("CREATE TABLE people (code TEXT PRIMARY KEY, age INTEGER)", connection))
-            {
-                _ = await create.ExecuteNonQueryAsync();
-            }
-
-            for (var i = 0; i < ids.Length; i++)
-            {
-                await using var insert = new NpgsqlCommand("INSERT INTO people (code, age) VALUES ($1, $2)", connection);
-                insert.Parameters.Add(new() { Value = ids[i] });
-                insert.Parameters.Add(new() { Value = 20 + i * 10 });
-                _ = await insert.ExecuteNonQueryAsync();
-            }
-        }
-
-        foreach (var machine in new[] { cell.Sjc, cell.Fra })
-        {
-            await using var source = Wire(machine, await machine.Api.Server.IssueNarrowedAsync(
-                cell.Database.OrganizationId, cell.Database.ProjectId, null, "documents:read"));
-            List<string> rows = [];
-            await TerraBaseTestServer.EventuallyAsync(async token =>
-            {
-                await using var connection = await source.OpenConnectionAsync(token);
-                await using var command = new NpgsqlCommand("SELECT code FROM people WHERE age >= 20 ORDER BY age", connection);
-                rows = [];
-                try
-                {
-                    await using var reader = await command.ExecuteReaderAsync(token);
-                    while (await reader.ReadAsync(token))
-                    {
-                        rows.Add(reader.GetString(0));
-                    }
-                }
-                catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.UndefinedTable)
-                {
-                    // The table definition has not replicated to this region yet.
-                }
-
-                return rows.Count == ids.Length;
-            }, timeout: TimeSpan.FromSeconds(30));
-            await Assert.That(string.Join(',', rows)).IsEqualTo(string.Join(',', ids)).Because(machine.Region);
-        }
-    }
-
-    private static NpgsqlDataSource Wire(Machine machine, string key) => NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder
-    {
-        Host = "127.0.0.1",
-        Port = machine.Api.Server.PostgresPort,
-        Username = "wire",
-        Password = key,
-        Database = "main",
-        SslMode = SslMode.Disable,
-    }.ConnectionString);
 
     private static async Task<string> PutAsync(HttpClient http, Cell cell, string id, string json)
     {

@@ -300,8 +300,6 @@ internal sealed class SqlSession(
                 return SqlErrors.Error("cannot start a transaction within a transaction");
             case SqlStatementKind.Commit when !_inTransaction:
                 return SqlErrors.Error("cannot commit - no transaction is active");
-            case SqlStatementKind.Rollback when !_inTransaction:
-                return SqlErrors.Error("cannot rollback - no transaction is active");
             case SqlStatementKind.Savepoint or SqlStatementKind.Release or SqlStatementKind.RollbackTo when !_inTransaction:
                 return SqlErrors.Error("savepoints run only inside a transaction: BEGIN one first");
             case SqlStatementKind.Write when !canWrite:
@@ -470,6 +468,11 @@ internal sealed class SqlSession(
         if (tally.Rows + raw.RowsChanged > MaxChangedRows || tally.Growth + raw.GrowthBytes > MaxGrowthBytes)
         {
             return (TooManyChanges, false);
+        }
+
+        if (raw.Rows.Any(row => row.Any(value => value is double real && !double.IsFinite(real))))
+        {
+            return (SqlErrors.NonFinite, false);
         }
 
         var result = new SqlResult(
