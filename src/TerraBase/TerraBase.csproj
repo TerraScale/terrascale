@@ -72,6 +72,9 @@
     <Protobuf Include="Features/Replication/Protos/**/*.proto" ProtoRoot="Features/Replication/Protos" GrpcServices="Both" />
   </ItemGroup>
   <ItemGroup>
+    <Protobuf Include="Features/Sync/Protos/*.proto" ProtoRoot="Features/Sync/Protos" GrpcServices="None" Access="Internal" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- Vendored, with TerraScale's fixes (src/vendor/Turso.Data.Sqlite/UPSTREAM.md). -->
     <ProjectReference Include="../vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj" />
   </ItemGroup>

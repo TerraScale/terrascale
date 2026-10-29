@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package terrabase.sync.v1;
+
+option csharp_namespace = "TerraBase.Features.Sync";
+
+enum PageEncoding {
+  PAGE_ENCODING_RAW = 0;
+  PAGE_ENCODING_ZSTD = 1;
+}
+
+enum StreamKind {
+  STREAM_KIND_PAGES = 0;
+  STREAM_KIND_MVCC_LOGICAL_LOG = 1;
+}
+
+enum PullProtocol {
+  PULL_PROTOCOL_UNSPECIFIED = 0;
+  PULL_PROTOCOL_PAGES = 1;
+  PULL_PROTOCOL_MVCC_LOGICAL = 2;
+}
+
+message PullUpdatesRequest {
+  PageEncoding encoding = 1;
+  string server_revision = 2;
+  string client_revision = 3;
+  uint32 long_poll_timeout_ms = 4;
+  bytes server_pages_selector = 5;
+  bytes client_pages = 6;
+  string server_query_selector = 7;
+  StreamKind stream_kind = 8;
+}
+
+message RawPageEncoding {
+}
+
+message PullUpdatesHeader {
+  string server_revision = 1;
+  uint64 db_size = 2;
+  RawPageEncoding raw_encoding = 3;
+  StreamKind stream_kind = 5;
+  PullProtocol protocol = 8;
+}
+
+message PageData {
+  uint64 page_id = 1;
+  bytes encoded_page = 2;
+}
