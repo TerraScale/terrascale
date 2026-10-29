@@ -1,0 +1,16 @@
+@using System.Globalization
+@using TerraScale.Dashboard.Common.Charts
+@inherits RazorSlice<TerraScale.Dashboard.Features.Home.HomePage>
+@using TerraScale.Dashboard.Features.Home
+@using TerraScale.Dashboard.Common.Formatting
+<section class="ts-card" id="analytics-summary" aria-labelledby="analytics-summary-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="analytics-summary-title">Key analytics</h2><p class="ts-card-description">Selected project · @Model.Range</p></div></header><div class="ts-card-body">
+@if (Model.Measurement.AnalyticsError.Length > 0) { <div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-title">Analytics unavailable</p><p class="ts-alert-body">@Model.Measurement.AnalyticsError</p></div> }
+else if (Model.Measurement.Analytics is not { } data) { <div class="ts-empty" role="status"><span class="ts-icon-tile" aria-hidden="true">@Icons.Render("BarChart3", 16)</span><p class="ts-empty-title">@Model.Measurement.AnalyticsEmpty</p></div> }
+else
+{
+    <dl class="ts-stats" aria-label="Key analytics">@foreach (var stat in new[] { ("Requests", ChartGeometry.Compact(data.Requests), "In the selected period", data.Requests.ToString("N0", CultureInfo.InvariantCulture)), ("Errors", ChartGeometry.Compact(data.Errors), "In the selected period", data.Errors.ToString("N0", CultureInfo.InvariantCulture)), ("Worst p95 latency", MetricFormat.Latency(data.WorstP95Ms), "Maximum database-region bucket p95 across the selected period", ""), ("Storage", data.StorageBytes is { } storage ? MetricFormat.Bytes(storage) : "Not reported", "Latest sample per database region, summed across regions", "") }) { <div class="ts-stat"><dt class="ts-stat-label">@stat.Item1</dt><dd class="ts-stat-value" title="@(stat.Item4.Length > 0 ? stat.Item4 : null)">@stat.Item2</dd><dd class="ts-stat-detail">@stat.Item3</dd></div> }</dl>
+    <dl class="ts-stats" aria-label="Operations and bandwidth">@foreach (var stat in new[] { ("Operations", ChartGeometry.Compact(data.Operations), "In the selected period", data.Operations.ToString("N0", CultureInfo.InvariantCulture)), ("Client bandwidth", MetricFormat.Bytes(data.ClientBytes), "Server egress + client ingress", ""), ("Replication bandwidth", Model.Measurement.Replication is { } replication ? MetricFormat.Bytes(replication.WireBytes) : "Not reported", "Wire bytes counted once per directed pair", "") }) { <div class="ts-stat"><dt class="ts-stat-label">@stat.Item1</dt><dd class="ts-stat-value" title="@(stat.Item4.Length > 0 ? stat.Item4 : null)">@stat.Item2</dd><dd class="ts-stat-detail">@stat.Item3</dd></div> }</dl>
+}
+</div></section>
+@if (Model.Measurement.RequestPoints.Count > 0) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Home.HomeRequestChartView, TerraScale.Dashboard.Features.Home.HomeRequestChart>(HomeRequestChart.For(Model))) }
+<a class="ts-link" href="/analytics?range=@Model.Range">Explore analytics →</a>

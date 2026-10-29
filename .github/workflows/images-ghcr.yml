@@ -1,0 +1,192 @@
+# ts-orch permits this exact workflow path to release only ts-dashboard.
+name: Images (GHCR)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/TerraScale.Dashboard/**'
+      - 'tests/TerraScale.Dashboard*/**'
+      - 'scripts/dashboard/**'
+      - 'sdk/dotnet/**'
+      - 'Directory.*'
+      - '.editorconfig'
+      - 'BannedSymbols.txt'
+      - 'global.json'
+      - 'NuGet.config'
+      - 'Makefile'
+      - '.github/workflows/dashboard-ci.yml'
+      - '.github/workflows/images-ghcr.yml'
+      - 'scripts/dashboard/check-proof.py'
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: dashboard-images-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  statuses: read
+
+jobs:
+  ready:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      statuses: read
+    outputs:
+      deploy: ${{ steps.gate.outputs.deploy }}
+    steps:
+      - id: gate
+        name: Select qualified current green main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os, subprocess
+          def gh(*args):
+              return json.loads(subprocess.check_output(['gh', *args], text=True))
+          repo = os.environ['GITHUB_REPOSITORY']
+          revision = os.environ['REVISION']
+          current = gh('api', f'repos/{repo}/git/ref/heads/main')['object']['sha']
+          runs = gh('run', 'list', '--repo', repo, '--workflow', 'ci.yml', '--branch', 'main',
+                    '--commit', revision, '--event', 'push', '--limit', '100', '--json', 'status,conclusion')
+          pages = gh('api', '--paginate', '--slurp', f'repos/{repo}/commits/{revision}/statuses?per_page=100')
+          proof = next((item for page in pages for item in page if item['context'] == 'dashboard-release/dashboard'), None)
+          eligible = current == revision and bool(runs) and all(item['status'] == 'completed' and item['conclusion'] == 'success' for item in runs)
+          eligible = eligible and bool(proof) and proof['state'] == 'success' and proof['creator']['login'] == 'MarioGK'
+          if os.environ['EVENT_NAME'] == 'workflow_dispatch' and not eligible:
+              raise SystemExit('Qualify current green main on a dev host before dispatching deployment')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f"deploy={'true' if eligible else 'false'}\n")
+          PYTHON
+  test:
+    needs: ready
+    if: needs.ready.outputs.deploy == 'true'
+    uses: ./.github/workflows/dashboard-ci.yml
+
+  image:
+    needs: test
+    name: Publish and release
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_run')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      statuses: read
+      actions: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Require current green main and successful dev-host qualification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          test "$GITHUB_SHA" = "$current"
+          gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --commit "$GITHUB_SHA" \
+            --event push --limit 100 --json status,conclusion |
+            jq -e 'length > 0 and all(.[]; .status == "completed" and .conclusion == "success")'
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/statuses?per_page=100" |
+            jq -e 'add | map(select(.context == "dashboard-release/dashboard")) | first |
+              .state == "success" and .creator.login == "MarioGK"'
+      - name: Download and verify the application qualified on a dev host
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dashboard-qualified" "$RUNNER_TEMP/dashboard-publish"
+          gh release download "dashboard/qualified-$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" \
+            --dir "$RUNNER_TEMP/dashboard-qualified" --pattern dashboard-publish.tar.gz --pattern dashboard-qualification.json
+          python3 - <<'PYTHON'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path, PurePosixPath
+          import tarfile
+
+          temporary = Path(os.environ["RUNNER_TEMP"])
+          qualified = temporary / "dashboard-qualified"
+          output = temporary / "dashboard-publish"
+          manifest = json.loads((qualified / "dashboard-qualification.json").read_text())
+          assert manifest["schema"] == "terrascale.dashboard-qualification/v1"
+          assert manifest["revision"] == os.environ["GITHUB_SHA"]
+          assert manifest["archive"] == "dashboard-publish.tar.gz"
+          archive = qualified / manifest["archive"]
+          assert hashlib.sha256(archive.read_bytes()).hexdigest() == manifest["sha256"]
+          with tarfile.open(archive, "r:gz") as package:
+              files = {}
+              for member in package.getmembers():
+                  path = PurePosixPath(member.name)
+                  assert not path.is_absolute() and ".." not in path.parts
+                  assert member.isdir() or member.isfile(), "Only regular application files are permitted"
+                  if member.isfile():
+                      name = path.as_posix()
+                      assert name not in files, "Duplicate application file"
+                      files[name] = hashlib.sha256(package.extractfile(member).read()).hexdigest()
+              assert files and files == manifest["files"]
+              assert "TerraScale.Dashboard.dll" in files
+              package.extractall(output, filter="data")
+          print(f"Verified {len(files)} application files from {manifest['revision']}")
+          PYTHON
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        id: push
+        with:
+          context: ${{ runner.temp }}/dashboard-publish
+          file: scripts/dashboard/ci/Dockerfile.runtime
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/terrascale/ts-dashboard:${{ github.sha }}
+            ghcr.io/terrascale/ts-dashboard:main
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=dashboard-runtime
+          cache-to: type=gha,mode=max,scope=dashboard-runtime
+          push: true
+      - name: Inspect the published manifest
+        run: |
+          { echo '```'; docker buildx imagetools inspect "ghcr.io/terrascale/ts-dashboard@${{ steps.push.outputs.digest }}"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Release to every region
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SERVICE: ts-dashboard
+          INDEX: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/terrascale/${SERVICE}"
+          arm64=$(docker buildx imagetools inspect "${image}@${INDEX}" --format '{{json .Manifest}}' |
+            jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest')
+          test -n "$arm64"
+          docker buildx imagetools inspect "${image}@${arm64}" --format '{{json .Image}}' |
+            jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
+          echo "Verified linux/arm64 child ${arm64}, revision ${GITHUB_SHA}" >> "$GITHUB_STEP_SUMMARY"
+          tag=$(gh release list --repo TerraScale/ts-orchestrator --limit 30 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("ci-"))] | sort_by(.createdAt) | last | .tagName // ""')
+          test -n "$tag"
+          gh release download "$tag" --repo TerraScale/ts-orchestrator --dir "${RUNNER_TEMP}/ts-orch" --pattern terrascale-orchestrator-linux-amd64
+          curl -fsSL https://raw.githubusercontent.com/TerraScale/ts-orchestrator/main/deploy/m1/regions.json -o "${RUNNER_TEMP}/regions.json"
+          chmod +x "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64"
+          bash scripts/dashboard/ci/release-result.sh "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64" \
+            release app --service "$SERVICE" --image "${image}@${arm64}" --regions "${RUNNER_TEMP}/regions.json"
+      - name: Verify live readiness and deployed source revision
+        run: python3 scripts/dashboard/verify-live.py "$GITHUB_SHA"

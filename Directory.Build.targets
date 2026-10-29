@@ -9,17 +9,26 @@
     <ProjectReference Include="$(MSBuildThisFileDirectory)src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
-  <!-- Newtonsoft.Json is not allowed: System.Text.Json (source-generated) only.
-       BannedSymbols.txt blocks its APIs in code; this blocks every Newtonsoft
-       package, direct or transitive, from entering the build. -->
+  <!-- Authored code uses System.Text.Json; BannedSymbols.txt blocks Newtonsoft APIs.
+       The package graph also rejects Newtonsoft except the approved dashboard
+       Stripe.net transitive edge, checked below. -->
   <Target Name="BanNewtonsoftJsonPackages" AfterTargets="ResolvePackageAssets" Condition="'@(PackageDependencies)' != '' or '@(PackageReference)' != ''">
     <ItemGroup>
+      <_DirectNewtonsoftPackage Include="@(PackageReference)" Condition="$([System.String]::Copy('%(Identity)').Contains('Newtonsoft', System.StringComparison.OrdinalIgnoreCase))" />
+      <_DashboardStripePackage Include="@(ResolvedCompileFileDefinitions)" Condition="'$(IsDashboardArea)' == 'true' and '%(ResolvedCompileFileDefinitions.NuGetPackageId)' == 'Stripe.net'" />
       <_NewtonsoftPackage Include="@(PackageReference)" Condition="$([System.String]::Copy('%(Identity)').Contains('Newtonsoft', System.StringComparison.OrdinalIgnoreCase))" />
       <_NewtonsoftPackage Include="@(RuntimeCopyLocalItems->'%(NuGetPackageId)')" Condition="$([System.String]::Copy('%(RuntimeCopyLocalItems.NuGetPackageId)').Contains('Newtonsoft', System.StringComparison.OrdinalIgnoreCase))" />
       <_NewtonsoftPackage Include="@(ResolvedCompileFileDefinitions->'%(NuGetPackageId)')" Condition="$([System.String]::Copy('%(ResolvedCompileFileDefinitions.NuGetPackageId)').Contains('Newtonsoft', System.StringComparison.OrdinalIgnoreCase))" />
     </ItemGroup>
+    <Error Condition="'@(_DirectNewtonsoftPackage)' != ''" Text="Direct Newtonsoft package references are banned. Use System.Text.Json." />
+    <!-- Human approval 2026-10-29: only the official Stripe SDK's transitive Newtonsoft.Json dependency in dashboard projects. -->
+    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)scripts/dashboard/check-stripe-dependency.py&quot; &quot;$(ProjectAssetsFile)&quot;" Condition="'@(_DashboardStripePackage)' != ''" />
+    <ItemGroup Condition="'@(_DashboardStripePackage)' != ''">
+      <_NewtonsoftPackage Remove="@(_NewtonsoftPackage)" Condition="'%(_NewtonsoftPackage.NuGetPackageId)' == 'Newtonsoft.Json'" />
+    </ItemGroup>
     <Error Condition="'@(_NewtonsoftPackage)' != ''" Text="Newtonsoft packages are banned ('@(_NewtonsoftPackage->Distinct())'). Use System.Text.Json; remove the package or the dependency that brings it in." />
   </Target>
+
 
   <!-- Project-reference content loses AssetType; .NET's single-file publisher otherwise leaves Turso beside the app. -->
   <Target Name="ClassifyTursoNativeForSingleFile" BeforeTargets="_ComputeFilesToBundle" Condition="'$(PublishSingleFile)' == 'true'">
@@ -36,6 +45,11 @@
   <!-- TerraBase area: banned APIs (RS0030) and the BannedSymbols.txt list. Auth and ts-libs throw framework exceptions
        on purpose (BadHttpRequestException in the endpoint binder), so the rule stays with TerraBase. -->
   <ItemGroup Condition="'$(IsTerraBaseArea)' == 'true'">
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Link="BannedSymbols.txt" />
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(IsDashboardArea)' == 'true'">
     <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Link="BannedSymbols.txt" />
     <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
   </ItemGroup>

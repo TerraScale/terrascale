@@ -1,0 +1,38 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Functions.FunctionsPage>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
+@using System.Globalization
+@{ var list = DatabaseService.Path(Model.Database.Id, "functions"); }
+<main class="ts-page" data-database-id="@Model.Database.Id">
+@(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame,DatabaseFrameModel>(new(Model.Database, "functions")))
+@if(Model.Error.Length > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p><a class="ts-link" href="@list">Reload functions</a></div>}
+<section class="ts-card ts-card-flush" aria-labelledby="functions-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="functions-title">Functions</h2><p class="ts-card-description">JavaScript handlers that run on an HTTPS call, on collection changes or on a UTC cron schedule. Deploy them with the CLI or the API.</p></div></header><div class="ts-card-body">
+@if(Model.Functions.Count == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">No functions yet.</p><p class="ts-empty-detail">Deploy one with <code>PUT /v1/projects/{project}/databases/@Model.Database.Name/functions/{name}</code>.</p></div>}else{
+<div class="ts-table-wrap"><table class="ts-table" id="functions"><thead><tr><th scope="col">Name</th><th scope="col">Runs on</th><th scope="col">Updated (UTC)</th><th scope="col">Actions</th></tr></thead><tbody>
+@foreach(var function in Model.Functions){<tr><td class="ts-mono">@function.Name</td><td>@Runs(function)</td><td>@ValueFormat.UtcDate(function.UpdatedAt)</td><td><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@(list + "?function=" + Uri.EscapeDataString(function.Name))" aria-current="@(Model.Selected?.Name == function.Name ? "true" : null)">Details</a></td></tr>}
+</tbody></table></div>}
+</div></section>
+@if(Model.Selected is { } selected){
+<section class="ts-card" aria-labelledby="function-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title ts-mono" id="function-title">@selected.Name</h2><p class="ts-card-description">@Runs(selected). Created @ValueFormat.UtcDate(selected.CreatedAt).</p></div>
+@if(Model.Shell.Context.CanWriteProjectData){<button class="ts-btn ts-btn-danger ts-btn-sm" type="button" command="show-modal" commandfor="delete-function">Delete function</button>}</header><div class="ts-card-body ts-stack">
+<div class="ts-field"><span class="ts-label">Invoke URL</span><pre class="ts-code ts-break" id="function-invoke">POST @Model.InvokeUrl</pre><p class="ts-hint">Exchange your project API key for a short-lived access token with <code>documents:read</code>, then send that access token as a Bearer token. <a class="ts-link" href="https://docs.terrascale.tech/guides/authentication" @(ExternalLink.Attributes)>Authentication guide@(ExternalLink.Hint)</a></p></div>
+<div class="ts-field"><span class="ts-label">Source</span><pre class="ts-code" id="function-source">@selected.Source</pre></div>
+</div></section>
+@if(Model.Shell.Context.CanWriteProjectData){<dialog class="ts-dialog" id="delete-function" closedby="any" aria-labelledby="delete-function-title"><div class="ts-dialog-content"><header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="delete-function-title">Delete @selected.Name?</h2><p class="ts-dialog-description">This deletes the function with its trigger, schedule and logs. Calls to its invoke URL fail from then on.</p></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="delete-function">@Icons.Render("X", 18)</button></header><form method="post" action="/api/v1/dashboard/functions/delete" data-submit-once><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" /><input type="hidden" name="name" value="@selected.Name" /><div class="ts-dialog-footer"><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="delete-function">Cancel</button><button class="ts-btn ts-btn-danger" type="submit">Delete function</button></div></form></div></dialog>}
+<section class="ts-card ts-card-flush" aria-labelledby="function-logs-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="function-logs-title">Invocations</h2><p class="ts-card-description">The latest 25 invocations, newest first, with their console lines. TerraBase keeps the last 100.</p></div><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@(list + "?function=" + Uri.EscapeDataString(selected.Name))">Refresh</a></header><div class="ts-card-body">
+@if(Model.Logs.Count == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">No invocations yet.</p></div>}else{
+<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Invocation records"><table class="ts-table" id="function-logs"><thead><tr><th scope="col">Time (UTC)</th><th scope="col">Trigger</th><th scope="col">Status</th><th scope="col">Duration</th><th scope="col">Output</th></tr></thead><tbody>
+@foreach(var log in Model.Logs){<tr><td><time datetime="@log.At.ToString("O", CultureInfo.InvariantCulture)">@log.At.UtcDateTime.ToString("MMM d HH:mm:ss", CultureInfo.InvariantCulture)</time></td><td>@log.Trigger</td><td><span class="ts-badge ts-badge-tone" data-tone="@(log.Status == "ok" ? "success" : "danger")">@log.Status</span></td><td>@log.DurationMs.ToString("0.##", CultureInfo.InvariantCulture) ms</td><td>@if(log.Error is { Length: > 0 } failure){<p class="ts-break">@failure</p>}@if(log.Lines.Count > 0){<pre class="ts-code">@string.Join("\n", log.Lines)</pre>}else if(log.Error is null){<span class="ts-muted">—</span>}</td></tr>}
+</tbody></table></div>}
+</div></section>
+@if(selected.Trigger is { } trigger){<section class="ts-card ts-card-flush" aria-labelledby="function-deliveries-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="function-deliveries-title">Trigger deliveries</h2><p class="ts-card-description">Change deliveries from @trigger.Collection, oldest first. Failed deliveries stay pending and retry with backoff capped at one hour.</p></div></header><div class="ts-card-body">
+@if(Model.Deliveries.Count == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">No deliveries yet.</p></div>}else{
+<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Delivery records"><table class="ts-table" id="function-deliveries"><thead><tr><th scope="col">Delivery</th><th scope="col">Created</th><th scope="col">Status</th><th scope="col">Attempts</th><th scope="col">Last attempt</th><th scope="col">Next attempt</th><th scope="col">Error</th></tr></thead><tbody>@foreach(var delivery in Model.Deliveries){<tr><td class="ts-mono">@delivery.Id</td><td>@ValueFormat.UtcDate(delivery.CreatedAt)</td><td>@delivery.Status</td><td>@delivery.Attempts</td><td>@(delivery.LastAttemptAt is { } last ? ValueFormat.UtcDate(last) : "—")</td><td>@(delivery.NextAttemptAt is { } next ? ValueFormat.UtcDate(next) : "—")</td><td>@(delivery.ErrorCode ?? "—")</td></tr>}</tbody></table></div>}
+</div></section>}
+}
+</main>
+@functions {
+    public ShellModel LayoutModel => Model.Shell;
+    private static string Runs(TerraScale.Dashboard.Features.Functions.FunctionRecord function) =>
+        function.Trigger is { } trigger ? "Changes to " + trigger.Collection + (trigger.Events is { Count: > 0 } events ? " (" + string.Join(", ", events) + ")" : "") :
+        function.Cron is { Length: > 0 } cron ? "Cron " + cron + " UTC" : "HTTPS calls";
+}

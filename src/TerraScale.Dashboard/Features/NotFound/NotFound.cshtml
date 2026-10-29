@@ -1,0 +1,10 @@
+@inherits RazorSlice<DocumentModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.Document, DocumentModel>
+@inject AssetUrls Assets
+<main class="ts-notfound" aria-labelledby="notfound-title">
+    <header><a href="/" aria-label="TerraScale dashboard"><img class="ts-brand-logo" src="@Assets.Url("brand/logo-terrascale-principal.svg")" alt="TerraScale" width="183" height="44" decoding="async" /></a></header>
+    @(await RenderPartialAsync<TerraScale.Dashboard.Features.NotFound.NotFoundCopy>())
+</main>
+@functions {
+    public DocumentModel LayoutModel => Model;
+}
