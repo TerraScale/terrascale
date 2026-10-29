@@ -2,7 +2,6 @@ import gzip
 import hashlib
 import io
 import pathlib
-import shutil
 import tarfile
 import tempfile
 import urllib.request
@@ -29,7 +28,4 @@ with tempfile.TemporaryDirectory(prefix='verified-source-', dir=root) as staging
     previous = root / 'turso'
     if previous.exists():
         previous.rename(staging / 'previous')
-        target = staging / 'previous/target'
-        if target.exists():
-            shutil.move(target, source / 'target')
     source.rename(previous)
