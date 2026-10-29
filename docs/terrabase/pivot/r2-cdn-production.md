@@ -65,7 +65,7 @@ policy was not inspected and must not be copied to production.
 | Managed public access | `r2.dev` disabled; no alternate public route |
 
 DECISION: one shared bucket for all serving regions. Reason: immutable,
-home-confirmed objects have one canonical URL and cache key; extra buckets
+home-confirmed objects have one canonical URL; extra regional buckets
 would fragment the cache. The authoritative publisher owns each handle;
 regional readers never publish provisional overlays to R2. Handle identity
 includes a new incarnation after restore or failover; never reuse an old URL
@@ -99,16 +99,24 @@ prerequisite, not evidence that the cache actions are correct.
 2. In phase `http_request_cache_settings`, make the shape GET/HEAD paths
    cache-eligible, including extensionless SHA-256 names. Match hosts ending
    `.terrascale.tech` and starting `shapes-`, path starting `/v1/shapes/`,
-   empty query, methods GET/HEAD. Edge and browser TTL respect origin
+   empty query, methods GET/HEAD and Cloudflare's internal PURGE. The public
+   WAF still rejects client PURGE. Edge and browser TTL respect origin
    `Cache-Control`; PUT uses `public, max-age=31536000, immutable`.
    Explicitly prevent storage of 400–599 responses (status TTL `-1`,
    meaning no-store). Verify that no later rule overrides this policy.
-3. Keep the standard URL cache key; no cookies, authorization, epoch or
-   per-reader query variants. Public ciphertext GETs carry no auth header.
+3. Keep the standard cache key. It includes browser `Origin` and Cloudflare's
+   default forwarding/method-override header variants, not just the URL
+   ([cache-key reference](https://developers.cloudflare.com/cache/how-to/cache-keys/)).
+   Readers with the same variant collapse together; do not claim one cache
+   entry across browser origins. SDK GETs add no auth or custom variant
+   headers, cookies, epoch or per-reader query parameters.
    Configure bucket CORS for browser GET/HEAD from `*`, without credentials;
    SDKs use simple GETs so the WAF need not admit OPTIONS. Verify browser
    downloads from two different browser origins, including cached responses,
    before claiming SDK support; the cached allow-origin value must be `*`.
+   Use prefix purge below to remove every header variant. Excluding Origin
+   via custom cache-key headers requires Enterprise; this design requires
+   no such plan upgrade or unproven header-transform normalization.
 4. Keep Smart Tiered Cache on for the zone. Use Cloudflare's native custom
    domain cache, not a Worker Cache API implementation. No Worker, Cache
    Reserve or paid Argo add-on is required by this design.
@@ -166,14 +174,15 @@ temporarily broadening scope or reusing the CLI identity.
 
 ## Retention, purge and deletion
 
-Retain sealed objects in manifests for at most seven days; trim sooner below the shape
-floor or after handle invalidation. The hourly sweeper removes orphans and
+Retain sealed objects in manifests for at most seven days; trim sooner below
+the shape floor or after handle invalidation. The hourly sweeper removes orphans and
 queues purge; the operational cleanup target is age seven days plus one
 sweep interval, subject to service availability. Use an eight-day R2 object
-lifecycle expiry on `v1/shapes/` as a backstop, allowing the normal sweep to
-persist purge work first, and abort incomplete multipart uploads after
+lifecycle expiry on `v1/shapes/` as a backstop after the normal sweep window,
+and abort incomplete multipart uploads after
 one day. Lifecycle expiry is asynchronous and does not purge CDN copies;
-the application must persist purge work before expiry can remove the object.
+the application must persist cleanup inventory before uploading, independent
+of the bucket listing, so an outage through expiry cannot hide cached URLs.
 Align F5's CDC floor with shape replay and backup positions. Keep keys for
 retained, live objects; never resurrect an expired object under its old URL.
 
@@ -182,23 +191,35 @@ five attempts and metrics for purged/failed/dropped. Queue overflow or restart
 can lose work. F6 must make purge work durable rather than asserting that
 turning on this worker guarantees cleanup:
 
-1. Persist an idempotent outbox record (object key, canonical URL, database
-   incarnation, reason, attempt and next-attempt time) in TerraBase's internal
-   SQL catalog before issuing R2 DELETE. No Cloudflare Queue or local file
-   store. Keep records outside the database being deleted.
+1. Before PUT/publication persist an object inventory and scheduled cleanup
+   intent (object key, canonical URL, handle, database incarnation, seven-day
+   cleanup deadline) in TerraBase's internal SQL catalog. Retain it outside
+   the owning database until purge completes, even if R2 lifecycle already
+   removed the object. Earlier trim/deletion activates that intent immediately;
+   add reason, attempt and next-attempt time. No Cloudflare Queue or local
+   file store. Recovery drains overdue records without listing R2 first.
 2. Fence publication, remove the object from retained manifests, DELETE R2
-   idempotently, then purge its full URL through
-   `POST /zones/4cc466e19478c116fae7dc445a6d0911/purge_cache` with `files`.
-   Persist progress at each stage; crash recovery replays unfinished work.
+   idempotently, then purge through
+   `POST /zones/4cc466e19478c116fae7dc445a6d0911/purge_cache` with `prefixes`:
+   `shapes-ts-terrabase-shapes-prod.terrascale.tech/v1/shapes/<handle>/`.
+   Validate the exact host and canonical handle; no scheme/query/wildcards.
+   [Prefix purge](https://developers.cloudflare.com/cache/how-to/purge-cache/purge_by_prefix/)
+   clears all header variants, including unknown browser origins. Coalesce
+   ready deletions by handle after their R2 deletes complete; purging retained
+   siblings is safe but adds later cache fills. Persist progress at each stage.
 3. Bound each worker's in-memory window to 4,096 URLs / 1 MiB and batch at
-   most 100 URLs. Deduplicate by URL; use a leased consumer and account-wide
-   pacing of at most 100 URLs/second. Honor `Retry-After`; transient failures
+   most 100 prefixes. Use a leased consumer, deduplicate by handle and share
+   an account/plan rate budget with CI/bench: at most five prefix requests per
+   minute on Free ([limits](https://developers.cloudflare.com/cache/how-to/purge-cache/#availability-and-limits)).
+   Admission must bound pending handle churn to drain capacity; do not assume
+   the much higher single-file URL rate applies. Honor `Retry-After`; failures
    use jittered backoff up to one minute, five attempts per drain cycle.
 4. On exhaustion leave work pending for the next cycle. On non-429 4xx
    park it durably and alert for credential/policy repair; never drop it.
    Acknowledge completion only after API `success: true`. Enforce catalog
    storage admission; saturation blocks new mirror publication with a visible
-   error, while deletion fencing/key denial can proceed. Track pending count,
+   error, while deletion fencing/key denial can proceed. A 200/success response
+   acknowledges acceptance, not verified eviction. Track pending count,
    oldest age, retry/parked failures and existing purge outcomes. Alert on
    parked work or oldest age over one hour; use bounded metric labels.
 
@@ -306,15 +327,21 @@ Q6 alerts on actual storage, Class A/B, cache hit ratio and purge backlog.
    URL, browser GET, cold MISS then HIT and TLS. Verify denied non-shape paths,
    query variants, unsupported methods and a missing object that does not
    become a pinned cached 404. Validate cross-bucket credential denial.
+   Warm an extensionless object without Origin and from two browser origins,
+   DELETE and purge it, then verify all variants stop returning HIT across
+   tiered caches. Measure the additional R2 fills per Origin variant.
 4. Fast integration remains a required CI gate on the exact PR head. Run the
    independent Slow real-R2 scenario for CDN HIT, durable purge through
-   restart/429/saturation/credential failure and eventual deletion, reporting
-   failures through the existing automatic issue path. Slow remains
+   restart/429/saturation/credential failure and eventual deletion. Include
+   a sweeper outage spanning actual lifecycle expiry: recovery must purge
+   from durable inventory after the bucket has already lost the objects.
+   Report failures through the existing automatic issue path. Slow remains
    non-blocking for merges; failed proof is still unfinished task evidence.
 5. Repeat the N = 1/10/100/1000 scenario three times on SQL shapes (F10),
    compare client cache headers with R2 `r2OperationsAdaptiveGroups` GET
    counts over the same windows, and publish under `benchmark/bench/`.
-   Reproduce one GET per object per location for a controlled cold fill;
+   Reproduce one GET per object per location for a controlled cold fill
+   with a single header variant, matching the original benchmark;
    measure multiple locations separately before claiming a global bound.
 6. F11 proves cached ciphertext cannot be newly decrypted after database or
    tenant deletion, including partitions, restart, historical key versions
