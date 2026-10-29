@@ -26,8 +26,7 @@ namespace TerraBase.Features.Management;
 internal sealed partial class EngineManagementService(
     IStorageEngine engine, IOrphanDatabaseFiles orphanFiles, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger, DatabaseLifecycleCheckpoint checkpoint, IMeterFactory meters,
     Lazy<IDocumentService> documents, Lazy<IQueryShapeTracker> shapes, IMemoryBudget memory, IProjectAuthorityVerifier projectAuthority, Lazy<IStorageQuota> quota,
-    Lazy<ICatalogGate> catalogGate, Lazy<IWebhookErasure> webhookErasure, DatabaseAllowance databaseAllowance,
-    Lazy<IEscrowPeers> escrowPeers)
+    Lazy<ICatalogGate> catalogGate, Lazy<IWebhookErasure> webhookErasure, DatabaseAllowance databaseAllowance)
     : IManagementService, IAccessService, IManagementCommits, ITenantDirectory, IHostedService, ICatalogGuard, IDatabaseFileCatalog
 {
     private const string Organizations = "organizations";
@@ -730,10 +729,10 @@ internal sealed partial class EngineManagementService(
         string? id = null, DatabasePlacement? placement = null, DateTimeOffset? createdAt = null)
     {
         var allowance = sourceId is not null || (placement?.Home ?? options.Region) == options.Region
-            ? new AllowanceCheck(databaseAllowance.Limit, options.Region, await ServingAsync(cancellationToken).ConfigureAwait(false))
+            ? new AllowanceCheck(databaseAllowance.Limit, options.Region, [options.Region])
             : null;
 
-        var precheck = await WithUnitAsync(() => PrecheckAsync(project, name, allowance, cancellationToken), project, allowance, cancellationToken).ConfigureAwait(false);
+        var precheck = await PrecheckAsync(project, name, allowance, cancellationToken).ConfigureAwait(false);
 
         if (precheck is not TenantContext tenant)
         {
@@ -790,7 +789,7 @@ internal sealed partial class EngineManagementService(
                 };
             }
 
-            registered = await WithUnitAsync(() => RegisterAsync(project, database, tenant, allowance, cancellationToken), project, allowance, cancellationToken).ConfigureAwait(false);
+            registered = await RegisterAsync(project, database, tenant, allowance, cancellationToken).ConfigureAwait(false);
 
             if (registered is TenantContext)
             {
@@ -859,23 +858,6 @@ internal sealed partial class EngineManagementService(
                 Conflict error => error,
             };
         }, static error => error, cancellationToken);
-
-    private async ValueTask<AddDatabasePrecheck> WithUnitAsync(
-        Func<ValueTask<AddDatabasePrecheck>> check, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, AllowanceCheck? allowance, CancellationToken cancellationToken)
-    {
-        var result = await check().ConfigureAwait(false);
-        for (var attempt = 0; attempt < MaxUnitAcquisitions && allowance is not null && result is Conflict conflict && conflict == ManagementErrors.DatabaseAllowanceElsewhere; attempt++)
-        {
-            if (await AcquireUnitAsync(project, allowance, cancellationToken).ConfigureAwait(false) is { } refusal)
-            {
-                return refusal;
-            }
-
-            result = await check().ConfigureAwait(false);
-        }
-
-        return result;
-    }
 
     private static AddDatabaseResult Refused(AddDatabasePrecheck check) => check switch
     {
