@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
+using TerraBase.Primitives;
 
 namespace TerraBase.Engine.Revisions;
 

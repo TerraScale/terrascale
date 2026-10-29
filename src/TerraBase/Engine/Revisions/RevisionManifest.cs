@@ -62,7 +62,7 @@ internal sealed class RevisionManifest
     public void Seal(LiveGeneration live)
     {
         var full = live.Full || live.Pages.Count > MaxGenerationPages;
-        Sealed.Add(new SealedGeneration(Generation, live.MaxFrame, full, full ? new Dictionary<uint, ulong>() : new Dictionary<uint, ulong>(live.Pages)));
+        Sealed.Add(new SealedGeneration(Generation, live.MaxFrame, full, live.Pages.Where(_ => !full).ToDictionary()));
         Generation++;
         WalSalt = null;
         while (Sealed.Count > RetainedGenerations)
