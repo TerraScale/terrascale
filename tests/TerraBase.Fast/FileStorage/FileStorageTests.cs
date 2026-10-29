@@ -20,7 +20,7 @@ public sealed class FileStorageTests
     public async Task Empty_bucket_deletion_does_not_require_a_file_collection(bool missingCollection)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        await using var api = await WebhookApi.StartAsync(token);
+        await using var api = await ProjectApi.StartAsync(token);
         var path = $"/v1/projects/{api.Database.Project}/buckets";
         var rules = new CollectionAccessRules(null, new(false, true, []), new(false, true, []));
         string id;
@@ -50,7 +50,7 @@ public sealed class FileStorageTests
     public async Task Owner_upload_is_hidden_until_verified_and_second_user_gets_403()
     {
         var objects = new Objects();
-        await using var api = await WebhookApi.StartAsync(services => services.Replace(ServiceDescriptor.Singleton<IFileObjectStore>(objects)), CancellationToken.None);
+        await using var api = await ProjectApi.StartAsync(services => services.Replace(ServiceDescriptor.Singleton<IFileObjectStore>(objects)), CancellationToken.None);
         var buckets = $"/v1/projects/{api.Database.Project}/buckets";
         var rules = new CollectionAccessRules("/owner", new(true, false, []), new(true, false, []));
         var created = await Send(api.Client, HttpMethod.Post, buckets, new { name = "avatars", rules });
@@ -160,7 +160,7 @@ public sealed class FileStorageTests
     [Test]
     public async Task File_reservations_and_documents_share_the_organization_quota()
     {
-        await using var api = await WebhookApi.StartAsync(services =>
+        await using var api = await ProjectApi.StartAsync(services =>
         {
             services.Replace(ServiceDescriptor.Singleton<IFileObjectStore>(new Objects()));
             services.Replace(ServiceDescriptor.Singleton<IStorageQuota>(provider => new StorageQuota(provider.GetRequiredService<IStorageEngine>(), provider.GetRequiredService<ITenantDirectory>(), _ => 10)));
@@ -173,7 +173,7 @@ public sealed class FileStorageTests
         await Assert.That((await Send(api.Client, HttpMethod.Post, bucket + "/files/upload", request)).Status).IsEqualTo(HttpStatusCode.TooManyRequests);
     }
 
-    private static HttpClient User(WebhookApi api, string actor)
+    private static HttpClient User(ProjectApi api, string actor)
     {
         var client = api.Api.WithToken(api.Api.Issuer.Mint(actor, token =>
         {

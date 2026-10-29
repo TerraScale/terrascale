@@ -1,7 +1,7 @@
 # INSERT conflict compatibility
 
 This narrows the conflict behavior described in [relational SQL](relational-sql.md).
-The HTTP SQL endpoint and Hrana v2/v3 share this implementation. SQLite references:
+The HTTP SQL endpoint and PostgreSQL adapter share this implementation. SQLite references:
 [conflict algorithms](https://www.sqlite.org/lang_conflict.html) and
 [UPSERT](https://www.sqlite.org/lang_upsert.html).
 
@@ -43,4 +43,4 @@ from its document body while a UNIQUE key also contains that field; the existing
 document uniqueness projection cannot represent that SQL key faithfully.
 
 Regression coverage is in `tests/TerraBase.Fast/Sql/SqlConflictTests.cs`, using the real
-HTTP SQL and Hrana listeners.
+HTTP SQL listener.

@@ -27,9 +27,6 @@ public sealed record TerraBaseOptions
     /// <summary>Port of the PostgreSQL wire listener.</summary>
     public const int DefaultPostgresPort = 5432;
 
-    /// <summary>Port of the TerraBase wire protocol listener (docs/terrabase/wire-protocol.md).</summary>
-    public const int DefaultWirePort = 7464;
-
     /// <summary>Default seconds shutdown waits for transactions to return their database connections.</summary>
     public const int DefaultShutdownGraceSeconds = 10;
 
@@ -59,13 +56,11 @@ public sealed record TerraBaseOptions
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["port", "internal-port", "metrics-port", "postgres-port", "wire-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience", "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys, .. FileStorageSettings.Keys]);
+        ["port", "internal-port", "metrics-port", "postgres-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience", "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys, .. FileStorageSettings.Keys]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
 
-    // Generic-host arguments that WebApplicationFactory passes to the entry point. They are not
-    // TerraBase settings and change nothing: the host is built without args.
     private static readonly FrozenSet<string> HostArguments = FrozenSet.Create(
         StringComparer.Ordinal, "environment", "applicationName", "contentRoot");
 
@@ -89,12 +84,6 @@ public sealed record TerraBaseOptions
     /// free port) and a second service on a shared host change it.
     /// </summary>
     public int PostgresPort { get; init; } = DefaultPostgresPort;
-
-    /// <summary>
-    /// Port of the TerraBase wire protocol listener: plaintext behind the platform edge, which terminates TLS. Tests (<c>0</c>
-    /// picks a free port) and a second service on a shared host change it.
-    /// </summary>
-    public int WirePort { get; init; } = DefaultWirePort;
 
     /// <summary>Directory holding one Turso file per database.</summary>
     public required string DataDirectory { get; init; }
@@ -155,7 +144,6 @@ public sealed record TerraBaseOptions
     public TimeSpan QueryBudget
     {
         get;
-        // Programmatic configuration gets the same bounds as the setting: a zero budget would refuse every query.
         init => field = value >= TimeSpan.FromSeconds(1) && value <= TimeSpan.FromSeconds(MaxQueryBudgetSeconds)
             ? value
             : throw new TerraBaseConfigurationException($"query-budget-seconds must be between 1 and {MaxQueryBudgetSeconds} seconds");
@@ -234,11 +222,9 @@ public sealed record TerraBaseOptions
                 {
                     if (name.StartsWith("TERRABASE_FILES_S3_", StringComparison.Ordinal))
                     {
-                        // Missing file credentials make only file transfers unavailable. Never retain a stale value.
                         Environment.SetEnvironmentVariable(name, null);
                         continue;
                     }
-                    // Names the variable, never the file's contents.
                     throw new TerraBaseConfigurationException($"{key} must name a readable file");
                 }
             }
@@ -259,7 +245,6 @@ public sealed record TerraBaseOptions
             }
         }
 
-        // Only the whole set Fly sets for an attached bucket: a lone AWS_REGION from unrelated tooling is not a backup bucket.
         if (BackupSettings.TigrisVariables.All(variable => !string.IsNullOrEmpty(Environment.GetEnvironmentVariable(variable.Variable))))
         {
             foreach (var (variable, key) in BackupSettings.TigrisVariables)
@@ -334,8 +319,6 @@ public sealed record TerraBaseOptions
             authAudiences = [PlatformAuthAudience];
         }
 
-        // Outside Development only the platform pair: another issuer would let its holder mint tokens TerraBase trusts, and
-        // a regional one would turn every platform token away with 401. Tests run their own ts-auth in Development.
         if (production && (authIssuer != PlatformAuthIssuer || !authAudiences.Contains(PlatformAuthAudience)))
         {
             throw new TerraBaseConfigurationException(
@@ -348,7 +331,6 @@ public sealed record TerraBaseOptions
             InternalPort = ParsePort(values, "internal-port") ?? DefaultInternalPort,
             MetricsPort = ParsePort(values, "metrics-port") ?? DefaultMetricsPort,
             PostgresPort = ParsePort(values, "postgres-port") ?? DefaultPostgresPort,
-            WirePort = ParsePort(values, "wire-port") ?? DefaultWirePort,
             DataDirectory = dataDirectory,
             Region = region,
             MachineId = machineId,
@@ -429,7 +411,6 @@ public sealed record TerraBaseOptions
             : throw new TerraBaseConfigurationException($"readiness-cache-seconds must be an integer between 1 and {MaxReadinessCacheSeconds}");
     }
 
-    // ts-auth tokens authenticate Management API users.
     private static (string? Issuer, string[] Audiences) ParseAuth(IReadOnlyDictionary<string, string> values)
     {
         var issuer = values.GetValueOrDefault("auth-issuer");
@@ -444,7 +425,6 @@ public sealed record TerraBaseOptions
             throw new TerraBaseConfigurationException("auth-issuer and auth-audience must be set together");
         }
 
-        // iss is compared exactly, so whitespace Uri parsing would forgive (" https://…") is refused, not trimmed.
         if (issuer.Any(character => char.IsWhiteSpace(character) || char.IsControl(character))
             || !Uri.TryCreate(issuer, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps
             || uri.UserInfo.Length > 0 || uri.Query.Length > 0 || uri.Fragment.Length > 0)
@@ -453,14 +433,12 @@ public sealed record TerraBaseOptions
                 "auth-issuer must be an absolute https URL without whitespace, user information, query or fragment");
         }
 
-        // Control characters are checked before trimming, which would drop them at the edges of an entry.
         var audiences = audience.Split(',', StringSplitOptions.TrimEntries);
         return audience.Any(char.IsControl) || audiences.Any(value => value.Length == 0)
             ? throw new TerraBaseConfigurationException("auth-audience must be a comma-separated list of non-empty audiences without control characters")
             : (issuer, audiences);
     }
 
-    // ts-orch sets these on every task. A process elsewhere (development, tests) is a cell of its own, named local.
     private static (string Region, string MachineId, string? PeersFile) ClusterIdentity()
     {
         var region = Environment.GetEnvironmentVariable("TS_REGION");
@@ -479,7 +457,6 @@ public sealed record TerraBaseOptions
         return (region, node, peersFile);
     }
 
-    // An http://host:port origin of another member's internal listener.
     internal static bool TryParsePeerAddress(string value, [NotNullWhen(true)] out Uri? address) =>
         Uri.TryCreate(value, UriKind.Absolute, out address)
         && address.Scheme == Uri.UriSchemeHttp

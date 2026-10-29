@@ -242,7 +242,7 @@ internal sealed partial class UsageMeter
         {
             "ops" => dimension.PeerRegion == "" && dimension.Kind is "read" or "put" or "patch" or "delete",
             "requests" => dimension.PeerRegion == "" && dimension.Kind is "get" or "post" or "put" or "patch" or "delete" or "head" or "options" or "other",
-            "statements" => dimension.PeerRegion == "" && dimension.Kind is "postgres" or "hrana",
+            "statements" => dimension.PeerRegion == "" && dimension.Kind == "postgres",
             "client_bytes" => dimension.PeerRegion == "" && dimension.Kind is "sent" or "received",
             "storage_bytes" => dimension.PeerRegion == "" && dimension.Kind == "sample",
             "replication_bytes" => ValidRegion(dimension.PeerRegion) && dimension.Kind is "delta:sent" or "delta:received"

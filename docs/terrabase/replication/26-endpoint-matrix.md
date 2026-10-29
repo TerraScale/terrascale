@@ -1,22 +1,15 @@
 # Endpoint replication matrix
 
-`Fast.Replication.EndpointReplicationTests` starts three real servers (gru, sjc and fra), with peer streams and
-independent data directories. Each source endpoint writes in each region; all five endpoints in all three regions
-must read the inserted value, its replacement and its deletion. SQL HTTP, Postgres and Hrana also originate table
-creation and a committed transaction containing two inserts and an update.
+`Fast.Replication.EndpointReplicationTests` defines a three-server integration matrix for gru, sjc and fra, with peer
+streams and independent data directories. REST documents, SQL HTTP and Postgres originate writes in each region.
+REST documents, REST queries, SQL HTTP and Postgres read the inserted value, its replacement and its deletion.
+SQL HTTP and Postgres also originate table creation and a committed transaction containing two inserts and an update.
 
-The shared data model is a SQL table with a ULID `TEXT PRIMARY KEY`. Its rows are documents addressable by REST and
-Wire; ordinary document collections without a SQL table definition are not relational tables. Integer and composite
-SQL primary keys are outside the document API's ULID address contract.
-The matrix uses conforming JSON: REST and Wire writes do not enforce SQL column constraints or affinities.
+The shared data model is a SQL table with a ULID `TEXT PRIMARY KEY`. Its rows are documents addressable by REST;
+ordinary document collections without a SQL table definition are not relational tables. Integer and composite SQL
+primary keys are outside the document API's ULID address contract. REST writes do not enforce SQL column constraints
+or affinities.
 
-Wire operation `3` adds unconditional deletion: the GET address followed by one durability byte (`0` local,
-`1` remote), with no JSON. Success is `200` followed by the same durability and ETag fields as PUT. Authentication,
-write scope, ordering, validation, tombstones, metering and remote confirmation use the existing document write path.
-Deleting an absent document returns `404`; a body after the durability byte returns `400 invalid_frame`.
-
-Existing version 1 GET and PUT frames are unchanged. Older nodes return `400 unknown_operation` for operation `3`;
-clients must surface that refusal during a mixed deployment. No peer protocol or persisted format changes.
-
-These tests do not yet prove ALTER TABLE, deterministic conflict winners, transaction visibility during replication,
-rollback or production latency. ALTER TABLE is currently refused by the SQL grammar. Those remain RT6 acceptance work.
+The concurrent-write case checks that writes from every region converge through every reader and that a later write
+wins. These test definitions do not establish production latency or ALTER TABLE support. CI results for the exact
+head remain the execution evidence.

@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
@@ -10,10 +9,6 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
 
-/// <summary>
-/// gru, sjc and fra serving one database: rows written with SQL (the SQL API and libSQL's Hrana pipeline) in one region are
-/// read with SQL in the others, and concurrent SQL updates of one row converge to one of them everywhere (LWW by HLC).
-/// </summary>
 public sealed class SqlWriteReplicationTests
 {
     private const string Select = "SELECT id, name, age FROM people ORDER BY id";
@@ -71,7 +66,7 @@ public sealed class SqlWriteReplicationTests
     }
 
     [Test]
-    public async Task Sql_inserts_updates_and_deletes_in_gru_and_a_hrana_insert_in_sjc_are_read_with_sql_in_every_region()
+    public async Task Sql_inserts_updates_and_deletes_in_gru_and_sjc_are_read_with_sql_in_every_region()
     {
         await using var cell = await Cell.StartAsync();
         // Exercise JSON escaping deterministically as well as Bogus names such as D'angelo.
@@ -84,7 +79,7 @@ public sealed class SqlWriteReplicationTests
         }));
 
         await OkAsync(cell.Gru, Statement("UPDATE people SET age = age + 1 WHERE id = ?", 1), Statement("DELETE FROM people WHERE id = ?", 2));
-        await HranaInsertAsync(cell.Sjc, 4, names[3]);
+        await OkAsync(cell.Sjc, Statement("INSERT INTO people (id, name, age) VALUES (?, ?, 50)", 4, names[3]));
         await RowsEverywhereAsync(cell, JsonSerializer.Serialize(new object[][]
         {
             [1, names[0], 21], [3, names[2], 40], [4, names[3], 50],
@@ -120,33 +115,6 @@ public sealed class SqlWriteReplicationTests
     {
         using var response = await machine.Data.PostAsJsonAsync(ManagementApi.Uri($"{machine.Cell.Managed.Data}/sql/execute"), new { statements });
         await Assert.That(response.IsSuccessStatusCode).IsTrue().Because($"{machine.Region}: {await response.Content.ReadAsStringAsync()}");
-    }
-
-    // libSQL's v2 pipeline as @libsql/client sends it.
-    private static async Task HranaInsertAsync(Machine machine, int id, string name)
-    {
-        var body = JsonSerializer.Serialize(new
-        {
-            requests = new object[]
-            {
-                new
-                {
-                    type = "execute",
-                    stmt = new
-                    {
-                        sql = "INSERT INTO people (id, name, age) VALUES (?, ?, 50)",
-                        args = new object[] { new { type = "integer", value = id.ToString(System.Globalization.CultureInfo.InvariantCulture) }, new { type = "text", value = name } },
-                        want_rows = false,
-                    },
-                },
-                new { type = "close" },
-            },
-        });
-        using var content = new StringContent(body, Encoding.UTF8, "application/json");
-        using var response = await machine.Data.PostAsync(ManagementApi.Uri($"{machine.Cell.Managed.Data}/libsql/v2/pipeline"), content);
-        var text = await response.Content.ReadAsStringAsync();
-        await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(text);
-        await Assert.That(JsonElement.Parse(text).GetProperty("results")[0].GetProperty("type").GetString()).IsEqualTo("ok").Because(text);
     }
 
     // The people rows as JSON on `machine`, or null while it cannot read the table yet.

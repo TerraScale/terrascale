@@ -24,7 +24,7 @@ One unit is each started 4 KiB (4,096 bytes) of a document successfully read or 
 - A put or patch bills its stored document's units; a delete bills one unit.
 - A get bills the document's units; a not-found get bills none. List, query and export pages bill
   each returned document. SQL query runs bill each returned row's value.
-- SQL over HTTP, libSQL (Hrana) and Postgres wire bill the same way: an inserted or updated row bills
+- SQL over HTTP and Postgres wire bill the same way: an inserted or updated row bills
   its stored document's units and a deleted row one unit, once its transaction commits; a rolled-back
   or failed transaction bills no writes, and replaying a transaction's statements bills nothing again.
   A read of tables bills each returned row's started 4 KiB (text as UTF-8, 8 bytes per number, at

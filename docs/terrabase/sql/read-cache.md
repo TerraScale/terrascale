@@ -1,7 +1,7 @@
 # SQL read cache
 
 - Status: implemented, 2026-10-27. Applies to every relational read path in [relational-sql.md](relational-sql.md):
-  the HTTP SQL API, Hrana and the PostgreSQL adapter.
+  the HTTP SQL API and the PostgreSQL adapter.
 
 ## Why
 

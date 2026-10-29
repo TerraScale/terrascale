@@ -174,7 +174,7 @@ public sealed class PeerCredentialObservationTests
         {
             var value = name switch
             {
-                "port" or "internal-port" or "metrics-port" or "postgres-port" or "wire-port" => "0",
+                "port" or "internal-port" or "metrics-port" or "postgres-port" => "0",
                 "data-directory" => directory,
                 _ => string.Empty,
             };

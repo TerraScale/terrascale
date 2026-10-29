@@ -2,19 +2,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Engine;
 
-/// <summary>
-/// Physically rewrites one healthy open database file (TS-873): every logical row is copied to a private file beside it,
-/// which then replaces the old file, so deleted rows' free pages, change capture and sealed shape history of the old file
-/// are gone. Never a fault rebuild: a faulted copy, one under rebuild, or a node that failed closed is refused.
-/// </summary>
-/// <remarks>
-/// The rewrite gives the file a new incarnation. Peers refill it and old shape handles reset, as for any copy; a webhook
-/// registration bound to the old incarnation pauses with a feed gap. Rewrite only scopes whose callers coordinated that
-/// (SYSTEM, auth's database).
-/// A request that pinned the old incarnation is still admitted afterwards (<see cref="IReplicaCopyFaults.RefusedAsync"/>
-/// follows durable healthy rewrites). A write whose remote acknowledgement was awaited across the rewrite may still answer
-/// that its outcome is unknown: safe, never a false success.
-/// </remarks>
 internal interface IHealthyRewrite
 {
     /// <summary>

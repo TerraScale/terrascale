@@ -22,8 +22,7 @@ public sealed record LatencyPercentiles(double? P50Ms, double? P95Ms, double? P9
 public sealed record StatementUsage(long Statements, long Errors, LatencyPercentiles Latency);
 
 /// <summary>
-/// One UTC analytics bucket. Requests and errors are HTTP and wire requests (a PostgreSQL exchange ends at its Sync);
-/// statements are keyed by protocol (postgres, hrana). Storage is the average of sampled on-disk bytes, or null before sampling.
+/// One UTC analytics bucket. Requests and errors are HTTP and wire requests (a PostgreSQL exchange ends at its Sync).
 /// </summary>
 public sealed record AnalyticsPoint(DateTimeOffset Start, IReadOnlyDictionary<string, long> Requests, IReadOnlyDictionary<string, long> Operations,
     long Errors, LatencyPercentiles Latency, long? StorageBytes, BandwidthUsage ClientBandwidth, BandwidthUsage ReplicationBandwidth,

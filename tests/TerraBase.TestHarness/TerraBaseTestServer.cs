@@ -23,7 +23,6 @@ using TerraBase.Features.Backup;
 using TerraBase.Features.Management;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Replication;
-using TerraBase.Features.Wire;
 using TerraBase.Hosting;
 
 namespace TerraBase.Testing;
@@ -55,7 +54,6 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         ClientAddress = new UriBuilder(listeners[1]) { Host = "127.0.0.1" }.Uri;
         MetricsAddress = new UriBuilder(listeners[2]) { Host = "127.0.0.1" }.Uri;
         PostgresPort = listeners[3].Port;
-        WirePort = factory.Services.GetRequiredService<WireListener>().Port;
         // The effective registration, so a test that replaced the credential gets a client that sends its secret.
         Credential = factory.Services.GetRequiredService<PeerCredential>();
         Client = PeerTls.CreateClient(BaseAddress, credential: Credential);
@@ -84,9 +82,6 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
     /// <summary>The loopback port of the PostgreSQL wire listener.</summary>
     public int PostgresPort { get; }
-
-    /// <summary>The port of the TerraBase wire protocol listener (its own socket, not Kestrel's).</summary>
-    public int WirePort { get; }
 
     /// <summary>An HTTP/2 client for the internal listener that never follows redirects and never stores cookies.</summary>
     public HttpClient Client { get; }
@@ -162,7 +157,6 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 ["port"] = "0",
                 ["metrics-port"] = "0",
                 ["postgres-port"] = "0",
-                ["wire-port"] = "0",
                 ["data-directory"] = dataDirectory,
                 ["region"] = "test-region",
                 // Each server starts its read threads eagerly, one per core by default: on a 46-core host the parallel suite

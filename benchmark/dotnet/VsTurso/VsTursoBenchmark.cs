@@ -13,16 +13,6 @@ using TerraBase.Testing;
 
 namespace TerraBase.E2E
 {
-    /// <summary>
-    /// TerraBase against the raw vendored Turso driver on one host, with identical workloads (benchmark/dotnet/VsTurso, run by
-    /// <c>benchmark/dotnet/VsTurso/run.sh</c>). Compiled into TerraBase.E2E because the local nodes need its harness; without
-    /// <c>TERRABASE_VS_TURSO_OUT</c> it skips: it is a benchmark, not a scenario.
-    /// Lanes: <c>turso</c> (one upsert per transaction, WAL, synchronous FULL), <c>turso-cdc</c> (the same with change capture,
-    /// as TerraBase's writer runs), <c>engine</c> and <c>api</c> (one local node: <see cref="IDocumentService"/> in process, and
-    /// its public HTTP API over loopback), <c>floor</c> (that listener answering <c>GET /healthz</c>), <c>engine-3</c> and
-    /// <c>api-3</c> (gru of gru, sjc and fra, answered after a remote ack), and every <see cref="IVsTursoLane"/> in this assembly.
-    /// Every lane compares with <c>turso</c>.
-    /// </summary>
     [Category("benchmark-host")]
     public sealed class VsTursoBenchmark
     {
@@ -40,7 +30,6 @@ namespace TerraBase.E2E
             Skip.When(string.IsNullOrEmpty(output), "the vs-Turso benchmark: run it with benchmark/dotnet/VsTurso/run.sh");
             var seconds = int.Parse(Environment.GetEnvironmentVariable("TERRABASE_VS_TURSO_SECONDS") ?? "5", CultureInfo.InvariantCulture);
             var repeats = int.Parse(Environment.GetEnvironmentVariable("TERRABASE_VS_TURSO_REPEATS") ?? "3", CultureInfo.InvariantCulture);
-            // Lanes other files add: every IVsTursoLane in this assembly, run against the single node.
             var plugins = typeof(VsTursoBenchmark).Assembly.GetTypes()
                 .Where(type => typeof(IVsTursoLane).IsAssignableFrom(type) && type is { IsAbstract: false, IsInterface: false })
                 .Select(type => (IVsTursoLane)Activator.CreateInstance(type)!).ToList();
@@ -64,8 +53,6 @@ namespace TerraBase.E2E
                     single.Add((lane, new TursoTarget(Path.Combine(directory, lane + ".db"), capture: lane == "turso-cdc")));
                 }
 
-                // One node outside a cell: change capture, change groups and the feed run, nothing ships and no write waits for a remote ack.
-                // Its attribution splits each measured HTTP request into server, engine and overhead time; it stops listening before the cluster.
                 using (var attribution = new ServerAttribution())
                 await using (var node = lanes.Any(lane => lane is "engine" or "api" or "api-exceptions" or "floor" || plugins.Any(plugin => plugin.Name == lane))
                     ? await ManagementApi.StartAsync(services: attribution.Install) : null)
@@ -76,8 +63,6 @@ namespace TerraBase.E2E
                         var database = await node.CreateManagedDatabaseAsync("bench");
                         await node.SetPlanAsync(node.User, database.Organization, "enterprise", cancellationToken);
                         await node.VerifyProjectBindingAsync(database.Organization, database.Project, owner);
-                        // A synthetic API key's client credentials token, as ts-auth issues one: key_id and key_gen send every request
-                        // through the key revocation path, against the test issuer. Runs with the earlier key-less token are diagnostic only.
                         var keyId = EntityIds.New().ToString();
                         var key = keyId + "_" + new Faker().Random.String2(52, "0123456789abcdefghjkmnpqrstvwxyz");
                         var token = node.Issuer.Mint(keyId, descriptor =>
@@ -142,7 +127,6 @@ namespace TerraBase.E2E
             string[] lanes, string suffix, IServiceProvider services, TenantContext database, Uri address, string token, string path, string collection)
         {
             var targets = new List<(string, ITarget)>();
-            // The engine lane calls the node's own service, never the attribution's decorator.
             var documents = services.GetRequiredService<IDocumentService>();
             var engine = new EngineTarget(documents is AttributedDocuments attributed ? attributed.Inner : documents, database, collection);
             if (lanes.Contains("engine" + suffix))
@@ -160,7 +144,6 @@ namespace TerraBase.E2E
                 targets.Add(("api-exceptions" + suffix, new ApiTarget(address, token, path, engine)));
             }
 
-            // The HTTP floor: the same client and listener answering GET /healthz, so no auth, catalog or storage.
             if (lanes.Contains("floor" + suffix))
             {
                 targets.Add(("floor" + suffix, new ApiTarget(address, token, "/healthz?", engine, floor: true)));
@@ -177,7 +160,6 @@ namespace TerraBase.E2E
             {
                 foreach (var (size, bytes) in Sizes)
                 {
-                    // Every key exists before any cell runs, so reads always hit and writes always replace.
                     var body = new Bodies(size, bytes);
                     for (var first = 0; first < Keys; first += 500)
                     {
@@ -189,7 +171,6 @@ namespace TerraBase.E2E
                 await log.FlushAsync(cancellationToken);
             }
 
-            // Lanes interleave inside each repeat and cell, so a drift of the host hits every lane alike.
             for (var repeat = 1; repeat <= repeats; repeat++)
             {
                 foreach (var (size, bytes) in Sizes)
@@ -201,9 +182,7 @@ namespace TerraBase.E2E
                         {
                             foreach (var (lane, target) in targets)
                             {
-                                // Relational point reads currently scan the full table. Five seconds can finish no
-                                // measured requests at c=16; give these cells a useful sample window on the same dataset.
-                                var window = workload == "read" && lane is "sql" or "hrana" or "pg"
+                                var window = workload == "read" && lane is "sql" or "pg"
                                     ? TimeSpan.FromSeconds(Math.Max(30, duration.TotalSeconds)) : duration;
                                 var timing = lane is "api" or "api-exceptions" or "api-json" or "sdk" ? attribution : null;
                                 var cell = await MeasureAsync(target, body, workload, concurrency, window, timing, lane) with { Lane = lane, Repeat = repeat };
@@ -345,7 +324,6 @@ namespace TerraBase.E2E
                 text.AppendLine(CultureInfo.InvariantCulture, $"| {group.Key.Size} | {group.Key.Workload} | {group.Key.Concurrency} | {group.Key.Lane} | {ops:N0} ({runs.Min(run => run.OpsPerSecond):N0}–{runs.Max(run => run.OpsPerSecond):N0}) | {versus} | {Median(runs.Select(run => run.P50Micros)):0.0} | {Median(runs.Select(run => run.P99Micros)):0.0} | {Median(runs.Select(run => run.CpuMicrosPerOp)):0.0} | {Median(runs.Select(run => (double)run.AllocatedBytesPerOp)):N0} | {runs.Sum(run => run.Errors)} |");
             }
 
-            // Server-side attribution, only for lanes whose requests the node's HTTP pipeline measured (none for engine, wire or floor).
             text.AppendLine();
             text.AppendLine("Per-request wall time inside the node (hosting activity), medians of each repeat's quantiles; instrumentation included, not CPU.");
             text.AppendLine();
@@ -374,7 +352,6 @@ namespace TerraBase.E2E
             string Lane, int Repeat, string Size, string Workload, int Concurrency, double OpsPerSecond, double P50Micros, double P99Micros,
             double CpuMicrosPerOp, long AllocatedBytesPerOp, int Errors, int Samples, double Seconds, ServerStats? Server = null, long? CanceledExceptions = null);
 
-        /// <summary>JSON documents of one size: a fixed shape with a 13-digit counter, so no write repeats the stored body.</summary>
         private sealed class Bodies
         {
             private readonly byte[] _template;
@@ -393,7 +370,6 @@ namespace TerraBase.E2E
 
             public static string Id(string size, int key)
             {
-                // A canonical ULID (the document API refuses any other id): a fixed prefix, the size's letter and the key.
                 return string.Create(CultureInfo.InvariantCulture, $"01JZZZZZZZZZZZ{char.ToUpperInvariant(size[0])}{key:D11}");
             }
 
@@ -411,12 +387,10 @@ namespace TerraBase.E2E
 
     }
 
-    /// <summary>One lane's way to write, preload and point-read a document: the operations every cell times.</summary>
     internal interface ITarget : IAsyncDisposable
     {
         Task PutAsync(string id, byte[] json);
 
-        /// <summary>Writes <paramref name="documents"/> before measuring, in as few commits as the target allows.</summary>
         Task PreloadAsync(IReadOnlyList<(string Id, byte[] Json)> documents);
 
         Task GetAsync(string id);

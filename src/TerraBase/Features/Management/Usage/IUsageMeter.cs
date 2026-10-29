@@ -17,10 +17,7 @@ public interface IUsageMeter
     /// <summary>Records one completed client request and the body bytes read and written since its last report.</summary>
     void RecordRequest(TenantContext database, string method, int status, TimeSpan elapsed, long received, long sent);
 
-    /// <summary>
-    /// Records one SQL statement a protocol (<c>postgres</c> or <c>hrana</c>) ran or refused for the database, separately from
-    /// the request that carried it: a Hrana statement error is a failed statement inside a successful HTTP 200 request.
-    /// </summary>
+    /// <summary>Records one SQL statement a protocol ran or refused for the database, separately from the request that carried it.</summary>
     void RecordStatement(TenantContext database, string protocol, bool failed, TimeSpan elapsed);
 
     /// <summary>Records client body bytes a request still in progress read and wrote, in the minute it transferred them.</summary>

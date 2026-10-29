@@ -6,7 +6,6 @@ using TerraBase.Features.Management.Schema;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
-using TerraBase.Features.Webhooks;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
@@ -29,7 +28,6 @@ public static class ManagementExtensions
         services.AddSingleton(provider => new Lazy<IQueryShapeTracker>(provider.GetRequiredService<IQueryShapeTracker>));
         services.AddSingleton(provider => new Lazy<IStorageQuota>(provider.GetRequiredService<IStorageQuota>));
         services.AddSingleton(provider => new Lazy<IRemoteDurability>(provider.GetRequiredService<IRemoteDurability>));
-        services.AddSingleton(provider => new Lazy<IWebhookErasure>(provider.GetRequiredService<IWebhookErasure>));
         services.AddSingleton(provider => new Lazy<IEscrowPeers>(provider.GetRequiredService<IEscrowPeers>));
         services.AddSingleton<IDatabaseEscrow>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddHostedService(provider => provider.GetRequiredService<EngineManagementService>());

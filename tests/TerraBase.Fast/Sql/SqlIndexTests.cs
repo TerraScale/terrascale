@@ -1,6 +1,5 @@
 using System.Net;
 using TerraBase.Fast.Documents;
-using TerraBase.Fast.Hrana;
 
 namespace TerraBase.Fast.Sql;
 
@@ -55,23 +54,4 @@ public sealed class SqlIndexTests
         await Assert.That(SqlApi.Error(retried).Sqlite).IsEqualTo("SQLITE_CONSTRAINT_UNIQUE");
     }
 
-    [Test]
-    public async Task Hrana_runs_index_statements()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        var body = await HranaPipelineTests.PostAsync(api, """
-            {"requests":[{"type":"execute","stmt":{"sql":"CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT)"}},
-             {"type":"execute","stmt":{"sql":"CREATE INDEX people_id_name ON people (id, name)"}},
-             {"type":"execute","stmt":{"sql":"CREATE UNIQUE INDEX people_name ON people (name)"}},
-             {"type":"execute","stmt":{"sql":"INSERT INTO people VALUES (1, 'ada')"}},
-             {"type":"execute","stmt":{"sql":"INSERT INTO people VALUES (2, 'ada')"}},
-             {"type":"execute","stmt":{"sql":"DROP INDEX people_name"}},
-             {"type":"execute","stmt":{"sql":"INSERT INTO people VALUES (2, 'ada')"}},
-             {"type":"close"}]}
-            """);
-
-        var results = body.Json.GetProperty("results");
-        await Assert.That(HranaPipelineTests.Types(body.Json)).IsEqualTo("ok:execute,ok:execute,ok:execute,ok:execute,error,ok:execute,ok:execute,ok:close");
-        await Assert.That(results[4].GetProperty("error").GetProperty("code").GetString()).IsEqualTo("SQLITE_CONSTRAINT_UNIQUE");
-    }
 }

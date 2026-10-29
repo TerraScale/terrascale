@@ -10,8 +10,8 @@ peer-only `PUT /admin/projects/{project}/closure`. Retries retain the project's 
 including when account cancellation detaches a project intent to finish independently.
 
 Version 2 writes a permanent closure fence, unregisters databases regardless of replica placement, revokes TerraBase
-project API keys and removes backup destination authorization. Existing database purge work handles active files,
-webhooks and backup cleanup. Project closure acceptance requires every catalog holder's empty receipt and each
+project API keys and removes backup destination authorization. Existing database purge work handles active files
+and backup cleanup. Project closure acceptance requires every catalog holder's empty receipt and each
 database purge's active-erasure evidence; removing database catalog entries alone is insufficient. An unavailable
 holder keeps the operation pending. Backup/history erasure retains its separate evidence and retention lifecycle.
 

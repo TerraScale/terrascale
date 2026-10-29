@@ -1,7 +1,4 @@
-using System.Net;
-using System.Text.Json;
 using TerraBase.Fast.Documents;
-using static TerraBase.Fast.Hrana.HranaPipelineTests;
 
 namespace TerraBase.Fast.Sql;
 
@@ -98,30 +95,4 @@ public sealed class SqlConflictTests
         await SqlApi.OkAsync(api, $"{insert} INTO t VALUES (3, 'a', 'y', 'same key')");
     }
 
-    [Test]
-    [Arguments("v2")]
-    [Arguments("v3")]
-    public async Task Hrana_conflict_errors_preserve_the_open_transaction_and_successful_ignored_rows(string version)
-    {
-        await using var api = await DocumentApi.StartAsync();
-        var result = await PostAsync(api, """
-            {"requests":[
-             {"type":"execute","stmt":{"sql":"CREATE TABLE t (id INTEGER PRIMARY KEY, email TEXT UNIQUE, label TEXT NOT NULL)"}},
-             {"type":"execute","stmt":{"sql":"BEGIN"}},
-             {"type":"execute","stmt":{"sql":"INSERT INTO t VALUES (1, 'a', 'original')"}},
-             {"type":"execute","stmt":{"sql":"INSERT OR IGNORE INTO t VALUES (2, 'a', 'skip'), (3, 'b', NULL) RETURNING id"}},
-             {"type":"execute","stmt":{"sql":"INSERT INTO t VALUES (1, 'c', 'fail') ON CONFLICT(email) DO NOTHING"}},
-             {"type":"execute","stmt":{"sql":"REPLACE INTO t VALUES (4, 'a', 'replaced') RETURNING id"}},
-             {"type":"execute","stmt":{"sql":"COMMIT"}},
-             {"type":"execute","stmt":{"sql":"SELECT id FROM t"}},{"type":"close"}]}
-            """, version: version);
-        await Assert.That(result.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(Types(result.Json)).IsEqualTo("ok:execute,ok:execute,ok:execute,ok:execute,error,ok:execute,ok:execute,ok:execute,ok:close");
-        var ignored = Response(result.Json, 3).GetProperty("result");
-        await Assert.That(ignored.GetProperty("affected_row_count").GetInt64()).IsEqualTo(0);
-        await Assert.That(ignored.GetProperty("rows").GetArrayLength()).IsEqualTo(0);
-        await Assert.That(ignored.GetProperty("last_insert_rowid").ValueKind).IsEqualTo(JsonValueKind.Null);
-        await Assert.That(result.Json.GetProperty("results")[4].GetProperty("error").GetProperty("code").GetString()).IsEqualTo("SQLITE_CONSTRAINT_PRIMARYKEY");
-        await Assert.That(Response(result.Json, 7).GetProperty("result").GetProperty("rows").GetRawText()).IsEqualTo("""[[{"type":"integer","value":"4"}]]""");
-    }
 }

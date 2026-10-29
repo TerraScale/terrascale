@@ -160,7 +160,8 @@ Export a database on a schedule to the project's own bucket: [scheduled exports]
 
 Import NDJSON (an export, or mongoexport-style documents) through the import pipeline: [NDJSON import](import-ndjson.md).
 
-Relational SQL (tables, joins, transactions) and libSQL clients over Hrana: [design](sql/relational-sql.md).
+Relational SQL (tables, joins, transactions) over HTTP and PostgreSQL: [design](sql/relational-sql.md).
+Removed protocol surfaces and compatibility notes: [E4a](e4a-removal.md).
 SQL indexes and batch-write costs: [indexes](sql/indexes.md).
 SQL point reads and writes by a TEXT primary key, served by the id index: [key point reads](sql/key-point-reads.md).
 Repeated SQL reads reuse their parse and compilation: [read cache](sql/read-cache.md).

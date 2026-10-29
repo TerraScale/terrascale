@@ -1,14 +1,4 @@
 #!/usr/bin/env python3
-"""Production endpoint replication matrix (RT6), run by endpoint-replication-proof.sh on a ts-orch host.
-
-Python standard library only. HTTP goes through curl (h2c) to every region's internal listener as the platform operator.
-Postgres and Wire use each region's public TLS edge with a database-scoped key issued for the run. Arguments: the work
-directory holding `peer` (the peer credential header), `user` (the acting user header) and `peers` (the ts-orch peers
-file), the target TerraBase SHA, and the output JSON-lines file. The tenant is created here and deleted afterwards.
-
-Writes are never retried. elapsed_ms runs from the write's acknowledgement to the end of the first matching read,
-including the client's process and network time. Reads poll every 50 ms, up to 30 s.
-"""
 
 import concurrent.futures
 import json
@@ -25,8 +15,8 @@ import traceback
 
 REGIONS = ("gru", "sjc", "fra")
 PUBLIC = {"gru": "163.176.124.12", "sjc": "163.192.54.17", "fra": "130.162.238.198"}
-ENDPOINTS = ("documents", "sql", "postgres", "hrana", "wire")
-RELATIONAL = ("sql", "postgres", "hrana")
+ENDPOINTS = ("documents", "sql", "postgres")
+RELATIONAL = ("sql", "postgres")
 NATIVE_RELAYS = {}
 LOCAL = threading.local()
 DEADLINE = 30
@@ -46,12 +36,6 @@ class HttpError(Exception):
 
 class PgError(Exception):
     pass
-
-
-class WireError(Exception):
-    def __init__(self, status, code, message):
-        super().__init__(f"{status} {code}: {message}")
-        self.status, self.code = status, code
 
 
 def receive(stream, size):
@@ -116,60 +100,6 @@ class Pg:
                 return rows
 
 
-class Wire:
-    """Wire protocol v1 over the edge's TLS (docs/terrabase/wire-protocol.md)."""
-
-    def __init__(self, region, key, project, database):
-        raw = socket.create_connection(("127.0.0.1", NATIVE_RELAYS[region]["wire"]), timeout=20)
-        self.stream = ssl.create_default_context().wrap_socket(raw, server_hostname="api.terrascale.tech")
-        self.next = 0
-        status, body = self.call(0, b"\x01" + b"".join(self.string(part) for part in (key, project, database)))
-        if status != 200 or body != b"\x01":
-            raise ConnectionError("unexpected Wire hello version")
-
-    @staticmethod
-    def string(value):
-        data = value.encode()
-        return struct.pack("<H", len(data)) + data
-
-    @staticmethod
-    def address(collection, identifier):
-        return bytes([len(collection)]) + collection.encode() + identifier.encode()
-
-    def call(self, operation, body):
-        self.next += 1
-        self.stream.sendall(struct.pack("<IIB", 5 + len(body), self.next, operation) + body)
-        size = struct.unpack("<I", receive(self.stream, 4))[0]
-        if not 6 <= size <= 1049600:
-            raise ConnectionError("invalid Wire answer length")
-        answer = receive(self.stream, size)
-        request, status = struct.unpack("<IH", answer[:6])
-        if request != self.next:
-            raise ConnectionError("wire request id mismatch")
-        if status >= 300:
-            length = answer[6]
-            raise WireError(status, answer[7:7 + length].decode(), answer[7 + length:].decode())
-        return status, answer[6:]
-
-    def get(self, collection, identifier):
-        try:
-            _, head = self.call(1, self.address(collection, identifier))
-        except WireError as error:
-            if error.status == 404 and error.code == "not_found":
-                return None
-            raise
-        return json.loads(head[1 + head[0]:])
-
-    def put(self, collection, identifier, document):
-        status, _ = self.call(2, self.address(collection, identifier) + b"\x00" + json.dumps(document).encode())
-        return status
-
-    def delete(self, collection, identifier):
-        status, _ = self.call(3, self.address(collection, identifier) + b"\x00")
-        if status != 200:
-            raise RuntimeError(f"unexpected Wire delete status {status}")
-
-
 class Matrix:
     def __init__(self, work, sha, output):
         self.work, self.sha, self.output = work, sha, output
@@ -192,7 +122,6 @@ class Matrix:
             self.output.write(json.dumps(result) + "\n")
             self.output.flush()
 
-    # HTTP over the internal listener: `user` adds the acting user (Management API only).
     def http(self, region, method, path, body=None, user=False, expect=None):
         command = ["curl", "-sS", "--http2-prior-knowledge", "-m", "30", "-D", "-", "-X", method,
                    "-H", "@" + os.path.join(self.work, "peer")]
@@ -227,14 +156,6 @@ class Matrix:
             connections[connection_key] = Pg(region, self.key, f"{self.project}/{route}")
         return connections[connection_key]
 
-    def wire(self, region, route=None):
-        route = route or self.name
-        connection_key = (region, route)
-        connections = LOCAL.__dict__.setdefault("wire", {})
-        if connection_key not in connections:
-            connections[connection_key] = Wire(region, self.key, self.project, route)
-        return connections[connection_key]
-
     def drop_connection(self, kind, region, route):
         connection = getattr(LOCAL, kind, {}).pop((region, route), None)
         if connection is not None:
@@ -246,14 +167,6 @@ class Matrix:
             for statement in statements:
                 rows = self.pg(region, route).query(statement)
             return rows
-        if endpoint == "hrana":
-            requests = [{"type": "execute", "stmt": {"sql": statement, "want_rows": True}} for statement in statements]
-            _, body = self.http(region, "POST", self.data(route) + "/libsql/v2/pipeline", {"requests": requests + [{"type": "close"}]}, expect={200})
-            results = body["results"][:-1]
-            for result in results:
-                if result["type"] != "ok":
-                    raise HttpError(200, json.dumps(result))
-            return [[cell.get("value") for cell in row] for row in results[-1]["response"]["result"]["rows"]]
         _, body = self.http(region, "POST", self.data(route) + "/sql/execute", {"statements": [{"sql": statement} for statement in statements]}, expect={200})
         return body["results"][-1]["rows"]
 
@@ -267,14 +180,6 @@ class Matrix:
             else:
                 self.http(region, "PUT", self.document(route, table, identifier), {"value": value}, expect={200, 201})
             return
-        if endpoint == "wire":
-            if operation == "delete":
-                self.wire(region, route).delete(table, identifier)
-            else:
-                status = self.wire(region, route).put(table, identifier, {"value": value})
-                if status != (201 if operation == "insert" else 200):
-                    raise RuntimeError(f"unexpected Wire {operation} status {status}")
-            return
         statement = {
             "insert": f"INSERT INTO {table} VALUES ('{identifier}', '{value}')",
             "update": f"UPDATE {table} SET value = '{value}' WHERE id = '{identifier}'",
@@ -286,14 +191,10 @@ class Matrix:
         if endpoint == "documents":
             status, body = self.http(region, "GET", self.document(route, table, identifier), expect={200, 404})
             if status == 404:
-                # An unknown database or collection must never count as a deleted row.
                 if body["error"]["code"] != "not_found":
                     raise HttpError(status, json.dumps(body))
                 return None
             return body["document"].get("value")
-        if endpoint == "wire":
-            document = self.wire(region, route).get(table, identifier)
-            return None if document is None else document.get("value")
         rows = self.sql(region, endpoint, [f"SELECT value FROM {table} WHERE id = '{identifier}'"], route)
         return rows[0][0] if rows else None
 
@@ -302,15 +203,14 @@ class Matrix:
         while True:
             try:
                 matched = self.read(target, reader, table, identifier, route) == value
-            except (OSError, HttpError, PgError, WireError, KeyError, ValueError) as error:
+            except (OSError, HttpError, PgError, KeyError, ValueError) as error:
                 errors += 1
-                if reader in ("postgres", "wire"):
-                    self.drop_connection("pg" if reader == "postgres" else "wire", target, route)
+                if reader == "postgres":
+                    self.drop_connection("pg", target, route)
                 self.record(kind="read_error", target=target, reader=reader, source=source, writer=writer,
                             operation=operation, repeat=repeat, error=f"{type(error).__name__}: {error}")
                 retryable = (isinstance(error, OSError) and not isinstance(error, ssl.SSLCertVerificationError)
                              or isinstance(error, HttpError) and error.status in (429, 503)
-                             or isinstance(error, WireError) and error.status in (429, 503)
                              or isinstance(error, PgError) and isinstance(error.args[0], dict)
                                 and error.args[0].get("C") in ("57P03", "53200", "53300"))
                 if not retryable:
@@ -350,7 +250,6 @@ class Matrix:
         self.project = body["id"]
         self.management = f"/v1/management/organizations/{self.organization}/projects/{self.project}"
         self.record(kind="tenant", organization=self.organization, project=self.project)
-        # The project must reach every region before a database is placed in all of them.
         deadline = time.monotonic() + 120
         while any(self.http(region, "GET", self.management, user=True)[0] != 200 for region in REGIONS):
             if time.monotonic() >= deadline:
@@ -382,34 +281,29 @@ class Matrix:
     def prepare_transports(self):
         for route in (self.name, self.database):
             for region in REGIONS:
-                for transport in ("postgres", "wire"):
-                    deadline = time.monotonic() + 120
-                    while True:
-                        try:
-                            self.record(kind="socket_probe", target=region, reader=transport, route=route)
-                            if transport == "postgres":
-                                expected = f"{self.project}/{route}"
-                                if self.pg(region, route).query("SELECT current_database()") != [[expected]]:
-                                    raise RuntimeError("Postgres did not preserve its configured database selector")
-                            else:
-                                self.wire(region, route)
-                            break
-                        except (PgError, WireError) as error:
-                            retryable = (isinstance(error, PgError) and isinstance(error.args[0], dict)
-                                         and error.args[0].get("C") in ("28P01", "57P03")
-                                         or isinstance(error, WireError) and error.status in (401, 503))
-                            if not retryable or time.monotonic() >= deadline:
-                                raise
-                            time.sleep(0.5)
-                    self.record(kind="socket_route", target=region, reader=transport,
-                                route="ulid" if route == self.database else "name", matched=True)
+                deadline = time.monotonic() + 120
+                while True:
+                    try:
+                        self.record(kind="socket_probe", target=region, reader="postgres", route=route)
+                        expected = f"{self.project}/{route}"
+                        if self.pg(region, route).query("SELECT current_database()") != [[expected]]:
+                            raise RuntimeError("Postgres did not preserve its configured database selector")
+                        break
+                    except PgError as error:
+                        retryable = (isinstance(error, PgError) and isinstance(error.args[0], dict)
+                                     and error.args[0].get("C") in ("28P01", "57P03"))
+                        if not retryable or time.monotonic() >= deadline:
+                            raise
+                        time.sleep(0.5)
+                self.record(kind="socket_route", target=region, reader="postgres",
+                            route="ulid" if route == self.database else "name", matched=True)
 
     def attribute_native_writes(self):
         table = "rt6_origin_" + secrets.token_hex(3)
         self.sql("sjc", "sql", [f"CREATE TABLE {table} (id TEXT PRIMARY KEY, value TEXT)"], self.name)
         self.table_everywhere(table, self.name)
         for region in REGIONS:
-            markers = {ulid(): endpoint for endpoint in ("documents", "postgres", "wire")}
+            markers = {ulid(): endpoint for endpoint in ("documents", "postgres")}
             for identifier, endpoint in markers.items():
                 self.write(region, endpoint, table, identifier, region, "insert", self.name)
             origins = {}
@@ -425,12 +319,12 @@ class Matrix:
                     event = json.loads(line[6:])
                     if event.get("id") in markers:
                         origins[markers[event["id"]]] = int(event["origin"], 16) >> 16
-                    if len(origins) == 3:
+                    if len(origins) == len(markers):
                         break
             finally:
                 process.kill()
                 process.wait()
-            if len(origins) != 3 or len(set(origins.values())) != 1:
+            if len(origins) != len(markers) or len(set(origins.values())) != 1:
                 raise RuntimeError(f"native transport origin mismatch or missing evidence in {region}: {origins}")
             self.record(kind="native_origin", target=region, origins=origins, matched=True)
 
@@ -446,9 +340,6 @@ class Matrix:
                     self.table_everywhere(table, route)
                     identifier = ulid()
                     for operation, value in (("insert", "created"), ("update", "updated"), ("delete", None)):
-                        if endpoint == "wire" and operation == "delete" and not self.wire_delete[source]:
-                            self.record(kind="blocked", source=source, writer="wire", operation="delete", repeat=repeat, reason="unknown_operation_on_serving_build")
-                            continue
                         self.write(source, endpoint, table, identifier, value, operation, route)
                         self.everywhere(pool, source, endpoint, table, identifier, value, operation, time.monotonic(), repeat, route)
                     if endpoint in RELATIONAL:
@@ -483,7 +374,6 @@ class Matrix:
                 table = "rt6_lww_" + secrets.token_hex(5)
                 self.sql(left, "sql", [f"CREATE TABLE {table} (id TEXT PRIMARY KEY, value TEXT)"], self.name)
                 self.table_everywhere(table, self.name)
-                # A marker per region maps each origin replica to its region.
                 markers = {ulid(): region for region in REGIONS}
                 for identifier, region in markers.items():
                     self.write(region, "documents", table, identifier, region, "insert", self.name)
@@ -503,7 +393,6 @@ class Matrix:
                 feed = threading.Lock()
 
                 def collect(region):
-                    # Union every region's feed: a losing remote merge need not emit a change.
                     process = subprocess.Popen(
                         ["curl", "-sSN", "--http2-prior-knowledge", "-m", str(DEADLINE), "-H", "@" + os.path.join(self.work, "peer"),
                          f"http://{self.node[region][1]}:8081{self.data(self.name)}/changes?collections={table}"],
@@ -559,24 +448,6 @@ class Matrix:
                     self.everywhere(pool, source, endpoint, table, identifier, None, "rollback", time.monotonic(), repeat, self.name)
             print(f"rollback repeat {repeat + 1} passed", flush=True)
 
-    def probe_wire_delete(self):
-        table = "rt6_wire_delete_" + secrets.token_hex(2)
-        self.sql("sjc", "sql", [f"CREATE TABLE {table} (id TEXT PRIMARY KEY, value TEXT)"], self.name)
-        self.table_everywhere(table, self.name)
-        self.wire_delete = {}
-        for region in REGIONS:
-            try:
-                self.wire(region).delete(table, ulid())
-                raise RuntimeError("delete of a never-written identifier unexpectedly succeeded")
-            except WireError as error:
-                if (error.status, error.code) == (404, "not_found"):
-                    self.wire_delete[region] = True
-                elif (error.status, error.code) == (400, "unknown_operation"):
-                    self.wire_delete[region] = False
-                else:
-                    raise
-            self.record(kind="wire_delete", target=region, supported=self.wire_delete[region])
-
     def teardown(self):
         def remove(step, path, user=True):
             status, body = self.http("sjc", "DELETE", path, user=user)
@@ -618,7 +489,6 @@ def main():
                     raise RuntimeError(f"serving revision mismatch in {region}")
             matrix.provision()
             matrix.prepare_transports()
-            matrix.probe_wire_delete()
             matrix.attribute_native_writes()
             with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
                 matrix.crud(pool)
@@ -630,7 +500,7 @@ def main():
                 matrix.record(kind="ready_end", target=region, status=status, body=body)
                 if status != 200 or not body.get("revision", "").startswith(sha):
                     raise RuntimeError(f"serving revision changed in {region}")
-        except Exception as error:  # Report, then always tear the tenant down.
+        except Exception as error:
             failed = f"{type(error).__name__}: {error}"
             matrix.record(kind="failure", error=failed, stack=traceback.format_exc())
             print("FAILED " + failed, flush=True)
@@ -641,9 +511,8 @@ def main():
                 matrix.record(kind="failure", error=f"teardown: {type(error).__name__}: {error}")
                 print(f"TEARDOWN FAILED {error}", flush=True)
                 failed = failed or "teardown"
-        gap = any(not supported for supported in getattr(matrix, "wire_delete", {}).values())
-        result = "FAIL" if failed else "PASS_WITH_GAPS" if gap else "PASS"
-        matrix.record(kind="summary", result=result, wire_delete=getattr(matrix, "wire_delete", {}))
+        result = "FAIL" if failed else "PASS"
+        matrix.record(kind="summary", result=result)
         print("result: " + result, flush=True)
         sys.exit(1 if failed else 0)
 

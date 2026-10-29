@@ -401,7 +401,6 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             start.ArgumentList.Add($"--internal-port={this.node?.Port ?? 0}");
             start.ArgumentList.Add("--metrics-port=0");
             start.ArgumentList.Add("--postgres-port=0");
-            start.ArgumentList.Add("--wire-port=0");
             start.ArgumentList.Add($"--data-directory={Path.Combine(this.directory, "data")}");
             var listening = new ConcurrentQueue<Uri>();
             var bound = new TaskCompletionSource<Uri[]>(TaskCreationOptions.RunContinuationsAsynchronously);

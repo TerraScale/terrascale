@@ -391,7 +391,7 @@ async Task<Process> StartAsync()
 {
     var start = new ProcessStartInfo(wrap[0]) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
     foreach (var argument in wrap.Skip(1).Concat([Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") ?? "dotnet", binary,
-        $"--data-directory={data}", $"--port={port}", $"--internal-port={internalPort}", $"--metrics-port={metricsPort}", "--postgres-port=0", "--wire-port=0", "--storage-threads=2"]))
+        $"--data-directory={data}", $"--port={port}", $"--internal-port={internalPort}", $"--metrics-port={metricsPort}", "--postgres-port=0", "--storage-threads=2"]))
     {
         start.ArgumentList.Add(argument);
     }

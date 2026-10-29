@@ -9,8 +9,6 @@ namespace TerraBase.Fast.Functions;
 /// <summary>Functions deploy, run over HTTPS, write documents and keep logs through the public client listener.</summary>
 public sealed class FunctionTests
 {
-    private static readonly string[] Upserts = ["upsert"];
-
     private const string Hello = """
         function handler(event) {
             console.log("hello", event.body.name, event.query.lang);
@@ -23,7 +21,7 @@ public sealed class FunctionTests
     public async Task A_deployed_function_answers_over_https_writes_its_documents_and_logs_the_run()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        await using var fixture = await WebhookApi.StartAsync(token);
+        await using var fixture = await ProjectApi.StartAsync(token);
         await ManagementApi.CreateCollectionAsync(fixture.Client, fixture.Database, "audit", token);
         var path = fixture.Database.Data + "/functions";
 
@@ -56,7 +54,7 @@ public sealed class FunctionTests
     public async Task Failing_or_invalid_functions_are_refused_and_reported_and_deletion_removes_them()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        await using var fixture = await WebhookApi.StartAsync(token);
+        await using var fixture = await ProjectApi.StartAsync(token);
         var path = fixture.Database.Data + "/functions";
         using (var invalid = await fixture.Client.PutAsJsonAsync(ManagementApi.Uri(path + "/broken"), new { source = "function handler( {" }, token))
         {
@@ -104,64 +102,10 @@ public sealed class FunctionTests
     }
 
     [Test]
-    public async Task A_change_trigger_writes_an_audit_document_per_insert_and_cannot_write_its_own_collection()
-    {
-        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        await using var fixture = await WebhookApi.StartAsync(token);
-        await ManagementApi.CreateCollectionAsync(fixture.Client, fixture.Database, "audit", token);
-        var path = fixture.Database.Data + "/functions";
-        const string audit = """
-            function handler(event) {
-                for (const change of event.changes) {
-                    console.log(change.id, change.document.privateValue);
-                    db.put(event.collection === "items" ? "audit" : event.collection, change.id, { source: change.id });
-                }
-            }
-            """;
-        using (var deployed = await fixture.Client.PutAsJsonAsync(ManagementApi.Uri(path + "/audit"),
-            new { source = audit, trigger = new { collection = "items", events = Upserts } }, token))
-        {
-            await Assert.That(deployed.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await deployed.Content.ReadAsStringAsync(token));
-            var body = await deployed.Content.ReadFromJsonAsync<JsonElement>(token);
-            await Assert.That(body.GetProperty("trigger").GetProperty("collection").GetString()).IsEqualTo("items");
-        }
-
-        await fixture.PutAsync("first", token);
-        await fixture.DriveAsync(async cancellation => (await fixture.JsonAsync(path + "/audit/logs", cancellation)).GetArrayLength() > 0, token);
-        var written = await fixture.JsonAsync(ManagementApi.DocumentPath(fixture.Database, "audit", "first"), token);
-        await Assert.That(written.GetProperty("document").GetProperty("source").GetString()).IsEqualTo(ManagementApi.DocumentId("first"));
-        var logs = await fixture.JsonAsync(path + "/audit/logs", token);
-        await Assert.That(logs[0].GetProperty("trigger").GetString()).IsEqualTo("change");
-        await Assert.That(logs[0].GetProperty("lines")[0].GetString()).EndsWith("document-body-must-not-be-delivered");
-        await fixture.DriveAsync(async cancellation => await fixture.JsonAsync(path + "/audit/deliveries", cancellation) is var list
-            && list.GetArrayLength() == 1 && list[0].GetProperty("status").GetString() == "delivered", token);
-
-        // A trigger on its own write target fails and stays pending for retry: the dead-letter view.
-        using (var looped = await fixture.Client.PutAsJsonAsync(ManagementApi.Uri(path + "/loop"),
-            new { source = audit.Replace("\"items\" ? \"audit\"", "\"none\" ? \"audit\"", StringComparison.Ordinal), trigger = new { collection = "items" } }, token))
-        {
-            await Assert.That(looped.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        }
-
-        await fixture.PutAsync("second", token);
-        var pending = default(JsonElement);
-        await fixture.DriveAsync(async cancellation =>
-        {
-            var list = await fixture.JsonAsync(path + "/loop/deliveries", cancellation);
-            pending = list.GetArrayLength() > 0 ? list[0] : default;
-            return list.GetArrayLength() > 0 && list[0].GetProperty("errorCode").ValueKind == JsonValueKind.String;
-        }, token);
-        await Assert.That(pending.GetProperty("status").GetString()).IsEqualTo("pending");
-        await Assert.That(pending.GetProperty("errorCode").GetString()).IsEqualTo("function_error");
-        var loopLogs = await fixture.JsonAsync(path + "/loop/logs", token);
-        await Assert.That(loopLogs[0].GetProperty("error").GetString()).IsEqualTo("a change trigger cannot write its own collection");
-    }
-
-    [Test]
     public async Task A_cron_function_runs_on_its_schedule()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        await using var fixture = await WebhookApi.StartAsync(token);
+        await using var fixture = await ProjectApi.StartAsync(token);
         var path = fixture.Database.Data + "/functions";
         using (var invalid = await fixture.Client.PutAsJsonAsync(ManagementApi.Uri(path + "/tick"), new { source = "function handler(e) {}", cron = "every minute" }, token))
         {

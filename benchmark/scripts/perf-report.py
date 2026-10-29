@@ -20,9 +20,11 @@ def report(directory, baseline=None):
     groups = collections.defaultdict(list)
     for cell in cells:
         groups[cell["Size"], cell["Workload"], cell["Concurrency"], cell["Lane"]].append(cell)
+    lanes = {"turso", "turso-cdc", "engine", "api", "api-query", "api-batch", "sql", "pg"}
+    lanes.update(cell["Lane"] for cell in cells if cell["Lane"] in ("hrana", "wire", "tcp-echo"))
     expected = {(size, operation, concurrency, lane) for size in ("small", "medium")
                 for operation in ("read", "write") for concurrency in (1, 16)
-                for lane in ("turso", "turso-cdc", "engine", "api", "api-query", "api-batch", "sql", "pg", "hrana", "wire", "tcp-echo")}
+                for lane in lanes}
     reservation = metadata.get("host_reservation", {})
     reserved = reservation.get("host") == metadata["host"] and len(set(reservation.get("scheduler_locks", []))) == 4
     invalid = not reserved or not metadata['load_samples'] or bool(metadata['telemetry_errors'] or metadata.get("tracked_changes") or metadata.get("untracked_source")) or set(groups) != expected or any(len(rows) != 3 or {r["Repeat"] for r in rows} != {1, 2, 3}
@@ -34,8 +36,10 @@ def report(directory, baseline=None):
         if workload != "read" or lane in ("turso", "turso-cdc", "tcp-echo", "engine", "floor", "api-batch"):
             continue
         raw, echo = (groups.get((size, workload, concurrency, baseline)) for baseline in ("turso", "tcp-echo"))
-        if not raw or not echo:
+        if not raw:
             invalid = True
+            continue
+        if not echo:
             continue
         fields = ("P50Micros", "P99Micros") if concurrency == 1 else ("OpsPerSecond",)
         for field in fields:
@@ -80,7 +84,7 @@ def report(directory, baseline=None):
              "Quietness is checked at admission; scheduler slots stay reserved. Recorded load/pressure and control repeat spreads must be inspected for unscheduled interference during measurement.",
              f"Three interleaved repeats; host reservation: {reserved}; status: {'INVALID / missing reservation, dirty source, incomplete or failed cells' if invalid else 'complete, zero operation errors'}.",
              "", "Q-PARITY read targets: c=1 each percentile ≤ 1.1 × (raw Turso + TCP echo); "
-             "c=16 ops/s ≥ 0.9 × min(raw Turso, TCP echo). Applying the Wire budget to other endpoints is an aspirational comparison.",
+             "c=16 ops/s ≥ 0.9 × min(raw Turso, TCP echo). These historical targets are evaluated only when recorded TCP echo controls are present; current runs report endpoint measurements without target gaps.",
              "", "## Biggest gaps vs target", "", "| Rank | Lane | Size | c | Metric | Observed | Target | Gap ratio |",
              "| ---: | --- | --- | ---: | --- | ---: | ---: | ---: |"]
     for rank, gap in enumerate(gaps, 1):

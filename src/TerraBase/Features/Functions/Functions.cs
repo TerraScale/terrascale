@@ -1,33 +1,25 @@
 using TerraBase.Errors;
-using TerraBase.Features.Webhooks;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Functions;
 
-/// <summary>Runs a function on a collection's changes.</summary>
-/// <param name="Collection">Watched collection; the run may not write it.</param>
-/// <param name="Events">upsert and/or delete; null for both.</param>
-public sealed record FunctionTrigger(string Collection, string[]? Events);
-
 /// <summary>A function to deploy or replace.</summary>
 /// <param name="Source">JavaScript source defining <c>handler(event)</c>; at most 256 KiB.</param>
-/// <param name="Trigger">Change trigger, or null.</param>
 /// <param name="Cron">Five-field UTC cron expression, or null.</param>
-public sealed record DeployFunctionRequest(string? Source, FunctionTrigger? Trigger = null, string? Cron = null);
+public sealed record DeployFunctionRequest(string? Source, string? Cron = null);
 
 /// <summary>A deployed function.</summary>
 /// <param name="Name">Lowercase function name.</param>
 /// <param name="Source">JavaScript source; null in lists.</param>
-/// <param name="Trigger">Change trigger, or null.</param>
 /// <param name="Cron">Cron schedule, or null.</param>
 /// <param name="CreatedAt">First deployment time.</param>
 /// <param name="UpdatedAt">Last deployment time.</param>
-public sealed record FunctionBody(string Name, string? Source, FunctionTrigger? Trigger, string? Cron, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
+public sealed record FunctionBody(string Name, string? Source, string? Cron, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
 
 /// <summary>One invocation's log.</summary>
 /// <param name="Id">Invocation ULID.</param>
 /// <param name="At">Start time.</param>
-/// <param name="Trigger">http, change or cron.</param>
+/// <param name="Trigger">http or cron.</param>
 /// <param name="Status">ok or error.</param>
 /// <param name="DurationMs">Run time in milliseconds.</param>
 /// <param name="Lines">Console lines, at most 50 of 1 KiB.</param>
@@ -41,16 +33,13 @@ public sealed record FunctionLogBody(string Id, DateTimeOffset At, string Trigge
 public sealed record FunctionResponse(int Status, string ContentType, byte[] Body);
 
 /// <summary>A function operation or a public, sanitized failure.</summary>
-public readonly union FunctionResult(FunctionBody, FunctionBody[], FunctionLogBody[], WebhookDeliveryBody[], FunctionResponse, Done, Validation, NotFound, Conflict, Unavailable);
+public readonly union FunctionResult(FunctionBody, FunctionBody[], FunctionLogBody[], FunctionResponse, Done, Validation, NotFound, Conflict, Unavailable);
 
 /// <summary>Database-scoped customer functions.</summary>
 public interface IFunctions
 {
-    /// <summary>Deploys or replaces a function after checking its source parses; registers its trigger and schedule.</summary>
-    ValueTask<FunctionResult> DeployAsync(TenantContext tenant, string database, string name, DeployFunctionRequest request, CancellationToken cancellationToken);
-
-    /// <summary>The change trigger's delivery history: its dead-letter view.</summary>
-    ValueTask<FunctionResult> DeliveriesAsync(TenantContext tenant, string name, CancellationToken cancellationToken);
+    /// <summary>Deploys or replaces a function after checking its source parses.</summary>
+    ValueTask<FunctionResult> DeployAsync(TenantContext tenant, string name, DeployFunctionRequest request, CancellationToken cancellationToken);
 
     /// <summary>Lists functions without their source.</summary>
     ValueTask<FunctionResult> ListAsync(TenantContext tenant, CancellationToken cancellationToken);
@@ -69,7 +58,6 @@ public interface IFunctions
 }
 
 internal sealed record FunctionRecord(int Format, string Name, string Source, string Machine, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
-    FunctionTrigger? Trigger = null, string? Cron = null, string? WebhookId = null, TenantContext? Tenant = null);
+    string? Cron = null);
 
-// The node-wide schedule index; the deploying machine runs it, like webhook dispatch.
 internal sealed record FunctionSchedule(TenantContext Tenant, string Name, string Cron, string Machine);

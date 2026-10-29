@@ -21,7 +21,7 @@ data = dict(host_reservation=json.loads(pathlib.Path(sys.argv[1]).with_name("adm
             cpu_pressure_before=pathlib.Path('/proc/pressure/cpu').read_text())
 pathlib.Path(sys.argv[1]).write_text(json.dumps(data, indent=2) + '\n')
 PY
-export TERRABASE_VS_TURSO_LANES=turso,turso-cdc,engine,api,api-query,api-batch,sql,pg,hrana,wire,tcp-echo
+export TERRABASE_VS_TURSO_LANES=turso,turso-cdc,engine,api,api-query,api-batch,sql,pg
 export TERRABASE_VS_TURSO_WORKLOADS=read,write
 export TERRABASE_VS_TURSO_REPEATS=3 TERRABASE_VS_TURSO_SECONDS=5 TERRABASE_VS_TURSO_CONCURRENCY=1,16
 job=

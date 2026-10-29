@@ -21,7 +21,6 @@ using TerraBase.Features.Replication;
 using TerraBase.Features.Sql;
 using TerraBase.Features.UserAuth;
 using TerraBase.Features.Functions;
-using TerraBase.Features.Webhooks;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Hosting;
@@ -42,15 +41,6 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(TerraBase.Features.FileStorage.FileBucketPage))]
 [JsonSerializable(typeof(TerraBase.Features.FileStorage.FileObjectPage))]
 [JsonSerializable(typeof(FunctionSchedule))]
-[JsonSerializable(typeof(CreateWebhookRequest))]
-[JsonSerializable(typeof(CreatedWebhookBody))]
-[JsonSerializable(typeof(WebhookBody[]))]
-[JsonSerializable(typeof(WebhookDeliveryBody[]))]
-[JsonSerializable(typeof(WebhookPayload))]
-[JsonSerializable(typeof(WebhookRegistration))]
-[JsonSerializable(typeof(WebhookState))]
-[JsonSerializable(typeof(WebhookDispatch))]
-[JsonSerializable(typeof(WebhookDeliveryRecord))]
 [JsonSerializable(typeof(CollectionSchemaPreviewBody))]
 [JsonSerializable(typeof(DatabaseRequestLogs))]
 [JsonSerializable(typeof(RequestLogRecord))]

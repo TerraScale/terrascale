@@ -56,7 +56,6 @@ internal static class FunctionRoute
         FunctionBody function => TypedResults.Ok(function),
         FunctionBody[] functions => TypedResults.Ok(functions),
         FunctionLogBody[] logs => TypedResults.Ok(logs),
-        Webhooks.WebhookDeliveryBody[] deliveries => TypedResults.Ok(deliveries),
         FunctionResponse response => new Answer(response),
         Done => TypedResults.NoContent(),
         Validation error => ErrorResponse.From(error),

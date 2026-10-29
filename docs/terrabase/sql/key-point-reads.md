@@ -1,7 +1,7 @@
 # SQL point reads by a TEXT primary key
 
 - Status: implemented, 2026-10-27. Narrows the shortcut of [relational-sql.md](relational-sql.md) section 4 ("every read
-  scans each referenced table") for the most common ORM and libSQL shape, without changing any result.
+  scans each referenced table") for the most common ORM shape, without changing any result.
 
 ## Rule
 

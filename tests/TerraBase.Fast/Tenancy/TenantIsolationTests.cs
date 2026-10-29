@@ -292,7 +292,6 @@ public sealed class TenantIsolationTests
                 .Replace("{invitation}", invitation, StringComparison.Ordinal)
                 .Replace("{query}", tooling.Query, StringComparison.Ordinal)
                 .Replace("{backup}", tooling.Backup, StringComparison.Ordinal)
-                .Replace("{webhook}", DocumentId, StringComparison.Ordinal)
                 .Replace("{function}", "hello", StringComparison.Ordinal)
                 .Replace("{bucket}", DocumentId, StringComparison.Ordinal)
                 .Replace("{file}", DocumentId, StringComparison.Ordinal)

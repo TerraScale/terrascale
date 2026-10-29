@@ -4,14 +4,12 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using TerraBase.Fast.Documents;
-using TerraBase.Fast.Hrana;
 using TerraBase.Fast.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Sql;
 
-/// <summary>SQL over HTTP, Postgres wire and libSQL bills each started 4 KiB read or written, as documents do.</summary>
 public sealed class SqlMeteringTests
 {
     private const string Notes = "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)";
@@ -136,30 +134,6 @@ public sealed class SqlMeteringTests
     }
 
     [Test]
-    [Arguments("pipeline")]
-    [Arguments("cursor")]
-    public async Task Hrana_statement_errors_inside_a_200_are_statement_errors_not_request_errors(string endpoint)
-    {
-        await using var api = await DocumentApi.StartAsync();
-        await SqlApi.OkAsync(api, Notes);
-        const string steps = """[{"stmt":{"sql":"SELECT * FROM nowhere"}},{"stmt":{"sql":"SELECT id FROM notes"}}]""";
-        var request = endpoint == "cursor" ? $$$"""{"batch":{"steps":{{{steps}}}}}"""
-            : $$$"""{"requests":[{"type":"batch","batch":{"steps":{{{steps}}}}},{"type":"close"}]}""";
-        var response = await HranaPipelineTests.PostAsync(api, request, version: "v3", endpoint: endpoint);
-        await Assert.That(response.Status).IsEqualTo(HttpStatusCode.OK);
-        if (endpoint == "cursor")
-        {
-            var baton = JsonElement.Parse(response.Raw.Split('\n')[0]).GetProperty("baton").GetString();
-            await HranaPipelineTests.PostAsync(api, $$"""{"baton":"{{baton}}","requests":[{"type":"close"}]}""", version: "v3");
-        }
-
-        await Assert.That(await StatementsAsync(api, "hrana")).IsEqualTo((2L, 1L, 2L));
-        var log = (await LogsAsync(api)).First(row => row.GetProperty("route").GetString()!.EndsWith("/" + endpoint, StringComparison.Ordinal));
-        await Assert.That(log.GetProperty("status").GetInt32()).IsEqualTo(200);
-        await Assert.That((log.GetProperty("statements").GetInt64(), log.GetProperty("statementErrors").GetInt64())).IsEqualTo((2L, 1L));
-    }
-
-    [Test]
     public async Task Atomic_http_discards_read_prefix_charges_on_statement_and_commit_refusal()
     {
         var hook = new UsageCommitHook(storageLimit: _ => 16 * 1024);
@@ -213,45 +187,6 @@ public sealed class SqlMeteringTests
     }
 
     [Test]
-    [Arguments("v2", "pipeline")]
-    [Arguments("v3", "pipeline")]
-    [Arguments("v3", "cursor")]
-    public async Task Hrana_bills_accepted_reads_and_commits_but_not_response_bound_rejected_reads(string version, string endpoint)
-    {
-        await using var api = await DocumentApi.StartAsync();
-        await SqlApi.OkAsync(api, Notes);
-        await SendOkAsync(api, new { sql = "INSERT INTO notes VALUES (1, ?)", args = new object[] { new string('x', 16 * 1024) } });
-        var (beforeRead, beforeWrite) = await UnitsAsync(api);
-        var values = string.Join(',', Enumerable.Repeat("(1)", 400));
-        var steps = $$$"""
-            [{"stmt":{"sql":"SELECT body FROM notes"}},
-             {"stmt":{"sql":"INSERT INTO notes VALUES (2, 'small')"}},
-             {"stmt":{"sql":"SELECT body FROM notes CROSS JOIN (VALUES {{{values}}}) v WHERE notes.id = 1"}}]
-            """;
-        var request = endpoint == "cursor" ? $$$"""{"batch":{"steps":{{{steps}}}}}"""
-            : $$$"""{"requests":[{"type":"batch","batch":{"steps":{{{steps}}}}},{"type":"close"}]}""";
-        var response = await HranaPipelineTests.PostAsync(api, request, version: version, endpoint: endpoint);
-        await Assert.That(response.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(response.Raw).Contains("SQLITE_TOOBIG");
-        if (endpoint == "pipeline")
-        {
-            var batch = HranaPipelineTests.Response(response.Json, 0).GetProperty("result");
-            await Assert.That(batch.GetProperty("step_results")[0].GetProperty("rows").GetArrayLength()).IsEqualTo(1);
-            await Assert.That(batch.GetProperty("step_errors")[2].GetProperty("code").GetString()).IsEqualTo("SQLITE_TOOBIG");
-        }
-        else
-        {
-            var lines = response.Raw.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => JsonElement.Parse(line)).ToArray();
-            await Assert.That(lines.Count(line => line.TryGetProperty("type", out var type) && type.GetString() == "row")).IsEqualTo(1);
-            await Assert.That(lines[^1].GetProperty("step").GetInt32()).IsEqualTo(2);
-            await HranaPipelineTests.PostAsync(api, $$$"""{"baton":"{{{lines[0].GetProperty("baton").GetString()}}}","requests":[{"type":"close"}]}""", version: version);
-        }
-
-        await Assert.That(await UnitsAsync(api)).IsEqualTo((beforeRead + 4, beforeWrite + 1));
-        await Assert.That((await SqlApi.OkAsync(api, "SELECT id FROM notes WHERE id = 2")).Single().GetProperty("rows").GetArrayLength()).IsEqualTo(1);
-    }
-
-    [Test]
     public async Task Postgres_portal_describe_and_refused_execute_are_free_and_delivered_rows_bill_once()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -264,23 +199,6 @@ public sealed class SqlMeteringTests
         await Assert.That(string.Concat(await wire.PortalAsync("SELECT body FROM notes", 1))).IsEqualTo("12TEZ");
         await Assert.That(await UnitsAsync(api)).IsEqualTo((0L, 3L));
         await Assert.That(string.Concat(await wire.PortalAsync("SELECT body FROM notes", 0))).IsEqualTo("12TDCZ");
-        await Assert.That(await UnitsAsync(api)).IsEqualTo((3L, 3L));
-    }
-
-    [Test]
-    public async Task Libsql_bills_the_same_units_as_the_other_protocols()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        var body = JsonSerializer.Serialize(Large());
-        var result = await HranaPipelineTests.PostAsync(api, $$$"""
-            {"requests": [
-             {"type": "execute", "stmt": {"sql": "{{{Notes}}}", "args": [], "named_args": [], "want_rows": false}},
-             {"type": "execute", "stmt": {"sql": "INSERT INTO notes VALUES (1, ?)", "args": [{"type": "text", "value": {{{body}}}}], "named_args": [], "want_rows": false}},
-             {"type": "execute", "stmt": {"sql": "SELECT * FROM notes", "args": [], "named_args": [], "want_rows": true}},
-             {"type": "close"}]}
-            """);
-
-        await Assert.That(HranaPipelineTests.Types(result.Json)).IsEqualTo("ok:execute,ok:execute,ok:execute,ok:close");
         await Assert.That(await UnitsAsync(api)).IsEqualTo((3L, 3L));
     }
 

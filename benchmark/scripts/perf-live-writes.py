@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""Run on one serving host: bounded c=1 document writes (HTTP and Wire) and point reads (document, SQL, Hrana) locally.
-
-Each write is one FULL commit answered after this region's commit (0013e). A synthetic organization, project, database
-(this region and its pair, PAIR) and key are created through the local region's internal listener and deleted afterwards, their
-absence checked in every region; operations are paced at most 10/s, 60 per cell.
-"""
 import http.client
 import json
 import math
@@ -27,7 +21,7 @@ matrix = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(matrix)
 # A database needs two regions; gru and fra pair with each other, sjc with gru.
 PAIR = {"gru": "fra", "fra": "gru", "sjc": "gru"}
-matrix.NATIVE_RELAYS.update({region: dict(postgres=5432, wire=7464)})
+matrix.NATIVE_RELAYS.update({region: dict(postgres=5432)})
 
 with open(output, "x") as stream:
     live = matrix.Matrix(work, sha, stream)
@@ -70,11 +64,6 @@ with open(output, "x") as stream:
         client = http.client.HTTPConnection("127.0.0.1", 8080, timeout=20)
 
         def put(endpoint, table, identifier, value):
-            if endpoint == "wire":
-                status = live.wire(region).put(table, identifier, {"value": value})
-                if status != 200:
-                    raise RuntimeError(f"wire put {status}")
-                return
             client.request("PUT", live.document(live.name, table, identifier), json.dumps({"value": value}),
                            {"Authorization": "Bearer " + live.key, "Content-Type": "application/json"})
             response = client.getresponse()
@@ -89,9 +78,6 @@ with open(output, "x") as stream:
                 method, path, body = "GET", live.document(live.name, table, identifier), None
             elif endpoint == "sql":
                 method, path, body = "POST", live.data(live.name) + "/sql/execute", json.dumps({"statements": [{"sql": sql}]})
-            else:
-                method, path = "POST", live.data(live.name) + "/libsql/v2/pipeline"
-                body = json.dumps({"requests": [{"type": "execute", "stmt": {"sql": sql, "want_rows": True}}, {"type": "close"}]})
             client.request(method, path, body, {"Authorization": "Bearer " + live.key, "Content-Type": "application/json"})
             response = client.getresponse()
             data = response.read()
@@ -100,7 +86,7 @@ with open(output, "x") as stream:
 
         for repeat in range(1, 4):
             for size, (table, identifiers, value) in tables.items():
-                for endpoint in ("documents", "sql", "hrana"):
+                for endpoint in ("documents", "sql"):
                     get(endpoint, table, identifiers[0], value)
                     samples = []
                     for _ in range(60):
@@ -112,7 +98,7 @@ with open(output, "x") as stream:
                     live.record(kind="read_latency", region=region, endpoint=endpoint, repeat=repeat, size=size, concurrency=1,
                                 samples_ms=samples, p50_ms=statistics.median(samples), p99_ms=samples[math.ceil(len(samples) * .99) - 1],
                                 rate_window="paced at most 10/s; one warmup read")
-                for endpoint in ("documents", "wire"):
+                for endpoint in ("documents",):
                     put(endpoint, table, identifiers[0], value)
                     samples = []
                     for i in range(60):

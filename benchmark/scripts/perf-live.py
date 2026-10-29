@@ -50,7 +50,7 @@ class Live(matrix.Matrix):
         if region not in self.node:
             raise RuntimeError("local serving region absent from peers file")
         matrix.REGIONS = tuple(sorted(self.node))
-        matrix.NATIVE_RELAYS.update({region: dict(postgres=5432, wire=7464)})
+        matrix.NATIVE_RELAYS.update({region: dict(postgres=5432)})
 
     def record(self, **result):
         result.update(harness_source_hint=self.sha, at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
@@ -173,7 +173,7 @@ with open(output, "x") as stream:
 
         def read(endpoint, table, identifiers, value):
             identifier, requested = identifiers[0], []
-            if endpoint in ("postgres", "wire"):
+            if endpoint == "postgres":
                 result = live.read(region, endpoint, table, identifier, live.name)
                 if result != value:
                     raise RuntimeError("native read mismatch")
@@ -190,9 +190,8 @@ with open(output, "x") as stream:
             else:
                 sql = f"SELECT value FROM {table} WHERE id = '{identifier}'"
                 method = "POST"
-                path = live.data(live.name) + ("/sql/execute" if endpoint == "sql" else "/libsql/v2/pipeline")
-                body = json.dumps({"statements": [{"sql": sql}]} if endpoint == "sql" else
-                                  {"requests": [{"type": "execute", "stmt": {"sql": sql, "want_rows": True}}, {"type": "close"}]})
+                path = live.data(live.name) + "/sql/execute"
+                body = json.dumps({"statements": [{"sql": sql}]})
             local.http.request(method, path, body, {"Authorization": "Bearer " + live.key, "Content-Type": "application/json"})
             response = local.http.getresponse()
             data = json.loads(response.read())

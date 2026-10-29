@@ -1,7 +1,0 @@
-{
-  "name": "terrabase-libsql-proof-js",
-  "private": true,
-  "type": "module",
-  "scripts": { "proof": "node proof.mjs" },
-  "dependencies": { "@libsql/client": "0.18.0" }
-}

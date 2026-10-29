@@ -1,39 +1,10 @@
-using System.Text.Json;
 using Cronos;
 using TerraBase.Features.Management;
-using TerraBase.Features.Webhooks;
 using TerraBase.Hosting;
-using TerraBase.Primitives;
 using ZLogger;
 
 namespace TerraBase.Features.Functions;
 
-/// <summary>
-/// Delivers change webhooks addressed to <c>terrabase-function:{project}/{database}/{databaseId}/{function}</c> in process. A
-/// delivery whose body names another project or database than the URL and the function's own tenant is refused, so no tenant can
-/// aim a webhook at another's function.
-/// </summary>
-internal sealed class FunctionTriggerReceiver(IServiceProvider services) : IWebhookLocalReceiver
-{
-    public const string Scheme = "terrabase-function:";
-
-    public bool Accepts(string url) => url.StartsWith(Scheme, StringComparison.Ordinal);
-
-    public async ValueTask<WebhookAttempt> ReceiveAsync(string url, ReadOnlyMemory<byte> body, CancellationToken cancellationToken)
-    {
-        var parts = url[Scheme.Length..].Split('/');
-        var payload = JsonSerializer.Deserialize(body.Span, TerraBaseJsonContext.Default.WebhookPayload);
-        if (parts.Length != 4 || payload is null || payload.ProjectId != parts[0] || payload.Database != parts[1] || !EntityIds.IsValid(parts[2]))
-        {
-            return new(null, "target_rejected");
-        }
-
-        // Resolved per delivery: the webhook transport is built before the function service, which depends on webhooks.
-        return await services.GetRequiredService<FunctionService>().ReceiveAsync(payload, parts[2], parts[3], cancellationToken).ConfigureAwait(false);
-    }
-}
-
-/// <summary>Runs this machine's cron functions; a run missed while the machine was down is skipped, not replayed.</summary>
 internal sealed class FunctionScheduler(SystemCatalog catalog, FunctionService functions, Configuration.TerraBaseOptions options, TimeProvider time,
     ILogger<FunctionScheduler> logger) : BackgroundService
 {
@@ -100,7 +71,7 @@ internal sealed class FunctionScheduler(SystemCatalog catalog, FunctionService f
 
             _next[key] = (schedule.Cron, expression.GetNextOccurrence(now, TimeZoneInfo.Utc) ?? DateTimeOffset.MaxValue);
             var eventJson = $$"""{"trigger":"cron","scheduledAt":"{{next.Next.UtcDateTime:yyyy-MM-ddTHH:mm:ssZ}}"}""";
-            _ = await functions.RunAsync(schedule.Tenant, schedule.Name, "cron", eventJson, readOnlyCollection: null, cancellationToken).ConfigureAwait(false);
+            _ = await functions.RunAsync(schedule.Tenant, schedule.Name, "cron", eventJson, cancellationToken).ConfigureAwait(false);
         }
     }
 

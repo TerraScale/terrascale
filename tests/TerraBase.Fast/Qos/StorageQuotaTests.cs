@@ -10,7 +10,6 @@ using TerraBase.Features.Management;
 using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
-using static TerraBase.Fast.Hrana.HranaPipelineTests;
 
 namespace TerraBase.Fast.Qos;
 
@@ -42,36 +41,6 @@ public sealed class StorageQuotaTests
         await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
         await SqlApi.OkAsync(api, "DROP TABLE replacement");
         await Assert.That((await api.PutAsync(DocumentApi.NewId(), Data(21))).Status).IsEqualTo(HttpStatusCode.Created);
-        await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
-    }
-
-    [Test]
-    [Arguments("COMMIT")]
-    [Arguments("ROLLBACK")]
-    public async Task Sql_drop_replay_updates_warm_quota_once_and_rollback_keeps_it(string finish)
-    {
-        await using var api = await StartAsync();
-        await SqlApi.OkAsync(api, "CREATE TABLE t (id INTEGER PRIMARY KEY, body TEXT)", "INSERT INTO t VALUES (1, '1234567890')");
-        await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
-        var begun = await PostAsync(api, """{"requests":[{"type":"execute","stmt":{"sql":"BEGIN"}},{"type":"execute","stmt":{"sql":"DROP TABLE t"}}]}""");
-        await Assert.That(Types(begun.Json)).IsEqualTo("ok:execute,ok:execute");
-        await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
-        var replay = await PostAsync(api, $$$"""{"baton":"{{{begun.Json.GetProperty("baton").GetString()}}}","requests":[{"type":"execute","stmt":{"sql":"SELECT 1"}}]}""");
-        await Assert.That(Types(replay.Json)).IsEqualTo("ok:execute");
-        await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
-        var ended = await PostAsync(api, $$$"""{"baton":"{{{replay.Json.GetProperty("baton").GetString()}}}","requests":[{"type":"execute","stmt":{"sql":"{{{finish}}}"}},{"type":"close"}]}""");
-        await Assert.That(Types(ended.Json)).IsEqualTo("ok:execute,ok:close");
-        var reuse = await api.PutAsync(DocumentApi.NewId(), Data(21));
-        if (finish == "COMMIT")
-        {
-            await Assert.That(reuse.Status).IsEqualTo(HttpStatusCode.Created);
-        }
-        else
-        {
-            await IsQuotaAsync(reuse);
-            await Assert.That((await SqlApi.OkAsync(api, "SELECT count(*) FROM t"))[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(1);
-        }
-
         await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
     }
 

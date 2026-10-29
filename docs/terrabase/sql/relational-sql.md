@@ -1,8 +1,8 @@
-# Relational SQL and libSQL (Hrana) over the document lattice (SQ1)
+# Relational SQL over the document lattice (SQ1)
 
 - Status: design, 2026-10-22, SQ1 owner. It extends [R9](../r9-sql-writes-design.md) from single-collection writes to
-  tables, joins and transactions, and adds Hrana-over-HTTP for the official libSQL clients.
-- Shared path: the HTTP SQL API, Hrana and the PostgreSQL wire adapter (PG1) all call `ISqlService`
+  tables, joins and transactions.
+- Shared path: the HTTP SQL API and the PostgreSQL wire adapter (PG1) all call `ISqlService`
   (`src/TerraBase/Features/Sql/`). No front end parses or executes SQL on its own.
 - The dashboard route `POST /v1/projects/{project}/databases/{database}/sql` keeps its read-only single-collection
   subset and its `{id, value}` rows. It is unchanged.
@@ -39,7 +39,7 @@ tree, so the engine never sees text the validator did not see.
 | `CREATE [UNIQUE] INDEX`, `DROP INDEX` | the index service (unique: the unique-constraint service) |
 | `BEGIN [DEFERRED\|IMMEDIATE\|EXCLUSIVE]`, `BEGIN [TRANSACTION] READONLY`, `COMMIT`/`END`, `ROLLBACK` | the session (section 5) |
 | `INSERT`/`UPDATE`/`DELETE … RETURNING` columns, `*` or `column AS name` | the written rows: new values, old ones for a delete |
-| `PRAGMA foreign_keys = …`, `PRAGMA read_uncommitted`, `PRAGMA [main.\|temp.]table_info(t)` | no-op, `0`, SQLite's column rows (ORMs and libSQL clients send them) |
+| `PRAGMA foreign_keys = …`, `PRAGMA read_uncommitted`, `PRAGMA [main.\|temp.]table_info(t)` | no-op, `0`, SQLite's column rows (sent by ORMs) |
 
 Refused with an error that never quotes client text: `RETURNING` expressions, `ON CONFLICT DO UPDATE`, `OR FAIL`/`OR ROLLBACK`, `ALTER TABLE`,
 triggers, views, other `PRAGMA`s, `ATTACH`, `VACUUM`, savepoints, schemas other than `main` (`main.t` is `t`), every table reference that is not a SQL table
@@ -85,7 +85,7 @@ WITH "t" AS (SELECT json_extract(doc, '$."c1"') AS "c1", … FROM main."t" WHERE
 - Arguments are bound parameters (`?`, `?NNN`, `:name`, `@name`, `$name`); values are typed (null, integer, real, text).
 - Bounds: the existing work budget (5 million units or 5 s, `QueryCapacityException` → "query too expensive"),
   at most 10,000 rows and 8 MiB per result. Past either bound a statement fails with `SQLITE_TOOBIG` (DECISION, SQ1-c:
-  reads too, not a `truncated` flag, because neither `SqlResult` nor Hrana can carry one and silently dropped rows are wrong).
+  reads too, not a `truncated` flag, because `SqlResult` cannot carry one and silently dropped rows are wrong).
 - `WITH` only at the start of a statement, and not `RECURSIVE` (DECISION, SQ1-c: rows a recursive CTE generates pass no
   table scan, so the work budget would never charge them).
 - Parameters are renumbered `$p1`, `$p2`, … in SQLite's order (`?` = largest so far + 1, `?NNN`, names on first use) before
@@ -104,7 +104,7 @@ WITH "t" AS (SELECT json_extract(doc, '$."c1"') AS "c1", … FROM main."t" WHERE
 
 - Autocommit statements run alone: a read in a read transaction, a write in its own write transaction.
 - A transaction (`BEGIN` … `COMMIT`) inside one request runs in one write transaction, committed at `COMMIT`.
-- A transaction that spans requests (Hrana baton) never holds the database writer between requests. The session keeps
+- A transaction that spans PostgreSQL requests never holds the database writer between requests. The session keeps
   a log of the statements, their arguments, generated values and a hash of each result. The next request opens a write
   transaction, replays the log, checks every hash, runs its own statements and rolls back. `COMMIT` replays and keeps.
   A hash mismatch is a conflict: the commit fails with `SQLITE_BUSY` "transaction conflict: data changed since the
@@ -118,12 +118,11 @@ WITH "t" AS (SELECT json_extract(doc, '$."c1"') AS "c1", … FROM main."t" WHERE
 - `SqlError.Kind` is a stable sub-code (`no_such_table`, `no_such_column`, `already_exists`, `syntax`, `invalid_input`,
   `constraint`, `conflict`, `auth`, `too_big`, `interrupt`); `ISqlService.ListTablesAsync` lists tables with their
   columns for front ends (PG1 catalog queries).
-- `ISqlSession.ExecuteScriptAsync` (added for Hrana `sequence`) splits text with the same parser and runs each
+- `ISqlSession.ExecuteScriptAsync` splits text with the same parser and runs each
   statement without arguments; `BEGIN READONLY` is not available inside a script.
 - `…/sql/execute` wraps its statements in `BEGIN` … `COMMIT` (`BEGIN READONLY` when none writes, so reads never take the
   writer) and refuses transaction statements in the body.
-- Sessions live in memory on the node that opened them, bounded (count and bytes); a restart or an expired baton
-  answers "stream not found".
+- Sessions live in memory on the node that opened them, bounded (count and bytes); a restart ends those sessions.
 
 ## 6. Front ends
 
@@ -142,22 +141,6 @@ Errors: `400 sql_error` with `{"error": {"code", "message", "statement", "sqlite
 (`SQLITE_AUTH`), `409 sql_conflict`, `413 sql_too_large`. `sqlite_code` carries the `SqlError` code (DECISION, SQ1-b:
 the HTTP code stays the API's own vocabulary; clients that map SQLite codes read `sqlite_code`).
 
-### Hrana over HTTP (libSQL clients)
-
-Base URL `https://api.terrascale.tech/v1/projects/{project}/databases/{database}/libsql/` (the trailing slash matters
-for @libsql/client, which resolves `v2/pipeline` relative to it). `authToken` is a project data API key.
-
-- `POST …/libsql/v2/pipeline` and `POST …/libsql/v3/pipeline` (one JSON handler), `POST …/libsql/v3/cursor`
-  (newline-delimited JSON). @libsql/client speaks v2 only; the Rust crate and the Go and Python clients built on it
-  speak v3 only and need the cursor. WebSocket and protobuf are not served: no official client needs them for
-  `https://` or `libsql://` URLs (DECISION, research of client sources and a mock run, 2026-10-22).
-- Requests: `execute`, `batch` (conditions `ok`, `error`, `not`, `and`, `or`, `is_autocommit`), `sequence`,
-  `describe`, `store_sql`, `close_sql`, `close`, `get_autocommit`.
-- SQL errors are `{"type":"error","error":{"message","code"}}` results inside a 200 response; `code` is always set.
-- Batons are random 128-bit strings, rotated on every response, bound to the API key and database.
-- Wire traps: `last_insert_rowid` always present (`null` or a decimal string); integers as strings; blob values are refused
-  (an argument fails with `SQLITE_ERROR` "blob values are not supported"; results never hold blobs); no `Content-Type` requirement on requests; relaxed JSON escaping in responses.
-
 ### Scopes and limits
 
 Reads need `documents:read`; any write or DDL needs `documents:write`, checked per statement after parsing. Every route
@@ -173,7 +156,5 @@ SQL text 16 KiB per statement, 256 statements per request (the transaction log l
 | SQ1-c | engine reads (`ExecuteSqlAsync`), `SELECT` with joins and parameters, limits |
 | SQ1-d | `INSERT/UPDATE/DELETE` as lattice operations, keys, affinity, constraints, replication test |
 | SQ1-e | transactions and sessions (in-request and replayed) |
-| SQ1-f | Hrana v2/v3 pipeline |
-| SQ1-g | Hrana v3 cursor; client proof scripts (`scripts/terrabase/libsql/`) |
 
 `StorageFormat` is unchanged by every slice: the definition is a member of an existing metadata document.

@@ -16,15 +16,13 @@ namespace TerraBase.Fast.Replication;
 /// <summary>Real HTTP and socket clients of three regions; every source is checked through every reader.</summary>
 public sealed class EndpointReplicationTests
 {
-    private static readonly string[] Endpoints = ["documents", "sql", "postgres", "hrana", "wire", "query"];
+    private static readonly string[] Endpoints = ["documents", "sql", "postgres", "query"];
 
     [Test]
     [Arguments("documents")]
     [Arguments("sql")]
     [Arguments("postgres")]
-    [Arguments("hrana")]
-    [Arguments("wire")]
-    public async Task Every_region_originates_crud_read_through_all_six_readers(string endpoint)
+    public async Task Every_region_originates_crud_read_through_all_readers(string endpoint)
     {
         await using var cell = await Cell.StartAsync();
         var readers = new List<Clients>();
@@ -38,8 +36,7 @@ public sealed class EndpointReplicationTests
             await Task.WhenAll(readers.Select(async source =>
             {
                 var table = "rows_" + source.Machine.Region;
-                // A ULID TEXT key makes this SQL table addressable by the document and Wire APIs too.
-                await source.SqlAsync(endpoint is "postgres" or "hrana" ? endpoint : "sql",
+                await source.SqlAsync(endpoint == "postgres" ? endpoint : "sql",
                     $"CREATE TABLE {table} (id TEXT PRIMARY KEY, value TEXT)");
                 await EverywhereAsync(readers, table, EntityIds.New().ToString(), null);
                 var id = EntityIds.New().ToString();
@@ -51,7 +48,7 @@ public sealed class EndpointReplicationTests
                 await source.DeleteAsync(endpoint, table, id);
                 await EverywhereAsync(readers, table, id, null);
 
-                if (endpoint is "sql" or "postgres" or "hrana")
+                if (endpoint is "sql" or "postgres")
                 {
                     var other = EntityIds.New().ToString();
                     await source.TransactionAsync(endpoint,
@@ -197,7 +194,7 @@ public sealed class EndpointReplicationTests
         }
     }
 
-    private sealed class Clients(Machine machine, NpgsqlDataSource postgres, WireClient wire) : IAsyncDisposable
+    private sealed class Clients(Machine machine, NpgsqlDataSource postgres) : IAsyncDisposable
     {
         public Machine Machine => machine;
 
@@ -217,25 +214,12 @@ public sealed class EndpointReplicationTests
                 Database = "main",
                 SslMode = SslMode.Disable,
             }.ConnectionString);
-            try
-            {
-                return new Clients(machine, postgres, await WireClient.OpenAsync(machine.Api.Server.WirePort, key, tenant.ProjectId!, "main"));
-            }
-            catch
-            {
-                await postgres.DisposeAsync();
-                throw;
-            }
+            return new Clients(machine, postgres);
         }
 
         public async Task WriteAsync(string endpoint, string table, string id, string value, bool insert)
         {
-            if (endpoint == "wire")
-            {
-                var answer = await wire.PutAsync(table, id, JsonSerializer.Serialize(new { value }));
-                await Assert.That(answer.Status).IsEqualTo(insert ? 201 : 200).Because(answer.Code);
-            }
-            else if (endpoint == "documents")
+            if (endpoint == "documents")
             {
                 using var response = await machine.Data.PutAsJsonAsync(Document(table, id), new { value });
                 await Assert.That(response.StatusCode).IsEqualTo(insert ? HttpStatusCode.Created : HttpStatusCode.OK);
@@ -248,14 +232,7 @@ public sealed class EndpointReplicationTests
 
         public async Task DeleteAsync(string endpoint, string table, string id)
         {
-            if (endpoint == "wire")
-            {
-                var answer = await wire.DeleteAsync(table, id, remoteDurable: true);
-                await Assert.That(answer.Status).IsEqualTo(200).Because(answer.Code);
-                await Assert.That(answer.RemoteDurable).IsTrue();
-                await Assert.That(answer.ETag).StartsWith("tbv1-");
-            }
-            else if (endpoint == "documents")
+            if (endpoint == "documents")
             {
                 using var response = await machine.Data.DeleteAsync(Document(table, id));
                 await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -292,16 +269,14 @@ public sealed class EndpointReplicationTests
             }
             else
             {
-                _ = await HttpSqlAsync(endpoint, statements);
+                _ = await HttpSqlAsync(statements);
             }
         }
 
-        private async Task<JsonElement> HttpSqlAsync(string endpoint, params string[] statements)
+        private async Task<JsonElement> HttpSqlAsync(params string[] statements)
         {
-            object body = endpoint == "hrana"
-                ? new { requests = statements.Select(sql => (object)new { type = "execute", stmt = new { sql, want_rows = true } }).Append(new { type = "close" }) }
-                : new { statements = statements.Select(sql => new { sql }) };
-            using var response = await machine.Data.PostAsJsonAsync(ManagementApi.Uri(Path + (endpoint == "hrana" ? "/libsql/v2/pipeline" : "/sql/execute")), body);
+            var body = new { statements = statements.Select(sql => new { sql }) };
+            using var response = await machine.Data.PostAsJsonAsync(ManagementApi.Uri(Path + "/sql/execute"), body);
             var text = await response.Content.ReadAsStringAsync();
             if (!response.IsSuccessStatusCode)
             {
@@ -309,15 +284,6 @@ public sealed class EndpointReplicationTests
             }
 
             var results = JsonElement.Parse(text).GetProperty("results");
-            if (endpoint == "hrana")
-            {
-                if (results.EnumerateArray().Any(result => result.GetProperty("type").GetString() != "ok"))
-                {
-                    throw new HttpRequestException(text, null, HttpStatusCode.BadRequest);
-                }
-                return results[0].GetProperty("response").GetProperty("result");
-            }
-
             return results[0];
         }
 
@@ -359,18 +325,6 @@ public sealed class EndpointReplicationTests
                 return (true, rows.GetArrayLength() == 0 ? null : rows[0].GetProperty("value").GetProperty("value").GetString());
             }
 
-            if (endpoint == "wire")
-            {
-                var answer = await wire.GetAsync(table, id);
-                return answer.Status switch
-                {
-                    200 => (true, JsonElement.Parse(answer.Json).GetProperty("value").GetString()),
-                    404 => (true, null),
-                    429 or 503 or 421 => (false, null),
-                    _ => throw new InvalidOperationException($"wire: {answer.Status} {answer.Code}"),
-                };
-            }
-
             if (endpoint == "documents")
             {
                 using var response = await machine.Data.GetAsync(Document(table, id));
@@ -393,8 +347,8 @@ public sealed class EndpointReplicationTests
                     return (true, await command.ExecuteScalarAsync() as string);
                 }
 
-                var rows = (await HttpSqlAsync(endpoint, sql)).GetProperty("rows");
-                return (true, rows.GetArrayLength() == 0 ? null : endpoint == "hrana" ? rows[0][0].GetProperty("value").GetString() : rows[0][0].GetString());
+                var rows = (await HttpSqlAsync(sql)).GetProperty("rows");
+                return (true, rows.GetArrayLength() == 0 ? null : rows[0][0].GetString());
             }
             catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.UndefinedTable)
             {
@@ -410,7 +364,6 @@ public sealed class EndpointReplicationTests
 
         public async ValueTask DisposeAsync()
         {
-            await wire.DisposeAsync();
             await postgres.DisposeAsync();
         }
     }

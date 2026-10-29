@@ -2,7 +2,6 @@ using System.Diagnostics;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Errors;
-using TerraBase.Features.Webhooks;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -16,7 +15,7 @@ namespace TerraBase.Features.Replication;
 /// before the next, so an ack means the groups survive a power loss here.
 /// </summary>
 internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirectory tenants, DatabaseLifecycleCheckpoint checkpoint,
-    IWebhookReplicaAdmission webhooks, ReplicationTimings timings, IClosureCancellation cancellations) : IChangeGroupSink
+    ReplicationTimings timings, IClosureCancellation cancellations) : IChangeGroupSink
 {
     // How long one apply transaction may hold a database's writer before the groups left wait for the next one. Writers queue
     // in order, so a catalog anchor (a revocation's 10 s deadline) waits for at most about this much per transaction ahead of
@@ -51,7 +50,6 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
             progress?.Attach(transaction);
             await transaction.RequireAppliedAsync(origin, expected, cancellationToken).ConfigureAwait(false);
             step = timings.Record(ReplicationTimings.ReceiveBegin, step);
-            List<(string, string, DocumentState, EntryVersion)>? deferred = null;
             HashSet<(string Collection, string Id)> closureChanges = [];
             List<(string Id, DocumentState State, EntryVersion At)> closureJobs = [];
             for (; next < end; next++)
@@ -63,10 +61,6 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
                     if (database != ChangeGroups.System && delta.Collection == ClosureCancellation.Jobs)
                     {
                         closureJobs.Add((delta.Id, delta.State, at));
-                    }
-                    else if (database == ChangeGroups.System && webhooks.Decides(delta.Collection))
-                    {
-                        (deferred ??= []).Add((delta.Collection, delta.Id, delta.State, at));
                     }
                     else
                     {
@@ -85,7 +79,6 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
                 }
             }
 
-            _ = await JoinAdmittedAsync(transaction, deferred, cancellationToken).ConfigureAwait(false);
             _ = await JoinClosureJobsAsync(transaction, closureJobs, cancellationToken).ConfigureAwait(false);
             await cancellations.ObserveAsync(transaction, closureChanges, cancellationToken).ConfigureAwait(false);
             await transaction.RecordAppliedAsync(origin, applied, cancellationToken).ConfigureAwait(false);
@@ -190,7 +183,6 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
         IReadOnlyList<RepairState> states, bool baseline, CancellationToken cancellationToken)
     {
         var changed = 0;
-        List<(string, string, DocumentState, EntryVersion)>? deferred = null;
         HashSet<(string Collection, string Id)> closureChanges = [];
         List<(string Id, DocumentState State, EntryVersion At)> closureJobs = [];
         foreach (var state in states.Where(state => state.State.MaxStamp.Value != 0))
@@ -202,10 +194,6 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
             {
                 closureJobs.Add((state.Id, state.State, at));
             }
-            else if (database == ChangeGroups.System && webhooks.Decides(state.Collection))
-            {
-                (deferred ??= []).Add((state.Collection, state.Id, state.State, at));
-            }
             else
             {
                 changed += (baseline ? await transaction.JoinBaselineAsync(state.Collection, state.Id, state.State, at, cancellationToken).ConfigureAwait(false)
@@ -213,7 +201,6 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
             }
         }
 
-        changed += await JoinAdmittedAsync(transaction, deferred, cancellationToken, baseline).ConfigureAwait(false);
         changed += await JoinClosureJobsAsync(transaction, closureJobs, cancellationToken, baseline).ConfigureAwait(false);
         await cancellations.ObserveAsync(transaction, closureChanges, cancellationToken).ConfigureAwait(false);
 
@@ -242,23 +229,6 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
         {
             changes.Add((collection, id));
         }
-    }
-
-    // Joins are commutative per key, so webhook state joins last: deletion authority in the same transaction dominates it.
-    private async ValueTask<int> JoinAdmittedAsync(IStorageTransaction transaction, List<(string Collection, string Id, DocumentState State, EntryVersion At)>? deferred,
-        CancellationToken cancellationToken, bool baseline = false)
-    {
-        var changed = 0;
-        foreach (var (collection, id, state, at) in deferred ?? [])
-        {
-            if (await webhooks.AdmitAsync(transaction, collection, id, state, cancellationToken).ConfigureAwait(false))
-            {
-                changed += (baseline ? await transaction.JoinBaselineAsync(collection, id, state, at, cancellationToken).ConfigureAwait(false)
-                    : await transaction.JoinAsync(collection, id, state, at, cancellationToken).ConfigureAwait(false)) ? 1 : 0;
-            }
-        }
-
-        return changed;
     }
 
     // The system database, which every region holds, or a client database the catalog places here (null otherwise).

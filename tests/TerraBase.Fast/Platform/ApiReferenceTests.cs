@@ -21,7 +21,6 @@ public sealed class ApiReferenceTests
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) deleteDocument Documents
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:write) deleteDeclaredCollectionSchema Collections
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/ttl TsAuth(documents:write) deleteCollectionTtl Collections
-        DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/webhooks/{webhook} TsAuth(documents:read,documents:write) deleteCollectionWebhook Webhooks
         DELETE /v1/projects/{project}/databases/{database}/functions/{function} TsAuth(documents:read,documents:write) deleteFunction Functions
         DELETE /v1/projects/{project}/databases/{database}/if-id/{expectedId} TsAuth(databases:write) deleteDatabaseIfId Databases
         DELETE /v1/projects/{project}/databases/{database}/indexes/{index} TsAuth(databases:write) dropIndex Indexes
@@ -54,13 +53,10 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape/keys TsAuth(documents:read) getShapeKey Live
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape/manifest TsAuth(documents:read) getShapeManifest Live
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/ttl TsAuth(documents:read) getCollectionTtl Collections
-        GET /v1/projects/{project}/databases/{database}/collections/{collection}/webhooks TsAuth(documents:read) listCollectionWebhooks Webhooks
-        GET /v1/projects/{project}/databases/{database}/collections/{collection}/webhooks/{webhook}/deliveries TsAuth(documents:read) listCollectionWebhookDeliveries Webhooks
         GET /v1/projects/{project}/databases/{database}/export TsAuth(documents:read) exportDatabase Documents
         GET /v1/projects/{project}/databases/{database}/export-schedule TsAuth(databases:read) getExportSchedule Backups
         GET /v1/projects/{project}/databases/{database}/functions TsAuth(documents:read,documents:write) listFunctions Functions
         GET /v1/projects/{project}/databases/{database}/functions/{function} TsAuth(documents:read,documents:write) getFunction Functions
-        GET /v1/projects/{project}/databases/{database}/functions/{function}/deliveries TsAuth(documents:read,documents:write) listFunctionDeliveries Functions
         GET /v1/projects/{project}/databases/{database}/functions/{function}/logs TsAuth(documents:read,documents:write) listFunctionLogs Functions
         GET /v1/projects/{project}/databases/{database}/import TsAuth(databases:read) getImport Imports
         GET /v1/projects/{project}/databases/{database}/index-recommendations TsAuth(databases:read) listIndexRecommendations Indexes
@@ -94,7 +90,6 @@ public sealed class ApiReferenceTests
         POST /v1/projects/{project}/databases/{database}/collections/{collection}/documents TsAuth(documents:write) createDocument Documents
         POST /v1/projects/{project}/databases/{database}/collections/{collection}/query TsAuth(documents:read) queryDocuments Queries
         POST /v1/projects/{project}/databases/{database}/collections/{collection}/schema/preview TsAuth(documents:read,documents:write) previewCollectionSchema Collections
-        POST /v1/projects/{project}/databases/{database}/collections/{collection}/webhooks TsAuth(documents:read,documents:write) createCollectionWebhook Webhooks
         POST /v1/projects/{project}/databases/{database}/functions/{function}/invoke TsAuth(documents:read) invokeFunction Functions
         POST /v1/projects/{project}/databases/{database}/import TsAuth(databases:write,documents:write) createImport Imports
         POST /v1/projects/{project}/databases/{database}/import/cancel TsAuth(databases:write) cancelImport Imports
@@ -102,8 +97,6 @@ public sealed class ApiReferenceTests
         POST /v1/projects/{project}/databases/{database}/import/start TsAuth(databases:write,documents:write) startImport Imports
         POST /v1/projects/{project}/databases/{database}/index-recommendations/{recommendation}/apply TsAuth(databases:write) applyIndexRecommendation Indexes
         POST /v1/projects/{project}/databases/{database}/indexes TsAuth(databases:write) createIndex Indexes
-        POST /v1/projects/{project}/databases/{database}/libsql/{version}/cursor TsAuth(documents:read) libsqlCursor SQL
-        POST /v1/projects/{project}/databases/{database}/libsql/{version}/pipeline TsAuth(documents:read) libsqlPipeline SQL
         POST /v1/projects/{project}/databases/{database}/point-in-time/plan TsAuth(databases:read) planPointInTime Backups
         POST /v1/projects/{project}/databases/{database}/point-in-time/recover TsAuth(databases:write,documents:write) recoverHistoricalRecords Backups
         POST /v1/projects/{project}/databases/{database}/point-in-time/recovery-preview TsAuth(databases:write,documents:read) previewSelectiveRecovery Backups

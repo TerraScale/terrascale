@@ -93,7 +93,6 @@ internal sealed class NodeProcess : IAsyncDisposable
             ["internal-port"] = $"{_internalPort}",
             ["metrics-port"] = $"{_metricsPort}",
             ["postgres-port"] = "0",
-            ["wire-port"] = "0",
             ["storage-threads"] = "2",
         })
         {

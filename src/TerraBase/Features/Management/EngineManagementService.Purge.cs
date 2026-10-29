@@ -181,8 +181,7 @@ internal sealed partial class EngineManagementService
             throw new InvalidOperationException("a database purge conflicts with its cleanup scope");
         }
 
-        // Under this writer: a conflicting webhook dispatch replicated after erasure verified withholds this point-in-time receipt.
-        if (!erasureVerified || !webhookErasure.Value.Certifies(database))
+        if (!erasureVerified)
         {
             return false;
         }

@@ -94,12 +94,8 @@ public static class Listeners
         return context.Features.Get<AnsweringRegion>()?.Region ?? context.RequestServices.GetRequiredService<TerraBaseOptions>().Region;
     }
 
-    // <region>.api.terrascale.tech: the host that pins a region (docs/terrabase/region-identity.md); api.terrascale.tech
-    // itself goes to the nearest region.
     private const string RegionalHostSuffix = ".api.terrascale.tech";
 
-    // Whether host is <label>.api.terrascale.tech, and the region the label names (null when it names none).
-    // Case-insensitive; Kestrel's Host.Host has no port.
     private static bool IsRegionalHost(string host, out string? region)
     {
         region = null;
@@ -115,15 +111,12 @@ public static class Listeners
 
     private static string RegionalHosts(IEnumerable<string> regions) => string.Join(", ", regions.Select(name => name + RegionalHostSuffix));
 
-    // The regions with a started machine of this app, this one's included, in order.
     private static async Task<SortedSet<string>> ServedRegionsAsync(HttpContext context)
     {
         var view = await context.RequestServices.GetRequiredService<IMembership>().RefreshAsync(context.RequestAborted).ConfigureAwait(false);
         return [.. view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).Select(member => member.Region).Append(RegionOf(context))];
     }
 
-    // 421 for a pin this machine does not answer, before authentication: it names only the answering region and the
-    // serving regions, never the pin (client input) or a database, so it says how to recover without tenant details.
     private static async Task RefusePinAsync(HttpContext context, StringValues pin, string? host)
     {
         var region = RegionOf(context);
@@ -244,14 +237,13 @@ public static class Listeners
     /// <summary>
     /// Binds the internal listener on <paramref name="internalAddress"/>, then the public, metrics and postgres listeners, in
     /// that order. Those three bind every interface, except in local development (<see cref="LoopbackOnly"/>), where nothing but
-    /// this machine may reach them: loopback only. The wire protocol has its own socket listener (<c>WireListener</c>).
+    /// this machine may reach them: loopback only.
     /// </summary>
     public static void AddTerraBaseListeners(this KestrelServerOptions kestrel, TerraBaseOptions options, IPAddress internalAddress, string environmentName)
     {
         ArgumentNullException.ThrowIfNull(kestrel);
         ArgumentNullException.ThrowIfNull(options);
         var local = LoopbackOnly(options, environmentName);
-        // HTTP/2 only: without TLS there is no ALPN, and gRPC needs HTTP/2 prior knowledge.
         kestrel.Listen(internalAddress, options.InternalPort, listen =>
         {
             listen.Protocols = HttpProtocols.Http2;
@@ -273,7 +265,6 @@ public static class Listeners
                 }
             }
 
-            // Not ListenLocalhost: it refuses port 0, which tests use.
             if (local)
             {
                 kestrel.Listen(IPAddress.Loopback, port, Configure);
@@ -312,7 +303,6 @@ public static class Listeners
             {
                 var region = RegionOf(context);
                 var machine = context.RequestServices.GetRequiredService<TerraBaseOptions>().MachineId;
-                // OnStarting survives Response.Clear() in the error middleware.
                 context.Response.OnStarting(() =>
                 {
                     context.Response.Headers["X-TerraBase-Region"] = region;
@@ -322,8 +312,6 @@ public static class Listeners
                 var hasPin = context.Request.Headers.TryGetValue("X-TerraScale-Region-Pin", out var pin);
                 if (IsRegionalHost(context.Request.Host.Host, out var host))
                 {
-                    // An explicit regional host fails closed: it is answered in its region or refused, never served by
-                    // another region (docs/terrabase/region-identity.md).
                     if (host is null)
                     {
                         await BadRequests.WriteAsync(context, StatusCodes.Status421MisdirectedRequest, "misdirected_request",
@@ -331,7 +319,6 @@ public static class Listeners
                         return;
                     }
 
-                    // A header naming another region contradicts the host.
                     if (hasPin && (pin.Count != 1 || !string.Equals(pin[0], host, StringComparison.Ordinal)))
                     {
                         await RefusePinAsync(context, pin, host);
@@ -340,8 +327,6 @@ public static class Listeners
 
                     if (!string.Equals(host, region, StringComparison.Ordinal))
                     {
-                        // The edge already replayed it (it landed in the wrong region), the edge's replay reached no machine
-                        // there (ts-replay-failed), or no machine of the region is started: the region is unavailable.
                         var served = await ServedRegionsAsync(context);
                         if (context.Request.Headers.ContainsKey("ts-replay-src") || context.Request.Headers.ContainsKey("ts-replay-failed") || !served.Contains(host))
                         {
@@ -350,7 +335,6 @@ public static class Listeners
                             return;
                         }
 
-                        // Without a machine there, the edge sends the request back here with ts-replay-failed instead of an error.
                         ReplayIn(context, host, fallbackSelf: true);
                         context.Response.StatusCode = StatusCodes.Status421MisdirectedRequest;
                         return;

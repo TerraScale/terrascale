@@ -4,7 +4,6 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraBase.E2E
 {
-    /// <summary>The documents SDK, with the same server, token and route as the raw HTTP lane.</summary>
     internal sealed class SdkLane : IVsTursoLane
     {
         public string Name => "sdk";
@@ -18,11 +17,10 @@ namespace TerraBase.E2E
                 AccessTokenProvider = _ => ValueTask.FromResult(node.Token),
             });
             return Task.FromResult<ITarget>(new SdkTarget(http,
-                client.Database(node.Database.ProjectId!, WireLanes.DatabaseName), node.Collection, WireLanes.Engine(node)));
+                client.Database(node.Database.ProjectId!, BenchmarkSetup.DatabaseName), node.Collection, BenchmarkSetup.Engine(node)));
         }
     }
 
-    /// <summary>Raw pooled HTTP with JSON materialization, alongside the bytes-only api control.</summary>
     internal sealed class ApiJsonLane : IVsTursoLane
     {
         public string Name => "api-json";
@@ -31,8 +29,8 @@ namespace TerraBase.E2E
         {
             var http = new HttpClient(TerraBaseHttp.CreateHandler()) { BaseAddress = node.Api.Server.ClientAddress! };
             http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", node.Token);
-            var path = $"/v1/projects/{node.Database.ProjectId}/databases/{WireLanes.DatabaseName}/collections/{node.Collection}/documents/by-key?id=";
-            return Task.FromResult<ITarget>(new ApiJsonTarget(http, path, WireLanes.Engine(node)));
+            var path = $"/v1/projects/{node.Database.ProjectId}/databases/{BenchmarkSetup.DatabaseName}/collections/{node.Collection}/documents/by-key?id=";
+            return Task.FromResult<ITarget>(new ApiJsonTarget(http, path, BenchmarkSetup.Engine(node)));
         }
     }
 
