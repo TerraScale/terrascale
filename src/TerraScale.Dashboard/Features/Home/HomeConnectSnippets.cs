@@ -76,7 +76,7 @@ public static class HomeConnectSnippets
             	fmt.Println(len(page.Items))
             }
             """),
-        ("python", "Python", $"pip install \"terrascale @ git+https://github.com/TerraScale/ts-python@{SdkVersions.Python}\"", $$"""
+        ("python", "Python", $"pip install \"terrascale @ git+https://github.com/TerraScale/terrascale@history/ts-python/{SdkVersions.Python}\"", $$"""
             import os
 
             from terrascale import TerraScale
@@ -85,7 +85,7 @@ public static class HomeConnectSnippets
                 page = ts.database("{{database}}").collection("{{Collection}}").list(limit=10)
                 print(len(page.items))
             """),
-        ("rust", "Rust", $"cargo add terrascale --git https://github.com/TerraScale/ts-rust --tag {SdkVersions.Rust}\ncargo add serde_json\ncargo add tokio --features full", $$"""
+        ("rust", "Rust", $"cargo add terrascale --git https://github.com/TerraScale/terrascale --tag history/ts-rust/{SdkVersions.Rust}\ncargo add serde_json\ncargo add tokio --features full", $$"""
             use terrascale::v1::Client;
 
             #[tokio::main]

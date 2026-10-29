@@ -644,7 +644,7 @@ All sixteen role E2E cases passed in the latest full run. Ordinary principals re
 administration APIs. Local fields, organization roles, ID-token claims,
 management keys and email allowlists cannot grant platform access.
 
-The newer [official SDK explorer](https://github.com/TerraScale/ts-dotnet/blob/bcd20603f11f3aa54dc54cec6e410b4fe9e24151/src/TerraScale.DotNet/TerraBase/Platform/TerraBasePlatformClient.cs)
+The newer [official SDK explorer](https://github.com/TerraScale/terrascale/blob/bcd20603f11f3aa54dc54cec6e410b4fe9e24151/src/TerraScale.DotNet/TerraBase/Platform/TerraBasePlatformClient.cs)
 requires a per-request access-token provider and offers read-only exploration
 of first-party databases, collections and documents. It is not part of the
 currently pinned SDK candidate and does not supply the original cross-account
@@ -695,7 +695,7 @@ data. Preserving dashboard-owned preferences, history and Stripe bindings is a
 separate cutover decision. The Go database must remain intact until that scope,
 the account/resource mapping and a restore procedure are reviewed.
 
-The pinned [official Documents client](https://github.com/TerraScale/ts-dotnet/blob/130925898daf0207134d9582b7b672a5a1c3233b/src/TerraScale.DotNet/TerraBase/Documents/TerraBaseDocumentsClient.cs)
+The pinned [official Documents client](https://github.com/TerraScale/terrascale/blob/130925898daf0207134d9582b7b672a5a1c3233b/src/TerraScale.DotNet/TerraBase/Documents/TerraBaseDocumentsClient.cs)
 already exposes the necessary database operations:
 
 | Operation | Existing SDK contract | Bootstrap use |
@@ -708,7 +708,7 @@ already exposes the necessary database operations:
 
 Service provisioning automation must first establish the dashboard service's canonical
 organization/project and admitted storage credential, then automatically
-deliver the descriptor. The [official Management client](https://github.com/TerraScale/ts-dotnet/blob/130925898daf0207134d9582b7b672a5a1c3233b/src/TerraScale.DotNet/TerraBase/Management/TerraBaseManagementClient.cs)
+deliver the descriptor. The [official Management client](https://github.com/TerraScale/terrascale/blob/130925898daf0207134d9582b7b672a5a1c3233b/src/TerraScale.DotNet/TerraBase/Management/TerraBaseManagementClient.cs)
 can create organizations, projects and databases for an authenticated ts-auth
 user or a producer-trusted private-network caller. This SDK revision exposes
 no service-credential bootstrap grant, and a public request's `userId` must
