@@ -1,0 +1,25 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Auth.MfaRequiredPage>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.Document, DocumentModel>
+@inject AssetUrls Assets
+<main class="ts-login">
+    <section class="ts-login-hero ts-auth-hero" aria-hidden="true">
+        @(await RenderPartialAsync<TerraScale.Dashboard.Features.Auth.AuthRegionMap>())
+    </section>
+    <div class="ts-login-column">
+        <div class="ts-login-panel">
+            <div class="ts-login-stack" id="mfa-required">
+                <div class="ts-login-heading">
+                    <span class="ts-login-brand"><img src="@Assets.Url("brand/logo-icon-blue.svg")" alt="" width="25" height="28" decoding="async" /><span class="ts-login-brand-word">TerraScale</span></span>
+                    <div class="ts-auth-heading"><h1 class="ts-auth-title">@Model.OrganizationName requires two-factor authentication</h1><p class="ts-auth-subtitle">Set up two-factor authentication for your account, then come back to continue.</p></div>
+                </div>
+                <div class="ts-form"><a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href="@Model.ManageUrl">Set up two-factor</a><a class="ts-btn ts-btn-secondary ts-btn-block" href="/">I've set it up, continue</a></div>
+                @if (Model.Others.Count > 0)
+                {
+                    <div class="ts-stack-sm"><p class="ts-meta">Or switch to another organization</p>@foreach (var org in Model.Others) { <form method="post" action="/api/v1/dashboard/switch-organization"><input type="hidden" name="_csrf" value="@Model.CsrfToken" /><input type="hidden" name="organizationId" value="@org.Id" /><input type="hidden" name="returnUrl" value="/" /><button class="ts-btn ts-btn-ghost ts-btn-block" type="submit">@org.Name</button></form> }</div>
+                }
+                <form method="post" action="/api/v1/auth/logout"><input type="hidden" name="_csrf" value="@Model.CsrfToken" /><button class="ts-btn ts-btn-ghost ts-btn-block" type="submit">Sign out</button></form>
+            </div>
+        </div>
+    </div>
+</main>
+@functions { public DocumentModel LayoutModel => Model.Document; }
