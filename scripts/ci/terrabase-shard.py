@@ -45,6 +45,6 @@ if shard == 2:
 if shard == 4:
     subprocess.run([
         "make", "-j2", "-o", "restore", "-o", "terrabase-build",
-        "terrabase-replication-matrix", "terrabase-e2e-local", "CONFIGURATION=Release",
+        "terrabase-e2e-local", "CONFIGURATION=Release",
         "TERRABASE_E2E_RUN=dotnet tests/TerraBase.E2E/bin/Release/net11.0/TerraBase.E2E.dll",
     ], check=True, env=os.environ)

@@ -55,6 +55,16 @@ build_check = "src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck
 assert f"dotnet format whitespace {build_check} --verify-no-changes --no-restore" in stages["build-terrabase"][1]
 assert all_projects <= formatted | {build_check}, all_projects - formatted - {build_check}
 assert "needs: [changes, native, libs, auth, terrabase-build, terrabase]" in workflow, "Native/Fast must gate required test; Slow must not delay it"
+assert "merge_group" not in workflow, "Merge queue checks are gone: pull requests and main are the only gates"
+for job in ("libs", "auth", "terrabase-build", "terrabase"):
+    block = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split(f"\n  {job}:\n", 1)[1], maxsplit=1)[0]
+    assert "event_name != 'push'" not in block, f"{job} must run on pushes to main"
+test_job = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  test:\n", 1)[1], maxsplit=1)[0]
+main_job = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  main:\n", 1)[1], maxsplit=1)[0]
+assert "    needs: [changes, native, test]\n" in main_job, "Main must wait for the required test rollup"
+assert "!cancelled() && needs.test.result == 'success'" in main_job, "Main must not run after a failed or skipped test rollup"
+for job in (test_job, main_job):
+    assert not re.search(r"^    needs: .*slow", job, re.M), "Slow results must not gate test or main"
 assert "AREA: ${{ github.job }}" not in workflow, "github.job is unavailable in job-level env"
 
 # Cheap policy failures stop native downloads and every expensive area; Slow runs independently of publication.

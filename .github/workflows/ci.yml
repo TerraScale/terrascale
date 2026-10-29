@@ -1,21 +1,11 @@
 name: CI
 
-# One required check: "test". It passes when every affected Fast area and Rust proof check passed.
-# - changes: which areas (libs, auth, terrabase) the event touched; libs and shared files touch every area. Pull
-#   requests compare with their base, merge-group checks with the queue base, pushes to main with the previous main.
-#   workflow_dispatch runs every area. Docs-only changes run no area job.
-# - libs/auth/terrabase (PRs, merge groups, workflow_dispatch): native libs/TerraBase Fast; Docker auth Fast (measured per job).
-# - main (push, workflow_dispatch): production images build once per architecture, without rerunning checked stages.
-# - slow-auth/slow-terrabase: affected PRs and newest main, independent of required test. Main failures create issues.
-
 on:
   pull_request:
     # No `labeled`: a label must not re-run and cancel the running check.
     types: [opened, synchronize, reopened]
   push:
     branches: [main]
-  merge_group:
-    types: [checks_requested]
   workflow_dispatch:
     inputs:
       native_artifacts:
@@ -65,7 +55,6 @@ jobs:
         uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         with:
           # Empty on pushes: the action then diffs against the push's `before` commit.
-          base: ${{ github.event.merge_group.base_sha }}
           filters: |
             shared: &shared
               - .github/workflows/ci.yml
@@ -105,8 +94,6 @@ jobs:
               # The published platform contract (OpenApiTests, auth-openapi-check); the Markdown docs are not inputs.
               - docs/auth/*.yaml
               - scripts/auth/**
-            # ts-auth's tests run against the TerraBase built from the same commit and check the SDK's routes on it:
-            # merge groups and main add auth for it; pull requests get TerraBase's own job as their fast signal.
             auth-server:
               - src/TerraBase/**
             terrabase:
@@ -253,7 +240,7 @@ jobs:
   libs:
     needs: [changes, native]
     if: >-
-      github.event_name != 'push' && contains(fromJSON(needs.changes.outputs.fast), 'libs')
+      contains(fromJSON(needs.changes.outputs.fast), 'libs')
       && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     env:
       AREA: libs
@@ -328,7 +315,7 @@ jobs:
   auth:
     needs: [changes, native]
     if: >-
-      github.event_name != 'push' && contains(fromJSON(needs.changes.outputs.fast), 'auth')
+      contains(fromJSON(needs.changes.outputs.fast), 'auth')
       && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     env:
       AREA: auth
@@ -341,7 +328,7 @@ jobs:
   terrabase-build:
     needs: [changes, native]
     if: >-
-      github.event_name != 'push' && contains(fromJSON(needs.changes.outputs.fast), 'terrabase')
+      contains(fromJSON(needs.changes.outputs.fast), 'terrabase')
       && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     env:
       AREA: terrabase
@@ -372,7 +359,6 @@ jobs:
   terrabase:
     needs: terrabase-build
     strategy:
-      max-parallel: ${{ github.event_name == 'merge_group' && 2 || 4 }}
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
@@ -405,9 +391,10 @@ jobs:
           retention-days: 7
 
   main:
-    needs: [changes, native]
+    needs: [changes, native, test]
     if: >-
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+      !cancelled() && needs.test.result == 'success'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && needs.changes.outputs.main != '[]'
     strategy:
       fail-fast: false
@@ -681,5 +668,12 @@ jobs:
         run: |
           echo 'Fast requires the private SDK checkout; fork PRs cannot receive its deploy key. Qualify the changes on a branch in this repository.' >&2
           exit 1
-      - name: Native and every Fast area that ran passed
-        run: '! grep -qE "failure|cancelled" <<< "${{ join(needs.*.result, '' '') }}"'
+      - name: Native and every affected Fast area passed
+        env:
+          FAST_AREAS: ${{ needs.changes.outputs.fast }}
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          if grep -qE 'failure|cancelled' <<< '${{ join(needs.*.result, ' ') }}'; then exit 1; fi
+          for area in $(jq -r '.[]' <<< "$FAST_AREAS"); do
+            [[ $(jq -r --arg area "$area" '.[$area].result' <<< "$RESULTS") == success ]] || exit 1
+          done
