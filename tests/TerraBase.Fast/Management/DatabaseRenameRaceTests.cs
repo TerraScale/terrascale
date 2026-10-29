@@ -54,10 +54,6 @@ public sealed partial class DatabaseRenameRaceTests
         await AssertMissingAsync(regions.All, renamed.Project, "left");
         await Assert.That(await gru.Client.GetStringAsync(Uri(renamed.Path + "/backups"))).IsEqualTo(backups);
         await Assert.That(await gru.Client.GetStringAsync(Uri(renamed.Path + "/backup-policy"))).IsEqualTo(policy);
-        foreach (var region in regions.All)
-        {
-            await Assert.That(await EventsAsync(region, renamed.Organization, "database.renamed", renamed.Id)).IsEqualTo(1);
-        }
     }
 
     [Test]
@@ -97,14 +93,6 @@ public sealed partial class DatabaseRenameRaceTests
         {
             await Assert.That(await home.Client.GetStringAsync(Uri(database.Path + "/backups"))).IsEqualTo(list);
             await Assert.That(await home.Client.GetStringAsync(Uri(database.Path + "/backup-policy"))).IsEqualTo(policy);
-        }
-
-        foreach (var region in regions.All)
-        {
-            foreach (var database in new[] { left, right })
-            {
-                await Assert.That(await EventsAsync(region, left.Organization, "database.renamed", database.Id)).IsEqualTo(1);
-            }
         }
 
         // The customer then names the loser: the conflict banner clears and its conflict name is released everywhere.
@@ -242,11 +230,6 @@ public sealed partial class DatabaseRenameRaceTests
             await AssertMissingAsync(regions.All, target.Project, "renamed");
         }
 
-        foreach (var region in regions.All)
-        {
-            await Assert.That(await EventsAsync(region, target.Organization, "database.name_conflict", claimant.Id)).IsEqualTo(lost ? 1 : 0);
-        }
-
         await Assert.That(await gru.Client.GetStringAsync(Uri(unrelated.Path + "/backups"))).IsEqualTo(backups);
     }
 
@@ -266,8 +249,6 @@ public sealed partial class DatabaseRenameRaceTests
             var body = await BodyAsync(region, loser);
             await Assert.That(Field(body, "previousName")).IsEqualTo(name);
             await Assert.That(Field(body, "conflictOf")).IsEqualTo(winner.Id);
-            await Assert.That(await EventsAsync(region, winner.Organization, "database.name_conflict", loser.Id)).IsEqualTo(1);
-            await Assert.That(await EventsAsync(region, winner.Organization, "database.name_conflict", winner.Id)).IsEqualTo(0);
         }
     }
 

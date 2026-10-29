@@ -2979,7 +2979,7 @@ public sealed class PeerStreamTests
         public async Task<TenantContext> CreateOtherDatabaseAsync(string? databaseId = null)
         {
             var database = cluster.Database with { DatabaseId = databaseId ?? EntityIds.New().ToString() };
-            await CatalogFixture.RegisterAsync(Api, Api.User, database, $"other-{database.DatabaseId!.ToLowerInvariant()}", []);
+            await CatalogFixture.RegisterAsync(Api, Api.User, database, $"other-{database.DatabaseId!.ToLowerInvariant()}", replicas);
             return database;
         }
 
