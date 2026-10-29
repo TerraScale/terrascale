@@ -1,7 +1,3 @@
-// Runnable snippet: backup policy, an on-demand backup and a restore into a
-// new database with @terrascale/sdk 0.0.4. The token needs management access
-// to the sandbox project. Backups are unbilled; logical documents and
-// retained history are billed storage.
 import { strict as assert } from "node:assert";
 import type { TerraBaseV1Client } from "@terrascale/sdk";
 
@@ -24,7 +20,6 @@ export async function run(sandbox: Sandbox): Promise<void> {
   const listed = await db.backups.list();
   assert.ok(listed.items.some((item) => item.id === backup.id), "the new backup is listed");
 
-  // Restore never overwrites: it creates a new database from the backup.
   const restored = await db.backups.restore(backup.id, { name: `${sandbox.databaseName}-restored` });
   assert.equal(restored.name, `${sandbox.databaseName}-restored`);
   await sandbox.client.databases.delete(restored.name);

@@ -16,7 +16,7 @@ TerraScale's operating contract is that platform features work without activatio
 
 Every feature is always available within its authorization and service contract. Every region begins serving when it is ready, without a customer enable step. Availability does not bypass authentication, resource scope, residency or safety limits.
 
-Customer-selected database placement determines where data may reside. Automatic platform operation does not widen that boundary. See [replication semantics](/de/concepts/replication) for what each placement guarantees.
+Customer-selected database placement determines where data may reside. Automatic platform operation does not widen that boundary.
 
 ## Production secrets arrive automatically
 
@@ -28,6 +28,6 @@ Customer applications still need authorized credentials. Store those in the appl
 
 The platform uses one correct setting for each behavior. Features do not depend on opt-in flags, demo stores or skip-auth production modes. Test fakes remain in test code.
 
-The SDKs take one explicit endpoint, `https://api.terrascale.tech`, or a resolver you supply. See [SDK reference](/de/guides/sdks).
+The SDKs take one explicit endpoint, `https://api.terrascale.tech`, or a resolver you supply.
 
 </div>

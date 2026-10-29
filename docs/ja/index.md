@@ -1,6 +1,6 @@
 ---
 title: Developer documentation
-description: Practical TerraBase SDK guides, document CRUD, queries and safe authentication.
+description: TerraBase developer documentation for account setup, the CLI, SQL and pricing.
 outline: false
 aside: false
 lastUpdated: false

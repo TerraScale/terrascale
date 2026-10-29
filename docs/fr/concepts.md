@@ -9,10 +9,8 @@ title: TerraBase concepts
 
 # TerraBase concepts
 
-TerraBase stores your application's JSON documents in named collections within a project-scoped database. An SDK handle selects a resource; issuing an operation contacts its authorized endpoint.
+TerraBase is a SQL database. Databases are scoped to your project, and an API key or access token selects what you can reach.
 
-Documents carry opaque versions for conditional updates. Queries use JSON filters and opaque continuation cursors. See [queries and pagination](/fr/guides/queries).
-
-[Replication](/fr/concepts/replication) distinguishes current write results from multi-region product requirements. [Live updates](/fr/concepts/sync) and [SQL compatibility](/fr/concepts/sql) describe separate contracts and their availability boundaries.
+The [SQL](/fr/concepts/sql) page covers the query interface, and [usage accounting](/fr/concepts/pricing-philosophy) explains how operations and storage are metered.
 
 </div>

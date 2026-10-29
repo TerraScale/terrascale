@@ -1,5 +1,5 @@
 ---
-title: SQL compatibility
+title: SQL
 ---
 
 <!-- i18n:fallback:ar -->
@@ -7,12 +7,8 @@ title: SQL compatibility
 
 <div lang="en" dir="ltr">
 
-# SQL compatibility
+# SQL
 
-Use [JSON filter queries](/ar/guides/queries) for the current project-scoped Documents API. A SQL builder is not its query grammar.
-
-The published JavaScript package has a separate `@terrascale/sdk/sql` entrypoint. It is not used with the Documents API.
-
-For SQL, use [SQL over HTTP](/ar/guides/sql-http), the [libSQL clients](/ar/guides/libsql-clients) or [Postgres clients](/ar/guides/postgres-clients). The Documents API also accepts read-only `SELECT` queries: the [Go quickstart](/ar/getting-started/go) runs one and the [CLI](/ar/cli#run-sql) has `ts sql`. Neither runs writes, DDL or cross-database transactions.
+TerraBase is moving to a SQL-only interface. The SQL reference is not published yet, so this page does not describe a query contract. Until it is published, the [getting started guide](/ar/getting-started/) covers account, database and API key setup.
 
 </div>

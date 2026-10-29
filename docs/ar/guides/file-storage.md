@@ -14,11 +14,11 @@ description: Store project files with signed transfers, owner and role permissio
 The file API is being rolled out. These examples use `@terrascale/sdk` 0.0.8 or later and require the file API to be available for your project. Live upload, download and authorization verification is pending.
 :::
 
-Projects store files in buckets. Each bucket has the same owner, read and write rules as a document collection. Your server creates the bucket; signed-in end users upload and download files when its rules allow them. There are no object-store credentials to configure in your application.
+Projects store files in buckets. Each bucket has owner, read and write rules. Your server creates the bucket; signed-in end users upload and download files when its rules allow them. There are no object-store credentials to configure in your application.
 
 ## Create a bucket on your server
 
-Use a project access token with `documents:write`, obtained through [Authentication](/ar/guides/authentication). Keep this credential on your server.
+Use a project access token with write access, obtained through [Authentication](/ar/guides/authentication). Keep this credential on your server.
 
 ```js
 import { createTerraBaseClient } from '@terrascale/sdk'
@@ -104,7 +104,7 @@ The SDK does not automatically retry mutations or signed transfers. If a respons
 
 ## Shared storage allowance and cleanup
 
-Files and database data count together against the organization's existing [plan storage allowance](/ar/pricing). Reserving an upload immediately counts its full declared size. Project usage exposes `fileBytes`, and includes those bytes in `storageBytes` and `logicalBytes`. Replication does not count the same file again.
+Files and database data count together against the organization's existing [plan storage allowance](/ar/pricing). Reserving an upload immediately counts its full declared size. Project usage exposes `fileBytes`, and includes those bytes in `storageBytes` and `logicalBytes`.
 
 Deleting a file prevents new downloads and queues physical cleanup. Expired or failed uploads also need cleanup. Their storage reservations are released after object deletion succeeds, so the usage total can take time to fall. Delete files and wait for cleanup before calling `bucket.delete()`; deleting a bucket with files or reservations returns 409.
 
@@ -120,7 +120,7 @@ Deleting a file prevents new downloads and queues physical cleanup. Expired or f
 
 ## HTTP routes
 
-All paths below start with `/v1/projects/{project}` and use Bearer authorization. Read operations require `documents:read`; writes require `documents:write`. End-user authorization additionally evaluates the bucket rules.
+All paths below start with `/v1/projects/{project}` and use Bearer authorization. Read operations and writes require matching project access. End-user authorization additionally evaluates the bucket rules.
 
 | Method | Path | Result |
 | --- | --- | --- |

@@ -1,1 +1,0 @@
-{"name":"terrabase-server-token-provider","private":true,"type":"module","engines":{"node":"22.x || 24.x","npm":">=11"},"dependencies":{"@terrascale/sdk":"0.0.17"}}
