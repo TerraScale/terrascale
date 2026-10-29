@@ -1,0 +1,196 @@
+diff --git a/core/connection.rs b/core/connection.rs
+index 3bfb72b..09adce6 100644
+--- a/core/connection.rs
++++ b/core/connection.rs
+@@ -516,6 +516,7 @@ pub struct Connection {
+     /// Maximum execution time for a single statement on this connection.
+     /// `Duration::ZERO` means disabled.
+     pub(super) query_timeout_ms: AtomicU64,
++    pub(super) max_value_length: AtomicI64,
+     /// True when sqlite3_interrupt()-style cancellation is pending for active root statements.
+     pub(super) interrupt_requested: AtomicBool,
+     /// Whether this is an internal connection used for MVCC bootstrap
+@@ -4826,6 +4827,15 @@ impl Connection {
+         }
+     }
+ 
++    pub fn set_max_value_length(&self, length: i64) {
++        self.max_value_length
++            .store(length.clamp(0, crate::Value::MAX_BLOB_LENGTH), Ordering::SeqCst);
++    }
++
++    pub fn max_value_length(&self) -> i64 {
++        self.max_value_length.load(Ordering::SeqCst)
++    }
++
+     /// Sets the maximum duration a statement is allowed to run.
+     /// `Duration::ZERO` disables query timeout.
+     pub fn set_query_timeout(&self, duration: Duration) {
+diff --git a/core/database.rs b/core/database.rs
+index 3c4ff4f..3e52cbb 100644
+--- a/core/database.rs
++++ b/core/database.rs
+@@ -2595,6 +2595,7 @@ impl Database {
+             progress_handler: ProgressHandler::new(),
+             fts_progress_handler: RwLock::new(None),
+             query_timeout_ms: AtomicU64::new(0),
++            max_value_length: AtomicI64::new(crate::Value::MAX_BLOB_LENGTH),
+             interrupt_requested: AtomicBool::new(false),
+             is_mvcc_bootstrap_connection: AtomicBool::new(is_mvcc_bootstrap_connection),
+             full_column_names: AtomicBool::new(false),
+diff --git a/core/vdbe/execute.rs b/core/vdbe/execute.rs
+index 17fc1d9..e529188 100644
+--- a/core/vdbe/execute.rs
++++ b/core/vdbe/execute.rs
+@@ -10369,6 +10369,11 @@ pub fn op_function(
+             | ScalarFunc::Soundex
+             | ScalarFunc::ZeroBlob => {
+                 let reg_value = state.registers[*start_reg].borrow_mut().get_value();
++                if matches!(scalar_func, ScalarFunc::RandomBlob | ScalarFunc::ZeroBlob)
++                    && requested_blob_length(reg_value) > program.connection.max_value_length()
++                {
++                    return Err(LimboError::TooBig.into());
++                }
+                 let result = match scalar_func {
+                     ScalarFunc::Sign => reg_value.exec_sign(),
+                     ScalarFunc::Abs => Some(reg_value.exec_abs()?),
+@@ -12280,10 +12285,30 @@ pub fn op_function(
+             unreachable!("Window functions should not be handled here")
+         }
+     }
++    if value_byte_length(state.registers[*dest].get_value()) > program.connection.max_value_length() {
++        return Err(LimboError::TooBig.into());
++    }
+     state.pc += 1;
+     Ok(InsnFunctionStepResult::Step)
+ }
+ 
++fn requested_blob_length(value: &Value) -> i64 {
++    match value {
++        Value::Numeric(Numeric::Integer(i)) => *i,
++        Value::Numeric(Numeric::Float(f)) => f64::from(*f) as i64,
++        Value::Text(t) => t.as_str().parse().unwrap_or(0),
++        _ => 0,
++    }
++}
++
++fn value_byte_length(value: &Value) -> i64 {
++    match value {
++        Value::Text(t) => t.as_str().len() as i64,
++        Value::Blob(b) => b.len() as i64,
++        _ => 0,
++    }
++}
++
+ pub(crate) type OpAttachState = crate::connection::AttachDatabaseState;
+ 
+ /// LIKE with an operand that is not TEXT: both are converted to TEXT first.
+@@ -16069,12 +16094,18 @@ pub fn op_is_true(
+ }
+ 
+ pub fn op_concat(
+-    _program: &Program,
++    program: &Program,
+     state: &mut ProgramState,
+     insn: &Insn,
+     _pager: &Arc<Pager>,
+ ) -> InsnResult {
+     load_insn!(Concat { lhs, rhs, dest }, insn);
++    if value_byte_length(state.registers[*lhs].get_value())
++        + value_byte_length(state.registers[*rhs].get_value())
++        > program.connection.max_value_length()
++    {
++        return Err(LimboError::TooBig.into());
++    }
+     let value = state.registers[*lhs]
+         .get_value()
+         .exec_concat(state.registers[*rhs].get_value())?;
+diff --git a/sdk-kit/src/capi.rs b/sdk-kit/src/capi.rs
+index 0c265bc..77b8d43 100644
+--- a/sdk-kit/src/capi.rs
++++ b/sdk-kit/src/capi.rs
+@@ -46,6 +46,47 @@ pub extern "C" fn turso_connection_set_fts_progress_handler(
+     c::turso_status_code_t::TURSO_OK
+ }
+ 
++#[no_mangle]
++pub extern "C" fn turso_connection_interrupt(
++    connection: *const c::turso_connection_t,
++    error_opt_out: *mut *const std::ffi::c_char,
++) -> c::turso_status_code_t {
++    let connection = match unsafe { TursoConnection::ref_from_capi(connection) } {
++        Ok(connection) => connection,
++        Err(err) => return unsafe { err.to_capi(error_opt_out) },
++    };
++    connection.interrupt();
++    c::turso_status_code_t::TURSO_OK
++}
++
++#[no_mangle]
++pub extern "C" fn turso_connection_set_query_timeout_ms(
++    connection: *const c::turso_connection_t,
++    timeout_ms: u64,
++    error_opt_out: *mut *const std::ffi::c_char,
++) -> c::turso_status_code_t {
++    let connection = match unsafe { TursoConnection::ref_from_capi(connection) } {
++        Ok(connection) => connection,
++        Err(err) => return unsafe { err.to_capi(error_opt_out) },
++    };
++    connection.set_query_timeout(std::time::Duration::from_millis(timeout_ms));
++    c::turso_status_code_t::TURSO_OK
++}
++
++#[no_mangle]
++pub extern "C" fn turso_connection_set_max_value_length(
++    connection: *const c::turso_connection_t,
++    length: i64,
++    error_opt_out: *mut *const std::ffi::c_char,
++) -> c::turso_status_code_t {
++    let connection = match unsafe { TursoConnection::ref_from_capi(connection) } {
++        Ok(connection) => connection,
++        Err(err) => return unsafe { err.to_capi(error_opt_out) },
++    };
++    connection.set_max_value_length(length);
++    c::turso_status_code_t::TURSO_OK
++}
++
+ type CScalarFunction = unsafe extern "C" fn(
+     usize,
+     i32,
+diff --git a/sdk-kit/src/rsapi.rs b/sdk-kit/src/rsapi.rs
+index de788f0..dc5a903 100644
+--- a/sdk-kit/src/rsapi.rs
++++ b/sdk-kit/src/rsapi.rs
+@@ -1185,6 +1185,9 @@ impl TursoConnection {
+     ) {
+         self.connection.set_fts_progress_handler(handler);
+     }
++    pub fn set_max_value_length(&self, length: i64) {
++        self.connection.set_max_value_length(length);
++    }
+     /// Request interruption of the statement currently running on this connection.
+     /// Mirrors `sqlite3_interrupt`: the in-flight `step`/`execute` aborts with an
+     /// `Interrupt` error. Safe to call from another thread. If no statement is
+diff --git a/sdk-kit/turso.h b/sdk-kit/turso.h
+index 9003ea9..35addf9 100644
+--- a/sdk-kit/turso.h
++++ b/sdk-kit/turso.h
+@@ -324,6 +324,18 @@ turso_status_code_t turso_connection_set_fts_progress_handler(
+     int32_t (*callback)(uint64_t work, uint64_t bytes),
+     const char **error_opt_out);
+ 
++turso_status_code_t turso_connection_interrupt(const turso_connection_t *self, const char **error_opt_out);
++
++turso_status_code_t turso_connection_set_query_timeout_ms(
++    const turso_connection_t *self,
++    uint64_t timeout_ms,
++    const char **error_opt_out);
++
++turso_status_code_t turso_connection_set_max_value_length(
++    const turso_connection_t *self,
++    int64_t length,
++    const char **error_opt_out);
++
+ /** Get autocommit state of the connection */
+ bool turso_connection_get_autocommit(const turso_connection_t *self);
+ 

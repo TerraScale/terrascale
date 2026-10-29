@@ -14,7 +14,9 @@ RUN echo 'eadb14ec88ac351c938908443bcb89da324411e4eb8f8d068b3cc755fc0808ae  /inp
     && git apply --check /inputs/0001-preserve-page-authentication-damage.patch && git apply /inputs/0001-preserve-page-authentication-damage.patch \
     && echo 'e90dfc73d7064867fcfa5120c9b23f86d57eeaa7e6fca4c2c53005c80a37314f  /inputs/0002-select-runtime-aegis-c-backend.patch' | sha256sum --check \
     && git apply --check /inputs/0002-select-runtime-aegis-c-backend.patch && git apply /inputs/0002-select-runtime-aegis-c-backend.patch \
-    && git apply --check /inputs/turso-native-budget.patch && git apply /inputs/turso-native-budget.patch
+    && git apply --check /inputs/turso-native-budget.patch && git apply /inputs/turso-native-budget.patch \
+    && echo '94bec89cb24ceb590b401e30182db4b9c173a222a0ee3a8460ee2afc50fc77f8  /inputs/0004-export-interrupt-query-timeout-and-value-length.patch' | sha256sum --check \
+    && git apply --check /inputs/0004-export-interrupt-query-timeout-and-value-length.patch && git apply /inputs/0004-export-interrupt-query-timeout-and-value-length.patch
 # The sync dependency selects encryption + FTS without the transitive pure-rust default.
 RUN cargo +1.88.0 tree --locked --package turso_sync_sdk_kit --features turso_sdk_kit/fts -e features -i aegis > /inputs/aegis-feature-tree.txt \
     && ! grep -E 'feature "(pure-rust|pure-rust-crypto)"' /inputs/aegis-feature-tree.txt \
@@ -43,8 +45,12 @@ RUN case "$TARGETARCH" in amd64) rid=linux-x64; machine=3e00 ;; arm64) rid=linux
     && grep -qw turso_sync_database_new "/out/release/$rid-exports.txt" \
     && grep -qw turso_terrascale_storage_error_contract "/out/release/$rid-exports.txt" \
     && grep -qw turso_connection_set_fts_progress_handler "/out/release/$rid-exports.txt" \
+    && grep -qw turso_connection_interrupt "/out/release/$rid-exports.txt" \
+    && grep -qw turso_connection_set_query_timeout_ms "/out/release/$rid-exports.txt" \
+    && grep -qw turso_connection_set_max_value_length "/out/release/$rid-exports.txt" \
+    && grep -qw turso_connection_prepare_first "/out/release/$rid-exports.txt" \
     && cc -Wall -Wextra -Werror -I sdk-kit /inputs/turso-native-smoke.c -L target/lib-release -lturso_sdk_kit -o /smoke \
-    && cc -Wall -Wextra -Werror -I sdk-kit /inputs/turso-native-contract-smoke.c -L target/lib-release -lturso_sdk_kit -o /contract-smoke \
+    && cc -Wall -Wextra -Werror -pthread -I sdk-kit /inputs/turso-native-contract-smoke.c -L target/lib-release -lturso_sdk_kit -o /contract-smoke \
     && LD_LIBRARY_PATH=/turso/target/lib-release /smoke 2>&1 | tee "/out/release/$rid-fts-smoke.txt" \
     && LD_LIBRARY_PATH=/turso/target/lib-release /smoke expression 2>&1 | tee "/out/release/$rid-expression-probe.txt" \
     && LD_LIBRARY_PATH=/turso/target/lib-release /contract-smoke 2>&1 | tee "/out/release/$rid-contract1-smoke.txt" \
