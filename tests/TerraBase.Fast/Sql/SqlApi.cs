@@ -23,7 +23,7 @@ internal static class SqlApi
     public static async Task<JsonElement[]> OkAsync(DocumentApi api, params string[] sql)
     {
         var response = await ExecuteAsync(api, sql);
-        response.Status.ShouldBe(HttpStatusCode.OK);
+        await Assert.That(response.Status).IsEqualTo(HttpStatusCode.OK).Because(response.Message ?? "SQL response");
         return [.. response.Json.GetProperty("results").EnumerateArray()];
     }
 

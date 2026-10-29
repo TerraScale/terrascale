@@ -6,7 +6,9 @@ using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
+using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Observability;
+using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 
@@ -123,6 +125,46 @@ public sealed class HealthTests
         await Assert.That(health.Calls).IsEqualTo(before);
         clock.Advance(TimeSpan.FromSeconds(5));
         await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(health.Calls > before), TimeSpan.FromSeconds(15))).IsTrue();
+    }
+
+    [Test]
+    public async Task A_closure_storage_failure_arriving_during_shutdown_does_not_fault_the_host()
+    {
+        using var transport = new ShutdownClosureStorage();
+        using var storage = new HttpClient(transport);
+        await using var server = await AuthTestServer.StartAsync(services: services =>
+        {
+            services.AddSingleton(storage);
+            services.AddSingleton<IStorageHealth>(new FakeStorageHealth(healthy: false));
+        });
+        await transport.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        using var ready = await server.Client.GetAsync("/readyz");
+        await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+
+        await server.App.StopAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        await server.App.Services.GetRequiredService<ClosureWorker>().ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30));
+        await Assert.That(transport.FailedDuringShutdown.Task.IsCompletedSuccessfully).IsTrue();
+    }
+
+    private sealed class ShutdownClosureStorage : HttpMessageHandler
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource FailedDuringShutdown { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsolutePath.Contains("/" + AuthStore.ClosureJobCollection + "/", StringComparison.Ordinal))
+            {
+                var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                using var registration = cancellationToken.Register(() => canceled.TrySetResult());
+                this.Entered.TrySetResult();
+                await canceled.Task;
+                this.FailedDuringShutdown.TrySetResult();
+                throw ApiException.Unavailable(new IOException("synthetic storage closed during shutdown"));
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+        }
     }
 
     [Test]

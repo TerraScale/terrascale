@@ -35,7 +35,7 @@ public sealed class HranaStreamTests
         var after = await PostAsync(api, """{"requests":[{"type":"execute","stmt":{"sql":"SELECT x FROM t ORDER BY x"}},{"type":"close"}]}""");
 
         await Assert.That(Nulls(Response(begin.Json, 1).GetProperty("result").GetProperty("step_errors"))).IsEqualTo("null,null");
-        await Assert.That((first.Length, first[^2..])).IsEqualTo((24, ".t"));
+        await Assert.That((first.Length, first[^2..])).IsEqualTo((51, ".t"));
         await Assert.That(second).IsNotEqualTo(first);
         var steps = Response(middle.Json, 1).GetProperty("result");
         await Assert.That(steps.GetProperty("step_results")[0].GetProperty("rows").GetRawText()).IsEqualTo("""[[{"type":"float","value":2.5}]]""");
@@ -103,7 +103,7 @@ public sealed class HranaStreamTests
     }
 
     [Test]
-    public async Task A_forged_stateless_baton_opens_a_fresh_stream_for_the_caller_and_never_reaches_another()
+    public async Task A_forged_stateless_baton_cannot_retarget_a_database_or_reach_another_owners_state()
     {
         await using var api = await DocumentApi.StartAsync();
         using var other = await api.ClientWithScopesAsync("documents:read", "documents:write");
@@ -116,11 +116,9 @@ public sealed class HranaStreamTests
         var real = await PostAsync(api, UseStored(baton));
 
         await Assert.That(baton).EndsWith(".t");
-        foreach (var fresh in new[] { otherKey, otherDatabase })
-        {
-            await Assert.That(Types(fresh.Json)).IsEqualTo("error,ok:close");
-            await Assert.That(fresh.Json.GetProperty("results")[0].GetProperty("error").GetProperty("code").GetString()).IsEqualTo("SQL_NOT_FOUND");
-        }
+        await Assert.That(Types(otherKey.Json)).IsEqualTo("error,ok:close");
+        await Assert.That(otherKey.Json.GetProperty("results")[0].GetProperty("error").GetProperty("code").GetString()).IsEqualTo("SQL_NOT_FOUND");
+        await AssertExpiredAsync(otherDatabase);
 
         await Assert.That(Types(real.Json)).IsEqualTo("ok:execute,ok:close");
         await Assert.That(Response(real.Json, 0).GetProperty("result").GetProperty("rows").GetRawText()).IsEqualTo("""[[{"type":"integer","value":"1"}]]""");

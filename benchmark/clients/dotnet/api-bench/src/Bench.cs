@@ -241,7 +241,12 @@ internal sealed class Bench : IDisposable
     /// <summary>One raw request with the cached JWT. The body is read in full so the counter sees it.</summary>
     private async Task<string> SendAsync(HttpClient http, HttpMethod method, Uri uri, HttpContent? body, CancellationToken ct)
     {
-        using var request = new HttpRequestMessage(method, uri) { Content = body };
+        using var request = new HttpRequestMessage(method, uri)
+        {
+            Content = body,
+            Version = http.DefaultRequestVersion,
+            VersionPolicy = http.DefaultVersionPolicy,
+        };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await tokens.GetAsync(ct));
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         await response.Content.CopyToAsync(Stream.Null, ct);

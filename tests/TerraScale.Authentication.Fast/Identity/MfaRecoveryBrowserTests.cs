@@ -45,7 +45,8 @@ public sealed partial class MfaSignInTests
         await Assert.That(await disable.InputValueAsync()).IsEqualTo(codes[1]);
         await Assert.That(await page.Locator(".otp input").CountAsync()).IsEqualTo(0);
         await page.GetByRole(AriaRole.Button, new() { Name = "Turn off two-factor authentication" }).ClickAsync();
-        await Microsoft.Playwright.Assertions.Expect(page.GetByRole(AriaRole.Status)).ToContainTextAsync("Two-factor authentication is off.");
+        await Microsoft.Playwright.Assertions.Expect(page.GetByRole(AriaRole.Status).Filter(new() { HasText = "Two-factor authentication is off." }))
+            .ToContainTextAsync("Two-factor authentication is off.");
     }
 
     [Test]

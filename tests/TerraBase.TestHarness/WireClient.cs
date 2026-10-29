@@ -13,6 +13,9 @@ public sealed record WireAnswer(int Status, ArraySegment<byte> Payload, byte Ope
     /// <summary>The error code of an error answer.</summary>
     public string Code => Status >= 400 ? Encoding.ASCII.GetString(Payload.Slice(1, Payload[0])) : "";
 
+    /// <summary>The error message, UTF-8 to the end of the frame.</summary>
+    public string Message => Status >= 400 ? Encoding.UTF8.GetString(Payload[(1 + Payload[0])..]) : "";
+
     /// <summary>The ETag of a get or put answer.</summary>
     public string ETag => Operation is 2 or 3 ? Encoding.ASCII.GetString(Payload.Slice(2, Payload[1])) : Encoding.ASCII.GetString(Payload.Slice(1, Payload[0]));
 
@@ -51,8 +54,16 @@ public sealed class WireClient : IAsyncDisposable
     public static async Task<WireClient> ConnectAsync(int port)
     {
         var tcp = new TcpClient { NoDelay = true };
-        await tcp.ConnectAsync(IPAddress.Loopback, port);
-        return new WireClient(tcp);
+        try
+        {
+            await tcp.ConnectAsync(IPAddress.Loopback, port);
+            return new WireClient(tcp);
+        }
+        catch
+        {
+            tcp.Dispose();
+            throw;
+        }
     }
 
     /// <summary>Connects and sends the hello; throws when it is refused.</summary>
@@ -71,6 +82,9 @@ public sealed class WireClient : IAsyncDisposable
 
     public Task<WireAnswer> HelloAsync(string key, string project, string database) =>
         SendAsync(0, [1, .. Text(key), .. Text(project), .. Text(database)]);
+
+    public Task<WireAnswer> HelloPinnedAsync(string key, string project, string database, string region) =>
+        SendAsync(4, [1, .. Text(key), .. Text(project), .. Text(database), checked((byte)Encoding.UTF8.GetByteCount(region)), .. Encoding.UTF8.GetBytes(region)]);
 
     public Task<WireAnswer> GetAsync(string collection, string id) => SendAsync(1, Address(collection, id));
 

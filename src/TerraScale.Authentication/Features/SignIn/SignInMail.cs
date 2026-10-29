@@ -310,6 +310,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
 
     private async Task<IssuedPasscode?> IssueAsync(MailWork work) => work.Purpose switch
     {
+        PasscodePurpose.SignUp when work.PasswordHash is null => await passcodes.ResendSignUpAsync(work.Tenant, work.Email, work.PendingToken!, CancellationToken.None).ConfigureAwait(false),
         PasscodePurpose.SignUp => await passcodes.RequestSignUpAsync(work.Tenant, work.Email, work.PasswordHash!, work.PendingToken!, CancellationToken.None).ConfigureAwait(false),
         PasscodePurpose.StepUp => await users.GetAsync(work.Tenant, work.UserId!, CancellationToken.None).ConfigureAwait(false) is { } user
             ? await passcodes.RequestStepUpAsync(user, work.RequestId!, CancellationToken.None).ConfigureAwait(false)
@@ -484,6 +485,10 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         /// <summary>Queues a sign-up code, or a sign-in code when the address already has an account.</summary>
         public Task EnqueueSignUpAsync(string tenant, string email, string passwordHash, string pendingToken, string locale = AuthEmails.English) =>
             this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = PasscodePurpose.SignUp, PasswordHash = passwordHash, PendingToken = pendingToken }, locale, null);
+
+        /// <summary>Queues a resend bound to the original pending sign-up; the worker rechecks its token before issuance.</summary>
+        public Task EnqueueSignUpResendAsync(string tenant, string email, string pendingToken, string locale = AuthEmails.English) =>
+            this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = PasscodePurpose.SignUp, PendingToken = pendingToken }, locale, null);
 
         /// <summary>Queues the step-up code of hosted request <paramref name="requestId"/>.</summary>
         public Task EnqueueStepUpAsync(UserRecord user, string requestId)

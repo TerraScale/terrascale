@@ -57,10 +57,10 @@ case SignInStep.DeviceEnter:
 <p class="sub">Enter the code shown in your terminal.</p>
 break;
 case SignInStep.DeviceConfirm:
-<p class="sub">Approve only if you started this sign-in from the TerraScale CLI and the code matches your terminal.</p>
+<p class="sub">Approve only if you started this sign-in from <strong>@Model.ClientName</strong> and the code matches your device.</p>
 break;
 case SignInStep.DeviceApproved:
-<p class="sub">The TerraScale CLI is signed in. You can close this page and return to your terminal.</p>
+<p class="sub">The device is signed in. You can close this page and return to your application.</p>
 break;
 case SignInStep.DeviceDenied:
 <p class="sub">The device was not signed in. You can close this page.</p>
@@ -95,18 +95,34 @@ break;
 @if (Model.Error is { } error)
 {
 <div class="alert" data-state="@(Model.Limited ? "limited" : "error")" role="alert"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#@(Model.Limited ? "i-clock" : "i-circle-alert")"></use></svg><div>@if (Model.ErrorTitle is { } errorTitle)
-{<strong>@errorTitle</strong>}<p>@error</p></div></div>
+{<strong>@errorTitle</strong>}<p id="form-error">@error</p></div></div>
 }
 @if (Model.Error is not null || Model.Step is SignInStep.Rejected or SignInStep.NotFound)
 {
 <p class="hint">Request ID: @Model.RequestId</p>
 }
+@if (Model.RetryAt is { } retryAt)
+{
+<p id="retry-hint" class="hint" role="status">Try again at <time datetime="@retryAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture)">@retryAt.ToString("HH:mm:ss 'UTC'", System.Globalization.CultureInfo.InvariantCulture)</time>. If sign-in expires while waiting, start again.</p>
+<p class="hint" data-retry-seconds="@Model.RetrySeconds" aria-live="off"></p>
+}
+@if (Model.Step is SignInStep.Code or SignInStep.SignUpCode or SignInStep.ResetCode)
+{
+<p id="resend-hint" class="hint">Wait at least 60 seconds before requesting another code. Request limits still apply.
+@if (Model.ResendAt is { } resendAt)
+{
+<span>Request another code after <time datetime="@resendAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture)">@resendAt.ToString("HH:mm:ss 'UTC'", System.Globalization.CultureInfo.InvariantCulture)</time>.</span>
+<span data-retry-seconds="@TerraScale.Authentication.Features.SignIn.HostedAuth.MailCooldown.TotalSeconds" aria-live="off"></span>
+}
+</p>
+}
+<p id="submission-status" class="hint" role="status" aria-live="polite"></p>
 @if (Model.Slug == TerraScale.Authentication.Features.Oidc.OidcIssuer.InstanceId && Model.Step is SignInStep.Email or SignInStep.SignUp && Model.Theme.Providers is { Count: > 0 } providers)
 {
 <div class="actions" aria-label="Social sign-in">
 @foreach (var provider in providers)
 {
-<form method="post" action="/ui/@Model.Slug/social/@provider">
+<form id="social-@provider" name="social-@provider" method="post" action="/ui/@Model.Slug/social/@provider">
 <input type="hidden" name="next" value="@Model.Next">
 <button class="secondary" type="submit">Continue with @TerraScale.Authentication.Features.ProjectTenants.SocialProviders.Label(provider)</button>
 </form>
@@ -117,11 +133,11 @@ break;
 @switch (Model.Step)
 {
 case SignInStep.Email:
-<form method="post" action="/ui/@Model.Slug/sign-in@(Model.Theme.Passcode ? "" : "/password")">
+<form id="sign-in-email-form" name="sign-in-email-form" method="post" action="/ui/@Model.Slug/sign-in@(Model.Theme.Passcode ? "" : "/password")">
 <input type="hidden" name="next" value="@Model.Next">
 <div class="field">
 <label for="sign-in-email">Email</label>
-<input id="sign-in-email" name="email" type="email" autocomplete="username" placeholder="you@company.com" required autofocus value="@Model.Email">
+<input id="sign-in-email" name="email" type="email" autocomplete="username" placeholder="you@company.com" required autofocus value="@Model.Email" aria-describedby="@(Model.Error is null ? null : "form-error")">
 </div>
 <div class="actions">
 @if (Model.Theme.Passcode)
@@ -155,19 +171,19 @@ case SignInStep.Email:
 </div>
 break;
 case SignInStep.Password:
-<form method="post" action="/ui/@Model.Slug/sign-in/password">
+<form id="sign-in-password-form" name="sign-in-password-form" method="post" action="/ui/@Model.Slug/sign-in/password">
 <input type="hidden" name="next" value="@Model.Next">
-<input type="hidden" name="email" value="@Model.Email">
+<input id="sign-in-username" type="hidden" name="email" autocomplete="username" value="@Model.Email">
 <div class="chip"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg><span>@Model.Email</span><a href="@Model.Link("sign-in")">Change</a></div>
 <div class="field">
 <div class="row"><label for="sign-in-password">Password</label><a href="@Model.Link("reset")">Forgot password?</a></div>
-<input id="sign-in-password" name="password" type="password" autocomplete="current-password" required autofocus>
+<input id="sign-in-password" name="password" type="password" autocomplete="current-password" required autofocus aria-describedby="@(Model.Error is null ? null : "form-error")">
 </div>
 <button type="submit">Sign in</button>
 </form>
 @if (Model.Theme.Passcode)
 {
-<form method="post" action="/ui/@Model.Slug/sign-in">
+<form id="sign-in-password-resend-form" name="sign-in-password-resend-form" method="post" action="/ui/@Model.Slug/sign-in">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <button type="submit" class="secondary"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg>Email me a sign-in code</button>
@@ -175,19 +191,20 @@ case SignInStep.Password:
 }
 break;
 case SignInStep.Code:
-<form method="post" action="/ui/@Model.Slug/sign-in/verify">
+<form id="sign-in-code-form" name="sign-in-code-form" method="post" action="/ui/@Model.Slug/sign-in/verify">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <div class="field">
 <label for="sign-in-code">Sign-in code</label>
-<input id="sign-in-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus>
+<input id="sign-in-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus aria-describedby="@(Model.Error is null ? null : "form-error")">
 </div>
 <button type="submit">Verify and sign in</button>
 </form>
-<form method="post" action="/ui/@Model.Slug/sign-in">
+<form id="sign-in-code-resend-form" name="sign-in-code-resend-form" method="post" action="/ui/@Model.Slug/sign-in">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
-<button type="submit" class="secondary">Send a new code</button>
+<input type="hidden" name="resend" value="true">
+<button type="submit" class="secondary" aria-describedby="resend-hint">Send a new code</button>
 </form>
 <div class="row"><a href="@Model.Link("sign-in")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Different email</a><a href="@Model.Link("sign-up")">Create account</a></div>
 break;
@@ -225,16 +242,16 @@ case SignInStep.Rejected:
 <a class="btn" href="@Model.Link("sign-in")">Back to sign in<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.SignUp:
-<form method="post" action="/ui/@Model.Slug/sign-up">
+<form id="sign-up-form" name="sign-up-form" method="post" action="/ui/@Model.Slug/sign-up">
 <input type="hidden" name="next" value="@Model.Next">
 <div class="field">
 <label for="sign-up-email">Email</label>
-<input id="sign-up-email" name="email" type="email" autocomplete="username" placeholder="you@company.com" required autofocus value="@Model.Email">
+<input id="sign-up-email" name="email" type="email" autocomplete="username" placeholder="you@company.com" required autofocus value="@Model.Email" aria-describedby="@(Model.Error is null ? null : "form-error")">
 </div>
 <div class="field">
 <label for="sign-up-password">Password</label>
-<input id="sign-up-password" name="password" type="password" autocomplete="new-password" minlength="15" required>
-<span class="hint">At least 15 characters. A passphrase of a few words works well.</span>
+<input id="sign-up-password" name="password" type="password" autocomplete="new-password" minlength="15" required aria-describedby="password-requirements @(Model.Error is null ? null : "form-error")">
+<span id="password-requirements" class="hint">At least 15 characters. A passphrase of a few words works well.</span>
 </div>
 <button type="submit">Create account</button>
 </form>
@@ -250,48 +267,56 @@ case SignInStep.SignUp:
 <p class="alt">Already have an account? <a href="@Model.Link("sign-in")">Sign in</a></p>
 break;
 case SignInStep.SignUpCode:
-<form method="post" action="/ui/@Model.Slug/sign-up/verify">
+<form id="sign-up-code-form" name="sign-up-code-form" method="post" action="/ui/@Model.Slug/sign-up/verify">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <input type="hidden" name="pending_token" value="@Model.PendingToken">
 <div class="field">
 <label for="sign-up-code">Verification code</label>
-<input id="sign-up-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus>
+<input id="sign-up-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus aria-describedby="@(Model.Error is null ? null : "form-error")">
 </div>
 <button type="submit">Verify email</button>
 </form>
-<div class="row"><a href="@Model.Link("sign-up")">Start over for a new code</a><a href="@Model.Link("sign-up")">Change email</a></div>
+<form id="sign-up-code-resend-form" name="sign-up-code-resend-form" method="post" action="/ui/@Model.Slug/sign-up/resend">
+<input type="hidden" name="next" value="@Model.Next">
+<input type="hidden" name="email" value="@Model.Email">
+<input type="hidden" name="pending_token" value="@Model.PendingToken">
+<input type="hidden" name="resend" value="true">
+<button type="submit" class="secondary" aria-describedby="resend-hint">Send a new code</button>
+</form>
+<div class="row"><a href="@Model.Link("sign-up")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Change email</a></div>
 break;
 case SignInStep.Reset:
-<form method="post" action="/ui/@Model.Slug/reset">
+<form id="reset-form" name="reset-form" method="post" action="/ui/@Model.Slug/reset">
 <input type="hidden" name="next" value="@Model.Next">
 <div class="field">
 <label for="reset-email">Email</label>
-<input id="reset-email" name="email" type="email" autocomplete="username" placeholder="you@company.com" required autofocus value="@Model.Email">
+<input id="reset-email" name="email" type="email" autocomplete="username" placeholder="you@company.com" required autofocus value="@Model.Email" aria-describedby="@(Model.Error is null ? null : "form-error")">
 </div>
 <button type="submit">Email me a reset code</button>
 </form>
 <p class="alt">Remembered it? <a href="@Model.Link("sign-in")">Sign in</a></p>
 break;
 case SignInStep.ResetCode:
-<form method="post" action="/ui/@Model.Slug/reset/complete">
+<form id="reset-code-form" name="reset-code-form" method="post" action="/ui/@Model.Slug/reset/complete">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <div class="field">
 <label for="reset-code">Reset code</label>
-<input id="reset-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus>
+<input id="reset-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus aria-describedby="@(Model.Error is null ? null : "form-error")">
 </div>
 <div class="field">
 <label for="reset-password">New password</label>
-<input id="reset-password" name="password" type="password" autocomplete="new-password" minlength="15" required>
-<span class="hint">At least 15 characters. Every session ends when it changes.</span>
+<input id="reset-password" name="password" type="password" autocomplete="new-password" minlength="15" required aria-describedby="password-requirements @(Model.Error is null ? null : "form-error")">
+<span id="password-requirements" class="hint">At least 15 characters. Every session ends when it changes.</span>
 </div>
 <button type="submit">Set new password</button>
 </form>
-<form method="post" action="/ui/@Model.Slug/reset">
+<form id="reset-code-resend-form" name="reset-code-resend-form" method="post" action="/ui/@Model.Slug/reset">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
-<button type="submit" class="secondary">Send a new code</button>
+<input type="hidden" name="resend" value="true">
+<button type="submit" class="secondary" aria-describedby="resend-hint">Send a new code</button>
 </form>
 <div class="row"><a href="@Model.Link("reset")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Different email</a></div>
 break;
@@ -299,10 +324,10 @@ case SignInStep.ResetDone:
 <a class="btn" href="@Model.Link("sign-in")">Sign in<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.DeviceEnter:
-<form method="get" action="/ui/@Model.Slug/device">
+<form id="device-entry-form" name="device-entry-form" method="get" action="/ui/@Model.Slug/device">
 <div class="field">
 <label for="device-code">Device code</label>
-<input id="device-code" class="code" name="user_code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="32" placeholder="0000-0000-0000" required autofocus value="@Model.UserCode">
+<input id="device-code" class="code" name="user_code" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" maxlength="32" placeholder="0000-0000-0000" required autofocus value="@Model.UserCode" aria-describedby="@(Model.Error is null ? null : "form-error")">
 </div>
 <button type="submit">Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></button>
 </form>
@@ -314,10 +339,17 @@ break;
 case SignInStep.DeviceConfirm:
 <div class="device-code" aria-label="Device code">@Model.UserCode</div>
 <dl class="facts">
-<div><dt>Application</dt><dd>TerraScale CLI</dd></div>
+<div><dt>Application</dt><dd>@Model.ClientName</dd></div>
 <div><dt>Account</dt><dd>@Model.Account</dd></div>
 </dl>
-<form method="post" action="/ui/@Model.Slug/device">
+<p id="device-permissions">Requested permissions</p>
+<ul aria-labelledby="device-permissions">
+@foreach (var permission in Model.RequestedPermissions)
+{
+<li>@permission</li>
+}
+</ul>
+<form id="device-consent-form" name="device-consent-form" method="post" action="/ui/@Model.Slug/device">
 <input type="hidden" name="user_code" value="@Model.UserCode">
 <div class="actions">
 <button type="submit" name="decision" value="approve"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-terminal"></use></svg>Approve</button>
@@ -329,14 +361,14 @@ case SignInStep.DeviceApproved:
 <div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>Device approved.</p></div>
 break;
 case SignInStep.Mfa:
-<form method="post" action="/ui/@Model.Slug/sign-in/mfa">
+<form id="mfa-form" name="mfa-form" method="post" action="/ui/@Model.Slug/sign-in/mfa">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <input type="hidden" name="challenge" value="@Model.Challenge">
 <div class="field">
 <label for="mfa-code">Authentication code</label>
-<input id="mfa-code" class="code" name="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="······" required autofocus>
-<span class="hint">Lost your authenticator? Enter one of your recovery codes instead.</span>
+<input id="mfa-code" class="code" name="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="······" required autofocus aria-describedby="mfa-hint @(Model.Error is null ? null : "form-error") @(Model.RetryAt is null ? null : "retry-hint")">
+<span id="mfa-hint" class="hint">Lost your authenticator? Enter one of your recovery codes instead.</span>
 </div>
 <button type="submit">Verify and sign in</button>
 </form>
@@ -353,10 +385,11 @@ case SignInStep.Security:
 </dl>
 @if (Model.MfaEnabled)
 {
-<form method="post" action="/ui/@Model.Slug/security/totp/disable">
+<form id="security-form" name="security-form" method="post" action="/ui/@Model.Slug/security/totp/disable">
+<input type="hidden" name="next" value="@Model.Next">
 <div class="field">
 <label for="disable-code">Code to turn off two-factor</label>
-<input id="disable-code" class="code" name="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="······" required>
+<input id="disable-code" class="code" name="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="······" required aria-describedby="@(Model.Error is null ? null : "form-error")">
 <span class="hint">Your authenticator's current code or an unused recovery code. Every session signs out.</span>
 </div>
 <button type="submit" class="secondary">Turn off two-factor authentication</button>
@@ -364,7 +397,8 @@ case SignInStep.Security:
 }
 else
 {
-<form method="post" action="/ui/@Model.Slug/security/totp">
+<form id="security-resend-form" name="security-resend-form" method="post" action="/ui/@Model.Slug/security/totp">
+<input type="hidden" name="next" value="@Model.Next">
 <button type="submit"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>Set up an authenticator app</button>
 </form>
 }
@@ -372,15 +406,16 @@ break;
 case SignInStep.TotpSetup:
 <img src="@Model.QrCode" alt="QR code to add TerraScale to your authenticator app" width="240" height="240">
 <p class="hint">Can't scan it? Enter this key: <code>@Model.Secret</code></p>
-<form method="post" action="/ui/@Model.Slug/security/totp/confirm">
+<form id="totp-setup-form" name="totp-setup-form" method="post" action="/ui/@Model.Slug/security/totp/confirm">
+<input type="hidden" name="next" value="@Model.Next">
 <div class="field">
 <label for="totp-code">Code from the app</label>
-<input id="totp-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus>
+<input id="totp-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus aria-describedby="@(Model.Error is null ? null : "form-error")">
 <span class="hint">Turning it on signs you out everywhere else.</span>
 </div>
 <button type="submit">Turn on two-factor authentication</button>
 </form>
-<div class="row"><a href="/ui/@Model.Slug/security"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Cancel</a></div>
+<div class="row"><a href="@Model.Link("security")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Cancel</a></div>
 break;
 case SignInStep.RecoveryCodes:
 <ul class="facts" aria-label="Recovery codes">
@@ -389,7 +424,7 @@ case SignInStep.RecoveryCodes:
 <li><code>@recovery</code></li>
 }
 </ul>
-<a class="btn" href="/ui/@Model.Slug/security">I saved them<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<a class="btn" href="@Model.Link("security")">I saved them<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.Reauthenticate:
 <a class="btn" href="@Model.Link("sign-in")">Sign in<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
@@ -400,6 +435,10 @@ break;
 case SignInStep.NotFound:
 <a class="btn" href="@Model.Link("sign-in")">Sign in<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
+}
+@if (Model.AccountReturn is { } accountReturn)
+{
+<div class="row"><a href="@accountReturn">Back to account</a></div>
 }
 @functions {
     /// <inheritdoc />

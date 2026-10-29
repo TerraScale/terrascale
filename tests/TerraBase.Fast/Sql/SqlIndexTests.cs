@@ -41,8 +41,9 @@ public sealed class SqlIndexTests
     {
         await using var api = await DocumentApi.StartAsync();
         await SqlApi.OkAsync(api, "CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT, team TEXT)");
-        await SqlApi.SendAsync(api, api.Client, Insert(1, "ada"), Insert(2, "ada"), Insert(3, "bob"),
+        var inserted = await SqlApi.SendAsync(api, api.Client, Insert(1, "ada"), Insert(2, "ada"), Insert(3, "bob"),
             new { sql = "UPDATE people SET team = 't' || id" });
+        await Assert.That(inserted.Status).IsEqualTo(HttpStatusCode.OK).Because(inserted.Message ?? "index fixture");
 
         var duplicates = await SqlApi.ExecuteAsync(api, "CREATE UNIQUE INDEX people_name ON people (name)");
         var distinct = await SqlApi.ExecuteAsync(api, "CREATE UNIQUE INDEX people_team ON people (team)", "CREATE UNIQUE INDEX people_name_team ON people (name, team)");

@@ -6,6 +6,8 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Fast.Documents;
+using TerraBase.Fast.Management;
+using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -17,6 +19,64 @@ public sealed class WireProtocolTests
     private const string Items = "items";
 
     private static readonly Faker Faker = new();
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_hello_cannot_switch_to_a_recreated_database_between_its_authorization_lookups(bool databaseScoped)
+    {
+        var recordRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var armed = 0;
+        ManagedDatabaseRef? database = null;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using var api = await ManagementApi.StartAsync(services: services =>
+        {
+            var registration = services.Single(service => service.ServiceType == typeof(IManagementService));
+            services.Remove(registration);
+            services.AddSingleton(provider =>
+            {
+                var inner = (IManagementService)registration.ImplementationFactory!(provider);
+                return UsageApiTests.SlowManagement.Wrap(inner, _ => { }, operation =>
+                    operation == nameof(IManagementService.FindDatabaseRecordAsync) && Interlocked.Exchange(ref armed, 0) == 1
+                        ? new ValueTask<FindDatabaseRecordResult>(ReadBeforeRecreationAsync(inner))
+                        : null);
+            });
+        });
+        database = await api.CreateManagedDatabaseAsync();
+        var key = await api.Server.IssueNarrowedAsync(database.Organization, database.Project, databaseScoped ? database.Id : null, "documents:read");
+        await using var session = await WireClient.ConnectAsync(api.Server.WirePort);
+        Volatile.Write(ref armed, 1);
+        var hello = session.HelloAsync(key, database.Project, database.Name);
+        ManagedDatabaseRef replacement;
+        try
+        {
+            await recordRead.Task.WaitAsync(deadline.Token);
+            using var deleted = await api.Client.DeleteAsync(ManagementApi.Uri(database.Path), deadline.Token);
+            await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+            replacement = await api.CreateManagedDatabaseAsync(database.Organization, database.Project, database.Name);
+            await Assert.That(replacement.Id).IsNotEqualTo(database.Id);
+        }
+        finally
+        {
+            resume.TrySetResult();
+        }
+
+        var refused = await hello.WaitAsync(deadline.Token);
+        await Assert.That((refused.Status, refused.Code)).IsEqualTo((404, "unknown_database"));
+        await using var fresh = await WireClient.ConnectAsync(api.Server.WirePort);
+        var retried = await fresh.HelloAsync(key, replacement.Project, replacement.Name);
+        await Assert.That(retried.Status).IsEqualTo(databaseScoped ? 404 : 200);
+
+        async Task<FindDatabaseRecordResult> ReadBeforeRecreationAsync(IManagementService inner)
+        {
+            var target = database ?? throw new InvalidOperationException("The test database has not been created.");
+            var record = await inner.FindDatabaseRecordAsync(target.Organization, target.Project, target.Name, deadline.Token);
+            recordRead.TrySetResult();
+            await resume.Task.WaitAsync(deadline.Token);
+            return record;
+        }
+    }
 
     [Test]
     public async Task Outgoing_memory_refusal_does_not_accept_a_wire_read_charge()
@@ -108,6 +168,18 @@ public sealed class WireProtocolTests
         await Assert.That(deleted.RemoteDurable).IsFalse();
         await Assert.That(deleted.ETag).StartsWith("tbv1-");
         await Assert.That((read.Status, read.Code)).IsEqualTo((404, "not_found"));
+    }
+
+    [Test]
+    public async Task Pinned_hello_bounds_and_region_syntax_fail_closed_before_key_lookup()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var hello = Hello("invalid", Ulid.NewUlid().ToString(), "main");
+        await Assert.That(await RefusedAsync(api, 4, hello)).IsEqualTo((400, "invalid_frame"));
+        await Assert.That(await RefusedAsync(api, 4, [.. hello, 0])).IsEqualTo((400, "invalid_frame"));
+        await Assert.That(await RefusedAsync(api, 4, [.. hello, 64, .. Encoding.ASCII.GetBytes(new string('a', 64))])).IsEqualTo((400, "invalid_frame"));
+        await Assert.That(await RefusedAsync(api, 4, [.. hello, 3, .. "gru"u8, 0])).IsEqualTo((400, "invalid_frame"));
+        await Assert.That(await RefusedAsync(api, 4, [.. hello, 3, .. "GRU"u8])).IsEqualTo((421, "misdirected_request"));
     }
 
     [Test]

@@ -1,5 +1,8 @@
 using System.Net;
+using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
+using TerraBase.Fast.Documents;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Platform;
@@ -58,6 +61,12 @@ public sealed class ClientCorsTests
     [Arguments("/changes", "GET")]
     [Arguments("/collections/todos/shape", "GET")]
     [Arguments("/COLLECTIONS/todos/query", "POST")]
+    [Arguments("/sql/execute", "POST")]
+    [Arguments("/libsql/v2/pipeline", "POST")]
+    [Arguments("/libsql/v3/pipeline", "POST")]
+    [Arguments("/libsql/v3/cursor", "POST")]
+    [Arguments("/SQL/EXECUTE", "POST")]
+    [Arguments("/LIBSQL/V3/CURSOR", "POST")]
     public async Task Client_data_preflight_accepts_bearer_headers_without_credentials(string route, string method)
     {
         await using var server = await TerraBaseTestServer.StartAsync();
@@ -76,11 +85,25 @@ public sealed class ClientCorsTests
     }
 
     [Test]
-    public async Task Browser_receives_the_denied_data_response_and_exposed_contract_headers()
+    [Arguments("/collections/todos/documents", "GET", null)]
+    [Arguments("/sql/execute", "POST", null)]
+    [Arguments("/libsql/v2/pipeline", "POST", null)]
+    [Arguments("/libsql/v3/pipeline", "POST", null)]
+    [Arguments("/libsql/v3/cursor", "POST", null)]
+    [Arguments("/sql/execute", "POST", "invalid")]
+    [Arguments("/libsql/v2/pipeline", "POST", "invalid")]
+    [Arguments("/libsql/v3/pipeline", "POST", "invalid")]
+    [Arguments("/libsql/v3/cursor", "POST", "invalid")]
+    public async Task Browser_receives_the_denied_data_response_and_exposed_contract_headers(string route, string method, string? bearer)
     {
         await using var server = await TerraBaseTestServer.StartAsync();
         using var client = new HttpClient { BaseAddress = server.ClientAddress };
-        using var request = new HttpRequestMessage(HttpMethod.Get, Database + "/collections/todos/documents");
+        using var request = new HttpRequestMessage(new HttpMethod(method), Database + route);
+        if (bearer is not null)
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
+        }
+
         request.Headers.Add("Origin", "https://example.com");
         using var response = await client.SendAsync(request);
 
@@ -94,17 +117,59 @@ public sealed class ClientCorsTests
     }
 
     [Test]
-    public async Task Internal_and_management_routes_do_not_answer_browser_preflight()
+    [Arguments("/sql/execute", """{"statements":[{"sql":"SELECT 1"}]}""")]
+    [Arguments("/libsql/v2/pipeline", """{"requests":[{"type":"execute","stmt":{"sql":"SELECT 1"}},{"type":"close"}]}""")]
+    [Arguments("/libsql/v3/pipeline", """{"requests":[{"type":"execute","stmt":{"sql":"SELECT 1"}},{"type":"close"}]}""")]
+    [Arguments("/libsql/v3/cursor", """{"batch":{"steps":[{"stmt":{"sql":"SELECT 1"}}]}}""")]
+    public async Task Authenticated_sql_responses_are_readable_by_the_browser(string route, string body)
+    {
+        await using var api = await DocumentApi.StartAsync();
+        using var request = new HttpRequestMessage(HttpMethod.Post, api.DatabasePath() + route)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Add("Origin", "https://example.com");
+        using var response = await api.Client.SendAsync(request);
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(response.Headers.GetValues("Access-Control-Allow-Origin").Single()).IsEqualTo("*");
+        await Assert.That(response.Headers.Contains("Access-Control-Allow-Credentials")).IsFalse();
+        await Assert.That(response.Headers.GetValues("Access-Control-Expose-Headers").Single().Split(',').Select(value => value.Trim())).Contains("X-Request-ID");
+    }
+
+    [Test]
+    [Arguments("/sql")]
+    [Arguments("/sql/explain")]
+    [Arguments("/sql/execute/extra")]
+    [Arguments("/libsql")]
+    [Arguments("/libsql/v4/pipeline")]
+    [Arguments("/libsql/v2/cursor")]
+    [Arguments("/libsql/v3/pipeline/extra")]
+    [Arguments("/libsql/v3/cursor/extra")]
+    public async Task Unsupported_sql_paths_do_not_answer_browser_preflight(string route)
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+        using var client = new HttpClient { BaseAddress = server.ClientAddress };
+        using var request = Preflight(Database + route, "POST");
+        using var response = await client.SendAsync(request);
+
+        await Assert.That(response.Headers.Contains("Access-Control-Allow-Origin")).IsFalse();
+    }
+
+    [Test]
+    [Arguments("/changes", "GET")]
+    [Arguments("/sql/execute", "POST")]
+    [Arguments("/libsql/v2/pipeline", "POST")]
+    [Arguments("/libsql/v3/pipeline", "POST")]
+    [Arguments("/libsql/v3/cursor", "POST")]
+    public async Task Internal_and_management_routes_do_not_answer_browser_preflight(string route, string method)
     {
         await using var server = await TerraBaseTestServer.StartAsync();
         using var client = new HttpClient { BaseAddress = server.ClientAddress };
         using var management = Preflight("/v1/projects", "POST");
         using var managementResponse = await client.SendAsync(management);
         await Assert.That(managementResponse.Headers.Contains("Access-Control-Allow-Origin")).IsFalse();
-        using var sql = Preflight(Database + "/sql", "POST");
-        using var sqlResponse = await client.SendAsync(sql);
-        await Assert.That(sqlResponse.Headers.Contains("Access-Control-Allow-Origin")).IsFalse();
-        using var internalRequest = Preflight(Database + "/changes", "GET");
+        using var internalRequest = Preflight(Database + route, method);
         using var internalResponse = await server.Client.SendAsync(internalRequest);
         await Assert.That(internalResponse.Headers.Contains("Access-Control-Allow-Origin")).IsFalse();
     }

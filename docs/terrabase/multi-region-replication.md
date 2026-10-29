@@ -59,6 +59,7 @@ elsewhere ("section 15") are the file number prefixes.
 - [27. Idle databases cost almost nothing between writes](replication/27-idle-background-work.md)
 - [28. Anti-entropy repairs read before they write](replication/28-repair-reads-off-the-writer.md)
 - [29. A catalog gate opens from the maintained digests](replication/29-catalog-gate-start.md)
+- [28. SQL controls and Hrana routing qualification](replication/28-sql-hrana-routing-qualification.md)
 - [Receiver apply progress and the batch inactivity deadline](replication/receiver-apply-progress.md)
 - [Live replay of admitted writes after a cut-log refill](replication/admitted-write-refill-replay.md)
 

@@ -1,5 +1,7 @@
 # ts-auth
 
+Current availability and corrections to historical capability claims: [authentication capability matrix](capability-matrix.md).
+
 Read the [required zero-configuration operating contract](zero-configuration.md).
 Current configuration paths are implementation limitations, not production activation instructions.
 

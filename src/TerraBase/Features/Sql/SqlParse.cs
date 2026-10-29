@@ -3,7 +3,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using SqlParser;
 using SqlParser.Ast;
-using SqlParser.Dialects;
+using SqlParser.Tokens;
 using TerraBase.Engine;
 
 namespace TerraBase.Features.Sql;
@@ -158,7 +158,20 @@ internal static partial class SqlParse
         try
         {
             var (numbered, names) = SqlRead.Number(sql);
-            var statements = new Parser().ParseSql(numbered, new SQLiteDialect());
+            var parser = new Parser();
+            var statements = parser.ParseSql(numbered, new SqlDialect());
+            // The parser can stop at a block's END; client SQL must consume the entire input.
+            if (parser.PeekToken() is not EOF)
+            {
+                throw Parser.Expected("end of input", parser.PeekToken());
+            }
+
+            // SQLiteDialect silently drops ADD IF NOT EXISTS; inspect tokens without changing dialect or quoting.
+            if (statements is [Statement.AlterTable] && AlterIfNotExists(numbered))
+            {
+                throw new FormatException("ALTER TABLE does not support IF NOT EXISTS");
+            }
+
             return statements.Count == 1
                 ? Translate(statements[0]) with { Params = names }
                 : throw new FormatException("exactly one statement is supported");
@@ -170,6 +183,10 @@ internal static partial class SqlParse
         catch (TokenizeException exception)
         {
             return SqlErrors.Error(Syntax(exception.Line, exception.Column));
+        }
+        catch (SqlValueTooLargeException exception)
+        {
+            return SqlErrors.TooBig(exception.Message);
         }
         catch (FormatException exception)
         {
@@ -225,6 +242,7 @@ internal static partial class SqlParse
         Statement.Update update => SqlWrite.Update(update),
         Statement.Delete { DeleteOperation: var delete } => SqlWrite.Delete(delete),
         Statement.CreateTable { Element: var create } => CreateTable(create),
+        Statement.AlterTable alter => AddColumn(alter),
         Statement.Drop { ObjectType: ObjectType.Table } drop => DropTable(drop),
         Statement.CreateIndex { Element: var index } => CreateIndex(index),
         Statement.Drop { ObjectType: ObjectType.Index } drop => DropIndex(drop),

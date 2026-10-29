@@ -211,6 +211,46 @@ public sealed class PostgresWireTests
             ["id,bigint,,t", "name,text,,t", "email,character varying,,f", "team,text,,f"]);
     }
 
+    [Test]
+    public async Task An_aborted_transaction_refuses_every_portal_and_rollback_discards_reads_run_at_describe()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
+        await using var wire = await PostgresWireClient.ConnectAsync(api.Server.PostgresPort, key, database.Name);
+        await wire.QueryAsync(People);
+        await wire.SyncAsync(PostgresWireClient.Parse("described", "SELECT name FROM people"), PostgresWireClient.Describe('S', "described"),
+            PostgresWireClient.Parse("plain", "SELECT name FROM people"));
+        await wire.QueryAsync("BEGIN; SAVEPOINT s; INSERT INTO people (name) VALUES ('ghost')");
+        // "inherited" takes its statement's columns; Describe runs the reads of "cached" and "ghost" ahead of Execute.
+        var bound = await wire.SyncAsync(PostgresWireClient.Bind("inherited", "described"), PostgresWireClient.Bind("fresh", "plain"),
+            PostgresWireClient.Bind("cached", "plain"), PostgresWireClient.Describe('P', "cached"), PostgresWireClient.Bind("ghost", "plain"), PostgresWireClient.Describe('P', "ghost"));
+        var failed = await wire.QueryAsync("INSERT INTO people (name) VALUES (NULL)");
+        List<string> refused = [Tags(await wire.QueryAsync("SELECT oid FROM pg_type AS typ JOIN pg_namespace ns ON ns.oid = typnamespace"))];
+        foreach (var message in new (char, byte[])[] { PostgresWireClient.Parse("again", "SELECT 1"), PostgresWireClient.Bind("rebound", "plain"), PostgresWireClient.Describe('S', "described"),
+            PostgresWireClient.Describe('S', "plain"), PostgresWireClient.Describe('P', "inherited"), PostgresWireClient.Describe('P', "cached"), PostgresWireClient.Describe('P', "fresh"),
+            PostgresWireClient.Execute("cached"), ('E', [.. "cached\0"u8, 0, 0, 0, 1]) }) // The last asks for one row.
+        {
+            refused.Add(Tags(await wire.SyncAsync(message)));
+        }
+
+        await wire.QueryAsync("ROLLBACK TO s");
+        var recovered = await wire.SyncAsync(PostgresWireClient.Execute("ghost"));
+        await wire.QueryAsync("INSERT INTO people (name) VALUES ('kept'); SAVEPOINT t; INSERT INTO people (name) VALUES ('late')");
+        await wire.SyncAsync(PostgresWireClient.Bind("late", "plain"), PostgresWireClient.Describe('P', "late"));
+        await wire.QueryAsync("ROLLBACK TO t");
+        var kept = await wire.SyncAsync(PostgresWireClient.Execute("late"));
+        await wire.SyncAsync(PostgresWireClient.Bind("ended", "plain"), PostgresWireClient.Describe('P', "ended"));
+        await wire.QueryAsync("ROLLBACK");
+        var ended = await wire.SyncAsync(PostgresWireClient.Execute("ended"));
+
+        await Assert.That(Tags(bound)).IsEqualTo("Z:T");
+        await Assert.That(Tags(failed)).IsEqualTo("E:23502,Z:E");
+        await Assert.That(refused).IsEquivalentTo(Enumerable.Repeat("E:25P02,Z:E", 10));
+        await Assert.That(Tags(recovered)).IsEqualTo("C:SELECT 0,Z:T");
+        await Assert.That(Tags(kept)).IsEqualTo("D:kept,C:SELECT 1,Z:T");
+        await Assert.That(Tags(ended)).IsEqualTo("C:SELECT 0,Z:I");
+    }
+
     // Needs SQ1-c (SELECT with joins) and SQ1-d (INSERT/UPDATE/DELETE).
     [Test]
     public async Task Rows_are_written_with_parameters_and_read_with_joins()
@@ -264,6 +304,27 @@ public sealed class PostgresWireTests
         await Assert.That(inserted).IsEqualTo(3);
         await Assert.That(conflict!.SqlState).IsEqualTo("23505");
         await Assert.That(count[0][0]).IsEqualTo("3");
+    }
+
+    [Test]
+    public async Task Alter_add_column_refuses_a_prepared_result_whose_width_changed()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
+        await using var source = Source(api, key, database.Name);
+        await using var connection = await source.OpenConnectionAsync();
+        await ExecuteAsync(connection, "CREATE TABLE t (id INTEGER PRIMARY KEY)");
+        await ExecuteAsync(connection, "INSERT INTO t VALUES (1)");
+        await using var select = new NpgsqlCommand("SELECT * FROM t", connection);
+        await select.PrepareAsync();
+        await ExecuteAsync(connection, "ALTER TABLE t ADD extra TEXT");
+        var changed = await Assert.ThrowsAsync<PostgresException>(select.ExecuteScalarAsync);
+        await Assert.That(changed!.SqlState).IsEqualTo("0A000");
+        await using var current = new NpgsqlCommand("SELECT id, extra FROM t", connection);
+        await using var row = await current.ExecuteReaderAsync();
+        await Assert.That(await row.ReadAsync()).IsTrue();
+        await Assert.That(row.GetInt64(0)).IsEqualTo(1);
+        await Assert.That(row.IsDBNull(1)).IsTrue();
     }
 
     // Needs SQ1-d (writes) and SQ1-e (transactions).
@@ -377,6 +438,20 @@ public sealed class PostgresWireTests
         await Assert.That(invalid.Single(message => message.Type == 'E').Fields[0]).IsEqualTo("22P02");
         var recovery = await simple.QueryAsync("SELECT 1");
         await Assert.That(recovery.Single(message => message.Type == 'D').Fields[0]).IsEqualTo("1");
+    }
+    private static string Tags(List<(char Type, string?[] Fields)> messages) => string.Join(',', messages.Select(message => $"{message.Type}:{message.Fields[0]}"));
+
+    [Test]
+    [Arguments("main@")]
+    [Arguments("main@@gru")]
+    [Arguments("main@GRU")]
+    public async Task Malformed_database_pins_fail_closed_before_key_lookup(string database)
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var failure = await OpenFailureAsync(api, "invalid", database);
+        await Assert.That(failure!.SqlState).IsEqualTo("08004");
+        await Assert.That(failure.MessageText).StartsWith("misdirected_request:");
+        await Assert.That(failure.MessageText).DoesNotContain("database regions:");
     }
 
     private static async Task<PostgresException?> OpenFailureAsync(ManagementApi api, string key, string database)

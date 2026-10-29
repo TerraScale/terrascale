@@ -15,13 +15,18 @@ internal sealed class Tokens(TerraScaleAuthOidcClient oidc, string apiKey)
     private Cached? cached;
 
     /// <summary>The cached JWT, exchanged again within 60 s of expiry.</summary>
-    internal async ValueTask<string> GetAsync(CancellationToken cancellationToken)
+    internal ValueTask<string> GetAsync(CancellationToken cancellationToken) => GetAsync(TimeSpan.Zero, cancellationToken);
+
+    /// <summary>Exchanges now unless the cached JWT stays fresh for <paramref name="horizon"/>, so the next reads cannot refresh it.</summary>
+    internal async ValueTask PrewarmAsync(TimeSpan horizon, CancellationToken cancellationToken) => await GetAsync(horizon, cancellationToken);
+
+    private async ValueTask<string> GetAsync(TimeSpan horizon, CancellationToken cancellationToken)
     {
-        if (cached is { } current && DateTimeOffset.UtcNow < current.Refresh) return current.Token;
+        if (cached is { } current && DateTimeOffset.UtcNow + horizon < current.Refresh) return current.Token;
         await gate.WaitAsync(cancellationToken);
         try
         {
-            if (cached is null || DateTimeOffset.UtcNow >= cached.Refresh)
+            if (cached is null || DateTimeOffset.UtcNow + horizon >= cached.Refresh)
             {
                 var response = await ExchangeAsync(cancellationToken);
                 cached = new Cached(response.AccessToken, DateTimeOffset.UtcNow.AddSeconds(response.ExpiresIn - RefreshMarginSeconds));

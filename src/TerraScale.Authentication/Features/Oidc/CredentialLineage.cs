@@ -5,6 +5,7 @@ using OpenIddict.Abstractions;
 using OpenIddict.Server;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Store;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 using static OpenIddict.Server.OpenIddictServerEvents;
 
@@ -59,8 +60,8 @@ internal static class CredentialLineage
     }
 }
 
-/// <summary>Validates stored ancestry and status, ending the grant on authenticated refresh-token replay.</summary>
-public sealed class ValidateCredentialLineage(IOpenIddictTokenStore<OidcToken> tokens) : IOpenIddictServerHandler<ValidateTokenContext>
+/// <summary>Validates stored ancestry and status, ending grants on authenticated refresh-token or authorization-code replay.</summary>
+public sealed class ValidateCredentialLineage(IOpenIddictTokenStore<OidcToken> tokens, AuthStore store) : IOpenIddictServerHandler<ValidateTokenContext>
 {
     /// <inheritdoc />
     public async ValueTask HandleAsync(ValidateTokenContext context)
@@ -101,6 +102,12 @@ public sealed class ValidateCredentialLineage(IOpenIddictTokenStore<OidcToken> t
                 context.Reject(Errors.AccessDenied, "The device authorization was denied.");
                 return;
             default:
+                if (await AuthorizationCodeReplay.EndGrantAsync(context, context.Principal, store, tokens).ConfigureAwait(false))
+                {
+                    context.Reject(Errors.InvalidToken, AuthorizationCodeReplay.Notice);
+                    return;
+                }
+
                 context.Reject(context.Principal?.HasTokenType(TokenTypeIdentifiers.Private.ClientAssertion) == true
                     ? Errors.InvalidClient : Errors.InvalidToken, CredentialLineage.ConflictNotice);
                 return;

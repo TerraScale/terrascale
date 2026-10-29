@@ -107,7 +107,8 @@ public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, 
         cancellationToken.ThrowIfCancellationRequested();
         await reservation.EnqueueCodeAsync(tenant, address, PasscodePurpose.SignIn, AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage));
 
-        return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Code, SignInFlow.Tenant(this.HttpContext), address, SignInFlow.SafeNext(this.HttpContext, form.Next)));
+        return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Code, SignInFlow.Tenant(this.HttpContext), address, SignInFlow.SafeNext(this.HttpContext, form.Next))
+        { ResendAt = SignInFlow.ResendAt(this.HttpContext) });
     }
 }
 
@@ -339,7 +340,8 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
             AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage), cancellationToken);
         return wait is { } retry
             ? SignInFlow.Limited(this.HttpContext, SignInStep.SignUp, retry, address, next)
-            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUpCode, SignInFlow.Tenant(this.HttpContext), address, next) { PendingToken = pending });
+            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUpCode, SignInFlow.Tenant(this.HttpContext), address, next)
+            { PendingToken = pending, ResendAt = SignInFlow.ResendAt(this.HttpContext) });
     }
 }
 
@@ -464,8 +466,9 @@ public sealed class StartResetEndpoint(HostedAuth hosted, AuthOptions options) :
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         return await hosted.StartPasswordResetAsync(address, SignInFlow.Ip(this.HttpContext),
             AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage), cancellationToken) is { } wait
-            ? SignInFlow.Limited(this.HttpContext, SignInStep.Reset, wait, address, next)
-            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, SignInFlow.Tenant(this.HttpContext), address, next));
+            ? SignInFlow.Limited(this.HttpContext, this.HttpContext.Request.Form["resend"] == "true" ? SignInStep.ResetCode : SignInStep.Reset, wait, address, next)
+            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, SignInFlow.Tenant(this.HttpContext), address, next)
+            { ResendAt = SignInFlow.ResendAt(this.HttpContext) });
     }
 }
 
@@ -519,6 +522,8 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
 /// <summary>Checks shared by the sign-in forms.</summary>
 internal static class SignInFlow
 {
+    public static DateTimeOffset ResendAt(HttpContext context) => context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow() + HostedAuth.MailCooldown;
+
     public static IResult Limited(HttpContext context, SignInStep step, TimeSpan wait, string email, string? next, string? pendingToken = null, string? challenge = null)
     {
         var seconds = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds));
@@ -532,6 +537,8 @@ internal static class SignInFlow
                 Limited = true,
                 PendingToken = pendingToken,
                 Challenge = challenge,
+                RetryAt = context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow().AddSeconds(seconds),
+                RetrySeconds = seconds,
             },
             StatusCodes.Status429TooManyRequests);
     }
@@ -649,7 +656,7 @@ internal static class SignInFlow
             "sign-in" => theme.Passcode || HttpMethods.IsGet(context.Request.Method),
             "sign-in/verify" => theme.Passcode,
             "sign-in/password" or "reset" or "reset/complete" => theme.Password,
-            "sign-up" or "sign-up/verify" => theme.SignUp,
+            "sign-up" or "sign-up/verify" or "sign-up/resend" => theme.SignUp,
             _ => true,
         };
     }
@@ -671,6 +678,7 @@ internal static class SignInFlow
         next is not null && Tenancy.Resolved(context) is { } tenant
             && (next.StartsWith($"/{tenant}/oauth/authorize?", StringComparison.Ordinal)
                 || next == SecurityPath(tenant)
+                || HostedAccountReturn.Allowed(tenant, next)
                 || !Tenancy.IsProject(tenant) && (next == DevicePath || next.StartsWith(DevicePath + "?", StringComparison.Ordinal)))
             && next.Length <= 4096
             && !next.Any(character => character is '\\' or '#' || char.IsControl(character) || char.IsWhiteSpace(character))

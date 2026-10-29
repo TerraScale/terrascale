@@ -131,11 +131,12 @@ public sealed partial record HostedLayoutModel
 :root[data-theme="dark"] { color-scheme: dark; }
 * { box-sizing: border-box; }
 body { position: relative; font: var(--body-size) / 1.5 var(--font); margin: 0; background: var(--page-background, var(--canvas)); color: var(--ink); }
-a { color: var(--link); text-decoration: none; }
+a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
 a:hover { text-decoration: underline; }
 :focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
 p { margin: 0; }
 .auth-page { min-height: 100vh; min-height: 100dvh; padding: 96px 16px; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; align-content: center; }
+@media (max-height: 480px) { .auth-page { padding-top: 24px; padding-bottom: 24px; align-content: start; } }
 .card { width: min(420px, 100%); min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; padding: 32px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-card); }
 .brand { display: flex; align-items: center; justify-content: center; gap: 12px; min-width: 0; font: 600 18px / 1.5 var(--font); letter-spacing: -0.015em; color: var(--ink); }
 .brand span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -14,6 +14,7 @@ using TerraBase.Features.Memory;
 using TerraBase.Features.Pressure;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
+using TerraBase.Features.Regions;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -30,7 +31,7 @@ namespace TerraBase.Features.Wire;
 internal sealed class WireConnectionHandler(IServiceProvider services)
 {
     public const byte Version = 1;
-    public const byte Hello = 0, Get = 1, Put = 2, Delete = 3;
+    public const byte Hello = 0, Get = 1, Put = 2, Delete = 3, PinnedHello = 4;
 
     /// <summary>Requests one connection runs at once; the next frame is read when one answers.</summary>
     public const int MaxInFlight = 128;
@@ -53,7 +54,7 @@ internal sealed class WireConnectionHandler(IServiceProvider services)
     // An answer to write, and what to release once it is written: the request's slot and memory.
     private sealed record Outgoing(byte[] Answer, Action? Release = null);
 
-    private sealed record Session(string Secret, string Project, string Database)
+    private sealed record Session(string Secret, string Project, string Database, string? Pin)
     {
         public required Grant Grant { get; set; }
     }
@@ -206,7 +207,7 @@ internal sealed class WireConnectionHandler(IServiceProvider services)
         var frame = await ReadFrameAsync(input, null, timeout.Token).ConfigureAwait(false) ?? throw new EndOfStreamException();
         using (frame.Reservation)
         {
-            if (frame.Op != Hello || frame.Body.Length < 1 || frame.Body[0] != Version)
+            if (frame.Op is not (Hello or PinnedHello) || frame.Body.Length < 1 || frame.Body[0] != Version)
             {
                 answers.Add(new Outgoing(Error(frame.Id, new Validation("the first frame must be a hello for protocol version 1", "unsupported_version"))));
                 return null;
@@ -214,7 +215,24 @@ internal sealed class WireConnectionHandler(IServiceProvider services)
 
             var offset = 1;
             var (secret, project, database) = (Text(frame.Body, ref offset), Text(frame.Body, ref offset), Text(frame.Body, ref offset));
-            var access = await AuthorizeAsync(secret, project, database, timeout.Token).ConfigureAwait(false);
+            string? pin = null;
+            if (frame.Op == PinnedHello)
+            {
+                if (offset >= frame.Body.Length || frame.Body[offset] is 0 or > 63 || frame.Body.Length - offset - 1 != frame.Body[offset])
+                {
+                    answers.Add(new Outgoing(Error(frame.Id, new Validation("pinned hello must end with a bounded region", "invalid_frame"))));
+                    return null;
+                }
+
+                pin = Encoding.UTF8.GetString(frame.Body.AsSpan(offset + 1));
+                if (!TerraBaseOptions.IsRegion(pin))
+                {
+                    answers.Add(new Outgoing(Error(frame.Id, new Unavailable($"use one valid region pin; see {RegionGuidance.Docs}", "misdirected_request"))));
+                    return null;
+                }
+            }
+
+            var access = await AuthorizeAsync(secret, project, database, pin, timeout.Token).ConfigureAwait(false);
             if (access is not Grant grant)
             {
                 answers.Add(new Outgoing(Error(frame.Id, Refusal(access))));
@@ -223,13 +241,13 @@ internal sealed class WireConnectionHandler(IServiceProvider services)
 
             answers.Add(new Outgoing(Answer(frame.Id, 200, [Version], [])));
             await answers.FlushAsync().ConfigureAwait(false);
-            return new Session(secret, project, database) { Grant = grant };
+            return new Session(secret, project, database, pin) { Grant = grant };
         }
     }
 
     // The checks of an API-key request on the client listener: the key and its scope, the database in the key's reach, and
     // its placement in this region. The catalog commit sequence is taken first, so a commit racing the reads re-runs them.
-    private async ValueTask<Access> AuthorizeAsync(string secret, string project, string database, CancellationToken cancellationToken)
+    private async ValueTask<Access> AuthorizeAsync(string secret, string project, string database, string? pin, CancellationToken cancellationToken)
     {
         var sequence = (await services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).CommitSequence;
         if (await services.GetRequiredService<IApiKeyStore>().FindAsync(secret, cancellationToken).ConfigureAwait(false) is not ApiKey key
@@ -243,18 +261,26 @@ internal sealed class WireConnectionHandler(IServiceProvider services)
             return new Validation("project must be a canonical uppercase ULID and database a canonical uppercase ULID or lowercase name of at most 63 characters");
         }
 
-        var found = await services.GetRequiredService<ITenantDirectory>().FindDatabaseAsync(key.OrganizationId, project, database, cancellationToken).ConfigureAwait(false);
-        if (found is not TenantContext tenant || !key.Reaches(tenant))
+        var found = await services.GetRequiredService<IManagementService>().FindDatabaseRecordAsync(key.OrganizationId, project, database, cancellationToken).ConfigureAwait(false);
+        if (found is not ManagedDatabase record || !key.Reaches(new TenantContext(key.OrganizationId, PlanTier.Hobby, project, record.Id)))
         {
             return found is Unavailable unavailable ? unavailable : DocumentRoute.UnknownDatabase;
         }
 
         var region = services.GetRequiredService<TerraBaseOptions>().Region;
-        return await services.GetRequiredService<IManagementService>().FindDatabaseRecordAsync(key.OrganizationId, project, tenant.DatabaseId!, cancellationToken).ConfigureAwait(false) switch
+        if (!record.PlacedIn(region) || (pin is not null && pin != region))
         {
-            ManagedDatabase record when !record.PlacedIn(region) => new Unavailable($"the database is served in {record.Home(region)}", "wrong_region"),
+            var regions = await RegionGuidance.RegionsAsync(record, region, services.GetRequiredService<IRegionCatalog>(), cancellationToken).ConfigureAwait(false);
+            var target = pin is not null && regions.Contains(pin, StringComparer.Ordinal) ? pin : regions[0];
+            return new Unavailable(RegionGuidance.Message(target, regions), "wrong_region");
+        }
+
+        return await services.GetRequiredService<ITenantDirectory>().FindDatabaseAsync(key.OrganizationId, project, database, cancellationToken).ConfigureAwait(false) switch
+        {
+            TenantContext tenant when tenant.DatabaseId == record.Id && key.Reaches(tenant) => new Grant(key, tenant, sequence),
+            TenantContext => DocumentRoute.UnknownDatabase,
             Unavailable error => error,
-            _ => new Grant(key, tenant, sequence),
+            _ => DocumentRoute.UnknownDatabase,
         };
     }
 
@@ -268,7 +294,7 @@ internal sealed class WireConnectionHandler(IServiceProvider services)
             return grant;
         }
 
-        var access = await AuthorizeAsync(session.Secret, session.Project, session.Database, cancellationToken).ConfigureAwait(false);
+        var access = await AuthorizeAsync(session.Secret, session.Project, session.Database, session.Pin, cancellationToken).ConfigureAwait(false);
         if (access is Grant fresh && fresh.Database.DatabaseId == grant.Database.DatabaseId)
         {
             session.Grant = fresh;
@@ -681,7 +707,7 @@ internal sealed class WireConnectionHandler(IServiceProvider services)
             Unauthorized e => (401, e.Code, e.Message),
             Forbidden e => (403, e.Code, e.Message),
             QuotaExceeded e => (429, e.Code, e.Message),
-            Unavailable { Code: "wrong_region" } e => (421, e.Code, e.Message),
+            Unavailable { Code: "wrong_region" or "misdirected_request" } e => (421, e.Code, e.Message),
             Unavailable e => (503, e.Code, e.Message),
             PayloadTooLarge e => (413, e.Code, e.Message),
             UnsupportedMediaType e => (415, e.Code, e.Message),

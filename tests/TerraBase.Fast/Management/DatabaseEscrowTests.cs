@@ -81,15 +81,12 @@ public sealed class DatabaseEscrowTests
     {
         await using var cell = await DatabaseEscrowCell.StartAsync();
         await cell.CountEverywhereAsync(0);
-        await cell.StopAsync(0);
-        await cell.StopAsync(2);
-        var peers = cell.Regions[1].Server.Services.GetRequiredService<IEscrowPeers>();
-        await TerraBaseTestServer.EventuallyAsync(async token => (await peers.RegionsAsync(token)).Count == 0,
-            timeout: TimeSpan.FromSeconds(30));
-        // AllRegions remains valid after peer discovery expires, so this reaches the allowance check.
+        await cell.IsolateAsync(1);
+        await Assert.That(await cell.DonorRegionsAsync(1)).IsEqualTo("fra,gru");
         using var refused = await cell.Regions[1].Client.PostAsJsonAsync(ManagementApi.Uri(cell.Databases),
             new { name = "partitioned", allRegions = true });
         await Assert.That((await cell.ListAsync(1)).Length).IsEqualTo(0);
+        await Assert.That(cell.FailedDonorRegions(1)).IsEqualTo("fra,gru");
         await ErrorAssert.ErrorAsync(refused, HttpStatusCode.Conflict, "database_limit",
             "the rest of the organization's database allowance is held in regions this region cannot reach now; retry shortly");
     }

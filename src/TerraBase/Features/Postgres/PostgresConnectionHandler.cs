@@ -7,6 +7,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Connections;
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -15,8 +16,10 @@ using TerraBase.Features.Management.Logs;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Regions;
 using TerraBase.Features.Sql;
 using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -34,6 +37,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     private const int MaxStartupBytes = 10_000, MaxMessageBytes = 1024 * 1024, MaxNamed = 256;
     private static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(10);
     private static readonly PgError Denied = new("28P01", "password authentication failed");
+    private static readonly PgError AbortedTransaction = new("25P02", "current transaction is aborted, commands ignored until end of transaction block");
 
     // PROXY protocol v2 (HAProxy's proxy-protocol.txt §2.2): the signature, then version/command, family and length.
     private static ReadOnlySpan<byte> ProxySignature => [0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A];
@@ -274,9 +278,21 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
 
         var slash = database.IndexOf('/', StringComparison.Ordinal);
+        string? pin = null;
+        var at = database.LastIndexOf('@');
+        if (at >= slash + 1)
+        {
+            pin = database[(at + 1)..];
+            if (!TerraBaseOptions.IsRegion(pin) || database[..at].Contains('@', StringComparison.Ordinal))
+            {
+                return new PgError("08004", $"misdirected_request: use one valid database@region pin; see {RegionGuidance.Docs}");
+            }
+
+            database = database[..at];
+        }
         if (TsAuthKeyExchange.IsKey(secret))
         {
-            return await AuthorizeDashboardKeyAsync(secret, database, slash, client, cancellationToken).ConfigureAwait(false);
+            return await AuthorizeDashboardKeyAsync(secret, database, slash, pin, client, cancellationToken).ConfigureAwait(false);
         }
 
         if (await Keys.FindAsync(secret, cancellationToken).ConfigureAwait(false) is not ApiKey key
@@ -288,17 +304,12 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             return Denied;
         }
 
-        return await Tenants.FindDatabaseAsync(key.OrganizationId, project, database[(slash + 1)..], cancellationToken).ConfigureAwait(false) switch
-        {
-            TenantContext tenant when key.Reaches(tenant) => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.DocumentsWrite)),
-            Unavailable => new PgError("57P03", "the database is unavailable; retry"),
-            _ => Denied,
-        };
+        return await DatabaseAccessAsync(key.OrganizationId, project, database[(slash + 1)..], key.Scopes.Contains(ApiKeyScopes.DocumentsWrite), pin, key, null, null, null, cancellationToken).ConfigureAwait(false);
     }
 
     // A dashboard API key, as ts-auth issues it: its access token names the project, an optional database and the scopes,
     // and the project resolves to its storage namespace like a bearer token's on the client listener.
-    private async ValueTask<Access> AuthorizeDashboardKeyAsync(string secret, string database, int slash, IPAddress? client, CancellationToken cancellationToken)
+    private async ValueTask<Access> AuthorizeDashboardKeyAsync(string secret, string database, int slash, string? pin, IPAddress? client, CancellationToken cancellationToken)
     {
         var grant = await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(secret, cancellationToken).ConfigureAwait(false);
         if (grant is Unavailable)
@@ -356,9 +367,29 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             }
             restriction = restricted.DatabaseId;
         }
-        return await Tenants.FindDatabaseAsync(found, key.ProjectId, database[(slash + 1)..], cancellationToken).ConfigureAwait(false) switch
+        return await DatabaseAccessAsync(found, key.ProjectId, database[(slash + 1)..], key.Scopes.Contains(ApiKeyScopes.DocumentsWrite),
+            pin, null, restriction, key.Key, until, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<Access> DatabaseAccessAsync(string organization, string project, string database, bool canWrite, string? pin, ApiKey? key, string? restriction, KeyToken? credentialId, DateTimeOffset? until, CancellationToken cancellationToken)
+    {
+        var found = await services.GetRequiredService<IManagementService>().FindDatabaseRecordAsync(organization, project, database, cancellationToken).ConfigureAwait(false);
+        if (found is not ManagedDatabase record || restriction is not null && restriction != record.Id || (key is not null && !key.Reaches(new TenantContext(organization, PlanTier.Hobby, project, record.Id))))
         {
-            TenantContext tenant when restriction is null || restriction == tenant.DatabaseId => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.DocumentsWrite), key.Key, until),
+            return found is Unavailable ? new PgError("57P03", "the database is unavailable; retry") : Denied;
+        }
+
+        var region = services.GetRequiredService<TerraBaseOptions>().Region;
+        if (!record.PlacedIn(region) || (pin is not null && pin != region))
+        {
+            var regions = await RegionGuidance.RegionsAsync(record, region, services.GetRequiredService<IRegionCatalog>(), cancellationToken).ConfigureAwait(false);
+            var target = pin is not null && regions.Contains(pin, StringComparer.Ordinal) ? pin : regions[0];
+            return new PgError("08004", RegionGuidance.Message(target, regions));
+        }
+
+        return await Tenants.FindDatabaseAsync(organization, project, database, cancellationToken).ConfigureAwait(false) switch
+        {
+            TenantContext tenant => new Authorized(tenant, canWrite, credentialId, until),
             Unavailable => new PgError("57P03", "the database is unavailable; retry"),
             _ => Denied,
         };
@@ -445,6 +476,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         output.Error(error.Code, error.Message, error.Fatal, session.Exchange is { } exchange ? $"request id {exchange.RequestId}" : null);
         session.Failed = !session.Sql.IsAutocommit;
         session.Exchange?.Failed = true;
+        session.Invalidate();
     }
 
     private async ValueTask SyncAsync(Session session, PgWriter output, CancellationToken cancellationToken)
@@ -481,6 +513,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     {
         if (PgCatalog.IsTypeLoad(sql))
         {
+            if (session.Failed)
+            {
+                return AbortedTransaction;
+            }
+
             Array.ForEach(PgCatalog.TypeLoad(), result => Write(output, result, [], describe: true));
             return null;
         }
@@ -547,6 +584,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 }
 
                 var parsedStatement = parsed is [var single] ? single : new PgStatement(PgKind.Empty, "", "", 0);
+                if (Aborted(session, parsedStatement) is { } parseAborted)
+                {
+                    return parseAborted;
+                }
+
                 oids.AddRange(Enumerable.Repeat(0, Math.Max(0, parsedStatement.Parameters - oids.Count)));
                 session.Statements[statementName] = new Prepared(parsedStatement, [.. oids]);
                 output.Empty('1');
@@ -559,6 +601,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 if (!session.Statements.TryGetValue(boundName, out var bound))
                 {
                     return new PgError("26000", "prepared statement does not exist");
+                }
+
+                if (Aborted(session, bound.Statement) is { } bindAborted)
+                {
+                    return bindAborted;
                 }
 
                 if (values.Length != bound.Oids.Length || formats.Length > 1 && formats.Length != values.Length)
@@ -587,6 +634,12 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 return null;
             case 'D':
                 var (kind, described) = (message.Byte(), message.CString());
+                if ((kind == 'S' ? session.Statements.GetValueOrDefault(described)?.Statement : session.Portals.GetValueOrDefault(described)?.Statement)
+                    is { } target && Aborted(session, target) is { } describeAborted)
+                {
+                    return describeAborted;
+                }
+
                 if (kind == 'S' && session.Statements.TryGetValue(described, out var statement))
                 {
                     var (columns, _, error) = await DescribeAsync(session, statement.Statement, cancellationToken).ConfigureAwait(false);
@@ -619,8 +672,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 {
                     if (!portal.Described)
                     {
-                        var (columns, readOnly, error) = await DescribeAsync(session, portal.Statement, cancellationToken).ConfigureAwait(false);
-                        if (error is null && readOnly)
+                        var (columns, prefetch, error) = await DescribeAsync(session, portal.Statement, cancellationToken).ConfigureAwait(false);
+                        if (error is null && prefetch)
                         {
                             // A read runs now, so its columns carry the types of its values; Execute sends the kept rows.
                             var outcome = await RunAsync(session, portal.Statement, portal.Args, cancellationToken).ConfigureAwait(false);
@@ -649,6 +702,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     return new PgError("34000", "portal does not exist");
                 }
 
+                if (Aborted(session, running.Statement) is { } executeAborted)
+                {
+                    return executeAborted;
+                }
+
                 if (maxRows > 0)
                 {
                     return new PgError("0A000", "Execute with a row limit is not supported yet");
@@ -670,6 +728,16 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
                 foreach (var result in executedOutcome is PgResult[] results ? results : [])
                 {
+                    if (running.Formats.Length > 1 && running.Formats.Length != (result.Columns?.Length ?? 0))
+                    {
+                        return new PgError("08P01", "result format count must match the result columns");
+                    }
+
+                    if (running.Described && (result.Columns?.Length ?? 0) != (running.Columns?.Length ?? 0))
+                    {
+                        return new PgError("0A000", "cached plan must not change result type");
+                    }
+
                     if (Write(output, result, running.Formats, describe: false, running.Described ? running.Columns : null) is { } encodeError)
                     {
                         return encodeError;
@@ -685,11 +753,13 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
     }
 
-    // A statement's result columns before it runs, and whether it only reads; SHOW and catalog reads run to find out.
-    private async ValueTask<(PgColumn[]? Columns, bool ReadOnly, PgError? Error)> DescribeAsync(Session session, PgStatement statement, CancellationToken cancellationToken)
+    // Result columns and whether portal Describe must run a read to capture value-dependent types.
+    private async ValueTask<(PgColumn[]? Columns, bool Prefetch, PgError? Error)> DescribeAsync(Session session, PgStatement statement, CancellationToken cancellationToken)
     {
         switch (statement.Kind)
         {
+            case PgKind.Catalog when PgCatalog.SessionSql(statement.Text) is not null:
+                return ([new PgColumn("case", 16)], false, null);
             case PgKind.Show or PgKind.Catalog:
                 var outcome = await RunAsync(session, statement, [], cancellationToken, Counting.Failures).ConfigureAwait(false);
                 return (outcome is PgResult[] { Length: > 0 } results ? results[0].Columns : null, true, outcome is PgError error ? error : null);
@@ -717,12 +787,17 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
     }
 
+    // An aborted transaction refuses every statement but its exits, so nothing replays its log. Unlike PostgreSQL, Describe
+    // refuses statements without rows too: telling them apart would replay the log.
+    private static PgError? Aborted(Session session, PgStatement statement) =>
+        session.Failed && statement.Kind is not (PgKind.Commit or PgKind.Rollback or PgKind.RollbackTo or PgKind.Empty) ? AbortedTransaction : null;
+
     private async ValueTask<PgOutcome> RunAsync(Session session, PgStatement statement, IReadOnlyList<SqlValue> args, CancellationToken cancellationToken,
         Counting counting = Counting.All)
     {
-        if (session.Failed && statement.Kind is not (PgKind.Commit or PgKind.Rollback or PgKind.Empty))
+        if (Aborted(session, statement) is { } aborted)
         {
-            return new PgError("25P02", "current transaction is aborted, commands ignored until end of transaction block");
+            return aborted;
         }
 
         switch (statement.Kind)
@@ -751,15 +826,44 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
         return await GuardAsync(session, async (database, token) => statement.Kind switch
         {
+            PgKind.Catalog when PgCatalog.SessionSql(statement.Text) is { } catalogSql =>
+                await session.Sql.ExecuteAsync(new SqlCommand(catalogSql, [], NoNamed), token).ConfigureAwait(false) switch
+                {
+                    SqlResult result => new[] { PgCatalog.HasTablesResult(result) },
+                    SqlError error => PostgresStatements.Error(error),
+                },
             PgKind.Catalog => PgCatalog.Answer(statement.Text, session.Database, session.User,
                 await services.GetRequiredService<ISqlService>().ListTablesAsync(database, token).ConfigureAwait(false)),
             PgKind.Begin or PgKind.Commit or PgKind.Rollback => await TransactionAsync(session, statement.Kind, token).ConfigureAwait(false),
+            PgKind.Savepoint or PgKind.Release or PgKind.RollbackTo => await SavepointAsync(session, statement, token).ConfigureAwait(false),
             _ => await session.Sql.ExecuteAsync(new SqlCommand(statement.Sql, args, NoNamed), token).ConfigureAwait(false) switch
             {
                 SqlResult result => new[] { PostgresStatements.Result(statement, result) with { ReadCharge = result.ReadCharge } },
                 SqlError error => PostgresStatements.Error(error),
             },
         }, cancellationToken, counting).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<PgOutcome> SavepointAsync(Session session, PgStatement statement, CancellationToken cancellationToken)
+    {
+        if (session.Sql.IsAutocommit)
+        {
+            return new PgError("25P01", "savepoint commands require a transaction block");
+        }
+
+        var kind = statement.Kind switch { PgKind.Savepoint => SqlSavepointKind.Create, PgKind.Release => SqlSavepointKind.Release, _ => SqlSavepointKind.RollbackTo };
+        if (await session.Sql.SavepointAsync(kind, statement.Sql, cancellationToken).ConfigureAwait(false) is SqlError error)
+        {
+            return error.Code == "SQLITE_ERROR" ? new PgError("3B001", error.Message) : PostgresStatements.Error(error);
+        }
+
+        if (kind == SqlSavepointKind.RollbackTo)
+        {
+            session.Failed = false;
+            session.Invalidate();
+        }
+
+        return new[] { new PgResult(null, [], kind switch { SqlSavepointKind.Create => "SAVEPOINT", SqlSavepointKind.Release => "RELEASE", _ => "ROLLBACK" }) };
     }
 
     // PostgreSQL's transaction verbs on the session: BEGIN inside a transaction and COMMIT or ROLLBACK outside one only
@@ -773,6 +877,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 : new[] { new PgResult(null, [], verb) };
         }
 
+        session.Invalidate();
         var verb = kind switch { PgKind.Begin => "BEGIN", PgKind.Commit => "COMMIT", _ => "ROLLBACK" };
         if (session.Sql.IsAutocommit != (kind == PgKind.Begin))
         {
@@ -824,8 +929,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             var access = await AuthorizeAsync(session.ApiKey, session.Database, session.Client, running.Token).ConfigureAwait(false);
             if (access is not Authorized { Database: var database })
             {
-                // A revoked or expired key ends the session; any other refusal stays the generic one.
-                return access is PgError { Fatal: true } refusal ? refusal : Denied;
+                return access is PgError error ? error : Denied;
             }
 
             session.Exchange?.Database = database;
@@ -1054,6 +1158,15 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
         // The ReadyForQuery status: idle, in a transaction, or in an aborted transaction.
         public char Status => Sql.IsAutocommit ? 'I' : Failed ? 'E' : 'T';
+
+        // Drops reads run at Describe once the transaction they read in fails, rolls back or ends: Execute reads again.
+        public void Invalidate()
+        {
+            foreach (var portal in Portals.Values)
+            {
+                portal.Pending = null;
+            }
+        }
 
         public void Track(CancellationTokenSource? running)
         {

@@ -179,7 +179,7 @@ public sealed class TotpBeginEndpoint(Sessions sessions, TotpCredentials mfa, Au
 
         if (!SecurityFlow.Recent(this.HttpContext, live.Session))
         {
-            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Reauthenticate, SignInFlow.Tenant(this.HttpContext), Next: SignInFlow.SecurityPath(SignInFlow.Tenant(this.HttpContext)))
+            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Reauthenticate, SignInFlow.Tenant(this.HttpContext), Next: HostedAccountReturn.Security(this.HttpContext))
             { Account = live.User.Email }, StatusCodes.Status401Unauthorized);
         }
 
@@ -350,7 +350,7 @@ internal static class SecurityFlow
     public static IResult SignIn(HttpContext context)
     {
         var tenant = SignInFlow.Tenant(context);
-        return Results.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(SignInFlow.SecurityPath(tenant))}");
+        return Results.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(HostedAccountReturn.Security(context))}");
     }
 
     /// <summary>The security page for <paramref name="user"/>.</summary>

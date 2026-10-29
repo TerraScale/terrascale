@@ -352,7 +352,8 @@ public sealed class PublishKeyRing(KeyRing ring) : IOpenIddictServerHandler<Hand
 /// Replaces OpenIddict's redemption step, which ignores a lost redemption for refresh tokens. Here a code, device code,
 /// device user code or refresh token is redeemed by a conditional write on the version this request validated, so of any number of concurrent
 /// redemptions one succeeds locally. Replicated winner claims reject unused losing descendants without ending the
-/// winning grant. Replaying a consumed refresh token ends that grant, including when its ancestry lost.
+/// winning grant. Authenticated replay of a consumed refresh token or authorization code ends that grant,
+/// including when its ancestry lost or a concurrent redemption just won.
 /// </summary>
 public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations, AuthStore store, TimeProvider clock) : IOpenIddictServerHandler<ProcessSignInContext>
 {
@@ -476,7 +477,9 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
         var replay = context.EndpointType is OpenIddictServerEndpointType.Token && context.Request.IsRefreshTokenGrantType()
             && await CredentialLineage.RevokeRefreshReplayAsync(tokens, token, principal, context.Request.ClientId,
                 context.CancellationToken).ConfigureAwait(false);
-        context.Reject(Errors.InvalidGrant, replay ? CredentialLineage.ReplayNotice : CredentialLineage.ConflictNotice);
+        var codeReplay = !replay && await AuthorizationCodeReplay.EndGrantAsync(context, principal, store, tokens).ConfigureAwait(false);
+        context.Reject(Errors.InvalidGrant, replay ? CredentialLineage.ReplayNotice
+            : codeReplay ? AuthorizationCodeReplay.Notice : CredentialLineage.ConflictNotice);
     }
 
     private static JsonElement Redeemed(OidcToken token, DateTimeOffset now)

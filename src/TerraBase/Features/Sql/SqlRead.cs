@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Text;
 using SqlParser;
 using SqlParser.Ast;
-using SqlParser.Dialects;
 using SqlParser.Tokens;
 using TerraBase.Engine;
 
@@ -72,7 +71,13 @@ internal static class SqlRead
     /// </summary>
     public static (string Sql, List<string?> Names) Number(string sql)
     {
-        var tokens = new Tokenizer().Tokenize(sql, new SQLiteDialect());
+        // SqlParserCS 0.6.5 uses U+FFFF as EOF and can discard the remaining input during tokenization.
+        if (sql.Contains(char.MaxValue))
+        {
+            throw new FormatException("U+FFFF is not supported in SQL text");
+        }
+
+        var tokens = new Tokenizer().Tokenize(sql, new SqlDialect());
         var names = new List<string?>();
         var numbers = new Dictionary<string, int>(StringComparer.Ordinal);
         var text = new StringBuilder(sql.Length + 16);
@@ -185,11 +190,17 @@ internal static class SqlRead
         }
 
         query = Pragmas(query);
-        var validator = new Validator();
+        if (query.With?.CteTables.Count > SqlAffinityResolver.MaxCtes)
+        {
+            throw SqlAffinityBudget.Limit();
+        }
+
+        var ctes = query.With?.CteTables.Select(cte => cte.Alias.Name.Value).ToHashSet(SqlIdentifierComparer.Instance) ?? [];
+        var validator = new Validator(ctes);
         ((IElement)query).Visit(validator);
-        var ctes = query.With?.CteTables.Select(cte => cte.Alias.Name.Value.ToLowerInvariant()).ToHashSet(StringComparer.Ordinal) ?? [];
-        var tables = validator.Tables.Where(table => !ctes.Contains(table)).Distinct(StringComparer.Ordinal).ToList();
+        var tables = validator.Tables.Distinct(StringComparer.Ordinal).ToList();
         Rename(query, [with(ReferenceEqualityComparer.Instance)]);
+        SqlGuard.Normalize(query);
         return new ReadSql(query, [.. tables.Where(table => !SqlCatalog.Relations.ContainsKey(table))])
         {
             Catalog = [.. tables.Where(SqlCatalog.Relations.ContainsKey)],
@@ -220,7 +231,7 @@ internal static class SqlRead
                 case TableFactor.Table { Args: null, Name.Values: [var name] } table when SqlCatalog.Relations.ContainsKey(name.Value.ToLowerInvariant()) && property.CanWrite:
                     // Both names are a lowercase letter or _, then letters, digits or _ (catalog names, or an alias the tree parsed).
                     var alias = table.Alias?.ToSql() ?? name.Value.ToLowerInvariant();
-                    property.SetValue(node, new Parser().ParseSql($"SELECT 1 FROM {SqlCatalog.CteName(name.Value.ToLowerInvariant())} AS {alias}", new SQLiteDialect())
+                    property.SetValue(node, new Parser().ParseSql($"SELECT 1 FROM {SqlCatalog.CteName(name.Value.ToLowerInvariant())} AS {alias}", new SqlDialect())
                         is [Statement.Select { Query.Body: SetExpression.SelectExpression { Select.From: [{ Relation: { } renamed }] } }]
                         ? renamed
                         : throw new FormatException("a catalog reference does not render"));
@@ -313,7 +324,7 @@ internal static class SqlRead
         var bound = parameters.ToList();
         foreach (var extra in template.Extras)
         {
-            bound.Add(extra.Literal ?? SqlCoerce.Bound(extra.Affinity, parameters[extra.Source - 1]));
+            bound.Add(extra.Literal ?? Bound(extra.Affinity, parameters[extra.Source - 1]));
         }
 
         return new SqlProgram(template.Tables, template.Ctes, template.Statement, bound, MaxRows, MaxBytes);
@@ -333,7 +344,6 @@ internal static class SqlRead
         }
 
         var key = KeyParameter(read, tables, count, out var keyLiteral);
-        SqlGuard.Apply(read.Query, tables);
         var extras = new List<SqlExtraParameter>();
         if (keyLiteral is not null)
         {
@@ -346,13 +356,15 @@ internal static class SqlRead
             key = count + extras.Count;
         }
 
-        SqlCoerce.Apply(read.Query, tables, count, extras);
+        var affinities = SqlGuard.Affinity(read.Query, tables, count + extras.Count, keyed);
+        extras.AddRange(affinities.Select(binding => new SqlExtraParameter(binding.Parameter, binding.Affinity)));
+        SqlGuard.Apply(read.Query, tables);
 
         // Defense in depth: the text the engine runs must parse back to the same statement.
         var full = read.Query.ToSql();
         try
         {
-            if (new Parser().ParseSql(full, new SQLiteDialect()) is not [Statement.Select { Query: var again }] || again.ToSql() != full)
+            if (new Parser().ParseSql(full, new SqlDialect()) is not [Statement.Select { Query: var again }] || again.ToSql() != full)
             {
                 throw new FormatException("the statement does not render back to itself");
             }
@@ -373,6 +385,25 @@ internal static class SqlRead
     // A single TEXT primary key is the document id verbatim.
     private static string? TextKey(SqlTableDefinition table) =>
         table.PrimaryKey is [var key] && table.Columns.First(column => column.Name == key).Affinity == SqlAffinity.Text ? key : null;
+
+    // A bound parameter converted by the affinity of the column it is compared with.
+    private static object? Bound(SqlAffinity affinity, object? value)
+    {
+        var converted = SqlGuard.ComparisonValue(affinity, value switch
+        {
+            long integer => SqlValue.Of(integer),
+            double real => SqlValue.Of(real),
+            string text => SqlValue.Of(text),
+            _ => SqlValue.Null,
+        });
+        return converted.Kind switch
+        {
+            SqlValueKind.Integer => converted.Integer,
+            SqlValueKind.Real => converted.Real,
+            SqlValueKind.Text => converted.Text,
+            _ => null,
+        };
+    }
 
     // The parameter number of a point read: a SELECT of one table with a single TEXT primary key whose WHERE holds
     // `key = value` among its top-level AND terms, value a parameter or a '…' literal (bound as one more parameter, in
@@ -456,8 +487,8 @@ internal static class SqlRead
         var sources = new List<(string Alias, SqlTableDefinition? Table)>();
         foreach (var factor in (select.From ?? []).SelectMany(join => (join.Joins ?? []).Select(item => item.Relation).Prepend(join.Relation)))
         {
-            var table = factor is TableFactor.Table { Name.Values: [var name] } ? name.Value.ToLowerInvariant() : null;
-            var alias = factor?.Alias?.Name.Value.ToLowerInvariant() ?? table;
+            var table = factor is TableFactor.Table { Name.Values: [var name] } ? SqlIdentifierComparer.LowerAscii(name.Value) : null;
+            var alias = factor?.Alias?.Name.Value ?? table;
             sources.Add((alias ?? "", table is not null && read.Tables.Contains(table) ? tables[table] : null));
         }
 
@@ -470,7 +501,7 @@ internal static class SqlRead
                     result.AddRange(sources.SelectMany(source => source.Table?.Columns.Select(Type) ?? [null]));
                     break;
                 case SelectItem.QualifiedWildcard { Name.Values: [var qualifier] }:
-                    result.AddRange(sources.Where(source => string.Equals(source.Alias, qualifier.Value, StringComparison.OrdinalIgnoreCase)).SelectMany(source => source.Table?.Columns.Select(Type) ?? [null]));
+                    result.AddRange(sources.Where(source => SqlIdentifierComparer.Instance.Equals(source.Alias, qualifier.Value)).SelectMany(source => source.Table?.Columns.Select(Type) ?? [null]));
                     break;
                 case SelectItem.UnnamedExpression { Expression: var expression }:
                     result.Add(Column(expression));
@@ -496,11 +527,11 @@ internal static class SqlRead
             var (qualifier, name) = expression switch
             {
                 Expression.Identifier { Ident: var ident } => (null, ident.Value),
-                Expression.CompoundIdentifier { Idents: [var table, var ident] } => (table.Value.ToLowerInvariant(), ident.Value),
+                Expression.CompoundIdentifier { Idents: [var table, var ident] } => (table.Value, ident.Value),
                 _ => ((string?)null, (string?)null),
             };
-            var matches = sources.Where(source => qualifier is null || source.Alias == qualifier)
-                .Select(source => source.Table?.Columns.FirstOrDefault(column => column.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            var matches = sources.Where(source => qualifier is null || SqlIdentifierComparer.Instance.Equals(source.Alias, qualifier))
+                .Select(source => source.Table?.Columns.FirstOrDefault(column => SqlIdentifierComparer.Instance.Equals(column.Name, name)))
                 .Where(column => column is not null).ToList();
             return name is not null && matches.Count == 1 ? Type(matches[0]) : null;
         }
@@ -511,7 +542,7 @@ internal static class SqlRead
         }
     }
 
-    private sealed class Validator : Visitor
+    private sealed class Validator(HashSet<string> ctes) : Visitor
     {
         public List<string> Tables { get; } = [];
 
@@ -521,6 +552,9 @@ internal static class SqlRead
         {
             switch (relation)
             {
+                case TableFactor.Table { Args: null, WithHints: null or [], Version: null, Partitions: null or [], WithOrdinality: false, Name.Values: [var cte] }
+                    when ctes.Contains(cte.Value):
+                    break;
                 case TableFactor.Table { Args: null, WithHints: null or [], Version: null, Partitions: null or [], WithOrdinality: false, Name.Values: [var only] }
                     when SqlCatalog.Relations.ContainsKey(only.Value.ToLowerInvariant()):
                     Tables.Add(only.Value.ToLowerInvariant());

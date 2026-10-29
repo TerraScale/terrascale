@@ -1,5 +1,8 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using SqlParser;
+using SqlParser.Dialects;
+using SqlParser.Tokens;
 using TerraBase.Features.Sql;
 
 namespace TerraBase.Features.Postgres;
@@ -11,6 +14,45 @@ namespace TerraBase.Features.Postgres;
 /// </summary>
 internal static partial class PgCatalog
 {
+    // Npgsql EF provider 10.0.3, NpgsqlDatabaseCreator.CreateHasTablesCommand. Match the complete token
+    // sequence: accepting just the relations or a SELECT prefix would silently ignore client predicates.
+    private static readonly string[] HasTablesTokens = Tokens("""
+        SELECT CASE WHEN COUNT(*) = 0 THEN FALSE ELSE TRUE END
+        FROM pg_class AS cls
+        JOIN pg_namespace AS ns ON ns.oid = cls.relnamespace
+        WHERE
+            cls.relkind IN ('r', 'v', 'm', 'f', 'p') AND
+            ns.nspname NOT IN ('pg_catalog', 'information_schema') AND
+            NOT EXISTS (
+                SELECT 1 FROM pg_depend WHERE
+                    classid=(
+                        SELECT cls.oid
+                        FROM pg_class AS cls
+                        JOIN pg_namespace AS ns ON ns.oid = cls.relnamespace
+                        WHERE relname='pg_class' AND ns.nspname='pg_catalog'
+                    ) AND
+                    objid=cls.oid AND
+                    deptype IN ('e', 'x')
+            )
+        """);
+
+    /// <summary>
+    /// The EF table-existence operation over this session's real SQL catalog. All supported SQL tables are in public
+    /// and none belong to extensions. This must run in the SQL session, so uncommitted CREATE/DROP and replay reads
+    /// have the same visibility as ordinary SQL. Other pg_class/pg_depend query shapes remain unsupported.
+    /// </summary>
+    public static string? SessionSql(string sql) => Tokens(sql).SequenceEqual(HasTablesTokens, StringComparer.Ordinal)
+        ? "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table')"
+        : null;
+
+    /// <summary>The recognised CASE/COUNT query always returns one PostgreSQL boolean, including for an empty schema.</summary>
+    public static PgResult HasTablesResult(SqlResult result) => new([new PgColumn("case", 16)], result.Rows, "SELECT 1") { ReadCharge = result.ReadCharge };
+
+    private static string[] Tokens(string sql) => [.. new Tokenizer().Tokenize(sql, new PostgreSqlDialect())
+        .Where(token => token is not Whitespace)
+        .Select(token => token is Word { QuoteStyle: null } word ? word.Value.ToUpperInvariant() : token.ToString()
+            ?? throw new InvalidOperationException("a PostgreSQL token did not render"))];
+
     // Built-in base types a driver may name; "unknown" is a pseudo-type Npgsql also loads.
     private static readonly (int Oid, string Name)[] Types =
     [
@@ -42,7 +84,32 @@ internal static partial class PgCatalog
     ];
 
     /// <summary>Whether a statement reads the catalog or only calls session functions.</summary>
-    public static bool IsCatalog(string sql) => CatalogPattern().IsMatch(sql) || FunctionsPattern().IsMatch(sql);
+    public static bool IsCatalog(string sql, IEnumerable<Token> tokens)
+    {
+        Token? previous = null;
+        foreach (var token in tokens.Where(token => token is not Whitespace))
+        {
+            if (token is Period && previous is Word qualifier
+                && (Identifier(qualifier, "pg_catalog") || Identifier(qualifier, "information_schema")))
+            {
+                return true;
+            }
+
+            if (token is Word table && previous is Word { QuoteStyle: null } clause
+                && (Identifier(clause, "FROM") || Identifier(clause, "JOIN"))
+                && CatalogRelationPattern().IsMatch(table.QuoteStyle is null ? table.Value.ToLowerInvariant() : table.Value))
+            {
+                return true;
+            }
+
+            previous = token;
+        }
+
+        return FunctionsPattern().IsMatch(sql);
+    }
+
+    private static bool Identifier(Word word, string value) => word.Value.Equals(value,
+        word.QuoteStyle is null ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     /// <summary><c>SELECT current_database(), current_schema, current_user, version()</c> in any combination; null otherwise.</summary>
     public static PgResult? Functions(string sql, string database, string user)
@@ -177,10 +244,9 @@ internal static partial class PgCatalog
 
     private static PgColumn[] Text(params string[] names) => [.. names.Select(name => new PgColumn(name, PostgresStatements.TextOid))];
 
-    // A schema-qualified catalog name, or an unqualified catalog relation or view (pg_catalog is searched first). A user
-    // table that only starts with pg_, such as pg_orders, is ordinary SQL.
-    [GeneratedRegex(@"\b(?:pg_catalog|information_schema)\s*\.|\b(?:FROM|JOIN)\s+(?:pg_(?:aggregate|am|amop|amproc|attrdef|attribute|auth_members|authid|available_extensions|cast|class|collation|constraint|conversion|database|db_role_setting|default_acl|depend|description|enum|event_trigger|extension|foreign_data_wrapper|foreign_server|foreign_table|group|index|indexes|inherits|language|locks|matviews|namespace|opclass|operator|opfamily|policies|policy|prepared_statements|proc|publication|range|replication_slots|rewrite|roles|rules|sequence|sequences|settings|shadow|shdepend|shdescription|statistic|statistic_ext|tables|tablespace|timezone_names|trigger|ts_config|ts_dict|type|user|user_mappings|views)|pg_stat(?:io)?_\w+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex CatalogPattern();
+    // Preserve the known catalog relation set: pg_orders and other user pg_* tables are ordinary SQL.
+    [GeneratedRegex(@"\A(?:pg_(?:aggregate|am|amop|amproc|attrdef|attribute|auth_members|authid|available_extensions|cast|class|collation|constraint|conversion|database|db_role_setting|default_acl|depend|description|enum|event_trigger|extension|foreign_data_wrapper|foreign_server|foreign_table|group|index|indexes|inherits|language|locks|matviews|namespace|opclass|operator|opfamily|policies|policy|prepared_statements|proc|publication|range|replication_slots|rewrite|roles|rules|sequence|sequences|settings|shadow|shdepend|shdescription|statistic|statistic_ext|tables|tablespace|timezone_names|trigger|ts_config|ts_dict|type|user|user_mappings|views)|pg_stat(?:io)?_\w+)\z", RegexOptions.CultureInvariant)]
+    private static partial Regex CatalogRelationPattern();
 
     [GeneratedRegex(@"\ASELECT\s+((?:(?:pg_catalog\.)?(?:current_database\(\)|current_schema(?:\(\))?|current_user|session_user|version\(\))\s*(?:,\s*|\z))+)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex FunctionsPattern();

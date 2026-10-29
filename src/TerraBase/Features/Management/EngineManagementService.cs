@@ -782,18 +782,22 @@ internal sealed partial class EngineManagementService(
     // Records cleanup ownership before creating (or copying) storage, then registers the database and
     // clears the intent in one transaction. project resolves the tenant of the project to add to (or why there is
     // none) inside each transaction. A copy reads the engine database sourceId of that project (a database or a
-    // backup snapshot).
-    private async ValueTask<AddDatabaseResult> AddDatabaseAsync(
-        Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, string? sourceId, string? branchedFrom, CancellationToken cancellationToken,
-        string? id = null, DatabasePlacement? placement = null, DateTimeOffset? createdAt = null)
+    // backup snapshot). stages times each awaited stage (EngineManagementService.CreateStages.cs).
+    private async ValueTask<AddDatabaseResult> AddDatabaseInStagesAsync(
+        CreateStages stages, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, string? sourceId, string? branchedFrom,
+        string? id, DatabasePlacement? placement, DateTimeOffset? createdAt, CancellationToken cancellationToken)
     {
         // Copies are new databases even when their preserved home differs from the snapshot's region.
         // Replica materialization has no sourceId and spends no additional unit.
-        var allowance = sourceId is not null || (placement?.Home ?? options.Region) == options.Region
-            ? new AllowanceCheck(databaseAllowance.Limit, options.Region, await ServingAsync(cancellationToken).ConfigureAwait(false))
-            : null;
+        AllowanceCheck? allowance = null;
+        if (sourceId is not null || (placement?.Home ?? options.Region) == options.Region)
+        {
+            stages.Next(CreateStages.Serving);
+            allowance = new AllowanceCheck(databaseAllowance.Limit, options.Region, await ServingAsync(cancellationToken).ConfigureAwait(false));
+        }
 
         // Checked again when registering; this avoids creating storage for a request that cannot succeed.
+        stages.Next(CreateStages.Precheck);
         var precheck = await WithUnitAsync(() => PrecheckAsync(project, name, allowance, cancellationToken), project, allowance, cancellationToken).ConfigureAwait(false);
 
         if (precheck is not TenantContext tenant)
@@ -804,6 +808,7 @@ internal sealed partial class EngineManagementService(
         StorageQuotaGroupLease? lease = null;
         if (sourceId is not null)
         {
+            stages.Next(CreateStages.QuotaEnter);
             var entered = await quota.Value.EnterOrganizationsAsync([tenant.OrganizationId], cancellationToken).ConfigureAwait(false);
             if (entered is not StorageQuotaGroupLease granted)
             {
@@ -820,6 +825,7 @@ internal sealed partial class EngineManagementService(
         using var admission = lease;
         if (placement is null)
         {
+            stages.Next(CreateStages.Replicas);
             if (await DefaultReplicasAsync(cancellationToken).ConfigureAwait(false) is not { } replicas)
             {
                 return DatabaseRegions.NoOtherRegion;
@@ -833,7 +839,8 @@ internal sealed partial class EngineManagementService(
             id ?? NewId(), tenant.ProjectId!, name, branchedFrom, createdAt ?? time.GetUtcNow(), PlatformDatabases.IsPlatform(tenant.OrganizationId) ? null : placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version,
             placement.AllRegions);
         var storage = tenant with { DatabaseId = database.Id };
-        var preparation = await PrepareDatabaseAsync(storage, sourceId is null ? null : tenant with { DatabaseId = sourceId }, cancellationToken).ConfigureAwait(false);
+        stages.Next(CreateStages.Prepare);
+        var preparation = await PrepareDatabaseAsync(storage, sourceId is null ? null : tenant with { DatabaseId = sourceId }, cancellationToken, stages).ConfigureAwait(false);
         if (preparation is not bool created || !created)
         {
             return preparation switch
@@ -846,12 +853,15 @@ internal sealed partial class EngineManagementService(
         AddDatabasePrecheck registered;
         try
         {
+            stages.Next(CreateStages.QuotaCheck);
             if (admission is not null
                 && admission.RequiresAccounting(tenant.OrganizationId)
                 && await admission.CheckAsync(tenant.OrganizationId,
                     await quota.Value.ReadBytesAsync(storage, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false) is not Done and var exceeded)
             {
+                stages.Next(CreateStages.Cleanup, CreateStages.Refused);
                 await AbandonDatabaseAsync(storage).ConfigureAwait(false);
+                stages.End(CreateStages.Completed);
                 return exceeded switch
                 {
                     QuotaExceeded error => error,
@@ -860,6 +870,7 @@ internal sealed partial class EngineManagementService(
                 };
             }
 
+            stages.Next(CreateStages.Register);
             registered = await WithUnitAsync(() => RegisterAsync(project, database, tenant, allowance, cancellationToken), project, allowance, cancellationToken).ConfigureAwait(false);
 
             if (registered is TenantContext)
@@ -869,12 +880,16 @@ internal sealed partial class EngineManagementService(
         }
         catch (QueryCapacityException)
         {
+            stages.Next(CreateStages.Cleanup, CreateStages.Refused);
             await AbandonDatabaseAsync(storage).ConfigureAwait(false);
+            stages.End(CreateStages.Completed);
             return StorageQuota.AccountingUnavailable;
         }
-        catch
+        catch (Exception exception)
         {
+            stages.Next(CreateStages.Cleanup, CreateStages.Outcome(exception));
             await AbandonDatabaseAsync(storage).ConfigureAwait(false);
+            stages.End(CreateStages.Completed);
             throw;
         }
 
@@ -886,13 +901,17 @@ internal sealed partial class EngineManagementService(
 
         if (registered is not TenantContext)
         {
-            return await FinishDatabaseCleanupAsync(storage, CancellationToken.None).ConfigureAwait(false) switch
+            stages.Next(CreateStages.Cleanup, CreateStages.Refused);
+            if (await FinishDatabaseCleanupAsync(storage, CancellationToken.None).ConfigureAwait(false) is Unavailable unavailable)
             {
-                Done => Refused(registered),
-                Unavailable error => error,
-            };
+                return unavailable;
+            }
+
+            stages.End(CreateStages.Completed);
+            return Refused(registered);
         }
 
+        stages.Next(CreateStages.Complete);
         await engine.CompleteDatabaseIntentAsync(storage, CancellationToken.None).ConfigureAwait(false);
         checkpoint("create.registered", storage);
         return new AddedDatabase(database, storage);
@@ -962,8 +981,9 @@ internal sealed partial class EngineManagementService(
     };
 
     // Creates (or copies source into) storage under a committed cleanup intent, which stays until registration or
-    // cleanup clears it. False when the branch source is missing, leaving nothing behind.
-    private async ValueTask<RecordedDeletion> PrepareDatabaseAsync(TenantContext storage, TenantContext? source, CancellationToken cancellationToken)
+    // cleanup clears it. False when the branch source is missing, leaving nothing behind. stages, when timed, ends the
+    // prepare stage before any cleanup here.
+    private async ValueTask<RecordedDeletion> PrepareDatabaseAsync(TenantContext storage, TenantContext? source, CancellationToken cancellationToken, CreateStages? stages = null)
     {
         checkpoint("create.prepare", storage);
         var recording = false;
@@ -996,16 +1016,20 @@ internal sealed partial class EngineManagementService(
                 return true;
             }, cancellationToken).ConfigureAwait(false);
         }
-        catch
+        catch (Exception exception)
         {
             // A rejected destination never acquired ownership. A stop in the intent callback leaves recovery work.
             if (publishing)
             {
-                _ = await FinishDatabaseCleanupAsync(storage, CancellationToken.None).ConfigureAwait(false);
+                stages?.Next(CreateStages.Cleanup, CreateStages.Outcome(exception));
+                var cleaned = await FinishDatabaseCleanupAsync(storage, CancellationToken.None).ConfigureAwait(false);
+                stages?.End(cleaned is Unavailable ? CreateStages.Refused : CreateStages.Completed);
             }
             else if (recording)
             {
+                stages?.Next(CreateStages.Cleanup, CreateStages.Outcome(exception));
                 await ReleaseUnrecordedIntentAsync(storage).ConfigureAwait(false);
+                stages?.End(CreateStages.Completed);
             }
 
             throw;

@@ -111,6 +111,9 @@ internal readonly union SqlOutcome(SqlResult, SqlError);
 /// <summary>A statement's description, or why it cannot run.</summary>
 internal readonly union SqlDescribeOutcome(SqlDescription, SqlError);
 
+/// <summary>An operation on a named marker in an explicit transaction.</summary>
+internal enum SqlSavepointKind { Create, Release, RollbackTo }
+
 /// <summary>
 /// A SQL connection to one database: autocommit, or inside a transaction that may span requests. Not thread-safe:
 /// one request drives it at a time.
@@ -128,6 +131,9 @@ internal interface ISqlSession : IAsyncDisposable
     /// The adapter accepts a result's <see cref="SqlResult.ReadCharge"/> only at its protocol success boundary.
     /// </summary>
     ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, CancellationToken cancellationToken);
+
+    /// <summary>Creates, releases or restores a named savepoint; names are normalized by the caller.</summary>
+    ValueTask<SqlOutcome> SavepointAsync(SqlSavepointKind kind, string name, CancellationToken cancellationToken);
 
     /// <summary>
     /// <see cref="ExecuteAsync(SqlCommand, CancellationToken)"/> asking <paramref name="admit"/> whether the transport can
