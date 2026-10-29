@@ -15,7 +15,9 @@ internal sealed partial class EngineManagementService
         var project = closure.ProjectId;
         if (!await ClosureOrganizationMatchesAsync(transaction, project, closure.AuthorityOrganizationId, token).ConfigureAwait(false))
         {
-            throw new InvalidOperationException("a project erasure conflicts with its storage binding");
+            // Replicated fences cannot authorize erasure of another local organization. Keep this holder's
+            // receipt non-empty while the binding disagrees, without failing the convergence service.
+            return false;
         }
 
         var databases = await transaction.ListAsync(Databases(project), null, CatalogPage, MaxPageBytes, token).ConfigureAwait(false);

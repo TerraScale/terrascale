@@ -39,6 +39,9 @@ after a lost response, a restart or a repeated request presents the same identit
   project. Registration (`CanAddDatabaseAsync`: create, branch, copy/restore, adoption) and enrollment
   (`ResolveProjectAsync` with `create`) read the fence in their committing transaction, so after a machine's receipt no
   database of the project can be registered on that machine.
+- A replicated version-2 erasure fence whose authority organization conflicts with the local storage binding never
+  erases local contents. Convergence records this holder's receipt as non-empty, keeping closure pending until the
+  binding agrees and erasure can be verified.
 - Acceptance is computed on read: every holder in `expectedHolders`, and every machine currently listed as a catalog
   member, has an `empty` receipt naming the fence's closure id. The binding is causal, not wall-clock: a receipt is
   written only in a transaction that sees the permanent fence, so clock skew between machines cannot strand or forge
