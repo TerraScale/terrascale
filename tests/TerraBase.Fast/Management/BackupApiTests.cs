@@ -362,13 +362,11 @@ public sealed class BackupApiTests
         const string BadRetention = "retentionDays must be an integer between 1 and 35";
         const string BadLimit = "limit must be an integer between 1 and 100";
         const string BadName = "name must be a lowercase database name of at most 63 characters";
-        const string RoleTooLow = "your role in the organization does not allow this";
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync("main");
         using var created = await api.Client.PostAsync(Uri($"{database.Path}/backups"), content: null);
         var backup = $"{database.Path}/backups/{(await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()}";
         var unknown = $"{database.ProjectPath}/databases/{EntityIds.New()}";
-        using var viewer = api.As(await api.AddMemberAsync(api.Client, database.Organization, "viewer"));
 
         await ErrorAssert.ErrorAsync(
             api.Client.PutAsJsonAsync(Uri($"{database.Path}/backup-policy"), new { fullBackupCron = "every day", retentionDays = 7 }), HttpStatusCode.BadRequest, "invalid_request", BadCron);
@@ -385,9 +383,6 @@ public sealed class BackupApiTests
         await ErrorAssert.ErrorAsync(
             api.Client.PostAsJsonAsync(Uri($"{database.Path}/backups/{EntityIds.New()}/restore"), new { }), HttpStatusCode.NotFound, "not_found");
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"{unknown}/backups/{EntityIds.New()}/restore"), new { }), HttpStatusCode.NotFound, "not_found");
-        await ErrorAssert.ErrorAsync(viewer.PutAsJsonAsync(Uri($"{database.Path}/backup-policy"), new { retentionDays = 7 }), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
-        await ErrorAssert.ErrorAsync(viewer.PostAsync(Uri($"{database.Path}/backups"), content: null), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
-        await ErrorAssert.ErrorAsync(viewer.PostAsJsonAsync(Uri($"{backup}/restore"), new { }), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
     }
 
     [Test]

@@ -28,8 +28,6 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
     private const int MaxFlushShapes = 128;
     private const string Format = "alpha";
     private const string LastFlush = "flush";
-    // Empty ids cannot be a managed owner; the dashboard has its own collections and one bounded pending share.
-    private static readonly DatabaseOwner Dashboard = new("", "", "");
 
     private readonly Counter<long> _dropped = meters.Create(Telemetry.MeterName).CreateCounter<long>(
         "terrabase.query_shapes.dropped", "{observation}", "Query shape observations dropped by validation, pending, memory or persisted limits.");
@@ -42,11 +40,11 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
     private bool _disposed;
     private (string Id, Taken[] Batch)? _inDoubt;
 
-    public void Record(TenantContext? database, string collection, string shape, TimeSpan latency, long rowsScanned)
+    public void Record(TenantContext database, string collection, string shape, TimeSpan latency, long rowsScanned)
     {
-        if ((database is not null && (string.IsNullOrEmpty(database.OrganizationId) || database.OrganizationId.Length > 128
+        if (string.IsNullOrEmpty(database.OrganizationId) || database.OrganizationId.Length > 128
             || string.IsNullOrEmpty(database.ProjectId) || database.ProjectId.Length > 128
-            || string.IsNullOrEmpty(database.DatabaseId) || database.DatabaseId.Length > 128)) || !DatabaseName.TryParse(collection, out _)
+            || string.IsNullOrEmpty(database.DatabaseId) || database.DatabaseId.Length > 128 || !DatabaseName.TryParse(collection, out _)
             || shape.Length is 0 or > MaxShapeBytes || Encoding.UTF8.GetByteCount(shape) > MaxShapeBytes
             || latency < TimeSpan.Zero || rowsScanned < 0)
         {
@@ -116,7 +114,7 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
         }
     }
 
-    public async ValueTask<QueryShapeReadResult> ReadAsync(TenantContext? database, CancellationToken cancellationToken)
+    public async ValueTask<QueryShapeReadResult> ReadAsync(TenantContext database, CancellationToken cancellationToken)
     {
         await _flush.WaitAsync(cancellationToken).ConfigureAwait(false);
         IMemoryReservation? reservation = null;
@@ -322,7 +320,7 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
         foreach (var (database, shapes) in batch)
         {
             // Do not recreate database state deleted since the observation.
-            if (database != Dashboard && await EngineManagementService.DatabaseTenantUncheckedAsync(
+            if (await EngineManagementService.DatabaseTenantUncheckedAsync(
                 transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false) is null)
             {
                 continue;
@@ -504,9 +502,9 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
     private static long Add(long a, long b) => b > long.MaxValue - a ? long.MaxValue : a + b;
 
     private static string Key(string collection, string id) => $"{collection}:{id}";
-    private static DatabaseOwner Owner(TenantContext? database) => database is null ? Dashboard : DatabaseOwner.Of(database);
-    private static string Records(string databaseId) => databaseId.Length == 0 ? "dashboard_query_shapes" : DatabaseState(databaseId) + "query_shapes";
-    private static string Flushes(string databaseId) => databaseId.Length == 0 ? "dashboard_query_shapes_flush" : DatabaseState(databaseId) + "query_shapes_flush";
+    private static DatabaseOwner Owner(TenantContext database) => DatabaseOwner.Of(database);
+    private static string Records(string databaseId) => DatabaseState(databaseId) + "query_shapes";
+    private static string Flushes(string databaseId) => DatabaseState(databaseId) + "query_shapes_flush";
 
     public async ValueTask DisposeAsync()
     {

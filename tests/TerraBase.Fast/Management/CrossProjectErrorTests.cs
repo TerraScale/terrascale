@@ -27,9 +27,7 @@ public sealed class CrossProjectErrorTests
     {
         await using var api = await ManagementApi.StartAsync();
         var own = await api.CreateManagedDatabaseAsync("own");
-        await api.VerifyProjectBindingAsync(own.Organization, own.Project);
         var otherProject = await api.CreateProjectAsync(own.Organization, "Other project");
-        await api.VerifyProjectBindingAsync(own.Organization, otherProject);
         var foreign = await api.CreateManagedDatabaseAsync(own.Organization, otherProject, "foreign");
         using var owner = api.WithToken(Token(api, foreign.Project));
         await ManagementApi.CreateCollectionAsync(owner, foreign, "people");
@@ -80,9 +78,7 @@ public sealed class CrossProjectErrorTests
     {
         await using var api = await ManagementApi.StartAsync();
         var own = await api.CreateManagedDatabaseAsync("own");
-        await api.VerifyProjectBindingAsync(own.Organization, own.Project);
         var otherProject = await api.CreateProjectAsync(own.Organization, "Other project");
-        await api.VerifyProjectBindingAsync(own.Organization, otherProject);
         var foreign = await api.CreateManagedDatabaseAsync(own.Organization, otherProject, "foreign");
         using var owner = api.WithToken(Token(api, foreign.Project));
         using var client = api.WithToken(Token(api, own.Project));

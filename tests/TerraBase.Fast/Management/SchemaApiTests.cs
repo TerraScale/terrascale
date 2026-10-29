@@ -40,7 +40,6 @@ public sealed class SchemaApiTests
                 }));
         });
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
         using var signed = api.WithToken(api.Issuer.Mint(api.User, token =>

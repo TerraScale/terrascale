@@ -405,19 +405,7 @@ public sealed class KeyAwareDigestTests
 
         private async Task RegisterAsync(string replica)
         {
-            var commit = JsonSerializer.Serialize(new
-            {
-                id = EntityIds.New().ToString(),
-                ops = new object[]
-                {
-                    new { op = "create_organization", id = Database.OrganizationId, name = $"key-digest-{Database.OrganizationId}" },
-                    new { op = "create_project", organization = Database.OrganizationId, id = Database.ProjectId, name = "key-digest" },
-                    new { op = "create_database", organization = Database.OrganizationId, project = Database.ProjectId, name = "main", id = Database.DatabaseId, replica_regions = new[] { replica } },
-                },
-            });
-            using var service = Api.Service(Api.User);
-            using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
-            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
+            await CatalogFixture.RegisterAsync(Api, Api.User, Database, "main", [replica]);
         }
     }
 

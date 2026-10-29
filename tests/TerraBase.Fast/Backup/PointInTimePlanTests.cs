@@ -24,7 +24,6 @@ public sealed class PointInTimePlanTests
         await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time);
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var at = time.GetUtcNow();
         probe.Listings[File(database) + "/snapshots/"] =
             [string.Create(CultureInfo.InvariantCulture, $"{File(database)}/snapshots/{at.ToUnixTimeMilliseconds():D13}-{Ulid.NewUlid()}-{0:D16}")];
@@ -148,7 +147,7 @@ public sealed class PointInTimePlanTests
     }
 
     [Test]
-    public async Task Validation_is_access_first_and_viewers_can_read_the_plan()
+    public async Task Validation_is_access_first_and_owners_can_read_the_plan()
     {
         var s3 = new FakeS3();
         var time = Clock();
@@ -159,7 +158,7 @@ public sealed class PointInTimePlanTests
         }, time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
-        using var viewer = api.As(await api.AddMemberAsync(api.Client, database.Organization, "viewer"));
+        using var owner = api.As(api.User);
         using var outsider = api.As(EntityIds.New().ToString());
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         time.Advance(TimeSpan.FromSeconds(10));
@@ -192,7 +191,7 @@ public sealed class PointInTimePlanTests
         using var missing = await outsider.PostAsJsonAsync(route, new { });
         using var invalid = await outsider.PostAsJsonAsync(route, new { pointInTime = time.GetUtcNow().AddDays(1) });
         using var hidden = await outsider.PostAsJsonAsync(route, new { pointInTime = snapshot });
-        using var allowed = await viewer.PostAsJsonAsync(route, new { pointInTime = latest });
+        using var allowed = await owner.PostAsJsonAsync(route, new { pointInTime = latest });
         using var anonymous = api.WithToken(null);
         using var unauthenticated = await anonymous.PostAsJsonAsync(route, new { pointInTime = snapshot });
         await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
@@ -204,7 +203,7 @@ public sealed class PointInTimePlanTests
 
         // Hobby retention includes the stored endpoint exactly at its one-day boundary.
         time.Advance(TimeSpan.FromDays(1) - (time.GetUtcNow() - latest));
-        using var boundary = await viewer.PostAsJsonAsync(route, new { pointInTime = latest });
+        using var boundary = await owner.PostAsJsonAsync(route, new { pointInTime = latest });
         boundary.EnsureSuccessStatusCode();
         var boundaryPlan = await boundary.Content.ReadFromJsonAsync<JsonElement>();
         await Assert.That(boundaryPlan.GetProperty("window").GetProperty("earliest").GetDateTimeOffset()).IsEqualTo(latest);
@@ -214,7 +213,7 @@ public sealed class PointInTimePlanTests
         time.Advance(TimeSpan.FromSeconds(1));
         foreach (var at in new[] { latest, time.GetUtcNow() })
         {
-            await ErrorAssert.ErrorAsync(viewer.PostAsJsonAsync(route, new { pointInTime = at }), HttpStatusCode.NotFound, "not_found",
+            await ErrorAssert.ErrorAsync(owner.PostAsJsonAsync(route, new { pointInTime = at }), HttpStatusCode.NotFound, "not_found",
                 "continuous backup holds nothing of this database within its plan's retention window");
         }
         await Assert.That(s3.Objects.Keys.Where(key => key.StartsWith(File(database) + "/", StringComparison.Ordinal))).IsEquivalentTo(retained);

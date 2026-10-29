@@ -66,8 +66,6 @@ public sealed class CatalogLatticeTests
         var stored = await Task.WhenAll(cluster.Regions.Select(region => region.ReadStoredAsync("organizations", organization)));
         await Assert.That(stored.Select(document => document!.Version).Distinct().Count()).IsEqualTo(1);
         await Assert.That(stored.Select(document => Encoding.UTF8.GetString(document!.Json.Span)).Distinct().Count()).IsEqualTo(1);
-        // The membership and the creator's organization-name index (a scalar) came with it.
-        await Assert.That(await cluster["fra"].UntilAsync($"organizations/{organization}/members", cluster["gru"].Api.User, json => json is not null)).IsTrue();
         await Assert.That(await cluster["fra"].UntilAsync($"users/{cluster["gru"].Api.User}/organization_names", "replicated", json => json == $"\"{organization}\"")).IsTrue();
     }
 
@@ -77,10 +75,10 @@ public sealed class CatalogLatticeTests
         await using var cluster = await Cluster.StartAsync("gru", "sjc", "fra");
         var id = EntityIds.New().ToString();
         await Task.WhenAll(cluster.Regions.Select(region => region.WriteAsync(async transaction =>
-            await transaction.PutAsync("dashboard/plans", id, Json($$"""{"region":"{{region.Name}}","shared":1}"""), CancellationToken.None))));
+            await transaction.PutAsync("catalog_fixture/plans", id, Json($$"""{"region":"{{region.Name}}","shared":1}"""), CancellationToken.None))));
 
-        await Assert.That(await cluster.UntilConvergedAsync("dashboard/plans", id)).IsTrue();
-        var value = await cluster["gru"].ReadAsync("dashboard/plans", id);
+        await Assert.That(await cluster.UntilConvergedAsync("catalog_fixture/plans", id)).IsTrue();
+        var value = await cluster["gru"].ReadAsync("catalog_fixture/plans", id);
         await Assert.That(value).IsNotNull();
         await Assert.That(cluster.Regions.Select(region => region.Name)).Contains(JsonElement.Parse(value!).GetProperty("region").GetString()!);
     }
@@ -133,10 +131,7 @@ public sealed class CatalogLatticeTests
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
         var user = gru.Api.User;
         var (organization, project, database) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
-        await gru.CommitAsync(user,
-            new { op = "create_organization", id = organization, name = "Deleting" },
-            new { op = "create_project", organization, id = project, name = "p" },
-            new { op = "create_database", organization, project, name = "main", id = database, replica_regions = Sjc });
+        await CatalogFixture.RegisterAsync(gru.Api, user, new TenantContext(organization, PlanTier.Hobby, project, database), "main", Sjc);
         var tenant = new TenantContext(organization, PlanTier.Hobby, project, database);
 
         await Assert.That(await sjc.UntilAsync($"projects/{project}/databases", database, json => json is not null)).IsTrue();
@@ -161,7 +156,7 @@ public sealed class CatalogLatticeTests
         await Assert.That(await sjc.UntilAsync($"projects/{project}/database_names", "main", json => json is null)).IsTrue();
 
         var recreated = EntityIds.New().ToString();
-        await sjc.CommitAsync(user, new { op = "create_database", organization, project, name = "main", id = recreated });
+        await CatalogFixture.RegisterAsync(sjc.Api, user, tenant with { DatabaseId = recreated }, "main", []);
         foreach (var region in cluster.Regions)
         {
             await Assert.That(await region.UntilAsync($"projects/{project}/database_names", "main", json => json == $"\"{recreated}\"")).IsTrue().Because(region.Name);
@@ -181,9 +176,7 @@ public sealed class CatalogLatticeTests
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
         var user = gru.Api.User;
         var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());
-        await gru.CommitAsync(user,
-            new { op = "create_organization", id = organization, name = "Racing" },
-            new { op = "create_project", organization, id = project, name = "p" });
+        await CatalogFixture.RegisterProjectAsync(gru.Api, user, organization, project);
         await Assert.That(await sjc.UntilAsync($"organizations/{organization}/projects", project, json => json is not null)).IsTrue();
 
         string[] ids = [EntityIds.New().ToString(), EntityIds.New().ToString()];
@@ -239,9 +232,6 @@ public sealed class CatalogLatticeTests
         await Assert.That(byId.GetProperty("conflictOf").GetString()).IsEqualTo(winner.DatabaseId);
         await Assert.That(await gru.Tenants.FindDatabaseAsync(organization, project, "twin", CancellationToken.None) is TenantContext { DatabaseId: var found } && found == winner.DatabaseId).IsTrue();
 
-        var events = await Task.WhenAll((await gru.IdsAsync($"organizations/{organization}/audit")).Select(id => gru.ReadAsync($"organizations/{organization}/audit", id)));
-        await Assert.That(events.Count(json => JsonElement.Parse(json!) is var e && e.GetProperty("action").GetString() == "database.name_conflict"
-            && e.GetProperty("target").GetString() == loser.DatabaseId)).IsEqualTo(1);
     }
 
     // Both regions accept the same name over HTTP at the same moment: whatever each accepted survives everywhere.
@@ -252,9 +242,7 @@ public sealed class CatalogLatticeTests
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
         var user = gru.Api.User;
         var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());
-        await gru.CommitAsync(user,
-            new { op = "create_organization", id = organization, name = "Racing" },
-            new { op = "create_project", organization, id = project, name = "p" });
+        await CatalogFixture.RegisterProjectAsync(gru.Api, user, organization, project);
         await Assert.That(await sjc.UntilAsync($"organizations/{organization}/projects", project, json => json is not null)).IsTrue();
 
         var path = ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases");
@@ -348,7 +336,6 @@ public sealed class CatalogLatticeTests
         var organization = await gru.Api.CreateOrganizationAsync("Erasing");
         await gru.Api.SetPlanAsync(gru.Api.User, organization, "starter");
         var project = await gru.Api.CreateProjectAsync(organization, "erased");
-        await gru.Api.VerifyProjectBindingAsync(organization, project);
         var other = await gru.Api.CreateProjectAsync(organization, "retained");
         var live = await gru.Api.CreateManagedDatabaseAsync(organization, other, "live");
         var databases = new List<ManagedDatabaseRef>();
@@ -754,13 +741,6 @@ public sealed class CatalogLatticeTests
 
         public string FileOf(TenantContext database) =>
             Path.Combine(_directory, database.OrganizationId, database.ProjectId!, database.DatabaseId + ".db");
-
-        public async Task CommitAsync(string user, params object[] ops)
-        {
-            using var service = Api.Service(user);
-            using var response = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new { id = EntityIds.New().ToString(), ops });
-            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
-        }
 
         public async Task SeedDatabaseAsync(TenantContext tenant, string name)
         {

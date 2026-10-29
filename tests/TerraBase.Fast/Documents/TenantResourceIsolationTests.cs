@@ -156,14 +156,11 @@ public sealed class TenantResourceIsolationTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task A_downgrade_releases_old_cache_before_request_admission(bool commit)
+    public async Task A_downgrade_releases_old_cache_before_request_admission()
     {
         await using var management = await RequestLogMemoryFixture.StartAsync(settings =>
             settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture));
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
-        using var owner = management.As(tenant.User);
         using var service = management.Service(tenant.User);
         var planUri = new Uri($"/v1/management/organizations/{tenant.OrganizationId}/plan", UriKind.Relative);
         using (var changed = await service.PutAsJsonAsync(planUri, new { plan = "enterprise" }))
@@ -192,25 +189,9 @@ public sealed class TenantResourceIsolationTests
             // Enterprise holds more than the entire new Hobby memory allowance, so admission alone would lock it out.
             await Assert.That(oldRetention).IsNull();
         }
-        var commits = new Uri("/v1/management/commits", UriKind.Relative);
-        using (var changed = commit
-            ? await service.PostAsJsonAsync(commits, new
-            {
-                id = EntityIds.New().ToString(),
-                ops = new[] { new { op = "set_plan", organization = tenant.OrganizationId, plan = "hobby" } },
-            })
-            : await service.PutAsJsonAsync(planUri, new { plan = "hobby" }))
+        using (var changed = await service.PutAsJsonAsync(planUri, new { plan = "hobby" }))
         {
             await Assert.That(changed.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        }
-        if (commit)
-        {
-            using var renamed = await owner.PostAsJsonAsync(commits, new
-            {
-                id = EntityIds.New().ToString(),
-                ops = new[] { new { op = "rename_organization", organization = tenant.OrganizationId, name = "Recovered" } },
-            });
-            await Assert.That(renamed.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
         using (var recovered = await tenant.Data.GetAsync(tenant.Database("shop", $"/collections/items/documents/by-key?id={StorageFixture.Id("b7")}")))
         {

@@ -18,7 +18,6 @@ namespace TerraBase.Testing;
 /// </summary>
 public sealed class ManagementApi : IAsyncDisposable
 {
-    private static readonly HttpRequestOptionsKey<(string Organization, string Project)> BindingAuthority = new("test-project-binding-authority");
 
     private readonly Lazy<Task> _cleanup;
 
@@ -110,9 +109,8 @@ public sealed class ManagementApi : IAsyncDisposable
     internal async Task VerifyCatalogAsync(CancellationToken cancellationToken) =>
         await Assert.That(await ((CatalogGate)Server.Services.GetRequiredService<ICatalogGate>()).VerifyAsync(cancellationToken)).IsTrue();
 
-    /// <summary>A client acting as <paramref name="user"/>, with <paramref name="email"/> as its verified email when set.</summary>
-    public HttpClient As(string user, string? email = null) =>
-        Authorized(() => email is null ? Issuer.Mint(user) : Issuer.MintWithEmail(user, email));
+    /// <summary>A client acting as <paramref name="user"/>.</summary>
+    public HttpClient As(string user) => Authorized(() => Issuer.Mint(user));
 
     /// <summary>A client acting as <paramref name="user"/> through the platform operator on the internal listener.</summary>
     public HttpClient Service(string user)
@@ -146,25 +144,11 @@ public sealed class ManagementApi : IAsyncDisposable
     public async Task<string> CreateOrganizationAsync(string name, HttpClient? client = null) =>
         await CreateAsync(client, "/v1/management/organizations", name);
 
-    public async Task<string> CreateProjectAsync(string organization, string name, HttpClient? client = null) =>
-        await CreateAsync(client, $"/v1/management/organizations/{organization}/projects", name);
-
-    /// <summary>Explicitly proves the sign-in caller's ts-auth project authority and verifies an existing legacy binding.</summary>
-    public async Task VerifyProjectBindingAsync(string organization, string project, HttpClient? client = null)
+    public async Task<string> CreateProjectAsync(string organization, string name, HttpClient? client = null)
     {
-        client ??= Client;
-        if (client.DefaultRequestHeaders.Authorization is { Scheme: "Bearer", Parameter: { } token })
-        {
-            Issuer.GrantProject(token, organization, project);
-        }
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, Uri($"/v1/management/organizations/{organization}/projects/{project}/binding"))
-        {
-            Content = JsonContent.Create(new { organization }),
-        };
-        request.Options.Set(BindingAuthority, (organization, project));
-        using var response = await client.SendAsync(request);
-        response.EnsureSuccessStatusCode();
+        var project = await CreateAsync(client, $"/v1/management/organizations/{organization}/projects", name);
+        Issuer.RegisterProject(project, organization);
+        return project;
     }
 
     public async Task<string> CreateDatabaseAsync(string organization, string project, string name, HttpClient? client = null) =>
@@ -281,22 +265,6 @@ public sealed class ManagementApi : IAsyncDisposable
         return new Tenant(user, organization, project, DataClient(await Server.IssueAsync(organization, scopes)));
     }
 
-    /// <summary>Has a new user join <paramref name="organization"/> as <paramref name="role"/> through an invitation from <paramref name="inviter"/>; returns its id.</summary>
-    public async Task<string> AddMemberAsync(HttpClient inviter, string organization, string role)
-    {
-        ArgumentNullException.ThrowIfNull(inviter);
-        var user = EntityIds.New().ToString();
-        var email = $"{EntityIds.New()}@example.com";
-        using var invited = await inviter.PostAsJsonAsync(
-            new Uri($"/v1/management/organizations/{organization}/invitations", UriKind.Relative), new { email, role });
-        invited.EnsureSuccessStatusCode();
-        var token = (await invited.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString();
-        using var member = As(user, email);
-        using var accepted = await member.PostAsJsonAsync(new Uri("/v1/management/invitations/accept", UriKind.Relative), new { token });
-        accepted.EnsureSuccessStatusCode();
-        return user;
-    }
-
     public async ValueTask DisposeAsync()
     {
         try
@@ -361,21 +329,17 @@ public sealed class ManagementApi : IAsyncDisposable
 
     // A fresh token on every request, so a long test never sends an expired one.
     private HttpClient Authorized(Func<string> token) =>
-        new(new BearerToken(token, Issuer) { InnerHandler = Tls.CreateHandler() })
+        new(new BearerToken(token) { InnerHandler = Tls.CreateHandler() })
         {
             BaseAddress = Server.ClientAddress,
             Timeout = Timeout.InfiniteTimeSpan,
         };
 
-    private sealed class BearerToken(Func<string> token, TestIssuer issuer) : DelegatingHandler
+    private sealed class BearerToken(Func<string> token) : DelegatingHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var bearer = token();
-            if (request.Options.TryGetValue(BindingAuthority, out var authority))
-            {
-                issuer.GrantProject(bearer, authority.Organization, authority.Project);
-            }
 
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
             return base.SendAsync(request, cancellationToken);
@@ -383,10 +347,10 @@ public sealed class ManagementApi : IAsyncDisposable
     }
 }
 
-/// <summary>An organization with one project, its only member, and a data API client whose key reaches the whole organization.</summary>
+/// <summary>An organization with one project, its creator, and a data API client whose key reaches the whole organization.</summary>
 public sealed class Tenant(string user, string organizationId, string projectId, HttpClient data) : IDisposable
 {
-    /// <summary>The organization's only member, its creator.</summary>
+    /// <summary>The organization's creator.</summary>
     public string User { get; } = user;
 
     public string OrganizationId { get; } = organizationId;

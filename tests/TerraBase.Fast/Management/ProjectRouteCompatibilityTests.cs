@@ -14,7 +14,6 @@ public sealed class ProjectRouteCompatibilityTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = legacy ? api.As(api.User) : ProjectClient(api, database.Project);
         var path = legacy
             ? $"/V1/Management/Organizations/{database.Organization}/Projects/{database.Project}/DataBases/{database.Id}/Backups/"
@@ -33,7 +32,6 @@ public sealed class ProjectRouteCompatibilityTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         var path = ManagementApi.Uri($"/v1/projects/{database.Project}/saved-queries/{EntityIds.New()}");
 

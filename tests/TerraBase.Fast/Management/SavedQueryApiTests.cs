@@ -19,7 +19,6 @@ public sealed class SavedQueryApiTests
     {
         const string BadName = "name must be 1 to 128 characters, include a letter or digit and have no control characters";
         const string NotSelect = "only SELECT statements are supported";
-        const string RoleTooLow = "your role in the organization does not allow this";
         var clock = new SteppingClock();
         var hook = new UsageCommitHook();
         await using var api = await ManagementApi.StartAsync(TerraBaseTestServer.UseProductionQueryBudget, services: services =>
@@ -33,7 +32,6 @@ public sealed class SavedQueryApiTests
         var unknownDatabase = $"{database.ProjectPath}/databases/{EntityIds.New()}";
         using var created = await api.Client.PostAsJsonAsync(Uri(queries), new { name = "All", sql = "SELECT * FROM people" });
         var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
-        using var viewer = api.As(await api.AddMemberAsync(api.Client, database.Organization, "viewer"));
 
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(queries), new { name = " ", sql = "SELECT * FROM people" }), HttpStatusCode.BadRequest, "invalid_request", BadName);
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(queries), new { name = "Drop", sql = "DELETE FROM people" }), HttpStatusCode.BadRequest, "invalid_request", NotSelect);
@@ -45,9 +43,6 @@ public sealed class SavedQueryApiTests
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{unknownProject}/saved-queries/{id}")), HttpStatusCode.NotFound, "not_found");
         await ErrorAssert.ErrorAsync(api.Client.PutAsJsonAsync(Uri($"{queries}/{EntityIds.New()}"), new { name = "All", sql = "SELECT * FROM people" }), HttpStatusCode.NotFound, "not_found");
         await ErrorAssert.ErrorAsync(api.Client.DeleteAsync(Uri($"{queries}/{EntityIds.New()}")), HttpStatusCode.NotFound, "not_found");
-        await ErrorAssert.ErrorAsync(viewer.PostAsJsonAsync(Uri(queries), new { name = "All", sql = "SELECT * FROM people" }), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
-        await ErrorAssert.ErrorAsync(viewer.PutAsJsonAsync(Uri($"{queries}/{id}"), new { name = "All", sql = "SELECT * FROM people" }), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
-        await ErrorAssert.ErrorAsync(viewer.DeleteAsync(Uri($"{queries}/{id}")), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"{database.Path}/sql"), new { sql = "DELETE FROM people" }), HttpStatusCode.BadRequest, "invalid_request", NotSelect);
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"{unknownDatabase}/sql"), new { sql = "SELECT * FROM people" }), HttpStatusCode.NotFound, "not_found");
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"{unknownDatabase}/sql/check"), new { sql = "SELECT * FROM people" }), HttpStatusCode.NotFound, "not_found");
@@ -149,30 +144,6 @@ public sealed class SavedQueryApiTests
         {
             Directory.Delete(directory, recursive: true);
         }
-    }
-
-    [Test]
-    public async Task A_member_removed_after_the_project_lookup_cannot_delete_a_saved_query()
-    {
-        var hook = new UsageCommitHook();
-        await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(), services: hook.Install);
-        var database = await api.CreateManagedDatabaseAsync();
-        var org = $"/v1/management/organizations/{database.Organization}";
-        var memberId = await api.AddMemberAsync(api.Client, database.Organization, "member");
-        using var member = api.As(memberId);
-        var path = $"{database.ProjectPath}/saved-queries/{await CreateAsync(member, database.ProjectPath + "/saved-queries", "Mine")}";
-
-        // The member's delete has resolved the project but not started its catalog write when the owner removes them.
-        using var gate = hook.PauseWrite();
-        var delete = member.DeleteAsync(Uri(path));
-        await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        (await api.Client.DeleteAsync(Uri($"{org}/members/{memberId}"))).EnsureSuccessStatusCode();
-        gate.Dispose();
-        using var deleted = await delete.WaitAsync(TimeSpan.FromSeconds(10));
-        using var kept = await api.Client.GetAsync(Uri(path));
-
-        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(kept.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
     [Test]

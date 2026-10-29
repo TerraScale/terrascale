@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -13,26 +14,24 @@ internal sealed partial class EngineManagementService
     {
         var local = await ReadAsync<WritableDatabaseTenantResult>(async transaction =>
         {
-            // Enrolled projects have storage envelopes, not duplicate ts-auth memberships. Without live proof they
-            // remain hidden; the legacy branch retains its original local owner/admin authorization.
             if (authorityToken is not null)
             {
                 return await RecoveryEnrolledTenantAsync(transaction, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false) is { } enrolled
                     ? enrolled : ManagementErrors.NotFound;
             }
 
-            var access = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
-            if (access is not OrganizationMember)
+            var access = await AuthorizeAsync(transaction, userId, organizationId, allowProject: false, cancellationToken).ConfigureAwait(false);
+            if (access is not Organization)
             {
                 return access switch
                 {
                     NotFound error => error,
                     Forbidden error => error,
-                    OrganizationMember => throw new UnreachableException(),
+                    Organization => throw new UnreachableException(),
                 };
             }
 
-            return await MemberDatabaseTenantAsync(transaction, userId, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false) is { } tenant
+            return await AuthorizedDatabaseTenantAsync(transaction, userId, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false) is { } tenant
                 ? tenant
                 : ManagementErrors.NotFound;
         }, static error => error, cancellationToken).ConfigureAwait(false);
@@ -41,8 +40,6 @@ internal sealed partial class EngineManagementService
             return local;
         }
 
-        // No catalog transaction is held across the live authority request. A legacy tenant must use the original
-        // operator request; ts-auth authority cannot admit a legacy storage binding.
         var authority = await projectAuthority.IsRecoveryAdministratorAsync(authorityToken, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
         if (authority is not true)
         {
@@ -54,7 +51,6 @@ internal sealed partial class EngineManagementService
             };
         }
 
-        // A concurrent delete or binding change invalidates this authorization. This never enrolls or writes state.
         return await ReadAsync<WritableDatabaseTenantResult>(async transaction =>
             await RecoveryEnrolledTenantAsync(transaction, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false) is { } after && before == after
                 ? after : ManagementErrors.NotFound, static error => error, cancellationToken).ConfigureAwait(false);
@@ -63,10 +59,10 @@ internal sealed partial class EngineManagementService
     private async ValueTask<TenantContext?> RecoveryEnrolledTenantAsync(
         IStorageTransaction transaction, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken) =>
         options.AuthIssuer is not null
-        && await IsProjectBoundAsync(transaction, projectId, organizationId, cancellationToken).ConfigureAwait(false)
+        && await IsProjectRegisteredAsync(transaction, projectId, organizationId, cancellationToken).ConfigureAwait(false)
         && await GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken).ConfigureAwait(false) == organizationId
-        && await GetAsync(transaction, Bindings(projectId), "ts_auth", TerraBaseJsonContext.Default.ProjectCatalogBinding, cancellationToken)
-            .ConfigureAwait(false) is { AuthorityOrganizationId: null }
-        && await CountAllAsync(transaction, Members(organizationId), cancellationToken).ConfigureAwait(false) == 0
+        && await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false)
+            is { CreatedBy: OperatorHandler.KeyId }
+
             ? await DatabaseTenantUncheckedAsync(transaction, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false) : null;
 }

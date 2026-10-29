@@ -227,7 +227,6 @@ public sealed class ClientAccessRetainedShapeTests
         });
         using (var owner = api.Management.As(api.Tenant.User))
         {
-            await api.Management.VerifyProjectBindingAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, owner);
         }
         await CollectionAccessRulesTests.DeclareAsync(api, CollectionAccessRulesTests.OwnerRules());
         var actor = DocumentApi.NewId();

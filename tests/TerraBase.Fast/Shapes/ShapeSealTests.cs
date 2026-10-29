@@ -1279,19 +1279,7 @@ public sealed class ShapeSealTests
         private async Task RegisterAsync(string[] replicas)
         {
             var tenant = pair.Tenant;
-            var commit = JsonSerializer.Serialize(new
-            {
-                id = EntityIds.New().ToString(),
-                ops = new object[]
-                {
-                    new { op = "create_organization", id = tenant.OrganizationId, name = $"shape-{tenant.OrganizationId}" },
-                    new { op = "create_project", organization = tenant.OrganizationId, id = tenant.ProjectId, name = "shape" },
-                    new { op = "create_database", organization = tenant.OrganizationId, project = tenant.ProjectId, name = "main", id = tenant.DatabaseId, replica_regions = replicas },
-                },
-            });
-            using var service = Api.Service(Api.User);
-            using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
-            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
+            await CatalogFixture.RegisterAsync(Api, Api.User, tenant, "main", replicas);
         }
     }
 }

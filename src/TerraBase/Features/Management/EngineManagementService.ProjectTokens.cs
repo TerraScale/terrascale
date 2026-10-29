@@ -3,13 +3,12 @@ using System.Diagnostics;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
+using TerraBase.Features.Platform;
+using TerraBase.Configuration;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
-
-internal sealed record ProjectCatalogBinding(
-    int Version, string Issuer, string OrganizationId, string? AuthorityOrganizationId, string VerifiedBy, DateTimeOffset VerifiedAt);
 
 internal sealed partial class EngineManagementService : IProjectCatalog
 {
@@ -19,16 +18,15 @@ internal sealed partial class EngineManagementService : IProjectCatalog
 
     public async ValueTask<ResolveProjectResult> ResolveProjectAsync(string projectId, string actor, string? createIn, CancellationToken cancellationToken)
     {
-        if (options.AuthIssuer is not { } issuer)
+        if (options.AuthIssuer is null)
         {
             return ManagementErrors.NotFound;
         }
 
         var sequence = (await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).CommitSequence;
         var key = (projectId, "", "");
-        var cacheable = CommitTransaction.Value is null;
         ProjectMapping mapping;
-        if (cacheable && _projectMappings.TryGetValue(key, out var cached) && cached.Sequence == sequence)
+        if (_projectMappings.TryGetValue(key, out var cached) && cached.Sequence == sequence)
         {
             mapping = cached.Mapping;
         }
@@ -38,7 +36,7 @@ internal sealed partial class EngineManagementService : IProjectCatalog
             {
                 var organization = await GetAsync(transaction, ProjectOrganizations, projectId, Id, token).ConfigureAwait(false);
                 return new ProjectMapping(organization, organization is not null
-                    && await IsProjectBoundAsync(transaction, projectId, organization, token).ConfigureAwait(false));
+                    && await IsProjectRegisteredAsync(transaction, projectId, organization, token).ConfigureAwait(false));
             }, static error => error, token), cancellationToken).ConfigureAwait(false);
             if (lookup is not ProjectMapping read)
             {
@@ -50,23 +48,19 @@ internal sealed partial class EngineManagementService : IProjectCatalog
             }
 
             mapping = read;
-            if (cacheable)
-            {
-                Cache(_projectMappings, key, sequence, mapping);
-            }
+            Cache(_projectMappings, key, sequence, mapping);
         }
 
         if (mapping.Organization is not null || createIn is not { } organizationId)
         {
-            return mapping is { Verified: true, Organization: not null } ? mapping.Organization : ManagementErrors.NotFound;
+            return mapping is { Registered: true, Organization: not null } && (createIn is null || createIn == mapping.Organization) ? mapping.Organization : ManagementErrors.NotFound;
         }
 
-        // Keep layout 1 and catalog 5: these records are storage envelopes, not ts-auth identity or membership.
         return await WriteAsync<ResolveProjectResult>(async transaction =>
         {
             if (await GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken).ConfigureAwait(false) is { } existing)
             {
-                return await IsProjectBoundAsync(transaction, projectId, existing, cancellationToken).ConfigureAwait(false) ? existing : ManagementErrors.NotFound;
+                return await IsProjectRegisteredAsync(transaction, projectId, existing, cancellationToken).ConfigureAwait(false) && existing == organizationId ? existing : ManagementErrors.NotFound;
             }
 
             if (await transaction.GetVersionAsync(ProjectOrganizations, projectId, cancellationToken).ConfigureAwait(false) is not null
@@ -75,15 +69,13 @@ internal sealed partial class EngineManagementService : IProjectCatalog
                 return ManagementErrors.NotFound;
             }
 
-            // The namespace is the ts-auth organization, shared by all of its projects. Legacy commits let users choose
-            // organization ULIDs, so an organization with members is someone's storage, never this project's owner.
             var owner = await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false);
             if (owner is null)
             {
-                owner = new Organization(organizationId, organizationId, actor, time.GetUtcNow());
+                owner = new Organization(organizationId, organizationId, OperatorHandler.KeyId, time.GetUtcNow());
                 await PutAsync(transaction, Organizations, owner.Id, owner, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false);
             }
-            else if (await CountAllAsync(transaction, Members(organizationId), cancellationToken).ConfigureAwait(false) > 0)
+            else if (owner.CreatedBy != OperatorHandler.KeyId)
             {
                 return ManagementErrors.NotFound;
             }
@@ -91,9 +83,6 @@ internal sealed partial class EngineManagementService : IProjectCatalog
             var project = new Project(projectId, owner.Id, projectId, time.GetUtcNow());
             await PutAsync(transaction, Projects(owner.Id), project.Id, project, TerraBaseJsonContext.Default.Project, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, ProjectOrganizations, project.Id, owner.Id, Id, cancellationToken).ConfigureAwait(false);
-            await PutAsync(transaction, Bindings(project.Id), "ts_auth",
-                new ProjectCatalogBinding(1, issuer, owner.Id, null, actor, time.GetUtcNow()), TerraBaseJsonContext.Default.ProjectCatalogBinding, cancellationToken)
-                .ConfigureAwait(false);
             return owner.Id;
         }, static error => error, cancellationToken).ConfigureAwait(false);
     }
@@ -107,19 +96,14 @@ internal sealed partial class EngineManagementService : IProjectCatalog
     public async ValueTask<SetPlanResult> SetEnrolledPlanAsync(string projectId, PlanTier plan, CancellationToken cancellationToken) =>
         await WriteAsync<SetPlanResult>(async transaction =>
         {
-            // Enrollment writes a binding without an authority organization and an organization without members, so no owner
-            // can set this plan; a legacy binding names the organization whose owners do.
             if (await GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken).ConfigureAwait(false) is not { } organizationId
-                || !await IsProjectBoundAsync(transaction, projectId, organizationId, cancellationToken).ConfigureAwait(false)
-                || await GetAsync(transaction, Bindings(projectId), "ts_auth", TerraBaseJsonContext.Default.ProjectCatalogBinding, cancellationToken)
-                    .ConfigureAwait(false) is not { AuthorityOrganizationId: null }
+                || !await IsProjectRegisteredAsync(transaction, projectId, organizationId, cancellationToken).ConfigureAwait(false)
                 || await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken)
-                    .ConfigureAwait(false) is not { } organization)
+                    .ConfigureAwait(false) is not { CreatedBy: OperatorHandler.KeyId } organization)
             {
                 return ManagementErrors.NotFound;
             }
 
-            // The dashboard republishes plans periodically; an unchanged plan writes nothing and records no audit event.
             if (organization.Plan == plan)
             {
                 return organization;
@@ -128,8 +112,7 @@ internal sealed partial class EngineManagementService : IProjectCatalog
             organization = organization with { Plan = plan };
             await PutAsync(transaction, Organizations, organization.Id, organization, TerraBaseJsonContext.Default.Organization, cancellationToken)
                 .ConfigureAwait(false);
-            await RecordAsync(transaction, organizationId, OperatorHandler.KeyId, "settings.plan_updated", projectId, PlanName(plan), cancellationToken)
-                .ConfigureAwait(false);
+
             return organization;
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
@@ -142,7 +125,7 @@ internal sealed partial class EngineManagementService : IProjectCatalog
                 ? await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false)
                 : null;
             if (version is { Deleted: true } || organization is null && plan == PlanTier.Hobby
-                || organization is not null && await CountAllAsync(transaction, Members(organizationId), cancellationToken).ConfigureAwait(false) > 0)
+                || organization is not null && organization.CreatedBy != OperatorHandler.KeyId)
             {
                 return ManagementErrors.NotFound;
             }
@@ -156,80 +139,18 @@ internal sealed partial class EngineManagementService : IProjectCatalog
             organization = (organization ?? new Organization(organizationId, organizationId, OperatorHandler.KeyId, time.GetUtcNow())) with { Plan = plan };
             await PutAsync(transaction, Organizations, organization.Id, organization, TerraBaseJsonContext.Default.Organization, cancellationToken)
                 .ConfigureAwait(false);
-            await RecordAsync(transaction, organizationId, OperatorHandler.KeyId, "settings.plan_updated", null, PlanName(plan), cancellationToken)
-                .ConfigureAwait(false);
+
             return organization;
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
-    public async ValueTask<VerifyProjectBindingResult> VerifyBindingAsync(
-        string userId, string organizationId, string projectId, string authorityOrganizationId, string token, CancellationToken cancellationToken)
-    {
-        if (options.AuthIssuer is not { } issuer)
-        {
-            return ManagementErrors.NotFound;
-        }
-
-        var precheck = await ReadAsync<VerifyProjectBindingResult>(async transaction =>
-            await CanBindProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false)
-                ? new Done() : ManagementErrors.NotFound, static error => error, cancellationToken).ConfigureAwait(false);
-        if (precheck is not Done)
-        {
-            return precheck;
-        }
-
-        VerifyProjectBindingResult authority = await projectAuthority.IsProjectAdministratorAsync(token, authorityOrganizationId, projectId, cancellationToken)
-            .ConfigureAwait(false) switch
-        {
-            true => new Done(),
-            false => ManagementErrors.NotFound,
-            Unavailable error => error,
-        };
-        if (authority is not Done)
-        {
-            return authority;
-        }
-
-        // The online authority check holds no storage locks. Recheck storage ownership and mapping in the committing transaction.
-        return await WriteAsync<VerifyProjectBindingResult>(async transaction =>
-        {
-            if (!await CanBindProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false))
-            {
-                return new NotFound();
-            }
-
-            if (await GetAsync(transaction, Bindings(projectId), "ts_auth", TerraBaseJsonContext.Default.ProjectCatalogBinding, cancellationToken)
-                .ConfigureAwait(false) is { } existing)
-            {
-                return existing is { Version: 1 } && existing.Issuer == issuer && existing.OrganizationId == organizationId
-                    && existing.AuthorityOrganizationId == authorityOrganizationId
-                    ? new Done() : new Conflict("the project already has a different verified binding", "binding_conflict");
-            }
-
-            await PutAsync(transaction, Bindings(projectId), "ts_auth",
-                new ProjectCatalogBinding(1, issuer, organizationId, authorityOrganizationId, userId, time.GetUtcNow()),
-                TerraBaseJsonContext.Default.ProjectCatalogBinding, cancellationToken).ConfigureAwait(false);
-            await RecordAsync(transaction, organizationId, userId, "project_binding_verified", projectId, detail: null, cancellationToken).ConfigureAwait(false);
-            return new Done();
-        }, static error => error, cancellationToken).ConfigureAwait(false);
-    }
-
-    private sealed record ProjectMapping(string? Organization, bool Verified);
+    private sealed record ProjectMapping(string? Organization, bool Registered);
 
     private readonly union ProjectMappingResult(ProjectMapping, Unavailable);
 
-    private static string Bindings(string projectId) => SystemCatalog.ProjectState(projectId) + "binding";
-
-    private async ValueTask<bool> IsProjectBoundAsync(IStorageTransaction transaction, string projectId, string organizationId, CancellationToken cancellationToken) =>
-        await GetAsync(transaction, Bindings(projectId), "ts_auth", TerraBaseJsonContext.Default.ProjectCatalogBinding, cancellationToken).ConfigureAwait(false)
-            is { Version: 1 } binding && binding.Issuer == options.AuthIssuer && binding.OrganizationId == organizationId
-        && await GetAsync(transaction, Projects(organizationId), projectId, TerraBaseJsonContext.Default.Project, cancellationToken).ConfigureAwait(false)
-            is { } project && project.OrganizationId == organizationId;
-
-    private static async ValueTask<bool> CanBindProjectAsync(
-        IStorageTransaction transaction, string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>
-        await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Owner, cancellationToken).ConfigureAwait(false) is OrganizationMember
-        && await GetAsync(transaction, Projects(organizationId), projectId, TerraBaseJsonContext.Default.Project, cancellationToken).ConfigureAwait(false) is not null
-        && await GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken).ConfigureAwait(false) == organizationId;
+    private async ValueTask<bool> IsProjectRegisteredAsync(IStorageTransaction transaction, string projectId, string organizationId, CancellationToken cancellationToken) =>
+        await GetAsync(transaction, Projects(organizationId), projectId, TerraBaseJsonContext.Default.Project, cancellationToken).ConfigureAwait(false)
+            is { } project && project.OrganizationId == organizationId
+            && (!PlatformDatabases.IsPlatform(organizationId) || options.AuthIssuer == TerraBaseOptions.PlatformAuthIssuer);
 
     private static bool ProjectActor(string userId, string organizationId) =>
         ProjectAccess.Current is { } access && access.Actor == userId && access.OrganizationId == organizationId;

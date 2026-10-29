@@ -45,9 +45,7 @@ public sealed partial class DatabaseRenameRaceTests
             sjc = peer;
             await AwaitPeersAsync(gru, peer);
             var first = await gru.CreateManagedDatabaseAsync(name);
-            await gru.VerifyProjectBindingAsync(first.Organization, first.Project);
             await UntilAsync(async () => await ReadCatalogAsync(peer, $"projects/{first.Project}/databases", first.Id) is not null);
-            await peer.VerifyProjectBindingAsync(first.Organization, first.Project);
             return (new Regions(gru, peer, delivery), first);
         }
         catch
@@ -175,7 +173,6 @@ public sealed partial class DatabaseRenameRaceTests
         && await ReadCatalogAsync(api, $"projects/{project}/databases", id) is { } record
         && JsonElement.Parse(record).GetProperty("name").GetString() == name;
 
-    // The audit events of the organization in api's catalog with this action and target.
     private static async Task<int> EventsAsync(ManagementApi api, string organization, string action, string target)
     {
         var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);

@@ -129,19 +129,17 @@ internal sealed class EngineManagedBackupService(
                 return new NotFound();
             }
 
-            // A backup policy is project state of the organization: a viewer cannot set it, and setting it changes the organization.
             var access = await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false);
-            if (access is not OrganizationMember)
+            if (access is not Organization)
             {
                 return access switch
                 {
-                    Forbidden => ManagementErrors.RoleTooLow,
+                    Forbidden error => error,
                     NotFound => new NotFound(),
-                    OrganizationMember => throw new UnreachableException(),
+                    Organization => throw new UnreachableException(),
                 };
             }
 
-            await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, BackupCatalog.Policy(owner.DatabaseId), CurrentPolicy, policy, TerraBaseJsonContext.Default.BackupPolicy, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, BackedUpDatabases, owner.DatabaseId, owner, TerraBaseJsonContext.Default.DatabaseOwner, cancellationToken).ConfigureAwait(false);
             return policy;
@@ -262,7 +260,7 @@ internal sealed class EngineManagedBackupService(
     {
         ManagedDatabase database => database,
         Conflict error => error,
-        Forbidden => ManagementErrors.RoleTooLow,
+        Forbidden error => error,
         NotFound => new NotFound(),
         QuotaExceeded error => error,
         Unavailable error => error,
@@ -382,9 +380,6 @@ internal sealed class EngineManagedBackupService(
         }
     }
 
-    // pending → snapshotting → registered, or → expiring on any failure. Each step re-reads the record and the
-    // database in its transaction. A user's backup re-checks their membership; a scheduled one (no user) only that the
-    // database still exists. Every scheduled attempt ends in exactly one schedule update: success or failure.
     private async ValueTask<CreateBackupResult> SnapshotAsync(string? userId, BackupRecord record, CancellationToken cancellationToken)
     {
         SnapshotSourceResult found;
@@ -816,11 +811,10 @@ internal sealed class EngineManagedBackupService(
             : await GetRecordAsync(transaction, owner.OrganizationId, JsonSerializer.Deserialize(first.Documents[0].Json.Span, Id)!, cancellationToken).ConfigureAwait(false);
     }
 
-    // The backed-up database's tenant: through the user's membership for a manual backup, for no user for a scheduled one.
     private static ValueTask<TenantContext?> GetDatabaseAsync(IStorageTransaction transaction, string? userId, BackupRecord record, CancellationToken cancellationToken) =>
         userId is null
             ? EngineManagementService.DatabaseTenantUncheckedAsync(transaction, record.OrganizationId, record.ProjectId, record.DatabaseId, cancellationToken)
-            : EngineManagementService.MemberDatabaseTenantAsync(transaction, userId, record.OrganizationId, record.ProjectId, record.DatabaseId, cancellationToken);
+            : EngineManagementService.AuthorizedDatabaseTenantAsync(transaction, userId, record.OrganizationId, record.ProjectId, record.DatabaseId, cancellationToken);
 
     private static ValueTask<BackupRecord?> GetRecordAsync(IStorageTransaction transaction, string organizationId, string backupId, CancellationToken cancellationToken) =>
         GetAsync(transaction, BackupCatalog.Records(organizationId), backupId, TerraBaseJsonContext.Default.BackupRecord, cancellationToken);

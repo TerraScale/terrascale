@@ -2,7 +2,6 @@ using System.Net.Sockets;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using TerraBase.Engine;
@@ -129,11 +128,10 @@ public sealed class BenchmarkReadinessTests
     }
 
     [Test]
-    public async Task Registration_retries_503_with_the_original_commit(CancellationToken cancellationToken)
+    public async Task Registration_keeps_the_requested_database_identities(CancellationToken cancellationToken)
     {
-        var unavailable = new UnavailableRegistration();
-        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru", services: services =>
-            services.AddSingleton<IStartupFilter>(unavailable), cancellationToken: cancellationToken);
+        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru",
+            services: new OtherRegions("sjc", "fra").Register, cancellationToken: cancellationToken);
         var config = new JsonObject
         {
             ["region"] = "gru",
@@ -143,9 +141,6 @@ public sealed class BenchmarkReadinessTests
             ["extra_databases"] = new JsonArray([.. Enumerable.Range(0, 17).Select(_ => (JsonNode?)JsonValue.Create(EntityIds.New().ToString()))]),
         };
         await BenchmarkProcessHost.RegisterAsync(api, config, cancellationToken);
-        await Assert.That(unavailable.Payloads.Count).IsEqualTo(6);
-        await Assert.That(unavailable.Payloads.GroupBy(payload => payload).All(group => group.Count() == 2)).IsTrue();
-        await Assert.That(unavailable.Payloads.Distinct().Select(payload => JsonNode.Parse(payload)!["ops"]!.AsArray().Count).SequenceEqual([4, 16, 1])).IsTrue();
         await Assert.That(BenchmarkProcessHost.DatabaseIds(config).Count).IsEqualTo(18);
         JsonArray[] invalidDatabases = [["idle-1"], [config["database"]!.GetValue<string>()],
             ["01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FAV"]];
@@ -155,12 +150,12 @@ public sealed class BenchmarkReadinessTests
             badConfig["extra_databases"] = invalid;
             await Assert.That(() => BenchmarkProcessHost.DatabaseIds(badConfig)).Throws<InvalidOperationException>();
         }
-        await BenchmarkProcessHost.WaitForProjectBindingAsync(api, config["organization"]!.GetValue<string>(),
+        await BenchmarkProcessHost.WaitForProjectAsync(api, config["organization"]!.GetValue<string>(),
             config["project"]!.GetValue<string>(), cancellationToken);
     }
 
     [Test]
-    public async Task Binding_waits_for_the_project_to_be_registered(CancellationToken cancellationToken)
+    public async Task Readiness_waits_for_the_project_to_be_registered(CancellationToken cancellationToken)
     {
         var missing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var api = await ManagementApi.StartAsync(services: services =>
@@ -168,18 +163,12 @@ public sealed class BenchmarkReadinessTests
         var organization = await api.CreateOrganizationAsync("benchmark");
         var project = EntityIds.New().ToString();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var ready = BenchmarkProcessHost.WaitForProjectBindingAsync(api, organization, project, deadline.Token);
+        var ready = BenchmarkProcessHost.WaitForProjectAsync(api, organization, project, deadline.Token);
         try
         {
             await missing.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
             await Assert.That(ready.IsCompleted).IsFalse();
-            using var service = api.Service(api.User);
-            using var created = await service.PostAsJsonAsync(new Uri("/v1/management/commits", UriKind.Relative), new
-            {
-                id = EntityIds.New().ToString(),
-                ops = new[] { new { op = "create_project", organization, id = project, name = "benchmark" } },
-            }, cancellationToken);
-            created.EnsureSuccessStatusCode();
+            await CatalogFixture.RegisterProjectAsync(api, api.User, organization, project, cancellationToken);
             await ready;
         }
         finally
@@ -274,16 +263,8 @@ public sealed class BenchmarkReadinessTests
                 await Assert.That(ready.IsCompleted).IsFalse();
             }
             await WaitForReasonAsync("physical");
-            using (var service = api.Service(api.User))
-            using (var created = await service.PostAsJsonAsync(new Uri("/v1/management/commits", UriKind.Relative), new
-            {
-                id = EntityIds.New().ToString(),
-                ops = new[] { new { op = "create_database", organization = database.Organization, project = database.Project,
-                    id = extra, name = "idle-1", replica_regions = Array.Empty<string>() } },
-            }, deadline.Token))
-            {
-                created.EnsureSuccessStatusCode();
-            }
+            await CatalogFixture.RegisterAsync(api, api.User,
+                new TenantContext(database.Organization, PlanTier.Hobby, database.Project, extra), "idle-1", [], deadline.Token);
             await BenchmarkProcessHost.WaitForWritesAsync(client,
                 new Uri($"/v1/projects/{database.Project}/databases/idle-1/collections", UriKind.Relative), null, deadline.Token);
             await WaitForReasonAsync("own-prefix");
@@ -331,33 +312,6 @@ public sealed class BenchmarkReadinessTests
         }
     }
 
-    private sealed class UnavailableRegistration : IStartupFilter
-    {
-        public List<string> Payloads { get; } = [];
-
-        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
-        {
-            app.Use(async (context, proceed) =>
-            {
-                if (context.Request.Path == "/v1/management/commits" && context.Request.Method == "POST")
-                {
-                    context.Request.EnableBuffering();
-                    using var reader = new StreamReader(context.Request.Body, leaveOpen: true);
-                    Payloads.Add(await reader.ReadToEndAsync(context.RequestAborted));
-                    context.Request.Body.Position = 0;
-                    if (Payloads.Count(payload => payload == Payloads[^1]) == 1)
-                    {
-                        context.Response.StatusCode = 503;
-                        return;
-                    }
-                }
-
-                await proceed(context);
-            });
-            next(app);
-        };
-    }
-
     private sealed class MissingReadiness(TaskCompletionSource missing) : IStartupFilter
     {
         public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
@@ -366,7 +320,7 @@ public sealed class BenchmarkReadinessTests
             {
                 await proceed(context);
                 if ((context.Request.Path.Value?.Contains("/collections/bench-wait/", StringComparison.Ordinal) == true
-                    || context.Request.Path.Value?.EndsWith("/binding", StringComparison.Ordinal) == true)
+                    || context.Request.Path.Value?.Contains("/projects/", StringComparison.Ordinal) == true)
                     && context.Response.StatusCode == 404)
                 {
                     missing.TrySetResult();

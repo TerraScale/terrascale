@@ -19,16 +19,7 @@ public sealed class PeerStreamRetirementTests
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
         var retired = cluster.Database with { DatabaseId = EntityIds.New().ToString() };
         var deleted = new ManagedDatabaseRef(retired.OrganizationId, retired.ProjectId!, retired.DatabaseId!, $"other-{retired.DatabaseId!.ToLowerInvariant()}");
-        var (created, creation) = await gru.CommitAsync(new
-        {
-            op = "create_database",
-            organization = retired.OrganizationId,
-            project = retired.ProjectId,
-            id = retired.DatabaseId,
-            name = deleted.Name,
-            replica_regions = ReplicaRegions,
-        });
-        await Assert.That(created).IsEqualTo(HttpStatusCode.OK).Because(creation);
+        await CatalogFixture.RegisterAsync(gru.Api, gru.Api.User, retired, deleted.Name, ReplicaRegions);
         var sender = gru.Api.Server.Services.GetRequiredService<IReplicationStatus>();
         await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(ReportsDeletedDatabase()), Deadline);
         var healthy = new ManagedDatabaseRef(cluster.Database.OrganizationId, cluster.Database.ProjectId!, cluster.Database.DatabaseId!, "main");
@@ -46,23 +37,10 @@ public sealed class PeerStreamRetirementTests
         await TerraBaseTestServer.EventuallyAsync(async _ => await sjc.ReadAsync(retired, retiredId) == """{"n":1}""", Deadline);
 
         // Deletion requires removing the database's replica placement first.
-        var (status, body) = await gru.CommitAsync(new
-        {
-            op = "set_database_regions",
-            organization = retired.OrganizationId,
-            project = retired.ProjectId,
-            database = retired.DatabaseId,
-            replica_regions = Array.Empty<string>(),
-        });
+        var (status, body) = await gru.DatabaseRequestAsync(HttpMethod.Patch, new { replicaRegions = Array.Empty<string>() }, retired.DatabaseId);
         await Assert.That(status).IsEqualTo(HttpStatusCode.OK).Because(body);
-        (status, body) = await gru.CommitAsync(new
-        {
-            op = "delete_database",
-            organization = retired.OrganizationId,
-            project = retired.ProjectId,
-            database = retired.DatabaseId,
-        });
-        await Assert.That(status).IsEqualTo(HttpStatusCode.OK).Because(body);
+        (status, body) = await gru.DatabaseRequestAsync(HttpMethod.Delete, new { }, retired.DatabaseId);
+        await Assert.That(status).IsEqualTo(HttpStatusCode.NoContent).Because(body);
 
         await TerraBaseTestServer.EventuallyAsync(async token =>
         {

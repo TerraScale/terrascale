@@ -6,9 +6,6 @@ namespace TerraBase.Features.Management;
 /// <summary>A verified project namespace, known absence, or an unreadable catalog.</summary>
 public readonly union ResolveProjectResult(string, NotFound, Unavailable);
 
-/// <summary>A verified legacy project binding, or why verification failed.</summary>
-public readonly union VerifyProjectBindingResult(Done, NotFound, Conflict, Unavailable);
-
 /// <summary>Resolves ts-auth project ids to the compatible on-disk catalog namespace.</summary>
 public interface IProjectCatalog
 {
@@ -18,15 +15,15 @@ public interface IProjectCatalog
     /// </summary>
     ValueTask<ResolveProjectResult> ResolveProjectAsync(string projectId, string actor, string? createIn, CancellationToken cancellationToken);
 
-    /// <summary>The organization that registered <paramref name="projectId"/>, whether or not ts-auth bound it yet.</summary>
+    /// <summary>The organization that registered <paramref name="projectId"/>, if registered.</summary>
     ValueTask<ResolveProjectResult> ProjectOrganizationAsync(string projectId, CancellationToken cancellationToken);
 
-    /// <summary>Sets the plan of the storage organization a signed project enrolled; legacy-bound projects keep their owners' plan.</summary>
+    /// <summary>Sets the plan of the storage organization a signed project enrolled; projects created through management routes keep their creator's plan.</summary>
     ValueTask<SetPlanResult> SetEnrolledPlanAsync(string projectId, PlanTier plan, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Sets the plan of the memberless storage organization named by its ts-auth organization id, creating it for a paid plan
-    /// before its first database enrolls; organizations with members keep their owners' plan.
+    /// Sets the plan of the operator-owned storage organization named by its ts-auth organization id, creating it for a paid plan
+    /// before its first database enrolls; organizations created through management routes keep their creator's plan.
     /// </summary>
     ValueTask<SetPlanResult> SetStoragePlanAsync(string organizationId, PlanTier plan, CancellationToken cancellationToken);
 
@@ -36,7 +33,4 @@ public interface IProjectCatalog
     /// </summary>
     ValueTask<CloseProjectResult> CloseProjectAsync(string projectId, string closureId, string authorityOrganizationId, int version, CancellationToken cancellationToken);
 
-    /// <summary>Verifies a legacy owner's sign-in token with ts-auth before binding existing storage to its project.</summary>
-    ValueTask<VerifyProjectBindingResult> VerifyBindingAsync(
-        string userId, string organizationId, string projectId, string authorityOrganizationId, string token, CancellationToken cancellationToken);
 }

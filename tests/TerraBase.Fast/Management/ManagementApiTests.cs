@@ -15,7 +15,7 @@ public sealed class ManagementApiTests
     private static readonly string[] ReadScopes = ["documents:read"];
 
     [Test]
-    public async Task Organizations_are_created_listed_renamed_and_deleted()
+    public async Task Organizations_are_created_listed_and_deleted()
     {
         await using var api = await ManagementApi.StartAsync();
         var name = Faker.Company.CompanyName();
@@ -25,8 +25,6 @@ public sealed class ManagementApiTests
         var id = organization.GetProperty("id").GetString()!;
         using var read = await api.Client.GetAsync(Uri($"/v1/management/organizations/{id}"));
         using var list = JsonDocument.Parse(await api.Client.GetStringAsync(Uri("/v1/management/organizations")));
-        using var renamed = await api.Client.PatchAsJsonAsync(Uri($"/v1/management/organizations/{id}"), new { name = "Renamed Org" });
-        var afterRename = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"/v1/management/organizations/{id}"));
         using var deleted = await api.Client.DeleteAsync(Uri($"/v1/management/organizations/{id}"));
         using var gone = await api.Client.GetAsync(Uri($"/v1/management/organizations/{id}"));
         using var listAfterDelete = JsonDocument.Parse(await api.Client.GetStringAsync(Uri("/v1/management/organizations")));
@@ -39,8 +37,6 @@ public sealed class ManagementApiTests
         await Assert.That(EntityIds.IsValid(id)).IsTrue();
         await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(list.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!)).IsEquivalentTo([id]);
-        await Assert.That(renamed.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(afterRename.GetProperty("name").GetString()).IsEqualTo("Renamed Org");
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(listAfterDelete.RootElement.GetProperty("items").GetArrayLength()).IsEqualTo(0);
@@ -62,11 +58,7 @@ public sealed class ManagementApiTests
         var read = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"/v1/management/organizations/{organization}"));
         using var listed = JsonDocument.Parse(await api.Client.GetStringAsync(Uri("/v1/management/organizations")));
         using var nonMember = await other.PutAsJsonAsync(Uri(plan), new { plan = "hobby" });
-        using var admin = api.As(await api.AddMemberAsync(api.Client, organization, "admin"));
-        using var member = api.As(await api.AddMemberAsync(api.Client, organization, "member"));
-        using var byAdmin = await admin.PutAsJsonAsync(Uri(plan), new { plan = "hobby" });
-        using var byMember = await member.PutAsJsonAsync(Uri(plan), new { plan = "hobby" });
-        var afterRefused = await member.GetFromJsonAsync<JsonElement>(Uri($"/v1/management/organizations/{organization}"));
+        var afterRefused = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"/v1/management/organizations/{organization}"));
 
         await Assert.That(initial.GetProperty("plan").GetString()).IsEqualTo("hobby");
         await Assert.That(pro.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -77,8 +69,6 @@ public sealed class ManagementApiTests
         await Assert.That(nonMember.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         // User tokens cannot grant a resource entitlement, regardless of organization role.
         await ErrorAssert.ErrorAsync(byOwner, HttpStatusCode.Forbidden, "forbidden", "plan changes need the platform operator");
-        await ErrorAssert.ErrorAsync(byAdmin, HttpStatusCode.Forbidden, "forbidden", "plan changes need the platform operator");
-        await ErrorAssert.ErrorAsync(byMember, HttpStatusCode.Forbidden, "forbidden", "plan changes need the platform operator");
         await Assert.That(afterRefused.GetProperty("plan").GetString()).IsEqualTo("enterprise");
     }
 
@@ -109,39 +99,7 @@ public sealed class ManagementApiTests
     }
 
     [Test]
-    public async Task A_user_switches_between_their_own_organizations()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        using var other = api.As(EntityIds.New().ToString());
-        var first = await api.CreateOrganizationAsync("First");
-        var second = await api.CreateOrganizationAsync("Second");
-        var foreign = await api.CreateOrganizationAsync("Foreign", other);
-        const string current = "/v1/management/current-organization";
-
-        using var none = await api.Client.GetAsync(Uri(current));
-        using var switchedFirst = await api.Client.PutAsJsonAsync(Uri(current), new { organizationId = first });
-        using var switchedSecond = await api.Client.PutAsJsonAsync(Uri(current), new { organizationId = second });
-        var selected = await api.Client.GetFromJsonAsync<JsonElement>(Uri(current));
-        using var otherUserNone = await other.GetAsync(Uri(current));
-        using var notMember = await api.Client.PutAsJsonAsync(Uri(current), new { organizationId = foreign });
-        using var unknown = await api.Client.PutAsJsonAsync(Uri(current), new { organizationId = EntityIds.New().ToString() });
-        using var missing = await api.Client.PutAsJsonAsync(Uri(current), new { });
-        (await api.Client.DeleteAsync(Uri($"/v1/management/organizations/{second}"))).Dispose();
-        using var afterDelete = await api.Client.GetAsync(Uri(current));
-
-        await Assert.That(none.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(switchedFirst.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(switchedSecond.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(selected.GetProperty("id").GetString()).IsEqualTo(second);
-        await Assert.That(otherUserNone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(notMember.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(unknown.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(afterDelete.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-    }
-
-    [Test]
-    public async Task Projects_are_created_listed_renamed_and_deleted()
+    public async Task Projects_are_created_listed_and_deleted()
     {
         await using var api = await ManagementApi.StartAsync();
         var organization = await api.CreateOrganizationAsync("Acme");
@@ -151,7 +109,6 @@ public sealed class ManagementApiTests
         using var created = await api.Client.PostAsJsonAsync(Uri(projects), new { name = "Production" });
         var project = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
         using var list = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(projects)));
-        using var renamed = await api.Client.PatchAsJsonAsync(Uri($"{projects}/{project}"), new { name = "Staging" });
         var read = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"{projects}/{project}"));
         using var underOtherOrganization = await api.Client.GetAsync(Uri($"/v1/management/organizations/{other}/projects/{project}"));
         using var organizationNotEmpty = await api.Client.DeleteAsync(Uri($"/v1/management/organizations/{organization}"));
@@ -162,8 +119,7 @@ public sealed class ManagementApiTests
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(created.Headers.Location!.ToString()).IsEqualTo($"{projects}/{project}");
         await Assert.That(list.RootElement.GetProperty("items")[0].GetProperty("organizationId").GetString()).IsEqualTo(organization);
-        await Assert.That(renamed.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(read.GetProperty("name").GetString()).IsEqualTo("Staging");
+        await Assert.That(read.GetProperty("name").GetString()).IsEqualTo("Production");
         await Assert.That(underOtherOrganization.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await ErrorAssert.ErrorAsync(organizationNotEmpty, HttpStatusCode.Conflict, "not_empty", "delete what it contains first");
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
@@ -231,23 +187,17 @@ public sealed class ManagementApiTests
         var mainId = (await main.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
 
         using var organization = await api.Client.PostAsJsonAsync(Uri("/v1/management/organizations"), new { name = "ACME" });
-        using var organizationRename = await api.Client.PatchAsJsonAsync(Uri($"/v1/management/organizations/{globex}"), new { name = "acme" });
-        using var organizationOwnCase = await api.Client.PatchAsJsonAsync(Uri($"/v1/management/organizations/{acme}"), new { name = "ACME" });
         using var organizationOtherUser = await otherUser.PostAsJsonAsync(Uri("/v1/management/organizations"), new { name = "Acme" });
         using var projectDuplicate = await api.Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{acme}/projects"), new { name = "web" });
-        using var projectRename = await api.Client.PatchAsJsonAsync(Uri($"/v1/management/organizations/{acme}/projects/{project}"), new { name = "MOBILE" });
         using var projectElsewhere = await api.Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{globex}/projects"), new { name = "Web" });
         using var databaseDuplicate = await api.Client.PostAsJsonAsync(Uri(databases), new { name = "main" });
         using var branchDuplicate = await api.Client.PostAsJsonAsync(Uri($"{databases}/{mainId}/branches"), new { name = "main" });
         using var list = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(databases)));
 
         await ErrorAssert.ErrorAsync(organization, HttpStatusCode.Conflict, "name_taken", "name is already taken");
-        await ErrorAssert.ErrorAsync(organizationRename, HttpStatusCode.Conflict, "name_taken", "name is already taken");
-        await Assert.That(organizationOwnCase.StatusCode).IsEqualTo(HttpStatusCode.OK);
         // Organization names are unique per creator, so they reveal nothing about other tenants.
         await Assert.That(organizationOtherUser.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await ErrorAssert.ErrorAsync(projectDuplicate, HttpStatusCode.Conflict, "name_taken", "name is already taken");
-        await ErrorAssert.ErrorAsync(projectRename, HttpStatusCode.Conflict, "name_taken", "name is already taken");
         await Assert.That(projectElsewhere.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await ErrorAssert.ErrorAsync(databaseDuplicate, HttpStatusCode.Conflict, "name_taken", "name is already taken");
         await ErrorAssert.ErrorAsync(branchDuplicate, HttpStatusCode.Conflict, "name_taken", "name is already taken");
@@ -269,7 +219,7 @@ public sealed class ManagementApiTests
         statuses.AddRange(await AllStatusesAsync(api.Client, $"/v1/management/organizations/{organization}", unknown.ToString(), unknown.ToString(), Level.Project));
         statuses.AddRange(await AllStatusesAsync(api.Client, $"/v1/management/organizations/{organization}", project, unknown.ToString(), Level.Database));
 
-        await Assert.That(statuses).Count().IsEqualTo(14 + 8 + 3);
+        await Assert.That(statuses).Count().IsEqualTo(12 + 7 + 3);
         await Assert.That(statuses.Distinct()).IsEquivalentTo([HttpStatusCode.NotFound]);
     }
 
@@ -284,12 +234,11 @@ public sealed class ManagementApiTests
         var database = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
 
         var statuses = await AllStatusesAsync(intruder, $"/v1/management/organizations/{organization}", project, database);
-        await Assert.That(statuses).Count().IsEqualTo(14);
+        await Assert.That(statuses).Count().IsEqualTo(12);
         using var intruderList = JsonDocument.Parse(await intruder.GetStringAsync(Uri("/v1/management/organizations")));
         using var stillThere = await api.Client.GetAsync(Uri($"/v1/management/organizations/{organization}/projects/{project}/databases/{database}"));
         var unchanged = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"/v1/management/organizations/{organization}"));
 
-        // 404, not 403: a non-member cannot even confirm that the organization exists.
         await Assert.That(statuses.Distinct()).IsEquivalentTo([HttpStatusCode.NotFound]);
         await Assert.That(intruderList.RootElement.GetProperty("items").GetArrayLength()).IsEqualTo(0);
         await Assert.That(stillThere.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -311,9 +260,7 @@ public sealed class ManagementApiTests
         foreach (var body in badDisplayNames)
         {
             statuses.Add(await StatusAsync(api.Client.PostAsJsonAsync(Uri("/v1/management/organizations"), body)));
-            statuses.Add(await StatusAsync(api.Client.PatchAsJsonAsync(Uri($"/v1/management/organizations/{organization}"), body)));
             statuses.Add(await StatusAsync(api.Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{organization}/projects"), body)));
-            statuses.Add(await StatusAsync(api.Client.PatchAsJsonAsync(Uri($"/v1/management/organizations/{organization}/projects/{project}"), body)));
         }
 
         foreach (var body in badDatabaseNames)
@@ -411,7 +358,7 @@ public sealed class ManagementApiTests
                 dataDirectory,
                 ("catalog", "version", JsonSerializer.Serialize("99")),
                 ("organizations", organization, $$"""{"id":"{{organization}}","name":"Acme","createdBy":"alice","createdAt":"2026-10-04T12:00:00+00:00"}"""),
-                ($"organizations/{organization}/members", "alice", JsonSerializer.Serialize("alice")),
+
                 ("users/alice/organizations", organization, JsonSerializer.Serialize(organization)),
                 ("users/alice/organization_names", "acme", JsonSerializer.Serialize(organization)));
             var before = await ReadSystemDocumentsAsync(dataDirectory);
@@ -427,8 +374,6 @@ public sealed class ManagementApiTests
                 create = await StatusAsync(mallory.PostAsJsonAsync(Uri("/v1/management/organizations"), new { name = "Other" }));
                 const string message = "the management catalog has an old or unsupported format; discard the affected data";
                 await ErrorAssert.ErrorAsync(mallory.GetAsync(Uri("/v1/management/organizations")), HttpStatusCode.ServiceUnavailable, "unavailable", message);
-                await ErrorAssert.ErrorAsync(mallory.GetAsync(Uri($"/v1/management/organizations/{organization}/members")),
-                    HttpStatusCode.ServiceUnavailable, "unavailable", message);
                 await ErrorAssert.ErrorAsync(mallory.PostAsJsonAsync(Uri("/v1/management/organizations"), new { name = "Other" }),
                     HttpStatusCode.ServiceUnavailable, "unavailable", message);
                 var projectPath = $"/v1/management/organizations/{organization}/projects/{EntityIds.New()}";
@@ -441,9 +386,6 @@ public sealed class ManagementApiTests
                 await ErrorAssert.ErrorAsync(api.Server.Client.PostAsJsonAsync(Uri("/admin/api-keys"),
                     new { name = "key", scopes = ReadScopes, organizationId = organization }),
                     HttpStatusCode.ServiceUnavailable, "unavailable", message);
-                using var commit = await mallory.PostAsJsonAsync(Uri("/v1/management/commits"),
-                    new { id = organization, ops = new[] { new { op = "create_organization", id = organization, name = "Other" } } });
-                await ErrorAssert.ErrorAsync(commit, HttpStatusCode.ServiceUnavailable, "unavailable", message);
             }
 
             await Assert.That(list).IsEqualTo(HttpStatusCode.ServiceUnavailable);
@@ -475,7 +417,7 @@ public sealed class ManagementApiTests
         const string message = "the management catalog has an old or unsupported format; discard the affected data";
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri("/v1/management/organizations")),
             HttpStatusCode.ServiceUnavailable, "unavailable", message);
-        await ErrorAssert.ErrorAsync(api.Client.PatchAsJsonAsync(Uri($"/v1/management/organizations/{organization}"), new { name = "Refused" }),
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{organization}/projects"), new { name = "Refused" }),
             HttpStatusCode.ServiceUnavailable, "unavailable", message);
         // This endpoint reaches the SystemCatalog write directly, without a separate management-service check.
         await ErrorAssert.ErrorAsync(api.Server.Client.PostAsJsonAsync(Uri("/admin/api-keys"),
@@ -492,9 +434,8 @@ public sealed class ManagementApiTests
         using var read = await api.Client.GetAsync(Uri($"/v1/management/organizations/{organization}"));
         await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("name").GetString()).IsEqualTo("Preserved");
-        using var renamed = await api.Client.PatchAsJsonAsync(Uri($"/v1/management/organizations/{organization}"), new { name = "Recovered" });
-        await Assert.That(renamed.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That((await renamed.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("name").GetString()).IsEqualTo("Recovered");
+        using var recovered = await api.Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{organization}/projects"), new { name = "Recovered" });
+        await Assert.That(recovered.StatusCode).IsEqualTo(HttpStatusCode.Created);
         using var issued = await api.Server.Client.PostAsJsonAsync(Uri("/admin/api-keys"),
             new { name = "Recovered key", scopes = ReadScopes, organizationId = organization });
         await Assert.That(issued.StatusCode).IsEqualTo(HttpStatusCode.Created);
@@ -502,10 +443,8 @@ public sealed class ManagementApiTests
 
     [Test]
     [Arguments("organization-tombstone")]
-    [Arguments("project-binding")]
+    [Arguments("project-mapping")]
     [Arguments("organization-deletion-history")]
-    [Arguments("dashboard_query_shapes")]
-    [Arguments("dashboard_query_shapes_flush")]
     public async Task Unversioned_management_residuals_are_refused_without_stamping_the_catalog(string residual)
     {
         await using var api = await ManagementApi.StartAsync();
@@ -515,7 +454,7 @@ public sealed class ManagementApiTests
         var collection = residual switch
         {
             "organization-tombstone" or "organization-deletion-history" => "organizations",
-            "project-binding" => "project_organizations",
+            "project-mapping" => "project_organizations",
             _ => residual,
         };
         await using (var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None))
@@ -624,13 +563,11 @@ public sealed class ManagementApiTests
         (Level Level, Func<Task<HttpResponseMessage>> Send)[] requests =
         [
             (Level.Organization, () => client.GetAsync(Uri(organization))),
-            (Level.Organization, () => client.PatchAsJsonAsync(Uri(organization), named)),
             (Level.Organization, () => client.PutAsJsonAsync(Uri($"{organization}/plan"), new { plan = "pro" })),
             (Level.Organization, () => client.DeleteAsync(Uri(organization))),
             (Level.Organization, () => client.GetAsync(Uri($"{organization}/projects"))),
             (Level.Organization, () => client.PostAsJsonAsync(Uri($"{organization}/projects"), named)),
             (Level.Project, () => client.GetAsync(Uri(projectPath))),
-            (Level.Project, () => client.PatchAsJsonAsync(Uri(projectPath), named)),
             (Level.Project, () => client.DeleteAsync(Uri(projectPath))),
             (Level.Project, () => client.GetAsync(Uri($"{projectPath}/databases"))),
             (Level.Project, () => client.PostAsJsonAsync(Uri($"{projectPath}/databases"), named)),

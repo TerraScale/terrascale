@@ -165,7 +165,6 @@ public sealed class WebhookSecurityTests
         }
 
         var foreign = await fixture.Api.CreateManagedDatabaseAsync("foreign");
-        await fixture.Api.VerifyProjectBindingAsync(foreign.Organization, foreign.Project);
         using var otherProject = fixture.ProjectClient(project: foreign.Project);
         await ManagementApi.CreateCollectionAsync(otherProject, foreign, "items", token);
         using var databaseBound = fixture.ProjectClient(database: sibling.Id);

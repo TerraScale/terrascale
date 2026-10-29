@@ -73,29 +73,22 @@ public sealed class CatalogCleanupRaceTests
         var prepared = new TaskCompletionSource<(TenantContext Storage, UsageCommitHook.Gate Gate)>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var api = await ManagementApi.StartAsync(services: services =>
         {
+            new OtherRegions("sjc").Register(services);
             hook.Install(services);
             services.AddSingleton<DatabaseLifecycleCheckpoint>((step, storage) =>
             {
                 if (step == "create.files")
                 {
-                    prepared.SetResult((storage, hook.PauseWrite()));
+                    prepared.SetResult((storage, hook.PauseWrite(fail: true)));
                 }
             });
         });
         var organization = await api.CreateOrganizationAsync("cleanup race");
         var project = await api.CreateProjectAsync(organization, "cleanup race");
-        var database = EntityIds.New().ToString();
-        using var service = api.Service(api.User);
-        var submitting = service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
-        {
-            id = EntityIds.New().ToString(),
-            ops = new object[]
-            {
-                new { op = "create_organization", id = organization, name = "conflicting organization" },
-                new { op = "create_database", organization, project, id = database, name = "main", replica_regions = Replicas },
-            },
-        });
+        var submitting = api.Client.PostAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"),
+            new { name = "main", replicaRegions = Replicas });
         var (storage, gate) = await prepared.Task.WaitAsync(TestContext.Current!.Execution.CancellationToken);
+        var database = storage.DatabaseId!;
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         var catalog = await engine.OpenSystemDatabaseAsync(CancellationToken.None);
         var checkedRegistration = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -145,7 +138,7 @@ public sealed class CatalogCleanupRaceTests
         }
 
         using var response = await submitting;
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because(await response.Content.ReadAsStringAsync());
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError).Because(await response.Content.ReadAsStringAsync());
         await Assert.That((await engine.OpenDatabaseAsync(storage, CancellationToken.None))!.Incarnation).IsEqualTo(copy.Incarnation);
         await using (var data = await copy.BeginTransactionAsync(write: false, CancellationToken.None))
         {

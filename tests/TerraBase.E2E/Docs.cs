@@ -160,7 +160,6 @@ internal static class Docs
         throw new HttpRequestException($"{response.RequestMessage?.Method} {response.RequestMessage?.RequestUri} answered {(int)response.StatusCode}: {answer}", null, response.StatusCode);
     }
 
-    // Tenant admission answers 429 tenant_busy with Retry-After before it runs the request (QosExtensions, CommitEndpoint),
     // so sending it again cannot repeat it. The outage probe alone also retries two explicit pre-execution 503 codes.
     // Every other answer is returned: tenant_memory and write_outcome_unknown can come after the request ran.
     // A wait that would pass the convergence deadline returns the 429, and the caller reports it; token cancels the wait.

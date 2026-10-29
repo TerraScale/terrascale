@@ -2259,9 +2259,7 @@ public sealed partial class DatabaseRecoveryTests
     }
 
     [Test]
-    [Arguments("management")]
-    [Arguments("commit")]
-    public async Task A_catalog_refusal_before_creation_intent_leaves_no_owned_files_or_catalog_changes(string route)
+    public async Task A_catalog_refusal_before_creation_intent_leaves_no_owned_files_or_catalog_changes()
     {
         await using var state = new RecoveryData();
         var hook = new UsageCommitHook();
@@ -2314,9 +2312,9 @@ public sealed partial class DatabaseRecoveryTests
         }
 
         using var retried = await CreateAsync();
-        await Assert.That(retried.StatusCode).IsEqualTo(route == "commit" ? HttpStatusCode.OK : HttpStatusCode.Created);
+        await Assert.That(retried.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var body = await retried.Content.ReadFromJsonAsync<JsonElement>();
-        var replacement = (route == "commit" ? body.GetProperty("results")[0].GetProperty("value") : body).GetProperty("id").GetString()!;
+        var replacement = body.GetProperty("id").GetString()!;
         await Assert.That(File.Exists(state.Path(replacement))).IsTrue();
         await Assert.That((await PendingAsync(api)).Documents).IsEmpty();
         using var data = api.DataClient(state.ApiKey);
@@ -2326,13 +2324,7 @@ public sealed partial class DatabaseRecoveryTests
 
         Task<HttpResponseMessage> CreateAsync()
         {
-            return route == "commit"
-            ? owner.PostAsJsonAsync(Uri("/v1/management/commits"), new
-            {
-                id = state.Organization,
-                ops = new[] { new { op = "create_database", organization = state.Organization, project = state.Project, name = state.TargetName } },
-            })
-            : owner.PostAsJsonAsync(Uri(state.Databases), new { name = state.TargetName });
+            return owner.PostAsJsonAsync(Uri(state.Databases), new { name = state.TargetName });
         }
     }
 

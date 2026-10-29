@@ -33,9 +33,9 @@ internal sealed class RegionProcesses : IAsyncDisposable
     private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(120);
     private readonly string _root = Directory.CreateTempSubdirectory("terrabase-regions-").FullName;
     private readonly Dictionary<string, Region> _regions = [with(StringComparer.Ordinal)];
-    private readonly string _organization = EntityIds.New().ToString();
-    private readonly string _project = EntityIds.New().ToString();
-    private readonly string _database = EntityIds.New().ToString();
+    private string _organization = EntityIds.New().ToString();
+    private string _project = EntityIds.New().ToString();
+    private string _database = EntityIds.New().ToString();
 
     // Every region's process loads the write-ahead log fault shim (StartWithWalFaultsAsync).
     private readonly bool _walFaults;
@@ -294,26 +294,10 @@ internal sealed class RegionProcesses : IAsyncDisposable
 
     private async Task RegisterAsync(Region node, string owner, string[] replicas)
     {
-        var commit = JsonSerializer.Serialize(new
-        {
-            id = EntityIds.New().ToString(),
-            ops = new object[]
-            {
-                new { op = "create_organization", id = _organization, name = $"regions-{_organization}" },
-                new { op = "set_plan", organization = _organization, plan = "enterprise" },
-                new { op = "create_project", organization = _organization, id = _project, name = "regions" },
-                new { op = "create_database", organization = _organization, project = _project, name = "canary", id = _database, replica_regions = replicas },
-            },
-        });
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/v1/management/commits", UriKind.Relative))
-        {
-            Content = new StringContent(commit, Encoding.UTF8, "application/json"),
-            Version = HttpVersion.Version20,
-            VersionPolicy = HttpVersionPolicy.RequestVersionExact,
-        };
-        request.Headers.Add("X-TerraBase-User-Id", owner);
-        using var response = await this[node.Name].SendAsync(request);
-        await Docs.EnsureSuccessAsync(response);
+        var database = await CatalogApi.CreateAsync(this[node.Name], owner, "canary", replicas);
+        _organization = database.Organization;
+        _project = database.Project;
+        _database = database.Id;
     }
 
     private sealed class Region(string name, string machineId, string dataDirectory)

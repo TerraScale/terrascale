@@ -11,7 +11,6 @@ using TerraBase.Fast.Storage;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
-using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -26,7 +25,6 @@ public sealed class QosAdmissionTests
         using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
         _ = await tenant.ContextAsync(api.Server, "app");
         using var owner = api.As(tenant.User);
-        await api.VerifyProjectBindingAsync(tenant.OrganizationId, tenant.ProjectId, owner);
         using var jwt = api.WithToken(api.Issuer.Mint(tenant.User, token =>
         {
             token.Claims["project_id"] = tenant.ProjectId;
@@ -108,7 +106,7 @@ public sealed class QosAdmissionTests
     }
 
     [Test]
-    public async Task Commit_concurrency_is_held_until_response_serialization_finishes()
+    public async Task Management_concurrency_is_held_until_response_serialization_finishes()
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
@@ -164,12 +162,7 @@ public sealed class QosAdmissionTests
 
         async Task<HttpResponseMessage> SendAsync(bool hold)
         {
-            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/v1/management/commits", UriKind.Relative));
-            request.Content = JsonContent.Create(new
-            {
-                id = EntityIds.New().ToString(),
-                ops = new[] { new { op = "rename_organization", organization, name = "Still active" } },
-            });
+            using var request = new HttpRequestMessage(HttpMethod.Get, new Uri($"/v1/management/organizations/{organization}", UriKind.Relative));
             if (hold)
             {
                 request.Headers.Add("X-Test-Hold-Response", "true");
@@ -209,7 +202,7 @@ public sealed class QosAdmissionTests
         await using var api = await ManagementApi.StartAsync();
         var organization = await api.CreateOrganizationAsync("Body limit");
         using var body = new StringContent($"{{\"name\":\"{new Faker().Random.String2(4 * 1024 * 1024, "abcdef")}\"}}", Encoding.UTF8, "application/json");
-        using var response = await api.Client.PatchAsync(new Uri($"/v1/management/organizations/{organization}", UriKind.Relative), body);
+        using var response = await api.Client.PostAsync(new Uri($"/v1/management/organizations/{organization}/projects", UriKind.Relative), body);
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.RequestEntityTooLarge);
         using var recovered = await api.Client.GetAsync(new Uri($"/v1/management/organizations/{organization}", UriKind.Relative));
         recovered.EnsureSuccessStatusCode();

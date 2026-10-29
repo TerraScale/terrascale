@@ -9,7 +9,6 @@ using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Hosting;
-using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -82,37 +81,6 @@ public sealed class QueryShapeMemoryTests
         var stats = await api.Client.GetFromJsonAsync<JsonElement>(ManagementApi.Uri(database.Path[3..] + "/query-shapes"));
         await Assert.That(stats.GetProperty("items").GetArrayLength()).IsEqualTo(1);
         await Assert.That(stats.GetProperty("items")[0].GetProperty("queries").GetInt64()).IsEqualTo(sql ? 1L : 2L);
-    }
-
-    [Test]
-    public async Task Dashboard_queries_release_normalization_scratch_and_retain_shape_through_record()
-    {
-        await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(), services: InstallProbes);
-        using var service = api.Service(api.User);
-        var text = new Faker().Lorem.Word();
-        using (var seeded = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
-        {
-            id = EntityIds.New().ToString(),
-            ops = new[] { new { op = "create", collection = "notes", id = EntityIds.New().ToString(), document = new { text } } },
-        }))
-        {
-            seeded.EnsureSuccessStatusCode();
-        }
-
-        var memory = api.Server.Services.GetRequiredService<MemoryProbe>();
-        var tracker = api.Server.Services.GetRequiredService<TrackerProbe>();
-        using var gauge = new MemoryGauge(api.Server.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName));
-        using (var response = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/documents/notes/query"),
-            new { filter = new { eq = new[] { "/text", text } } }))
-        {
-            response.EnsureSuccessStatusCode();
-        }
-
-        await AssertReservationsAsync(memory, tracker, gauge, expectedRecords: 1);
-        await Assert.That(tracker.Records.Single().Database).IsNull();
-        var stats = await service.GetFromJsonAsync<JsonElement>(ManagementApi.Uri("/management/query-shapes"));
-        await Assert.That(stats.GetProperty("items").GetArrayLength()).IsEqualTo(1);
-        await Assert.That(stats.GetProperty("items")[0].GetProperty("queries").GetInt64()).IsEqualTo(1);
     }
 
     private static void InstallProbes(IServiceCollection services)
@@ -192,18 +160,18 @@ public sealed class QueryShapeMemoryTests
     {
         public ConcurrentQueue<Observation> Records { get; } = new();
 
-        public void Record(TenantContext? database, string collection, string shape, TimeSpan latency, long rowsScanned)
+        public void Record(TenantContext database, string collection, string shape, TimeSpan latency, long rowsScanned)
         {
             var before = memory.Active;
             inner.Record(database, collection, shape, latency, rowsScanned);
             Records.Enqueue(new Observation(database, shape, rowsScanned, before, memory.Active));
         }
 
-        public ValueTask<QueryShapeReadResult> ReadAsync(TenantContext? database, CancellationToken cancellationToken) =>
+        public ValueTask<QueryShapeReadResult> ReadAsync(TenantContext database, CancellationToken cancellationToken) =>
             inner.ReadAsync(database, cancellationToken);
     }
 
-    private sealed record Observation(TenantContext? Database, string Shape, long RowsScanned, ObservedReservation[] Before, ObservedReservation[] After);
+    private sealed record Observation(TenantContext Database, string Shape, long RowsScanned, ObservedReservation[] Before, ObservedReservation[] After);
 
     private sealed class MemoryGauge : IDisposable
     {

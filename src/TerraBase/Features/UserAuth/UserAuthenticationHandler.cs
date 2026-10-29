@@ -16,8 +16,7 @@ namespace TerraBase.Features.UserAuth;
 /// Authenticates <c>Authorization: Bearer &lt;ts-auth access token&gt;</c>: an asymmetrically signed JWT of type
 /// <c>at+jwt</c> from <c>auth-issuer</c>, for one of <c>auth-audience</c>, within its lifetime, with a <c>sub</c>, and not
 /// a ts-auth guest's (<c>is_anonymous</c>).
-/// The principal carries the <c>sub</c> as <see cref="ClaimTypes.NameIdentifier"/> and, when <c>email_verified</c> is
-/// true, the <c>email</c> as <see cref="ClaimTypes.Email"/>. Request headers never name the user.
+/// The principal carries the <c>sub</c> as <see cref="ClaimTypes.NameIdentifier"/>. Request headers never name the user.
 /// </summary>
 internal sealed class UserAuthenticationHandler(
     IOptionsMonitor<AuthenticationSchemeOptions> options,
@@ -213,12 +212,6 @@ internal sealed class UserAuthenticationHandler(
         if (project is null && jwt.TryGetPayloadValue<string>(Platform.PlatformExplore.RoleClaim, out var role) && role == Platform.PlatformExplore.AdminRole)
         {
             claims.Add(new Claim(Platform.PlatformExplore.RoleClaim, role));
-        }
-
-        if (jwt.TryGetPayloadValue<bool>("email_verified", out var verified) && verified
-            && jwt.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Email, out var email) && !string.IsNullOrEmpty(email))
-        {
-            claims.Add(new Claim(ClaimTypes.Email, email));
         }
 
         // Exactly the list the signature was checked against: a later refresh replaces it and so retires the entry.

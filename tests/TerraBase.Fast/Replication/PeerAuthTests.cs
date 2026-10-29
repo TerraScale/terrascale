@@ -128,10 +128,9 @@ public sealed class PeerAuthTests
                 await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized).Because($"{name} {path}");
             }
 
-            // Key issue and a management commit that claims an operator's user ID, which the credential must still gate.
             using var key = await http.PostAsync(new Uri("/admin/api-keys", UriKind.Relative), KeyBody(EntityIds.New().ToString()), Token);
             await Assert.That(key.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized).Because($"{name} POST /admin/api-keys");
-            using var commit = CommitRequest(owner, EntityIds.New().ToString());
+            using var commit = OrganizationRequest(owner, EntityIds.New().ToString());
             using var refused = await http.SendAsync(commit, Token);
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized).Because($"{name} forged management commit");
         }
@@ -140,7 +139,7 @@ public sealed class PeerAuthTests
         await Assert.That(await CountsAsync(server)).IsEqualTo(before);
 
         // The same commit with the valid credential is accepted, so the refusals above are the credential's.
-        using var accepted = await server.Client.SendAsync(CommitRequest(owner, EntityIds.New().ToString()), Token);
+        using var accepted = await server.Client.SendAsync(OrganizationRequest(owner, EntityIds.New().ToString()), Token);
         await Assert.That(accepted.IsSuccessStatusCode).IsTrue();
 
         // The same administration path answers the valid credential, so the refusal is the credential's.
@@ -230,7 +229,7 @@ public sealed class PeerAuthTests
         // A forged catalog write to b, claiming an operator, is refused and leaves b's catalog and keys as they were.
         var before = await CountsAsync(b);
         using var forged = RawHttp(b.BaseAddress, [mine]);
-        using var commit = CommitRequest(EntityIds.New().ToString(), EntityIds.New().ToString());
+        using var commit = OrganizationRequest(EntityIds.New().ToString(), EntityIds.New().ToString());
         using var refused = await forged.SendAsync(commit, Token);
         await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(await CountsAsync(b)).IsEqualTo(before);
@@ -366,17 +365,11 @@ public sealed class PeerAuthTests
     private static StringContent KeyBody(string organization) =>
         new(JsonSerializer.Serialize(new { name = "forged", scopes = ReadScopes, organizationId = organization }), Encoding.UTF8, "application/json");
 
-    // A management commit that creates one organization as the given user; the internal listener serves it.
-    private static HttpRequestMessage CommitRequest(string owner, string organization)
+    private static HttpRequestMessage OrganizationRequest(string owner, string organization)
     {
-        var commit = JsonSerializer.Serialize(new
+        var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/v1/management/organizations", UriKind.Relative))
         {
-            id = EntityIds.New().ToString(),
-            ops = new object[] { new { op = "create_organization", id = organization, name = $"forged-{organization}" } },
-        });
-        var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/v1/management/commits", UriKind.Relative))
-        {
-            Content = new StringContent(commit, Encoding.UTF8, "application/json"),
+            Content = JsonContent.Create(new { name = $"forged-{organization}" }),
             Version = HttpVersion.Version20,
             VersionPolicy = HttpVersionPolicy.RequestVersionExact,
         };

@@ -18,7 +18,6 @@ public sealed class DatabaseIdentityDeletionTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         using var deleted = await client.DeleteAsync(Uri(database.Data + (conditional ? "/if-id/" + database.Id : "")));
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await deleted.Content.ReadAsStringAsync());
@@ -48,7 +47,6 @@ public sealed class DatabaseIdentityDeletionTests
         });
         var organization = await api.CreateOrganizationAsync("Replicated deletion");
         var project = await api.CreateProjectAsync(organization, "Project");
-        await api.VerifyProjectBindingAsync(organization, project);
         using var client = ProjectClient(api, project);
         object placement = allRegions ? new { name = "main", allRegions = true }
             : new { name = "main", replicaRegions = new[] { "sjc", "fra" } };
@@ -89,7 +87,6 @@ public sealed class DatabaseIdentityDeletionTests
                 }));
         });
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         var document = await PutDocumentAsync(client, database);
         Volatile.Write(ref armed, true);
@@ -110,7 +107,6 @@ public sealed class DatabaseIdentityDeletionTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         using var response = await client.DeleteAsync(Uri(database.Data + "/if-id/" + expected));
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
@@ -126,7 +122,6 @@ public sealed class DatabaseIdentityDeletionTests
     {
         await using var api = await ManagementApi.StartAsync();
         var original = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(original.Organization, original.Project);
         using var client = ProjectClient(api, original.Project);
         using (var deleted = await client.DeleteAsync(Uri(original.Data + "/if-id/" + original.Id)))
         {
@@ -168,7 +163,6 @@ public sealed class DatabaseIdentityDeletionTests
         });
         fixture = api;
         original = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(original.Organization, original.Project);
         using var client = ProjectClient(api, original.Project);
         Volatile.Write(ref armed, 1);
         using var stale = await client.DeleteAsync(Uri(original.Data + "/if-id/" + original.Id));
@@ -193,7 +187,6 @@ public sealed class DatabaseIdentityDeletionTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var second = await api.CreateManagedDatabaseAsync(database.Organization, database.Project, "other");
         using var allowed = ProjectClient(api, database.Project);
         var document = await PutDocumentAsync(allowed, database);

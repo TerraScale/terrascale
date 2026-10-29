@@ -41,7 +41,6 @@ internal sealed class WebhookApi : IAsyncDisposable
         {
             await fixture.StartNodeAsync(fixture._machine, services, token);
             fixture.Database = await fixture.Api.CreateManagedDatabaseAsync();
-            await fixture.Api.VerifyProjectBindingAsync(fixture.Database.Organization, fixture.Database.Project);
             fixture._client = fixture.ProjectClient();
             await ManagementApi.CreateCollectionAsync(fixture.Client, fixture.Database, "items", token);
             return fixture;

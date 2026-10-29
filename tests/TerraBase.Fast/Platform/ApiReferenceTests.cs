@@ -421,7 +421,6 @@ public sealed class ApiReferenceTests
         var id = DocumentApi.NewId();
         await Assert.That((await api.PutAsync(id, new { n = 1 })).Status).IsEqualTo(HttpStatusCode.Created);
         using var owner = api.Management.As(api.Tenant.User);
-        await api.Management.VerifyProjectBindingAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, owner);
         using var client = api.Management.WithToken(api.Management.Issuer.Mint(api.Tenant.User, token =>
         {
             token.Claims["project_id"] = api.Tenant.ProjectId;

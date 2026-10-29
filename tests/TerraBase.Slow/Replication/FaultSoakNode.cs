@@ -11,6 +11,8 @@ namespace TerraBase.Slow.Replication;
 [Category("fault-soak-host")]
 public sealed class FaultSoakNode
 {
+    private static readonly string[] Regions = ["gru", "sjc", "fra"];
+
     internal const string Prefix = "TERRABASE_SOAK_";
 
     [Test]
@@ -37,17 +39,12 @@ public sealed class FaultSoakNode
             }
         },
             time: new SkewedClock(offset), cancellationToken: cancellationToken, userId: Read("OWNER"));
-        var authority = api.Issuer.Mint(api.User, token =>
-        {
-            token.NotBefore = DateTime.UtcNow.AddMinutes(-5);
-            token.Expires = DateTime.UtcNow.AddHours(1);
-        });
-        api.Issuer.GrantProject(authority, Read("ORGANIZATION"), Read("PROJECT"));
         var projectToken = api.Issuer.Mint(api.User, token =>
         {
             token.NotBefore = DateTime.UtcNow.AddMinutes(-5);
             token.Expires = DateTime.UtcNow.AddHours(1);
             token.Claims!["project_id"] = Read("PROJECT");
+            token.Claims!["org_id"] = Read("ORGANIZATION");
             token.Claims!["scope"] = "databases:read databases:write";
         });
         await File.WriteAllTextAsync(info + ".partial", new JsonObject
@@ -55,10 +52,14 @@ public sealed class FaultSoakNode
             ["internal"] = api.Server.BaseAddress.ToString(),
             ["peer"] = api.Server.PeerAddress!.ToString(),
             ["client"] = api.Server.ClientAddress!.ToString(),
-            ["authority"] = authority,
             ["projectToken"] = projectToken,
         }.ToJsonString(), cancellationToken);
         File.Move(info + ".partial", info!, overwrite: true);
+        await CatalogFixture.RegisterProjectAsync(api, api.User, Read("ORGANIZATION"), Read("PROJECT"), cancellationToken);
+        await api.SetPlanAsync(api.User, Read("ORGANIZATION"), "enterprise", cancellationToken);
+        await CatalogFixture.RegisterAsync(api, api.User,
+            new TerraBase.Tenancy.TenantContext(Read("ORGANIZATION"), TerraBase.Tenancy.PlanTier.Enterprise, Read("PROJECT"), Read("DATABASE")),
+            "soak", [.. Regions.Where(region => region != Read("REGION"))], cancellationToken);
         await Task.Delay(Timeout.Infinite, cancellationToken);
     }
 

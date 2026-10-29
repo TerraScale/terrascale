@@ -75,7 +75,6 @@ namespace TerraBase.E2E
                         using var owner = node.As(node.User);
                         var database = await node.CreateManagedDatabaseAsync("bench");
                         await node.SetPlanAsync(node.User, database.Organization, "enterprise", cancellationToken);
-                        await node.VerifyProjectBindingAsync(database.Organization, database.Project, owner);
                         // A synthetic API key's client credentials token, as ts-auth issues one: key_id and key_gen send every request
                         // through the key revocation path, against the test issuer. Runs with the earlier key-less token are diagnostic only.
                         var keyId = EntityIds.New().ToString();

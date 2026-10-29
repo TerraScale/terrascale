@@ -68,15 +68,8 @@ public static class UserAuthExtensions
             ?.FindFirst(ClaimTypes.NameIdentifier)?.Value
         ?? throw new InvalidOperationException("the request has no authenticated ts-auth user");
 
-    /// <summary>
-    /// Whether the request came from the platform operator (internal listener), which
-    /// the dashboard document space of Management commits needs: a ts-auth user token never reaches it.
-    /// </summary>
+    /// <summary>Whether the request came from the platform operator (internal listener).</summary>
     public static bool IsOperator(this ClaimsPrincipal user) => Identity(user, OperatorHandler.SchemeName) is not null;
-
-    /// <summary>The user's email when its ts-auth token marks it verified; otherwise <see langword="null"/>.</summary>
-    public static string? VerifiedEmail(this ClaimsPrincipal user) =>
-        Identity(user, UserAuthenticationHandler.SchemeName)?.FindFirst(ClaimTypes.Email)?.Value;
 
     // Only an identity these schemes authenticated, never one another scheme (an API key) added to the principal.
     private static ClaimsIdentity? Identity(ClaimsPrincipal user, string scheme) =>

@@ -89,7 +89,6 @@ public sealed class IndexPlanTests
     private static async Task<ManagedDatabaseRef> SeedAsync(ManagementApi api)
     {
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
         // Enough rows that a full scan costs more than a seek, in one transaction.

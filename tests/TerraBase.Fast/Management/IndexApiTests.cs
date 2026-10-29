@@ -103,7 +103,6 @@ public sealed class IndexApiTests
         const string BadCount = "fields must hold 1 to 4 distinct fields";
         const string BadField = "fields must be dotted member paths of letters, digits and _, not _id or _rev";
         const string BadName = "name must be a lowercase letter, then lowercase letters, digits or _, at most 63 characters";
-        const string RoleTooLow = "your role in the organization does not allow this";
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         var indexes = $"{database.Path}/indexes";
@@ -115,7 +114,6 @@ public sealed class IndexApiTests
         (await api.Client.PostAsJsonAsync(Uri($"{database.Path}/sql"), new { sql = "SELECT * FROM people WHERE email = 'a@example.com'" })).EnsureSuccessStatusCode();
         // An index on another field takes the name the email recommendation's index would get.
         (await api.Client.PostAsJsonAsync(Uri(indexes), new { collection = "people", fields = Name, name = "people_email" })).EnsureSuccessStatusCode();
-        using var viewer = api.As(await api.AddMemberAsync(api.Client, database.Organization, "viewer"));
 
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(indexes), new { collection = "Bad Name", fields = Email }), HttpStatusCode.BadRequest, "invalid_request", BadCollection);
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(indexes), new { collection = "people" }), HttpStatusCode.BadRequest, "invalid_request", BadCount);
@@ -140,10 +138,6 @@ public sealed class IndexApiTests
         await ErrorAssert.ErrorAsync(api.Client.DeleteAsync(Uri($"{unknown}/indexes/people_email")), HttpStatusCode.NotFound, "not_found");
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{unknown}/index-recommendations")), HttpStatusCode.NotFound, "not_found");
         await ErrorAssert.ErrorAsync(api.Client.PostAsync(Uri($"{unknown}/index-recommendations/people:email/apply"), null), HttpStatusCode.NotFound, "not_found");
-        await ErrorAssert.ErrorAsync(viewer.PostAsJsonAsync(Uri(indexes), new { collection = "people", fields = Email }), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
-        await ErrorAssert.ErrorAsync(viewer.DeleteAsync(Uri($"{indexes}/people_email")), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
-        await ErrorAssert.ErrorAsync(
-            viewer.PostAsync(Uri($"{database.Path}/index-recommendations/people:email/apply"), null), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
     }
 
     [Test]

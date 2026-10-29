@@ -14,7 +14,6 @@ using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
-using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -48,7 +47,6 @@ public sealed class UsageAnalyticsTests
                     } : null));
         });
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         var filter = failedRead == nameof(IManagementService.GetDatabaseAsync) ? $"?database={database.Id}" : "";
         Volatile.Write(ref refuse, true);
@@ -74,7 +72,6 @@ public sealed class UsageAnalyticsTests
         var databases = new[] { createdFirst, createdSecond }.OrderBy(database => database.Id, StringComparer.Ordinal).ToArray();
         var first = databases[0];
         var second = databases[1];
-        await api.VerifyProjectBindingAsync(first.Organization, first.Project);
         using var client = ProjectClient(api, first.Project);
         for (var index = 0; index < databases.Length; index++)
         {
@@ -218,7 +215,6 @@ public sealed class UsageAnalyticsTests
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 8, 21, 30, 0, TimeSpan.Zero));
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1", time: clock);
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         await ManagementApi.CreateCollectionAsync(client, database, "people");
         var document = ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "one"));
@@ -261,7 +257,6 @@ public sealed class UsageAnalyticsTests
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 1, 21, 30, 0, TimeSpan.Zero));
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1", time: clock);
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         await ManagementApi.CreateCollectionAsync(client, database, "people");
         using var older = await client.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "old")),
@@ -295,7 +290,6 @@ public sealed class UsageAnalyticsTests
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1");
         var first = await api.CreateManagedDatabaseAsync("first");
         var second = await api.CreateManagedDatabaseAsync(first.Organization, first.Project, "second");
-        await api.VerifyProjectBindingAsync(first.Organization, first.Project);
         using var restricted = ProjectClient(api, first.Project, database: first.Id);
         var visible = await ReadAsync(restricted, ManagementApi.Uri($"/v1/projects/{first.Project}/{feature}"));
         await Assert.That(visible.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("databaseId").GetString()!)).IsEquivalentTo([first.Id]);
@@ -321,7 +315,6 @@ public sealed class UsageAnalyticsTests
     {
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1");
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         var empty = await ReadAsync(client, ManagementApi.Uri($"/v1/projects/{database.Project}/analytics?range=1h"));
         await Assert.That(empty.GetProperty("items")[0].GetProperty("series").EnumerateArray()
@@ -362,7 +355,6 @@ public sealed class UsageAnalyticsTests
             {
                 database = await api.CreateManagedDatabaseAsync();
                 actor = api.User;
-                await api.VerifyProjectBindingAsync(database.Organization, database.Project);
                 using var client = ProjectClient(api, database.Project);
                 await ManagementApi.CreateCollectionAsync(client, database, "people");
                 using var written = await client.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "one")), new { name = new Faker().Name.FullName() });
@@ -405,7 +397,6 @@ public sealed class UsageAnalyticsTests
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1",
             services => services.AddSingleton<IReplicationStatus>(peers), clock);
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         var lagging = new ReplicationDatabaseStatus(0, database.Organization, database.Project, database.Id,
             Ulid.NewUlid(), 3, 1, 2, true, 14, 0.25);
@@ -439,7 +430,6 @@ public sealed class UsageAnalyticsTests
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1",
             services => services.AddSingleton<IReplicationStatus>(peers), clock);
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         var flush = api.Server.Services.GetServices<IHostedService>().OfType<UsageFlushService>().Single();
         var route = ManagementApi.Uri($"/v1/projects/{database.Project}/replication?range=1h&region=gru-1");
@@ -498,7 +488,6 @@ public sealed class UsageAnalyticsTests
     {
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1");
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         await ManagementApi.CreateCollectionAsync(client, database, "people");
         using (var written = await client.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "one")), new { name = new Faker().Name.FullName() }))
@@ -538,27 +527,10 @@ public sealed class UsageAnalyticsTests
         // Hobby admission would throttle creating the databases below; the plan does not change sampling.
         await api.SetPlanAsync(api.User, first.Organization, "enterprise");
         var databases = new List<TenantContext> { new(first.Organization, PlanTier.Hobby, first.Project, first.Id) };
-        // Create the real catalog in lifecycle commits, without 139 separate admission/publication cycles.
-        foreach (var batch in Enumerable.Range(1, 139).Chunk(16))
+        for (var i = 1; i < 140; i++)
         {
-            using var response = await api.Client.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
-            {
-                id = EntityIds.New().ToString(),
-                ops = batch.Select(i => new
-                {
-                    op = "create_database",
-                    organization = first.Organization,
-                    project = first.Project,
-                    name = "db" + i.ToString(CultureInfo.InvariantCulture),
-                }).ToArray(),
-            });
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            var committed = JsonSerializer.Deserialize<JsonElement>(await response.Content.ReadAsStringAsync());
-            foreach (var result in committed.GetProperty("results").EnumerateArray())
-            {
-                var database = result.GetProperty("value");
-                databases.Add(new TenantContext(first.Organization, PlanTier.Hobby, first.Project, database.GetProperty("id").GetString()!));
-            }
+            var id = await api.CreateDatabaseAsync(first.Organization, first.Project, "db" + i.ToString(CultureInfo.InvariantCulture));
+            databases.Add(new TenantContext(first.Organization, PlanTier.Hobby, first.Project, id));
         }
 
         await Assert.That(databases.Count).IsEqualTo(140);
@@ -635,7 +607,6 @@ public sealed class UsageAnalyticsTests
     {
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1");
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         await ManagementApi.CreateCollectionAsync(client, database, "people");
         var analytics = ManagementApi.Uri($"/v1/projects/{database.Project}/analytics?range=1h&region=gru-1");
@@ -691,7 +662,6 @@ public sealed class UsageAnalyticsTests
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 8, 21, 30, 0, TimeSpan.Zero));
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1", time: clock);
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         var meter = api.Server.Services.GetRequiredService<UsageMeter>();
         var now = clock.GetUtcNow().ToUnixTimeSeconds() / 60;
@@ -740,7 +710,6 @@ public sealed class UsageAnalyticsTests
     {
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1");
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         var missing = "missing-" + new Faker().Random.AlphaNumeric(8).ToLowerInvariant();
         using var response = await client.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{missing}"));

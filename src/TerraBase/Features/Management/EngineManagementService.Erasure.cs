@@ -14,12 +14,12 @@ internal sealed partial class EngineManagementService
     private async ValueTask<bool> EraseProjectBatchAsync(IStorageTransaction transaction, ProjectClosureRecord closure, CancellationToken token)
     {
         var project = closure.ProjectId;
-        if (!await ClosureBindingMatchesAsync(transaction, project, closure.AuthorityOrganizationId, token).ConfigureAwait(false))
+        if (!await ClosureOrganizationMatchesAsync(transaction, project, closure.AuthorityOrganizationId, token).ConfigureAwait(false))
         {
             throw new InvalidOperationException("a project erasure conflicts with its storage binding");
         }
 
-        var databases = await transaction.ListAsync(Databases(project), null, MemberPage, MaxPageBytes, token).ConfigureAwait(false);
+        var databases = await transaction.ListAsync(Databases(project), null, CatalogPage, MaxPageBytes, token).ConfigureAwait(false);
         foreach (var document in databases.Documents)
         {
             var database = EntityPayload.Read(document, TerraBaseJsonContext.Default.ManagedDatabase)
@@ -35,7 +35,7 @@ internal sealed partial class EngineManagementService
             _ = await UnregisterRecordAsync(transaction, storage, database, token, customerDeletion: true).ConfigureAwait(false);
         }
 
-        await EngineApiKeyStore.RevokeProjectBatchAsync(transaction, project, MemberPage, MaxPageBytes, token).ConfigureAwait(false);
+        await EngineApiKeyStore.RevokeProjectBatchAsync(transaction, project, CatalogPage, MaxPageBytes, token).ConfigureAwait(false);
         if (databases.HasMore)
         {
             return false;
@@ -61,7 +61,7 @@ internal sealed partial class EngineManagementService
         var scanned = after == "complete";
         if (!scanned)
         {
-            var history = await transaction.ListAsync(DatabasePurge.Collection, after, MemberPage, MaxPageBytes, token).ConfigureAwait(false);
+            var history = await transaction.ListAsync(DatabasePurge.Collection, after, CatalogPage, MaxPageBytes, token).ConfigureAwait(false);
             foreach (var document in history.Documents)
             {
                 var purge = EntityPayload.Read(document, TerraBaseJsonContext.Default.DatabasePurgeRecord)
@@ -76,7 +76,7 @@ internal sealed partial class EngineManagementService
             await PutAsync(transaction, ProjectClosure.Scans(project), options.MachineId, scanned ? "complete" : history.Documents[^1].Id, Id, token).ConfigureAwait(false);
         }
 
-        var purges = await transaction.ListAsync(ProjectClosure.Purges(project), null, MemberPage, MaxPageBytes, token).ConfigureAwait(false);
+        var purges = await transaction.ListAsync(ProjectClosure.Purges(project), null, CatalogPage, MaxPageBytes, token).ConfigureAwait(false);
         var absent = !purges.HasMore;
         foreach (var document in purges.Documents)
         {

@@ -176,7 +176,6 @@ public sealed class CollectionAuthorizationAdmissionTests
         try
         {
             using var owner = api.Management.As(api.Tenant.User);
-            await api.Management.VerifyProjectBindingAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, owner);
             await CollectionAccessRulesTests.DeclareAsync(api, CollectionAccessRulesTests.OwnerRules());
             return api;
         }

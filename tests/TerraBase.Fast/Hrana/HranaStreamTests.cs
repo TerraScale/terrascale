@@ -154,7 +154,6 @@ public sealed class HranaStreamTests
         await using var api = await DocumentApi.StartAsync();
         await PostAsync(api, CreateT);
         using var owner = api.Management.As(api.Tenant.User);
-        await api.Management.VerifyProjectBindingAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, owner);
         string Token(string scope)
         {
             return api.Management.Issuer.Mint(api.Tenant.User, token =>

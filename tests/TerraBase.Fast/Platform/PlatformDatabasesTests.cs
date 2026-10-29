@@ -1,10 +1,8 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Configuration;
-using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Platform;
@@ -218,43 +216,6 @@ public sealed class PlatformDatabasesTests
         }
 
         await Assert.That(api.Issuer.ProjectFetches).IsEqualTo(0);
-    }
-
-    [Test]
-    [Arguments("issuer")]
-    [Arguments("version")]
-    [Arguments("organizationId")]
-    [Arguments("authorityOrganizationId")]
-    public async Task Seeding_refuses_a_conflicting_binding_without_overwriting_it(string field)
-    {
-        await using var server = await TerraBaseTestServer.StartAsync(Seeding);
-        await SeededAsync(server);
-        var system = await server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
-        var collection = $"projects/{PlatformDatabases.DashboardProjectId}/binding";
-        byte[] conflicting;
-        await using (var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None))
-        {
-            var stored = await transaction.GetAsync(collection, "ts_auth", CancellationToken.None);
-            var binding = JsonNode.Parse(stored!.Json.Span)!;
-            binding[field] = field == "version" ? JsonValue.Create(2)
-                : JsonValue.Create(field == "issuer" ? "https://auth.example.invalid/other" : EntityIds.New().ToString());
-
-            conflicting = Encoding.UTF8.GetBytes(binding.ToJsonString());
-            await transaction.PutAsync(collection, "ts_auth", conflicting, CancellationToken.None);
-            await transaction.CommitAsync(CancellationToken.None);
-        }
-
-        // Compare persisted bytes: storage canonicalizes the submitted JSON.
-        await using (var baseline = await system.BeginTransactionAsync(write: false, CancellationToken.None))
-        {
-            conflicting = (await baseline.GetAsync(collection, "ts_auth", CancellationToken.None))!.Json.ToArray();
-        }
-
-        var catalog = server.Services.GetRequiredService<IPlatformCatalog>();
-        await Assert.That(await catalog.EnsurePlatformAsync(CancellationToken.None) is Conflict { Code: "platform_binding_taken" }).IsTrue();
-        await using var read = await system.BeginTransactionAsync(write: false, CancellationToken.None);
-        var kept = await read.GetAsync(collection, "ts_auth", CancellationToken.None);
-        await Assert.That(kept!.Json.ToArray()).IsEquivalentTo(conflicting);
     }
 
     // Test-only transport: serve the production issuer's discovery/JWKS with this test's private signing keys.

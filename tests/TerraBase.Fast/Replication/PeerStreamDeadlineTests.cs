@@ -1,6 +1,5 @@
 using System.Net;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 using Grpc.Core;
@@ -1076,29 +1075,10 @@ public sealed class PeerStreamDeadlineTests
         var project = EntityIds.New().ToString();
         var databases = Enumerable.Range(0, count)
             .Select(_ => new TenantContext(organization, PlanTier.Hobby, project, EntityIds.New().ToString())).ToArray();
-        using var service = api.Service(api.User);
-        // Management commits allow at most 16 database operations; create the shared parents in the first one.
-        foreach (var chunk in databases.Chunk(16))
+        foreach (var database in databases)
         {
-            List<object> operations = [];
-            if (chunk[0] == databases[0])
-            {
-                operations.Add(new { op = "create_organization", id = organization, name = $"peers-{organization}" });
-                operations.Add(new { op = "create_project", organization, id = project, name = "peers" });
-            }
-
-            operations.AddRange(chunk.Select(database => (object)new
-            {
-                op = "create_database",
-                organization,
-                project,
-                name = count == 1 ? "main" : $"peers-{database.DatabaseId}".ToLowerInvariant(),
-                id = database.DatabaseId,
-                replica_regions = ReplicaRegions,
-            }));
-            var commit = JsonSerializer.Serialize(new { id = EntityIds.New().ToString(), ops = operations });
-            using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
-            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
+            await CatalogFixture.RegisterAsync(api, api.User, database,
+                count == 1 ? "main" : $"peers-{database.DatabaseId}".ToLowerInvariant(), ReplicaRegions);
         }
 
         return databases;

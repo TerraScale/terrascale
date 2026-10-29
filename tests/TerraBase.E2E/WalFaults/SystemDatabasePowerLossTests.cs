@@ -17,16 +17,10 @@ public sealed class SystemDatabasePowerLossTests
     {
         Skip.When(WalSyncFaults.Library is null, "needs Linux and cc to build the write-ahead log fault shim");
         await using var node = await PowerLossNode.StartAsync(nameof(TenantPowerLossHost));
-        var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());
         var owner = EntityIds.New().ToString();
-        await node.CommitAsync(owner, new JsonObject
-        {
-            ["id"] = EntityIds.New().ToString(),
-            ["ops"] = new JsonArray(
-                new JsonObject { ["op"] = "create_organization", ["id"] = organization, ["name"] = $"power-{organization}" },
-                new JsonObject { ["op"] = "create_project", ["organization"] = organization, ["id"] = project, ["name"] = "power" },
-                new JsonObject { ["op"] = "create_database", ["organization"] = organization, ["project"] = project, ["name"] = "canary", ["id"] = EntityIds.New().ToString(), ["replica_regions"] = new JsonArray(Cluster.Sjc) }),
-        });
+        var createdDatabase = await node.CreateDatabaseAsync(owner, [Cluster.Sjc]);
+        var organization = createdDatabase.Organization;
+        var project = createdDatabase.Project;
         var path = $"/v1/projects/{project}/databases/canary";
         await Cluster.CreateCollectionAsync(new(StringComparer.Ordinal) { [Cluster.Gru] = node.Client }, path, "items");
         var read = new Uri($"{path}/collections/items/documents/by-key?id={EntityIds.New()}", UriKind.Relative);

@@ -16,7 +16,7 @@ public sealed class DeleteOrganizationEndpoint(IManagementService management) : 
         Metadata(AnchoredRevocation.Instance);
         Name("deleteOrganization");
         Summary("Deletes an organization");
-        Description("Needs owner (403 otherwise). Fails with 409 while the organization still has projects. Also deletes its members, invitations, ownership transfer and audit log." + " " + ManagementRoute.IdentityDescription);
+        Description("Needs the organization creator. Fails with 409 while the organization still has projects." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);

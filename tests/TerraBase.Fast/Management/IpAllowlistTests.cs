@@ -24,7 +24,6 @@ public sealed class IpAllowlistTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync("main");
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var collections = Uri(database.Data + "/collections");
 
         async Task<(HttpStatusCode Status, string? Code)> GetAsync(string? keyCidrs, string? projectCidrs, string? forwardedFor = null)
@@ -70,7 +69,6 @@ public sealed class IpAllowlistTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var key = DashboardKey(api, database, "203.0.113.0/24");
 
         await Assert.That(await ConnectAsync(api.Server.PostgresPort, key, database.Name, null)).IsEqualTo("28000");

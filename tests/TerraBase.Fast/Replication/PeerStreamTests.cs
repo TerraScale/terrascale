@@ -1093,8 +1093,6 @@ public sealed class PeerStreamTests
         }
     }
 
-    // Reviewer-only probe F: fill the production cap with disjoint subranges of a real remote-only CDC transaction.
-    // Losing a needed lower range must request refill, preserve another file's ranges, and never hide a local group.
     [Test]
     public async Task Probe_r3_cap_eviction_refills_without_skipping_local_groups()
     {
@@ -1215,7 +1213,6 @@ public sealed class PeerStreamTests
         await Assert.That(await gru.HeadAsync(copy)).IsGreaterThanOrEqualTo(stale);
         await Assert.That(await gru.AckedAsync(copy, sjcNode)).IsEqualTo(0);
     }
-
 
     // An index dropped and made again with other fields while a replica is away reaches it through a refill as the final
     // definition only: the replica ends with the new fields, not its old index of that name.
@@ -1417,8 +1414,7 @@ public sealed class PeerStreamTests
         await using var cluster = await Cluster.StartAsync("gru", "sjc");
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
         var created = cluster.Database with { DatabaseId = EntityIds.New().ToString() };
-        var (status, body) = await gru.CommitAsync(new { op = "create_database", organization = created.OrganizationId, project = created.ProjectId, name = "registered", id = created.DatabaseId, replica_regions = new[] { sjc.Region } });
-        await Assert.That(status).IsEqualTo(HttpStatusCode.OK).Because(body);
+        await CatalogFixture.RegisterAsync(gru.Api, gru.Api.User, created, "registered", [sjc.Region]);
         var directory = sjc.Api.Server.Services.GetRequiredService<ITenantDirectory>();
         await Assert.That(await directory.RegisteredAsync(created, CancellationToken.None) is false).IsTrue();
         var catalog = await gru.Api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
@@ -1606,16 +1602,7 @@ public sealed class PeerStreamTests
         await using var cluster = await Cluster.StartAsync("gru", "sjc");
         var sjc = cluster["sjc"];
         var database = cluster.Database with { DatabaseId = EntityIds.New().ToString() };
-        var commit = JsonSerializer.Serialize(new
-        {
-            id = EntityIds.New().ToString(),
-            ops = new object[] { new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = "sjc-only", id = database.DatabaseId } },
-        });
-        using (var service = sjc.Api.Service(sjc.Api.User))
-        {
-            using var created = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
-            await Assert.That(created.IsSuccessStatusCode).IsTrue().Because(await created.Content.ReadAsStringAsync());
-        }
+        await CatalogFixture.RegisterAsync(sjc.Api, sjc.Api.User, database, "sjc-only", []);
 
         using var push = await RawPush.StartAsync(sjc, (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru").Name);
         await push.RefillAsync(database, 5);
@@ -2400,15 +2387,15 @@ public sealed class PeerStreamTests
         var database = cluster.Database;
         await Assert.That(await gru.UntilStreamsAsync(["fra", "sjc"])).IsTrue();
 
-        var (status, body) = await gru.CommitAsync(new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = "defaulted", id = EntityIds.New().ToString() });
-        await Assert.That(status).IsEqualTo(HttpStatusCode.OK).Because(body);
+        var (status, body) = await gru.DatabaseRequestAsync(HttpMethod.Post, new { name = "defaulted" });
+        await Assert.That(status).IsEqualTo(HttpStatusCode.Created).Because(body);
         await Assert.That(ReplicaRegions(body)).IsEquivalentTo(["fra", "sjc"]);
 
-        (status, body) = await gru.CommitAsync(new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = "alone", id = EntityIds.New().ToString(), replica_regions = Array.Empty<string>() });
+        (status, body) = await gru.DatabaseRequestAsync(HttpMethod.Post, new { name = "alone", replicaRegions = Array.Empty<string>() });
         await Assert.That(status).IsEqualTo(HttpStatusCode.BadRequest).Because(body);
         await Assert.That(body).Contains("placement_needs_two_regions");
 
-        (status, body) = await gru.CommitAsync(new { op = "set_database_regions", organization = database.OrganizationId, project = database.ProjectId, database = database.DatabaseId, replica_regions = Array.Empty<string>() });
+        (status, body) = await gru.DatabaseRequestAsync(HttpMethod.Patch, new { replicaRegions = Array.Empty<string>() }, database.DatabaseId);
         await Assert.That(status).IsEqualTo(HttpStatusCode.OK).Because(body);
     }
 
@@ -2424,7 +2411,7 @@ public sealed class PeerStreamTests
         await TerraBaseTestServer.EventuallyAsync(async token =>
             (await gru.Api.Server.Services.GetRequiredService<IRemoteDurability>()
                 .OtherRegionsAsync(token)).Count == 0, Deadline);
-        var (status, body) = await gru.CommitAsync(new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = "lonely", id = EntityIds.New().ToString() });
+        var (status, body) = await gru.DatabaseRequestAsync(HttpMethod.Post, new { name = "lonely" });
         await Assert.That(status).IsEqualTo(HttpStatusCode.ServiceUnavailable).Because(body);
         await Assert.That(body).Contains("remote_region_unavailable");
     }
@@ -2697,7 +2684,6 @@ public sealed class PeerStreamTests
         await Assert.That(new Ulid(digest.Incarnation.Span)).IsEqualTo(incarnation);
         return digest.Buckets.ToByteArray();
     }
-
 
     // Retention raises a connected peer's stored ack over joined rows, past the stream's own ack (review of #169): the stream
     // goes on from the raised ack, and the peer is never told to refill. gru's and sjc's writes interleave, with a retention
@@ -2993,14 +2979,7 @@ public sealed class PeerStreamTests
         public async Task<TenantContext> CreateOtherDatabaseAsync(string? databaseId = null)
         {
             var database = cluster.Database with { DatabaseId = databaseId ?? EntityIds.New().ToString() };
-            var commit = JsonSerializer.Serialize(new
-            {
-                id = EntityIds.New().ToString(),
-                ops = new object[] { new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = $"other-{database.DatabaseId.ToLowerInvariant()}", id = database.DatabaseId } },
-            });
-            using var service = Api.Service(Api.User);
-            using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
-            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
+            await CatalogFixture.RegisterAsync(Api, Api.User, database, $"other-{database.DatabaseId!.ToLowerInvariant()}", []);
             return database;
         }
 
@@ -3418,12 +3397,10 @@ public sealed class PeerStreamTests
             }
         }
 
-        // One management commit of `op` as the cluster's user: its status and body.
-        public async Task<(HttpStatusCode Status, string Body)> CommitAsync(object op)
+        public async Task<(HttpStatusCode Status, string Body)> DatabaseRequestAsync(HttpMethod method, object body, string? id = null)
         {
-            var commit = JsonSerializer.Serialize(new { id = EntityIds.New().ToString(), ops = new[] { op } });
-            using var service = Api.Service(Api.User);
-            using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
+            using var response = await CatalogApi.SendAsync(Api.Server.Client, Api.User, method,
+                $"/v1/management/organizations/{cluster.Database.OrganizationId}/projects/{cluster.Database.ProjectId}/databases" + (id is null ? "" : "/" + id), body);
             return (response.StatusCode, await response.Content.ReadAsStringAsync());
         }
 
@@ -3431,19 +3408,7 @@ public sealed class PeerStreamTests
         private async Task RegisterAsync()
         {
             var database = cluster.Database;
-            var commit = JsonSerializer.Serialize(new
-            {
-                id = EntityIds.New().ToString(),
-                ops = new object[]
-                {
-                    new { op = "create_organization", id = database.OrganizationId, name = $"peers-{database.OrganizationId}" },
-                    new { op = "create_project", organization = database.OrganizationId, id = database.ProjectId, name = "peers" },
-                    new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = "main", id = database.DatabaseId, replica_regions = replicas },
-                },
-            });
-            using var service = Api.Service(Api.User);
-            using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
-            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
+            await CatalogFixture.RegisterAsync(Api, Api.User, database, "main", replicas);
         }
     }
 

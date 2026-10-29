@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
@@ -742,8 +741,8 @@ public sealed class Cluster : IAsyncDisposable
             // (R10a) answers with 409 id_taken or name_taken: it already holds them. Until then each node keeps its own catalog.
             foreach (var node in _nodes.Values)
             {
-                await CommitAsync(node.Api!, Registration(OrganizationId, _project, _database, "canary", [.. regions.Where(region => region != node.Region)]),
-                    alreadyHeld: node.Region != regions[0]);
+                await CatalogFixture.RegisterAsync(node.Api!, node.Api!.User,
+                    new TenantContext(OrganizationId, PlanTier.Hobby, _project, _database), "canary", [.. regions.Where(region => region != node.Region)]);
             }
 
             foreach (var node in _nodes.Values)
@@ -877,8 +876,6 @@ public sealed class Cluster : IAsyncDisposable
             }, time: node.Skew == TimeSpan.Zero ? null : new SkewedTime(node.Skew), userId: _user);
         }
 
-        // Each start is a new ts-auth stand-in, so the project token is minted again, for the user who registered the
-        // organization at the first start; the plan and the verified binding stay in the node's catalog.
         private async Task AuthorizeAsync(Node node, bool restart)
         {
             var api = node.Api!;
@@ -887,14 +884,12 @@ public sealed class Cluster : IAsyncDisposable
             {
                 // The enterprise plan lifts the organization's request budget for the cross-region suite.
                 await api.SetPlanAsync(node.User, OrganizationId, "enterprise");
-                // Project tokens act on the project only once ts-auth's binding of it to the organization is verified.
-                using var owner = api.As(node.User);
-                await api.VerifyProjectBindingAsync(OrganizationId, _project, owner);
             }
 
             node.Token = api.Issuer.Mint(node.User, token =>
             {
                 token.Claims["project_id"] = _project;
+                token.Claims["org_id"] = OrganizationId;
                 token.Claims["scope"] = Scopes;
                 // A benchmark host serves for hours; the e2e tests end well within the default five minutes.
                 token.Expires = DateTime.UtcNow.AddHours(12);
@@ -904,28 +899,6 @@ public sealed class Cluster : IAsyncDisposable
             AskRemoteDurable(node.Edge);
         }
 
-        // With alreadyHeld, a 409 naming ids or names already taken counts as done: the catalog brought them.
-        private static async Task CommitAsync(ManagementApi api, string commit, bool alreadyHeld = false)
-        {
-            using var service = api.Service(api.User);
-            using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
-            if (!alreadyHeld || !await Cluster.TakenAsync(response))
-            {
-                await Docs.EnsureSuccessAsync(response);
-            }
-        }
-
-        // An organization, project and database with chosen ids, in one commit.
-        private static string Registration(string organization, string project, string database, string name, string[] replicas) => JsonSerializer.Serialize(new
-        {
-            id = EntityIds.New().ToString(),
-            ops = new object[]
-            {
-                new { op = "create_organization", id = organization, name = $"e2e-{organization}" },
-                new { op = "create_project", organization, id = project, name = "e2e" },
-                new { op = "create_database", organization, project, name, id = database, replica_regions = replicas },
-            },
-        });
     }
 
     private sealed class Node(string region, string machineId, string dataDirectory, TimeSpan skew)

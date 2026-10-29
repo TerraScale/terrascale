@@ -14,7 +14,6 @@ public sealed class ProjectApiTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var legacy = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(legacy, database, "people");
         var email = new Faker().Internet.Email();
@@ -79,7 +78,6 @@ public sealed class ProjectApiTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         await ManagementApi.CreateCollectionAsync(client, database, "people");
         var name = new Faker().Name.FullName();
@@ -115,7 +113,6 @@ public sealed class ProjectApiTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         var path = $"/v1/projects/{database.Project}/saved-queries";
         string id;

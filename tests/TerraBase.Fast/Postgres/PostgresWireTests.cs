@@ -144,7 +144,6 @@ public sealed class PostgresWireTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var key = DashboardKey(api, database, "documents:read documents:write", database.Id);
         await using var source = Source(api, key, idRoute ? database.Id : database.Name);
         await using var connection = await source.OpenConnectionAsync();
@@ -158,7 +157,6 @@ public sealed class PostgresWireTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var writer = DashboardKey(api, database, "documents:read documents:write", database.Id);
         var reader = DashboardKey(api, database, "documents:read", database.Id);
         var elsewhere = DashboardKey(api, database, "documents:read documents:write", EntityIds.New().ToString());

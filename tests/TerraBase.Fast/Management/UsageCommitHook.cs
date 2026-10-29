@@ -74,9 +74,9 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         return gate;
     }
 
-    public Gate PauseWrite()
+    public Gate PauseWrite(bool fail = false)
     {
-        var gate = new Gate(fail: false);
+        var gate = new Gate(fail);
         if (Interlocked.CompareExchange(ref _write, gate, null) is not null)
         {
             throw new InvalidOperationException("a write gate is already armed");
@@ -266,7 +266,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public bool IsClosed => inner.IsClosed;
         public long CommitSequence => inner.CommitSequence;
 
-
         public Task WaitForCommitAsync(long sequence, CancellationToken cancellationToken) => inner.WaitForCommitAsync(sequence, cancellationToken);
         public async ValueTask<IStorageTransaction> BeginDurableTransactionAsync(
             CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
@@ -309,7 +308,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public TenantContext? Tenant => inner.Tenant;
         public bool IsClosed => inner.IsClosed;
         public long CommitSequence => inner.CommitSequence;
-
 
         public Task WaitForCommitAsync(long sequence, CancellationToken cancellationToken) => inner.WaitForCommitAsync(sequence, cancellationToken);
         public ValueTask<IStorageTransaction> BeginDurableTransactionAsync(
