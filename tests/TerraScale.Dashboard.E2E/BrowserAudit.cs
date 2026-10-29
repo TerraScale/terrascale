@@ -1,5 +1,3 @@
-using Deque.AxeCore.Commons;
-using Deque.AxeCore.Playwright;
 using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E;
@@ -41,15 +39,12 @@ public static class BrowserAudit
         await page.GotoAsync(new Uri(origin, "/__test/step-up/" + new Uri(hosted.Url).Segments.Last() + "?approve=yes").ToString());
     }
 
-    private static readonly AxeRunOptions Wcag22AA = new()
-    {
-        RunOnly = new RunOnlyOptions { Type = "tag", Values = ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"] },
-    };
+    private static readonly string[] Wcag22AA = ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"];
 
     // Fails with each violating rule and its node targets, like the former assert.deepEqual(violations, []).
     public static async Task AssertAccessibleAsync(IPage page, string because)
     {
-        var result = await page.RunAxe(Wcag22AA);
+        var result = await BrowserAccessibility.RunAsync(page, Wcag22AA);
         var violations = result.Violations.Select(v => v.Id + ": " + string.Join(", ", v.Nodes.Select(n => n.Target.ToString()))).ToArray();
         await Assert.That(violations).IsEmpty().Because(because);
     }

@@ -1,6 +1,5 @@
 using System.Net;
 using System.Text.Json;
-using Deque.AxeCore.Playwright;
 using Microsoft.Playwright;
 using TerraScale.Dashboard.E2E.Features.Databases;
 
@@ -72,7 +71,7 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
         var evidence = Path.Combine(fixture.Root, "docs/reviews/2026-10-13/database-data-access/obj/evidence");
         Directory.CreateDirectory(evidence);
         await page.ScreenshotAsync(new() { Path = Path.Combine(evidence, $"api-key-dialog-{width}.png"), FullPage = true });
-        var accessibility = await page.RunAxe();
+        var accessibility = await BrowserAccessibility.RunAsync(page);
         await File.WriteAllTextAsync(Path.Combine(evidence, $"api-key-dialog-axe-{width}.json"), JsonSerializer.Serialize(
             accessibility.Violations.Select(rule => new { rule.Id, rule.Help, Nodes = rule.Nodes.Select(node => node.Target) }),
             new JsonSerializerOptions { WriteIndented = true }));

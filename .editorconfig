@@ -72,3 +72,8 @@ dotnet_diagnostic.IDE0350.severity = silent
 
 # Soft limit for editors; long string literals may exceed it.
 max_line_length = 140
+
+# ASP.NET's request delegate source generator emits framework argument-validation calls.
+# Recognize that generated file; authored Dashboard code retains every banned API check.
+[**/GeneratedRouteBuilderExtensions.g.cs]
+generated_code = true

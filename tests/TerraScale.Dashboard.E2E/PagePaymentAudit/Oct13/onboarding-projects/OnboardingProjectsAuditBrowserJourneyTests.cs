@@ -1,7 +1,5 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Deque.AxeCore.Commons;
-using Deque.AxeCore.Playwright;
 using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.OnboardingProjects;
@@ -66,8 +64,7 @@ public sealed class OnboardingProjectsAuditBrowserJourneyTests(DashboardRootFixt
             await dialog.Locator("input[name=name]").FillAsync("Browser audit " + size);
             var bounds = await dialog.BoundingBoxAsync();
             await Assert.That(bounds!.X >= 0 && bounds.X + bounds.Width <= width + 1).IsTrue();
-            var accessibility = await page.RunAxe(new AxeRunOptions
-            { RunOnly = new RunOnlyOptions { Type = "tag", Values = ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"] } });
+            var accessibility = await BrowserAccessibility.RunAsync(page, ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]);
             await ShotAsync("dialog");
             var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -137,8 +134,7 @@ public sealed class OnboardingProjectsAuditBrowserJourneyTests(DashboardRootFixt
             await page.GetByRole(AriaRole.Button, new() { Name = "Continue on Free", Exact = true }).ClickAsync();
             await page.GetByRole(AriaRole.Heading, new() { Name = "Create your first project" }).WaitForAsync();
             await ShotAsync("first-project");
-            var onboardingAccessibility = await page.RunAxe(new AxeRunOptions
-            { RunOnly = new RunOnlyOptions { Type = "tag", Values = ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"] } });
+            var onboardingAccessibility = await BrowserAccessibility.RunAsync(page, ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]);
             await page.GetByLabel("Project name", new() { Exact = true }).FillAsync("Browser onboarding " + size);
             await page.GetByRole(AriaRole.Button, new() { Name = "Create project and open Dashboard" }).ClickAsync();
             await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == origin + "/");
