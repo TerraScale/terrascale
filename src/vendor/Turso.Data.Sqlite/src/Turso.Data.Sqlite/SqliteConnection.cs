@@ -712,6 +712,18 @@ public partial class SqliteConnection : DbConnection
     public void SetFtsProgressHandler(Func<ulong, ulong, bool>? callback)
         => TursoBindings.SetFtsProgressHandler(DatabaseHandle, callback);
 
+    public void UseManualWal() => TursoBindings.UseManualWal(DatabaseHandle);
+
+    public TursoWalState GetWalState() => TursoBindings.GetWalState(DatabaseHandle);
+
+    public void ReadWalFramePages(ulong firstFrame, Span<uint> pageNumbers, Span<uint> databaseSizes)
+        => TursoBindings.ReadWalFramePages(DatabaseHandle, firstFrame, pageNumbers, databaseSizes);
+
+    public bool TryReadPage(uint pageNumber, ulong watermark, Span<byte> page)
+        => TursoBindings.TryReadPage(DatabaseHandle, pageNumber, watermark, page);
+
+    public int PageSize => TursoBindings.GetPageSize(DatabaseHandle);
+
     internal TursoDatabaseHandle DatabaseHandle
     {
         get
