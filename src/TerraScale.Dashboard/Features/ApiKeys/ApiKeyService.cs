@@ -318,7 +318,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         }
 
         private static readonly Uri AuthOrigin = new("https://auth.terrascale.tech/");
-        private static readonly string[] FullAccessScopes = ["documents:read", "documents:write", "databases:read", "databases:write"];
 
         private static string KeysPath(DatabaseScope scope)
         {
@@ -439,6 +438,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
     public sealed record ApiKeysPage(TerraScale.Dashboard.Common.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "", string DraftExpiresInDays = "", string DraftAllowedCidrs = "", IReadOnlyList<string>? ProjectCidrs = null, DateTimeOffset Now = default)
     {
+        private static readonly string[] FullAccessScopes = ["documents:read", "documents:write", "databases:read", "databases:write"];
         public string Warning { get; init; } = "";
         public static string Lines(IReadOnlyList<string>? cidrs)
         {
