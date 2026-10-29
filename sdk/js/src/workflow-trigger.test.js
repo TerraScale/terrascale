@@ -5,6 +5,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "vitest";
 
+const ciUrl = new URL("../../../.github/workflows/sdk-js-ci.yml", import.meta.url);
+const proofUrl = new URL("../../../.github/workflows/sdk-fast.yml", import.meta.url);
+const qualificationUrl = new URL("../scripts/qualify-release.sh", import.meta.url);
 const ownedCommands = [
   "node scripts/provision-reviewed-npm.js",
   "npm run check:vulnerabilities",
@@ -15,42 +18,47 @@ const ownedCommands = [
   "npm test",
 ];
 
-test("PRs keep one verify job and supported Node 22 compatibility stays weekly", async () => {
-  const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
-  assert.match(workflow, /^  pull_request:\n    branches: \[main\]\n/mu);
+test("SDK changes require the shared Fast proof with read-only workflow permissions", async () => {
+  const workflow = await readFile(ciUrl, "utf8");
+  assert.match(workflow, /^  push:\n    branches: \[main\]/mu);
+  assert.match(workflow, /^  pull_request:\n    branches: \[main\]/mu);
+  assert.match(workflow, /'sdk\/js\/\*\*'/u);
   assert.doesNotMatch(workflow, /^  pull_request_target:/mu);
-  assert.match(workflow, /^  schedule:/mu);
-  assert.match(workflow, /^permissions:\n  contents: read\n/mu);
-  const job = jobDefinition(workflow, "verify");
-  assert.match(job, /runs-on: ubuntu-24\.04/u);
-  assert.doesNotMatch(job, /matrix\./u);
-  assert.match(job, /github\.event_name == 'schedule' \|\| github\.event_name == 'workflow_dispatch'\) && '22\.23\.2' \|\| '24\.21\.0'/u);
-  assert.match(job, /actions\/checkout@11d5960a326750d5838078e36cf38b85af677262/u);
-  assert.match(job, /persist-credentials: false/u);
-  assert.match(job, /actions\/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020/u);
+  assert.match(workflow, /^permissions:\n  contents: read\n  statuses: read\n/mu);
+  assert.match(workflow, /uses: \.\/\.github\/workflows\/sdk-fast\.yml/u);
+  assert.match(workflow, /area: sdk-js/u);
+  assert.doesNotMatch(workflow, /runs-on:|npm (?:ci|test|run)/u);
 });
 
-test("CI retains the reviewed checks and main skips only an identical proven PR tree", async () => {
-  const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
-  const parsed = steps(jobDefinition(workflow, "verify"));
-  const commands = parsed.flatMap((step) => {
-    const run = runOf(step);
-    return run !== undefined && ownedCommands.includes(run) ? [run] : [];
-  });
-  assert.deepEqual(commands, ownedCommands);
-  for (const name of ["Typecheck", "Generate SDK type declarations", "Check C# route drift", "Run SDK tests"])
-    assert.match(stepNamed(jobDefinition(workflow, "verify"), name).body, /steps\.proof\.outputs\.proven != 'true'/u);
-  // Advisories change without code changes, so the audit runs on every tree, including proven ones.
-  assert.doesNotMatch(stepNamed(jobDefinition(workflow, "verify"), "Audit every committed npm graph").body, /\bif:/u);
-  const save = stepNamed(jobDefinition(workflow, "verify"), "Save main npm cache");
-  assert.match(save.body, /github\.event_name == 'push'/u);
+test("shared CI checks the exact source commit's dev-host proof without building", async () => {
+  const workflow = await readFile(proofUrl, "utf8");
+  assert.match(workflow, /persist-credentials: false/u);
+  assert.match(workflow, /github\.event\.pull_request\.head\.sha \|\| github\.sha/u);
+  assert.match(workflow, /python3 scripts\/sdk\/check-proof\.py "\$AREA" "\$REVISION"/u);
+  assert.doesNotMatch(workflow, /npm (?:ci|test|run)|dotnet (?:build|test)|cargo (?:build|test)|go test/u);
+  assert.doesNotMatch(workflow, /secrets\.|NPM_TOKEN|REGISTRY_TOKEN/u);
 });
 
-test("CI never invokes or provisions TerraBase, downloads a producer, or lowers CPU priority", async () => {
-  const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
-  assert.doesNotMatch(workflow, /terrabase|integration|provision-terrabase|run-terrabase|contracts\/|test:browser|e2e/iu);
-  assert.doesNotMatch(workflow, /\b(?:curl|wget|gh release|nice|renice)\b/u);
-  assert.doesNotMatch(workflow, /secrets\.|NPM_TOKEN|REGISTRY_TOKEN|TERRASCALE_|FORGEJO/u);
+test("dev-host qualification retains audits, static checks, tests and packing", async () => {
+  const qualification = await readFile(qualificationUrl, "utf8");
+  let previous = -1;
+  for (const command of ownedCommands) {
+    const position = qualification.indexOf(command);
+    assert.ok(position > previous, `Missing or reordered release gate: ${command}`);
+    previous = position;
+  }
+  assert.match(qualification, /inspectNpmCli/u);
+  assert.match(qualification, /TERRASCALE_NPM_ARCHIVE_INTEGRITY/u);
+  assert.match(qualification, /npm pack --json --pack-destination "\$output"/u);
+  assert.doesNotMatch(qualification, /--allow-dirty|npm publish/u);
+});
+
+test("SDK CI and qualification never invoke or download a TerraBase binary", async () => {
+  for (const url of [ciUrl, proofUrl, qualificationUrl]) {
+    const contents = await readFile(url, "utf8");
+    assert.doesNotMatch(contents, /provision-terrabase|run-terrabase|terrabase[^\n]*(?:download|binary)|gh release download[^\n]*terrabase/iu);
+    assert.doesNotMatch(contents, /\b(?:nice|renice)\b/u);
+  }
 });
 
 test("npm exposes no TerraBase binary provisioning or integration command", async () => {
@@ -74,17 +82,18 @@ test("TerraBase binary helpers and their isolated provisioning support are absen
   }
 });
 
-test("the owner-approved 0.0.x guard runs in CI and the real package passes it", async () => {
-  const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
-  const guard = runOf(stepNamed(jobDefinition(workflow, "verify"), "Require the owner-approved 0.0.x version policy"));
-  assert.ok(guard !== undefined, "Missing version guard run block");
+test("the owner-approved 0.0.x guard runs before qualification and rejects other versions", async () => {
+  const qualification = await readFile(qualificationUrl, "utf8");
+  const start = qualification.indexOf("version=$(node -p");
+  const end = qualification.indexOf('test "$(node --version)"');
+  assert.ok(start >= 0 && end > start, "Missing version guard before toolchain qualification");
+  const guard = qualification.slice(start, end);
   const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
   assert.match(pkg.version, /^0\.0\.[0-9]+$/u);
   const directory = await mkdtemp(path.join(tmpdir(), "terrascale-version-guard-"));
   try {
     for (const version of ["0.0.0", "0.0.1", "0.0.528", "0.3.0", "1.0.0", "0.0", "0.0.1-beta", "0.0.1+build", pkg.version]) {
       await writeFile(path.join(directory, "package.json"), JSON.stringify({ version }));
-      /** @type {import("node:child_process").SpawnSyncReturns<string>} */
       const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", guard], {
         cwd: directory, encoding: "utf8", timeout: 10_000,
       });
@@ -97,34 +106,3 @@ test("the owner-approved 0.0.x guard runs in CI and the real package passes it",
     await rm(directory, { recursive: true, force: true });
   }
 });
-
-/** @param {string} workflow @param {string} job @returns {string} */
-function jobDefinition(workflow, job) {
-  const start = workflow.indexOf(`  ${job}:\n`);
-  assert.notEqual(start, -1, `Missing workflow job: ${job}`);
-  const remaining = workflow.slice(start);
-  const next = remaining.slice(1).search(/\n  [a-z][a-z0-9-]+:\n/u);
-  return next === -1 ? remaining : remaining.slice(0, next + 1);
-}
-
-/** @param {string} definition @returns {{ name: string, body: string }[]} */
-function steps(definition) {
-  return definition.split("\n      - name: ").slice(1).map((chunk) => {
-    const [name = "", ...body] = chunk.split("\n");
-    return { name, body: body.join("\n") };
-  });
-}
-
-/** @param {string} definition @param {string} name @returns {{ name: string, body: string }} */
-function stepNamed(definition, name) {
-  const step = steps(definition).find((candidate) => candidate.name === name);
-  assert.ok(step, `Missing workflow step: ${name}`);
-  return step;
-}
-
-/** @param {{ body: string }} step @returns {string | undefined} */
-function runOf(step) {
-  const block = step.body.match(/^        run: \|\n((?:          [^\n]*\n?)+)/mu)?.[1];
-  if (block !== undefined) return block.replace(/^          /gmu, "").trimEnd();
-  return step.body.match(/^        run: (.+)$/mu)?.[1];
-}
