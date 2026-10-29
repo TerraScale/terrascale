@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ExternalLink from '@/components/ExternalLink.svelte'
   import Icon from '@/components/Icon.svelte'
   import RegionFlag from '@/components/RegionFlag.svelte'
   import {
@@ -7,6 +8,7 @@
     type Region,
   } from '@/lib/world-map.generated'
   import { dict } from '@/lib/i18n'
+  import { registrationUrl } from '@/lib/site'
 
   const highlightIcons = ['globe', 'activity', 'code2', 'bot'] as const
   $: highlights = $dict.hero.highlights.map((label, i) => ({
@@ -78,12 +80,23 @@
 
     <h1 class="hero__headline">
       {$dict.hero.headlineLead}<br />
-      <span class="hero__accent">{$dict.hero.headlineAccent}</span>
+      {$dict.hero.headlineAccent}
     </h1>
 
     <p class="hero__subtitle">
       {$dict.hero.subtitle}
     </p>
+
+    <div class="hero__cta">
+      <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary hero__cta-btn">
+        {$dict.hero.cta}
+        <Icon name="arrowRight" className="hero__cta-icon" />
+      </ExternalLink>
+      <p class="hero__cta-note">
+        <Icon name="checkCircle" className="hero__cta-note-icon" />
+        {$dict.hero.ctaNote}
+      </p>
+    </div>
   </div>
 
   <!-- A dotted world map laid back in perspective under the copy. Each region's flag stands
@@ -209,10 +222,14 @@
     color: var(--ts-text);
     letter-spacing: -0.035em;
     text-wrap: balance;
-  }
-
-  .hero__accent {
-    color: var(--ts-primary);
+    /* The one gradient on the page: on the hero heading text, never on a background. */
+    background: linear-gradient(90deg, #fff, #9b9b9b);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    /* The gradient spans each line rather than the whole block. */
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
   }
 
   /* The far edge of the map runs under this copy: brighter text plus a soft scrim halo keeps it
@@ -222,7 +239,7 @@
     font-size: 18px;
     color: color-mix(in srgb, var(--ts-text) 88%, transparent);
     line-height: 1.65;
-    max-width: 60ch;
+    max-width: 680px;
     margin: 0;
     font-weight: 450;
     text-wrap: pretty;
@@ -230,6 +247,59 @@
       0 0 2px var(--ts-bg-base),
       0 0 8px var(--ts-bg-base),
       0 0 18px var(--ts-bg-base);
+  }
+
+  .hero__cta {
+    display: grid;
+    justify-items: center;
+    gap: 12px;
+  }
+
+  :global(.hero__cta-btn) {
+    height: 40px;
+    padding: 0 16px;
+    font-size: 16px;
+    font-weight: 600;
+    transition:
+      background-color 300ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  :global(.hero__cta-btn:hover) {
+    transform: translateY(-1px);
+  }
+
+  :global(.hero__cta-btn:active) {
+    transform: scale(0.98);
+  }
+
+  :global(.hero__cta-icon) {
+    width: 16px;
+    height: 16px;
+    transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  :global(.hero__cta-btn:hover .hero__cta-icon) {
+    transform: translateX(2px);
+  }
+
+  .hero__cta-note {
+    margin: 0;
+    font-size: 14px;
+    line-height: 20px;
+    color: var(--ts-text-muted);
+    text-wrap: pretty;
+    text-shadow: 0 0 8px var(--ts-bg-base);
+  }
+
+  /* Inline, so the icon stays beside the first word when the note wraps on phones. */
+  :global(.hero__cta-note-icon) {
+    display: inline-block;
+    vertical-align: -3px;
+    margin-right: 8px;
+    width: 16px;
+    height: 16px;
+    color: var(--ts-success);
   }
 
   /* ---------- 3D map ---------- */
@@ -524,6 +594,14 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    :global(.hero__cta-btn),
+    :global(.hero__cta-icon) {
+      transition: none;
+    }
+    :global(.hero__cta-btn:hover),
+    :global(.hero__cta-btn:hover .hero__cta-icon) {
+      transform: none;
+    }
     .hero__world,
     .hero__plane,
     .hero__pin-core,

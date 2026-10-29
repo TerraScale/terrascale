@@ -3,12 +3,13 @@
   import ExternalLink from '@/components/ExternalLink.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
   import { dict } from '@/lib/i18n'
+  import { reveal } from '@/lib/reveal'
   import { registrationUrl } from '@/lib/site'
 
   $: perks = $dict.cta.perks
 </script>
 
-<section class="cta">
+<section class="cta" use:reveal>
   <div class="cta__inner">
     <div class="cta__card">
       <h2 class="cta__headline">

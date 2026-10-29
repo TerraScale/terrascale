@@ -3,6 +3,7 @@
   import RegionFlag from '@/components/RegionFlag.svelte'
   import type { AppIconName } from '@/lib/icons'
   import { dict } from '@/lib/i18n'
+  import { reveal } from '@/lib/reveal'
 
   const featureIcons: AppIconName[] = ['database', 'globe', 'target', 'activity', 'shieldCheck']
   const regionCodes = ['gru', 'sjc', 'fra'] as const
@@ -14,7 +15,7 @@
   }))
 </script>
 
-<section class="features" id="features">
+<section class="features" id="features" use:reveal>
   <div class="features__inner">
     <div class="features__head">
       <span class="ts-eyebrow">{$dict.features.eyebrow}</span>
@@ -25,34 +26,35 @@
       <p class="features__subtitle">{$dict.features.subtitle}</p>
     </div>
 
-    <dl class="features__spec">
+    <ul class="features__grid">
       {#each features as feature (feature.title)}
-        <div class="spec-row">
-          <dt class="spec-row__label">
-            <span class="spec-row__icon">
-              <Icon name={feature.icon} className="spec-row__icon-svg" />
+        <li class="feature">
+          <div class="feature__label">
+            <span class="feature__icon">
+              <Icon name={feature.icon} className="feature__icon-svg" />
             </span>
             {feature.title}
-          </dt>
-          <dd class="spec-row__text">{feature.text}</dd>
-          <dd class="spec-row__tags">
+          </div>
+          <h3 class="feature__headline">{feature.headline}</h3>
+          <p class="feature__text">{feature.text}</p>
+          <div class="feature__tags">
             {#each feature.bullets as bullet (bullet)}
               {#if isRegion(bullet)}
-                <RegionFlag code={bullet} />
+                <span class="feature__tag"><RegionFlag code={bullet} /></span>
               {:else}
-                <span class="spec-row__tag">{bullet}</span>
+                <span class="feature__tag">{bullet}</span>
               {/if}
             {/each}
-          </dd>
-        </div>
+          </div>
+        </li>
       {/each}
-    </dl>
+    </ul>
   </div>
 </section>
 
 <style>
   .features {
-    padding: 80px 0;
+    padding: 96px 0;
     border-top: 1px solid var(--ts-divider);
   }
 
@@ -64,106 +66,121 @@
     display: grid;
     justify-items: center;
     gap: 16px;
-    max-width: 760px;
+    max-width: 680px;
     margin: 0 auto 48px;
     text-align: center;
   }
 
   .features__title {
-    font-size: clamp(30px, 3.2vw, 48px);
+    font-size: 48px;
     font-weight: 600;
     color: var(--ts-text);
-    line-height: 1.08;
+    line-height: 1;
     letter-spacing: -0.035em;
     margin: 0;
+    text-wrap: balance;
   }
 
   .features__accent {
-    color: var(--ts-primary);
+    color: var(--ts-primary-light);
   }
 
   .features__subtitle {
     font-size: 16px;
     color: var(--ts-text-muted);
-    line-height: 1.7;
-    max-width: 56ch;
+    line-height: 24px;
     margin: 0;
+    text-wrap: pretty;
   }
 
-  .features__spec {
+  /* Two wide cards over three narrow ones. */
+  .features__grid {
+    list-style: none;
     margin: 0;
-    border: 1px solid var(--ts-divider);
-    border-radius: 10px;
-    background: var(--ts-bg-surface);
-  }
-
-  .spec-row {
+    padding: 0;
     display: grid;
-    grid-template-columns: 220px minmax(0, 1fr);
-    gap: 12px 32px;
-    align-items: start;
-    padding: 24px 32px;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 16px;
   }
 
-  .spec-row + .spec-row {
-    border-top: 1px solid var(--ts-divider);
+  .feature {
+    grid-column: span 2;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 32px;
+    border: 1px solid var(--ts-divider);
+    border-radius: 16px;
+    background: var(--ts-bg-surface);
+    transition: border-color 300ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
-  .spec-row__label {
+  .feature:nth-child(-n + 2) {
+    grid-column: span 3;
+  }
+
+  .feature:hover {
+    border-color: var(--ts-glass-border);
+  }
+
+  .feature__label {
     display: flex;
     align-items: center;
     gap: 12px;
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--ts-text);
-    letter-spacing: -0.015em;
+    font-family: var(--ts-font-mono);
+    font-size: 12px;
+    line-height: 16px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ts-text-muted);
   }
 
-  .spec-row__icon {
+  .feature__icon {
     flex-shrink: 0;
     width: 32px;
     height: 32px;
-    border-radius: 6px;
-    background: color-mix(in oklab, var(--hue) 16%, transparent);
-    color: var(--hue);
+    border-radius: 8px;
+    background: rgba(var(--ts-primary-light-rgb), 0.12);
+    color: var(--ts-primary-light);
     display: grid;
     place-items: center;
   }
 
-  /* Non-semantic icon hues (dark chart series 1 to 5); status colours are reserved for status. */
-  .spec-row:nth-child(1) { --hue: #4797e4; }
-  .spec-row:nth-child(2) { --hue: #00a1dd; }
-  .spec-row:nth-child(3) { --hue: #925086; }
-  .spec-row:nth-child(4) { --hue: #7f5794; }
-  .spec-row:nth-child(5) { --hue: #4797e4; }
-
-  :global(.spec-row__icon-svg) {
+  :global(.feature__icon-svg) {
     width: 16px;
     height: 16px;
   }
 
-  .spec-row__text {
+  .feature__headline {
+    margin: 12px 0 0;
+    font-size: 20px;
+    line-height: 28px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    color: var(--ts-text);
+    text-wrap: balance;
+  }
+
+  .feature__text {
     margin: 0;
-    padding-top: 4px;
     font-size: 14px;
     color: var(--ts-text-muted);
-    line-height: 1.7;
-    max-width: 80ch;
+    line-height: 24px;
+    text-wrap: pretty;
   }
 
-  .spec-row__tags {
-    grid-column: 2;
-    margin: 0;
+  .feature__tags {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px 12px;
-    align-items: center;
+    gap: 8px;
+    margin-top: auto;
+    padding-top: 12px;
   }
 
-  .spec-row__tag {
+  .feature__tag {
     display: inline-flex;
     align-items: center;
-    height: 26px;
+    height: 24px;
     padding: 0 8px;
     border: 1px solid var(--ts-divider);
     border-radius: 4px;
@@ -173,6 +190,19 @@
     line-height: 1;
   }
 
+  @media (max-width: 1024px) {
+    .features__grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .feature,
+    .feature:nth-child(-n + 2) {
+      grid-column: span 1;
+    }
+    .feature:last-child {
+      grid-column: span 2;
+    }
+  }
+
   @media (max-width: 640px) {
     .features {
       padding: 64px 0;
@@ -180,12 +210,24 @@
     .features__head {
       margin-bottom: 32px;
     }
-    .spec-row {
-      grid-template-columns: minmax(0, 1fr);
-      padding: 20px;
+    .features__title {
+      font-size: 30px;
+      line-height: 36px;
     }
-    .spec-row__tags {
+    .features__grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .feature,
+    .feature:nth-child(-n + 2),
+    .feature:last-child {
       grid-column: auto;
+      padding: 24px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .feature {
+      transition: none;
     }
   }
 </style>
