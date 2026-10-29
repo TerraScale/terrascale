@@ -18,7 +18,9 @@ RUN echo 'eadb14ec88ac351c938908443bcb89da324411e4eb8f8d068b3cc755fc0808ae  /inp
     && echo '1f8be1f08274d7eb4ca5b4f37dcce153107e6177fec8efb53d8097df46bafd59  /inputs/0004-explicit-wal-revision-contract.patch' | sha256sum --check \
     && git apply --check /inputs/0004-explicit-wal-revision-contract.patch && git apply /inputs/0004-explicit-wal-revision-contract.patch \
     && echo '01dd719147e3c98ecff784b170536e4baa1c2c6865d87a954e215b39ebb4f540  /inputs/0005-export-interrupt-query-timeout-and-value-length.patch' | sha256sum --check \
-    && git apply --check /inputs/0005-export-interrupt-query-timeout-and-value-length.patch && git apply /inputs/0005-export-interrupt-query-timeout-and-value-length.patch
+    && git apply --check /inputs/0005-export-interrupt-query-timeout-and-value-length.patch && git apply /inputs/0005-export-interrupt-query-timeout-and-value-length.patch \
+    && echo 'a245bbd7b97ed116bf579c16cf544f234aa1ae082b7c03dfc3824b4d82bdcfc7  /inputs/0006-sync-client-own-cdc-table.patch' | sha256sum --check \
+    && git apply --check /inputs/0006-sync-client-own-cdc-table.patch && git apply /inputs/0006-sync-client-own-cdc-table.patch
 # The sync dependency selects encryption + FTS without the transitive pure-rust default.
 RUN cargo +1.88.0 tree --locked --package turso_sync_sdk_kit --features turso_sdk_kit/fts -e features -i aegis > /inputs/aegis-feature-tree.txt \
     && ! grep -E 'feature "(pure-rust|pure-rust-crypto)"' /inputs/aegis-feature-tree.txt \
