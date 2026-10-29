@@ -11,7 +11,7 @@ public sealed class GetDatabaseAnalyticsEndpoint(IUsageAnalytics analytics, Time
         Get(AnalyticsRoute.Database + "/analytics");
         Name("getDatabaseAnalytics");
         Summary("Reads database analytics");
-        Description("Client requests by HTTP method, committed document operations by type, errors, mergeable histogram latency percentiles, sampled on-disk storage and separate client and replication body/message bandwidth. " + AnalyticsWindow.Description + " " + ProjectApiRoute.IdentityDescription);
+        Description("Client requests by HTTP method, committed document operations by type, errors, mergeable histogram latency percentiles, sampled on-disk storage and client bandwidth. " + AnalyticsWindow.Description + " " + ProjectApiRoute.IdentityDescription);
         Tags("Analytics");
         Produces<ProjectAnalytics>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);

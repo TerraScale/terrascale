@@ -445,7 +445,7 @@ public sealed class UsageAnalyticsTests
                 Unavailable error => throw new InvalidOperationException(error.Message),
                 null => throw new InvalidOperationException("usage observations unavailable"),
             };
-            unsampled += lifetime.Meters?.ContainsKey("storage_bytes|gru-1||sample") == true ? 0 : 1;
+            unsampled += lifetime.Meters?.ContainsKey("storage_bytes|gru-1|sample") == true ? 0 : 1;
         }
 
         await Assert.That(unsampled).IsEqualTo(0);
@@ -484,7 +484,7 @@ public sealed class UsageAnalyticsTests
             UsageCounts counts => counts,
             Unavailable error => throw new InvalidOperationException(error.Message),
         };
-        await Assert.That(series.Select(point => point.Meters?.GetValueOrDefault("storage_bytes|gru-1||sample")?.Count ?? 0))
+        await Assert.That(series.Select(point => point.Meters?.GetValueOrDefault("storage_bytes|gru-1|sample")?.Count ?? 0))
             .IsEquivalentTo([1L, 1L], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     }
 
@@ -519,7 +519,7 @@ public sealed class UsageAnalyticsTests
         var meters = new Dictionary<string, UsageReading>(StringComparer.Ordinal);
         foreach (var method in new[] { "get", "post" })
         {
-            var dimension = new UsageDimension("requests", "gru-1", "", method);
+            var dimension = new UsageDimension("requests", "gru-1", method);
             meters[dimension.Key] = new(dimension, long.MaxValue, 0, latency);
         }
 
@@ -551,7 +551,7 @@ public sealed class UsageAnalyticsTests
                 latency[bin] = count;
             }
 
-            var dimension = new UsageDimension("requests", "gru-1", "", "get");
+            var dimension = new UsageDimension("requests", "gru-1", "get");
             var key = new UsageKey(new(database.Organization, database.Project, database.Id), minute / 60, TerraBase.Features.Management.Usage.UsageScope.Minute, (int)(minute % 60));
             meter.Add(key, new OpCounts(0, 0, new Dictionary<string, UsageReading>(StringComparer.Ordinal) { [dimension.Key] = new(dimension, bins.Sum(bin => bin.Count), 0, latency) }));
         }
@@ -607,7 +607,7 @@ public sealed class UsageAnalyticsTests
             UsageCounts counts => counts,
             Unavailable error => throw new InvalidOperationException(error.Message),
         };
-        await Assert.That(known.Meters?.ContainsKey("requests|gru-1||get") ?? false).IsTrue();
+        await Assert.That(known.Meters?.ContainsKey("requests|gru-1|get") ?? false).IsTrue();
     }
 
     private static async Task AssertMemoryReleasedAsync(ManagementApi api, long baseline)

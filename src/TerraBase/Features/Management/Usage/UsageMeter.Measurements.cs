@@ -144,11 +144,11 @@ internal sealed partial class UsageMeter
     internal static bool ValidDimension(UsageDimension dimension) =>
         ValidRegion(dimension.Region) && dimension.Meter switch
         {
-            "ops" => dimension.PeerRegion == "" && dimension.Kind is "read" or "put" or "patch" or "delete",
-            "requests" => dimension.PeerRegion == "" && dimension.Kind is "get" or "post" or "put" or "patch" or "delete" or "head" or "options" or "other",
-            "statements" => dimension.PeerRegion == "" && dimension.Kind is "postgres" or "hrana",
-            "client_bytes" => dimension.PeerRegion == "" && dimension.Kind is "sent" or "received",
-            "storage_bytes" => dimension.PeerRegion == "" && dimension.Kind == "sample",
+            "ops" => dimension.Kind is "read" or "put" or "patch" or "delete",
+            "requests" => dimension.Kind is "get" or "post" or "put" or "patch" or "delete" or "head" or "options" or "other",
+            "statements" => dimension.Kind is "postgres" or "hrana",
+            "client_bytes" => dimension.Kind is "sent" or "received",
+            "storage_bytes" => dimension.Kind == "sample",
             _ => false,
         };
 

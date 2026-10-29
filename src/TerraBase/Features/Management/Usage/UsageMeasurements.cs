@@ -2,9 +2,9 @@ using TerraBase.Features.Stats;
 
 namespace TerraBase.Features.Management.Usage;
 
-internal sealed record UsageDimension(string Meter, string Region, string PeerRegion, string Kind)
+internal sealed record UsageDimension(string Meter, string Region, string Kind)
 {
-    public string Key => $"{Meter}|{Region}|{PeerRegion}|{Kind}";
+    public string Key => $"{Meter}|{Region}|{Kind}";
 }
 
 internal sealed record UsageReading(UsageDimension Dimension, long Count, long Value = 0, long[]? Latency = null)
