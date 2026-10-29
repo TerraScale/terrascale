@@ -264,7 +264,9 @@ namespace TerraScale.Dashboard.E2E
             return value.Length is > 0 and <= 4096 ? value : throw new AccountAccessException("token is invalid.", 422, "invalid_request");
         }
 
-        private static void Require(bool condition, string message) { if (!condition)
+        private static void Require(bool condition, string message)
+        {
+            if (!condition)
             {
                 throw new InvalidOperationException(message);
             }

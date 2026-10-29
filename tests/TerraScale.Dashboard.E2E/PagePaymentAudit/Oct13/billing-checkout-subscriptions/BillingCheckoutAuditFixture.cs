@@ -123,7 +123,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.BillingCheckout
             if (scenario == "offline")
             {
                 return new(HttpStatusCode.ServiceUnavailable)
-            { Content = new StringContent("{\"error\":{\"message\":\"Local invoice outage\"}}", System.Text.Encoding.UTF8, "application/json") };
+                { Content = new StringContent("{\"error\":{\"message\":\"Local invoice outage\"}}", System.Text.Encoding.UTF8, "application/json") };
             }
 
             var value = new

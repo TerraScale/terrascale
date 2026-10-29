@@ -35,7 +35,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
                 if (!first && state == "duplicate")
                 {
                     return Task.FromResult<IResult?>(Results.Json(new
-                { items = new[] { new { name = "items", documents = 5L, bytes = 50L }, new { name = "items", documents = 1L, bytes = 10L } } }));
+                    { items = new[] { new { name = "items", documents = 5L, bytes = 50L }, new { name = "items", documents = 1L, bytes = 10L } } }));
                 }
 
                 if (state == "zero")

@@ -608,7 +608,9 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var token = Regex.Match(html, "name=\"_csrf\" value=\"([^\"]+)\"").Groups[1].Value;
             Check(token.Length > 0, "The native form publishes its CSRF token"); return WebUtility.HtmlDecode(token);
         }
-        private static void Check(bool condition, string message) { if (!condition)
+        private static void Check(bool condition, string message)
+        {
+            if (!condition)
             {
                 throw new InvalidOperationException(message);
             }
