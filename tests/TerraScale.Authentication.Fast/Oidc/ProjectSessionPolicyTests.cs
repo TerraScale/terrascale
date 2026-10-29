@@ -19,10 +19,6 @@ namespace TerraScale.Authentication.Fast.Oidc;
 public sealed class ProjectSessionPolicyTests(TerraBaseFixture fixture)
 {
 
-
-
-
-
     [Test]
     public async Task Project_lifetimes_apply_on_issuance_resolution_and_rotation_without_affecting_other_tenants()
     {
@@ -62,13 +58,6 @@ public sealed class ProjectSessionPolicyTests(TerraBaseFixture fixture)
         await Assert.That((await sessions.ResolveAsync(OidcIssuer.InstanceId, platform.Token))!.Value.Session.ExpiresAt).IsEqualTo(platform.Session.CreatedAt + Sessions.Lifetime);
     }
 
-
-
-
-
-
-
-
     private static async Task<(string OwnerToken, string Project)> ProjectAsync(OidcHarness oidc)
     {
         var (_, token) = await oidc.SignInUserAsync(new Faker().Internet.Email().ToLowerInvariant());
@@ -78,6 +67,5 @@ public sealed class ProjectSessionPolicyTests(TerraBaseFixture fixture)
     private static async Task ConfigureAsync(OidcHarness oidc, string token, string project, int seconds, params string[] redirects) =>
         await oidc.OkAsync(HttpMethod.Put, $"/v1/{project}/settings", token,
             new { configuration = new { redirect_urls = redirects, session_lifetime_seconds = seconds } });
-
 
 }

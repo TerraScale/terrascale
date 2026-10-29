@@ -47,7 +47,6 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
         await Assert.That(await GitHubActionsBinding.UnbindAsync(oidc.Server.App.Services, CancellationToken.None)).IsFalse();
     }
 
-
     private static DateTimeOffset Deadline(OidcHarness oidc) =>
         DateTimeOffset.FromUnixTimeSeconds(oidc.Server.App.Services.GetRequiredService<TimeProvider>().GetUtcNow().AddHours(1).ToUnixTimeSeconds());
 

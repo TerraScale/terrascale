@@ -54,7 +54,6 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         await Assert.That(oidc.Email.HasPending).IsFalse();
     }
 
-
     [Test]
     public async Task The_origin_check_compares_scheme_ascii_host_and_effective_port()
     {
@@ -122,7 +121,6 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         await Assert.That(delivered).IsEquivalentTo(["alice@example.test", "bob@example.test"]);
         await Assert.That(email.MaxInFlight).IsEqualTo(1);
     }
-
 
     [Test]
     public async Task A_third_party_cannot_attach_a_password_to_someone_elses_sign_up()
@@ -203,7 +201,6 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         await Assert.That(unknownReset.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(oidc.Email.HasPending).IsFalse();
     }
-
 
     [Test]
     public async Task Concurrent_redemptions_of_one_sign_up_code_across_replicas_create_one_account()
@@ -515,7 +512,6 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
 
         await Assert.That(violations).IsEmpty();
     }
-
 
     [Test]
     [Arguments("#a3e635", null, null)]

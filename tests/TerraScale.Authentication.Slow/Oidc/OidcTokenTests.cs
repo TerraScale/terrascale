@@ -58,8 +58,6 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
         await Assert.That(userInfo.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
-
-
     [Test]
     public async Task A_key_rotation_reaches_every_replica_and_earlier_tokens_keep_validating()
     {
@@ -303,7 +301,6 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
         await Assert.That(polled.StatusCode).IsEqualTo(HttpStatusCode.OK);
         return await OidcHarness.JsonAsync(polled);
     }
-
 
     private static async Task AssertConflictNoticeAsync(JsonElement error)
     {

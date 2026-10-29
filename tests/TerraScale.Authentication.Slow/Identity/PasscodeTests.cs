@@ -117,8 +117,6 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
         await Assert.That(await passcodes.VerifyAsync(caller.InstanceId, Email, code.Code)).IsNull();
     }
 
-
-
     [Test]
     public async Task Five_wrong_guesses_kill_the_code_even_for_the_right_code()
     {
@@ -420,9 +418,6 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
             await Assert.That(renewed.GetProperty(field).GetRawText()).IsEqualTo(full.GetProperty(field).GetRawText());
         }
     }
-
-
-
 
     [Test]
     public async Task Concurrent_redemptions_from_independent_stacks_open_exactly_one_session()

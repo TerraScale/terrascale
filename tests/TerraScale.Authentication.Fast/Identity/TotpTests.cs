@@ -80,13 +80,7 @@ public sealed class TotpTests(TerraBaseFixture fixture)
         await Assert.That(await mfa.BeginAsync(disabled)).IsNotNull();
     }
 
-
-
-
-
     private static string Code(TotpEnrollment enrollment, StoreTestClock clock) =>
         new Totp(Base32Encoding.ToBytes(enrollment.Secret)).ComputeTotp(clock.UtcNow.UtcDateTime);
-
-
 
 }

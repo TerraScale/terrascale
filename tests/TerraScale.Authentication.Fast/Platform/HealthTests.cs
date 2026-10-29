@@ -25,7 +25,6 @@ public sealed class HealthTests
         await Assert.That(body.GetProperty("version").GetString()).DoesNotContain("+");
     }
 
-
     [Test]
     public async Task Prometheus_metrics_are_served_only_on_the_metrics_listener()
     {
@@ -44,7 +43,6 @@ public sealed class HealthTests
         await Assert.That(otherPath.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
 
-
     [Test]
     public async Task Readiness_fails_closed_when_storage_is_not_reachable()
     {
@@ -57,7 +55,6 @@ public sealed class HealthTests
         await Assert.That(body.GetProperty("status").GetString()).IsEqualTo("not_ready");
         await Assert.That(body.TryGetProperty("region", out _)).IsFalse();
     }
-
 
     [Test]
     public async Task Readiness_reports_the_storage_region_once_the_authority_answers()

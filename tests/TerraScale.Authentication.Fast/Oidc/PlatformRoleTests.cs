@@ -45,7 +45,6 @@ public sealed class PlatformRoleTests(TerraBaseFixture fixture)
         await Assert.That(Role(await SignInAsync(oidc, "mariogk@example.test"))).IsNull();
     }
 
-
     private static async Task<JsonElement> SignInAsync(OidcHarness oidc, string address)
     {
         var session = await oidc.SignInAsync(address);

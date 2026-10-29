@@ -23,7 +23,6 @@ public sealed class EndUserAccessTokenTests(TerraBaseFixture fixture)
     private const string Audience = "https://api.terrascale.tech";
     private static readonly string[] ReadWrite = ["documents:read", "documents:write"];
 
-
     [Test]
     [Arguments(false)]
     [Arguments(true)]
@@ -124,7 +123,6 @@ public sealed class EndUserAccessTokenTests(TerraBaseFixture fixture)
         await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That((await OidcHarness.JsonAsync(refused)).TryGetProperty("access_token", out _)).IsFalse();
     }
-
 
     [Test]
     [Arguments(false)]

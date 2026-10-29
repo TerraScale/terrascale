@@ -81,7 +81,6 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
         await Assert.That(unrelatedRefresh.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
-
     [Test]
     public async Task Code_replay_rejects_the_parent_and_preserves_the_winning_descendants()
     {
@@ -125,11 +124,6 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
         await Assert.That(redeem.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(await OidcHarness.ErrorAsync(redeem)).IsEqualTo("invalid_grant");
     }
-
-
-
-
-
 
     private static Task<HttpResponseMessage> RefreshAsync(OidcHarness oidc, string token, bool publicClient, HttpClient? client = null) =>
         publicClient ? (client ?? oidc.Client).PostAsync($"/{OidcIssuer.Slug}/oauth/token", new FormUrlEncodedContent(new Dictionary<string, string>
@@ -221,8 +215,6 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
     }
 
     // Descending, so an unexpected status leads the failure message.
-
-
 
     // The instance's stored signing key documents, read directly from TerraBase.
 

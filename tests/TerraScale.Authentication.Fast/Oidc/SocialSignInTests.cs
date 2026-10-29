@@ -88,14 +88,6 @@ public sealed partial class SocialSignInTests(TerraBaseFixture fixture)
         await Assert.That(await SignInAsync(oidc, providers, project, provider, email)).IsNull();
     }
 
-
-
-
-
-
-
-
-
     private static async Task UnchangedAsync(Users users, UserRecord expected) =>
         await Assert.That(JsonSerializer.Serialize((await users.GetAsync(expected.InstanceId, expected.Id))!, IdentityJson.Default.UserRecord))
             .IsEqualTo(JsonSerializer.Serialize(expected, IdentityJson.Default.UserRecord));

@@ -66,8 +66,6 @@ public sealed class EndUserAccessTokenTests(TerraBaseFixture fixture)
         await Assert.That((await oidc.ValidateAsync(encoded, Audience)).Subject).IsEqualTo(user);
     }
 
-
-
     [Test]
     public async Task Foreign_org_narrowed_tampered_platform_and_anonymous_credentials_cannot_mint()
     {
@@ -94,12 +92,6 @@ public sealed class EndUserAccessTokenTests(TerraBaseFixture fixture)
         await Assert.That(cookie.Headers.WwwAuthenticate.Single().Scheme).IsEqualTo("Bearer");
     }
 
-
-
-
-
-
-
     private Task<OidcHarness> StartAsync(TimeProvider? clock = null) => OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience, clock: clock);
 
     private static async Task<(string Owner, string Organization, string Project)> SetupAsync(OidcHarness oidc)
@@ -112,7 +104,6 @@ public sealed class EndUserAccessTokenTests(TerraBaseFixture fixture)
     private static string Path(string project) => $"/v1/terrascale/projects/{project}/end-user-tokens";
 
     private static string Keys(string organization, string? project) => $"{Organizations}/{organization}" + (project is null ? string.Empty : $"/projects/{project}") + "/api-keys";
-
 
     private static async Task<string> KeyAsync(OidcHarness oidc, string owner, string organization, string? project, string? database = null, string[]? scopes = null, DateTimeOffset? expires = null) =>
         (await oidc.OkAsync(HttpMethod.Post, Keys(organization, project), owner,

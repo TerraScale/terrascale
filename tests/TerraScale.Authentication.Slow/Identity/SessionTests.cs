@@ -103,7 +103,6 @@ public sealed class SessionTests(TerraBaseFixture fixture)
         await Assert.That((await database.ListDocumentsAsync("sessions")).Items.Count).IsEqualTo(2);
     }
 
-
     [Test]
     public async Task Concurrent_rotations_from_independent_stores_produce_exactly_one_successor()
     {
@@ -125,8 +124,6 @@ public sealed class SessionTests(TerraBaseFixture fixture)
         await Assert.That(await sessions.ResolveAsync("instance", issued.Token)).IsNull();
         await Assert.That(await sessions.ResolveAsync("instance", results.Single(result => result is not null)!.Token)).IsNotNull();
     }
-
-
 
     [Test]
     public async Task Active_factors_refuse_primary_issuance_and_current_epoch_weak_sessions()

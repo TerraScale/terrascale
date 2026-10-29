@@ -173,7 +173,4 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         await Assert.That(platformPage).DoesNotContain(HtmlEncoder.Default.Encode(brand));
     }
 
-
-
-
 }

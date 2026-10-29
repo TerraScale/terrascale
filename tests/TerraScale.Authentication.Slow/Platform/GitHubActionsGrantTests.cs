@@ -33,7 +33,6 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
         await Assert.That(error).IsEqualTo("invalid_client");
     }
 
-
     [Test]
     public async Task A_token_outside_the_trust_policy_is_refused()
     {

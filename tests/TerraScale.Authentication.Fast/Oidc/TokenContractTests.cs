@@ -97,11 +97,6 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
         await Assert.That(authorize.Headers.Location?.OriginalString ?? string.Empty).DoesNotStartWith($"/ui/{OidcIssuer.Slug}/sign-in");
     }
 
-
-
-
-
-
     private Task<OidcHarness> StartAsync() => OidcHarness.StartAsync(fixture, values =>
     {
         values["access-token-audiences"] = Audience;

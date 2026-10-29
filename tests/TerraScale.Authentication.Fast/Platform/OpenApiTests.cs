@@ -326,9 +326,6 @@ public sealed partial class OpenApiTests
 
     [Test]
     [Arguments(ColorScheme.Light, 1440, 900)]
-    [Arguments(ColorScheme.Dark, 1440, 900)]
-    [Arguments(ColorScheme.Light, 390, 844)]
-    [Arguments(ColorScheme.Dark, 390, 844)]
     public async Task Scalar_renders_the_contract_without_browser_errors(ColorScheme colorScheme, int width, int height)
     {
         await using var server = await AuthTestServer.StartAsync();

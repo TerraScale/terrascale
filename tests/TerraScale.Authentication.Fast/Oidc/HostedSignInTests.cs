@@ -22,7 +22,6 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
     [ClassDataSource<BrowserFixture>(Shared = SharedType.PerTestSession)]
     public required BrowserFixture Chromium { get; init; }
 
-
     [Test]
     public async Task A_wrong_code_is_refused_and_the_right_one_sets_a_locked_down_session_cookie()
     {
@@ -49,8 +48,6 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         await Assert.That(cookie.Path.ToString()).IsEqualTo("/");
         await Assert.That(cookie.Value.ToString()).IsEqualTo(OidcHarness.SessionCookie(verified)!);
     }
-
-
 
     [Test]
     public async Task Hosted_sign_up_creates_the_account_and_password_sign_in_and_reset_work()
@@ -123,8 +120,6 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         await Assert.That(await PasswordSignInAsync(oidc, Address, "a brand new passphrase")).IsNotNull();
     }
 
-
-
     [Test]
     public async Task A_password_reset_code_works_once_for_its_purpose_and_signs_the_user_out_everywhere()
     {
@@ -188,13 +183,7 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         await Assert.That(await PasswordSignInAsync(oidc, Address, "brand new password")).IsNotNull();
     }
 
-
-
-
-
     // Starts a hosted sign-up and returns the pending token its verify page carries.
-
-
 
     // Every hosted email-code start shares the same mail cooldown.
 
@@ -206,10 +195,6 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
 
     [GeneratedRegex("name=\"pending_token\" value=\"([^\"]+)\"")]
     private static partial Regex PendingToken();
-
-
-
-
 
     [Test]
     public async Task Six_digit_entry_submits_the_real_code_and_password_visibility_is_accessible()
@@ -236,8 +221,6 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         await Assert.That(await page.Locator("#sign-up-password").GetAttributeAsync("type")).IsEqualTo("password");
         await Assert.That(violations).IsEmpty();
     }
-
-
 
     /// <summary>
     /// Opens the real sign-in page. The browser never reaches the loopback listener directly: every request to the

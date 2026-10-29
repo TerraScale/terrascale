@@ -146,7 +146,6 @@ public sealed class ProjectSessionPolicyTests(TerraBaseFixture fixture)
         await AssertInvalidGrantAsync(rejected);
     }
 
-
     [Test]
     public async Task Redirect_policy_narrows_registration_and_protocol_redirects_but_preserves_client_validation_and_empty_defaults()
     {

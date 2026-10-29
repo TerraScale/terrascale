@@ -19,7 +19,6 @@ public sealed partial class EmailChangeTests(TerraBaseFixture fixture)
     private const string Change = "/v1/terrascale/account/email-change";
     private const string Confirm = Change + "/confirm";
 
-
     [Test]
     public async Task Proofless_duplicate_cross_account_and_expired_changes_are_denied()
     {
@@ -54,9 +53,6 @@ public sealed partial class EmailChangeTests(TerraBaseFixture fixture)
         await Assert.That((await oidc.Server.App.Services.GetRequiredService<Users>().FindByEmailAsync(OidcIssuer.InstanceId, "finn@example.test"))).IsNotNull();
     }
 
-
-
     // The outbox delivers the new address's code and the old address's notice in either order.
-
 
 }

@@ -47,7 +47,6 @@ public sealed partial class EmailChangeTests(TerraBaseFixture fixture)
         await Assert.That(await oidc.FailAsync(HttpMethod.Post, Confirm, fresh, new { code })).IsEqualTo((403, "email_change_denied"));
     }
 
-
     [Test]
     public async Task The_old_address_cancel_link_voids_the_change_and_signs_out_everywhere()
     {

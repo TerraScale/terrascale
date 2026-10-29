@@ -19,8 +19,6 @@ namespace TerraScale.Authentication.Slow.Oidc;
 public sealed class ProjectTenantTests(TerraBaseFixture fixture)
 {
 
-
-
     [Test]
     public async Task Password_only_pages_offer_no_email_code_action_or_recovery_advice()
     {

@@ -24,7 +24,6 @@ public sealed partial class SocialSignInTests(TerraBaseFixture fixture)
 {
     private readonly Faker faker = new();
 
-
     [Test]
     [Arguments("https://accounts.google.com", "accounts.google.com")]
     [Arguments("accounts.google.com", "https://accounts.google.com")]

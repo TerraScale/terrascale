@@ -42,6 +42,4 @@ public sealed class UserTests(TerraBaseFixture fixture)
         await Assert.That((await database.ListDocumentsAsync("uniques")).Items.Count).IsEqualTo(2);
     }
 
-
-
 }

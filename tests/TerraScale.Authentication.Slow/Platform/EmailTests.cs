@@ -367,5 +367,4 @@ public sealed class EmailTests
         }
     }
 
-
 }

@@ -43,8 +43,6 @@ public sealed class SessionTests(TerraBaseFixture fixture)
         await Assert.That(await independent.ResolveAsync("instance-a", digest)).IsNull();
     }
 
-
-
     [Test]
     [Arguments(0, false)]
     public async Task Sessions_expire_at_the_exact_absolute_boundary(int secondsFromExpiry, bool live)
@@ -58,7 +56,6 @@ public sealed class SessionTests(TerraBaseFixture fixture)
         await Assert.That((await sessions.ResolveAsync("instance", issued.Token)).HasValue).IsEqualTo(live);
         await Assert.That(await sessions.RotateAsync("instance", issued.Token) is not null).IsEqualTo(live);
     }
-
 
     [Test]
     public async Task Rotation_kills_the_old_token_and_keeps_the_absolute_expiry()
@@ -83,7 +80,6 @@ public sealed class SessionTests(TerraBaseFixture fixture)
         await Assert.That(await sessions.RotateAsync("instance", rotated.Token)).IsNull();
         await Assert.That((await database.ListDocumentsAsync("sessions")).Items.Count).IsEqualTo(2);
     }
-
 
     [Test]
     public async Task Revocation_is_idempotent_and_scoped_to_the_token_and_instance()
@@ -135,15 +131,6 @@ public sealed class SessionTests(TerraBaseFixture fixture)
         var fresh = await sessions.CreateAsync(current);
         await Assert.That((await independent.ResolveAsync("instance", fresh.Token))!.Value.User.AuthEpoch).IsEqualTo(1);
     }
-
-
-
-
-
-
-
-
-
 
     private (Users Users, Sessions Sessions) Stack(TerraBaseTestTenant tenant, TimeProvider clock)
     {

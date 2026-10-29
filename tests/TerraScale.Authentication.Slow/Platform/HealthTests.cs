@@ -15,9 +15,6 @@ namespace TerraScale.Authentication.Slow.Platform;
 public sealed class HealthTests
 {
 
-
-
-
     [Test]
     public async Task Readiness_treats_a_hung_authority_as_not_ready()
     {

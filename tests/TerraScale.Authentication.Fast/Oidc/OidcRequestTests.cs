@@ -54,8 +54,6 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
         await Assert.That(await OidcHarness.ErrorAsync(wrongSecret)).IsEqualTo("invalid_client");
     }
 
-
-
     [Test]
     public async Task Logout_revokes_the_session_and_continues_only_to_a_registered_uri()
     {
@@ -123,9 +121,6 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
         await Assert.That(ClearsSessionCookie(page)).IsTrue();
     }
 
-
-
-
     private static async Task<HttpResponseMessage> PostAsync(OidcHarness oidc, string target, Dictionary<string, string> fields, string? cookie, string? origin = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, target) { Content = new FormUrlEncodedContent(fields) };
@@ -141,7 +136,6 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
 
         return await oidc.Client.SendAsync(request);
     }
-
 
     private static bool ClearsSessionCookie(HttpResponseMessage response) =>
         response.Headers.TryGetValues("Set-Cookie", out var cookies)

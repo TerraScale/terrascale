@@ -17,7 +17,6 @@ namespace TerraScale.Authentication.Slow.Oidc;
 public sealed class PlatformRoleTests(TerraBaseFixture fixture)
 {
 
-
     [Test]
     public async Task Any_other_stored_role_grants_nothing()
     {

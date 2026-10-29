@@ -21,9 +21,6 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
 {
     private const string Email = "alice@example.test";
 
-
-
-
     [Test]
     public async Task Only_a_master_keyed_hmac_of_the_code_is_stored()
     {
@@ -77,8 +74,6 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
         await Assert.That((await database.ListDocumentsAsync("sessions")).Items.Count).IsEqualTo(1);
     }
 
-
-
     [Test]
     [Arguments(0, false)]
     public async Task Codes_expire_at_the_exact_boundary(int secondsFromExpiry, bool works)
@@ -95,13 +90,6 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
         await Assert.That(stored.GetProperty("consumed").GetBoolean()).IsEqualTo(works);
         await Assert.That(stored.GetProperty("failedAttempts").GetInt32()).IsEqualTo(0);
     }
-
-
-
-
-
-
-
 
     [Test]
     public async Task Unknown_emails_write_nothing_and_never_verify()
@@ -161,15 +149,6 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
         var reissued = (await passcodes.RequestAsync("instance", Email))!;
         await Assert.That((await passcodes.VerifyAsync("instance", Email, reissued.Code))!.Session.AuthEpoch).IsEqualTo(1);
     }
-
-
-
-
-
-
-
-
-
 
     private (Users Users, Sessions Sessions, Passcodes Passcodes) Stack(TerraBaseTestTenant tenant, TimeProvider clock, AuthOptions options)
     {

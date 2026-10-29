@@ -17,8 +17,6 @@ namespace TerraScale.Authentication.Slow.Identity;
 public sealed partial class MfaSignInTests(TerraBaseFixture fixture)
 {
 
-
-
     /// <summary>Enrols through the hosted security pages; returns the secret, the recovery codes and the new session.</summary>
     private static async Task<(string Secret, IReadOnlyList<string> Codes, string Session)> EnrolAsync(OidcHarness oidc, string session, StoreTestClock clock)
     {

@@ -88,7 +88,6 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
         await Assert.That(authTime).IsGreaterThanOrEqualTo(after / 1000);
     }
 
-
     [Test]
     public async Task Logout_with_an_id_token_hint_ends_only_its_own_users_session()
     {

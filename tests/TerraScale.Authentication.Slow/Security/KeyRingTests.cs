@@ -416,7 +416,6 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         await Assert.That(await ValidateAsync(server, "ins_a", $"{hsHeader}.{parts[1]}.{hsSignature}")).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
-
     [Test]
     public async Task Correctly_signed_tokens_still_need_a_ring_kid_and_es256()
     {
@@ -445,7 +444,6 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
             .IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
-
     [Test]
     public async Task Audiences_match_exactly_without_trailing_slash_folding()
     {
@@ -458,7 +456,6 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         await Assert.That(await ValidateAsync(server, "ins_a", plain, audience: Audience + "/")).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(await ValidateAsync(server, "ins_a", slashed, audience: Audience + "/")).IsEqualTo(HttpStatusCode.OK);
     }
-
 
     [Test]
     [Arguments(0, HttpStatusCode.BadRequest)]
@@ -475,7 +472,6 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         await Assert.That(response.StatusCode).IsEqualTo(expected);
     }
 
-
     [Test]
     public async Task Claims_cannot_override_issuer_audience_or_lifetime()
     {
@@ -489,7 +485,6 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         }
     }
-
 
     [Test]
     public async Task Public_key_objects_cannot_export_a_secret_or_sign()
@@ -508,7 +503,6 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
             keys.ToList().ForEach(key => key.Dispose());
         }
     }
-
 
     [Test]
     public async Task Unreachable_storage_fails_signing_closed_with_503()

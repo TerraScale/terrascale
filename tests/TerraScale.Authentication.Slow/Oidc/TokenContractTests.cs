@@ -21,8 +21,6 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
     private const string ServiceId = "01M4EQ2FRJ8S8B29E8TQVWNW4K";
     private const string ServiceSecret = "service-test-secret-0123456789abcdefghij";
 
-
-
     [Test]
     [Arguments("access-token-audiences", "http://gru.api.terrascale.tech")]
     [Arguments("access-token-audiences", "https://gru.api.terrascale.tech/?x=1")]
@@ -154,7 +152,6 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
         request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{secret}")));
         return oidc.Client.SendAsync(request);
     }
-
 
     private static async Task<JsonWebKeySet> KeysAsync(OidcHarness oidc) =>
         new(await oidc.Client.GetStringAsync($"/{OidcIssuer.Slug}/.well-known/jwks.json"));
