@@ -41,7 +41,8 @@ namespace TerraScale.Dashboard.Features.Data
             var record = new SqlWorkspaceRecord(scope.OrganizationId, scope.ProjectId, databaseId, context.UserId,
                 Encoding.UTF8.GetByteCount(sql) <= SqlWorkspace.SqlBytes ? sql : "", history, Receipt: receipt);
             var key = Key(context, databaseId);
-            for (var attempt = 0; ; attempt++)
+            var attempt = 0;
+            while (true)
             {
                 var current = await state.GetAsync(SqlWorkspace.Collection, key, cancellationToken);
                 try
@@ -50,7 +51,10 @@ namespace TerraScale.Dashboard.Features.Data
                         current is null ? TerraBasePrecondition.Absent : TerraBasePrecondition.Matches(current.Version), cancellationToken);
                     return receipt.Id;
                 }
-                catch (TerraBasePreconditionFailedException) when (attempt < 3) { }
+                catch (TerraBasePreconditionFailedException) when (attempt < 3)
+                {
+                    attempt++;
+                }
             }
         }
 

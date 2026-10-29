@@ -110,7 +110,7 @@ namespace TerraScale.Dashboard.Features.Billing
         private async Task<(OrganizationRecord Organization, InternalBill Bill)> ReadDetailsAsync(AccountContext context, CancellationToken cancellationToken)
         {
             context = await AccountScope.RefreshAsync(accounts, context, cancellationToken);
-            var (Document, Organization, Authority) = await AuthorizedOrganizationAsync(context, context.Organization!.Id, cancellationToken);
+            var (_, Organization, _) = await AuthorizedOrganizationAsync(context, context.Organization!.Id, cancellationToken);
             var organization = Organization;
             if (organization.InternalBilling is null)
             {
@@ -346,7 +346,7 @@ namespace TerraScale.Dashboard.Features.Billing
 
         private async Task ReleaseUncommittedAsync(BillingBinding reservation, CancellationToken cancellationToken)
         {
-            var (Document, Organization) = await OrganizationAsync(reservation.OrganizationId, cancellationToken);
+            var (_, Organization) = await OrganizationAsync(reservation.OrganizationId, cancellationToken);
             if (Organization.InternalBilling is not null)
             {
                 return;
