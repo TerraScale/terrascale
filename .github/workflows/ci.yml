@@ -408,7 +408,6 @@ jobs:
       actions: write
     steps:
       - *checkout
-      - *checkout-ts-dotnet
       - *native-artifacts
       - *setup-dotnet
       - *nuget-cache
@@ -432,7 +431,7 @@ jobs:
         with:
           context: terrascale
           file: terrascale/Dockerfile
-          build-contexts: ts-dotnet=ts-dotnet
+          build-contexts: ts-dotnet=terrascale/sdk/dotnet
           target: ${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}
           platforms: linux/amd64,linux/arm64
           tags: |
@@ -452,7 +451,7 @@ jobs:
         with:
           context: terrascale
           file: terrascale/Dockerfile
-          build-contexts: ts-dotnet=ts-dotnet
+          build-contexts: ts-dotnet=terrascale/sdk/dotnet
           target: base
           build-args: *build-args
           cache-from: *cache-from

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # CI runs the `test-libs`, `test-auth` and `test-terrabase` stages on pull requests and merge groups (.github/workflows/ci.yml);
 # `make docker-test` builds `test`, all three. The `terrabase` and `ts-auth` stages publish to GHCR for ts-orch.
-# ts-auth builds ts-dotnet from source (named context `ts-dotnet`, a checkout); its tests start the TerraBase built from
+# ts-auth builds the in-repo SDK from source (named context `ts-dotnet`, sdk/dotnet); its tests start the TerraBase built from
 # this same tree (Makefile TERRABASE_BINARY).
 
 # Match global.json and keep the SDK's targeting packs aligned with locked NuGet dependencies.
@@ -22,7 +22,7 @@ ENV DOTNET_PROCESSOR_COUNT=$DOTNET_PROCESSOR_COUNT DOTNET_GCHeapCount=$DOTNET_GC
 ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 ASPNETCORE_HTTP_PORTS= DOTNET_ROOT=/usr/share/dotnet NUGET_SCRATCH=/nuget-scratch
 # The WAL power-loss tests compile their LD_PRELOAD shim with cc and the C library headers.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends make nodejs npm jq gcc libc6-dev \
+    && apt-get install -y --no-install-recommends make nodejs npm jq gcc libc6-dev python3 \
     && rm -rf /var/lib/apt/lists/*
 # Chromium for the ts-auth browser tests: the npm playwright matching Microsoft.Playwright in Directory.Packages.props
 # installs the same browser revision. Redocly (auth-openapi-check) is fetched once here too.
@@ -41,7 +41,7 @@ RUN mkdir /restore-manifests \
     && find . -type f \( -name '*.csproj' -o -name '*.props' -o -name '*.targets' \
         -o -name '*.slnx' -o -name '*.slnf' -o -name '*packages.lock.json' \
         -o -name 'NuGet.config' -o -name 'global.json' -o -name 'dotnet-tools.json' \
-        -o -name 'Makefile' \) -exec cp --parents '{}' /restore-manifests/ \;
+        -o -name 'Makefile' -o -path './scripts/dashboard/check-stripe-dependency.py' \) -exec cp --parents '{}' /restore-manifests/ \;
 
 # Shared packages are restored into this layer (and deduplicated across concurrent CI jobs): a BuildKit
 # cache mount is best-effort and may come up empty in a later stage, so it only holds NuGet's download cache.
