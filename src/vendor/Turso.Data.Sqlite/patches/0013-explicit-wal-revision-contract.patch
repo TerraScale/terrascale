@@ -1,0 +1,169 @@
+From: TerraScale
+Subject: [PATCH] Expose the explicit WAL revision contract
+
+diff --git a/src/Turso.Data.Sqlite/SqliteConnection.cs b/src/Turso.Data.Sqlite/SqliteConnection.cs
+index feaea5ab3..68c07cb7e 100644
+--- a/src/Turso.Data.Sqlite/SqliteConnection.cs
++++ b/src/Turso.Data.Sqlite/SqliteConnection.cs
+@@ -712,6 +712,20 @@ public partial class SqliteConnection : DbConnection
+     public void SetFtsProgressHandler(Func<ulong, ulong, bool>? callback)
+         => TursoBindings.SetFtsProgressHandler(DatabaseHandle, callback);
+ 
++    public void UseManualWal() => TursoBindings.UseManualWal(DatabaseHandle);
++
++    public TursoWalState GetWalState() => TursoBindings.GetWalState(DatabaseHandle);
++
++    public void ReadWalFramePages(ulong firstFrame, Span<uint> pageNumbers, Span<uint> databaseSizes)
++        => TursoBindings.ReadWalFramePages(DatabaseHandle, firstFrame, pageNumbers, databaseSizes);
++
++    public bool TryReadSnapshotPage(uint pageNumber, Span<byte> page)
++        => TursoBindings.TryReadSnapshotPage(DatabaseHandle, pageNumber, page);
++
++    public bool TryCheckpointTruncate(ulong upperBound) => TursoBindings.TryCheckpointTruncate(DatabaseHandle, upperBound);
++
++    public int PageSize => TursoBindings.GetPageSize(DatabaseHandle);
++
+     internal TursoDatabaseHandle DatabaseHandle
+     {
+         get
+diff --git a/src/Turso.Raw/Public/TursoBindings.cs b/src/Turso.Raw/Public/TursoBindings.cs
+index 8d6776b07..8bee30d40 100644
+--- a/src/Turso.Raw/Public/TursoBindings.cs
++++ b/src/Turso.Raw/Public/TursoBindings.cs
+@@ -110,6 +110,91 @@ public static class TursoBindings
+         db.FtsProgressHandler = native;
+     }
+ 
++    public static void UseManualWal(TursoDatabaseHandle db)
++    {
++        ArgumentNullException.ThrowIfNull(db);
++        db.ThrowIfInvalid();
++        RequireWalContract();
++        var status = TursoInterop.WalManual(db, out var errorPtr);
++        ThrowIfError(status, errorPtr);
++    }
++
++    public static TursoWalState GetWalState(TursoDatabaseHandle db)
++    {
++        ArgumentNullException.ThrowIfNull(db);
++        db.ThrowIfInvalid();
++        RequireWalContract();
++        var status = TursoInterop.WalState(db, out var maxFrame, out var checkpointSequence, out var errorPtr);
++        ThrowIfError(status, errorPtr);
++        return new TursoWalState(maxFrame, checkpointSequence);
++    }
++
++    public static unsafe void ReadWalFramePages(TursoDatabaseHandle db, ulong firstFrame, Span<uint> pageNumbers, Span<uint> databaseSizes)
++    {
++        ArgumentNullException.ThrowIfNull(db);
++        db.ThrowIfInvalid();
++        ArgumentOutOfRangeException.ThrowIfZero(firstFrame);
++        if (pageNumbers.Length != databaseSizes.Length)
++            throw new ArgumentException("Page numbers and database sizes must have the same length.", nameof(databaseSizes));
++        if (pageNumbers.Overlaps(databaseSizes))
++            throw new ArgumentException("Page numbers and database sizes must not overlap.", nameof(databaseSizes));
++        if (pageNumbers.IsEmpty)
++            return;
++        RequireWalContract();
++        fixed (uint* pages = pageNumbers)
++        fixed (uint* sizes = databaseSizes)
++        {
++            var status = TursoInterop.WalFramePages(db, firstFrame, (uint)pageNumbers.Length, pages, sizes, out var errorPtr);
++            ThrowIfError(status, errorPtr);
++        }
++    }
++
++    public static unsafe bool TryReadSnapshotPage(TursoDatabaseHandle db, uint pageNumber, Span<byte> page)
++    {
++        ArgumentNullException.ThrowIfNull(db);
++        db.ThrowIfInvalid();
++        ArgumentOutOfRangeException.ThrowIfZero(pageNumber);
++        RequireWalContract();
++        fixed (byte* buffer = page)
++        {
++            var status = TursoInterop.SnapshotReadPage(db, pageNumber, buffer, (nuint)page.Length, out var found, out var errorPtr);
++            ThrowIfError(status, errorPtr);
++            return found != 0;
++        }
++    }
++
++    public static bool TryCheckpointTruncate(TursoDatabaseHandle db, ulong upperBound)
++    {
++        ArgumentNullException.ThrowIfNull(db);
++        db.ThrowIfInvalid();
++        RequireWalContract();
++        var status = TursoInterop.WalCheckpointTruncate(db, upperBound, out var truncated, out var errorPtr);
++        ThrowIfError(status, errorPtr);
++        return truncated != 0;
++    }
++
++    public static int GetPageSize(TursoDatabaseHandle db)
++    {
++        ArgumentNullException.ThrowIfNull(db);
++        db.ThrowIfInvalid();
++        RequireWalContract();
++        return checked((int)TursoInterop.PageSize(db));
++    }
++
++    private static void RequireWalContract()
++    {
++        try
++        {
++            if (TursoInterop.WalContract() == 1)
++                return;
++        }
++        catch (EntryPointNotFoundException)
++        {
++        }
++
++        throw new NotSupportedException("The native library must include the WAL revision contract.");
++    }
++
+     public static TursoStatementHandle PrepareStatement(TursoDatabaseHandle db, string sql)
+     {
+         db.ThrowIfInvalid();
+diff --git a/src/Turso.Raw/Public/TursoWalState.cs b/src/Turso.Raw/Public/TursoWalState.cs
+new file mode 100644
+index 000000000..930ff29bf
+--- /dev/null
++++ b/src/Turso.Raw/Public/TursoWalState.cs
+@@ -0,0 +1,3 @@
++namespace Turso.Raw.Public;
++
++public readonly record struct TursoWalState(ulong MaxFrame, uint CheckpointSequence);
+diff --git a/src/Turso.Raw/TursoInterop.cs b/src/Turso.Raw/TursoInterop.cs
+index d1119181c..6c35465c2 100644
+--- a/src/Turso.Raw/TursoInterop.cs
++++ b/src/Turso.Raw/TursoInterop.cs
+@@ -58,6 +58,31 @@ internal static class TursoInterop
+     [DllImport(DllName, EntryPoint = "turso_terrascale_storage_error_contract", CallingConvention = CallingConvention.Cdecl)]
+     public static extern uint StorageErrorContract();
+ 
++    [DllImport(DllName, EntryPoint = "turso_terrascale_wal_contract", CallingConvention = CallingConvention.Cdecl)]
++    internal static extern uint WalContract();
++
++    [DllImport(DllName, EntryPoint = "turso_terrascale_wal_manual", CallingConvention = CallingConvention.Cdecl)]
++    internal static extern TursoStatusCode WalManual(TursoDatabaseHandle connection, out IntPtr errorPtr);
++
++    [DllImport(DllName, EntryPoint = "turso_terrascale_wal_state", CallingConvention = CallingConvention.Cdecl)]
++    internal static extern TursoStatusCode WalState(
++        TursoDatabaseHandle connection, out ulong maxFrame, out uint checkpointSequence, out IntPtr errorPtr);
++
++    [DllImport(DllName, EntryPoint = "turso_terrascale_wal_frame_pages", CallingConvention = CallingConvention.Cdecl)]
++    internal static extern unsafe TursoStatusCode WalFramePages(
++        TursoDatabaseHandle connection, ulong firstFrame, uint count, uint* pageNumbers, uint* databaseSizes, out IntPtr errorPtr);
++
++    [DllImport(DllName, EntryPoint = "turso_terrascale_snapshot_read_page", CallingConvention = CallingConvention.Cdecl)]
++    internal static extern unsafe TursoStatusCode SnapshotReadPage(
++        TursoDatabaseHandle connection, uint pageNumber, byte* page, nuint pageLength, out int found, out IntPtr errorPtr);
++
++    [DllImport(DllName, EntryPoint = "turso_terrascale_wal_checkpoint_truncate", CallingConvention = CallingConvention.Cdecl)]
++    internal static extern TursoStatusCode WalCheckpointTruncate(
++        TursoDatabaseHandle connection, ulong upperBound, out int truncated, out IntPtr errorPtr);
++
++    [DllImport(DllName, EntryPoint = "turso_terrascale_page_size", CallingConvention = CallingConvention.Cdecl)]
++    internal static extern uint PageSize(TursoDatabaseHandle connection);
++
+     [DllImport(DllName, EntryPoint = "turso_database_new", CallingConvention = CallingConvention.Cdecl)]
+     public static extern TursoStatusCode DatabaseNew(
+         ref TursoDatabaseConfig config,

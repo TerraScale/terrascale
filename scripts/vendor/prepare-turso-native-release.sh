@@ -18,6 +18,7 @@ for rid in linux-x64 linux-arm64; do
   grep -qx 'native smoke: candidate query/cursor/sort/preflight/count use indexed text id seeks; ULIDs, missing hits and empty counts passed' "$input/release/$rid-fts-smoke.txt"
   grep -qx 'native smoke: three-term carrying-slop reader/count/ordered queries refuse scratch; small admitted slop succeeds' "$input/release/$rid-fts-smoke.txt"
   grep -q '^contract1 smoke: marker=1, aegis256 persisted FTS, SQL spoof constraint and page tamper TURSO_CORRUPT passed$' "$input/release/$rid-contract1-smoke.txt"
+  grep -q '^wal contract smoke: marker=1, [0-9]* frames with the database file untouched across close, snapshot page reads decrypt under a passive checkpoint, write transactions, checkpoints and spills of other connections and bad ranges refused, busy or stale truncates kept, explicit TRUNCATE resets frames$' "$input/release/$rid-wal-smoke.txt"
   for source in "$input"/release/*; do
     target="$output/$(basename "$source")"
     if [[ -f "$target" ]]; then cmp "$source" "$target"; else cp "$source" "$target"; fi
@@ -25,7 +26,7 @@ for rid in linux-x64 linux-arm64; do
   cp "$library" "$output/terrascale-turso-$rid.so"
 done
 {
-  printf 'release=turso-native-v0.8.2-fts-contract1-runtime-aegis-20261023\n'
+  printf 'release=turso-native-v0.8.2-fts-contract1-aegis-wal1-20261029-r4\n'
   printf 'repository_commit=%s\n' "$(git rev-parse HEAD)"
   printf 'workflow_run=%s\n' "${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-TerraScale/terrascale}/actions/runs/${GITHUB_RUN_ID:-not-a-CI-run}"
   printf 'Source, patches, Cargo.lock, recipe, compiler, ABI exports, ELF dependencies and successful smoke logs accompany each architecture.\n'

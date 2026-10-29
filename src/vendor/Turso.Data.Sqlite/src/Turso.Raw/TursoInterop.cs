@@ -58,6 +58,31 @@ internal static class TursoInterop
     [DllImport(DllName, EntryPoint = "turso_terrascale_storage_error_contract", CallingConvention = CallingConvention.Cdecl)]
     public static extern uint StorageErrorContract();
 
+    [DllImport(DllName, EntryPoint = "turso_terrascale_wal_contract", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern uint WalContract();
+
+    [DllImport(DllName, EntryPoint = "turso_terrascale_wal_manual", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern TursoStatusCode WalManual(TursoDatabaseHandle connection, out IntPtr errorPtr);
+
+    [DllImport(DllName, EntryPoint = "turso_terrascale_wal_state", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern TursoStatusCode WalState(
+        TursoDatabaseHandle connection, out ulong maxFrame, out uint checkpointSequence, out IntPtr errorPtr);
+
+    [DllImport(DllName, EntryPoint = "turso_terrascale_wal_frame_pages", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern unsafe TursoStatusCode WalFramePages(
+        TursoDatabaseHandle connection, ulong firstFrame, uint count, uint* pageNumbers, uint* databaseSizes, out IntPtr errorPtr);
+
+    [DllImport(DllName, EntryPoint = "turso_terrascale_snapshot_read_page", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern unsafe TursoStatusCode SnapshotReadPage(
+        TursoDatabaseHandle connection, uint pageNumber, byte* page, nuint pageLength, out int found, out IntPtr errorPtr);
+
+    [DllImport(DllName, EntryPoint = "turso_terrascale_wal_checkpoint_truncate", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern TursoStatusCode WalCheckpointTruncate(
+        TursoDatabaseHandle connection, ulong upperBound, out int truncated, out IntPtr errorPtr);
+
+    [DllImport(DllName, EntryPoint = "turso_terrascale_page_size", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern uint PageSize(TursoDatabaseHandle connection);
+
     [DllImport(DllName, EntryPoint = "turso_database_new", CallingConvention = CallingConvention.Cdecl)]
     public static extern TursoStatusCode DatabaseNew(
         ref TursoDatabaseConfig config,

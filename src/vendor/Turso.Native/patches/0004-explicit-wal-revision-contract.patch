@@ -1,0 +1,229 @@
+diff --git a/core/connection.rs b/core/connection.rs
+index 3bfb72b..be427dd 100644
+--- a/core/connection.rs
++++ b/core/connection.rs
+@@ -4956,6 +4956,18 @@ impl Connection {
+         matches!(self.get_tx_state(), TransactionState::Write { .. })
+     }
+ 
++    pub fn is_in_read_tx(&self) -> bool {
++        matches!(self.get_tx_state(), TransactionState::Read)
++    }
++
++    pub fn is_idle_or_in_read_tx(&self) -> bool {
++        matches!(self.get_tx_state(), TransactionState::None | TransactionState::Read)
++    }
++
++    pub fn wal_snapshot_position(&self) -> (u32, u64) {
++        self.pager.load().wal_pos()
++    }
++
+     pub(crate) fn get_mv_tx_id(&self) -> Option<u64> {
+         self.mv_tx.read().map(|(tx_id, _)| tx_id)
+     }
+diff --git a/sdk-kit/src/capi.rs b/sdk-kit/src/capi.rs
+index 0c265bc..c301a1b 100644
+--- a/sdk-kit/src/capi.rs
++++ b/sdk-kit/src/capi.rs
+@@ -25,6 +25,187 @@ pub extern "C" fn turso_terrascale_storage_error_contract() -> u32 {
+     1
+ }
+ 
++#[no_mangle]
++pub extern "C" fn turso_terrascale_wal_contract() -> u32 {
++    1
++}
++
++#[no_mangle]
++pub extern "C" fn turso_terrascale_wal_manual(
++    connection: *const c::turso_connection_t,
++    error_opt_out: *mut *const std::ffi::c_char,
++) -> c::turso_status_code_t {
++    match unsafe { TursoConnection::ref_from_capi(connection) } {
++        Ok(connection) => {
++            connection.core().wal_auto_actions_disable();
++            c::turso_status_code_t::TURSO_OK
++        }
++        Err(err) => unsafe { err.to_capi(error_opt_out) },
++    }
++}
++
++fn wal_misuse(message: &str, error_opt_out: *mut *const std::ffi::c_char) -> c::turso_status_code_t {
++    unsafe { rsapi::TursoError::Misuse(message.to_string()).to_capi(error_opt_out) }
++}
++
++#[no_mangle]
++pub extern "C" fn turso_terrascale_wal_state(
++    connection: *const c::turso_connection_t,
++    max_frame: *mut u64,
++    checkpoint_seq: *mut u32,
++    error_opt_out: *mut *const std::ffi::c_char,
++) -> c::turso_status_code_t {
++    let connection = match unsafe { TursoConnection::ref_from_capi(connection) } {
++        Ok(connection) => connection,
++        Err(err) => return unsafe { err.to_capi(error_opt_out) },
++    };
++    if max_frame.is_null() || checkpoint_seq.is_null() {
++        return wal_misuse("got null pointer", error_opt_out);
++    }
++    let core = connection.core();
++    if !core.is_idle_or_in_read_tx() {
++        return wal_misuse("WAL state is only defined outside a write transaction", error_opt_out);
++    }
++    let (seq, frames) = core.wal_snapshot_position();
++    if seq == u32::MAX {
++        return wal_misuse("the database has no WAL", error_opt_out);
++    }
++    unsafe {
++        *max_frame = frames;
++        *checkpoint_seq = seq;
++    }
++    c::turso_status_code_t::TURSO_OK
++}
++
++fn wal_restarted(core: &turso_core::Connection, seq: u32) -> Result<bool, turso_core::LimboError> {
++    Ok(core.wal_state()?.checkpoint_seq_no != seq)
++}
++
++#[no_mangle]
++pub extern "C" fn turso_terrascale_wal_frame_pages(
++    connection: *const c::turso_connection_t,
++    first_frame: u64,
++    count: u32,
++    page_numbers: *mut u32,
++    db_sizes: *mut u32,
++    error_opt_out: *mut *const std::ffi::c_char,
++) -> c::turso_status_code_t {
++    let connection = match unsafe { TursoConnection::ref_from_capi(connection) } {
++        Ok(connection) => connection,
++        Err(err) => return unsafe { err.to_capi(error_opt_out) },
++    };
++    if first_frame == 0 || page_numbers.is_null() || db_sizes.is_null() {
++        return wal_misuse("invalid WAL frame range", error_opt_out);
++    }
++    let core = connection.core();
++    if !core.is_in_read_tx() {
++        return wal_misuse("WAL frames are only readable inside a read transaction", error_opt_out);
++    }
++    let (seq, max_frame) = core.wal_snapshot_position();
++    match first_frame.checked_add(u64::from(count)) {
++        Some(end) if end - 1 <= max_frame => {}
++        _ => return wal_misuse("WAL frame range is past the last frame", error_opt_out),
++    }
++    let bytes = count as usize * std::mem::size_of::<u32>();
++    let (pages_at, sizes_at) = (page_numbers as usize, db_sizes as usize);
++    if count > 0 && pages_at < sizes_at.saturating_add(bytes) && sizes_at < pages_at.saturating_add(bytes) {
++        return wal_misuse("WAL frame output buffers overlap", error_opt_out);
++    }
++    match wal_restarted(core, seq) {
++        Ok(false) => {}
++        Ok(true) => return wal_misuse("the WAL restarted after the read snapshot began", error_opt_out),
++        Err(err) => return unsafe { rsapi::TursoError::from(err).to_capi(error_opt_out) },
++    }
++    let mut frame = vec![0u8; 24 + core.get_page_size().get() as usize];
++    let pages = unsafe { std::slice::from_raw_parts_mut(page_numbers, count as usize) };
++    let sizes = unsafe { std::slice::from_raw_parts_mut(db_sizes, count as usize) };
++    for index in 0..count as usize {
++        match core.wal_get_frame(first_frame + index as u64, &mut frame) {
++            Ok(info) => {
++                pages[index] = info.page_no;
++                sizes[index] = info.db_size;
++            }
++            Err(err) => return unsafe { rsapi::TursoError::from(err).to_capi(error_opt_out) },
++        }
++    }
++    match wal_restarted(core, seq) {
++        Ok(false) => c::turso_status_code_t::TURSO_OK,
++        Ok(true) => wal_misuse("the WAL restarted while its frames were read", error_opt_out),
++        Err(err) => unsafe { rsapi::TursoError::from(err).to_capi(error_opt_out) },
++    }
++}
++
++#[no_mangle]
++pub extern "C" fn turso_terrascale_wal_checkpoint_truncate(
++    connection: *const c::turso_connection_t,
++    upper_bound: u64,
++    truncated: *mut i32,
++    error_opt_out: *mut *const std::ffi::c_char,
++) -> c::turso_status_code_t {
++    let connection = match unsafe { TursoConnection::ref_from_capi(connection) } {
++        Ok(connection) => connection,
++        Err(err) => return unsafe { err.to_capi(error_opt_out) },
++    };
++    if truncated.is_null() {
++        return wal_misuse("got null pointer", error_opt_out);
++    }
++    let core = connection.core();
++    if !core.get_auto_commit() || !core.is_idle_or_in_read_tx() || core.is_in_read_tx() {
++        return wal_misuse("a checkpoint needs a connection outside any transaction", error_opt_out);
++    }
++    let mode = turso_core::CheckpointMode::Truncate { upper_bound_inclusive: Some(upper_bound) };
++    let outcome = match core.checkpoint(mode) {
++        Ok(_) => core.wal_state().map(|state| state.max_frame == 0),
++        Err(turso_core::LimboError::Busy) => Ok(false),
++        Err(err) => Err(err),
++    };
++    match outcome {
++        Ok(done) => {
++            unsafe { *truncated = i32::from(done) };
++            c::turso_status_code_t::TURSO_OK
++        }
++        Err(err) => unsafe { rsapi::TursoError::from(err).to_capi(error_opt_out) },
++    }
++}
++
++#[no_mangle]
++pub extern "C" fn turso_terrascale_snapshot_read_page(
++    connection: *const c::turso_connection_t,
++    page_no: u32,
++    page: *mut u8,
++    page_len: usize,
++    found: *mut i32,
++    error_opt_out: *mut *const std::ffi::c_char,
++) -> c::turso_status_code_t {
++    let connection = match unsafe { TursoConnection::ref_from_capi(connection) } {
++        Ok(connection) => connection,
++        Err(err) => return unsafe { err.to_capi(error_opt_out) },
++    };
++    let core = connection.core();
++    if page_no == 0 || page.is_null() || found.is_null() || page_len != core.get_page_size().get() as usize {
++        return wal_misuse("invalid page read", error_opt_out);
++    }
++    if !core.is_in_read_tx() {
++        return wal_misuse("snapshot page reads need an open read transaction", error_opt_out);
++    }
++    let buffer = unsafe { std::slice::from_raw_parts_mut(page, page_len) };
++    match core.try_wal_watermark_read_page(page_no, buffer, None) {
++        Ok(present) => {
++            unsafe { *found = i32::from(present) };
++            c::turso_status_code_t::TURSO_OK
++        }
++        Err(err) => unsafe { rsapi::TursoError::from(err).to_capi(error_opt_out) },
++    }
++}
++
++#[no_mangle]
++pub extern "C" fn turso_terrascale_page_size(connection: *const c::turso_connection_t) -> u32 {
++    match unsafe { TursoConnection::ref_from_capi(connection) } {
++        Ok(connection) => connection.core().get_page_size().get(),
++        Err(_) => 0,
++    }
++}
++
+ pub static PKG_VERSION_C: &[u8] = concat!(env!("CARGO_PKG_VERSION"), "\0").as_bytes();
+ 
+ /// TerraScale's internal ABI: configure only while this connection is idle.
+diff --git a/sdk-kit/src/rsapi.rs b/sdk-kit/src/rsapi.rs
+index de788f0..12308f7 100644
+--- a/sdk-kit/src/rsapi.rs
++++ b/sdk-kit/src/rsapi.rs
+@@ -1204,6 +1204,9 @@ impl TursoConnection {
+     pub fn get_auto_commit(&self) -> bool {
+         self.connection.get_auto_commit()
+     }
++    pub(crate) fn core(&self) -> &Arc<Connection> {
++        &self.connection
++    }
+     pub fn last_insert_rowid(&self) -> i64 {
+         self.connection.last_insert_rowid()
+     }
