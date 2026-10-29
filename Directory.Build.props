@@ -27,6 +27,8 @@
     <!-- ts-libs tests use real cultures (fr-FR), so the invariant mode stays with TerraBase and ts-auth. -->
     <InvariantGlobalization Condition="'$(IsLibsArea)' != 'true'">true</InvariantGlobalization>
     <Deterministic>true</Deterministic>
+    <!-- The pinned preview compiler retains invalid Razor generator state across shared compilations. -->
+    <UseSharedCompilation>false</UseSharedCompilation>
     <Authors>TerraScale</Authors>
     <!-- Container tooling builds Linux images; the release binaries are linux-x64 and linux-arm64. -->
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
