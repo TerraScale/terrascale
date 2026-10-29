@@ -25,10 +25,10 @@ index feaea5ab3..c82333cc6 100644
      {
          get
 diff --git a/src/Turso.Raw/Public/TursoBindings.cs b/src/Turso.Raw/Public/TursoBindings.cs
-index 8d6776b07..4b135f0ba 100644
+index 8d6776b07..adfa8fb46 100644
 --- a/src/Turso.Raw/Public/TursoBindings.cs
 +++ b/src/Turso.Raw/Public/TursoBindings.cs
-@@ -110,6 +110,79 @@ public static class TursoBindings
+@@ -110,6 +110,81 @@ public static class TursoBindings
          db.FtsProgressHandler = native;
      }
  
@@ -58,6 +58,8 @@ index 8d6776b07..4b135f0ba 100644
 +        ArgumentOutOfRangeException.ThrowIfZero(firstFrame);
 +        if (pageNumbers.Length != databaseSizes.Length)
 +            throw new ArgumentException("Page numbers and database sizes must have the same length.", nameof(databaseSizes));
++        if (pageNumbers.Overlaps(databaseSizes))
++            throw new ArgumentException("Page numbers and database sizes must not overlap.", nameof(databaseSizes));
 +        if (pageNumbers.IsEmpty)
 +            return;
 +        RequireWalContract();

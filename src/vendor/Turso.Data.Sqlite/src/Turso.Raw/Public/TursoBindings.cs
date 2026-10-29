@@ -136,6 +136,8 @@ public static class TursoBindings
         ArgumentOutOfRangeException.ThrowIfZero(firstFrame);
         if (pageNumbers.Length != databaseSizes.Length)
             throw new ArgumentException("Page numbers and database sizes must have the same length.", nameof(databaseSizes));
+        if (pageNumbers.Overlaps(databaseSizes))
+            throw new ArgumentException("Page numbers and database sizes must not overlap.", nameof(databaseSizes));
         if (pageNumbers.IsEmpty)
             return;
         RequireWalContract();
