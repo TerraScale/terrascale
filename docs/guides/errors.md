@@ -18,7 +18,7 @@ Decide recovery from the typed status and code, and from whether an operation ma
 
 ## Retry behavior
 
-SDKs retry only replay-safe reads after transient refusals, such as `429`, a gateway `502` or `504`, or a transient `503`. They wait at least the server's `Retry-After`, otherwise use a jittered backoff, and stop before the call's deadline or cancellation. No SDK resends a write the server may have received, and validation, authorization, not-found and conflict failures are never retried. The exact codes and attempt limits differ by SDK; see each SDK's reference.
+SQL SDK retry contracts are being updated. Check a qualified SDK's reference before relying on automatic retries; do not assume a failed response permits replaying a write.
 
 For a repeatable read, wait as directed by the server, bound attempts and honor cancellation. Validation, authorization and conflict failures need a fix before another attempt. Do not hide those failures in an infinite retry loop.
 

@@ -44,6 +44,6 @@ Business hours are Monday to Friday, 09:00 to 18:00 CET/CEST.
 | Team | 8 hours (business hours) |
 | Enterprise | Custom, as set out in your contract |
 
-These are response targets, not a service-level agreement, and they carry no service credits. The same targets appear in [plan entitlements](/ar/limits). For what is published about uptime, see [availability and SLA](/ar/legal/sla).
+These are response targets, not a service-level agreement, and they carry no service credits. For what is published about uptime, see [availability and SLA](/ar/legal/sla).
 
 </div>

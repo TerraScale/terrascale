@@ -9,6 +9,7 @@ title: Usage accounting reference
 
 # Usage accounting
 
-The historical writes-only pricing draft is superseded. Reads and writes consume operation units under the current public catalog. Use [pricing](/fr/pricing/) and [usage accounting](/fr/concepts/pricing-philosophy).
+SQL read pricing and usage accounting are being updated. See
+[subscription pricing](/fr/pricing/) and [usage accounting](/fr/concepts/pricing-philosophy).
 
 </div>
