@@ -224,14 +224,9 @@ namespace TerraScale.Dashboard.Features.Organizations
 
             if (wizard.Length > 0 && wizard != "organization")
             {
-                if (context.Organization?.Kind != "business" || context.Role != "owner")
-                {
-                    wizard = "organization";
-                }
-                else
-                {
-                    wizard = !context.Organization.CanProvision(context.UserId) ? "payment" : "project";
-                }
+                wizard = context.Organization?.Kind != "business" || context.Role != "owner"
+                    ? "organization"
+                    : !context.Organization.CanProvision(context.UserId) ? "payment" : "project";
             }
             if (error.Length == 0 && http.Request.Query["error"].ToString() is { Length: > 0 and <= 500 } queryError)
             {

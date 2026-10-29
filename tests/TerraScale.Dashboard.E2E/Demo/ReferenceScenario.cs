@@ -6,7 +6,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Dashboard.Features.Home;
 using TerraScale.Dashboard.Features.Backups;
-using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Features.Usage;
 
 namespace TerraScale.Dashboard.E2E

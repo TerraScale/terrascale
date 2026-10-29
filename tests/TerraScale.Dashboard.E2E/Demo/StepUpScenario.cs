@@ -1,12 +1,10 @@
 using System.Net;
-using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.E2E
