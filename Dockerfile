@@ -22,7 +22,7 @@ ENV DOTNET_PROCESSOR_COUNT=$DOTNET_PROCESSOR_COUNT DOTNET_GCHeapCount=$DOTNET_GC
 ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 ASPNETCORE_HTTP_PORTS= DOTNET_ROOT=/usr/share/dotnet NUGET_SCRATCH=/nuget-scratch
 # The WAL power-loss tests compile their LD_PRELOAD shim with cc and the C library headers.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends make nodejs npm jq gcc libc6-dev \
+    && apt-get install -y --no-install-recommends make nodejs npm jq gcc libc6-dev python3 \
     && rm -rf /var/lib/apt/lists/*
 # Chromium for the ts-auth browser tests: the npm playwright matching Microsoft.Playwright in Directory.Packages.props
 # installs the same browser revision. Redocly (auth-openapi-check) is fetched once here too.
@@ -31,6 +31,7 @@ RUN npx --yes playwright@1.63.0 install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 # .git is excluded: its packs and index differ per clone and would invalidate every later cached layer.
 COPY --from=ts-dotnet --exclude=.git . /src/terrascale/sdk/dotnet
+ENV TS_DOTNET_DIR=sdk/dotnet TsDotnetRoot=/src/terrascale/sdk/dotnet
 WORKDIR /src/terrascale
 
 # COPY from this filtered stage keys restore on manifest contents, not changes to application source.
@@ -41,7 +42,7 @@ RUN mkdir /restore-manifests \
     && find . -type f \( -name '*.csproj' -o -name '*.props' -o -name '*.targets' \
         -o -name '*.slnx' -o -name '*.slnf' -o -name '*packages.lock.json' \
         -o -name 'NuGet.config' -o -name 'global.json' -o -name 'dotnet-tools.json' \
-        -o -name 'Makefile' \) -exec cp --parents '{}' /restore-manifests/ \;
+        -o -name 'Makefile' -o -path './scripts/dashboard/check-stripe-dependency.py' \) -exec cp --parents '{}' /restore-manifests/ \;
 
 # Shared packages are restored into this layer (and deduplicated across concurrent CI jobs): a BuildKit
 # cache mount is best-effort and may come up empty in a later stage, so it only holds NuGet's download cache.
