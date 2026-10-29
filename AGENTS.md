@@ -41,6 +41,7 @@
 - Use the root Makefile when a target exists. Build: `make build`; Fast: `make test-fast`; Slow: `make test-slow`; full checks: `make check`. Area targets: `libs-build`, `libs-test`, `libs-check`, `auth-build`, `auth-test-fast`, `auth-test-slow`, `auth-check`, `terrabase-build`, `terrabase-test-fast`, `terrabase-test-slow`, `terrabase-check`, `benchmark-build`, `benchmark-check`.
 - Fast pre-push command: `make test-fast`, or the changed area's `make libs-test`, `make auth-test-fast` or `make terrabase-test-fast`.
 - SDKs live in `sdk/dotnet`, `sdk/js`, `sdk/go`, `sdk/python` and `sdk/rust`; read the area's `AGENTS.md`. Their Fast commands are `make sdk-dotnet-test-fast`, `make sdk-js-test-fast`, `make sdk-go-test-fast`, `make sdk-python-test-fast` and `make sdk-rust-test-fast`; each must finish within five minutes. `make sdk-test-fast` runs all five.
+- Public documentation lives in `docs-site/`; Fast: `make docs-test-fast`. Dashboard source and tests live in `src/TerraScale.Dashboard/` and `tests/TerraScale.Dashboard.E2E/`; Fast: `make dashboard-test-fast`.
 - Auth and TerraBase consume the libraries through ProjectReference. Services consume the in-repo .NET SDK source via `TsDotnetRoot` in `Directory.Build.props`.
 - Shared build configuration lives in `Directory.Build.props`, `Directory.Build.targets`, `Directory.Packages.props`, `global.json`, `NuGet.config`, `.editorconfig` and `BannedSymbols.txt`.
 

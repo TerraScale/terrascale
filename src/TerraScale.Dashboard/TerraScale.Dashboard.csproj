@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <RootNamespace>TerraScale.Dashboard</RootNamespace>
+    <AssemblyName>TerraScale.Dashboard</AssemblyName>
+    <WebRoot>web/static</WebRoot>
+    <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Shared/Accounts/pricing.json" />
+    <PackageReference Include="Cronos" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" />
+    <PackageReference Include="RazorSlices" />
+    <PackageReference Include="Scalar.AspNetCore" />
+    <PackageReference Include="Stripe.net" />
+    <ProjectReference Include="../../sdk/dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj" />
+    <!-- The E2E suite drives the in-memory providers of Demo/ (DEMO=true) directly. -->
+    <InternalsVisibleTo Include="TerraScale.Dashboard.E2E" />
+    <!-- web/ is also the asset build's npm project; its manifests are build inputs, never shipped. -->
+    <Content Remove="web/package.json;web/package-lock.json" />
+    <None Update="**/*" Watch="false" />
+    <Content Include="web/static/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Update="web/static/**/*" Watch="false" />
+    <Watch Include="web/assets/**/*" />
+    <Watch Include="Features/**/*.css" />
+  </ItemGroup>
+  <Target Name="BundleDashboardAssets" BeforeTargets="PrepareForBuild">
+    <!-- The asset build's npm project (package.json, node_modules, build/) is web/. -->
+    <Exec WorkingDirectory="$(MSBuildProjectDirectory)/web" Command="npm ci --ignore-scripts" Condition="!Exists('web/node_modules/lightningcss/package.json')" />
+    <Exec WorkingDirectory="$(MSBuildProjectDirectory)/web" Command="node build/build-css.mjs" />
+    <Exec WorkingDirectory="$(MSBuildProjectDirectory)/web" Command="node build/build-js.mjs" />
+    <!-- The bundles are content-hashed and generated above, after the static glob ran: list the files that exist now. -->
+    <ItemGroup>
+      <Content Remove="web/static/js/**" />
+      <Content Include="web/static/js/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Watch="false" />
+    </ItemGroup>
+  </Target>
+</Project>

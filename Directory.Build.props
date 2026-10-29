@@ -5,6 +5,7 @@
     <ProjectFolder>$([MSBuild]::MakeRelative('$(MSBuildThisFileDirectory)', '$(MSBuildProjectDirectory)'))</ProjectFolder>
     <IsTerraBaseArea Condition="$(ProjectFolder.StartsWith('src/TerraBase')) or $(ProjectFolder.StartsWith('tests/TerraBase'))">true</IsTerraBaseArea>
     <IsLibsArea Condition="$(ProjectFolder.Contains('TerraScale.Endpoints')) or $(ProjectFolder.Contains('TerraScale.Logging'))">true</IsLibsArea>
+    <IsDashboardArea Condition="$(ProjectFolder.StartsWith('src/TerraScale.Dashboard')) or $(ProjectFolder.StartsWith('tests/TerraScale.Dashboard'))">true</IsDashboardArea>
   </PropertyGroup>
 
   <PropertyGroup>

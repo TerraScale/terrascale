@@ -217,7 +217,8 @@ sdk-dotnet-test-fast:
 	cd sdk/dotnet && bash scripts/test-fast.sh
 
 sdk-js-test-fast:
-	cd sdk/js && npm ci --no-audit --no-fund && npm test
+	cd sdk/js && mise exec node@24.21.0 -- npm exec --yes --package=npm@11.18.0 -- npm ci --no-audit --no-fund
+	cd sdk/js && mise exec node@24.21.0 -- npm exec --yes --package=npm@11.18.0 -- npm test
 
 sdk-go-test-fast:
 	cd sdk/go && go test -count=1 ./...
@@ -227,4 +228,21 @@ sdk-python-test-fast:
 	cd sdk/python && uv pip install --python .venv/bin/python --no-deps --no-build-isolation -e '.[dev]' && .venv/bin/pytest -q
 
 sdk-rust-test-fast:
-	cd sdk/rust && cargo test --locked
+	cd sdk/rust && rustup run 1.98.1 cargo test --locked
+
+.PHONY: docs-test-fast
+docs-test-fast:
+	cd docs-site && bash scripts/test-fast.sh
+
+.PHONY: dashboard-build dashboard-test-fast dashboard-test-slow dashboard-check
+dashboard-build:
+	$(MAKE) -f scripts/dashboard/Makefile build
+
+dashboard-test-fast:
+	bash scripts/dashboard/test-fast.sh
+
+dashboard-test-slow:
+	$(MAKE) -f scripts/dashboard/Makefile test-slow
+
+dashboard-check:
+	$(MAKE) -f scripts/dashboard/Makefile check
