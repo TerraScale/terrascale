@@ -11,11 +11,13 @@ use serde::Serialize;
 use tracing::warn;
 use turso_core::{CheckpointMode, Connection, DatabaseOpts, OpenFlags};
 use turso_sync_engine::server_proto::{
-    PageData, PageSetRawEncodingProto, PageUpdatesEncodingReq, PullUpdatesApplyMode,
-    PullUpdatesProtocol, PullUpdatesReqProtoBody, PullUpdatesRespProtoBody, PullUpdatesStreamKind,
+    Error as HranaError, PageData, PageSetRawEncodingProto, PageUpdatesEncodingReq, PipelineReqBody,
+    PipelineRespBody, PullUpdatesApplyMode, PullUpdatesProtocol, PullUpdatesReqProtoBody,
+    PullUpdatesRespProtoBody, PullUpdatesStreamKind, StreamRequest, StreamResult,
 };
 
-use super::revision::{self, Live, Manifest, Plan, Revision, CHECKPOINT_FRAMES};
+use super::revision::{self, FileIdentity, Live, Manifest, Plan, Revision, CHECKPOINT_FRAMES};
+use super::sandbox;
 use super::{
     current_snapshot_db_size_pages, encode_length_delimited, open_db_handle, DbHandle,
     OpenConfig, TursoSyncServer, PAGE_SIZE, WAL_FRAME_HEADER_SIZE,
@@ -65,6 +67,9 @@ pub struct Stats {
     pub max_manifest_bytes: u64,
     pub max_sealed_generations: usize,
     pub max_horizon_buckets: usize,
+    pub max_item_frames: u64,
+    pub denied_statements: u64,
+    pub open_transactions_rolled_back: u64,
 }
 
 #[derive(Serialize)]
@@ -78,6 +83,7 @@ pub struct Snapshot {
     pub wal_bytes: u64,
     pub manifest_bytes: u64,
     pub db_pages: u64,
+    pub integrity: String,
     pub stats: Stats,
 }
 
@@ -157,6 +163,8 @@ impl Tenant {
     pub fn open(base: &Path, name: &str) -> Result<Self> {
         let dir = base.join(name);
         fs::create_dir_all(dir.join("backups"))?;
+        revision::sync_dir(base)?;
+        revision::sync_dir(&dir)?;
         let manifest = match Manifest::load(&dir) {
             Ok(Some(manifest)) => manifest,
             Ok(None) => Manifest::new_incarnation(),
@@ -222,6 +230,7 @@ impl Tenant {
     fn attach(&self, st: &mut State) -> Result<()> {
         let handle = open_db_handle(&self.data(), &open_config())?;
         let salt = revision::read_wal_salt(&self.wal())?;
+        let identity = FileIdentity::of(&self.data())?;
         {
             let conn = handle.conn.lock().unwrap();
             let state = conn.wal_state()?;
@@ -229,7 +238,9 @@ impl Tenant {
                 checkpoint_seq: state.checkpoint_seq_no,
                 ..Live::default()
             };
-            if st.manifest.wal_salt.is_some() && st.manifest.wal_salt != salt {
+            let wal_moved = st.manifest.wal_salt.is_some() && st.manifest.wal_salt != salt;
+            let file_moved = st.manifest.db_file.as_ref().is_some_and(|known| *known != identity);
+            if wal_moved || file_moved {
                 warn!(
                     "{}: WAL changed outside the coordinator; next pulls resend every page",
                     self.dir.display()
@@ -241,6 +252,7 @@ impl Tenant {
         }
         st.handle = Some(handle);
         self.checkpoint_locked(st)?;
+        st.manifest.db_file = Some(FileIdentity::of(&self.data())?);
         self.store(st)
     }
 
@@ -309,31 +321,84 @@ impl Tenant {
             checkpoint_seq: after.checkpoint_seq_no,
             ..Live::default()
         };
+        st.manifest.db_file = Some(FileIdentity::of(&self.data())?);
+        self.store(st)?;
         st.stats.checkpoints += 1;
         Ok(())
     }
 
+    fn maintain(&self, st: &mut State, handle: &DbHandle) -> Result<()> {
+        {
+            let conn = handle.conn.lock().unwrap();
+            if !conn.get_auto_commit() {
+                return Ok(());
+            }
+            let before = st.live.max_frame;
+            let generation = st.manifest.generation;
+            self.refresh(st, &conn)?;
+            let added = if st.manifest.generation == generation {
+                st.live.max_frame.saturating_sub(before)
+            } else {
+                st.live.max_frame
+            };
+            st.stats.max_item_frames = st.stats.max_item_frames.max(added);
+        }
+        if st.live.max_frame >= CHECKPOINT_FRAMES {
+            self.checkpoint_locked(st)?;
+        }
+        Ok(())
+    }
+
     pub fn pipeline(&self, hrana: &TursoSyncServer, body: &[u8]) -> Result<Reply> {
+        let req: PipelineReqBody = match serde_json::from_slice(body) {
+            Ok(req) => req,
+            Err(e) => return Ok(Reply::text(400, format!("invalid pipeline request: {e}"))),
+        };
         let mut st = self.lock();
         let handle = Self::handle(&st)?;
-        let result = hrana.handle_pipeline(&handle, body);
-        let autocommit = {
-            let conn = handle.conn.lock().unwrap();
-            let autocommit = conn.get_auto_commit();
-            if autocommit {
-                self.refresh(&mut st, &conn)?;
-            }
-            autocommit
-        };
-        if autocommit && st.live.max_frame >= CHECKPOINT_FRAMES {
-            self.checkpoint_locked(&mut st)?;
+        let mut results = Vec::with_capacity(req.requests.len());
+        for request in &req.requests {
+            let result = match sandbox::denied(request) {
+                Some(message) => {
+                    st.stats.denied_statements += 1;
+                    StreamResult::Error {
+                        error: HranaError {
+                            message,
+                            code: "SQL_DENIED".to_string(),
+                        },
+                    }
+                }
+                None => {
+                    let conn = handle.conn.lock().unwrap();
+                    match request {
+                        StreamRequest::Execute(r) => hrana.execute_statement(&conn, r),
+                        StreamRequest::Batch(r) => hrana.execute_batch(&conn, r),
+                        StreamRequest::None => StreamResult::Error {
+                            error: HranaError {
+                                message: "Unknown request type".to_string(),
+                                code: "UNKNOWN".to_string(),
+                            },
+                        },
+                    }
+                }
+            };
+            results.push(result);
+            self.maintain(&mut st, &handle)?;
         }
-        let response = result?;
-        Ok(Reply {
-            status: response.status,
-            content_type: "application/json",
-            body: response.body,
-            pull: None,
+        let left_open = !handle.conn.lock().unwrap().get_auto_commit();
+        if left_open {
+            handle.conn.lock().unwrap().execute("ROLLBACK")?;
+            st.stats.open_transactions_rolled_back += 1;
+            self.maintain(&mut st, &handle)?;
+            return Ok(Reply::text(
+                400,
+                "transaction_left_open: a transaction must end in the request that began it; it was rolled back",
+            ));
+        }
+        Reply::json(&PipelineRespBody {
+            baton: req.baton,
+            base_url: None,
+            results,
         })
     }
 
@@ -508,6 +573,8 @@ impl Tenant {
         if st.handle.is_some() {
             self.checkpoint_locked(&mut st)?;
             self.detach(&mut st)?;
+            st.manifest.db_file = Some(FileIdentity::of(&self.data())?);
+            self.store(&mut st)?;
         }
         Ok(())
     }
@@ -518,6 +585,14 @@ impl Tenant {
         let conn = handle.conn.lock().unwrap();
         self.refresh(&mut st, &conn)?;
         let db_pages = current_snapshot_db_size_pages(&conn, st.live.max_frame)?;
+        let integrity = conn
+            .prepare("PRAGMA integrity_check")?
+            .run_collect_rows()?
+            .into_iter()
+            .flatten()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
         Ok(Snapshot {
             incarnation: st.manifest.incarnation.clone(),
             generation: st.manifest.generation,
@@ -528,6 +603,7 @@ impl Tenant {
             wal_bytes: file_len(&self.wal()),
             manifest_bytes: file_len(&Manifest::path(&self.dir)),
             db_pages,
+            integrity,
             stats: st.stats.clone(),
         })
     }

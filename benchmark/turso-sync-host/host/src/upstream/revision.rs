@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -71,6 +72,7 @@ impl Sealed {
 pub struct Bucket {
     pub first_generation: u64,
     pub last_generation: u64,
+    pub end_frames: Vec<u64>,
     #[serde(serialize_with = "bitmap_to_hex", deserialize_with = "bitmap_from_hex")]
     pub pages: RoaringBitmap,
 }
@@ -93,12 +95,33 @@ fn bitmap_from_hex<'de, D: Deserializer<'de>>(d: D) -> Result<RoaringBitmap, D::
     RoaringBitmap::deserialize_from(&bytes[..]).map_err(serde::de::Error::custom)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileIdentity {
+    pub len: u64,
+    pub inode: u64,
+    pub mtime_sec: i64,
+    pub mtime_nsec: i64,
+}
+
+impl FileIdentity {
+    pub fn of(path: &Path) -> Result<Self> {
+        let meta = fs::metadata(path)?;
+        Ok(Self {
+            len: meta.len(),
+            inode: meta.ino(),
+            mtime_sec: meta.mtime(),
+            mtime_nsec: meta.mtime_nsec(),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
     pub format: u32,
     pub incarnation: String,
     pub generation: u64,
     pub wal_salt: Option<(u32, u32)>,
+    pub db_file: Option<FileIdentity>,
     pub sealed: Vec<Sealed>,
     pub horizon: Vec<Bucket>,
 }
@@ -110,6 +133,7 @@ impl Manifest {
             incarnation: new_ulid(),
             generation: 1,
             wal_salt: None,
+            db_file: None,
             sealed: Vec::new(),
             horizon: Vec::new(),
         }
@@ -137,10 +161,12 @@ impl Manifest {
                 {
                     bucket.pages.extend(pages);
                     bucket.last_generation = oldest.generation;
+                    bucket.end_frames.push(oldest.end_frame);
                 }
                 _ => self.horizon.push(Bucket {
                     first_generation: oldest.generation,
                     last_generation: oldest.generation,
+                    end_frames: vec![oldest.end_frame],
                     pages: pages.collect(),
                 }),
             }
@@ -268,6 +294,12 @@ pub fn plan(manifest: &Manifest, live: &Live, client: &str) -> Plan {
                     }) else {
                         return Plan::Full(Reason::Expired);
                     };
+                    let offset = (rev.generation - manifest.horizon[k].first_generation) as usize;
+                    match manifest.horizon[k].end_frames.get(offset) {
+                        Some(end) if rev.frame <= *end => {}
+                        Some(_) => return Plan::Full(Reason::Ahead),
+                        None => return Plan::Full(Reason::Expired),
+                    }
                     let mut next = manifest.horizon[k].first_generation;
                     for bucket in &manifest.horizon[k..] {
                         if bucket.first_generation != next {

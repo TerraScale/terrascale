@@ -43,7 +43,7 @@ row(['Network', 'loopback; client, host and control on one machine'] );
 line();
 line('## Gates');
 line();
-line('Every counter must be 0 in every repeat. "Acked" means a server write whose pipeline request returned success, or a client row whose `push()` returned. "Local" means a row the client committed offline and has not pushed yet.');
+line('Every counter must be 0 in every repeat. The oracle compares full rows (`id`, `origin`, `v`), not just keys, through inserts, updates and deletes on both sides. "Acked" means a server write whose pipeline request returned success, or a client change whose `push()` returned. "Local" means a change the client committed offline and has not pushed yet. Keys are ULIDs; clients change only their own rows, so the oracle has no conflicts to resolve.');
 line();
 header(['Gate', ...repeatCols]);
 const totals = [
@@ -54,6 +54,7 @@ const totals = [
   ['`pull()` returned false while rows were missing', 'stale_false_pulls'],
   ['Unexpected server rows', 'unexpected_server_rows'],
   ['Plan mismatches (wrong incremental/full/expired decision)', 'plan_mismatches'],
+  ['SQL sandbox failures (PRAGMA, VACUUM INTO, ATTACH, open transaction)', 'sandbox_failures'],
 ];
 for (const [label, key] of totals) perRepeat(label, (r) => String(r.totals[key]));
 perRepeat('History bounded', (r) => yes(r.bounded.pass));
@@ -103,17 +104,18 @@ line('## Bounded history');
 line();
 header(['Measure', ...repeatCols]);
 perRepeat('Peak WAL bytes', (r) => String(r.bounded.max_wal_bytes));
-perRepeat('WAL bound (32 + (1024 + 256) frames x 4120 B)', (r) => String(r.bounded.wal_bound_bytes));
+perRepeat('Largest single pipeline item, frames', (r) => String(r.bounded.max_item_frames));
+perRepeat('WAL bound: 32 + (1024 + largest item) frames x 4120 B', (r) => String(r.bounded.wal_bound_bytes));
 perRepeat('Peak exact generations retained (limit 8)', (r) => String(r.bounded.max_sealed_generations));
 perRepeat('Peak compacted buckets (limit 8 x 8 generations)', (r) => String(r.bounded.max_horizon_buckets));
 perRepeat('Peak manifest bytes', (r) => String(r.bounded.max_manifest_bytes));
 perRepeat('Automatic checkpoints during the 8,000-row burst', (r) => String(r.automatic_checkpoints));
-perRepeat('Coordinated checkpoints, all host lifetimes', (r) => String(r.server_counters?.checkpoints ?? 'n/a'));
+perRepeat('Coordinated checkpoints counted before each stop (shutdown checkpoints not included)', (r) => String(r.server_counters?.checkpoints ?? 'n/a'));
 perRepeat('Checkpoints detected outside the coordinator', (r) => String(r.server_counters?.detected_checkpoints ?? 'n/a'));
 perRepeat('Rewrite: database pages before / after', (r) => `${r.rewrite?.pages_before} / ${r.rewrite?.pages_after}`);
-perRepeat('Acked rows rolled back by restoring an older backup', (r) => String(r.rolled_back_by_restore));
+perRepeat('Acked row changes rolled back by restoring an older backup', (r) => String(r.rolled_back_by_restore));
 line();
-line('The rolled-back rows were acked after backup `b2` was taken. Restoring `b2` removes them by definition (recovery point), and the gate is that every client drops them too (0 phantom rows). They are not counted as lost acked writes.');
+line('The host checks the WAL policy after every pipeline item (one execute, or one batch), so the WAL can exceed 1,024 frames by at most the largest item. The rolled-back changes (inserts, updates and deletes) were acked after backup `b2` was taken. Restoring `b2` reverts them by definition (recovery point); the gate is that every client converges to the restored rows (0 skipped, 0 phantom). They are not counted as lost acked writes.');
 line();
 line('## Pull latency (same host, includes client apply)');
 line();
@@ -149,7 +151,9 @@ for (const l of [
   'Only the official JS client (page protocol, V1 revisions) was qualified. Go, Python and Rust clients, partial sync and MVCC were not tested.',
   "Client pushes use upstream's Hrana pipeline only to deliver the pending offline writes. Production never uses Turso push (D14); R6/R7 replace it.",
   'The prototype buffers every response in memory, keeps every database open, and binds 127.0.0.1 with fixture tokens. R1/R2 must add streaming, LRU, TLS and production auth.',
-  'Upstream SQL can run `PRAGMA wal_checkpoint` through the pipeline. Here that is detected and served as a full resend. Production denies it in the D15 sandbox.',
+  'The prototype sandbox denies PRAGMA, VACUUM, ATTACH and DETACH, and rolls back a transaction left open at the end of a request. It is not the full D15 sandbox (file functions, schema hiding, resource limits).',
+  'The host must own the database files exclusively while it runs. A change made by another process while the host is down is detected through the WAL salt and the database file identity (size, inode, mtime), then served as a full resend.',
+  'Durability was tested with SIGKILL only. Power loss was not simulated, although the manifest and directories are fsynced.',
 ]) line(`- ${l}`);
 line();
 process.stdout.write(out.join('\n'));

@@ -20,27 +20,29 @@ Before the host truncates the WAL, it durably records which pages changed in the
 | Same incarnation, generation still retained | Changed pages only (`incremental`), or nothing (`empty`) |
 | Generation compacted into a horizon bucket | The bucket's page set plus newer generations (`incremental`) |
 | Older than the horizon | Every page (`full;expired`) |
-| Sealed as full: rewrite, or a WAL restart outside the coordinator | Every page (`full;rewritten`) |
+| Sealed as full: rewrite, or continuity not provable at startup | Every page (`full;rewritten`) |
 | Other incarnation (restore) or unparsable | Every page (`full;other-incarnation`, `full;unrecognized`) |
-| Ahead of the durable history (frames lost in a crash) | Every page (`full;ahead`) |
+| Ahead of the durable history (frames lost in a crash), including inside a compacted bucket | Every page (`full;ahead`) |
 | Pinned `server_revision` (chunked bootstrap) not current | HTTP 409 `revision_expired` |
 
 A full answer is a normal incremental page stream that covers every page up to `db_size`. The page-mode client applies it as a rebootstrap: it rolls back its local changes, applies the pages, and replays its pending offline writes. The client rejects `ReplaceBase` in page mode, so the host never sends it.
 
 History stays bounded:
 
-- **WAL.** A checkpoint runs once the WAL reaches 1,024 frames (4 MiB), so the WAL never exceeds that plus one transaction.
+- **WAL.** The policy is checked after every pipeline item (one execute or one batch), and a checkpoint runs once the WAL reaches 1,024 frames (4 MiB). The WAL never exceeds that plus the largest single item.
 - **Exact history.** The last 8 sealed generations keep per-page last frames.
-- **Compacted history.** Older generations fold into up to 8 buckets of 8 generations each, stored as roaring page sets. Clients at most 64 to 72 generations behind still get an incremental answer; older ones get a full rebootstrap.
+- **Compacted history.** Older generations fold into up to 8 buckets of 8 generations each, stored as roaring page sets plus each generation's last frame. Clients at most 64 to 72 generations behind still get an incremental answer; older ones get a full rebootstrap.
 
 ## How the host covers each lifecycle event
 
 | Event | Handling |
 |---|---|
 | Checkpoint | Coordinated under the database's writer lock: seal, persist, then truncate. Runs on the 1,024-frame policy and on admin request. |
-| Checkpoint the host did not start | `PRAGMA wal_checkpoint` through SQL, even inside one pipeline request: the WAL `checkpoint_seq` moves, so the generation is sealed as full. While the host was down: the WAL salt in the manifest no longer matches, so it is also sealed as full. |
+| Checkpoint through SQL | Denied: the pipeline rejects PRAGMA, VACUUM, ATTACH and DETACH per statement (`SQL_DENIED`). Checkpoints run only through the coordinator. As defense in depth, a WAL `checkpoint_seq` change the host did not cause seals the generation as full. |
+| Transaction left open | A request that ends inside a transaction is rolled back and gets HTTP 400 `transaction_left_open`. Every request therefore ends in autocommit, the page index is refreshed after every item, and one client's open transaction can never absorb another client's write. |
+| Change while the host was down | At startup, the manifest's WAL salt and database file identity (size, inode, mtime) must match what the host recorded after its last checkpoint or close. If either differs, the generation is sealed as full. |
 | Graceful restart | SIGTERM drains requests, then seals and checkpoints every open database. |
-| Crash | On open, WAL frames are indexed into the current generation, then a startup checkpoint seals them. |
+| Crash | On open, WAL frames are indexed into the current generation, then a startup checkpoint seals them. New tenant directories and the manifest directory are fsynced. |
 | Rewrite | `VACUUM INTO` a staged file. The generation is marked full in the manifest before the file swap, so a crash in between stays safe. |
 | Restore | A new incarnation is written before the file swap. Every client rebootstraps (D18). |
 
@@ -68,7 +70,7 @@ The host takes `--listen`, `--data` and `--tokens <file>`. The token file is JSO
 - Run the coordinator inside TerraBase's writer admission. Every checkpoint path must go through it: shutdown, rewrite, copy, restore and backup replay.
 - Stream full answers instead of buffering them in memory.
 - Store the page index outside one JSON manifest for large databases.
-- Combine with the D15 sandbox, which denies raw checkpoint pragmas.
+- Replace this small statement filter with the full D15 sandbox.
 - Qualify the other SDK languages.
 
 See [NOTICE.md](NOTICE.md) for the upstream license.

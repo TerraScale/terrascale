@@ -21,4 +21,5 @@ signal-hook = "0.3.18"
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 turso_core = { workspace = true, features = ["conn_raw_api"] }
+turso_parser.workspace = true
 turso_sync_engine.workspace = true
