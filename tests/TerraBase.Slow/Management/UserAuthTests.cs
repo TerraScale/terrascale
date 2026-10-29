@@ -85,7 +85,6 @@ public sealed class UserAuthTests
     }
 
     [Test]
-    [WorkloadTransportQuarantine]
     public async Task The_github_actions_workload_token_reads_only_its_bound_database_and_cannot_write_or_manage()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
@@ -188,13 +187,4 @@ public sealed class UserAuthTests
         using var response = await client.GetAsync(new Uri(path, UriKind.Relative), cancellationToken);
         return response.StatusCode;
     }
-}
-
-// CI task permits a named-owner quarantine for at most 24 h; #853 tracks the unproven loopback reset.
-[AttributeUsage(AttributeTargets.Method)]
-internal sealed class WorkloadTransportQuarantineAttribute()
-    : SkipAttribute("#853: loopback POST reset has an ambiguous outcome; owner MarioGK / terrascale CI WRK; expires 2026-10-29T16:40:00Z")
-{
-    public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(DateTimeOffset.UtcNow < new DateTimeOffset(2026, 10, 29, 16, 40, 0, TimeSpan.Zero));
 }
