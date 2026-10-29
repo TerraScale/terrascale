@@ -1,0 +1,16 @@
+{
+  "name": "turso-sync-host-qualify",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@tursodatabase/sync": "0.8.2",
+    "ulid": "3.0.2"
+  },
+  "overrides": {
+    "@tursodatabase/sync-common": "0.8.2",
+    "@tursodatabase/database-common": "0.8.2"
+  }
+}
