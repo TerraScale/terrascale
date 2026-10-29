@@ -30,11 +30,12 @@ nice -n 19 make check
 with the race detector, uncached, with a four-minute per-package deadline.
 `make test-slow` runs the exhaustive 108-cell parity matrix across three regions,
 three repeats, three transport lanes, two payload sizes and two concurrency
-levels, plus the PITR multi-batch, crash, fault, restore-boundary and exhaustive
+levels, the warmed-up cell measurement matrix, plus the PITR multi-batch, crash, fault, restore-boundary and exhaustive
 data-oracle scenarios. Fast keeps a small write/update/delete/recreate, exact-cut
 and verification lifecycle alongside client isolation and monitoring. `make test` and `make check` include both suites. Fast retains individual
 transport-lane, measurement, document-validation and owned-database cleanup
-coverage. All parity tests use local HTTPS fixtures.
+coverage. Fast validates concurrent exact reads by awaiting every operation;
+the warmed-up measurement matrix runs in Slow. All parity tests use local HTTPS fixtures.
 
 Go 1.25+ is required. Local build, test and benchmark commands run at low CPU
 priority; CI runs at full priority. Tests exercise scheduling and protocol

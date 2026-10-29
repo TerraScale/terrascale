@@ -8,11 +8,15 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"terrascale.tech/sdk/v1"
 )
 
 var parityCellTestPlan = parityPlan{Warmup: 100 * time.Millisecond, Measure: 300 * time.Millisecond, Drain: 10 * time.Second}
 
-func TestParityCellAcceptsExactReadsOnEveryLane(t *testing.T) {
+// Fast waits for one real read per worker; success never depends on starting
+// another request between warmup and a wall-clock measurement deadline.
+func TestParityReadsExactDocumentOnEveryLane(t *testing.T) {
 	t.Parallel()
 	for _, lane := range []string{"raw-h1", "raw-h2", "sdk"} {
 		for _, concurrency := range []int{1, 16} {
@@ -20,14 +24,49 @@ func TestParityCellAcceptsExactReadsOnEveryLane(t *testing.T) {
 				t.Parallel()
 				target := parityTestTarget(lane)
 				f := newParityFixture(t, func(_ int64, w http.ResponseWriter, r *http.Request) { serveDocument(target, "gru", w, r) })
-				plan := parityCellTestPlan
-				plan.Concurrency = concurrency
-				row, err := parityCell(context.Background(), parityTestToken("a.b.c"), f.transport(), target, plan)
-				if err != nil || len(row.Rejected) != 0 || row.Transport.Attempts != row.Starts || row.Measured == 0 {
-					t.Fatalf("row %+v, %v", row, err)
+				base := f.transport()
+				t.Cleanup(base.CloseIdleConnections)
+				if lane != "sdk" {
+					var protocols http.Protocols
+					protocols.SetHTTP1(lane == "raw-h1")
+					protocols.SetHTTP2(lane == "raw-h2")
+					base.Protocols = &protocols
 				}
-				if lane == "raw-h1" && row.Transport.H1 != row.Starts || lane != "raw-h1" && row.Transport.H2 != row.Starts {
-					t.Fatalf("protocol counts %+v", row.Transport)
+				observed := &parityTransport{base: base, region: target.Region, protocol: lane}
+				httpClient := &http.Client{Transport: observed}
+				source := parityTestToken("a.b.c")
+				client, err := v1.New(v1.Config{TokenSource: source, HTTPClient: httpClient})
+				if err != nil {
+					t.Fatal(err)
+				}
+				address := fmt.Sprintf("%s/v1/projects/%s/databases/%s/collections/bench/documents/by-key?id=%s", parityOrigin, target.Project, target.Database, target.Document.id)
+				results := make(chan error, concurrency)
+				for range concurrency {
+					go func() {
+						var document *v1.Document
+						var err error
+						if lane == "sdk" {
+							document, err = client.Database(target.Project, target.Database).Collection("bench").Get(t.Context(), target.Document.id)
+						} else {
+							document, err = parityRawGet(t.Context(), httpClient, source, address)
+						}
+						if err == nil {
+							err = target.Document.check(document)
+						}
+						results <- err
+					}()
+				}
+				for range concurrency {
+					if err := <-results; err != nil {
+						t.Error(err)
+					}
+				}
+				counts := observed.counts()
+				if counts.Attempts != int64(concurrency) || counts.Bad != 0 || counts.BodyErrors != 0 {
+					t.Fatalf("transport counts %+v for %d reads", counts, concurrency)
+				}
+				if lane == "raw-h1" && counts.H1 != int64(concurrency) || lane != "raw-h1" && counts.H2 != int64(concurrency) {
+					t.Fatalf("protocol counts %+v", counts)
 				}
 			})
 		}
