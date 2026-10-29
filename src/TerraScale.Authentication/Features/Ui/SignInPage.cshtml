@@ -18,6 +18,7 @@ case SignInStep.Code:
 else
 {
 <p class="sub">If an account exists for <strong>@Model.Email</strong>, we emailed it a six-digit code. It expires in 30 minutes. Only the newest code works: asking for another code replaces this one.</p>
+<p class="sub">No email within a few minutes? Check your spam folder and that the address is spelled right. If you have no account yet, create one instead.</p>
 }
 <p class="sub">If this code recovers access after repeated requests, using it signs out your older sessions.</p>
 break;
@@ -188,7 +189,7 @@ case SignInStep.Code:
 <input type="hidden" name="email" value="@Model.Email">
 <button type="submit" class="secondary">Send a new code</button>
 </form>
-<div class="row"><a href="@Model.Link("sign-in")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Different email</a></div>
+<div class="row"><a href="@Model.Link("sign-in")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Different email</a><a href="@Model.Link("sign-up")">Create account</a></div>
 break;
 case SignInStep.Continue:
 <a class="btn" href="@Model.Next">Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
