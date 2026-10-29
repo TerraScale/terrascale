@@ -21,6 +21,23 @@ public sealed class ShapeMirrorHttpTests
     private const int LargeBody = 600_000;
 
     [Test]
+    public async Task Shape_objects_use_their_own_transport_while_backup_key_material_stays_in_the_backup_store()
+    {
+        var shapes = new FakeS3();
+        var backups = new FakeS3();
+        await using var host = await MirrorHost.StartAsync(shapes, backups);
+        await host.PutAsync(new { status = "open" });
+        var shape = await host.BootstrapAsync(where: null);
+        var objects = await host.ManifestAsync(shape, shape.FirstPage, count: 1);
+        var key = objects[0].GetProperty("object").GetString()!;
+        await Assert.That(shapes.Objects.ContainsKey(key)).IsTrue();
+        await Assert.That(backups.Objects.Keys.Any(key => key.StartsWith("v1/shapes/", StringComparison.Ordinal))).IsFalse();
+        await Assert.That(shapes.Objects.Keys.All(key => key.StartsWith("v1/shapes/", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(backups.Objects.Count).IsGreaterThan(0);
+        await Assert.That((await host.OpenAsync(shape, objects[0])).SequenceEqual(shape.PageBytes)).IsTrue();
+    }
+
+    [Test]
     public async Task Real_http_snapshot_and_chunk_reads_are_mirrored_by_the_service_callbacks_and_decrypt_to_the_origin_bytes()
     {
         await using var host = await MirrorHost.StartAsync();
@@ -219,15 +236,17 @@ public sealed class ShapeMirrorHttpTests
 
         private string Base => $"{Api.Collections}/{DocumentApi.Collection}";
 
-        public static async Task<MirrorHost> StartAsync()
+        public static async Task<MirrorHost> StartAsync(FakeS3? shapes = null, FakeS3? backups = null)
         {
-            var s3 = new FakeS3();
-            var api = await DocumentApi.StartAsync(s3.Configure, services =>
+            shapes ??= new FakeS3();
+            backups ??= shapes;
+            var api = await DocumentApi.StartAsync(backups.Configure, services =>
             {
-                s3.RoutePlatform(services);
+                backups.RoutePlatform(services);
+                shapes.RouteShapes(services);
                 ManualBackupHosting.Configure(services);
             });
-            return new MirrorHost(api, s3);
+            return new MirrorHost(api, shapes);
         }
 
         public ValueTask DisposeAsync() => Api.DisposeAsync();
@@ -279,7 +298,7 @@ public sealed class ShapeMirrorHttpTests
         /// <summary>Fetches the presigned object, checks its size and digest, and opens it with the key route's epoch key.</summary>
         public async Task<byte[]> OpenAsync(Shape shape, JsonElement entry)
         {
-            using var platform = Api.Server.Services.GetRequiredService<IHttpClientFactory>().CreateClient("backup-s3");
+            using var platform = Api.Server.Services.GetRequiredService<IHttpClientFactory>().CreateClient("shapes-s3");
             var bytes = await platform.GetByteArrayAsync(new Uri(entry.GetProperty("url").GetString()!), Cancellation);
             Require(bytes.Length == entry.GetProperty("size").GetInt64(), "the object has the listed size");
             Require(Convert.ToHexStringLower(SHA256.HashData(bytes)) == entry.GetProperty("sha256").GetString(), "the object has the listed sha256");

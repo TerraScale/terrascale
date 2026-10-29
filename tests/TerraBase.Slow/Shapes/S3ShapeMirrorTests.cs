@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Configuration;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
@@ -37,8 +38,21 @@ public sealed class S3ShapeMirrorTests
         try
         {
             api = await ManagementApi.StartAsync(TigrisCiBucket.Configure,
-                services: services => services.AddSingleton<IObjectStore>(provider =>
-                    new TigrisBackupTests.PrefixedStore(provider.GetRequiredService<S3ObjectStore>(), prefix)),
+                services: services =>
+                {
+                    services.AddSingleton<IObjectStore>(provider => new TigrisBackupTests.PrefixedStore(provider.GetRequiredService<S3ObjectStore>(), prefix));
+                    services.AddSingleton(provider =>
+                    {
+                        var settings = provider.GetRequiredService<BackupSettings>();
+                        return new ShapeStorageSettings
+                        {
+                            Endpoint = settings.Endpoint, Region = settings.Region, Bucket = settings.Bucket,
+                            AccessKeyId = settings.AccessKeyId, SecretKey = settings.SecretKey,
+                            CloudflareApiToken = settings.CloudflareApiToken ?? string.Empty,
+                            Cdn = TigrisCiBucket.R2 ? new Uri($"https://shapes-{settings.Bucket}.terrascale.tech/") : null,
+                        };
+                    });
+                },
                 cancellationToken: cancellationToken, failedStartCleanup: cleanup => failedStartCleanup = cleanup);
             // The catalog gate opens once this machine's catalog anchor is proven in the bucket.
             var gate = api.Server.Services.GetRequiredService<ICatalogGate>();

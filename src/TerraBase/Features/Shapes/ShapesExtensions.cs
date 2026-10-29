@@ -70,6 +70,8 @@ public static class ShapesExtensions
     /// <summary>Registers the shape services behind <c>GET …/collections/{collection}/shape</c>, their JSON metadata and examples.</summary>
     public static IServiceCollection AddTerraBaseShapes(this IServiceCollection services)
     {
+        services.AddHttpClient(ShapeObjectStore.HttpClientName);
+        services.AddSingleton(provider => provider.GetRequiredService<TerraBaseOptions>().ShapeStorage!);
         services.AddHttpClient(ShapeCdnPurge.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(30));
         return services.ConfigureHttpJsonOptions(json =>
             {
@@ -120,18 +122,18 @@ public static class ShapesExtensions
             .AddSingleton<ShapeMirror>(provider => new ShapeMirror(provider.GetRequiredService<IStorageEngine>(),
                 provider.GetRequiredService<IShapeStorage>(), provider.GetRequiredService<IShapeMetrics>(), provider.GetRequiredService<IMemoryBudget>(), provider.GetRequiredService<TimeProvider>(),
                 () => provider.GetRequiredService<IShapeCrypto>(),
-                provider.GetService<BackupSettings>() is { } settings ? new ShapeObjectStore(settings,
-                    provider.GetRequiredService<IHttpClientFactory>(), provider.GetRequiredService<IObjectStore>(), provider.GetRequiredService<TimeProvider>(),
+                provider.GetService<ShapeStorageSettings>() is { } settings ? new ShapeObjectStore(settings,
+                    provider.GetRequiredService<IHttpClientFactory>(), provider.GetRequiredService<TimeProvider>(),
                     provider.GetRequiredService<IShapeCdnPurge>()) : null,
                 provider.GetRequiredService<ILogger<ShapeMirror>>()))
             .AddSingleton<ShapeCdnPurge>(provider => new ShapeCdnPurge(provider.GetRequiredService<IHttpClientFactory>(),
-                provider.GetService<BackupSettings>()?.CloudflareApiToken, provider.GetRequiredService<TimeProvider>(),
+                provider.GetService<ShapeStorageSettings>()?.CloudflareApiToken, provider.GetRequiredService<TimeProvider>(),
                 provider.GetRequiredService<IMeterFactory>(), provider.GetRequiredService<ILogger<ShapeCdnPurge>>()))
             .AddSingleton<IShapeCdnPurge>(provider => provider.GetRequiredService<ShapeCdnPurge>())
             .AddHostedService(provider => provider.GetRequiredService<ShapeCdnPurge>())
             .AddHostedService(provider => new ShapeCdnAnalytics(provider.GetRequiredService<IHttpClientFactory>(),
-                provider.GetService<BackupSettings>() is { } settings ? ShapeObjectStore.Cdn(settings)?.Host : null,
-                provider.GetService<BackupSettings>()?.CloudflareApiToken, provider.GetRequiredService<TimeProvider>(),
+                provider.GetService<ShapeStorageSettings>()?.Cdn?.Host,
+                provider.GetService<ShapeStorageSettings>()?.CloudflareApiToken, provider.GetRequiredService<TimeProvider>(),
                 provider.GetRequiredService<IMeterFactory>(), provider.GetRequiredService<ILogger<ShapeCdnAnalytics>>()))
             .AddSingleton<IShapeMirror>(provider => provider.GetRequiredService<ShapeMirror>())
             .AddSingleton<IShapeKeyRetention>(provider => provider.GetRequiredService<ShapeMirror>())
@@ -188,7 +190,6 @@ public static class ShapesExtensions
 
 /// <summary>
 /// Endpoint metadata: origin answers hold tenant plaintext or depend on the caller's credential, so no cache may store them.
-/// Only TBS1 ciphertext in Tigris is shared-cacheable (<c>ShapeObjectStore.CacheControl</c>, FR-22/FR-24).
 /// </summary>
 internal sealed class OriginNoStore
 {

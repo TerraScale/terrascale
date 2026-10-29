@@ -60,6 +60,12 @@ if (options.Backup is null && environmentName != Environments.Development)
     return 2;
 }
 
+if (options.ShapeStorage is null && environmentName != Environments.Development)
+{
+    await Console.Error.WriteLineAsync("terrabase: TERRABASE_SHAPES_ACCESS_KEY_ID, TERRABASE_SHAPES_SECRET_ACCESS_KEY and TERRABASE_SHAPES_CDN_API_TOKEN are required outside Development");
+    return 2;
+}
+
 // Settings come only from TerraBaseOptions. The slim builder still adds environment variables
 // and appsettings files, and Kestrel would bind listeners from a "Kestrel" section in them
 // (for example Kestrel__Endpoints__X__Url): drop every configuration source.

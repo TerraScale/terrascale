@@ -250,16 +250,14 @@ public sealed class ShapeMirrorTests
         await Assert.That(before.Count).IsEqualTo(3);
         foreach (var entry in before)
         {
-            await Assert.That(entry.Url).IsEqualTo($"https://shapes-{FakeS3.Bucket}.terrascale.tech/{entry.Object}")
+            await Assert.That(entry.Url).IsEqualTo($"https://{ShapeStorageSettings.CdnHost}/{entry.Object}")
                 .Because("an R2 bucket's link is the object's stable path on the bucket's CDN host, with no signature");
         }
 
         var deleted = await harness.Mirror.TrimAsync(harness.Tenant, harness.Shape.Handle, chunks[2].Offset, harness.Cancellation);
         await Assert.That(deleted).IsEqualTo(2);
-        await cloudflare.PurgedAsync(2, harness.Cancellation);
-        await Assert.That(cloudflare.Purged.Order(StringComparer.Ordinal).ToArray())
-            .IsEquivalentTo(before.Take(2).Select(entry => entry.Url).Order(StringComparer.Ordinal).ToArray(), TUnit.Assertions.Enums.CollectionOrdering.Matching)
-            .Because("exactly the deleted objects leave Cloudflare's cache; the retained one stays cached");
+        await cloudflare.PurgedAsync(1, harness.Cancellation);
+        await Assert.That(cloudflare.Purged.All(prefix => prefix == $"{ShapeStorageSettings.CdnHost}/v1/shapes/{harness.Shape.Handle}/")).IsTrue();
     }
 
     [Test]
@@ -283,7 +281,7 @@ public sealed class ShapeMirrorTests
         await TerraBaseTestServer.EventuallyAsync(async _ =>
             await server.MetricAsync("terrabase_shape_cdn_requests_total", "cache_status=\"hit\"", harness.Cancellation) == 1980);
         var windows = cloudflare.Windows.ToArray();
-        await Assert.That(windows.All(window => window.Host == $"shapes-{FakeS3.Bucket}.terrascale.tech")).IsTrue();
+        await Assert.That(windows.All(window => window.Host == ShapeStorageSettings.CdnHost)).IsTrue();
         await Assert.That(windows[1].Start).IsEqualTo(windows[0].End).Because("windows are half-open and adjacent, so no request is counted twice");
         await Assert.That(DateTimeOffset.Parse(windows[1].End, CultureInfo.InvariantCulture)).IsLessThanOrEqualTo(harness.Time.GetUtcNow() - ShapeCdnAnalytics.Delay)
             .Because("a window is read only once Cloudflare has had time to ingest it");
@@ -829,8 +827,8 @@ public sealed class ShapeMirrorTests
         public ShapeMirror NewMirror(TimeProvider time)
         {
             var services = _api.Server.Services;
-            var objects = new ShapeObjectStore(services.GetRequiredService<BackupSettings>(), services.GetRequiredService<IHttpClientFactory>(),
-                services.GetRequiredService<IObjectStore>(), time, services.GetRequiredService<IShapeCdnPurge>());
+            var objects = new ShapeObjectStore(services.GetRequiredService<ShapeStorageSettings>(), services.GetRequiredService<IHttpClientFactory>(),
+                time, services.GetRequiredService<IShapeCdnPurge>());
             var crypto = services.GetRequiredService<IShapeCrypto>();
             return new ShapeMirror(services.GetRequiredService<IStorageEngine>(), services.GetRequiredService<IShapeStorage>(),
                 services.GetRequiredService<IShapeMetrics>(), services.GetRequiredService<IMemoryBudget>(), time,

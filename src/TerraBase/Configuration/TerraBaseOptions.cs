@@ -59,7 +59,7 @@ public sealed record TerraBaseOptions
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["port", "internal-port", "metrics-port", "postgres-port", "wire-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience", "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys, .. FileStorageSettings.Keys]);
+        ["port", "internal-port", "metrics-port", "postgres-port", "wire-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience", "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys, .. FileStorageSettings.Keys, .. ShapeStorageSettings.Keys]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -196,6 +196,8 @@ public sealed record TerraBaseOptions
 
     /// <summary>Independent customer-file identity delivered by OCI Vault; never the backup identity.</summary>
     public FileStorageSettings? FileStorage { get; init; }
+
+    internal ShapeStorageSettings? ShapeStorage { get; init; }
 
     /// <summary>The master key wrapping database keys, independently of continuous backup.</summary>
     public byte[]? DatabaseMasterKey { get; init; }
@@ -364,6 +366,7 @@ public sealed record TerraBaseOptions
             QueryBudget = TimeSpan.FromSeconds(ParseInteger(values, "query-budget-seconds", 1, MaxQueryBudgetSeconds) ?? DefaultQueryBudgetSeconds),
             Backup = BackupSettings.Parse(values),
             FileStorage = FileStorageSettings.Parse(values),
+            ShapeStorage = ShapeStorageSettings.Parse(values),
             DatabaseMasterKey = values.TryGetValue("master-key", out var masterKey) ? BackupSettings.ParseMasterKey(masterKey) : null,
         };
     }
