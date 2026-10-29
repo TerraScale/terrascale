@@ -17,6 +17,8 @@ public sealed class SharedDocumentServerTests
         var id = DocumentApi.NewId();
         await Assert.That((await first.PutAsync(id, new { owner = "first" })).Status).IsEqualTo(HttpStatusCode.Created);
         await Assert.That((await second.GetAsync(id)).Status).IsEqualTo(HttpStatusCode.NotFound);
+        var crossTenant = await DocumentApi.SendAsync(second.Client, HttpMethod.Get, first.Document(id));
+        await Assert.That(crossTenant.Status).IsEqualTo(HttpStatusCode.NotFound);
         await first.DisposeAsync();
 
         await Assert.That((await second.PutAsync(id, new { owner = "second" })).Status).IsEqualTo(HttpStatusCode.Created);
