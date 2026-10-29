@@ -22,8 +22,10 @@ public sealed partial class TsAuthPlatformJourneyTests
         var output = BrowserAudit.Output(Directory.GetCurrentDirectory(), "q03-project-invitation-revoke");
         await using var recording = await browser.NewContextAsync(new()
         {
-            StorageState = await login.Context.StorageStateAsync(), RecordVideoDir = output,
-            ViewportSize = new() { Width = 1440, Height = 1000 }, ColorScheme = ColorScheme.Dark
+            StorageState = await login.Context.StorageStateAsync(),
+            RecordVideoDir = output,
+            ViewportSize = new() { Width = 1440, Height = 1000 },
+            ColorScheme = ColorScheme.Dark
         });
         await recording.RouteAsync("**/css/terrascale.css*", async route =>
         {
