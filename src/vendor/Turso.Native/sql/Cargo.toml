@@ -1,0 +1,19 @@
+[package]
+name = "terrascale_sql_parser"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+serde_json = "=1.0.154"
+turso_parser = { path = "../../../../artifacts/router-parser/turso/sqlite/parser" }
+
+[profile.release]
+panic = "unwind"
+
+[profile.dev]
+panic = "unwind"

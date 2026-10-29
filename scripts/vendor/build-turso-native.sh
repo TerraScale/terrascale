@@ -21,3 +21,6 @@ fi
   --file "$root/scripts/vendor/Dockerfile.turso-native" \
   --output "type=local,dest=$output" "$root"
 (cd "$output" && sha256sum --check SHA256SUMS-*)
+"$builder" buildx build --platform "linux/$arch" --no-cache --target native \
+  --file "$root/scripts/vendor/Dockerfile.router-parser" \
+  --output "type=local,dest=$output" "$root"
