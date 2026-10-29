@@ -8,6 +8,7 @@ using Amazon.S3.Model;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -35,6 +36,10 @@ public sealed class TigrisBackupTests
                 services: services => services.AddSingleton<IObjectStore>(provider =>
                     new PrefixedStore(provider.GetRequiredService<S3ObjectStore>(), prefix)),
                 cancellationToken: cancellationToken, failedStartCleanup: cleanup => failedStartCleanup = cleanup);
+            // Ready first, as ts-orch routes only to ready machines: the catalog gate opens once this machine's anchor is read
+            // from the bucket, which can outlast the gate's start budget and leave the first requests catalog_unverified.
+            var gate = api.Server.Services.GetRequiredService<ICatalogGate>();
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(gate.IsOpen), ShippingDeadline);
             var database = await api.CreateManagedDatabaseAsync("main");
             using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
             await ManagementApi.CreateCollectionAsync(data, database, "people", cancellationToken);

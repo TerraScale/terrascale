@@ -55,6 +55,9 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
     private const int CacheItems = 4096;
     private const int ScanItems = 1024;
     private static readonly TimeSpan RemoteDeadline = TimeSpan.FromSeconds(2);
+    // A CI runner saw one bucket HEAD answer 408 RequestTimeout, and the chunk never reached the bucket (#838).
+    internal const int MirrorAttempts = 3;
+    internal static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(2);
     private static readonly SearchValues<char> LowerHex = SearchValues.Create("0123456789abcdef");
     private readonly Channel<Pending> _queue = Channel.CreateBounded<Pending>(new BoundedChannelOptions(QueueItems)
     {
@@ -84,7 +87,8 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
 
     internal void ChunkSealed(IDatabaseStore store, ShapeSealDefinition shape, ShapeSealedChunk chunk)
     {
-        // shortcut: refused or failed work stays origin-only; add bounded backfill when complete T1 coverage is required.
+        // shortcut: refused work, and work that failed every attempt, stays origin-only; add bounded backfill when complete
+        // T1 coverage is required.
         if (store.Tenant is { } tenant)
         {
             _ = Queue(tenant, shape.ShapeId, shape.Handle, Number(chunk.Offset), Number(chunk.EndOffset),
@@ -441,7 +445,22 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         {
             try
             {
-                await MirrorAsync(pending, stoppingToken).ConfigureAwait(false);
+                // A sealed body is queued once: a bucket that timed out or failed itself is tried again after a pause, or
+                // the object stays origin-only for good. Each attempt starts with HEAD and writes If-None-Match, so a
+                // write that landed unacknowledged is adopted, never stored twice.
+                for (var attempt = 1; ; attempt++)
+                {
+                    try
+                    {
+                        await MirrorAsync(pending, stoppingToken).ConfigureAwait(false);
+                        break;
+                    }
+                    catch (Exception error) when (!stoppingToken.IsCancellationRequested && !pending.AdoptOnly && attempt < MirrorAttempts && Transient(error))
+                    {
+                        _logger.ZLogInformation(error, $"Shape mirror attempt {attempt} of {MirrorAttempts} failed; it is tried again");
+                        await Task.Delay(RetryDelay * attempt, _time, stoppingToken).ConfigureAwait(false);
+                    }
+                }
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {
@@ -797,6 +816,11 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
 
         admission.Dispose();
     }
+
+    // What a later attempt can outlast: a bucket that timed out, throttled or failed itself, a broken connection, or the
+    // attempt's own deadline. Refusals (403, an object that cannot be adopted) and invalid metadata are final.
+    private static bool Transient(Exception error) => error is IOException or HttpRequestException or OperationCanceledException or StorageBusyException
+        or AmazonServiceException { StatusCode: HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests or >= HttpStatusCode.InternalServerError };
 
     private static bool RemoteFailure(Exception error) => error is IOException or InvalidDataException or HttpRequestException or AmazonServiceException or OperationCanceledException or StorageBusyException;
     private static string Number(long value) => value.ToString(CultureInfo.InvariantCulture);

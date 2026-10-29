@@ -236,13 +236,25 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
 
     /// <summary>
     /// Why a token of key <paramref name="keyId"/>, issued for the key string of <paramref name="generation"/> to act in
-    /// <paramref name="projectId"/>, no longer acts (<c>key_revoked</c> or <c>key_expired</c>), or null while it still does:
-    /// the key, its organization and the project still exist, and the key string still works. Always read from the store.
+    /// <paramref name="organizationId"/> and <paramref name="projectId"/>, no longer acts (<c>key_revoked</c> or <c>key_expired</c>),
+    /// or null while it still does: the key, its organization and the project still exist, and the key string still works.
+    /// Always read from the store.
     /// </summary>
-    public async Task<string?> RefusalAsync(string keyId, string generation, string? projectId, CancellationToken cancellationToken)
+    public async Task<string?> RefusalAsync(string keyId, string generation, string? organizationId, string? projectId, CancellationToken cancellationToken)
     {
-        var document = IsKeyId(keyId) ? await store.GetAsync(AuthStore.ApiKeyCollection, Instance, keyId, cancellationToken).ConfigureAwait(false) : null;
-        if (document?.Document.Deserialize(PlatformJson.Default.ApiKeyRecord) is not { } key || key.InstanceId != Instance || key.Id != keyId)
+        if (!IsKeyId(keyId) || organizationId is null)
+        {
+            return "key_revoked";
+        }
+
+        // The key, and the organization and project its token names, together: one storage round trip, where reading the key
+        // first made two, and TerraBase's two-second answer window is spent on them (#853). The token is this issuer's own
+        // signed claim, and the key must still belong to that organization: the same answer as the key's own reads.
+        var document = store.GetAsync(AuthStore.ApiKeyCollection, Instance, keyId, cancellationToken);
+        var organization = directory.OrganizationAsync(organizationId, cancellationToken);
+        var project = projectId is null ? Task.FromResult<Versioned<ProjectRecord>?>(null) : directory.ProjectAsync(projectId, cancellationToken);
+        await Task.WhenAll(document, organization, project).ConfigureAwait(false);
+        if ((await document.ConfigureAwait(false))?.Document.Deserialize(PlatformJson.Default.ApiKeyRecord) is not { } key || key.InstanceId != Instance || key.Id != keyId)
         {
             return "key_revoked";
         }
@@ -258,11 +270,7 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
             return "key_revoked";
         }
 
-        // The same reads as an exchange (PlatformGrants.ApiKeyAsync), together: one storage round trip.
-        var organization = directory.OrganizationAsync(key.OrganizationId, cancellationToken);
-        var project = projectId is null ? Task.FromResult<Versioned<ProjectRecord>?>(null) : directory.ProjectAsync(projectId, cancellationToken);
-        await Task.WhenAll(organization, project).ConfigureAwait(false);
-        return await organization.ConfigureAwait(false) is null
+        return key.OrganizationId != organizationId || await organization.ConfigureAwait(false) is null
             || projectId is not null && (await project.ConfigureAwait(false))?.Value.OrganizationId != key.OrganizationId
             ? "key_revoked"
             : null;

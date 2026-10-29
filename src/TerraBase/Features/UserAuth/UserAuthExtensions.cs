@@ -115,7 +115,7 @@ public static class UserAuthExtensions
             }
 
             var authority = context.RequestServices.GetRequiredService<IKeyAuthority>();
-            var answer = (await authority.CheckAsync(key, context.RequestAborted).ConfigureAwait(false)).Value;
+            var answer = (await authority.AdmitAsync(key, context.RequestAborted).ConfigureAwait(false)).Value;
             if (answer is not KeyActive active)
             {
                 await RefuseKeyAsync(context, answer as KeyRefused).ConfigureAwait(false);

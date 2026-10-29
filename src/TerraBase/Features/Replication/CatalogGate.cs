@@ -606,6 +606,7 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
         }
 
         var callerCancellation = cancellationToken;
+        var steps = new AnchorSteps(_time);
         using var deadline = new CancellationTokenSource(AnchorTimeout, _time);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         cancellationToken = bounded.Token;
@@ -619,10 +620,11 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
             acquired = true;
             if (revocation || _revocation is null)
             {
-                _revocation = await MarkRevocationAsync(cancellationToken).ConfigureAwait(false);
+                _revocation = await MarkRevocationAsync(steps, cancellationToken).ConfigureAwait(false);
             }
 
             // The head is read pinned to the identity it is anchored with: one read transaction checks both.
+            steps.Next("reading the catalog head");
             var incarnation = (await _engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).Incarnation;
             if (await _source.HeadAsync(ChangeGroups.System, incarnation, cancellationToken).ConfigureAwait(false) is not { } head)
             {
@@ -654,10 +656,12 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
             }
 
             body.Position = 0;
+            steps.Next("sealing the anchor");
             var (keyId, dataKey) = await _keys!.CurrentAsync(KeyScope, cancellationToken).ConfigureAwait(false);
             using var sealedAnchor = new MemoryStream();
             await BackupObject.WriteAsync(body, sealedAnchor, AnchorKey, keyId, dataKey, cancellationToken).ConfigureAwait(false);
             sealedAnchor.Position = 0;
+            steps.Next("putting the anchor in the bucket");
             await _anchors.PutAsync(AnchorKey, sealedAnchor, cancellationToken).ConfigureAwait(false);
             _anchoredIncarnation = incarnation;
             Interlocked.Exchange(ref _anchored, head);
@@ -665,6 +669,7 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
         catch (OperationCanceledException) when (deadline.IsCancellationRequested && !callerCancellation.IsCancellationRequested)
         {
             Interlocked.Increment(ref _anchorTimeouts);
+            _logger.ZLogWarning($"A catalog anchor ran out of its {AnchorTimeout.TotalSeconds}s: {steps}");
             throw;
         }
         finally
@@ -677,6 +682,25 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
     }
 
     private string AnchorKey => $"catalog-anchor/{_options.MachineId}";
+
+    // Where one anchor's time went. Its steps run one after another, so a late anchor names the step it ran out in and what
+    // each earlier one took (#733: anchors missed the deadline with no single long writer hold or wait to blame).
+    private sealed class AnchorSteps(TimeProvider time)
+    {
+        private readonly StringBuilder _done = new();
+        private string _step = "waiting for the anchor in flight";
+        private long _started = time.GetTimestamp();
+
+        public void Next(string step)
+        {
+            _ = _done.Append(_step).Append(' ').Append(Seconds()).Append(" s, ");
+            (_step, _started) = (step, time.GetTimestamp());
+        }
+
+        public override string ToString() => $"{_done}{_step} {Seconds()} s when it passed";
+
+        private string Seconds() => time.GetElapsedTime(_started).TotalSeconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+    }
 
     private static string KeyScope => BackupLayout.KeyScope(null);
 

@@ -37,6 +37,13 @@ public interface IKeyAuthority
 {
     /// <summary>Whether <paramref name="key"/> still acts; <see cref="Unavailable"/> must be refused as well.</summary>
     ValueTask<KeyAuthorityResult> CheckAsync(KeyToken key, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Whether new work may start on <paramref name="key"/>: as <see cref="CheckAsync"/>, but a yes must leave the work's watch
+    /// time to renew it (<see cref="TsAuthKeyAuthority.Admission"/>). An older yes waits for the question already in flight; a
+    /// ts-auth too slow to leave that much is <see cref="Unavailable"/>, refused before the work starts, never cut off in it.
+    /// </summary>
+    ValueTask<KeyAuthorityResult> AdmitAsync(KeyToken key, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -191,6 +198,16 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
     public static readonly TimeSpan Fresh = TimeSpan.FromSeconds(2);
 
     private static readonly TimeSpan RefreshAfter = Fresh / 2;
+
+    /// <summary>
+    /// The least of a yes new work starts on. Its watch asks again once the yes is <see cref="RefreshAfter"/> old and aborts
+    /// the work when no new yes arrives before this one runs out, so a yes with less left could end work it just admitted:
+    /// a request admitted on a 1.8-second answer was reset 200 ms in, its write's outcome unknown to the client (#853).
+    /// </summary>
+    public static readonly TimeSpan Admission = Fresh - RefreshAfter;
+
+    // New work asks again from here, before Admission would make it wait: a busy key's requests keep not waiting.
+    private static readonly TimeSpan AdmissionRefresh = RefreshAfter / 2;
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(2);
     private const int Capacity = 16 * 1024;
     private const int MaxInFlight = 256;
@@ -202,10 +219,34 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
     private readonly ConcurrentDictionary<string, Lazy<Task<Answer>>> _asking = new(StringComparer.Ordinal);
     private int _inFlight;
 
+    public async ValueTask<KeyAuthorityResult> AdmitAsync(KeyToken key, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        var id = Id(key);
+        if (_answers.TryGetValue(id, out var known))
+        {
+            var age = time.GetUtcNow() - known.AskedAt;
+            if (known.Result.Value is KeyRefused || age < RefreshAfter)
+            {
+                if (known.Result.Value is KeyActive && age >= AdmissionRefresh)
+                {
+                    _ = Ask(id, key);
+                }
+
+                return known.Result;
+            }
+        }
+
+        var answer = await Ask(id, key).WaitAsync(cancellationToken).ConfigureAwait(false);
+        return answer.Result.Value is KeyActive active && active.Until - time.GetUtcNow() < Admission
+            ? new Unavailable("ts-auth answered too slowly for new work to outlast its answer")
+            : answer.Result;
+    }
+
     public async ValueTask<KeyAuthorityResult> CheckAsync(KeyToken key, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(key);
-        var id = key.KeyId + " " + key.Generation + " " + key.ProjectId;
+        var id = Id(key);
         if (_answers.TryGetValue(id, out var known))
         {
             var age = time.GetUtcNow() - known.AskedAt;
@@ -222,6 +263,8 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
 
         return (await Ask(id, key).WaitAsync(cancellationToken).ConfigureAwait(false)).Result;
     }
+
+    private static string Id(KeyToken key) => key.KeyId + " " + key.Generation + " " + key.ProjectId;
 
     private Task<Answer> Ask(string id, KeyToken key) =>
         _asking.GetOrAdd(id, _ => new Lazy<Task<Answer>>(() => AskAsync(id, key))).Value;
