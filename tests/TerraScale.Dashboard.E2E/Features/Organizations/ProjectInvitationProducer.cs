@@ -7,12 +7,16 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
     {
         private sealed partial class PlatformProducer
         {
-            public void ClearProjectInvitations(string org, string project) { lock (gate)
+            public void ClearProjectInvitations(string org, string project)
+            {
+                lock (gate)
                 {
                     Find(org)!.Invitations.RemoveAll(invite => invite.ProjectId == project);
                 }
             }
-            public void SetInvitationStatus(string org, string token, string status) { lock (gate)
+            public void SetInvitationStatus(string org, string token, string status)
+            {
+                lock (gate)
                 {
                     Find(org)!.Invitations.Single(invite => invite.Token == token).Status = status;
                 }

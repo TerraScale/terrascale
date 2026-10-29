@@ -239,7 +239,9 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 return calls.Where(call => call.Method == method && call.Path == path).Select(call => call.Body).ToArray();
             }
 
-            public void RefuseNext(string method, string path, HttpStatusCode status, string code, string message) { lock (gate)
+            public void RefuseNext(string method, string path, HttpStatusCode status, string code, string message)
+            {
+                lock (gate)
                 {
                     refusal = (method, path, status, code, message);
                 }
@@ -255,34 +257,46 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                     return org.Id;
                 }
             }
-            public void Rename(string organizationId, string name) { lock (gate)
+            public void Rename(string organizationId, string name)
+            {
+                lock (gate)
                 {
                     Find(organizationId)!.Name = name;
                 }
             }
             public string AddProject(string organizationId, string name, string creator)
             { lock (gate) { var project = new Project(ids.NewId(), name, creator, DateTimeOffset.UtcNow); Find(organizationId)!.Projects.Add(project); return project.Id; } }
-            public void AddMember(string organizationId, string userId, string email, string role) { lock (gate)
+            public void AddMember(string organizationId, string userId, string email, string role)
+            {
+                lock (gate)
                 {
                     Find(organizationId)!.Members[userId] = new(email, role, DateTimeOffset.UtcNow);
                 }
             }
-            public void AddCollaborator(string organizationId, string userId) { lock (gate)
+            public void AddCollaborator(string organizationId, string userId)
+            {
+                lock (gate)
                 {
                     Find(organizationId)!.Collaborators.Add(userId);
                 }
             }
-            public void RemoveMember(string organizationId, string userId) { lock (gate)
+            public void RemoveMember(string organizationId, string userId)
+            {
+                lock (gate)
                 {
                     Find(organizationId)!.Members.Remove(userId);
                 }
             }
-            public string? Role(string organizationId, string userId) { lock (gate)
+            public string? Role(string organizationId, string userId)
+            {
+                lock (gate)
                 {
                     return Find(organizationId)!.Members.GetValueOrDefault(userId)?.Role;
                 }
             }
-            public string InvitationId(string organizationId, string token) { lock (gate)
+            public string InvitationId(string organizationId, string token)
+            {
+                lock (gate)
                 {
                     return Find(organizationId)!.Invitations.Single(invitation => invitation.Token == token).Id;
                 }
@@ -296,13 +310,16 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                     return token;
                 }
             }
-            public void StartTransfer(string organizationId, string from, string to) { lock (gate)
+            public void StartTransfer(string organizationId, string from, string to)
+            {
+                lock (gate)
                 {
                     Find(organizationId)!.Transfer = (from, to, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddDays(7));
                 }
             }
             public void AddAudit(string organizationId, string actor, string action, string target)
-            { lock (gate)
+            {
+                lock (gate)
                 {
                     Find(organizationId)!.Audit.Add(new { id = ids.NewId(), actor, action, target, detail = (string?)null, occurred_at = DateTimeOffset.UtcNow });
                 }
@@ -560,7 +577,9 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 return Json(new { error = new { code, message } }, status);
             }
 
-            private static void Require(bool condition, string message) { if (!condition)
+            private static void Require(bool condition, string message)
+            {
+                if (!condition)
                 {
                     throw new InvalidOperationException(message);
                 }

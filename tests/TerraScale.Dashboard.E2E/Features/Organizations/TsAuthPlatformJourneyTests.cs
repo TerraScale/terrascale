@@ -1421,7 +1421,9 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             private bool deletionRefused;
             public Dictionary<string, object> InvitationReplies { get; } = [];
             public HttpStatusCode DeletionStatus { get; set; } = HttpStatusCode.Accepted;
-            public bool ReceiptAppearsIn(string html) { lock (gate)
+            public bool ReceiptAppearsIn(string html)
+            {
+                lock (gate)
                 {
                     return deletionReceipts.Keys.Any(receipt => html.Contains(receipt, StringComparison.Ordinal));
                 }
@@ -1455,7 +1457,9 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 return calls.Count(call => call.User == user && call.Method != "GET" && call.Path.StartsWith("/v1/terrascale/organizations/" + org, StringComparison.Ordinal));
             }
 
-            public void ObservePlan(HttpRequestMessage request) { if (request.Method == HttpMethod.Put)
+            public void ObservePlan(HttpRequestMessage request)
+            {
+                if (request.Method == HttpMethod.Put)
                 {
                     plans.Enqueue(request.RequestUri!.AbsolutePath);
                 }
@@ -1470,7 +1474,9 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 return calls.Where(call => call.Method == method && call.Path == path).Select(call => call.Body).ToArray();
             }
 
-            public void RefuseNext(string method, string path, HttpStatusCode status, string code, string message) { lock (gate)
+            public void RefuseNext(string method, string path, HttpStatusCode status, string code, string message)
+            {
+                lock (gate)
                 {
                     refusal = (method, path, status, code, message);
                 }
@@ -1486,67 +1492,91 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                     return org.Id;
                 }
             }
-            public void Rename(string organizationId, string name) { lock (gate)
+            public void Rename(string organizationId, string name)
+            {
+                lock (gate)
                 {
                     Find(organizationId)!.Name = name;
                 }
             }
-            public void RemoveProject(string organizationId, string projectId) { lock (gate)
+            public void RemoveProject(string organizationId, string projectId)
+            {
+                lock (gate)
                 {
                     Find(organizationId)!.Projects.RemoveAll(project => project.Id == projectId);
                 }
             }
-            public bool Exists(string organizationId) { lock (gate)
+            public bool Exists(string organizationId)
+            {
+                lock (gate)
                 {
                     return Find(organizationId) is not null;
                 }
             }
             public string AddProject(string organizationId, string name, string creator)
             { lock (gate) { var project = new Project(ids.NewId(), name, creator, DateTimeOffset.UtcNow); Find(organizationId)!.Projects.Add(project); AddCollaborator(organizationId, creator, project.Id, "admin"); return project.Id; } }
-            public void AddMember(string organizationId, string userId, string email, string role) { lock (gate)
+            public void AddMember(string organizationId, string userId, string email, string role)
+            {
+                lock (gate)
                 {
                     Find(organizationId)!.Members[userId] = new(email, role, DateTimeOffset.UtcNow);
                 }
             }
             public void AddCollaborator(string organizationId, string userId, string? projectId = null, string role = "viewer")
             { lock (gate) { var org = Find(organizationId)!; if (!org.Collaborators.ContainsKey(userId)) { org.Collaborators[userId] = []; } if (projectId is not null) { org.Collaborators[userId][projectId] = role; } } }
-            public void RemoveGrant(string org, string user, string project) { lock (gate)
+            public void RemoveGrant(string org, string user, string project)
+            {
+                lock (gate)
                 {
                     Find(org)!.Collaborators[user].Remove(project);
                 }
             }
-            public void RequireMfa(string org) { lock (gate)
+            public void RequireMfa(string org)
+            {
+                lock (gate)
                 {
                     Find(org)!.RequireMfa = true;
                 }
             }
-            public void Enroll(string userId, int recoveryCodes) { lock (gate)
+            public void Enroll(string userId, int recoveryCodes)
+            {
+                lock (gate)
                 {
                     enrolled[userId] = recoveryCodes;
                 }
             }
             public void RemoveMember(string organizationId, string userId) { lock (gate) { var org = Find(organizationId)!; org.Members.Remove(userId); org.Collaborators.Remove(userId); } }
-            public string? ProjectRole(string org, string project, string user) { lock (gate)
+            public string? ProjectRole(string org, string project, string user)
+            {
+                lock (gate)
                 {
                     return EffectiveRole(Find(org)!, Find(org)!.Projects.Single(item => item.Id == project), user);
                 }
             }
-            public string? Role(string organizationId, string userId) { lock (gate)
+            public string? Role(string organizationId, string userId)
+            {
+                lock (gate)
                 {
                     return Find(organizationId)!.Members.GetValueOrDefault(userId)?.Role;
                 }
             }
-            public string InvitationId(string organizationId, string token) { lock (gate)
+            public string InvitationId(string organizationId, string token)
+            {
+                lock (gate)
                 {
                     return Find(organizationId)!.Invitations.Single(invitation => invitation.Token == token).Id;
                 }
             }
-            public void ExpireInvitation(string org, string token) { lock (gate)
+            public void ExpireInvitation(string org, string token)
+            {
+                lock (gate)
                 {
                     Find(org)!.Invitations.Single(invitation => invitation.Token == token).ExpiresAt = DateTimeOffset.UtcNow.AddDays(-1);
                 }
             }
-            public string? InvitationStatus(string organizationId, string invitationId) { lock (gate)
+            public string? InvitationStatus(string organizationId, string invitationId)
+            {
+                lock (gate)
                 {
                     return Find(organizationId)!.Invitations.SingleOrDefault(invitation => invitation.Id == invitationId)?.Status;
                 }
@@ -1560,13 +1590,16 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                     return token;
                 }
             }
-            public void StartTransfer(string organizationId, string from, string to) { lock (gate)
+            public void StartTransfer(string organizationId, string from, string to)
+            {
+                lock (gate)
                 {
                     Find(organizationId)!.Transfer = (from, to, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddDays(7));
                 }
             }
             public void AddAudit(string organizationId, string actor, string action, string target)
-            { lock (gate)
+            {
+                lock (gate)
                 {
                     Find(organizationId)!.Audit.Add(new { id = ids.NewId(), actor, action, target, detail = (string?)null, occurred_at = DateTimeOffset.UtcNow });
                 }
@@ -2033,7 +2066,9 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 return Json(new { error = new { code, message } }, status);
             }
 
-            private static void Require(bool condition, string message) { if (!condition)
+            private static void Require(bool condition, string message)
+            {
+                if (!condition)
                 {
                     throw new InvalidOperationException(message);
                 }

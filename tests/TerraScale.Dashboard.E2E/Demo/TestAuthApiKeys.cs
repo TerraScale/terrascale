@@ -30,12 +30,16 @@ namespace TerraScale.Dashboard.E2E.Demo
         public int PausedLists => Volatile.Read(ref pausedLists);
         public void PauseLists() { Interlocked.Exchange(ref pausedLists, 0); listGate = new(TaskCreationOptions.RunContinuationsAsynchronously); }
         public void ReleaseLists() { listGate?.TrySetResult(); listGate = null; }
-        public (Key Key, string Secret)[] Issued() { lock (gate)
+        public (Key Key, string Secret)[] Issued()
+        {
+            lock (gate)
             {
                 return keys.Values.ToArray();
             }
         }
-        public void ExpireAt(string keyId, DateTimeOffset expiresAt) { lock (gate)
+        public void ExpireAt(string keyId, DateTimeOffset expiresAt)
+        {
+            lock (gate)
             {
                 keys[keyId] = (keys[keyId].Key with { ExpiresAt = expiresAt }, keys[keyId].Secret);
             }
@@ -57,17 +61,17 @@ namespace TerraScale.Dashboard.E2E.Demo
             lock (gate)
             {
                 return new
-            {
-                keys = keys.Values.Select(value => new { value.Key.Id, value.Key.Name, value.Key.ProjectId, value.Key.Database, value.Key.Scopes, secret = value.Secret }).ToArray(),
-                requests = requests.Select(value => new
                 {
-                    method = value.Method,
-                    path = value.Path,
-                    userId = value.UserId,
-                    bearerKind = "original-session",
-                    authorization = "Bearer " + value.Token
-                }).ToArray()
-            };
+                    keys = keys.Values.Select(value => new { value.Key.Id, value.Key.Name, value.Key.ProjectId, value.Key.Database, value.Key.Scopes, secret = value.Secret }).ToArray(),
+                    requests = requests.Select(value => new
+                    {
+                        method = value.Method,
+                        path = value.Path,
+                        userId = value.UserId,
+                        bearerKind = "original-session",
+                        authorization = "Bearer " + value.Token
+                    }).ToArray()
+                };
             }
         }
 
