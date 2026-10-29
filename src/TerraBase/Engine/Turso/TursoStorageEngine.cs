@@ -811,11 +811,15 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                         || entry.FileName.SequenceEqual(SystemName + FileExtension + "-shm")
                         || entry.FileName.SequenceEqual(SystemName + FileExtension + "-journal")
                         || entry.FileName.SequenceEqual(SystemName + FileExtension + DatabaseKeys.Suffix)
+                        || entry.FileName.SequenceEqual(SystemName + FileExtension + RevisionManifestFile.Suffix)
+                        || entry.FileName.SequenceEqual(SystemName + FileExtension + RevisionManifestFile.StagedSuffix)
                         || entry.FileName.SequenceEqual(IntentName + FileExtension)
                         || entry.FileName.SequenceEqual(IntentName + FileExtension + "-wal")
                         || entry.FileName.SequenceEqual(IntentName + FileExtension + "-shm")
                         || entry.FileName.SequenceEqual(IntentName + FileExtension + "-journal")
-                        || entry.FileName.SequenceEqual(IntentName + FileExtension + DatabaseKeys.Suffix));
+                        || entry.FileName.SequenceEqual(IntentName + FileExtension + DatabaseKeys.Suffix)
+                        || entry.FileName.SequenceEqual(IntentName + FileExtension + RevisionManifestFile.Suffix)
+                        || entry.FileName.SequenceEqual(IntentName + FileExtension + RevisionManifestFile.StagedSuffix));
                 return reservedRootName
                     ? entry.IsDirectory || link
                     : !entry.IsDirectory || link || CollisionDatabaseIdFromFileName(entry.FileName.ToString()) is not null;

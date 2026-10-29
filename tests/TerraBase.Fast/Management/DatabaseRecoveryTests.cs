@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Engine.Revisions;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
@@ -994,6 +995,10 @@ public sealed partial class DatabaseRecoveryTests
         await using var state = new RecoveryData();
         await using var api = await state.StartAsync();
         await AssertReadyAsync(api);
+        foreach (var database in new[] { "_system.db", "_intents.db" })
+        {
+            await File.WriteAllBytesAsync(System.IO.Path.Combine(state.Directory, database + RevisionManifestFile.StagedSuffix), state.Faker.Random.Bytes(17));
+        }
         var note = System.IO.Path.Combine(state.Directory, "operator-notes.txt");
         await File.WriteAllBytesAsync(note, state.Faker.Random.Bytes(17));
         var nested = System.IO.Path.Combine(state.Directory, "ordinary-directory", "nested-empty-directory");
@@ -1041,7 +1046,8 @@ public sealed partial class DatabaseRecoveryTests
         }
 
         var paths = System.IO.Directory.GetFiles(System.IO.Path.GetDirectoryName(state.Path(state.Source))!);
-        await Assert.That(paths.Length).IsEqualTo(10);
+        // Each database also owns its persisted page-revision manifest.
+        await Assert.That(paths.Length).IsEqualTo(12);
         var before = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         foreach (var path in paths)
         {
