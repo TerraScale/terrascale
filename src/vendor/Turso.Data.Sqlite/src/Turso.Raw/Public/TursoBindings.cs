@@ -121,6 +121,71 @@ public static class TursoBindings
         return db.OwnStatement(statementPtr);
     }
 
+    public static TursoStatementHandle? PrepareFirst(TursoDatabaseHandle db, string sql, out int tailLength)
+    {
+        db.ThrowIfInvalid();
+        ArgumentNullException.ThrowIfNull(sql);
+
+        var utf8 = new byte[Encoding.UTF8.GetByteCount(sql) + 1];
+        Encoding.UTF8.GetBytes(sql, utf8);
+        var status = TursoInterop.ConnectionPrepareFirst(db, utf8, out var statementPtr, out var tailIndex, out var errorPtr);
+        ThrowIfError(status, errorPtr, "Unable to prepare statement: ");
+        if (statementPtr == IntPtr.Zero)
+        {
+            tailLength = 0;
+            return null;
+        }
+
+        var consumed = checked((int)(ulong)tailIndex);
+        tailLength = sql.Length - Encoding.UTF8.GetCharCount(utf8, 0, Math.Min(consumed, utf8.Length - 1));
+        return db.OwnStatement(statementPtr);
+    }
+
+    public static void Interrupt(TursoDatabaseHandle db)
+    {
+        db.ThrowIfInvalid();
+        var status = TursoInterop.ConnectionInterrupt(db, out var errorPtr);
+        ThrowIfError(status, errorPtr);
+    }
+
+    public static void SetQueryTimeout(TursoDatabaseHandle db, TimeSpan timeout)
+    {
+        db.ThrowIfInvalid();
+        var status = TursoInterop.ConnectionSetQueryTimeout(db, checked((ulong)Math.Max(0, Math.Ceiling(timeout.TotalMilliseconds))), out var errorPtr);
+        ThrowIfError(status, errorPtr);
+    }
+
+    public static void SetMaxValueLength(TursoDatabaseHandle db, long length)
+    {
+        db.ThrowIfInvalid();
+        var status = TursoInterop.ConnectionSetMaxValueLength(db, length, out var errorPtr);
+        ThrowIfError(status, errorPtr);
+    }
+
+    public static TursoValueType GetValueType(TursoStatementHandle statement, int columnIndex)
+    {
+        statement.ThrowIfInvalid();
+        ArgumentOutOfRangeException.ThrowIfNegative(columnIndex);
+
+        return TursoInterop.StatementRowValueKind(statement, ToNativeIndex(columnIndex)) switch
+        {
+            TursoNativeValueType.Null => TursoValueType.Null,
+            TursoNativeValueType.Integer => TursoValueType.Integer,
+            TursoNativeValueType.Real => TursoValueType.Real,
+            TursoNativeValueType.Text => TursoValueType.Text,
+            TursoNativeValueType.Blob => TursoValueType.Blob,
+            _ => TursoValueType.Empty,
+        };
+    }
+
+    public static long GetValueByteCount(TursoStatementHandle statement, int columnIndex)
+    {
+        statement.ThrowIfInvalid();
+        ArgumentOutOfRangeException.ThrowIfNegative(columnIndex);
+
+        return TursoInterop.StatementRowValueBytesCount(statement, ToNativeIndex(columnIndex));
+    }
+
     public static void ResetStatement(TursoStatementHandle statement)
     {
         statement.ThrowIfInvalid();

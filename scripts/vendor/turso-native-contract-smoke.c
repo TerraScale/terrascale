@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 extern uint32_t turso_terrascale_storage_error_contract(void);
@@ -61,7 +62,8 @@ static void check_search(turso_connection_t *connection) {
 static const char *endless = "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x + 1 FROM n) SELECT sum(x) FROM n";
 
 static void *interrupt_later(void *connection) {
-    usleep(200000);
+    struct timespec pause = {0, 200000000};
+    nanosleep(&pause, NULL);
     expect(turso_connection_interrupt(connection, &error), TURSO_OK);
     return NULL;
 }
