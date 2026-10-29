@@ -1,5 +1,9 @@
 # Browser SQL and libSQL HTTP access
 
+Security review hold: this expands the browser-accessible data API surface.
+The folded recovery PR must not merge until security review explicitly approves
+this CORS change. Source recovery and passing CI do not lift that hold.
+
 The client listener's bearer-only CORS policy now includes these exact routes below
 `/v1/projects/{project}/databases/{database}`:
 

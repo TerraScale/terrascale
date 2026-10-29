@@ -22,6 +22,14 @@ ordinary `pg_orders` tables remain SQL. Add listener coverage for transaction,
 savepoint and prepared-portal visibility and strict predicate matching; do not
 claim general EF compatibility from this single introspection operation.
 
+Additional local-only salvage: beta's `fix/client-sql-libsql-cors` at
+`1d99fa8252c15b8816e20440f230f6898670b297` adds bearer-only CORS for exact SQL
+execute and libSQL HTTP routes. Port it with main's public probe policy and
+listener boundaries intact. This is a security-sensitive surface expansion and
+remains on hold until security review explicitly approves it. It is independent
+of the rejected/unresolved CORS span-matcher performance experiment; that runtime
+matcher remains excluded.
+
 Decisions: 45 already in main, 23 dropped evidence, 17 ported, 109 superseded.
 
 | Branch | Original tip | Decision | Evidence / retained behavior |
