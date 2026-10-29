@@ -18,6 +18,10 @@ const { DATABASE_URL, MATRIX_SURFACE: surface, MATRIX_REPEAT = '3' } = process.e
 if (!DATABASE_URL || !surface || !/^[1-9]\d*$/.test(MATRIX_REPEAT)) throw new Error('Required: DATABASE_URL, MATRIX_SURFACE, positive MATRIX_REPEAT');
 const repeats = Number(MATRIX_REPEAT), config = { connectionString: DATABASE_URL, max: 1, connectionTimeoutMillis: 5000, query_timeout: 15000, statement_timeout: 15000 };
 assert(Number.isSafeInteger(repeats));
+const selectedTools = process.argv[2] ? [process.argv[2]] : ['prisma', 'drizzle'];
+assert(selectedTools.every(tool => ['prisma', 'drizzle'].includes(tool)));
+const endpoint = new URL(DATABASE_URL), secrets = [DATABASE_URL, endpoint.username, endpoint.password].flatMap(value => [value, decodeURIComponent(value)]).filter(Boolean);
+const safeError = error => secrets.reduce((text, secret) => text.replaceAll(secret, '[redacted]'), String(error.stderr || error.message || error)).replace(/\x1b\[[0-9;]*m/g, '').trim().slice(-1000);
 const protocolDelta = (before, after) => ({ parse: after.parse - before.parse, bind: after.bind - before.bind });
 const codes = (error, seen = new Set()) => {
   if (!error || typeof error !== 'object' || seen.has(error)) return [];
@@ -83,7 +87,7 @@ async function drizzleApi(dir, names, pool) {
   } };
 }
 
-for (let repeat = 1; repeat <= repeats; repeat++) for (const tool of ['prisma', 'drizzle']) {
+for (let repeat = 1; repeat <= repeats; repeat++) for (const tool of selectedTools) {
   const dir = await mkdtemp(join(root, '.matrix-')), suffix = ulid().toLowerCase();
   const names = { parent: `mx_${tool}_${suffix}`, child: `mx_${tool}_${suffix}_child` }, pool = new pg.Pool(config), passed = new Set();
   const observed = { parse: 0, bind: 0 }, wireErrors = [];
@@ -95,7 +99,7 @@ for (let repeat = 1; repeat <= repeats; repeat++) for (const tool of ['prisma', 
     const missing = deps.filter(dep => !passed.has(dep));
     if (missing.length) return row(check, 'blocked', { prerequisites: missing });
     try { const detail = await operation(); passed.add(check); row(check, 'pass', detail ?? {}); }
-    catch (error) { row(check, 'fail', { codes: codes(error), context: error.matrix, assertion: error.code === 'ERR_ASSERTION' ? 'result_mismatch' : undefined }); }
+    catch (error) { row(check, 'fail', { codes: codes(error), message: safeError(error), context: error.matrix, assertion: error.code === 'ERR_ASSERTION' ? 'result_mismatch' : undefined }); }
   };
   try {
     await stage('connect', [], async () => { api = await (tool === 'prisma' ? prismaApi : drizzleApi)(dir, names, pool); assert.equal(Number((await api.query('SELECT 1 AS value'))[0].value), 1); });

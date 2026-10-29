@@ -22,9 +22,9 @@ class Psql:
         if parameters.keys() - names.keys():
             raise ValueError('unsupported connection parameter names')
         env = {**os.environ, 'PGCONNECT_TIMEOUT': '10', 'PSQL_PAGER': '', **{names[key]: value for key, value in parameters.items()}}
-        result = subprocess.run(['psql', '-X', '-qAt' if tuples else '-qA', '-v', f'ON_ERROR_STOP={int(stop)}', '-v', 'VERBOSITY=sqlstate', '-f', '-'], input=sql + '\n', text=True, capture_output=True, env=env, timeout=45)
+        result = subprocess.run(['psql', '-X', '-qAt' if tuples else '-qA', '-v', f'ON_ERROR_STOP={int(stop)}', '-v', 'VERBOSITY=verbose', '-f', '-'], input=sql + '\n', text=True, capture_output=True, env=env, timeout=45)
         if result.returncode:
-            states = re.findall(r'\b[0-9A-Z]{5}\b', result.stderr)
+            states = re.findall(r'(?:ERROR|FATAL):\s+([0-9A-Z]{5}):', result.stderr)
             raise RuntimeError(f'psql exit={result.returncode} SQLSTATE={states}; {result.stderr[:240]}')
         return result.stdout.strip().splitlines()
 
