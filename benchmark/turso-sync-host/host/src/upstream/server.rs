@@ -221,16 +221,11 @@ impl Server {
 }
 
 fn create_dir_durably(path: &Path) -> Result<()> {
-    if path.is_dir() {
-        return Ok(());
+    std::fs::create_dir_all(path)?;
+    for dir in path.canonicalize()?.ancestors() {
+        sync_dir(dir)?;
     }
-    let parent = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    create_dir_durably(parent)?;
-    std::fs::create_dir(path)?;
-    sync_dir(parent)
+    Ok(())
 }
 
 fn arg(args: &[String], name: &str) -> Result<String> {
