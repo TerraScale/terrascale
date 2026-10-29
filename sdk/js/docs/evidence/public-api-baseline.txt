@@ -1,0 +1,43 @@
+
+ RUN  v4.1.11 /tmp/sdk-js-baseline-eac7e3f
+
+ ❯ test/v1-public-api.test.js (2 tests | 2 failed) 32ms
+   × root export exposes current SQL and SSE without consumer request escapes 28ms
+   × root export exposes typed project databases and document/schema operations 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/v1-public-api.test.js > root export exposes current SQL and SSE without consumer request escapes
+AssertionError: expected 'undefined' to be 'function' // Object.is equality
+
+Expected: "function"
+Received: "undefined"
+
+ ❯ test/v1-public-api.test.js:10:50
+      8| test("root export exposes current SQL and SSE without consumer request…
+      9|   for (const name of ["sql", "checkSql", "explainSql", "changes"])
+     10|     expect(typeof /** @type {any} */ (db)[name]).toBe("function");
+       |                                                  ^
+     11|   expect("request" in db).toBe(false);
+     12| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  test/v1-public-api.test.js > root export exposes typed project databases and document/schema operations
+AssertionError: The instanceof assertion needs a constructor but undefined was given.
+ ❯ test/v1-public-api.test.js:15:28
+     13|
+     14| test("root export exposes typed project databases and document/schema …
+     15|   expect(client.databases).toBeInstanceOf(V1Databases);
+       |                            ^
+     16|   for (const name of ["create", "list", "get", "update", "delete", "br…
+     17|     expect(typeof /** @type {any} */ (client.databases)[name]).toBe("f…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  23:31:51
+   Duration  852ms (transform 313ms, setup 0ms, import 413ms, tests 32ms, environment 0ms)
+

@@ -1,0 +1,51 @@
+{
+  "repository": "https://github.com/TerraScale/terrascale",
+  "revision": "1c94fe262795ea87f55248989e04f5b93f2f40bf",
+  "pullRequest": "https://github.com/TerraScale/terrascale/pull/602",
+  "inputs": {
+    "FileStorageRoute.cs": {
+      "sourcePath": "src/TerraBase/Features/FileStorage/FileStorageRoute.cs",
+      "sha256": "23ec04a8b260896a77a33652163d28694ef04c61f768d385dc7120f168929aa9"
+    },
+    "FileStorageContracts.cs": {
+      "sourcePath": "src/TerraBase/Features/FileStorage/FileStorageContracts.cs",
+      "sha256": "aa99318bec1303d579930ed0ac9e4abc0517971339148a14c06fe8a080b136b7"
+    },
+    "CreateFileBucketEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/FileStorage/CreateFileBucketEndpoint.cs",
+      "sha256": "d3fbd3d32a99aad9d878a21b854bc45151b6cac2545085a27f1dc3b82083f111"
+    },
+    "ListFileBucketsEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/FileStorage/ListFileBucketsEndpoint.cs",
+      "sha256": "712042a24d3391f85f8be9a2b38fa2b632b5f88a7cdfa65ebbf530511285dc03"
+    },
+    "SetFileBucketRulesEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/FileStorage/SetFileBucketRulesEndpoint.cs",
+      "sha256": "c7a1a570bbefa5a599f3f99f59741dbb294f78c9ebaba1224a831a1a38050109"
+    },
+    "DeleteFileBucketEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/FileStorage/DeleteFileBucketEndpoint.cs",
+      "sha256": "02f70942800044527ac2da84f39028bde8195213993eeccfa70ccb169e376efb"
+    },
+    "CreateFileUploadEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/FileStorage/CreateFileUploadEndpoint.cs",
+      "sha256": "7a9e1474bcec3d2d542ae21a45582cdab2354cf2b85e23283742bdb9570da4f4"
+    },
+    "CompleteFileUploadEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/FileStorage/CompleteFileUploadEndpoint.cs",
+      "sha256": "22af6f1c866dbabe0301e22cb55526754e73b39f83c3d7498d66c939eae053ac"
+    },
+    "ListBucketFilesEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/FileStorage/ListBucketFilesEndpoint.cs",
+      "sha256": "0fcee6384af2123b748e4a5a3b06bd7aa7e4472b5a61f2418d2611121b82d787"
+    },
+    "CreateFileDownloadEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/FileStorage/CreateFileDownloadEndpoint.cs",
+      "sha256": "b823b002ad22b229893a30f6dbe5ab5e4562295a51f48bf46d926586e5c243ba"
+    },
+    "DeleteBucketFileEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/FileStorage/DeleteBucketFileEndpoint.cs",
+      "sha256": "bbcd2f8de750a9656f1a4b329b736b5d891db186f247ee5bc0de3bcdbc00c834"
+    }
+  }
+}

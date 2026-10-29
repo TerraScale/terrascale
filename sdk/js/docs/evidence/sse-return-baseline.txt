@@ -1,0 +1,29 @@
+npm notice run @terrascale/sdk@0.0.3 npx
+npm notice run 'vitest' run test/v1-changes-http.test.js -t return while next is pending --testTimeout 2000
+
+ RUN  v4.1.11 /home/mariogk/.t3/worktrees/ts-js/sdk-js-api-contracts-20261013
+
+ ❯ test/v1-changes-http.test.js (44 tests | 1 failed | 43 skipped) 2011ms
+     × return while next is pending closes the partial response 2009ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/v1-changes-http.test.js > SSE cancellation releases HTTP streams > return while next is pending closes the partial response
+Error: Test timed out in 2000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/v1-changes-http.test.js:273:3
+    271|   });
+    272|
+    273|   test("return while next is pending closes the partial response", asy…
+       |   ^
+    274|     /** @type {() => void} */
+    275|     let sent;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 43 skipped (44)
+   Start at  23:25:39
+   Duration  2.29s (transform 98ms, setup 0ms, import 158ms, tests 2.01s, environment 0ms)
+

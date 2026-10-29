@@ -1,0 +1,67 @@
+{
+  "manifestVersion": 2,
+  "contractVersion": "terrabase-client-v1",
+  "routeCount": 5,
+  "routes": [
+    {
+      "base": "native",
+      "producer": "terrabase",
+      "client": "TerraBaseClient",
+      "operation": "read",
+      "operationId": "readDocument",
+      "routeName": "database.read",
+      "method": "GET",
+      "pathTemplate": "/v1/tenants/{tenant}/databases/{database}/shards/{shard}/collections/{collection}/documents/{document}",
+      "requestType": "void",
+      "responseType": "PointResponse"
+    },
+    {
+      "base": "native",
+      "producer": "terrabase",
+      "client": "TerraBaseClient",
+      "operation": "query",
+      "operationId": "queryDocuments",
+      "routeName": "database.query",
+      "method": "POST",
+      "pathTemplate": "/v1/tenants/{tenant}/databases/{database}/shards/{shard}/collections/{collection}/documents/query",
+      "requestType": "QueryRequest",
+      "responseType": "QueryResponse"
+    },
+    {
+      "base": "native",
+      "producer": "terrabase",
+      "client": "TerraBaseClient",
+      "operation": "subscription",
+      "operationId": "subscribeDocuments",
+      "routeName": "database.subscription",
+      "method": "POST",
+      "pathTemplate": "/v1/tenants/{tenant}/databases/{database}/shards/{shard}/collections/{collection}/documents/subscriptions",
+      "requestType": "SubscriptionRequest",
+      "responseType": "SubscriptionResponse"
+    },
+    {
+      "base": "native",
+      "producer": "terrabase",
+      "client": "TerraBaseClient",
+      "operation": "commit",
+      "operationId": "commitDocuments",
+      "routeName": "database.commit",
+      "method": "POST",
+      "pathTemplate": "/v1/tenants/{tenant}/databases/{database}/shards/{shard}/transactions",
+      "requestType": "CommitRequest",
+      "responseType": "CommitResponse"
+    },
+    {
+      "base": "native",
+      "producer": "terrabase",
+      "client": "TerraBaseClient",
+      "operation": "transactionStatus",
+      "operationId": "transactionStatus",
+      "routeName": "database.transactionStatus",
+      "method": "POST",
+      "pathTemplate": "/v1/tenants/{tenant}/databases/{database}/shards/{shard}/transactions/status",
+      "requestType": "TransactionStatusRequest",
+      "responseType": "TransactionStatusResponse"
+    }
+  ]
+}

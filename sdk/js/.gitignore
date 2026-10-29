@@ -1,0 +1,11 @@
+node_modules/
+types/
+coverage/
+test-results/
+.npm/
+/.tools/
+*.tsbuildinfo
+/artifacts/
+
+# Private generated CI release candidates and signatures
+/.terrascale-develop-release/

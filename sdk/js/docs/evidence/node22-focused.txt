@@ -1,0 +1,9 @@
+
+ RUN  v4.1.11 /home/mariogk/.t3/worktrees/ts-js/sdk-js-api-contracts-20261013
+
+
+ Test Files  14 passed (14)
+      Tests  260 passed (260)
+   Start at  23:39:58
+   Duration  32.09s (transform 5.03s, setup 0ms, import 8.46s, tests 36.66s, environment 2ms)
+
