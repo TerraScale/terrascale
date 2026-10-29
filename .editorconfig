@@ -77,3 +77,9 @@ max_line_length = 140
 # Recognize that generated file; authored Dashboard code retains every banned API check.
 [**/GeneratedRouteBuilderExtensions.g.cs]
 generated_code = true
+
+# Match the Dashboard build's recommended style severity in formatter workspaces too.
+[{src,tests}/TerraScale.Dashboard*/**.cs]
+dotnet_diagnostic.IDE0011.severity = error
+dotnet_diagnostic.IDE0022.severity = error
+dotnet_diagnostic.IDE0160.severity = error
