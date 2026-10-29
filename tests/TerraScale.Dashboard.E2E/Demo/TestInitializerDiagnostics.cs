@@ -6,40 +6,47 @@ using Microsoft.Extensions.Logging;
 
 namespace TerraScale.Dashboard.E2E
 {
-    // Observe only this test host's requests; never log exception messages or request/config values.
+    // One process observer routes diagnostics through the current request's fixture-owned service.
     internal sealed class TestInitializerDiagnostics : IDisposable
     {
-        private EventHandler<FirstChanceExceptionEventArgs>? handler;
+        private static readonly HttpContextAccessor Current = new();
+        private ILogger? logger;
+        private int remaining = 4;
+
+        static TestInitializerDiagnostics()
+        {
+            AppDomain.CurrentDomain.FirstChanceException += OnThrow;
+        }
 
         public void Attach(WebApplication app)
         {
-            var marker = new object();
-            var remaining = 4;
-            var current = app.Services.GetRequiredService<IHttpContextAccessor>();
-            app.Use((context, next) => { context.Items[marker] = true; return next(context); });
-            void OnThrow(object? sender, FirstChanceExceptionEventArgs args)
+            logger = app.Logger;
+        }
+
+        private static void OnThrow(object? sender, FirstChanceExceptionEventArgs args)
+        {
+            if (args.Exception is not TypeInitializationException initializer || Current.HttpContext is not { } http)
             {
-                if (args.Exception is not TypeInitializationException initializer || current.HttpContext is not { } http ||
-                    !http.Items.ContainsKey(marker) || Interlocked.Decrement(ref remaining) < 0)
+                return;
+            }
+
+            try
+            {
+                var owner = http.RequestServices.GetService<TestInitializerDiagnostics>();
+                if (owner?.logger is not { } logger || Interlocked.Decrement(ref owner.remaining) < 0)
                 {
                     return;
                 }
-
-                try
-                {
-                    var root = initializer.GetBaseException();
-                    app.Logger.LogError("Test initializer {InitializerType}: root {RootType}; stack {RootStack}",
-                        Bound(initializer.TypeName, 256), Bound(root.GetType().FullName, 256), Bound(root.StackTrace, 2048));
-                }
-                catch (Exception) { /* Diagnostics must never alter the request outcome. */ }
+                var root = initializer.GetBaseException();
+                logger.LogError("Test initializer {InitializerType}: root {RootType}; stack {RootStack}",
+                    Bound(initializer.TypeName, 256), Bound(root.GetType().FullName, 256), Bound(root.StackTrace, 2048));
             }
-            handler = OnThrow;
-            AppDomain.CurrentDomain.FirstChanceException += handler;
+            catch (Exception) { /* Diagnostics must never alter the request outcome. */ }
         }
 
         public void Dispose()
         {
-            AppDomain.CurrentDomain.FirstChanceException -= handler;
+            logger = null;
         }
 
         private static string Bound(string? value, int limit)
