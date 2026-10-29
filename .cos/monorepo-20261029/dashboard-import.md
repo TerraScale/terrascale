@@ -9,7 +9,9 @@ Its `imports/dashboard` tree equals the source root tree:
 The following relocation moves projects to `src/TerraScale.Dashboard` and
 `tests/TerraScale.Dashboard.E2E`, helpers to `scripts/dashboard`, documentation
 to `docs/dashboard`, and benchmark evidence to `benchmark/dashboard`. Subsequent
-changes apply the monorepo .NET 11 analyzer policies and source SDK references.
+changes add source SDK references while preserving the dashboard's original .NET 10
+analyzer and warning settings under .NET 11. Style adoption is tracked in
+https://github.com/TerraScale/terrascale/issues/977.
 The historical merge retains the exact original tree before integration edits.
 
 Original repository backup: delta:/home/mariogk/Projects/TerraScale/.cos/monorepo-20261029/ts-dashboard.bundle.
