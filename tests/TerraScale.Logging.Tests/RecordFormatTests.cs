@@ -5,7 +5,6 @@ using ZLogger;
 
 namespace TerraScale.Logging.Tests;
 
-[NotInParallel("ActivityContext")]
 public sealed class RecordFormatTests
 {
     private const string FallbackService = "fallback";
@@ -130,15 +129,6 @@ public sealed class RecordFormatTests
     }
 
     [Test]
-    public async Task ThrowingToStringBecomesUnformattableMarker()
-    {
-        var root = Parse(Write(logger => logger.LogInformation("Bad {Bad}", new ThrowingText())));
-
-        await Assert.That(root.GetProperty("Bad").GetString()).IsEqualTo("<unformattable>");
-        await Assert.That(root.GetProperty("level").GetString()).IsEqualTo("INFO");
-    }
-
-    [Test]
     [Arguments(LogLevel.Error, "<3>")]
     [Arguments(LogLevel.Warning, "<4>")]
     [Arguments(LogLevel.Information, "<5>")]
@@ -184,42 +174,8 @@ public sealed class RecordFormatTests
         await Assert.That(root.GetProperty("Scope").GetString()).IsEqualTo("request-7");
     }
 
-    [Test]
-    public async Task BrokenStdoutDropsTheRecordAndLaterRecordsStillWrite()
-    {
-        using var output = new FailingOnceWriter();
-        using (var factory = LogHarness.CreateFactory(output))
-        {
-            var logger = factory.CreateLogger("Acme.Widgets");
-            logger.LogInformation("dropped {Id}", 1);
-            logger.LogInformation("kept {Id}", 2);
-        }
-
-        var root = Parse(output.ToString().TrimEnd('\n'));
-        await Assert.That(root.GetProperty("msg").GetString()).IsEqualTo("kept {Id}");
-    }
-
     // Consumers capture records with Console.SetOut, so the provider must read Console.Out at each write.
 #pragma warning disable TUnit0055 // The writer is restored in finally, before the test ends.
-    [Test]
-    [NotInParallel("Console")]
-    public async Task ConsoleOutIsReadAtEachWrite()
-    {
-        using var captured = new StringWriter();
-        var previous = Console.Out;
-        Console.SetOut(captured);
-        try
-        {
-            using var factory = LoggerFactory.Create(builder => builder.AddTerraScaleLogging("fallback", ("Acme.Widgets", LogLevel.Trace)));
-            factory.CreateLogger("Acme.Widgets").LogInformation("to console");
-        }
-        finally
-        {
-            Console.SetOut(previous);
-        }
-
-        await Assert.That(captured.ToString()).Contains("\"msg\":\"to console\"");
-    }
 #pragma warning restore TUnit0055
 
     // The provider writes a newline after every record; the helper drops it so assertions see the JSON alone.

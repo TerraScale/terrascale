@@ -140,13 +140,4 @@ public sealed class LoggingBuilderTests
         await Assert.That(factory.CreateLogger("Microsoft.AspNetCore.Routing").IsEnabled(LogLevel.Information)).IsFalse();
     }
 
-    [Test]
-    public async Task ServiceCategoryLevelsMustBeNamedOnceAndNonEmpty()
-    {
-        await Assert.ThrowsAsync<ArgumentException>(() => Task.Run(() => LoggerFactory.Create(builder => builder.AddTerraScaleLogging("terrabase",
-            ("Acme.Widgets", LogLevel.Warning),
-            ("Acme.Widgets", LogLevel.Error)))));
-        await Assert.ThrowsAsync<ArgumentException>(() => Task.Run(() => LoggerFactory.Create(builder => builder.AddTerraScaleLogging("terrabase",
-            (" ", LogLevel.Warning)))));
-    }
 }

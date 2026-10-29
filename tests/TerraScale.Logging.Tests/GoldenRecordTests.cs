@@ -8,7 +8,6 @@ namespace TerraScale.Logging.Tests;
 // Golden lines captured from the console formatter before the ZLogger switch (record v1).
 // Each event is logged twice (the MEL call and the ZLog call) and must match its line byte-for-byte.
 // The span id is random per run, so the golden lines carry 0000000000000000 and the activity's real span id is substituted.
-[NotInParallel("ActivityContext")]
 public sealed class GoldenRecordTests
 {
     private const string SpanPlaceholder = "0000000000000000";

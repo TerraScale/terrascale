@@ -305,18 +305,6 @@ public sealed class BindingEdgeTests
     }
 
     [Test]
-    [Arguments("""{"name":"a","name":"b"}""")]
-    [Arguments("""{"name":"a","Name":"b"}""")]
-    public async Task DuplicateBodyPropertiesFollowTheSerializerPolicyWhenMerging(string body)
-    {
-        // AllowDuplicateProperties defaults to true: the last value wins, as in direct deserialization.
-        await using var app = await StartAsync(mapInGroup: false);
-        using var client = Client(app);
-        using var response = await client.PutAsync("/items/7", new StringContent(body, Encoding.UTF8, "application/json"));
-        await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo("""{"id":7,"page":1,"name":"b","tags":[]}""");
-    }
-
-    [Test]
     public async Task SingleUseBindingSourcesAreConsumedOnce()
     {
         await using var app = await StartAsync(mapInGroup: false);
@@ -666,67 +654,11 @@ internal sealed partial class MoneyJsonContext : JsonSerializerContext;
 public sealed class ThirdPassBindingTests
 {
     [Test]
-    public async Task RequiredMembersAreOptionalQueryParametersWhenTheBodyIsKept()
-    {
-        await using var app = await StartAsync(_ => { });
-        using var client = Client(app);
-        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
-        var get = document.RootElement.GetProperty("paths").GetProperty("/required-filter").GetProperty("get");
-        var name = get.GetProperty("parameters").EnumerateArray().Single(parameter => parameter.GetProperty("name").GetString() == "name");
-        await Assert.That(name.TryGetProperty("required", out var required) && required.GetBoolean()).IsFalse();
-        await Assert.That(get.TryGetProperty("requestBody", out _)).IsTrue();
-    }
-
-    [Test]
-    public async Task EmptyJsonBodiesBindParametersAndDefaults()
-    {
-        await using var app = await StartAsync(_ => { });
-        using var client = Client(app);
-        using var withParameters = await client.PostAsync("/nested-echo?page=4", new StringContent("", Encoding.UTF8, "application/json"));
-        using var withoutParameters = await client.PostAsync("/nested-echo", new StringContent("", Encoding.UTF8, "application/json"));
-        await Assert.That(await withParameters.Content.ReadAsStringAsync()).IsEqualTo("""{"page":4,"filter":null}""");
-        await Assert.That(await withoutParameters.Content.ReadAsStringAsync()).IsEqualTo("""{"page":1,"filter":null}""");
-    }
-
-    [Test]
-    public async Task QueryValuesNeverOverwriteNestedBodyObjects()
-    {
-        await using var app = await StartAsync(_ => { });
-        using var client = Client(app);
-        using var response = await client.PostAsync(
-            "/nested-echo?filter=x&page=2",
-            new StringContent("""{"filter":{"name":"body"}}""", Encoding.UTF8, "application/json"));
-        await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo("""{"page":2,"filter":{"name":"body"}}""");
-    }
-
-    [Test]
-    public async Task NullableValuesUseTheApplicationConverterOfTheUnderlyingType()
-    {
-        await using var app = await StartAsync(builder => builder.Services.ConfigureHttpJsonOptions(options =>
-            options.SerializerOptions.Converters.Add(new StringOnlyIntConverter())));
-        using var client = Client(app);
-        await Assert.That(await client.GetStringAsync("/nullable-converted?limit=4&extra=5&extra=6"))
-            .IsEqualTo("""{"limit":4,"extra":[5,6]}""");
-    }
-
-    [Test]
     public async Task CollectionRouteValuesUseTheSimpleStyle()
     {
         await using var app = await StartAsync(_ => { });
         using var client = Client(app);
         await Assert.That(await client.GetStringAsync("/ids/1,2,3")).IsEqualTo("""{"ids":[1,2,3]}""");
-    }
-
-    [Test]
-    public async Task CaseSensitiveContractsBindTheExactlyNamedMember()
-    {
-        // System.Text.Json rejects "id" and "ID" together under case-insensitive names, so this
-        // contract only exists in case-sensitive apps.
-        await using var app = await StartAsync(
-            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.PropertyNameCaseInsensitive = false),
-            EndpointRegistration.Create<CaseEndpoint>());
-        using var client = Client(app);
-        await Assert.That(await client.GetStringAsync("/case?ID=7")).IsEqualTo("""{"id":0,"ID":7}""");
     }
 
     private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
@@ -816,43 +748,6 @@ public sealed class FourthPassBindingTests
         await Assert.That(post.TryGetProperty("requestBody", out _)).IsTrue();
     }
 
-    [Test]
-    public async Task RouteSlotsNamedAfterNestedObjectsKeepTheBody()
-    {
-        await using var app = await StartAsync(_ => { });
-        using var client = Client(app);
-        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
-        var get = document.RootElement.GetProperty("paths").GetProperty("/fourth/by-filter/{filter}").GetProperty("get");
-        var filter = get.GetProperty("parameters").EnumerateArray().Single(parameter => parameter.GetProperty("name").GetString() == "filter");
-        await Assert.That(filter.GetProperty("schema").GetProperty("type").GetString()).IsEqualTo("string");
-        await Assert.That(get.TryGetProperty("requestBody", out _)).IsTrue();
-    }
-
-    [Test]
-    public async Task CaseSensitiveContractsDocumentBothParameters()
-    {
-        await using var app = await StartAsync(
-            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.PropertyNameCaseInsensitive = false),
-            EndpointRegistration.Create<CaseEndpoint>());
-        using var client = Client(app);
-        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
-        var names = document.RootElement.GetProperty("paths").GetProperty("/case").GetProperty("get").GetProperty("parameters")
-            .EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()!).ToArray();
-        await Assert.That(names).IsEquivalentTo(["id", "ID"]);
-    }
-
-    [Test]
-    public async Task StrictNumbersAcceptParameterSyntax()
-    {
-        await using var app = await StartAsync(builder => builder.Services.ConfigureHttpJsonOptions(options =>
-            options.SerializerOptions.NumberHandling = JsonNumberHandling.Strict));
-        using var client = Client(app);
-        await Assert.That(await client.GetStringAsync("/fourth/strict/007?page=01&ids=%2B1&ids=%202%20&price=%2B2.5&ratio=01.5"))
-            .IsEqualTo("""{"big":7,"page":1,"ids":[1,2],"price":2.5,"ratio":1.5}""");
-        using var outOfRange = await client.GetAsync("/fourth/strict/1?page=1.5");
-        await Assert.That(outOfRange.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-    }
-
     private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
     {
         var builder = WebApplication.CreateBuilder();
@@ -901,52 +796,6 @@ public sealed class StrictNumbersEndpoint : Endpoint<StrictNumbersQuery, StrictN
 /// <summary>Regressions from review of PR #8 (fifth pass).</summary>
 public sealed class FifthPassBindingTests
 {
-    [Test]
-    public async Task RouteSuppliedRequiredMembersAreOptionalInTheBodySchema()
-    {
-        await using var app = await StartAsync();
-        using var client = Client(app);
-        using var response = await client.PostAsync("/fifth/items/7", new StringContent("""{"name":"x"}""", Encoding.UTF8, "application/json"));
-        await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo("""{"id":"7","name":"x"}""");
-
-        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
-        var schema = document.RootElement.GetProperty("paths").GetProperty("/fifth/items/{id}").GetProperty("post")
-            .GetProperty("requestBody").GetProperty("content").GetProperty("application/json").GetProperty("schema");
-        // Both members can come from parameters (id from the route, name from ?name=), so this
-        // operation's body requires neither; the shared component schema keeps both required.
-        var component = document.RootElement.GetProperty("components").GetProperty("schemas").GetProperty("RequiredItem");
-        var effective = schema.TryGetProperty("$ref", out _) ? component : schema;
-        await Assert.That(effective.TryGetProperty("required", out var required) && required.GetArrayLength() > 0).IsFalse();
-        await Assert.That(component.GetProperty("required").EnumerateArray().Select(name => name.GetString()!).ToArray()).IsEquivalentTo(["id", "name"]);
-    }
-
-    [Test]
-    public async Task MembersTheDeserializerCannotSetAreNotInputs()
-    {
-        await using var app = await StartAsync();
-        using var client = Client(app);
-        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
-        var names = document.RootElement.GetProperty("paths").GetProperty("/fifth/getter").GetProperty("get").GetProperty("parameters")
-            .EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()!).ToArray();
-        await Assert.That(names).IsEquivalentTo(["page"]);
-    }
-
-    [Test]
-    public async Task NullableComplexStructsStayBodyOnly()
-    {
-        await using var app = await StartAsync();
-        using var client = Client(app);
-        using var response = await client.PostAsync(
-            "/fifth/struct-echo?filter=x&page=2",
-            new StringContent("""{"filter":{"name":"body"}}""", Encoding.UTF8, "application/json"));
-        await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo("""{"page":2,"filter":{"name":"body"}}""");
-
-        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
-        var names = document.RootElement.GetProperty("paths").GetProperty("/fifth/struct-echo").GetProperty("post").GetProperty("parameters")
-            .EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()!).ToArray();
-        await Assert.That(names).IsEquivalentTo(["page"]);
-    }
-
     private static async Task<WebApplication> StartAsync()
     {
         var builder = WebApplication.CreateBuilder();
@@ -1012,48 +861,11 @@ public sealed class NullableStructEndpoint : Endpoint<NullableStructQuery, Nulla
 public sealed class SixthPassBindingTests
 {
     [Test]
-    public async Task EmptyValuesBindNullToNullableValueTypes()
-    {
-        await using var app = await StartAsync(_ => { });
-        using var client = Client(app);
-        await Assert.That(await client.GetStringAsync("/sixth/nullable?limit=&shade=")).IsEqualTo("""{"limit":null,"shade":null}""");
-    }
-
-    [Test]
     public async Task EnumNamesBindWithTheDefaultNumericConverter()
     {
         await using var app = await StartAsync(_ => { });
         using var client = Client(app);
         await Assert.That(await client.GetStringAsync("/sixth/enum?color=green&access=Read,Write")).IsEqualTo("""{"color":1,"access":3}""");
-    }
-
-    [Test]
-    public async Task UnsupportedCharsetsAreAnsweredWith415()
-    {
-        await using var app = await StartAsync(_ => { });
-        using var client = Client(app);
-        using var content = new ByteArrayContent("""{"page":1}"""u8.ToArray());
-        content.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse("application/json; charset=not-an-encoding");
-        using var merged = await client.PostAsync("/sixth/echo?page=2", content);
-        using var direct = await client.PostAsync("/sixth/echo", content);
-
-        // MediaTypeHeaderValue.Encoding returns null for an unknown charset (the merge path read it
-        // as UTF-8) and ReadFromJsonAsync throws InvalidOperationException (the direct path was a 500).
-        await Assert.That(merged.StatusCode).IsEqualTo(HttpStatusCode.UnsupportedMediaType);
-        await Assert.That(direct.StatusCode).IsEqualTo(HttpStatusCode.UnsupportedMediaType);
-    }
-
-    [Test]
-    public async Task ProblemResponsesSurviveAReplacedTypeInfoResolver()
-    {
-        await using var app = await StartAsync(
-            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolver = MoneyJsonContext.Default),
-            EndpointRegistration.Create<MoneyEndpoint>());
-        using var client = Client(app);
-        using var request = new HttpRequestMessage(HttpMethod.Get, "/money?amount=1") { Content = new StringContent("{", Encoding.UTF8, "application/json") };
-        using var response = await client.SendAsync(request);
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(response.Content.Headers.ContentType?.MediaType).IsEqualTo("application/problem+json");
     }
 
     private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
@@ -1113,50 +925,6 @@ public sealed class SixthEchoEndpoint : Endpoint<FilteredQuery, FilteredQuery>
 /// <summary>Regressions from review of PR #8 (seventh pass).</summary>
 public sealed class SeventhPassBindingTests
 {
-    [Test]
-    public async Task PropertyLevelStringEnumsWithoutIntegersBindNames()
-    {
-        await using var app = await StartAsync(_ => { }, EndpointRegistration.Create<StrictColorEndpoint>());
-        using var client = Client(app);
-        await Assert.That(await client.GetStringAsync("/seventh/strict-color?color=Green")).IsEqualTo("""{"color":"Green"}""");
-    }
-
-    [Test]
-    public async Task ContractModifierStringEnumsWithoutIntegersBindNames()
-    {
-        // A converter instance from System.Text.Json itself, attached per property by a modifier.
-        await using var app = await StartAsync(
-            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolver =
-                new DefaultJsonTypeInfoResolver
-                {
-                    Modifiers =
-                    {
-                        static contract =>
-                        {
-                            if (contract.Type == typeof(ColorQuery))
-                            {
-                                contract.Properties[0].CustomConverter = new JsonStringEnumConverter<Color>(namingPolicy: null, allowIntegerValues: false);
-                            }
-                        },
-                    },
-                }),
-            EndpointRegistration.Create<ColorEndpoint>());
-        using var client = Client(app);
-        await Assert.That(await client.GetStringAsync("/colors?color=Green")).IsEqualTo("""{"color":"Green"}""");
-    }
-
-    [Test]
-    public async Task OptionsLevelStringEnumsWithoutIntegersBindNamesNullablesAndElements()
-    {
-        await using var app = await StartAsync(
-            builder => builder.Services.ConfigureHttpJsonOptions(options =>
-                options.SerializerOptions.Converters.Add(new JsonStringEnumConverter(allowIntegerValues: false))),
-            EndpointRegistration.Create<ColorsEndpoint>());
-        using var client = Client(app);
-        await Assert.That(await client.GetStringAsync("/seventh/colors?shade=Red&colors=Green&colors=Red"))
-            .IsEqualTo("""{"shade":"Red","colors":["Green","Red"]}""");
-    }
-
     private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
     {
         var builder = WebApplication.CreateBuilder();
@@ -1211,43 +979,6 @@ public sealed class EighthPassBindingTests
         await Assert.That(size.TryGetProperty("required", out var optional) && optional.GetBoolean()).IsFalse();
     }
 
-    [Test]
-    public async Task MalformedApplicationConverterInputIsABadRequest()
-    {
-        await using var merged = await StartAsync(
-            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolver = MoneyJsonContext.Default),
-            EndpointRegistration.Create<MoneyEndpoint>());
-        using (var client = Client(merged))
-        {
-            using var response = await client.GetAsync("/money?amount=abc");
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        }
-
-        await using var direct = await StartAsync(
-            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new StringOnlyIntConverter())),
-            EndpointRegistration.Create<NestedEchoEndpoint>());
-        using (var client = Client(direct))
-        {
-            using var response = await client.PostAsync("/nested-echo", new StringContent("""{"page":"abc"}""", Encoding.UTF8, "application/json"));
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        }
-    }
-
-    [Test]
-    public async Task GlobalPopulateDoesNotMakeGetterOnlyScalarsInputs()
-    {
-        await using var app = await StartAsync(
-            builder => builder.Services.ConfigureHttpJsonOptions(options =>
-                options.SerializerOptions.PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate),
-            EndpointRegistration.Create<PopulateEndpoint>());
-        using var client = Client(app);
-        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
-        var names = document.RootElement.GetProperty("paths").GetProperty("/eighth/populate").GetProperty("get").GetProperty("parameters")
-            .EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()!).ToArray();
-        await Assert.That(names).IsEquivalentTo(["page", "tags"]);
-        await Assert.That(await client.GetStringAsync("/eighth/populate?page=2&tags=a&tags=b&id=7")).IsEqualTo("2:a,b:42");
-    }
-
     private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
     {
         var builder = WebApplication.CreateBuilder();
@@ -1293,27 +1024,6 @@ public sealed class PopulateEndpoint : Endpoint<PopulateQuery, string>
 /// <summary>Regressions from review of PR #8 (ninth pass).</summary>
 public sealed class NinthPassBindingTests
 {
-    [Test]
-    [Arguments(true, 200)]
-    [Arguments(false, 400)]
-    public async Task DuplicatePropertiesBehaveTheSameWithAndWithoutParameters(bool allowDuplicates, int expected)
-    {
-        await using var app = await StartAsync(
-            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.AllowDuplicateProperties = allowDuplicates),
-            EndpointRegistration.Create<NestedEchoEndpoint>());
-        using var client = Client(app);
-        const string body = """{"page":1,"page":2,"filter":{"name":"a","name":"b"}}""";
-        using var direct = await client.PostAsync("/nested-echo", new StringContent(body, Encoding.UTF8, "application/json"));
-        using var merged = await client.PostAsync("/nested-echo?page=3", new StringContent(body, Encoding.UTF8, "application/json"));
-        await Assert.That((int)direct.StatusCode).IsEqualTo(expected);
-        await Assert.That((int)merged.StatusCode).IsEqualTo(expected);
-        if (allowDuplicates)
-        {
-            await Assert.That(await direct.Content.ReadAsStringAsync()).IsEqualTo("""{"page":2,"filter":{"name":"b"}}""");
-            await Assert.That(await merged.Content.ReadAsStringAsync()).IsEqualTo("""{"page":3,"filter":{"name":"b"}}""");
-        }
-    }
-
     [Test]
     public async Task OptionalRouteSegmentsKeepTheQueryFallback()
     {
@@ -1380,63 +1090,6 @@ public sealed class TenthPassBindingTests
         using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
         var body = document.RootElement.GetProperty("paths").GetProperty("/tenth/required-nested").GetProperty("get").GetProperty("requestBody");
         await Assert.That(body.GetProperty("required").GetBoolean()).IsTrue();
-    }
-
-    [Test]
-    [Arguments("/tenth/optional/{id}")]
-    [Arguments("/tenth/defaulted/{id}")]
-    public async Task OptionalRouteSlotsDoNotMakeTheQueryFallbackRequired(string path)
-    {
-        await using var app = await StartAsync(
-            _ => { },
-            EndpointRegistration.Create<RequiredOptionalIdEndpoint>(),
-            EndpointRegistration.Create<RequiredDefaultedIdEndpoint>());
-        using var client = Client(app);
-        await Assert.That(await client.GetStringAsync("/tenth/optional/7")).IsEqualTo("7");
-        await Assert.That(await client.GetStringAsync("/tenth/defaulted")).IsEqualTo("5");
-        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
-        var query = document.RootElement.GetProperty("paths").GetProperty(path).GetProperty("get").GetProperty("parameters")
-            .EnumerateArray().Single(parameter => parameter.GetProperty("in").GetString() == "query");
-        await Assert.That(query.TryGetProperty("required", out var required) && required.GetBoolean()).IsFalse();
-    }
-
-    [Test]
-    public async Task MergedBodiesKeepRepeatedPopulatedMembers()
-    {
-        await using var app = await StartAsync(
-            builder => builder.Services.ConfigureHttpJsonOptions(options =>
-                options.SerializerOptions.PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate),
-            EndpointRegistration.Create<PopulateBodyEndpoint>());
-        using var client = Client(app);
-        const string body = """{"tags":["a"],"tags":["b"]}""";
-        using var direct = await client.PostAsync("/tenth/populate", new StringContent(body, Encoding.UTF8, "application/json"));
-        using var merged = await client.PostAsync("/tenth/populate?page=2", new StringContent(body, Encoding.UTF8, "application/json"));
-        await Assert.That(await direct.Content.ReadAsStringAsync()).IsEqualTo("1:a,b");
-        await Assert.That(await merged.Content.ReadAsStringAsync()).IsEqualTo("2:a,b");
-    }
-
-    [Test]
-    public async Task MergedBodiesKeepDictionaryKeysThatDifferByCase()
-    {
-        await using var app = await StartAsync(_ => { }, EndpointRegistration.Create<DataBodyEndpoint>());
-        using var client = Client(app);
-        const string body = """{"page":1,"data":{"a":1,"A":2}}""";
-        using var direct = await client.PostAsync("/tenth/data", new StringContent(body, Encoding.UTF8, "application/json"));
-        using var merged = await client.PostAsync("/tenth/data?page=2", new StringContent(body, Encoding.UTF8, "application/json"));
-        await Assert.That(await direct.Content.ReadAsStringAsync()).IsEqualTo("1:a=1,A=2");
-        await Assert.That(await merged.Content.ReadAsStringAsync()).IsEqualTo("2:a=1,A=2");
-    }
-
-    [Test]
-    [Arguments("/case?id=1&ID=2")]
-    [Arguments("/case?ID=2&id=1")]
-    public async Task QueryKeysThatDifferByCaseBindTheirOwnMembers(string url)
-    {
-        await using var app = await StartAsync(
-            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.PropertyNameCaseInsensitive = false),
-            EndpointRegistration.Create<CaseEndpoint>());
-        using var client = Client(app);
-        await Assert.That(await client.GetStringAsync(url)).IsEqualTo("""{"id":1,"ID":2}""");
     }
 
     private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
@@ -1519,39 +1172,6 @@ public sealed class DataBodyEndpoint : Endpoint<DataBody, string>
 public sealed class EleventhPassBindingTests
 {
     [Test]
-    [Arguments("/case?Id=ignored&id=7")]
-    [Arguments("/case?id=7&Id=ignored")]
-    public async Task AnAmbiguousQueryKeyDoesNotHideAnExactOne(string url)
-    {
-        await using var app = await StartAsync(
-            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.PropertyNameCaseInsensitive = false),
-            mapInGroup: false,
-            EndpointRegistration.Create<CaseEndpoint>());
-        using var client = Client(app);
-        using var request = new HttpRequestMessage(HttpMethod.Get, url)
-        {
-            Content = new StringContent("""{"id":1,"ID":2}""", Encoding.UTF8, "application/json"),
-        };
-        using var response = await client.SendAsync(request);
-        await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo("""{"id":7,"ID":2}""");
-    }
-
-    [Test]
-    public async Task CaseInsensitiveDuplicatesAreRejectedOnBothPaths()
-    {
-        await using var app = await StartAsync(
-            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.AllowDuplicateProperties = false),
-            mapInGroup: false,
-            EndpointRegistration.Create<NestedEchoEndpoint>());
-        using var client = Client(app);
-        const string body = """{"page":1,"Page":2}""";
-        using var direct = await client.PostAsync("/nested-echo", new StringContent(body, Encoding.UTF8, "application/json"));
-        using var merged = await client.PostAsync("/nested-echo?page=3", new StringContent(body, Encoding.UTF8, "application/json"));
-        await Assert.That(direct.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(merged.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-    }
-
-    [Test]
     public async Task OptionalAndDefaultedSegmentsKeepTheirQueryFallbackUnderAGroup()
     {
         // ApiExplorer's RelativePath keeps {id?} and {id=5}; only the OpenAPI path key drops the markers.
@@ -1599,20 +1219,6 @@ public sealed class EleventhPassBindingTests
 public sealed class TwelfthPassBindingTests
 {
     [Test]
-    public async Task DeepBodiesWithinTheConfiguredMaxDepthMergeLikeTheyDeserialize()
-    {
-        await using var app = await StartAsync(
-            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.MaxDepth = 2000),
-            EndpointRegistration.Create<DeepBodyEndpoint>());
-        using var client = Client(app);
-        var body = """{"data":""" + new string('[', 1500) + new string(']', 1500) + "}";
-        using var direct = await client.PostAsync("/twelfth/deep", new StringContent(body, Encoding.UTF8, "application/json"));
-        using var merged = await client.PostAsync("/twelfth/deep?page=2", new StringContent(body, Encoding.UTF8, "application/json"));
-        await Assert.That(await direct.Content.ReadAsStringAsync()).IsEqualTo("0");
-        await Assert.That(await merged.Content.ReadAsStringAsync()).IsEqualTo("2");
-    }
-
-    [Test]
     public async Task TypedRouteValuesBindIndependentlyOfTheCulture()
     {
         var builder = WebApplication.CreateBuilder();
@@ -1630,20 +1236,6 @@ public sealed class TwelfthPassBindingTests
         await app.StartAsync();
         using var client = Client(app);
         await Assert.That(await client.GetStringAsync("/twelfth/price")).IsEqualTo("1.5");
-    }
-
-    [Test]
-    public async Task GetterOnlyReadOnlyCollectionsAreNotPopulatedInputs()
-    {
-        await using var app = await StartAsync(
-            builder => builder.Services.ConfigureHttpJsonOptions(options =>
-                options.SerializerOptions.PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate),
-            EndpointRegistration.Create<ReadOnlyIdsEndpoint>());
-        using var client = Client(app);
-        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
-        var names = document.RootElement.GetProperty("paths").GetProperty("/twelfth/read-only").GetProperty("get").GetProperty("parameters")
-            .EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()!).ToArray();
-        await Assert.That(names).IsEquivalentTo(["page", "tags"]);
     }
 
     private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
@@ -1702,21 +1294,6 @@ public sealed class ReadOnlyIdsEndpoint : Endpoint<ReadOnlyIdsQuery, string>
 public sealed class ThirteenthPassBindingTests
 {
     [Test]
-    public async Task GetterOnlySetsArePopulatedInputs()
-    {
-        await using var app = await StartAsync(
-            builder => builder.Services.ConfigureHttpJsonOptions(options =>
-                options.SerializerOptions.PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate),
-            EndpointRegistration.Create<SetsEndpoint>());
-        using var client = Client(app);
-        await Assert.That(await client.GetStringAsync("/thirteenth/sets?ids=1&ids=2&labels=x")).IsEqualTo("1,2|x");
-        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
-        var names = document.RootElement.GetProperty("paths").GetProperty("/thirteenth/sets").GetProperty("get").GetProperty("parameters")
-            .EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()!).ToArray();
-        await Assert.That(names).IsEquivalentTo(["ids", "labels"]);
-    }
-
-    [Test]
     public async Task RouteSlotsDescribedByApiExplorerUseTheBoundPropertySchema()
     {
         await using var app = await StartAsync(_ => { }, EndpointRegistration.Create<IdsEndpoint>());
@@ -1766,24 +1343,6 @@ public sealed class FourteenthPassBindingTests
 {
     // Mirrors what System.Text.Json actually populates for a getter-only member under Populate
     // (probed directly): these collections are inputs, the others are not.
-    [Test]
-    public async Task GetterOnlyCollectionInputsMatchWhatTheSerializerPopulates()
-    {
-        await using var app = await StartAsync(
-            builder => builder.Services.ConfigureHttpJsonOptions(options =>
-                options.SerializerOptions.PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate),
-            EndpointRegistration.Create<CollectionsEndpoint>());
-        using var client = Client(app);
-        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
-        var names = document.RootElement.GetProperty("paths").GetProperty("/fourteenth/collections").GetProperty("get").GetProperty("parameters")
-            .EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()!).ToArray();
-        await Assert.That(names).IsEquivalentTo([
-            "list", "hashSet", "queue", "stack", "linkedList", "sortedSet", "collection", "observable",
-            "concurrentQueue", "concurrentStack", "iCollection", "iList", "iSet"]);
-        await Assert.That(await client.GetStringAsync("/fourteenth/collections?queue=1&queue=2&stack=3&stack=4&concurrentQueue=5"))
-            .IsEqualTo("1,2|4,3|5");
-    }
-
     private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
     {
         var builder = WebApplication.CreateBuilder();

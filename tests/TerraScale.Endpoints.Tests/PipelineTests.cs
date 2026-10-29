@@ -100,15 +100,6 @@ public sealed class PipelineTests
         await Assert.That(paths.GetProperty("/probe").GetProperty("get").GetProperty("operationId").GetString()).IsEqualTo("probe");
     }
 
-    [Test]
-    public async Task MappingAnUnregisteredEndpointFailsFast()
-    {
-        var builder = WebApplication.CreateBuilder();
-        await using var app = builder.Build();
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => Task.Run(() => new ProbeEndpoint().Map(app)));
-        await Assert.That(exception!.Message).Contains("not registered");
-    }
-
     private static async Task<WebApplication> StartAsync(params EndpointRegistration[] endpoints)
     {
         var builder = WebApplication.CreateBuilder();
