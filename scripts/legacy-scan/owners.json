@@ -1,0 +1,13 @@
+{
+  "ts-dashboard": "P2/P3",
+  "ts-dotnet": "P4b",
+  "ts-js": "P4a",
+  "ts-go": "P4c",
+  "ts-python": "P4d",
+  "ts-rust": "P4e",
+  "ts-docs": "P5/C3",
+  "ts-orchestrator": "P8",
+  "ts-status": "P8",
+  "ts-landing": "P8",
+  "terraform-provider-terrascale": "P8"
+}
