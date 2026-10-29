@@ -82,4 +82,27 @@ or were deleted where redundant. Assertions for retained cases remain strict.
 
 ## Final measurements
 
-Final timings, generated test counts and live main CI proof are pending validation.
+Rebased onto `ac82173cb`. The measured tree is `94a5a7585`; `b81cf85a9` adds only this baseline report/data. Beta has 12 logical CPUs. All repeated commands include restore and build, use host parallelism, and request TRX output through `TEST_ARGS`. No tests were skipped.
+
+| Run | `make libs-test` | `make terrabase-test-fast` | Result |
+| --- | ---: | ---: | --- |
+| 1 | 8.753 s | 49.283 s | Passed |
+| 2 | 7.668 s | 41.533 s | Passed |
+| 3 | 7.824 s | 36.375 s | Passed |
+| 4 | — | 35.461 s | Passed |
+| 5 | — | 37.040 s | Passed |
+
+| Suite | Before tests | After tests |
+| --- | ---: | ---: |
+| TerraBase Fast | 2,109 | 406 |
+| Turso driver | 46 | 24 |
+| TerraBase target total | 2,155 | 430 |
+| Endpoints | 89 | 50 |
+| Logging | 46 | 42 |
+| Libs target total | 135 | 92 |
+
+Per-test after durations for every repeat: [CSV](2026-10-29-terrabase-fast-after.csv).
+
+`ts-ship` also passed this candidate on mariogk-dev: libs **17.192 s**, auth **90.789 s**, TerraBase **64.200 s**. Its benchmark check failed `TestParityRunnerMeasuresEveryRegionThenCleansUp` and reached the 299-second deadline, so it correctly did not push. The benchmark owner has been notified through the parent.
+
+Live main CI proof is pending shipping. A separate four-CPU build rehearsal is in progress.
