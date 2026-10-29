@@ -1,24 +1,18 @@
 using TerraBase.Engine;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 
 namespace TerraBase.Features.Health;
-
-/// <summary>Local serving readiness, not certified membership or replica catch-up evidence.</summary>
 public interface INodeReadiness
 {
-    /// <summary>
-    /// Checks storage and shutdown with the readiness probe's rules. Not ts-auth's signing keys: ts-auth
-    /// stores its data here, so it cannot become ready before this node does; user tokens answer 401 until the keys load.
-    /// </summary>
     ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken);
 }
 
 internal sealed class NodeReadiness(
-    IStorageEngine engine, IHostApplicationLifetime lifetime, ICatalogGate gate, IPeerTopology topology) : INodeReadiness
+    IStorageEngine engine, IHostApplicationLifetime lifetime, ICatalogGate gate) : INodeReadiness
 {
     public async ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken)
     {
-        if (!gate.IsOpen || !topology.IsCurrent || lifetime.ApplicationStopping.IsCancellationRequested)
+        if (!gate.IsOpen || lifetime.ApplicationStopping.IsCancellationRequested)
         {
             return false;
         }
@@ -35,18 +29,11 @@ internal sealed class NodeReadiness(
         }
     }
 }
-
-/// <summary>Registers the shared local readiness check.</summary>
 public static class HealthExtensions
 {
-    /// <summary>Shares identical probe and pressure readiness rules.</summary>
     public static IServiceCollection AddTerraBaseHealth(this IServiceCollection services)
     {
         services.AddSingleton<INodeReadiness, NodeReadiness>();
-        services.AddSingleton<IReplicationHealth, ReplicationHealth>();
-        services.AddSingleton<PeerTopology>();
-        services.AddSingleton<IPeerTopology>(provider => provider.GetRequiredService<PeerTopology>());
-        services.AddHostedService(provider => provider.GetRequiredService<PeerTopology>());
         return services;
     }
 }

@@ -5,7 +5,6 @@ using System.Reflection;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Health;
-using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -17,18 +16,15 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
 {
     private const int BucketCount = 256;
     private const int MaxTrackedTenants = 4096;
-    private static readonly string[] ListenerNames = ["admin", "client", "peer"];
+    private static readonly string[] ListenerNames = ["internal", "client", "metrics"];
     private readonly Lock _gate = new();
     private readonly long[][] _latencies = [new long[BucketCount], new long[BucketCount], new long[BucketCount]];
     private readonly long[] _totals = new long[3];
     private readonly long[] _previousTotals = new long[3];
-    // ponytail: exact ranking within 4096 organizations per interval (under 1 MiB); expose dropped
-    // requests rather than invent a global top list. Use a measured heavy-hitter algorithm if this fills.
     private readonly Dictionary<string, (long Count, PlanTier? Plan)> _tenants = [];
     private readonly TerraBaseOptions _options;
     private readonly IStorageEngine _engine;
     private readonly INodeReadiness _readiness;
-    private readonly IReplicationPressure _replication;
     private readonly TimeProvider _time;
     private readonly ILogger<PressureSignals> _logger;
     private readonly string _processId = EntityIds.New().ToString();
@@ -41,12 +37,11 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
     private TimeSpan? _lastCpu;
     private long _clientConnections;
 
-    public PressureSignals(TerraBaseOptions options, IStorageEngine engine, TimeProvider time, IMeterFactory meters, ILogger<PressureSignals> logger, INodeReadiness readiness, IReplicationPressure replication)
+    public PressureSignals(TerraBaseOptions options, IStorageEngine engine, TimeProvider time, IMeterFactory meters, ILogger<PressureSignals> logger, INodeReadiness readiness)
     {
         _options = options;
         _engine = engine;
         _readiness = readiness;
-        _replication = replication;
         _time = time;
         _logger = logger;
         _snapshot = new PressureBody
@@ -106,8 +101,6 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
             using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1), _time);
             while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
             {
-                // The tick resumes this loop on the clock's callback thread. Leave it, so ticks that fire while this
-                // samples coalesce: a test clock advanced by days would otherwise sample once per second inline.
                 await Task.Yield();
                 Sample(await _readiness.IsReadyAsync(stoppingToken).ConfigureAwait(false));
             }
@@ -117,7 +110,6 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
             using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10), _time);
             do
             {
-                // The storage walk is synchronous: leave the clock's callback thread first, as the process loop does.
                 await Task.Yield();
                 StoragePressure stored;
                 try
@@ -127,7 +119,6 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
                 }
                 catch (ObjectDisposedException)
                 {
-                    // Engine closure must leave the administrative listener available for diagnostics.
                     stored = new StoragePressure(null, []);
                 }
 
@@ -216,7 +207,6 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
             Node = _options.MachineId,
             LocalReady = localReady,
             IoAdmittedCount = _engine.IoAdmittedCount,
-            SenderDurableLagSeq = _replication.SenderDurableLagSeq,
             Region = _options.Region,
             ProcessId = _processId,
             Release = _release,
@@ -240,8 +230,6 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
             TopTenantsByStorage = Array.AsReadOnly(storage?.Pressure.TopTenants.Select(tenant => new TenantStoragePressure(tenant.Org, tenant.Bytes)).ToArray() ?? []),
         });
     }
-
-    // Fixed geometric bins give an upper bound within 10% (minimum .01 ms); no retained request samples.
     private static double Percentile(long[] buckets)
     {
         var count = buckets.Sum();

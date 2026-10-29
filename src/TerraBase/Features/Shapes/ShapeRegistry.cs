@@ -6,24 +6,13 @@ using TerraBase.Tenancy;
 using ZLogger;
 
 namespace TerraBase.Features.Shapes;
-
-/// <summary>
-/// The shapes this machine serves, so the flight sealer can seal every one up to the head on wake (free-reads.md 3.6).
-/// An LRU cache, not an admission gate: at most <see cref="MaxShapes"/> entries, and <see cref="MaxShapesPerDatabase"/> per database,
-/// evict the least recently used entry. Eviction only stops wake sealing; the handle stays valid and reads seal on demand.
-/// Each entry's bytes are reserved from <see cref="IMemoryBudget"/> before it is allocated and released when it leaves.
-/// Replaced handles are queued for retirement and dropped by <see cref="TakeRetired"/>.
-/// </summary>
 internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, IMemoryBudget budget, TimeProvider time, ILogger<ShapeRegistry>? logger = null)
     : IShapeFlightSealer, IDisposable
 {
     internal const int MaxShapes = 1024;
     internal const int MaxShapesPerDatabase = 256;
-    // shortcut: restart, overflow, eviction and unobserved collection drops leave derived bytes; add a durable database-wide retirement sweep in FR-16.
     internal const int MaxRetired = 1024;
     internal static readonly TimeSpan TrimInterval = TimeSpan.FromMinutes(1);
-
-    // The entry, its list nodes, the key record and their dictionary slots, beyond the key strings.
     private const int EntryOverhead = 512;
 
     private readonly Lock _gate = new();
@@ -32,8 +21,6 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
     private readonly Dictionary<ShapeFilterKey, RegistryKey> _filtered = [];
     private readonly Dictionary<DatabaseKey, int> _counts = [];
     private readonly LinkedList<RetiredShape> _retired = new();
-
-    /// <summary>The handle this machine currently serves for the shape, or null when it is not registered. Touches the entry.</summary>
     public string? CurrentHandle(TenantContext database, string collection, string canonical)
     {
         lock (_gate)
@@ -47,9 +34,6 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
             return entry.Handle;
         }
     }
-
-    /// <summary>The filter of the filtered shape this machine currently serves under the handle, or null.</summary>
-    // shortcut: a linear scan of at most MaxShapes entries per key request, index by handle if key requests dominate.
     public ShapeFilter? FilteredShape(TenantContext database, string collection, string handle)
     {
         var owner = DatabaseKey.Of(database);
@@ -66,12 +50,6 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
             return null;
         }
     }
-
-    /// <summary>
-    /// Registers a shape at its head. A different handle for the same key replaces the entry and queues the old handle for retirement.
-    /// Evicts the least recently used entry of the database, then of the machine, when full. Null, or <see cref="QuotaExceeded"/>
-    /// when the memory budget cannot hold the entry; nothing changes in that case.
-    /// </summary>
     public QuotaExceeded? Track(TenantContext database, string collection, ShapeFilter filter, ShapeSealDefinition definition, long head)
     {
         var key = new RegistryKey(database, collection, filter.Canonical);
@@ -120,11 +98,6 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
             return null;
         }
     }
-
-    /// <summary>
-    /// Raises the shape's sealed cursor to a commit boundary a parked reader reached. Monotonic: a lower offset changes nothing,
-    /// and an unregistered shape is a no-op.
-    /// </summary>
     public void Advance(TenantContext database, string collection, string canonical, long offset)
     {
         lock (_gate)
@@ -135,8 +108,6 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
             }
         }
     }
-
-    /// <summary>Forgets the shapes the filter registry evicted, so the flight sealer stops sealing them. Their handles keep reading on demand.</summary>
     public void Forget(IReadOnlyList<ShapeFilterKey> evicted)
     {
         lock (_gate)
@@ -150,8 +121,6 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
             }
         }
     }
-
-    /// <summary>True when a retention pass of this shape is due; claims the slot so one pass runs per interval.</summary>
     public bool ClaimTrim(TenantContext database, string collection, string canonical)
     {
         lock (_gate)
@@ -171,8 +140,6 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
             return true;
         }
     }
-
-    /// <summary>Returns one retired handle from this database; the caller revalidates its authoritative lineage before dropping it.</summary>
     public RetiredShape? TakeRetired(TenantContext database)
     {
         lock (_gate)
@@ -189,8 +156,6 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
             return null;
         }
     }
-
-    /// <summary>Puts back a retired handle whose drop did not finish, or whose batch was busy. Keeps its key, so the next take can drop it.</summary>
     public void Retire(RetiredShape retired)
     {
         lock (_gate)
@@ -198,10 +163,6 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
             Enqueue(retired);
         }
     }
-
-    // Each shape of the database seals from its own cursor, so a wake seals only the commits it has not sealed yet.
-    // Best effort per shape: one shape's failure never stops the others, and this method never reports a shape's error as the database's.
-    // A stalled frontier is the database's: it would stall every shape, so the first one ends the wake as unavailable.
     public async ValueTask<ShapeFlightSealResult> SealAsync(IDatabaseStore store, CancellationToken cancellationToken)
     {
         if (store.Tenant is not { } tenant)
@@ -223,7 +184,6 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
         catch (Exception error) when (!cancellationToken.IsCancellationRequested
             && error is ShapeSealOffsetException or ObjectDisposedException or StorageBusyException or QosMemoryException)
         {
-            // Each requester reopens and reports its own missing, closing or busy database.
             logger?.ZLogWarning(error, $"Shape wake seal skipped a changing database");
             return new Done();
         }
@@ -255,7 +215,6 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
             }
             catch (ShapeSealOffsetException) when (!cancellationToken.IsCancellationRequested)
             {
-                // The cursor is no longer a retained boundary (retention, a reopen or a re-created collection). Forget the entry; the next resolve tracks it at the head.
                 lock (_gate)
                 {
                     if (_entries.TryGetValue(entry.Key, out var current) && ReferenceEquals(current, entry))
@@ -264,13 +223,8 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
                     }
                 }
             }
-            catch (ShapeUndurableException) when (!cancellationToken.IsCancellationRequested)
-            {
-                return new Unavailable("the shape head is not remote durable yet; retry later");
-            }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested)
             {
-                // This shape's own read reports the same error (ReadAtAsync); the other shapes still seal.
                 logger?.ZLogWarning(error, $"Shape wake seal skipped a shape");
             }
         }
@@ -304,8 +258,6 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
         _lru.Remove(entry.Node);
         _lru.AddFirst(entry.Node);
     }
-
-    // Unlinks every index of the entry and returns its bytes. The caller holds the gate and has checked the entry is current.
     private void Remove(Entry entry, bool release = true)
     {
         _lru.Remove(entry.Node);
@@ -336,8 +288,6 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
 
         return node?.Value ?? throw new InvalidOperationException("a full database holds an entry");
     }
-
-    // shortcut: overflow drops the oldest retired handle, see MaxRetired.
     private void Enqueue(RetiredShape retired)
     {
         if (_retired.Count == MaxRetired)
@@ -384,27 +334,15 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
         public IMemoryReservation Reservation { get; } = reservation;
 
         public LinkedListNode<Entry> Node { get; set; } = null!;
-
-        // The commit boundary sealed through; a wake seals from here.
         public long Cursor { get; set; } = cursor;
 
         public DateTimeOffset LastTrim { get; set; } = DateTimeOffset.MinValue;
     }
 }
-
-/// <summary>
-/// A handle this machine replaced, with the key it belongs to, so a failed or partial drop can be retried by <see cref="ShapeRegistry.Retire"/>.
-/// </summary>
 internal sealed record RetiredShape(TenantContext Database, string Collection, string Canonical, string Handle, IMemoryReservation Reservation) : IDisposable
 {
     public void Dispose() => Reservation.Dispose();
 }
-
-/// <summary>
-/// The requesters parked on one live flight, for <c>terrabase.shape.requests.waiting</c>. A requester counts only once its
-/// flight's probe has parked at the head: the probe runs after the flight captured the commit count, so a write issued after the
-/// gauge reaches N always wakes those N, and never races the probe.
-/// </summary>
 internal sealed class ShapeLiveGate(IShapeMetrics metrics)
 {
     private readonly Lock _gate = new();
@@ -469,8 +407,6 @@ internal sealed class ShapeLiveGate(IShapeMetrics metrics)
             Reconcile(group);
         }
     }
-
-    // The gauge is the parked requesters of every group, so each change posts only its difference.
     private void Reconcile(Group group)
     {
         var reported = group.Parked ? group.Admitted : 0;
@@ -492,6 +428,4 @@ internal sealed class ShapeLiveGate(IShapeMetrics metrics)
         public long Reported { get; set; }
     }
 }
-
-/// <summary>A live flight's identity from the request: the database, handle and offset.</summary>
 internal readonly record struct GateKey(string? Organization, string? Project, string? Database, string Handle, long Offset);

@@ -6,40 +6,8 @@ using System.Text.Json;
 
 namespace TerraBase.Engine.Lattices;
 
-/// <summary>
-/// The bytes of a <see cref="DocumentState"/> (docs/terrabase/multi-region-replication.md section 4), following the
-/// <c>LatticeEncoding</c> rules: a format byte, canonical order, little-endian fixed-width stamps, minimal LEB128
-/// counts, lengths and numbers, and a dictionary of the state's nodes so each version names its node by index.
-/// Decoding is a trust boundary: it accepts canonical bytes of a normalized state only, so decoding and encoding again
-/// returns the same bytes.
-/// </summary>
-/// <remarks>
-/// Two forms. The full form (<see cref="Encode"/>) carries every value: deltas on the wire. The stored form
-/// (<see cref="EncodeStored"/>) leaves out the value of a plain field, whose value is the base, because the stored
-/// document already holds it; decoding it needs that document.
-/// <code>
-/// state   = format(1) nodes:count{u64} clear fields:count{field}
-/// clear   = 0 | (1 live | 2 deleted) version changed
-/// field   = name:bytes base counters:count{node:index version inc:leb dec:leb changed} dots:count{dot}
-/// base    = 0 | (1 tombstone | 2 value | 3 value in the document) version changed [value:bytes if 2]
-/// dot     = element:bytes version (0 | 1 version) changed
-/// version = stamp:u64 node:index;  changed = u64;  bytes = length:leb utf8
-/// </code>
-/// </remarks>
 public static class DocumentStateEncoding
 {
-    internal static int Bucket(string collection, string id)
-    {
-        var name = Encoding.UTF8.GetBytes(collection);
-        var input = new byte[4 + name.Length + Encoding.UTF8.GetByteCount(id)];
-        BinaryPrimitives.WriteInt32LittleEndian(input, name.Length);
-        name.CopyTo(input, 4);
-        Encoding.UTF8.GetBytes(id, input.AsSpan(4 + name.Length));
-        var hash = SHA256.HashData(input);
-        return (hash[0] << 4) | (hash[1] >> 4);
-    }
-
-    /// <summary>The format every encoding starts with; decoding refuses any other.</summary>
     public const byte Format = 1;
 
     private const byte Absent = 0;
@@ -51,18 +19,8 @@ public static class DocumentStateEncoding
 
     private static readonly UTF8Encoding Strict = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
-    /// <summary>The full form of <paramref name="state"/>, with every value: for deltas.</summary>
-    public static byte[] Encode(DocumentState state) => Write(state, stored: false, hashing: false);
-
-    /// <summary>The stored form of <paramref name="state"/>: plain values live in its materialized document.</summary>
     public static byte[] EncodeStored(DocumentState state) => Write(state, stored: true, hashing: false);
 
-    /// <summary>The state <paramref name="data"/> holds in the full form.</summary>
-    /// <exception cref="InvalidDataException">The bytes are not the canonical full form of a normalized state.</exception>
-    public static DocumentState Decode(ReadOnlySpan<byte> data) => Read(data, document: null);
-
-    /// <summary>The state <paramref name="data"/> holds in the stored form, with its materialized <paramref name="document"/> (empty when none).</summary>
-    /// <exception cref="InvalidDataException">The bytes are not the canonical stored form of a normalized state, or the document is not its materialization.</exception>
     public static DocumentState DecodeStored(ReadOnlySpan<byte> data, ReadOnlySpan<byte> document)
     {
         JsonDocument? json = null;
@@ -87,10 +45,6 @@ public static class DocumentStateEncoding
         }
     }
 
-    /// <summary>
-    /// The digest for anti-entropy: the first 128 bits of SHA-256 over the length-prefixed UTF-8 collection and id,
-    /// then the stored state without bookkeeping and its materialized document. Equal keyed states hash equally on every node.
-    /// </summary>
     public static UInt128 Digest(string collection, string id, DocumentState state)
     {
         var key = new Writer([], hashing: true);
@@ -249,7 +203,6 @@ public static class DocumentStateEncoding
         reader.End();
         var state = new DocumentState(clear, fields.ToImmutable());
 
-        // Re-encoding catches every non-canonical choice at once: order, duplicates, unused nodes, non-minimal numbers, value placement.
         if (!state.Normalize().Equals(state) || !data.SequenceEqual(Write(state, stored: document is not null, hashing: false)))
         {
             throw new InvalidDataException("the document state is not canonical");
@@ -258,7 +211,6 @@ public static class DocumentStateEncoding
         return state;
     }
 
-    // A value must be compact JSON exactly as the state writes it.
     private static string Json(string text)
     {
         try
@@ -349,7 +301,6 @@ public static class DocumentStateEncoding
             Number((ulong)nodes[version.Node]);
         }
 
-        // Bookkeeping is not part of the state: the digest hashes it as zero.
         public void Changed(Hlc changed) => UInt64(hashing ? 0 : changed.Value);
 
         public void Text(string value)
@@ -381,7 +332,6 @@ public static class DocumentStateEncoding
             return value;
         }
 
-        // LEB128 of at most 64 bits; minimality is left to the re-encoding check.
         public ulong Number()
         {
             ulong value = 0;
@@ -401,7 +351,6 @@ public static class DocumentStateEncoding
             }
         }
 
-        // A count no larger than the entries of at least minimumBytes each that the rest could hold.
         public int Count(int minimumBytes)
         {
             var count = Number();

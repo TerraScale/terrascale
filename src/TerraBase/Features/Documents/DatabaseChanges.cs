@@ -6,7 +6,6 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
 using TerraBase.Configuration;
 using TerraBase.Engine;
-using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
 using TerraBase.Errors;
 using TerraBase.Features.Memory;
@@ -16,39 +15,20 @@ using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Documents;
-
-/// <summary>Serves a database's changes feed as Server-Sent Events.</summary>
 public interface IDatabaseChanges
 {
-    /// <summary>
-    /// Streams the feed of <paramref name="database"/> after <paramref name="cursor"/>, or from the feed's head when
-    /// <paramref name="head"/>, or else from the start of retention, only
-    /// events of <paramref name="collections"/> when given, until the client leaves, the connection's lifetime ends or the
-    /// feed fails. Before the first byte, failures answer with their status.
-    /// </summary>
     ValueTask<IResult> StreamAsync(
         HttpContext context, TenantContext database, FeedCursor? cursor, bool head, IReadOnlySet<string>? collections, CancellationToken cancellationToken);
 }
-
-/// <summary>
-/// One page at a time from the feed (docs/terrabase/multi-region-replication.md section 14), woken by the database's next
-/// commit or the 15 s heartbeat. No per-connection queue: a slow client holds back only its own reads, and one that takes
-/// no bytes for 10 s is dropped.
-/// </summary>
-internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudget memory, TimeProvider time, IHostApplicationLifetime lifetime, IMeterFactory meters, TerraBaseOptions options, IMembership membership, TerraBase.Features.Health.IPeerTopology topology)
+internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudget memory, TimeProvider time, IHostApplicationLifetime lifetime, IMeterFactory meters, TerraBaseOptions options)
     : IDatabaseChanges
 {
-    /// <summary>Open streams per database on one machine.</summary>
     internal const int MaxPerDatabase = 128;
 
     private const int MaxConnections = 1024;
     private const int PageEvents = 256;
     private const long PageBytes = 4 * 1024 * 1024;
-
-    /// <summary>How often an idle stream sends its cursor.</summary>
     internal static readonly TimeSpan Heartbeat = TimeSpan.FromSeconds(15);
-
-    // A stream re-authenticates by reconnecting with Last-Event-ID: a revoked API key streams at most this long.
     private static readonly TimeSpan MaxLifetime = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(10);
     private static readonly QuotaExceeded Busy = new("the database has as many change streams as it allows; retry later", "changes_busy");
@@ -88,34 +68,18 @@ internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudg
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, expiry.Token, lifetime.ApplicationStopping);
         var buffer = new ArrayBufferWriter<byte>();
         using var bufferMemory = new QosContext.ResultMemory(memory);
-        // Documents a page reads are charged to the tenant until the page is sent.
         var results = QosContext.Enter(database, memory);
         try
         {
             bufferMemory.Reserve(4096, database);
-            // A cursor older than the retention may lack an origin whose events all aged out since and were forgotten.
             if (cursor is not null && cursor.Issued.Value < FeedCursor.At(time.GetUtcNow() - FeedCursor.Retention).Value)
             {
                 return ErrorResponse.From(Expired);
             }
-
-            // An issue instant in the future would weaken the cursor's own promise about origins it lacks: it counts as now.
             if (cursor is not null && cursor.Issued.Value > FeedCursor.At(time.GetUtcNow()).Value)
             {
                 cursor = cursor with { Issued = FeedCursor.At(time.GetUtcNow()) };
             }
-
-            // The edge replays to the issuer's region; an issuer no longer listed is answered here, verifying the prefix.
-            if (cursor?.Machine is { Length: > 0 } machine && machine != options.MachineId
-                && Listeners.ArrivedOn(context) == TerraBaseListener.Client
-                && !context.Request.Headers.ContainsKey("ts-replay-src") && !context.Request.Headers.ContainsKey("ts-replay-failed")
-                && await IssuerRegionAsync(machine, context.RequestAborted).ConfigureAwait(false) is { } issuerRegion)
-            {
-                context.Response.Headers["ts-replay"] = $"region={issuerRegion};instance={machine};fallback=self";
-                context.Response.Headers.CacheControl = "no-store";
-                return new IssuerReplay();
-            }
-
             if (await ReadAsync(database, key, cursor, head, collections, stop.Token).ConfigureAwait(false) is not { } answer)
             {
                 return ErrorResponse.From(DocumentRoute.UnknownDatabase);
@@ -125,8 +89,6 @@ internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudg
             {
                 return ErrorResponse.From(Expired);
             }
-
-            // Streaming from here on: the stream gives back its slot in the organization's concurrent requests.
             context.Features.Get<QosRequestLease>()?.Lease.Dispose();
             context.Response.ContentType = "text/event-stream";
             context.Response.Headers.CacheControl = "no-store";
@@ -171,17 +133,8 @@ internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudg
                 answer = next;
             }
         }
-        catch (OperationCanceledException) when (stop.IsCancellationRequested || lifetime.ApplicationStopping.IsCancellationRequested || !topology.IsCurrent)
+        catch (OperationCanceledException) when (stop.IsCancellationRequested || lifetime.ApplicationStopping.IsCancellationRequested)
         {
-            if (!topology.IsCurrent)
-            {
-                RefuseTopology(context);
-            }
-
-            // A shared producer can observe host cancellation before this stream's linked-token callback runs.
-            // The client left, the lifetime or token ended, or the host stops: the client resumes with Last-Event-ID.
-            // Shared producers use ApplicationStopping directly. Their newer cancellation callbacks can finish a
-            // page before this stream's linked-token callback runs, so also observe the original shutdown token.
         }
         catch (QosMemoryException) when (!stop.IsCancellationRequested)
         {
@@ -258,8 +211,6 @@ internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudg
             }
         }
     }
-
-    // The commit sequence keys current-document snapshots as well as feed history; a new write never reuses a ready page.
     private async ValueTask<Answer?> ReadAsync(
         TenantContext database, DatabaseKey databaseKey, FeedCursor? cursor, bool head, IReadOnlySet<string>? collections, CancellationToken cancellationToken)
     {
@@ -268,10 +219,6 @@ internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudg
         var filter = collections is null ? null : string.Concat(collections.Order(StringComparer.Ordinal).Select(value => $"{value.Length}:{value}"));
         while (true)
         {
-            if (!topology.IsCurrent)
-            {
-                throw new OperationCanceledException("peer topology is not verified");
-            }
 
             if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
             {
@@ -290,11 +237,9 @@ internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudg
                     var window = now.ToUnixTimeSeconds() / (long)Heartbeat.TotalSeconds;
                     var incarnation = store.Incarnation;
                     var sequence = store.CommitSequence;
-                    // Cohorts emit the same issue instant and converge; idle cursors renew within one heartbeat.
                     var issued = pages.Find(value => value.Key.Incarnation == incarnation && value.Key.Sequence == sequence && value.Key.Window == window)?.Key.Issued
                         ?? FeedCursor.At(now);
                     var key = new PageKey(database, incarnation, sequence, window, issued, text, filter, head);
-                    // In-flight pages keep their slots until they finish, even if their commit sequence is now old.
                     for (var i = pages.Count - 1; i >= 0; i--)
                     {
                         if (pages[i].Result.Task.IsCompleted && (pages[i].Result.Task.IsFaulted || pages[i].Store.IsClosed
@@ -362,7 +307,6 @@ internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudg
 
             if (drain is not null)
             {
-                // Its own readers observe failure; waiting for capacity must not inherit another cursor's failure.
                 try
                 {
                     _ = await drain.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -380,7 +324,6 @@ internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudg
 
     private async Task ProduceAsync(DatabaseKey databaseKey, Flight flight, FeedCursor? cursor, IReadOnlySet<string>? collections)
     {
-        // A producer holds admission independently of the cache and readers, including when the last stream leaves.
         using var hold = flight.Producer;
         try
         {
@@ -461,7 +404,6 @@ internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudg
             var change = page.Events[i];
             position[change.Origin] = change.Stamp;
             prefixes[change.Origin] = change.Prefix!;
-            // Advance only after the final event of the stamp, preserving at-least-once resumes inside a transaction.
             var last = i + 1 == page.Events.Count || (page.Events[i + 1].Origin, page.Events[i + 1].Stamp) != (change.Origin, change.Stamp);
             Change(buffer, change, last ? ChangeCursor.Encode(Current(), scope) : null);
             if (chunk.WrittenCount > 0 && chunk.WrittenCount + buffer.WrittenCount > 64 * 1024)
@@ -517,8 +459,6 @@ internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudg
 
         public TaskCompletionSource<Answer> Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
-
-    // Until the database's next commit after `sequence`, or the heartbeat.
     private async Task WaitAsync(IDatabaseStore store, long sequence, DateTimeOffset beat, CancellationToken cancellationToken)
     {
         var until = beat - time.GetUtcNow();
@@ -561,7 +501,6 @@ internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudg
             json.WritePropertyName("document");
             if (change.Document is { } document)
             {
-                // Stored documents are compact canonical JSON, validated when written: no line breaks outside escapes.
                 json.WriteRawValue(document.Span, skipInputValidation: true);
             }
             else
@@ -594,8 +533,6 @@ internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudg
         buffer.Write(Encoding.ASCII.GetBytes(value));
         buffer.Write("\n"u8);
     }
-
-    // A terminal error after the stream started: an `error` event with the usual error body, then the end of the stream.
     private static async Task FailAsync(HttpContext context, ArrayBufferWriter<byte> buffer, string code, string? message, CancellationToken cancellationToken)
     {
         buffer.Write("event: error\ndata: "u8);
@@ -615,18 +552,6 @@ internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudg
         }
     }
 
-    private async ValueTask<string?> IssuerRegionAsync(string machine, CancellationToken cancellationToken)
-    {
-        var view = await membership.RefreshAsync(cancellationToken).ConfigureAwait(false);
-        return view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).FirstOrDefault(member => member.Name == machine)?.Region;
-    }
-
-    private sealed class IssuerReplay : IResult
-    {
-        public Task ExecuteAsync(HttpContext httpContext) =>
-            BadRequests.WriteAsync(httpContext, StatusCodes.Status421MisdirectedRequest, "cursor_elsewhere", "the cursor resumes on its issuing machine", op: null);
-    }
-
     private static async Task SendAsync(HttpContext context, ArrayBufferWriter<byte> buffer, CancellationToken cancellationToken)
     {
         if (buffer.WrittenCount == 0)
@@ -644,24 +569,8 @@ internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudg
         }
     }
 
-    private static void RefuseTopology(HttpContext context)
-    {
-        if (context.Response.HasStarted)
-        {
-            context.Abort();
-        }
-        else
-        {
-            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
-        }
-    }
-
     private static async Task SendAsync(HttpContext context, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
     {
-        if (!context.RequestServices.GetRequiredService<TerraBase.Features.Health.IPeerTopology>().IsCurrent)
-        {
-            throw new OperationCanceledException("peer topology is not verified");
-        }
 
         using var timeout = new CancellationTokenSource(SendTimeout);
         using var send = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);

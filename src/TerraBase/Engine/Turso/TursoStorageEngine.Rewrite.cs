@@ -5,25 +5,19 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Engine.Turso;
 
-/// <summary>
-/// Healthy rewrites (TS-873, <see cref="IHealthyRewrite"/>). The file transition keeps one complete lineage on disk at every
-/// step: the old file's log is checkpointed into it, synced and removed (directory synced) before the synced private copy
-/// is renamed over it (directory synced again), so a crash finds the whole old file or the whole new one, never the old log
-/// beside the new file. Private copies (<c>.&lt;id&gt;.&lt;nonce&gt;.rewriting</c>) left by a crash are deleted at start.
-/// </summary>
 internal sealed partial class TursoStorageEngine : IHealthyRewrite
 {
+    private static readonly TimeSpan DrainTimeout = TimeSpan.FromSeconds(30);
     private const string RewriteSuffix = "rewriting";
     internal static readonly TimeSpan RewriteFinalBudget = TimeSpan.FromMilliseconds(750);
 
     private static readonly TenantContext SystemCheckpoint = new(SystemName, PlanTier.Hobby);
 
-    /// <summary>Durably records a directory's entries; integration tests replace it to inject sync failures.</summary>
     internal Action<string> DirectorySync { get; set; } = SyncDirectory;
 
     public async ValueTask<HealthyRewrite> RewriteAsync(TenantContext? database, long minimumOffset, CancellationToken cancellationToken)
     {
-        // Opening takes lifecycle ownership and its own admission, before this rewrite pins any state.
+
         using var openingDeadline = new CancellationTokenSource(DrainTimeout, TimeProvider.System);
         using var opening = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token, openingDeadline.Token);
         TursoDatabaseStore store;
@@ -67,8 +61,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                     RejectDatabaseLinks(scratch);
                     var source = store.Incarnation;
                     var lineage = store.Lineage;
-                    // Ensure capture exists even for a database that has never had a write transaction.
-                    // An uncaptured pass already holding the writer is part of the snapshot, not a missed replay.
+
                     var uncaptured = await store.WithWriterAsync(_ => store.UncapturedCommits, "a rewrite's capture setup", budget.Token).ConfigureAwait(false);
                     long offset;
                     TursoChangeTap replay;
@@ -82,7 +75,6 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                         throw new RewriteRefusedException($"an uncaptured transaction ({store.UncapturedBy}) committed during the rewrite");
                     }
 
-                    // Preserve the lifecycle -> store lock order used by deletion and rebuild; bulk work above holds neither.
                     using var lifecycle = CancellationTokenSource.CreateLinkedTokenSource(budget.Token);
                     lifecycle.CancelAfter(DrainTimeout);
                     try
@@ -108,14 +100,6 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                         await ThrowIfPurgeFencedAsync(key.Database, budget.Token).ConfigureAwait(false);
                     }
 
-                    lock (_salvageGate)
-                    {
-                        if (_salvageOperations.ContainsKey(path))
-                        {
-                            throw new RewriteRefusedException("a salvage operation reads beside the database");
-                        }
-                    }
-
                     await using var quiesced = (await store.QuiesceAsync(async token =>
                     {
                         await store.WriteRewriteAsync(scratch, minimumOffset, replay, target, finalPass: false, token).ConfigureAwait(false);
@@ -131,7 +115,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                         budget.StopPressure();
                         heldBudget.CancelAfter(RewriteFinalBudget);
                     }, final.Token, budget.Token).ConfigureAwait(false)).ConfigureAwait(false);
-                    // Housekeeping remains uncaptured until decision 0017's second PR. Never publish a copy that missed it.
+
                     if (store.UncapturedCommits != uncaptured)
                     {
                         throw new RewriteRefusedException($"an uncaptured transaction ({store.UncapturedBy}) committed during the rewrite");
@@ -209,7 +193,6 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
         }
     }
 
-    // Worker-only, with the store quiesced and its log checkpointed. Each step leaves one complete lineage.
     private void Replace(string path, string scratch, TenantContext step, TursoDatabaseStore store, CancellationToken token, ref bool renamed)
     {
         var directory = Path.GetDirectoryName(path)!;
@@ -219,7 +202,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
         {
             foreach (var sidecar in Sidecars.Where(sidecar => sidecar != DatabaseKeys.Suffix))
             {
-                // A log or journal still holding frames belongs to its file: never removed.
+
                 if (new FileInfo(file + sidecar) is { Exists: true } log && log.Length != 0 && sidecar != "-shm")
                 {
                     throw new RewriteRefusedException("a database log still holds frames");
@@ -243,14 +226,13 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
         }
         renamed = true;
         _checkpoint("rewrite.replaced", step);
-        // Never retried: after a failed sync Linux may report a later one clean without the lost entries (fsyncgate).
+
         using (store.MeasureRewrite("directory_fsync_after"))
         {
             DirectorySync(directory);
         }
     }
 
-    // Recognized private rewrite copies of SYSTEM and of every tenant database a crash left; the files in place are whole.
     private void DeleteRewriteScratch()
     {
         var options = new EnumerationOptions { AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false };
@@ -277,7 +259,6 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
         }
     }
 
-    // The database id of a private rewrite copy or one of its sidecars, or null.
     private static string? RewriteScratchOf(string name)
     {
         foreach (var sidecar in Sidecars)
@@ -292,12 +273,11 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
         return name.Split('.') is ["", var id, var nonce, RewriteSuffix] && EntityIds.IsValid(nonce) ? id : null;
     }
 
-    // Durably records the directory's entries (a removal or a rename): .NET opens no directory handle.
     private static void SyncDirectory(string directory)
     {
         if (!OperatingSystem.IsLinux())
         {
-            // shortcut: Linux only, where TerraBase runs; add the platform's directory flush before serving elsewhere.
+
             throw new PlatformNotSupportedException("a healthy rewrite syncs directories on Linux only");
         }
 

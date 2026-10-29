@@ -11,7 +11,6 @@ using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
-using TerraBase.Features.Replication;
 using TerraBase.Features.Stats;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
@@ -23,10 +22,9 @@ namespace TerraBase.Features.Documents;
 
 internal sealed partial class DocumentService(IStorageEngine engine, TimeProvider time, DocumentCache cache, IUsageMeter usage,
     IQueryShapeTracker shapes, IMemoryBudget memory, IMeterFactory meters, IStorageQuota quota, IOperationAllowance allowance, IDatabaseStats stats,
-    IRemoteDurability durability, TerraBaseOptions options, ILogger<DocumentService> logger, IReplicaCopyFaults faults)
+    TerraBaseOptions options, ILogger<DocumentService> logger, IStorageCopyFaults faults)
     : IDocumentService, ISystemDocumentReader
 {
-    // assert_count examines at most this many documents.
     private const long MaxAssertCount = 10_000;
 
     private readonly Counter<long> _schemaRejections = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.schema.validation_failures", "{write}");
@@ -151,7 +149,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
     private async ValueTask<DocumentRead> ReadCachedDocumentAsync(DocumentKey key, Ulid incarnation, StrongBox<bool> hit, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        // The cache keeps documents only: an absence or a refusal comes back as null, which it never stores.
         DocumentRead? missed = null;
         var fromStorage = false;
         var document = await cache.GetAsync(key, incarnation, async () =>
@@ -192,8 +189,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         cancellationToken.ThrowIfCancellationRequested();
         return cache.GetSystemAsync(collection, id, () => ReadSystemAsync(collection, id, cancellationToken));
     }
-
-    // Internal system documents use opaque ids and do not require client collection metadata.
     private async ValueTask<StoredDocument?> ReadSystemAsync(string collection, string id, CancellationToken cancellationToken)
     {
         var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
@@ -230,11 +225,8 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             var stored = await transaction.GetAsync(key.Collection, key.Id, cancellationToken).ConfigureAwait(false);
             if (access is { IsEndUser: true } && (stored is null || !CollectionRuleAccess.CanRead(rules, stored.Json, access)))
             {
-                // No tombstone ETag, hidden conflict, size or existence oracle is exposed to an unauthorized reader.
                 return DocumentMissing;
             }
-
-            // A deleted document comes back as its tombstone, without a body, so its 404 can carry its version.
             if (stored is { } document)
             {
                 return document;
@@ -278,7 +270,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         QueryResult? refused = null;
         try
         {
-            // Count each request outside the cache; only a miss fills this request's scan observation.
             var result = await cache.QueryAsync(database, incarnation, query, countLimit, async () =>
             {
                 var read = await ReadQueryAsync(database, query, countLimit, observation, cancellationToken).ConfigureAwait(false);
@@ -374,11 +365,8 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         var incarnation = store.Incarnation;
         if (await faults.RefusedAsync(database, incarnation, cancellationToken).ConfigureAwait(false))
         {
-            throw new ReplicaCopyFaultedException("this database copy is awaiting certified recovery");
+            throw new StorageCopyFaultedException("this database copy requires storage recovery");
         }
-
-        // shortcut: one read transaction pins the snapshot for the whole stream, so a slow client holds one session;
-        // move to a durable snapshot file if exports of very large databases need it.
         var units = 0L;
         var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
@@ -412,10 +400,9 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         }
 
         usage.RecordRead(database, units);
-        // A copy that stopped being trusted while it streamed aborts the response instead of ending it cleanly.
         if (await faults.RefusedAsync(database, incarnation, cancellationToken).ConfigureAwait(false))
         {
-            throw new ReplicaCopyFaultedException("this database copy changed while it was being read");
+            throw new StorageCopyFaultedException("this database copy changed while it was being read");
         }
     }
 
@@ -440,8 +427,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             position = new QueryPosition(page.Rows[^1].Keys, page.Rows[^1].Document.Id);
         }
     }
-
-    // One operation, with the engine's limits read where they are hit.
     public ValueTask<ApplyOutcome> ApplyAsync(IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken) =>
         ApplyWithAccessAsync(transaction, operation, ProjectAccess.Current, cancellationToken);
 
@@ -472,7 +457,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         }
         catch (StorageWriteLimitException)
         {
-            // The commit is over its write count or bytes.
             return new DocumentRejected(WriteLimits);
         }
         catch (ChangeGroupCapacityException)
@@ -490,71 +474,26 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         (await CommitAsync(database, operations, indexErrors, cancellationToken).ConfigureAwait(false)).Outcome;
 
     public async ValueTask<WriteOutcome> WriteConfirmedAsync(
-        TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, bool waitForRemote, CancellationToken cancellationToken)
+        TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken)
     {
-        if (!operations.Any(operation => operation is PutOperation or PatchOperation or DeleteOperation))
+        var mutations = operations.Any(operation => operation is PutOperation or PatchOperation or DeleteOperation);
+        try
         {
-            // Assertions only: this attempt ships nothing, so it waits for nothing, not even a group-commit sibling's marker.
             return await WriteAsync(database, operations, indexErrors, cancellationToken).ConfigureAwait(false) switch
             {
-                WriteResult written => written with { Durability = WriteResult.Unchanged },
+                WriteResult written when !mutations => written with { Durability = WriteResult.Unchanged },
+                WriteResult written => written,
                 DocumentRejected rejected => rejected,
             };
         }
-
-        // Admitted before it executes: a refusal here means this attempt executed nothing. A cell of one admits every write. A
-        // database left in its home region alone takes no writes on either path; only a write that waits for another region is
-        // refused while none can confirm it, and only it keeps a waiter slot (0013e).
-        var admission = await durability.AdmitAsync(database, cancellationToken).ConfigureAwait(false);
-        RemoteLease? lease = null;
-        switch (admission)
+        catch (Exception error) when (error is not StorageBusyException && !cancellationToken.IsCancellationRequested)
         {
-            case Conflict error:
-                return new DocumentRejected(error);
-            case Unavailable error when waitForRemote:
-                return new DocumentRejected(error);
-            case RemoteLease admitted when waitForRemote:
-                lease = admitted;
-                break;
-            case RemoteLease admitted:
-                admitted.Dispose();
-                break;
-        }
-
-        using (lease)
-        {
-            try
-            {
-                var (outcome, marker) = await CommitAsync(database, operations, indexErrors, cancellationToken).ConfigureAwait(false);
-                // Without the wait, the answer follows this region's FULL commit; replication continues in the background (0013e).
-                if (outcome is not WriteResult written || !waitForRemote || !durability.Confirms)
-                {
-                    return outcome;
-                }
-
-                // A mutation without its own marker has nothing to confirm with: never answered as confirmed or unchanged.
-                if (marker is not { } own)
-                {
-                    return Unknown("the write's own commit position is unknown; its outcome is unknown");
-                }
-
-                // The writer is released: the wait holds no storage session or lock, and cancelling it leaves the commit replicating.
-                return await durability.WaitAsync(database, own, cancellationToken).ConfigureAwait(false)
-                    ? written with { Durability = WriteResult.RemoteDurable }
-                    : Unknown("no other region confirmed the write within 10 s; its outcome is unknown");
-            }
-            catch (Exception error) when (error is not StorageBusyException && !cancellationToken.IsCancellationRequested)
-            {
-                // The commit, reading its marker, or the wait failed: the write may have landed, so its outcome is unknown.
-                logger.ZLogError(error, $"A write to database {database.DatabaseId:@Database} failed at or after its commit; it is answered as outcome unknown");
-                return Unknown("the write may or may not have committed; its outcome is unknown");
-            }
+            logger.ZLogError(error, $"A write to database {database.DatabaseId:@Database} failed at or after its commit; it is answered as outcome unknown");
+            return Unknown("the write may or may not have committed; its outcome is unknown");
         }
     }
 
     private DocumentRejected Unknown(string message) => new(new OutcomeUnknown(message, options.Region, options.MachineId));
-
-    // Group commit: the write shares a transaction with other writes queued at the same time, in its own savepoint.
     private async ValueTask<(WriteOutcome Outcome, CommitMarker? Marker)> CommitAsync(
         TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken)
     {
@@ -562,8 +501,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         {
             return (new DocumentRejected(DocumentRoute.UnknownDatabase), null);
         }
-
-        // New billable work stops at the plan allowance; deletes and assertions still run.
         if (operations.Any(operation => operation is PutOperation or PatchOperation)
             && await allowance.CheckAsync(database, cancellationToken).ConfigureAwait(false) is var allowed && allowed is not Done)
         {
@@ -588,7 +525,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         using var lease = admission;
         var delta = 0L;
         var units = 0L;
-        // Group commit runs on a shared worker; carry this request's identity explicitly across that boundary.
         var access = ProjectAccess.Current;
         var (outcome, commit) = await store.WriteAsync(
             async (transaction, token) =>
@@ -620,14 +556,11 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         }
         catch (Exception error)
         {
-            // The write committed: failed accounting after it is logged, never answered as a failed write.
             logger.ZLogError(error, $"Accounting a committed write to database {database.DatabaseId:@Database} failed; the write is answered as committed");
         }
 
         return (written with { Offset = commit.Offset }, commit.Marker);
     }
-
-    // Quota, usage and statistics of a committed client write.
     private void RecordCommitted(TenantContext database, IReadOnlyList<DocumentOperation> operations, StorageQuotaLease admission, long delta, long units)
     {
         var writes = operations.Count(operation => operation is PutOperation or PatchOperation or DeleteOperation);
@@ -655,9 +588,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             }
         }
     }
-
-    // Every operation of one client write; the commit offset is filled in once its batch committed.
-    // Units: each put or patch bills its stored document's started 4 KiB, each delete one unit.
     private async ValueTask<(WriteOutcome Outcome, long Delta, int? GrowthOp, long Units)> ApplyAllAsync(
         IDatabaseStore store, IStorageTransaction transaction, IReadOnlyList<DocumentOperation> operations, bool indexErrors, bool accountStorage,
         ProjectAccess? access, CancellationToken cancellationToken)
@@ -667,7 +597,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         var delta = 0L;
         var units = 0L;
         int? growthOp = null;
-        // Assertions see the state before this transaction's writes.
         foreach (var assertions in new[] { true, false })
         {
             for (var i = 0; i < operations.Count; i++)
@@ -716,8 +645,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
         return (new WriteResult(0, results, transaction.Scope), delta, growthOp, units);
     }
-
-    // One operation of a client transaction: its collection must exist.
     private async ValueTask<ApplyOutcome> ApplyCheckedAsync(
         IDatabaseStore store, IStorageTransaction transaction, DocumentOperation operation, HashSet<string> collections, ProjectAccess? access, CancellationToken cancellationToken)
     {
@@ -741,8 +668,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                     {
                         return new DocumentRejected(failed);
                     }
-
-                    // Validate before normalization so removing identity cannot conceal invalid input.
                     _ = DocumentJson.Read(put.Json, requireObject: true);
                     var json = EntityPayload.WithoutId(put.Json, put.Id);
                     var (version, stored) = await transaction.PutAdmittedAsync(put.Collection, put.Id, json, cancellationToken).ConfigureAwait(false);
@@ -773,11 +698,8 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                         case Conflict error:
                             return new DocumentRejected(error);
                     }
-
-                    // Validate the complete patched result before removing duplicate identity.
                     var json = JsonSerializer.SerializeToUtf8Bytes(document, TerraBaseJsonContext.Default.JsonObject);
                     _ = DocumentJson.Read(json, requireObject: true);
-                    // An id equal to the document's is not stored: the field stays as it was before.
                     if (document["id"] is JsonValue identity && identity.GetValueKind() == JsonValueKind.String && identity.GetValue<string>() == patch.Id)
                     {
                         document.Remove("id");
@@ -798,8 +720,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                     }
 
                     var version = await transaction.PatchAsync(patch.Collection, patch.Id, json, operations, cancellationToken).ConfigureAwait(false);
-                    // The stored document is the merged state's materialization, which counters and sets can make differ
-                    // from the request's view of it.
                     var stored = await transaction.GetAsync(patch.Collection, patch.Id, cancellationToken).ConfigureAwait(false)
                         ?? throw new InvalidOperationException("a patched document has no body in the same transaction");
                     ReadOnlyMemory<byte>? response = stored.Json;
@@ -810,8 +730,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                         {
                             return AccessDenied;
                         }
-
-                        // A write grant does not grant a read of fields the caller did not supply.
                         if (!CollectionRuleAccess.CanRead(storedRules, stored.Json, access))
                         {
                             response = null;
@@ -925,9 +843,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                 throw new ArgumentOutOfRangeException(nameof(operation), operation.GetType().Name, "unknown operation");
         }
     }
-
-
-    // The precondition failure, or null when it holds.
     private static async ValueTask<PreconditionFailed?> CheckAsync(
         IStorageTransaction transaction, Precondition precondition, string collection, string id, DocumentVersion? current,
         CancellationToken cancellationToken, ReadOnlyMemory<byte>? json = null)
@@ -935,7 +850,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         string? version = null;
         if ((precondition.IfMatch is not null || precondition.IfNeverWritten) && current is { } state)
         {
-            // Wildcards and unconditional writes need only existence. Exact tags also identify equal-version body winners.
             var body = state.Deleted ? ReadOnlyMemory<byte>.Empty
                 : json ?? (await transaction.GetAsync(collection, id, cancellationToken).ConfigureAwait(false)
                     ?? throw new InvalidOperationException("a live document version has no body in the same transaction")).Json;
@@ -946,8 +860,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
     }
 
     private static PreconditionFailed Failed(string message) => new(message, "precondition_failed");
-
-    // `hit` is set by a read the document cache answered without storage.
     private async ValueTask<T> ReadCertifiedAsync<T>(
         TenantContext database, Func<Ulid, ValueTask<T>> read, Func<T> missing, CancellationToken cancellationToken, StrongBox<bool>? hit = null)
     {
@@ -960,30 +872,23 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         var incarnation = store.Incarnation;
         if (await faults.RefusedAsync(database, incarnation, cancellationToken).ConfigureAwait(false))
         {
-            throw new ReplicaCopyFaultedException("this database copy is awaiting certified recovery");
+            throw new StorageCopyFaultedException("this database copy requires storage recovery");
         }
 
         var result = await read(incarnation).ConfigureAwait(false);
-        // Admission can overlap a fault, swap and certification; reject results from a copy that stopped being trusted. A
-        // cache hit read no storage: it is of this incarnation, which the check above trusted just before the lookup.
         if (hit?.Value != true && await faults.RefusedAsync(database, incarnation, cancellationToken).ConfigureAwait(false))
         {
-            throw new ReplicaCopyFaultedException("this database copy changed while it was being read");
+            throw new StorageCopyFaultedException("this database copy changed while it was being read");
         }
 
         return result;
     }
-
-    // Null when the database's storage does not exist.
     private async ValueTask<IStorageTransaction?> BeginAsync(TenantContext database, bool write, CancellationToken cancellationToken) =>
         await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is { } store
             ? await store.BeginTransactionAsync(write, cancellationToken).ConfigureAwait(false)
             : null;
 }
-
-/// <summary>Cached reads of TerraBase-owned documents; tenant document routes never address system storage.</summary>
 public interface ISystemDocumentReader
 {
-    /// <summary>Reads an opaque document id from system storage without requiring client collection metadata.</summary>
     ValueTask<StoredDocument?> GetSystemAsync(string collection, string id, CancellationToken cancellationToken);
 }

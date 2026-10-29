@@ -31,10 +31,6 @@
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
     <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
-    <PackageReference Include="Google.Protobuf" />
-    <PackageReference Include="Grpc.AspNetCore" />
-    <PackageReference Include="Grpc.Net.Client" />
-    <PackageReference Include="Grpc.Tools" PrivateAssets="all" />
     <PackageReference Include="AWSSDK.S3" />
     <PackageReference Include="Cronos" />
     <PackageReference Include="Jint" />
@@ -63,10 +59,6 @@
     <InternalsVisibleTo Include="TerraBase.E2E" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- Checked-in, versioned inter-node contract (wire-compatible with terrabase-rust/proto). -->
-    <Protobuf Include="Features/Replication/Protos/**/*.proto" ProtoRoot="Features/Replication/Protos" GrpcServices="Both" />
-  </ItemGroup>
   <ItemGroup>
     <!-- Vendored, with TerraScale's fixes (src/vendor/Turso.Data.Sqlite/UPSTREAM.md). -->
     <ProjectReference Include="../vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj" />

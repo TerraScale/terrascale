@@ -5,16 +5,11 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
-using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Shapes;
-
-/// <summary>Registers the Shapes slice.</summary>
 public static class ShapesExtensions
 {
     private const string Handle = "h1-f3171a2230109328";
-
-    // getShape's responses: description, example body (null for none) and the TB-Shape-* headers each carries.
     private static readonly Dictionary<string, (string Description, string? Example, string[] Headers)> Responses = new(StringComparer.Ordinal)
     {
         ["200"] = ("A snapshot page, closed chunk or fresh body; the exact bytes the ETag hashes.", $$$"""
@@ -42,11 +37,6 @@ public static class ShapesExtensions
         ["TB-Shape-Up-To-Date"] = "true or false.",
         ["TB-Shape-Cursor"] = "live=true only: the bucket to send as cursor on the next long-poll.",
     };
-
-    /// <summary>
-    /// Makes every answer on an <see cref="OriginNoStore"/> route <c>private, no-store</c>, including 401, 403, 429 and errors
-    /// written by other middleware. Register it right after routing.
-    /// </summary>
     public static WebApplication UseTerraBaseShapeNoStore(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -54,7 +44,6 @@ public static class ShapesExtensions
         {
             if (context.GetEndpoint()?.Metadata.GetMetadata<OriginNoStore>() is not null)
             {
-                // OnStarting runs last, after error writers that set their own no-store, and survives Response.Clear.
                 context.Response.OnStarting(static state =>
                 {
                     ((HttpResponse)state).Headers.CacheControl = OriginNoStore.CacheControl;
@@ -66,8 +55,6 @@ public static class ShapesExtensions
         });
         return app;
     }
-
-    /// <summary>Registers the shape services behind <c>GET …/collections/{collection}/shape</c>, their JSON metadata and examples.</summary>
     public static IServiceCollection AddTerraBaseShapes(this IServiceCollection services)
     {
         services.AddHttpClient(ShapeCdnPurge.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(30));
@@ -77,7 +64,6 @@ public static class ShapesExtensions
                 json.SerializerOptions.TypeInfoResolverChain.Insert(0, ShapeKeyJsonContext.Default);
                 json.SerializerOptions.TypeInfoResolverChain.Insert(0, ShapeMirrorJsonContext.Default);
             })
-            // Runs after the generic examples, which do not know the shape protocol's bodies, headers and codes.
             .AddOpenApi("v1", options => options.AddOperationTransformer((operation, _, _) =>
             {
                 if (operation.OperationId == "getShape")
@@ -99,11 +85,11 @@ public static class ShapesExtensions
             .AddSingleton<ShapeLiveGate>()
             .AddSingleton<IShapeMetrics, ShapeMetrics>()
             .AddSingleton<IShapeSealer>(provider => new ShapeSealer(provider.GetRequiredService<IMemoryBudget>(),
-                provider.GetRequiredService<ILogger<ShapeSealer>>(), provider.GetRequiredService<IShapeStorage>(), provider.GetRequiredService<IRemoteDurability>(),
-                provider.GetRequiredService<IShapeMetrics>(), provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<ShapeMirror>().ChunkSealed))
+                provider.GetRequiredService<ILogger<ShapeSealer>>(), provider.GetRequiredService<IShapeStorage>(),
+                provider.GetRequiredService<IShapeMetrics>(), provider.GetRequiredService<ShapeMirror>().ChunkSealed))
             .AddSingleton<IShapeSnapshotSealer>(provider => new ShapeSnapshots(provider.GetRequiredService<IMemoryBudget>(),
                 provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<IShapeSnapshotTransactions>(),
-                provider.GetRequiredService<IRemoteDurability>(), provider.GetRequiredService<IShapeMetrics>(),
+                provider.GetRequiredService<IShapeMetrics>(),
                 provider.GetRequiredService<ShapeMirror>().SnapshotSealed, provider.GetRequiredService<ILogger<ShapeSnapshots>>()))
             .AddSingleton<IShapeRetention>(provider => new ShapeRetention(provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<IShapeStorage>(),
                 provider.GetRequiredService<ShapeMirror>().FloorTrimmedAsync))
@@ -185,11 +171,6 @@ public static class ShapesExtensions
 
     private static string Error(string code, string message) => $$$"""{"error":{"code":"{{{code}}}","message":"{{{message}}}"}}""";
 }
-
-/// <summary>
-/// Endpoint metadata: origin answers hold tenant plaintext or depend on the caller's credential, so no cache may store them.
-/// Only TBS1 ciphertext in Tigris is shared-cacheable (<c>ShapeObjectStore.CacheControl</c>, FR-22/FR-24).
-/// </summary>
 internal sealed class OriginNoStore
 {
     internal const string CacheControl = "private, no-store";

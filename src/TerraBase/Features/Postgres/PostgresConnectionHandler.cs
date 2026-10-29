@@ -22,30 +22,18 @@ using TerraBase.Tenancy;
 using ZLogger;
 
 namespace TerraBase.Features.Postgres;
-
-/// <summary>
-/// PostgreSQL wire protocol 3.0 on the postgres listener: plaintext behind the platform's TLS edge, a dashboard API key or a TerraBase API key as
-/// the password, and one <see cref="ISqlSession"/> per connection under the tenant's QoS admission. A connection from the
-/// edge may open with a PROXY protocol v2 header naming the client, whose address API key IP allowlists are checked against.
-/// </summary>
 internal sealed class PostgresConnectionHandler(IServiceProvider services) : ConnectionHandler
 {
     private const int Protocol30 = 196608, CancelCode = 80877102, SslCode = 80877103, GssCode = 80877104;
     private const int MaxStartupBytes = 10_000, MaxMessageBytes = 1024 * 1024, MaxNamed = 256;
     private static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(10);
     private static readonly PgError Denied = new("28P01", "password authentication failed");
-
-    // PROXY protocol v2 (HAProxy's proxy-protocol.txt §2.2): the signature, then version/command, family and length.
     private static ReadOnlySpan<byte> ProxySignature => [0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A];
-
-    // Sessions by process id, for CancelRequest; one handler serves the whole listener.
     private readonly ConcurrentDictionary<int, Session> _sessions = new();
 
     private static readonly ReadOnlyDictionary<string, SqlValue> NoNamed = ReadOnlyDictionary<string, SqlValue>.Empty;
 
     private readonly union Access(Authorized, PgError);
-
-    // Resolved per use, not when Kestrel starts: opening the engine there would bypass Program's startup error reporting.
     private IApiKeyStore Keys => services.GetRequiredService<IApiKeyStore>();
 
     private ITenantDirectory Tenants => services.GetRequiredService<ITenantDirectory>();
@@ -53,8 +41,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     private IMemoryBudget Memory => services.GetRequiredService<IMemoryBudget>();
 
     private TimeProvider Time => services.GetRequiredService<TimeProvider>();
-
-    /// <inheritdoc />
     public override async Task OnConnectedAsync(ConnectionContext connection)
     {
         ArgumentNullException.ThrowIfNull(connection);
@@ -73,11 +59,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
             if (session is not null)
             {
-                // A dashboard key's session, idle or busy, is aborted once ts-auth refuses the key: output not yet flushed
-                // is dropped with it (docs/terrabase/key-revocation.md).
                 using var refused = new CancellationTokenSource();
                 using var abort = refused.Token.Register(() => connection.Abort(new ConnectionAbortedException("the API key was refused")));
-                // The watch exchanges the key again as its 60-second tokens lapse, like a statement does: an idle session lives on.
                 using var watch = KeyWatch.Start(services.GetRequiredService<IKeyAuthority>(), session.Key is not null, session.Until,
                     async token => await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(session.ApiKey, token).ConfigureAwait(false) is TsAuthKeyGrant grant ? grant.Key : null,
                     refused, services.GetRequiredService<TimeProvider>());
@@ -86,13 +69,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
         catch (Exception error) when (error is InvalidDataException or QosMemoryException)
         {
-            // Framing errors leave the stream unreadable and memory refusals leave a body unread: both end the session.
             output.Error(error is QosMemoryException ? "53200" : "08P01", error.Message, fatal: true);
             await output.FlushAsync(CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception error) when (error is OperationCanceledException or IOException)
         {
-            // Closed by the client, the shutdown drain or the handshake timeout.
         }
         finally
         {
@@ -103,8 +84,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             }
         }
     }
-
-    // A startup packet's length never begins with 0x0D, so a connection without the header is read unchanged.
     private static async ValueTask<IPAddress?> ReadProxyHeaderAsync(PipeReader input, IPAddress? peer, CancellationToken cancellationToken)
     {
         var read = await input.ReadAsync(cancellationToken).ConfigureAwait(false);
@@ -123,7 +102,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
 
         var addresses = await ReadAsync(input, length, cancellationToken).ConfigureAwait(false);
-        // LOCAL (the edge's own health check) and families other than TCP over IPv4 or IPv6 keep the socket peer.
         return (header[12] & 0x0F, header[13]) switch
         {
             (1, 0x11) when length >= 12 => new IPAddress(addresses.AsSpan(0, 4)),
@@ -146,7 +124,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             var code = packet.Int32();
             if (code is SslCode or GssCode && negotiated < 2)
             {
-                // TLS ends at the platform edge: this listener speaks plaintext, and the client continues on this connection.
                 output.Raw((byte)'N');
                 await output.FlushAsync(cancellationToken).ConfigureAwait(false);
                 continue;
@@ -263,14 +240,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         output.Ready(session.Status);
         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
-
-    // Every statement re-checks the key and database, like every HTTP request: revocation and deletion apply at once.
-    // `database` is a name in the key's project, or project/name for a key that reaches the whole organization.
     private async ValueTask<Access> AuthorizeAsync(string secret, string database, IPAddress? client, CancellationToken cancellationToken)
     {
-        if (!services.GetRequiredService<TerraBase.Features.Health.IPeerTopology>().IsCurrent)
+        if (!services.GetRequiredService<TerraBase.Features.Catalog.ICatalogGate>().IsOpen)
         {
-            return new PgError("57P03", "this machine's peer topology is not verified; retry");
+            return new PgError("57P03", "this machine's catalog is not verified; retry");
         }
 
         var slash = database.IndexOf('/', StringComparison.Ordinal);
@@ -295,9 +269,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             _ => Denied,
         };
     }
-
-    // A dashboard API key, as ts-auth issues it: its access token names the project, an optional database and the scopes,
-    // and the project resolves to its storage namespace like a bearer token's on the client listener.
     private async ValueTask<Access> AuthorizeDashboardKeyAsync(string secret, string database, int slash, IPAddress? client, CancellationToken cancellationToken)
     {
         var grant = await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(secret, cancellationToken).ConfigureAwait(false);
@@ -318,9 +289,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         {
             return new PgError("28000", "ip_not_allowed: " + IpAllowlists.Refusal(client));
         }
-
-        // The key's live status, before the session starts and before every statement (docs/terrabase/key-revocation.md);
-        // a token from a ts-auth that predates key status has none to ask about.
         var answer = key.Key is null ? null : (await services.GetRequiredService<IKeyAuthority>().CheckAsync(key.Key, cancellationToken).ConfigureAwait(false)).Value;
         var until = (answer as KeyActive)?.Until;
         switch (answer)
@@ -366,7 +334,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
     private async Task ServeAsync(Session session, PipeReader input, PgWriter output, CancellationToken cancellationToken)
     {
-        // After an error in the extended protocol, messages are discarded until Sync.
         var failed = false;
         while (true)
         {
@@ -379,12 +346,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 }
 
                 var exchange = session.Exchange ??= new Exchange(Time.GetTimestamp(), output.Written, EntityIds.New(Time).ToString());
-                // The exchange's operations and statements, as an HTTP request's (UsageRequestMetering).
                 RequestLogOperations.Current.Value = exchange.Operations;
                 exchange.Received += 5 + body.Length;
-                if (!services.GetRequiredService<TerraBase.Features.Health.IPeerTopology>().IsCurrent)
+                if (!services.GetRequiredService<TerraBase.Features.Catalog.ICatalogGate>().IsOpen)
                 {
-                    output.Error("57P03", "this machine's peer topology is not verified; retry", fatal: true);
+                    output.Error("57P03", "this machine's catalog is not verified; retry", fatal: true);
                     await output.FlushAsync(cancellationToken).ConfigureAwait(false);
                     return;
                 }
@@ -437,9 +403,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             }
         }
     }
-
-    // An error inside a transaction aborts it, as in PostgreSQL: only ROLLBACK or COMMIT (which rolls back) run next.
-    // The detail carries the exchange's request ID, as X-Request-ID does for HTTP, to find it in the database's request logs.
     private static void Fail(Session session, PgWriter output, PgError error)
     {
         output.Error(error.Code, error.Message, error.Fatal, session.Exchange is { } exchange ? $"request id {exchange.RequestId}" : null);
@@ -454,10 +417,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
         Meter(session, output);
     }
-
-    // An exchange ends at its Sync (a simple query syncs itself): one request of the database a statement in it resolved,
-    // with the protocol message bytes each way, and one request log entry. Exchanges of only local commands (SET, SHOW,
-    // type loads) record nothing.
     private void Meter(Session session, PgWriter output)
     {
         if (session.Exchange is not { } exchange)
@@ -475,8 +434,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 exchange.RequestId, statements, errors);
         }
     }
-
-    // A simple query runs its statements in order and stops at the first error.
     private async ValueTask<PgError?> QueryAsync(Session session, string sql, PgWriter output, CancellationToken cancellationToken)
     {
         if (PgCatalog.IsTypeLoad(sql))
@@ -598,7 +555,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     (statement.Columns, statement.Described) = (columns, true);
                     if (statement.Statement.Kind == PgKind.Sql && Array.Exists(statement.Oids, oid => oid == 0))
                     {
-                        // Drivers that prepare (pgx) encode each parameter in the type this reports.
                         _ = await GuardAsync(session, async (database, token) =>
                         {
                             PostgresStatements.InferParameters(statement.Statement, statement.Oids,
@@ -622,7 +578,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                         var (columns, readOnly, error) = await DescribeAsync(session, portal.Statement, cancellationToken).ConfigureAwait(false);
                         if (error is null && readOnly)
                         {
-                            // A read runs now, so its columns carry the types of its values; Execute sends the kept rows.
                             var outcome = await RunAsync(session, portal.Statement, portal.Args, cancellationToken).ConfigureAwait(false);
                             error = outcome is PgError failure ? failure : null;
                             columns = outcome is PgResult[] { Length: > 0 } results ? results[0].Columns : null;
@@ -653,8 +608,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 {
                     return new PgError("0A000", "Execute with a row limit is not supported yet");
                 }
-
-                // Rows Describe already read are sent only if the key still reaches the database now.
                 if (running.Pending is not null && await AuthorizeAsync(session.ApiKey, session.Database, session.Client, cancellationToken).ConfigureAwait(false) is PgError stale)
                 {
                     running.Pending = null;
@@ -684,8 +637,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 return null;
         }
     }
-
-    // A statement's result columns before it runs, and whether it only reads; SHOW and catalog reads run to find out.
     private async ValueTask<(PgColumn[]? Columns, bool ReadOnly, PgError? Error)> DescribeAsync(Session session, PgStatement statement, CancellationToken cancellationToken)
     {
         switch (statement.Kind)
@@ -734,7 +685,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 session.Portals.Clear();
                 return new[] { new PgResult(null, [], "DISCARD ALL") };
             case PgKind.Deallocate:
-                // psycopg deallocates its prepared statements after a rollback.
                 if (PostgresStatements.Deallocated(statement.Text) is { } deallocated)
                 {
                     session.Statements.Remove(deallocated);
@@ -761,9 +711,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             },
         }, cancellationToken, counting).ConfigureAwait(false);
     }
-
-    // PostgreSQL's transaction verbs on the session: BEGIN inside a transaction and COMMIT or ROLLBACK outside one only
-    // warn, and COMMIT of an aborted transaction rolls it back.
     private static async ValueTask<PgOutcome> TransactionAsync(Session session, PgKind kind, CancellationToken cancellationToken)
     {
         async ValueTask<PgOutcome> Run(string verb)
@@ -791,15 +738,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         var outcome = await Run(aborted ? "ROLLBACK" : verb).ConfigureAwait(false);
         if (outcome is PgError && !session.Sql.IsAutocommit)
         {
-            // A failed COMMIT ends the transaction, as in PostgreSQL.
             _ = await Run("ROLLBACK").ConfigureAwait(false);
         }
 
         return outcome;
     }
-
-    // Every statement that reaches the database re-checks the key and runs under the HTTP pipeline's admission. A statement
-    // the key reaches is recorded with its outcome, including an admission refusal.
     private async ValueTask<PgOutcome> GuardAsync(Session session, Func<TenantContext, CancellationToken, ValueTask<PgOutcome>> run, CancellationToken cancellationToken,
         Counting counting = Counting.None)
     {
@@ -824,14 +767,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             var access = await AuthorizeAsync(session.ApiKey, session.Database, session.Client, running.Token).ConfigureAwait(false);
             if (access is not Authorized { Database: var database })
             {
-                // A revoked or expired key ends the session; any other refusal stays the generic one.
                 return access is PgError { Fatal: true } refusal ? refusal : Denied;
             }
 
             session.Exchange?.Database = database;
             authorized(database);
-
-            // The HTTP pipeline's admission (QosExtensions): one organization lease, then the tenant's memory and budgets.
             var tenant = new TenantContext(database.OrganizationId, database.Plan);
             using var lease = services.GetRequiredService<IQosAdmission>().TryEnter(tenant, out var retryAfter);
             if (lease is null)
@@ -886,8 +826,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
         output.End();
     }
-
-    // Rows in the described types; an error when a value does not fit its column's binary type.
     private static PgError? Write(PgWriter output, PgResult result, short[] formats, bool describe, PgColumn[]? columns = null)
     {
         if (result.Tag is null)
@@ -938,7 +876,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         var length = BinaryPrimitives.ReadInt32BigEndian(header.AsSpan(1));
         if (length is < 4 or > MaxMessageBytes)
         {
-            // Before allocating: the unread body cannot be skipped safely.
             throw new InvalidDataException("message length out of bounds");
         }
 
@@ -974,10 +911,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     }
 
     private sealed record Authorized(TenantContext Database, bool CanWrite, KeyToken? Key = null, DateTimeOffset? Until = null);
-
-    // The messages since the last Sync: when the first arrived, the output written before it, and what they received and resolved.
-    // Which outcomes of a guarded run are the client's statements: describing one runs it, and only a failure there is its
-    // outcome (it then never executes).
     private enum Counting
     {
         None,
@@ -1001,8 +934,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
         public TenantContext? Database { get; set; }
     }
-
-    // Columns are fixed once described, so later executions send the types the client was told.
     private sealed class Prepared(PgStatement statement, int[] oids)
     {
         public PgStatement Statement => statement;
@@ -1025,18 +956,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         public PgColumn[]? Columns { get; set; }
 
         public bool Described { get; set; }
-
-        // The outcome of a read run at Describe, sent by the next Execute.
         public PgOutcome? Pending { get; set; }
     }
-
-    // The running statement's cancellation, swapped under a lock so CancelRequest never cancels a disposed source.
     private sealed record Session(int ProcessId, int Secret, string ApiKey, string Database, string User, IPAddress? Client, ISqlSession Sql, Dictionary<string, string> Settings)
     {
-        /// <summary>The dashboard key's token as the session's watch checks it; null for a <c>tb_</c> key.</summary>
         public KeyToken? Key { get; init; }
-
-        /// <summary>Until when the yes that admitted the session holds: the watch starts from it.</summary>
         public DateTimeOffset? Until { get; init; }
 
         private readonly Lock _gate = new();
@@ -1045,14 +969,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         public Dictionary<string, Prepared> Statements { get; } = [];
 
         public Dictionary<string, Portal> Portals { get; } = [];
-
-        // Whether an error aborted the open transaction.
         public bool Failed { get; set; }
-
-        // The exchange in progress, metered at its Sync.
         public Exchange? Exchange { get; set; }
-
-        // The ReadyForQuery status: idle, in a transaction, or in an aborted transaction.
         public char Status => Sql.IsAutocommit ? 'I' : Failed ? 'E' : 'T';
 
         public void Track(CancellationTokenSource? running)
@@ -1071,8 +989,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             }
         }
     }
-
-    // Reads a frontend message body; running past its end is a framing error.
     private sealed class PgReader(byte[] data)
     {
         private static readonly UTF8Encoding Utf8 = new(false, true);
@@ -1117,15 +1033,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             return data.AsSpan(_position - count, count);
         }
     }
-
-    // Builds backend messages: type, big-endian length, body.
     private sealed class PgWriter(PipeWriter pipe)
     {
         private static readonly UTF8Encoding Utf8 = new(false, true);
         private readonly ArrayBufferWriter<byte> _body = new();
         private byte _type;
-
-        // Every message byte written to the connection.
         public long Written { get; private set; }
 
         public void Begin(char type)
