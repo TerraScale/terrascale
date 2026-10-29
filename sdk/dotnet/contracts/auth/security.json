@@ -1,0 +1,138 @@
+{
+  "producer_revision": "e30ffdc287530551b161b0130220be53d3c0475e",
+  "schemes": {
+    "platformUser": {
+      "type": "http",
+      "scheme": "bearer",
+      "bearerFormat": "JWT",
+      "requires": "Live terrascale user sign-in token; ES256 at+jwt; audience includes issuer; current auth epoch and live token/sign-in entries. Active MFA primary-only users refused. Organization, project, service and API-key tokens refused."
+    },
+    "clientBasic": {
+      "type": "http",
+      "scheme": "basic",
+      "encoding": "base64(ASCII(form_encode(client_id) + ':' + form_encode(client_secret)))",
+      "requires": "Confidential OAuth client."
+    },
+    "oauth_userinfo": {
+      "type": "http",
+      "scheme": "bearer",
+      "requires": "Issuer's valid access token; live user/current authentication epoch; active MFA primary-only users refused."
+    }
+  },
+  "token_audiences": {
+    "platform_issuer": "https://auth.terrascale.tech/terrascale",
+    "resource": "https://api.terrascale.tech",
+    "regional_host_changes_audience": false,
+    "sign_in": "Includes issuer and configured resource audiences; ID tokens are client-bound.",
+    "project_key_or_exchange": "Resource audience; org_id/project_id/scope, optional database only for narrowed API keys. Lifetime at most 15 minutes; exchange no longer than remaining subject lifetime."
+  },
+  "sign_in_scopes": [
+    "openid",
+    "email",
+    "profile",
+    "offline_access"
+  ],
+  "action_scopes": [
+    "databases:read",
+    "databases:write",
+    "documents:read",
+    "documents:write"
+  ],
+  "step_up": {
+    "provenance": "step-up-provenance.json",
+    "purpose_audiences": {"delete_account": ["ts-auth", "ts-dashboard"], "create_pat": ["ts-dashboard"], "create_api_key": ["ts-auth"], "rotate_api_key": ["ts-auth"], "create_oauth_client": ["ts-auth"]},
+    "consume": "ts-dashboard only; delete_account requires operation_receipt and returns 200 {operation_grant} only after final proof deadline check; create_pat forbids receipt and returns 204",
+    "proof_header": "X-TerraScale-Step-Up-Proof; fresh single-use ts-auth proof for account deletion, API-key create/rotate and Projects.CreateClientAsync",
+    "deletion_receipt": "Exact receipt PLUS X-TerraScale-Deletion-Authorization from successful dashboard consume or first auth deletion replace proof only for that account/epoch/state/fresh-bindings continuation for 15 days. Receipt alone reads status only; late rejection or lost acknowledgement never releases a grant",
+    "retry": "Never retry consume or credential mutation automatically, including on lost responses"
+  },
+  "authorization": "Producer rechecks ownership/membership/role; SDK never treats UI roles or local IDs as authority.",
+  "pagination": "limit 1..100 (default 20), opaque after bound to same list; items/next; next null ends. IDs unchanged; key lists creation order, org/project/member lists id order.",
+  "errors": {
+    "nested": "{error:{code,message}}",
+    "oauth": "{error,error_description?}",
+    "safe_metadata": "StatusCode, admitted ErrorCode, RetryAfter only; unknown code, server descriptions and bodies omitted.",
+    "platform_codes": [
+      "already_member",
+      "binding_conflict",
+      "closure_conflict",
+      "email_mismatch",
+      "forbidden_role",
+      "invalid_request",
+      "invitation_expired",
+      "invitation_pending",
+      "last_owner",
+      "mfa_not_enrolled",
+      "mfa_required",
+      "name_taken",
+      "not_empty",
+      "not_found",
+      "not_pending",
+      "rate_limited",
+      "rotation_pending",
+      "step_up_required",
+      "temporarily_unavailable",
+      "unauthorized"
+    ],
+    "token_codes": [
+      "invalid_request",
+      "invalid_client",
+      "invalid_grant",
+      "invalid_scope",
+      "invalid_target",
+      "unauthorized_client",
+      "unsupported_grant_type",
+      "rate_limited",
+      "temporarily_unavailable"
+    ]
+  },
+  "required_request_values": {
+    "NameRequest": [
+      "name"
+    ],
+    "RoleRequest": [
+      "role"
+    ],
+    "CreateApiKeyRequest": [
+      "name",
+      "scopes"
+    ],
+    "CreateInvitationRequest": [
+      "email",
+      "role"
+    ],
+    "InvitationTokenRequest": [
+      "token"
+    ],
+    "StartTransferRequest": [
+      "user_id"
+    ]
+  },
+  "limits": {
+    "platform_json_bytes": 16384,
+    "sdk_token_form_and_success_bytes": 1048576,
+    "sdk_error_bytes": 65536,
+    "sdk_deadline_seconds": 30
+  },
+  "retry": "No automatic retries for this integration surface; no stable mutation idempotency contract.",
+  "revocation": "Revoking user access/refresh token ends sign-in in ts-auth. Key/role revocation prevents fresh scope issuance. Offline tokens persist until expiry; no immediate offline revocation claim.",
+  "handler_prerequisite": "Caller-owned HttpClient must disable redirects and cookies. SDK DI does so; arbitrary handlers cannot be inspected. SDK never owns caller HttpClient disposal.",
+  "qualification": "Source-derived contract and synthetic HTTP fakes only. Producer parity, exact package compatibility and live integration remain unproven. Token database narrowing via exchange is absent. Introspection endpoint is absent.",
+  "api_key_secret_format": {
+    "id": "canonical 26-character ULID",
+    "separator": "_",
+    "secret_length": 52,
+    "secret_alphabet": "0123456789abcdefghjkmnpqrstvwxyz",
+    "prefix_or_last4_metadata": "absent",
+    "one_time_display": "Only creation/rotation returns key; listings/get return metadata."
+  },
+  "invitations": {
+    "token": "tsi_ followed by 52 lowercase base32 characters; shown once and emailed by producer; never log or persist in dashboard",
+    "lifetime_days": 7,
+    "security": "User sign-in bearer; verified invitee email must match for accept/decline; token alone is not authorization",
+    "roles": "Organization admin creates/lists/revokes; owner required when inviting owner. Project admin can target/list project_id. Producer checks current authority.",
+    "rate_limit": "Create only: 100 invitations per organization per hour; 429 rate_limited, no retry by SDK."
+  },
+  "ownership_transfer": "Owner nominates a current non-owner member for seven days. Starting a transfer replaces any pending offer and returns 201, not 409. Nominee confirms, becoming owner while initiating owner becomes admin. Owner or nominee cancels. A pending offer reads as 404 when absent/expired, when its initiating user is no longer an owner, or when its nominee is no longer a non-owner organization member (viewer/member/admin).",
+  "audit_events": "Organization admin reads newest-first items/next; producer retains at least 90 days."
+}

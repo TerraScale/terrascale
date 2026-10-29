@@ -1,0 +1,25 @@
+{
+  "repository": "https://github.com/TerraScale/terrascale",
+  "revision": "4ae355e5f82d6fb8701a4c409406dc4454314e85",
+  "pull_request": "https://github.com/TerraScale/terrascale/pull/672",
+  "sources_sha256": {
+    "src/TerraScale.Authentication/Features/ProjectTenants/ExportProjectUsersEndpoint.cs": "2305c727d8500371145ad9727b70c6ec63b6b8a4c6d13a744fd5d66c9fc5e680",
+    "src/TerraScale.Authentication/Features/ProjectTenants/ProjectTenantEndpoint.cs": "dc05916ec9a2520c4012fa33b377d3ceed62c6b7a8d0a7027caf8d2dd7d3e66b",
+    "src/TerraScale.Authentication/Features/ProjectTenants/UpdateProjectSettingsEndpoint.cs": "0c1ae5b3e52b3a1cb513b85c6e52c9f55f1c8f0b356deb738fc6171540171dd1",
+    "src/TerraScale.Authentication/Features/Platform/PlatformEndpoints.cs": "847c737c4b614e845d64910d7d2038cd94a75f730da5caabd0b61212749adde3",
+    "src/TerraScale.Authentication/Hosting/OpenApiSetup.cs": "d70c69db281f4f30aad89298dab555fc73eaad12ae5ed6d12ea92d114de2d77c",
+    "docs/auth/directory-export-and-email-branding.md": "aee2ac105f43e0d7cf88e8ec009e74f7789c94f1b8c9ed74b314d2290ab30d6c"
+  },
+  "operations": [
+    "export_project_users",
+    "get_project_settings",
+    "update_project_settings"
+  ],
+  "fields": {
+    "export_page": ["items: user[]", "next: string?", "created_before: date-time"],
+    "user": ["id: string", "email: string", "email_verified: bool", "created_at: date-time", "disabled: bool", "linked_providers: [{provider: string, client_id: string, subject: string}]"],
+    "branding": ["email_message: string? (at most 500 plain-text characters; newline is the only allowed control)"]
+  },
+  "sdk_scope": "JSON format only; format=csv and the X-Export-Next / X-Export-Created-Before headers are not exposed (the JSON body carries next and created_before).",
+  "qualification": "Owning producer merged in TerraScale/terrascale#672; HTTP fixture coverage only. Installed package and live-service qualification remain separate."
+}

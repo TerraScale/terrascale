@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Build both supported targets with .NET 11, or .NET 10 LTS with an
+         older toolchain. Clear the inherited singular TargetFramework so
+         multi-target dispatch selects the configured frameworks. -->
+    <TargetFrameworks Condition="$([MSBuild]::VersionGreaterThanOrEquals('$(BundledNETCoreAppTargetFrameworkVersion)', '11.0'))">net10.0;net11.0</TargetFrameworks>
+    <TargetFrameworks Condition="'$(TargetFrameworks)' == ''">net10.0</TargetFrameworks>
+    <TargetFramework />
+    <PackageId>TerraScale.DotNet</PackageId>
+    <Version>0.0.20</Version>
+    <Description>Official .NET SDK for TerraBase and ts-auth.</Description>
+    <PackageProjectUrl>https://github.com/TerraScale/ts-dotnet</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/TerraScale/ts-dotnet</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>terrascale;terrabase;database;documents;auth;sdk</PackageTags>
+    <PackageReleaseNotes>0.0.20: Adds purpose-bound sign-in email change request and confirmation. Confirmation ends every account sign-in; callers must discard local sessions. Includes 0.0.19: Adds Platform.SignOutEverywhereAsync (POST /v1/terrascale/account/sign-out), which ends every hosted session, refresh token and sign-in access token of the caller's account; API keys stay valid. Includes 0.0.18: HTTPS TerraBase and ts-auth requests negotiate HTTP/2 with HTTP/1.1 fallback and reuse the caller's connection pool. Preserves TLS validation, private transport rules and per-attempt authorization/retry behavior. Includes 0.0.17: Adds immutable-ID database rename with a name-only PATCH and nullable PreviousName/ConflictOf metadata. Includes 0.0.16: GET and HEAD requests also resend 429 tenant_busy, 503 capacity, gateway 502 and 504 answers and lost connections, each attempt asks the AccessTokenProvider again, and backoff without Retry-After uses full jitter, matching ts-go and ts-js. Includes 0.0.15: TerraBase requests resend the 503 refusals TerraBase answers before execution (remote_region_unavailable, confirmation_busy, catalog_stale for any buffered request; auth_unavailable and storage_busy for reads) at most twice with Retry-After plus jitter, and throw the 503 at once when the wait would pass the deadline; TerraBaseHttp.CreateHandler adds a 10-second connect timeout and 2-minute pooled connection lifetime. Includes 0.0.14: Adds purpose-bound step-up begin/consume on TerraScaleAuthClient.Platform. Breaking authorization change: API-key create/rotate and Projects.CreateClientAsync require a step-up proof; proof-free account deletion is replaced by DeleteAccountWithProofAsync, with an optional canonical deletion receipt and acknowledged operation grant for continuation; receipt-only status remains available after token revocation. Deletion consume returns the secret grant after HTTP 200, PAT consume returns null after HTTP 204. Consume and credential mutations send once, including on lost responses. Proof and consume records redact secrets from diagnostic formatting. Preserves API-key IP allowlists through AllowedCidrs on create requests and required metadata responses. Includes the 0.0.12 SDK APIs.</PackageReleaseNotes>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Deterministic>true</Deterministic>
+    <IncludeSymbols>false</IncludeSymbols>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="TerraScale.DotNet.Tests" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="../../LICENSE" Pack="true" PackagePath="\" />
+    <EmbeddedResource Include="../../contracts/auth/error-codes.json" LogicalName="TerraScale.DotNet.Auth.error-codes.json" />
+    <None Include="../../contracts/auth/**/*" Pack="true" PackagePath="contracts/auth/%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Include="../../contracts/terrabase/**/*" Pack="true" PackagePath="contracts/terrabase/%(RecursiveDir)%(Filename)%(Extension)" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.11" />
+    <PackageReference Include="NUlid" Version="1.7.3" />
+  </ItemGroup>
+</Project>

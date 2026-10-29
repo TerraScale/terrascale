@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Installed-package consumer: restores the published TerraScale.DotNet, never the SDK project. The release workflow
+       copies this directory out of the repository and restores it from a registry; see docs/package-release.md. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
+    <TargetFramework />
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TerraScale.DotNet" Version="[$(TerraScaleDotNetVersion)]" />
+  </ItemGroup>
+</Project>

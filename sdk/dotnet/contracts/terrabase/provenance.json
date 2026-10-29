@@ -1,0 +1,203 @@
+{
+  "repository": "https://github.com/TerraScale/terrascale",
+  "commit": "8db4c792142dcd6644e1d14a2b2efd6bc04a107a",
+  "sources": [
+    {
+      "path": "src/TerraBase/Features/Management/ProjectApiRoute.cs",
+      "export": "producer/src/TerraBase/Features/Management/ProjectApiRoute.cs.txt",
+      "sha256": "f78ac4888e34b0aa76158e9666efaf5de996d73e2b220018e44167ea2d7372cc"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/ManagedDatabaseBody.cs",
+      "export": "producer/src/TerraBase/Features/Management/ManagedDatabaseBody.cs.txt",
+      "sha256": "17093b73938a331e100e28345b69f32aa0ad27775ff5739df7ec437dfc619a33"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/DatabaseRegions.cs",
+      "export": "producer/src/TerraBase/Features/Management/DatabaseRegions.cs.txt",
+      "sha256": "16a54232cdf1e6d0d63555a43807a3104807b994a12c5018b5ade3cd051548c6"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/ManagementRoute.cs",
+      "export": "producer/src/TerraBase/Features/Management/ManagementRoute.cs.txt",
+      "sha256": "6308bc6db3ff1464985ba88d073f76e7d0e379802a21761cb4acaabcfd13084b"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/CreateManagedDatabaseEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Management/CreateManagedDatabaseEndpoint.cs.txt",
+      "sha256": "d14d0fb71fe065e1ed73791faa1dabaee795a229bc7bd8bf742dc58e3146080d"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/ListManagedDatabasesEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Management/ListManagedDatabasesEndpoint.cs.txt",
+      "sha256": "ddd6d4f39bd5881b26e3247d23bc50fa6aabde16406ee89c82c28b5a52dd6f9e"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/GetManagedDatabaseEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Management/GetManagedDatabaseEndpoint.cs.txt",
+      "sha256": "263b6ee7698bdc95b1546e5947ff2b12368348d14b833919ff4a2684bfb34d91"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/UpdateManagedDatabaseEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Management/UpdateManagedDatabaseEndpoint.cs.txt",
+      "sha256": "f34b3a239b785b303e333e5aafd4e5e1670e1411b71c0a085a5c183aa47beba3"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/DeleteManagedDatabaseEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Management/DeleteManagedDatabaseEndpoint.cs.txt",
+      "sha256": "1bd3038277ac6397724921491e45b0efc824c0ff3e3cc3fe7261a2782c28bcc5"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/Usage/GetDatabaseUsageEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Management/Usage/GetDatabaseUsageEndpoint.cs.txt",
+      "sha256": "67f975325f3337a7912269055ad1bc6f31b0fd4e5e7b283fd8f61751f8a5c1bf"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/Usage/GetProjectUsageEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Management/Usage/GetProjectUsageEndpoint.cs.txt",
+      "sha256": "23c3f1c55614c585906b66b707fba4d50ccf9df578e15fc342068fa5cdc86245"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/Usage/IUsageService.cs",
+      "export": "producer/src/TerraBase/Features/Management/Usage/IUsageService.cs.txt",
+      "sha256": "4ce8517feaa434e31aa40d58fac4b28ecae7ac9102adc152f8cbad921ac1b903"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/Usage/UsageWindow.cs",
+      "export": "producer/src/TerraBase/Features/Management/Usage/UsageWindow.cs.txt",
+      "sha256": "d96d739095a11e94ea611fbce86504da1b60f454ce759e7ea65b13e2a0405ba0"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/Schema/PutCollectionSchemaEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Management/Schema/PutCollectionSchemaEndpoint.cs.txt",
+      "sha256": "c3cb221cad62c1527e10456b73ea98a3360b00c18d1f2d7aca37d042ee7a3d24"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/Schema/GetCollectionSchemaEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Management/Schema/GetCollectionSchemaEndpoint.cs.txt",
+      "sha256": "10176ecd9e9d697adc89f67f1f36b025a8f64768b215cb9370d55eb752ee74e8"
+    },
+    {
+      "path": "src/TerraBase/Features/Documents/GetDatabaseChangesEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Documents/GetDatabaseChangesEndpoint.cs.txt",
+      "sha256": "22a6028fd5d961cdbd307876aef7df171e0d69f6094add382c4d36444f86b191"
+    },
+    {
+      "path": "src/TerraBase/Features/Documents/DatabaseChangeModels.cs",
+      "export": "producer/src/TerraBase/Features/Documents/DatabaseChangeModels.cs.txt",
+      "sha256": "157ab37070ec2104f72730bf0e641fa5219946614a3dafe82530885e9a573ed7"
+    },
+    {
+      "path": "src/TerraBase/Features/Documents/DatabaseChanges.cs",
+      "export": "producer/src/TerraBase/Features/Documents/DatabaseChanges.cs.txt",
+      "sha256": "653e1b45684fb8778267375f73d381b4417e4e52c65907b3602377c432677b19"
+    },
+    {
+      "path": "src/TerraBase/Features/Documents/ChangeCursor.cs",
+      "export": "producer/src/TerraBase/Features/Documents/ChangeCursor.cs.txt",
+      "sha256": "1e441a7c2f6b7af31ba6cfae40311374488737fa46557822fc230adeaa464613"
+    },
+    {
+      "path": "src/TerraBase/Features/Documents/DocumentRoute.cs",
+      "export": "producer/src/TerraBase/Features/Documents/DocumentRoute.cs.txt",
+      "sha256": "830b42f7ad595dcf6cd24353bd7c0944c8eaaf59ecb3f2d611f625e10f29844d"
+    },
+    {
+      "path": "src/TerraBase/Features/Documents/DocumentService.Schemas.cs",
+      "export": "producer/src/TerraBase/Features/Documents/DocumentService.Schemas.cs.txt",
+      "sha256": "182172f4320c73e890133b042aa75037ff4edba031791be542c88b5eefd137ba"
+    },
+    {
+      "path": "src/TerraBase/Features/Documents/CollectionSchemaRoute.cs",
+      "export": "producer/src/TerraBase/Features/Documents/CollectionSchemaRoute.cs.txt",
+      "sha256": "60665ffa0c29d19fd63895e391c65c1b6015c2109e75f960faf569f701ab7e50"
+    },
+    {
+      "path": "src/TerraBase/Features/Documents/GetCollectionSchemaEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Documents/GetCollectionSchemaEndpoint.cs.txt",
+      "sha256": "600d89a860177dc3cf20cb90b84e47cc1542afb09041636e300a9d61f3d2a526"
+    },
+    {
+      "path": "src/TerraBase/Features/Documents/PutCollectionSchemaEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Documents/PutCollectionSchemaEndpoint.cs.txt",
+      "sha256": "836d24b6a8137af9fdfce3e9c800c5c47a917802233658f83f9283a59490d3b2"
+    },
+    {
+      "path": "src/TerraBase/Features/Documents/DeleteCollectionSchemaEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Documents/DeleteCollectionSchemaEndpoint.cs.txt",
+      "sha256": "63fca1ce65c98aeba3f9caa2b12673c8c46b49b40f18180e8c9e08f233ca6830"
+    },
+    {
+      "path": "src/TerraBase/Hosting/Listeners.cs",
+      "export": "producer/src/TerraBase/Hosting/Listeners.cs.txt",
+      "sha256": "060f331c48b6b7667ab3904d62721bdb81859d93b6fa1ec9ccaf99968a502a75"
+    },
+    {
+      "path": "src/TerraBase/Hosting/TerraBaseJsonContext.cs",
+      "export": "producer/src/TerraBase/Hosting/TerraBaseJsonContext.cs.txt",
+      "sha256": "af09fd4633ddf4a334e92b864e1c6d3dc60949181cfb8681ebd61b043e115a2b"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/BranchManagedDatabaseEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Management/BranchManagedDatabaseEndpoint.cs.txt",
+      "sha256": "16729700b6baa72fd26ebe8c8537f51e3414fd1a439a9d0bcbac211dc6266043"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/Queries/RunSqlEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Management/Queries/RunSqlEndpoint.cs.txt",
+      "sha256": "a038d67d1c3e4979cc3333d425732c8d1c256035b5528fe5e649e64df93c6279"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/Queries/IQueryService.cs",
+      "export": "producer/src/TerraBase/Features/Management/Queries/IQueryService.cs.txt",
+      "sha256": "ef61b792dbadd17fd8911626feff692f5cb1c4177e860de00453b0d386192eb7"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/Indexes/ListIndexesEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Management/Indexes/ListIndexesEndpoint.cs.txt",
+      "sha256": "0b75cf7bb6bccb81c33236130794624798779c191d70fd14758c9deaa4fbe2f7"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/Indexes/CreateIndexEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Management/Indexes/CreateIndexEndpoint.cs.txt",
+      "sha256": "d434f90908125c04ed38e46acf88d75020e5e19e55ed6fae2b14e3f4b8eb2e35"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/Indexes/DropIndexEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Management/Indexes/DropIndexEndpoint.cs.txt",
+      "sha256": "d3177f0bea5dd2e5f729375b5409962bf205d22c23f2649062c3b66ff37ad891"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/Indexes/IIndexService.cs",
+      "export": "producer/src/TerraBase/Features/Management/Indexes/IIndexService.cs.txt",
+      "sha256": "2e81cdbecf9b2024f17574871e8c2b74dfb1e68049fdbdbf6e0d725b9e05232a"
+    },
+    {
+      "path": "src/TerraBase/Features/Documents/GetCollectionEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Documents/GetCollectionEndpoint.cs.txt",
+      "sha256": "28af27dda8c6dceadebdc00562c33ef93b8f88f8f6b30e784edfa7dea4a18907"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/Schema/ListCollectionsEndpoint.cs",
+      "export": "producer/src/TerraBase/Features/Management/Schema/ListCollectionsEndpoint.cs.txt",
+      "sha256": "9f7cfbe74fc20bcfb399259d83003d39da311633538e439725fcd10cb72be954"
+    },
+    {
+      "path": "src/TerraBase/Features/Management/Schema/ISchemaService.cs",
+      "export": "producer/src/TerraBase/Features/Management/Schema/ISchemaService.cs.txt",
+      "sha256": "7479a803cfd0374e7deab411a1fb9f974c8c4d0152454c9aa34f22633287ef6e"
+    },
+    {
+      "path": "src/TerraBase/Engine/SqlQuery.cs",
+      "export": "producer/src/TerraBase/Engine/SqlQuery.cs.txt",
+      "sha256": "3c2c3d0b43883fe2efb2f501ab9ab9c81f4a651f1d25c0c3a4c2f417e7c2b8b6"
+    }
+  ],
+  "qualification": "Exact exports from merged producer source and synthetic HTTP/SSE fixtures. No producer binary or live service executed; interoperability and OCI deployment remain separately qualified.",
+  "artifact": {
+    "path": "artifacts/terrabase-8db4c792-source.tar.gz",
+    "sha256": "7f49e1f71f45d8a81191905fccf0a628c16a27f44d87ae87fc3daff2029087bd",
+    "format": "git archive --format=tar, gzip mtime=0",
+    "commit": "8db4c792142dcd6644e1d14a2b2efd6bc04a107a"
+  }
+}

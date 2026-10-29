@@ -1,0 +1,9 @@
+{
+  "producer_revision": "1d823d8534fc5035859a47e263691d0c7cb7b744",
+  "sources_sha256": {
+    "src/TerraScale.Authentication/Features/Oidc/OidcServer.cs": "100d2b3dac02920c10ce9823bcfb8bbd8382f1e9ce8426241a6c5f75b6cfebae",
+    "docs/auth/parity.md": "f403a9cd914a3617535dd036530411427186290824373dd992460839eee0dbc2"
+  },
+  "scope": "Discovery omits introspection_endpoint; no introspection route/grant/result is supported. Platform MFA is independently owned and remains unchanged.",
+  "qualification": "Pinned-source HTTP fixture; supported authenticated device/refresh flow still requires production proof."
+}

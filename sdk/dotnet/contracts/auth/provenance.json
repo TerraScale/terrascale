@@ -1,0 +1,92 @@
+{
+  "repository": "https://github.com/TerraScale/terrascale",
+  "revision": "e30ffdc287530551b161b0130220be53d3c0475e",
+  "sources_sha256": {
+    "src/TerraScale.Authentication/Features/Platform/PlatformEndpoints.cs": "95b2b768730afff0c8f663d4c8ffee747a99dd66fa6fcec857d9ae9ca69279b2",
+    "src/TerraScale.Authentication/Features/Platform/ApiKeyEndpoints.cs": "4c6c12188314194e195a26a554c26e80b1635c6ab1ee0f436a42e94bc946f582",
+    "src/TerraScale.Authentication/Features/Platform/ApiKeys.cs": "4667529347f9446398624a507f37b8bd8f94bc2167984cd75a46b05beabf8e87",
+    "src/TerraScale.Authentication/Features/Platform/PlatformDirectory.cs": "1e47a6bf1dbeb390392ee5d14d6cc0a4f379e97db3587beb2b4555ae20dd7e01",
+    "src/TerraScale.Authentication/Features/Platform/PlatformAuthentication.cs": "df99dfb051ee1f03a1c4a3a5a5066a8ff96c9c26a9b61c8bbce6b40680882d26",
+    "src/TerraScale.Authentication/Features/Platform/PlatformGrants.cs": "dbb77e75aa4467eee4414cc20178ef539a55efc1cf4be230101dd20b16bda5b1",
+    "src/TerraScale.Authentication/Features/Oidc/OidcEndpoints.cs": "0647ad6db4e2319acbefae6fd2cfccbcf00ece628ef47ca75ec26b2c3e16c5c3",
+    "src/TerraScale.Authentication/Features/Oidc/OidcServer.cs": "cce1dd8dd7f51730b9b8e4a62a277514669370327bb5e32bd81487182e091ac7",
+    "src/TerraScale.Authentication.Contracts/ApiException.cs": "f9e95914f00e00979271e2c1326e317f26c559305d26f710864a44e4492b45d4",
+    "src/TerraScale.Authentication/Hosting/OpenApiSetup.cs": "924cc3e3a4af7c454ab16be936d7dfbbca0fa31a601d8f929fad56a30fb085e7",
+    "src/TerraScale.Authentication/Configuration/AuthOptions.cs": "240626568db2efe04a17b894e7dfc9937bf0787b1bb4e062173dd98337738c75",
+    "src/TerraScale.Authentication/Features/Platform/InvitationEndpoints.cs": "f04adbbea517d59033d759f08cfd02cd016e7b4995a3f834fd9d8bc09c3cd45e",
+    "src/TerraScale.Authentication/Features/Platform/Invitations.cs": "c2c25fb0e3ac58a282a9401a8c56c4aa5d8d4777db048b6e4799429a001564b3"
+  },
+  "qualification": "Source-derived contracts; HTTP fakes only. Producer parity and live qualification remain unproven.",
+  "ts873_closure_producer": {
+    "state": "Merged TS-873 producer: TerraScale/terrascale#495.",
+    "base_revision": "2d639336d1df5799bd2d62bd6cfded1498774dde",
+    "sources_sha256": {
+      "src/TerraScale.Authentication/Features/Platform/PlatformEndpoints.cs": "a7436836b58919b0804661cdacfd30760f568d3d41a969823514cfceb54f04fd",
+      "src/TerraScale.Authentication/Features/Platform/PlatformDirectory.cs": "c8ed08c159da30b5c6538f6202b5a4f970353740a984728590427e1174518856",
+      "src/TerraScale.Authentication/Features/Platform/Closures.cs": "deefbefc6fb13b864cf5499d4e4c19b206cda60129afb7a28f8589f38cb72216",
+      "src/TerraScale.Authentication/Features/Platform/AccountDeletion.cs": "dc4e2a4ff6c4c66969555ccf0e2cdef11da820f6fbf8ee7bcc16abbaac2b757f",
+      "docs/auth/platform-api.openapi.yaml": "7265b724ceef3201da65c95b283da827818ee97a6c6ecb92199fcb73aeff0aa7"
+    },
+    "codes": [
+      "closure_conflict",
+      "binding_conflict"
+    ],
+    "statuses": "delete_account and delete_project answer 202 while a TerraBase project closure is pending",
+    "revision": "c1a1d9662662698739750a9af45db979abb2cea7"
+  },
+  "account_deletion_receipts_producer": {
+    "state": "Producer PR TerraScale/terrascale#608; land before SDK merge.",
+    "revision": "b1c8fc92c55fd1235b6b94e1350a5c76908e20ed",
+    "sources_sha256": {
+      "src/TerraScale.Authentication/Features/Platform/AccountDeletionStatusEndpoint.cs": "e5452cf3e1e546359f04eb616f55cc86f58ed6bdcd8ad496b88fa0ff9ab19a47",
+      "src/TerraScale.Authentication/Features/Platform/PlatformEndpoints.cs": "5e6ae4b4c87db2ea14bf37148b983e02c0c148f1d440d7f9ec4cf26deea3bc47",
+      "src/TerraScale.Authentication/Features/Platform/AccountDeletion.cs": "1781ec6ebe3b92abad0a66c20512bb1ffa838098f77d6d32da3a7cdaf7a384ab",
+      "src/TerraScale.Authentication/Hosting/OpenApiSetup.cs": "1e79d24c7e391ad2d3c160765bfb25457eb4aaecc34909b747e7ea016e4e66a6",
+      "docs/auth/account-deletion-receipts.md": "52e92c0532f0c4a95bf4f96ec482147b602dc17e91f735c4fee5557126556cff"
+    }
+  },
+  "headless_removal_producer": {
+    "revision": "1d823d8534fc5035859a47e263691d0c7cb7b744",
+    "sources_sha256": {
+      "docs/auth/csharp-port.md": "6116f3c921bdabcaa198bae325b3572d08f4a5ef592ba02d875035bfe386a9be",
+      "docs/auth/parity.md": "f403a9cd914a3617535dd036530411427186290824373dd992460839eee0dbc2"
+    },
+    "scope": "Headless routes and password/email-code extension grants removed; older retained platform fixtures keep their own provenance."
+  },
+  "instance_billing_retirement_producer": {
+    "revision": "2cc348ec75a11079aa20547c09203e581ce70cb8",
+    "sources_sha256": {
+      "docs/auth/parity.md": "f403a9cd914a3617535dd036530411427186290824373dd992460839eee0dbc2"
+    },
+    "scope": "Legacy instance billing retirement only; public platform/dashboard billing authority is separate. No billing operations were present in the supported SDK route/DTO manifests."
+  },
+  "instance_api_key_retirement_producer": {
+    "revision": "4b6dfd03b2d814cea0b1f7d599478f6b06532b4a",
+    "sources_sha256": {
+      "docs/auth/parity.md": "f403a9cd914a3617535dd036530411427186290824373dd992460839eee0dbc2",
+      "src/TerraScale.Authentication/Features/Platform/ApiKeyEndpoints.cs": "15bbed925cb72d200047b674a9679bdff3a3301e904f30479952248726e0ba51"
+    },
+    "scope": "Legacy sk_-credential instance API-key client retirement only; supported Platform organization/project keys retain their authority, models and routes. No retired operation or DTO was present in the supported SDK manifests."
+  },
+  "instance_organization_retirement_producer": {
+    "revision": "4b6dfd03b2d814cea0b1f7d599478f6b06532b4a",
+    "sources_sha256": {
+      "docs/auth/parity.md": "f403a9cd914a3617535dd036530411427186290824373dd992460839eee0dbc2"
+    },
+    "scope": "Legacy instance organization operations and exclusive DTOs only; TerraScaleAuthOrganization remains for the separate legacy user membership result. Supported Platform/Projects organizations, members and invitations are preserved."
+  },
+  "instance_federation_directory_retirement_producer": {
+    "revision": "4b6dfd03b2d814cea0b1f7d599478f6b06532b4a",
+    "sources_sha256": {
+      "docs/auth/parity.md": "f403a9cd914a3617535dd036530411427186290824373dd992460839eee0dbc2"
+    },
+    "scope": "Retires only legacy instance Connections/Directories. Current organization SSO and project providers/directory export remain distinct and unchanged."
+  },
+  "instance_template_oauth_client_retirement_producer": {
+    "revision": "4b6dfd03b2d814cea0b1f7d599478f6b06532b4a",
+    "sources_sha256": {
+      "docs/auth/parity.md": "f403a9cd914a3617535dd036530411427186290824373dd992460839eee0dbc2"
+    },
+    "scope": "Legacy instance JWT templates and OAuth-client registration only. Project clients, backend token issuance and OIDC grants remain unchanged."
+  }
+}

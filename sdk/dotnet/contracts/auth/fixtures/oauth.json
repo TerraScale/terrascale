@@ -1,0 +1,8 @@
+{
+  "sign_in_response": {"access_token":"fixture-access-token","token_type":"Bearer","expires_in":3600,"refresh_token":"fixture-refresh-token","id_token":"fixture-id-token"},
+  "exchange_response": {"access_token":"fixture-project-token","token_type":"Bearer","expires_in":900,"issued_token_type":"urn:ietf:params:oauth:token-type:access_token"},
+  "client_credentials_response": {"access_token":"fixture-key-token","token_type":"Bearer","expires_in":900},
+  "userinfo_response": {"sub":"{user}","email":"synthetic@example.test","email_verified":true},
+  "nested_error": {"error":{"code":"forbidden_role","message":"fixture-credential-canary"}},
+  "oauth_error": {"error":"invalid_target","error_description":"fixture-credential-canary"}
+}

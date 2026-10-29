@@ -1,0 +1,27 @@
+{
+  "repository": "https://github.com/TerraScale/terrascale",
+  "state": "Reviewed contract on auth PR #767; merge and activation are held for the dashboard companion.",
+  "sources_sha256": {
+    "src/TerraScale.Authentication/Features/Platform/StepUpProofs.cs": "4e2d18c1bfd6f800f10a723605ae14820bcd0737419e4907d0b8fb73b181d509",
+    "src/TerraScale.Authentication/Features/Platform/RequestStepUpEndpoint.cs": "6ff3b1da82545da5493f7069eb1743ecaa2654d31998c92d768269224512ac6e",
+    "src/TerraScale.Authentication/Features/Platform/ConsumeStepUpEndpoint.cs": "1b97801939bad9ad06462aa75387be8601ab5136a52f726e4c3c5215e9fcaf2f",
+    "src/TerraScale.Authentication/Features/Platform/PlatformEndpoints.cs": "9351ccefeebf835c4e5689b52d830d783e7e54310b029748cf3fc44824161b87",
+    "src/TerraScale.Authentication/Features/Platform/ApiKeyEndpoints.cs": "f6b9bd9dec569f20ac9aedd4c6a65379068882d95e1b4c34d450f844595e52f5",
+    "src/TerraScale.Authentication/Features/ProjectTenants/CreateProjectClientEndpoint.cs": "6fca63ecf9814e4f117d60c32462404562cb2ea86b49e4d136903e56d9ec02ec",
+    "docs/auth/step-up-proof.md": "8f9a67fb226365718eb7a7f30da68e0b0782ad8897d73038ac6c4c021db86a60",
+    "docs/auth/step-up.openapi.yaml": "6c2247dffea424bf24cc39780ba1b17ceb56ad52f15eab1b85777735247d9e96"
+  },
+  "operations": [
+    "request_step_up",
+    "consume_step_up",
+    "delete_account",
+    "create_organization_api_key",
+    "create_project_api_key",
+    "rotate_organization_api_key",
+    "rotate_project_api_key",
+    "create_project_client"
+  ],
+  "qualification": "Source-inspected pending producer plus synthetic HTTP contracts only; independent security review, producer merge, installed-package and live-service qualification remain separate.",
+  "producer_revision": "5cb86e674c77d0142e1263119b6dc1c641a8ca3c",
+  "pull_request": "https://github.com/TerraScale/terrascale/pull/767"
+}

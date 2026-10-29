@@ -1,0 +1,24 @@
+{
+  "repository": "https://github.com/TerraScale/terrascale",
+  "revision": "a3cbf8b1c73d304189a489fa8033d41f3b508de3",
+  "sources_sha256": {
+    "src/TerraBase/Features/Health/HealthzEndpoint.cs": "98edd92dee709421daa9323ac49e17f8b7400c06643334d2881a48519b9accf7",
+    "src/TerraBase/Features/Health/ReadyzEndpoint.cs": "ba821267100d7ea6ee71d9873ec8aa3f9437bdde3652f59c2b4afd3ddee317dc",
+    "src/TerraBase/Features/Backup/BackupHealthEndpoint.cs": "12dac1a307d1c08bf48323df210d886b76470470a14344a685bb317b0a31533a",
+    "src/TerraBase/Hosting/Listeners.cs": "0244b2784a2401e000c8b661ec8cf11e3257c1f2336e1eedbe47e69e711e3c9f",
+    "src/TerraBase/Hosting/TerraBaseJsonContext.cs": "448816c44361d03fbe5bce6168e9f743d4847f903ca489ed44131617e875c026",
+    "src/TerraBase/Features/ApiReference/ApiExamples.cs": "4a7845fc9ee2b3d076f9a79f31578e8dc2d305ae1879efbe29606bbae7dcc725",
+    "tests/TerraBase.Fast/Platform/HealthTests.cs": "8e42591c00fa045e685553a9bdb1d973f78572a5e9a23e531b0d06d74bfb6a21",
+    "tests/TerraBase.Fast/Platform/ApiReferenceTests.cs": "c7e9bd79c44346bf68c15d6f00baa353dc1cad593b0b8ff799b4d65fa609124e"
+  },
+  "additional_immutable_contract": {"revision": "a095400a19bcc432ac27d0afaca4eba042b636a7", "source": "src/TerraBase/Features/Health/HealthzEndpoint.cs", "sha256": "afe88c688f0f605069dac490edb22b2c2155cadc0204e454bcabe28521c276ac", "shape": "StatusBody has only required status/version/region strings."},
+  "operations": [
+    {"operation_id": "healthz", "method": "GET", "path": "/healthz", "request_body": null, "parameters": null, "security": "anonymous on client listener; SDK sends no credential", "response_media_type": "application/json", "success_statuses": [200], "unavailable_body": null},
+    {"operation_id": "readyz", "method": "GET", "path": "/readyz", "request_body": null, "parameters": null, "security": "anonymous on client listener; SDK sends no credential", "response_media_type": "application/json", "success_statuses": [200, 503], "unavailable_body": 503},
+    {"operation_id": "backupz", "method": "GET", "path": "/backupz", "request_body": null, "parameters": null, "security": "anonymous on client listener; SDK sends no credential", "response_media_type": "application/json", "success_statuses": [200, 503], "unavailable_body": 503}
+  ],
+  "public_dto": {"sdk_type": "TerraBaseStatus", "required_non_null_fields": {"status": "string", "version": "string", "region": "string"}, "additional_fields": "ignored; private metadata is not exposed by SDK"},
+  "semantics": "Liveness ok; readiness ready/unavailable; backup shipping/unavailable. No pagination, checkpoint, mutation, SDK cache, hidden work or retries. 421 region-pin mismatch and other non-200/503 responses retain existing errors. Liveness 503 is preserved by existing generic probe decoder but is not declared by owning endpoint.",
+  "generated_boundary": "Existing producer StatusBody sourcegen registration and ApiReference tests inspected; generated OpenAPI/route manifest not regenerated or executed. SDK current-public-routes.json remains historical e7fa366 (healthz old operation id status), not current DTO authority. ApiExamples has healthz/readyz examples but lacks explicit backupz success/503 example; endpoint handler is owning wire authority.",
+  "live_evidence": ".qa-q12/evidence/health-owner-search/live-shape.json records 3 anonymous HTTP200 bodies with exactly these 3 string fields; evidence provided by coordinator, no live requests by fixer."
+}

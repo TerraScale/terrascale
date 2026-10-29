@@ -1,0 +1,12 @@
+{
+  "matched": 1,
+  "truncated": true,
+  "rows": [
+    {
+      "id": "a",
+      "value": {
+        "title": "São Paulo"
+      }
+    }
+  ]
+}

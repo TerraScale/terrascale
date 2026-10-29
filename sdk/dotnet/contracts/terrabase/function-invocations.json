@@ -1,0 +1,31 @@
+{
+  "producer": "TerraScale/terrascale",
+  "revision": "2cc348ec75a11079aa20547c09203e581ce70cb8",
+  "inputs": {
+    "src/TerraBase/Features/Functions/InvokeFunctionEndpoint.cs": "6efde44e9198c7f25e6575b77265ac7ae8b81f36f0d5671e1370652f1226b16d",
+    "src/TerraBase/Features/Functions/ListFunctionLogsEndpoint.cs": "ec74794e84847e6e30ac2ea9740613fdc300c130bbfd47e420504637742c93db",
+    "src/TerraBase/Features/Functions/ListFunctionDeliveriesEndpoint.cs": "d23b15381fd9d88522ffe58a90ca035f3a0a61fb29a8e8106bf3df661680b7e3",
+    "src/TerraBase/Features/Functions/FunctionRoute.cs": "b5ceb4be880749ffed5fc7666a9c58108b778d87a88291cd5cf3b4076fd62fe9",
+    "src/TerraBase/Features/Functions/Functions.cs": "0061891a2f27f41ba44092970ae03f68d3ec4e860efd58fe672bc8b75d6568a1",
+    "src/TerraBase/Features/Functions/FunctionService.cs": "170bf5318eb2464b96643d634b46b938e3663e05694ec23847f6aa89d4d38aa0",
+    "src/TerraBase/Features/Webhooks/Webhooks.cs": "d431250752b7cd21790e3f243fcc65263ebf59ca15cf70ab5d944a3c1164ba73",
+    "docs/functions/design.md": "6240637a5b2345fc816bc872caa88024b26a09d8870bf2d2ea0a8cbf8f5520d5"
+  },
+  "basePath": "/v1/projects/{project}/databases/{database}/functions/{function}",
+  "invoke": {
+    "operation": "invokeFunction",
+    "method": "POST",
+    "suffix": "/invoke",
+    "scope": "documents:read",
+    "body": "<=1048576 bytes; JSON if parseable, otherwise UTF-8 text, empty => null; query values are strings",
+    "success": "every 2xx: owned status/contentType/raw bytes; empty body allowed",
+    "failure": "every non-2xx: TerraBaseFunctionInvocationException.Response preserves status/contentType/raw body; inherited ErrorCode parses error.code when available; includes 3xx, 401/403, 400/404/413/500 function_error/503; no redirect or retry",
+    "partial": "cancellation/transport loss may leave effects committed; never replay automatically",
+    "contentTypes": "producer emits application/json or text/plain; charset=utf-8; SDK does not decode or assume JSON"
+  },
+  "observationSemantics": "JSON direct arrays; logs newest first, limit 1..100 default 50, last 100 retained; deliveries <=100 ascending IDs, empty without trigger; pending attempts/errorCode are dead-letter view; no cursor. Non-2xx use normal TerraBase exceptions.",
+  "observations": [
+    {"operation":"listFunctionLogs","method":"GET","suffix":"/logs?limit=2","scopes":["documents:read","documents:write"],"success":200,"fixture":[{"id":"01JA0000000000000000000002","at":"2026-10-26T02:00:00Z","trigger":"cron","status":"ok","durationMs":2147483648,"lines":["ok"]},{"id":"01JA0000000000000000000001","at":"2026-10-26T01:00:00Z","trigger":"change","status":"error","durationMs":2,"lines":[],"error":"failed"}]},
+    {"operation":"listFunctionDeliveries","method":"GET","suffix":"/deliveries","scopes":["documents:read","documents:write"],"success":200,"fixture":[{"id":"01JA0000000000000000000003","createdAt":"2026-10-26T02:00:00Z","status":"pending","attempts":2147483648,"lastAttemptAt":null,"nextAttemptAt":null,"httpStatus":null,"errorCode":"transport_error"}]}
+  ]
+}
