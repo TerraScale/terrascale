@@ -57,7 +57,7 @@ internal sealed class RevisionReplica
 
 internal sealed class RevisionDatabase
 {
-    private readonly Dictionary<string, string> _acked = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _acked = [with(StringComparer.Ordinal)];
 
     public TenantContext Database { get; } = new(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
 
