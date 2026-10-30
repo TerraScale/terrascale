@@ -48,6 +48,8 @@ image="localhost/terrascale-dashboard-qualified:$revision-$(basename "$workspace
         "$(grep '^FROM mcr.microsoft.com/dotnet/aspnet:' scripts/dashboard/ci/Dockerfile.runtime)"
     dotnet publish src/TerraScale.Dashboard --configuration Release --no-build --no-restore \
         --output "$workspace/publish" -p:ContinuousIntegrationBuild=true -p:SourceRevisionId="$revision"
+    # Private dev-host umasks must not make public application files unreadable to the image's non-root user.
+    chmod -R a+rX "$workspace/publish"
     "$engine" build --file scripts/dashboard/ci/Dockerfile.runtime --tag "$image" "$workspace/publish"
     bash scripts/dashboard/ci/smoke.sh "$engine" "$image"
 } 2>&1 | tee "$workspace/dashboard-qualification.log"
