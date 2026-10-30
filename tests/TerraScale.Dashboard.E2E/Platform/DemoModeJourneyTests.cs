@@ -12,15 +12,13 @@ namespace TerraScale.Dashboard.E2E.Platform
         [Test]
         public async Task TestExecutableServesSyntheticJourneysWithoutProviders()
         {
-            var port = FreePort();
-            using var process = StartFixture(port);
-            var output = process.StandardOutput.ReadToEndAsync();
-            var error = process.StandardError.ReadToEndAsync();
+            await using var host = StartFixture();
             try
             {
+                var origin = await host.WaitForOriginAsync();
                 using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new CookieContainer() })
-                { BaseAddress = new Uri($"http://127.0.0.1:{port}/"), Timeout = TimeSpan.FromSeconds(10) };
-                var ready = await ReadyAsync(client, process);
+                { BaseAddress = origin, Timeout = TimeSpan.FromSeconds(10) };
+                var ready = await ReadyAsync(client, host.Process);
                 await Assert.That(ready.GetProperty("status").GetString()).IsEqualTo("ok");
                 using (var login = await HttpJourney.LoginAsync(client))
                 {
@@ -38,20 +36,17 @@ namespace TerraScale.Dashboard.E2E.Platform
             }
             catch (Exception failure)
             {
-                var exited = process.HasExited;
-                var exitCode = exited ? process.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture) : "running";
-                var log = "";
-                var collected = false;
-                try { Stop(process); if (process.HasExited) { log = await output + await error; collected = true; } }
-                catch (Exception) { } // Diagnostic collection must never replace the original failure.
-                var announcement = log.Contains($"Synthetic fixture on port {port};", StringComparison.Ordinal);
+                var exited = host.Process.HasExited;
+                var exitCode = exited ? host.Process.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture) : "running";
+                // StopAsync drains both pipes; diagnostic collection must never replace the original failure.
+                var log = await host.StopAsync();
+                var collected = host.Process.HasExited;
                 var bindFailure = log.Contains("Failed to bind", StringComparison.OrdinalIgnoreCase);
                 var addressInUse = log.Contains("AddressInUseException", StringComparison.Ordinal) ||
                     log.Contains("address already in use", StringComparison.OrdinalIgnoreCase) || log.Contains("EADDRINUSE", StringComparison.Ordinal);
-                throw new IOException($"Demo child diagnostics: pid={process.Id}; port={port}; exitedBeforeCleanup={exited}; " +
-                    $"exitCodeBeforeCleanup={exitCode}; collected={collected}; announcement={announcement}; bindFailure={bindFailure}; addressInUse={addressInUse}.", failure);
+                throw new IOException($"Demo child diagnostics: pid={host.Process.Id}; port={host.AnnouncedPort}; exitedBeforeCleanup={exited}; " +
+                    $"exitCodeBeforeCleanup={exitCode}; collected={collected}; announcement={host.Announced}; bindFailure={bindFailure}; addressInUse={addressInUse}.", failure);
             }
-            Stop(process);
         }
 
         [Test]
@@ -79,14 +74,15 @@ namespace TerraScale.Dashboard.E2E.Platform
             }
         }
 
-        private Process StartFixture(int port)
+        // Port 0: the child binds an ephemeral port and announces it, so nothing is reserved before launch.
+        private FixtureProcess StartFixture()
         {
             var start = new ProcessStartInfo("dotnet") { WorkingDirectory = fixture.Root, RedirectStandardOutput = true, RedirectStandardError = true };
             start.ArgumentList.Add(typeof(DemoModeJourneyTests).Assembly.Location);
             start.ArgumentList.Add("--dashboard-fixture-host");
             start.ArgumentList.Add(Path.Combine(fixture.Root, "src", "TerraScale.Dashboard"));
-            start.ArgumentList.Add(port.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            return Process.Start(start) ?? throw new IOException("Could not launch the synthetic fixture.");
+            start.ArgumentList.Add("0");
+            return FixtureProcess.Start(start);
         }
 
         private Process Start(string? demo, int port, params string[] arguments)

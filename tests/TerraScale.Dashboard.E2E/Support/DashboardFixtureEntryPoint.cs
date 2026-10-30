@@ -1,27 +1,21 @@
-using System.Runtime.CompilerServices;
+using System.Globalization;
 
 namespace TerraScale.Dashboard.E2E
 {
     // Synthetic providers exist only in this test executable, including cold-process journeys.
+    // Runs from TestExecutableEntryPoint.Main, so the host is awaited like any other program and never blocks a module initializer.
     internal static class DashboardFixtureEntryPoint
     {
-        [ModuleInitializer]
-        internal static void DispatchTestProcess()
+        // Port 0 asks the OS for a free port at bind time; the child announces the bound origin.
+        internal static async Task<int> RunAsync(string[] args, int marker)
         {
-            var args = Environment.GetCommandLineArgs();
-            var marker = Array.IndexOf(args, "--dashboard-fixture-host");
-            if (marker < 0)
+            if (marker + 2 >= args.Length ||
+                !int.TryParse(args[marker + 2], NumberStyles.None, CultureInfo.InvariantCulture, out var port) || port is < 0 or > 65535)
             {
-                return;
+                return 2;
             }
 
-            if (marker + 2 >= args.Length)
-            {
-                Environment.Exit(2);
-            }
-
-            var port = int.Parse(args[marker + 2], System.Globalization.CultureInfo.InvariantCulture);
-            Environment.Exit(PublicDemo.RunAsync(args[marker + 1], port).GetAwaiter().GetResult());
+            return await PublicDemo.RunAsync(args[marker + 1], port);
         }
     }
 }

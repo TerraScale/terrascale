@@ -1,6 +1,8 @@
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -11,13 +13,20 @@ namespace TerraScale.Dashboard.E2E.Demo
     // Synthetic application host compiled only into the E2E executable.
     public static partial class PublicDemo
     {
+        // Machine-readable line a test reads from stdout: the bound origin, for example http://0.0.0.0:41234.
+        public const string OriginPrefix = "TERRASCALE_FIXTURE_ORIGIN ";
+
         public static async Task<int> RunAsync(string contentRoot, int port)
         {
             var environment = new DemoEnvironment();
             await environment.InitializeAsync();
             await using var app = environment.CreateHost(contentRoot, port, StripeBilling.Origin, Configure);
-            Console.WriteLine($"Synthetic fixture on port {port}; signs in as user@example.com");
-            await app.RunAsync();
+            await app.StartAsync();
+            // Port 0 is resolved at bind time, so the announced origin is the one the server actually listens on.
+            var origin = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First();
+            Console.WriteLine($"{OriginPrefix}{origin}");
+            Console.WriteLine($"Synthetic fixture on port {new Uri(origin).Port}; signs in as user@example.com");
+            await app.WaitForShutdownAsync();
             return 0;
         }
 

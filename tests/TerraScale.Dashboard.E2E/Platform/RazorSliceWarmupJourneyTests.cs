@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Net;
-using System.Net.Sockets;
 
 namespace TerraScale.Dashboard.E2E.Platform
 {
@@ -19,15 +18,14 @@ namespace TerraScale.Dashboard.E2E.Platform
         {
             for (var round = 0; round < 3; round++)
             {
-                var port = FreePort();
-                using var process = Start(port);
-                var output = process.StandardOutput.ReadToEndAsync();
-                var error = process.StandardError.ReadToEndAsync();
+                await using var host = Start();
+                string log;
                 try
                 {
+                    var origin = await host.WaitForOriginAsync();
                     using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new CookieContainer() })
-                    { BaseAddress = new Uri($"http://127.0.0.1:{port}/"), Timeout = TimeSpan.FromSeconds(30) };
-                    await ReadyAsync(client, process);
+                    { BaseAddress = origin, Timeout = TimeSpan.FromSeconds(30) };
+                    await ReadyAsync(client, host.Process);
                     using (var login = await HttpJourney.LoginAsync(client))
                     {
                         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
@@ -46,19 +44,14 @@ namespace TerraScale.Dashboard.E2E.Platform
                 }
                 finally
                 {
-                    if (!process.HasExited)
-                    {
-                        process.Kill(entireProcessTree: true);
-                    }
-
-                    await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                    log = await host.StopAsync();
                 }
-                var log = await output + await error;
                 await Assert.That(log).DoesNotContain("TypeInitializationException");
             }
         }
 
-        private Process Start(int port)
+        // Port 0: the child binds an ephemeral port and announces it, so nothing is reserved before launch.
+        private FixtureProcess Start()
         {
             var project = Path.Combine(fixture.Root, "src", "TerraScale.Dashboard");
             var application = typeof(RazorSliceWarmupJourneyTests).Assembly.Location;
@@ -71,15 +64,15 @@ namespace TerraScale.Dashboard.E2E.Platform
             start.ArgumentList.Add(application);
             start.ArgumentList.Add("--dashboard-fixture-host");
             start.ArgumentList.Add(project);
-            start.ArgumentList.Add(port.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            start.ArgumentList.Add("0");
             foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("TS_", StringComparison.Ordinal) ||
                          name.StartsWith("STRIPE_", StringComparison.Ordinal) || name.StartsWith("ASPNETCORE_", StringComparison.Ordinal)).ToArray())
             {
                 start.Environment.Remove(name);
             }
 
-            start.Environment["ASPNETCORE_HTTP_PORTS"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            return Process.Start(start) ?? throw new IOException("Could not launch the dashboard program.");
+            start.Environment["ASPNETCORE_HTTP_PORTS"] = "0";
+            return FixtureProcess.Start(start);
         }
 
         private static async Task ReadyAsync(HttpClient client, Process process)
@@ -105,11 +98,5 @@ namespace TerraScale.Dashboard.E2E.Platform
             throw new TimeoutException("The dashboard did not become ready.");
         }
 
-        private static int FreePort()
-        {
-            using var probe = new TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            return ((IPEndPoint)probe.LocalEndpoint).Port;
-        }
     }
 }

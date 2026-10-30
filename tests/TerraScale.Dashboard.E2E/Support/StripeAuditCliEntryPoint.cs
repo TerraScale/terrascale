@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using System.Net;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
@@ -10,21 +9,14 @@ namespace TerraScale.Dashboard.E2E
 {
     // This entry point exists only in the TUnit executable. The production
     // dashboard binary has no test-host switch or endpoint/identity override.
+    // Runs from TestExecutableEntryPoint.Main as an awaited program; the result is the process exit code.
     internal static class StripeAuditCliEntryPoint
     {
-        [ModuleInitializer]
-        internal static void DispatchTestProcess()
+        internal static async Task<int> RunAsync(string[] args, int marker)
         {
-            var args = Environment.GetCommandLineArgs();
-            var marker = Array.IndexOf(args, "--stripe-audit-test-host");
-            if (marker < 0)
-            {
-                return;
-            }
-
             if (marker + 2 >= args.Length)
             {
-                Environment.Exit(2);
+                return 2;
             }
 
             var proxy = args[marker + 1];
@@ -32,7 +24,7 @@ namespace TerraScale.Dashboard.E2E
             var commandArgs = args.Skip(marker + 3).ToArray();
             try
             {
-                var credentials = JsonSerializer.Deserialize<DashboardCredentials>(Console.In.ReadToEnd())
+                var credentials = JsonSerializer.Deserialize<DashboardCredentials>(await Console.In.ReadToEndAsync())
                     ?? throw new InvalidDataException("The test identity was not provided.");
                 // The fixture PEM is a public CA certificate, without a private key.
                 using var root = X509Certificate2.CreateFromPem(System.IO.File.ReadAllText(caPath));
@@ -69,13 +61,12 @@ namespace TerraScale.Dashboard.E2E
                     var http = new HttpClient(handler, disposeHandler: true);
                     return new StripeClient(new StripeClientOptions { ApiKey = key, HttpClient = new SystemNetHttpClient(http, enableTelemetry: false) });
                 }
-                var result = new StripeAuditCommand(identity, CreateClient).RunAsync(commandArgs).GetAwaiter().GetResult();
-                Environment.Exit(result);
+                return await new StripeAuditCommand(identity, CreateClient).RunAsync(commandArgs);
             }
             catch (Exception)
             {
                 Console.Error.WriteLine("Stripe audit test child failed safely.");
-                Environment.Exit(2);
+                return 2;
             }
         }
     }

@@ -7,6 +7,10 @@
     <InvariantGlobalization>false</InvariantGlobalization>
     <!-- Many concurrent real hosts allocate independently; use parallel GC as in the TerraBase integration suite. -->
     <ServerGarbageCollection>true</ServerGarbageCollection>
+    <!-- The synthetic host switches run from an awaited Main (Support/TestExecutableEntryPoint.cs), not a module initializer.
+         The generated testing-platform helper stays, so TUnit runs exactly as its generated entry point would run it. -->
+    <GenerateTestingPlatformEntryPoint>false</GenerateTestingPlatformEntryPoint>
+    <GenerateTestingPlatformApplicationHelper>true</GenerateTestingPlatformApplicationHelper>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
