@@ -1,7 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
 using TerraScale.Dashboard.Common.UI;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.FileStorage;
 
 namespace TerraScale.Dashboard.Features.FileStorage
 {
@@ -61,7 +62,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
                                         throw new ArgumentException("Invalid file size.");
                                     }
 
-                                    return Results.Json(await files.UploadAsync(context, bucket, new(form["name"].ToString(), form["contentType"].ToString(), size, form["sha256"].ToString(), metadata.RootElement.Clone()), http.RequestAborted));
+                                    return Results.Json(await files.UploadAsync(context, bucket, new(form["name"].ToString(), form["contentType"].ToString(), size, form["sha256"].ToString(), metadata.RootElement.Clone()), http.RequestAborted), FileStorageJson.Default.TerraBaseFileUrl);
                                 }
                             case "complete": await files.CompleteAsync(context, bucket, file, http.RequestAborted); return Results.NoContent();
                             case "delete": await files.DeleteAsync(context, bucket, file, http.RequestAborted); break;
@@ -125,7 +126,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
 
         private static bool Known(Exception error, HttpContext http)
         {
-            return error is AccountAccessException or HttpRequestException or IOException or JsonException or ArgumentException or TimeoutException
+            return error is AccountAccessException or TerraBaseException or HttpRequestException or IOException or JsonException or ArgumentException or TimeoutException
                 || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested;
         }
 
@@ -134,6 +135,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
             return error switch
             {
                 AccountAccessException denied => denied.StatusCode,
+                TerraBaseException failure => failure.Status,
                 HttpRequestException { StatusCode: { } status } => (int)status,
                 ArgumentException or JsonException => 422,
                 _ => 503

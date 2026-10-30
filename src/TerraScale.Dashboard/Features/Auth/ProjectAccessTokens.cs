@@ -1,6 +1,6 @@
 using System.Net;
 using System.Text.Json;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
@@ -80,14 +80,14 @@ namespace TerraScale.Dashboard.Features.Auth
             var discoveryRead = MetadataAsync(client, cancellationToken);
             var keysRead = SigningKeysAsync(client, cancellationToken);
             _ = ObservePublicReadsAsync(discoveryRead, keysRead);
-            TerraScaleAuthTokenResponse response;
+            TsAuthTokenResponse response;
             try
             {
                 response = await client.Oidc.ExchangeTokenAsync(credentials.AuthClientId, credentials.AuthClientSecret, session.AccessToken,
                     organizationId, projectId, scope, cancellationToken);
             }
             // ts-auth refuses with RFC 6749 errors (PlatformGrants.cs); the status tells callers which one.
-            catch (TerraScaleAuthException error) when (error.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.TooManyRequests)
+            catch (TsAuthException error) when (error.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.TooManyRequests)
             {
                 throw (error.StatusCode, error.ErrorCode) switch
                 {

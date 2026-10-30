@@ -85,6 +85,37 @@
           "Json.More.Net": "2.2.0"
         }
       },
+      "MagicOnion.Serialization.MessagePack": {
+        "type": "Transitive",
+        "resolved": "7.11.0",
+        "contentHash": "fdkSv0lHMvo5sSneMGVf2gexgZEkgzkVeuDWmVAJbIydknJN2uu4+EQJa+EpPBzaHkX7lqdyHDPKjTyPMvCQhg==",
+        "dependencies": {
+          "Grpc.Core.Api": "2.57.0",
+          "MagicOnion.Abstractions": "7.11.0",
+          "MessagePack": "3.1.7"
+        }
+      },
+      "MagicOnion.Shared": {
+        "type": "Transitive",
+        "resolved": "7.11.0",
+        "contentHash": "IttsfeydrAWXUT3eoK6KKwo1J89o5Vp+3uMjosTfkfuaR7DN7pPqhzqKMw3GE1L/awDKgYe1rwJc0Vx6Ebc/rg==",
+        "dependencies": {
+          "Grpc.Core.Api": "2.57.0",
+          "MagicOnion.Abstractions": "7.11.0",
+          "MagicOnion.Serialization.MessagePack": "7.11.0",
+          "MessagePack": "3.1.7"
+        }
+      },
+      "MessagePack.Annotations": {
+        "type": "Transitive",
+        "resolved": "3.1.12",
+        "contentHash": "LdI67sY7F3KK+JsrG02+DP1XFkowaZSoyfL2M88hjm1MOOsjf8amBLAJolV+zxoPUZf3uGbKzq1cMQD8PlpSpA=="
+      },
+      "MessagePackAnalyzer": {
+        "type": "Transitive",
+        "resolved": "3.1.12",
+        "contentHash": "iNSNatPh6bafRUbkQKlClExjpPpd8hiZgfZsodGf7bheIlkizGbMzsJ2mPui8jOHRe4Ky9eg5ou/fFzI7CT3fg=="
+      },
       "Microsoft.ApplicationInsights": {
         "type": "Transitive",
         "resolved": "2.23.0",
@@ -233,6 +264,11 @@
         "resolved": "11.0.0-rc.1.26425.128",
         "contentHash": "8u0zf6gNLLyiN7t/SrKK0R15h5m6aO1Ts8epu0a0hVosrJlovwfw3nEJIsohTbukDAcR5ouhCEMYX/Dge+GH1Q=="
       },
+      "Microsoft.NET.StringTools": {
+        "type": "Transitive",
+        "resolved": "17.11.4",
+        "contentHash": "mudqUHhNpeqIdJoUx2YDWZO/I9uEDYVowan89R6wsomfnUJQk6HteoQTlNjZDixhT2B4IXMkMtgZtoceIjLRmA=="
+      },
       "Microsoft.OpenApi": {
         "type": "Transitive",
         "resolved": "3.10.0",
@@ -292,6 +328,11 @@
         "type": "Transitive",
         "resolved": "0.11.6",
         "contentHash": "f33RkDtZO8VlGXCtmQIviOtxgnUdym9xx/b1p9h91CRGOsJFxCFOFK1FDbVt1OCf1aWwYejUFa2MOQyFWTFjbA=="
+      },
+      "Multicaster": {
+        "type": "Transitive",
+        "resolved": "2.1.1",
+        "contentHash": "KhcxjWkOG7jwUQwqf6sV8lDMPfj6pn2mhz14q4a4Tkt9ZpH5J4QPZgFw0gyt+Isr4nwPGt8E/FeiRy0aQKBGJg=="
       },
       "NativeCompressions.LZ4": {
         "type": "Transitive",
@@ -553,6 +594,7 @@
           "SqlParserCS": "[0.6.5, )",
           "TerraScale.Endpoints": "[1.0.0, )",
           "TerraScale.Logging": "[1.0.0, )",
+          "TerraScale.TerraBase.Rpc": "[1.0.0, )",
           "Turso.Data.Sqlite": "[0.8.2, )",
           "Ulid": "[1.4.1, )",
           "ZLogger": "[2.5.10, )",
@@ -578,6 +620,20 @@
         "dependencies": {
           "ZLogger": "[2.5.10, )",
           "ZString": "[2.6.0, )"
+        }
+      },
+      "terrascale.terrabase.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "MagicOnion.Abstractions": "[7.11.0, )",
+          "MessagePack": "[3.1.12, )"
+        }
+      },
+      "terrascale.terrabase.rpc": {
+        "type": "Project",
+        "dependencies": {
+          "MagicOnion.Server": "[7.11.0, )",
+          "TerraScale.TerraBase.Contracts": "[1.0.0, )"
         }
       },
       "turso.data": {
@@ -616,6 +672,30 @@
         "resolved": "3.36.2",
         "contentHash": "Ci1q1iJg74qAE5riTA2FbMS0wPbpruPQI/JQ9DrAsRo2VsSxgt1e/pmxGxgrci+pXJEgrSYg2vPl8rrStZkclQ=="
       },
+      "Grpc.AspNetCore.Server": {
+        "type": "CentralTransitive",
+        "requested": "[2.84.0, )",
+        "resolved": "2.84.0",
+        "contentHash": "RXUkMjU+Hu5tvf5EXNoJlKX+ADvR2HERkNRznMFpsQQiHFsaQ+OYyhgomuLxAaiNuPUmCUGPxyiCdqq//lrQdg==",
+        "dependencies": {
+          "Grpc.Net.Common": "2.84.0"
+        }
+      },
+      "Grpc.Core.Api": {
+        "type": "CentralTransitive",
+        "requested": "[2.84.0, )",
+        "resolved": "2.84.0",
+        "contentHash": "p2SOMl6q/GZ4/5MLkgboC/z55g4zKUEruRn/g46QgppjQBVnsLZVBU/9VO7n60ll38G3Eo8Zu9b7x+W01GKFVg=="
+      },
+      "Grpc.Net.Common": {
+        "type": "CentralTransitive",
+        "requested": "[2.84.0, )",
+        "resolved": "2.84.0",
+        "contentHash": "DPxm/H8G/lDRrz997wM0M2zN/PGqVeZKDakhBbtABEbv6WIW4HI9g3BvntBQT6ZUROuGacMzfyyF9e5kiTVFfQ==",
+        "dependencies": {
+          "Grpc.Core.Api": "2.84.0"
+        }
+      },
       "Jint": {
         "type": "CentralTransitive",
         "requested": "[4.17.0, )",
@@ -632,6 +712,42 @@
         "contentHash": "QoEqdoAUgAkbzuFAiHySjGuh8lJs8L8DxkEDGJLEebtlZ6+EbEr0wmYlidErSS2ASNFOModueb83DLNIRLqshg==",
         "dependencies": {
           "JsonPointer.Net": "6.0.1"
+        }
+      },
+      "MagicOnion.Abstractions": {
+        "type": "CentralTransitive",
+        "requested": "[7.11.0, )",
+        "resolved": "7.11.0",
+        "contentHash": "Q8eflOkdZIWfxPLHZsVcUmvYWeMBXnV2FE6AUW5iBCZXokEMhiZyvjOTREqD1DT9xt5GMmr75vJpSEN6bFIRWw==",
+        "dependencies": {
+          "Grpc.Core.Api": "2.57.0",
+          "MessagePack": "3.1.7"
+        }
+      },
+      "MagicOnion.Server": {
+        "type": "CentralTransitive",
+        "requested": "[7.11.0, )",
+        "resolved": "7.11.0",
+        "contentHash": "HiaxMFYMJM28NjBU4iVR842Axe6Z2QWWXbAp9pbjq4nVKvcz6Fe9/JsOAo6OJ+LbFZxrQRejGcOl4F4g1glcaw==",
+        "dependencies": {
+          "Grpc.AspNetCore.Server": "2.57.0",
+          "Grpc.Core.Api": "2.57.0",
+          "MagicOnion.Abstractions": "7.11.0",
+          "MagicOnion.Serialization.MessagePack": "7.11.0",
+          "MagicOnion.Shared": "7.11.0",
+          "MessagePack": "3.1.7",
+          "Multicaster": "2.1.1"
+        }
+      },
+      "MessagePack": {
+        "type": "CentralTransitive",
+        "requested": "[3.1.12, )",
+        "resolved": "3.1.12",
+        "contentHash": "m1QEsd59gUj82ji5tEQbZiyjV6y0F7cYfGVhil6pAlNZpyzR7ze9TucMu4lPpi8cZAV8aNl3D9/T9J1HbFz15Q==",
+        "dependencies": {
+          "MessagePack.Annotations": "3.1.12",
+          "MessagePackAnalyzer": "3.1.12",
+          "Microsoft.NET.StringTools": "17.11.4"
         }
       },
       "Microsoft.AspNetCore.OpenApi": {

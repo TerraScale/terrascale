@@ -1,5 +1,4 @@
 using Stripe;
-using TerraScale.DotNet;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 
 namespace TerraScale.Dashboard.Features.Billing

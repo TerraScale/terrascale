@@ -1,4 +1,4 @@
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
@@ -6,20 +6,20 @@ namespace TerraScale.Dashboard.Features.Auth
     // Every call carries the signed-in user's own token; ts-auth checks the project role each time.
     public interface ITsAuthProjects
     {
-        Task<TerraScaleAuthProjectSettings> GetSettingsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken);
-        Task<TerraScaleAuthProjectSettings> UpdateSettingsAsync(SessionRecord session, string projectId, TerraScaleAuthProjectSettingsUpdate update, CancellationToken cancellationToken);
+        Task<TsAuthProjectSettings> GetSettingsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken);
+        Task<TsAuthProjectSettings> UpdateSettingsAsync(SessionRecord session, string projectId, TsAuthProjectSettingsUpdate update, CancellationToken cancellationToken);
         // The update carries the provider's client secret; never log or store it.
-        Task<TerraScaleAuthProjectSettings> SetProviderAsync(SessionRecord session, string projectId, string provider, TerraScaleAuthProjectProviderUpdate update, CancellationToken cancellationToken);
-        Task<TerraScaleAuthProjectSettings> DeleteProviderAsync(SessionRecord session, string projectId, string provider, CancellationToken cancellationToken);
-        Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectUser>> ListUsersAsync(SessionRecord session, string projectId, string? query, string? after, CancellationToken cancellationToken);
-        Task<TerraScaleAuthUserExportPage> ExportUsersAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken);
-        Task<TerraScaleAuthProjectUser> SetUserDisabledAsync(SessionRecord session, string projectId, string userId, bool disabled, CancellationToken cancellationToken);
+        Task<TsAuthProjectSettings> SetProviderAsync(SessionRecord session, string projectId, string provider, TsAuthProjectProviderUpdate update, CancellationToken cancellationToken);
+        Task<TsAuthProjectSettings> DeleteProviderAsync(SessionRecord session, string projectId, string provider, CancellationToken cancellationToken);
+        Task<TsAuthPlatformPage<TsAuthProjectUser>> ListUsersAsync(SessionRecord session, string projectId, string? query, string? after, CancellationToken cancellationToken);
+        Task<TsAuthUserExportPage> ExportUsersAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken);
+        Task<TsAuthProjectUser> SetUserDisabledAsync(SessionRecord session, string projectId, string userId, bool disabled, CancellationToken cancellationToken);
         Task DeleteUserAsync(SessionRecord session, string projectId, string userId, CancellationToken cancellationToken);
-        Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectSession>> ListSessionsAsync(SessionRecord session, string projectId, string? userId, string? after, CancellationToken cancellationToken);
+        Task<TsAuthPlatformPage<TsAuthProjectSession>> ListSessionsAsync(SessionRecord session, string projectId, string? userId, string? after, CancellationToken cancellationToken);
         Task RevokeSessionAsync(SessionRecord session, string projectId, string sessionId, CancellationToken cancellationToken);
-        Task<IReadOnlyList<TerraScaleAuthProjectOAuthClient>> ListClientsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken);
+        Task<IReadOnlyList<TsAuthProjectOAuthClient>> ListClientsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken);
         // A confidential client's secret is in this answer only; never log or store it.
-        Task<TerraScaleAuthProjectOAuthClient> CreateClientAsync(SessionRecord session, string projectId, TerraScaleAuthProjectCreateOAuthClient request, string proof, CancellationToken cancellationToken);
+        Task<TsAuthProjectOAuthClient> CreateClientAsync(SessionRecord session, string projectId, TsAuthProjectCreateOAuthClient request, string proof, CancellationToken cancellationToken);
         Task DeleteClientAsync(SessionRecord session, string projectId, string clientId, CancellationToken cancellationToken);
     }
 
@@ -27,39 +27,39 @@ namespace TerraScale.Dashboard.Features.Auth
     {
         public const int ProjectPageSize = 25;
 
-        public Task<TerraScaleAuthProjectSettings> GetSettingsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken)
+        public Task<TsAuthProjectSettings> GetSettingsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken)
         {
             return ProjectAsync(() => Client().Projects.GetSettingsAsync(Bearer(session), Id(projectId), cancellationToken));
         }
 
-        public Task<TerraScaleAuthProjectSettings> UpdateSettingsAsync(SessionRecord session, string projectId, TerraScaleAuthProjectSettingsUpdate update, CancellationToken cancellationToken)
+        public Task<TsAuthProjectSettings> UpdateSettingsAsync(SessionRecord session, string projectId, TsAuthProjectSettingsUpdate update, CancellationToken cancellationToken)
         {
             return ProjectAsync(() => Client().Projects.UpdateSettingsAsync(Bearer(session), Id(projectId), update, cancellationToken));
         }
 
-        public Task<TerraScaleAuthProjectSettings> SetProviderAsync(SessionRecord session, string projectId, string provider, TerraScaleAuthProjectProviderUpdate update, CancellationToken cancellationToken)
+        public Task<TsAuthProjectSettings> SetProviderAsync(SessionRecord session, string projectId, string provider, TsAuthProjectProviderUpdate update, CancellationToken cancellationToken)
         {
             return ProjectAsync(() => Client().Projects.SetProviderAsync(Bearer(session), Id(projectId), provider, update, cancellationToken));
         }
 
-        public Task<TerraScaleAuthProjectSettings> DeleteProviderAsync(SessionRecord session, string projectId, string provider, CancellationToken cancellationToken)
+        public Task<TsAuthProjectSettings> DeleteProviderAsync(SessionRecord session, string projectId, string provider, CancellationToken cancellationToken)
         {
             return ProjectAsync(() => Client().Projects.DeleteProviderAsync(Bearer(session), Id(projectId), provider, cancellationToken));
         }
 
-        public Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectUser>> ListUsersAsync(SessionRecord session, string projectId, string? query, string? after, CancellationToken cancellationToken)
+        public Task<TsAuthPlatformPage<TsAuthProjectUser>> ListUsersAsync(SessionRecord session, string projectId, string? query, string? after, CancellationToken cancellationToken)
         {
             return ProjectAsync(() => Client().Projects.ListUsersAsync(Bearer(session), Id(projectId), Blank(query), ProjectPageSize, Blank(after), cancellationToken));
         }
 
-        public Task<TerraScaleAuthProjectUser> SetUserDisabledAsync(SessionRecord session, string projectId, string userId, bool disabled, CancellationToken cancellationToken)
+        public Task<TsAuthProjectUser> SetUserDisabledAsync(SessionRecord session, string projectId, string userId, bool disabled, CancellationToken cancellationToken)
         {
             return ProjectAsync(() => disabled
                 ? Client().Projects.DisableUserAsync(Bearer(session), Id(projectId), Id(userId), cancellationToken)
                 : Client().Projects.EnableUserAsync(Bearer(session), Id(projectId), Id(userId), cancellationToken));
         }
 
-        public Task<TerraScaleAuthUserExportPage> ExportUsersAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken)
+        public Task<TsAuthUserExportPage> ExportUsersAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken)
         {
             return ProjectAsync(() => Client().Projects.ExportUsersAsync(Bearer(session), Id(projectId), 100, after, cancellationToken));
         }
@@ -69,7 +69,7 @@ namespace TerraScale.Dashboard.Features.Auth
             return ProjectAsync(async () => { await Client().Projects.DeleteUserAsync(Bearer(session), Id(projectId), Id(userId), cancellationToken); return true; });
         }
 
-        public Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectSession>> ListSessionsAsync(SessionRecord session, string projectId, string? userId, string? after, CancellationToken cancellationToken)
+        public Task<TsAuthPlatformPage<TsAuthProjectSession>> ListSessionsAsync(SessionRecord session, string projectId, string? userId, string? after, CancellationToken cancellationToken)
         {
             return ProjectAsync(() => Client().Projects.ListSessionsAsync(Bearer(session), Id(projectId), Blank(userId) is { } user ? Id(user) : null, ProjectPageSize, Blank(after), cancellationToken));
         }
@@ -79,12 +79,12 @@ namespace TerraScale.Dashboard.Features.Auth
             return ProjectAsync(async () => { await Client().Projects.RevokeSessionAsync(Bearer(session), Id(projectId), Id(sessionId), cancellationToken); return true; });
         }
 
-        public async Task<IReadOnlyList<TerraScaleAuthProjectOAuthClient>> ListClientsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken)
+        public async Task<IReadOnlyList<TsAuthProjectOAuthClient>> ListClientsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken)
         {
             return (await ProjectAsync(() => Client().Projects.ListClientsAsync(Bearer(session), Id(projectId), cancellationToken))).Items ?? throw new IOException("ts-auth returned an invalid page.");
         }
 
-        public Task<TerraScaleAuthProjectOAuthClient> CreateClientAsync(SessionRecord session, string projectId, TerraScaleAuthProjectCreateOAuthClient request, string proof, CancellationToken cancellationToken)
+        public Task<TsAuthProjectOAuthClient> CreateClientAsync(SessionRecord session, string projectId, TsAuthProjectCreateOAuthClient request, string proof, CancellationToken cancellationToken)
         {
             return string.IsNullOrEmpty(proof) ? throw StepUpFlow.Required() :
             ProjectAsync(() => Client().Projects.CreateClientAsync(Bearer(session), Id(projectId), request, proof, cancellationToken));
@@ -105,7 +105,7 @@ namespace TerraScale.Dashboard.Features.Auth
         private static async Task<T> ProjectAsync<T>(Func<Task<T>> call)
         {
             try { return await call(); }
-            catch (TerraScaleAuthException error) when ((int?)error.StatusCode is >= 400 and < 500)
+            catch (TsAuthException error) when ((int?)error.StatusCode is >= 400 and < 500)
             {
                 if (error.ErrorCode == "step_up_required")
                 {

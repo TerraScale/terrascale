@@ -1,3 +1,4 @@
+using TerraScale.TerraBase.Contracts;
 using Stripe;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Databases;
@@ -62,7 +63,7 @@ namespace TerraScale.Dashboard.Features.Billing
         }
         private static bool BillingFailure(Exception error, HttpContext http)
         {
-            return error is AccountAccessException or OnboardingValidationException or StripeException or HttpRequestException or IOException ||
+            return error is AccountAccessException or OnboardingValidationException or StripeException or TerraBaseException or HttpRequestException or IOException ||
             error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested;
         }
 

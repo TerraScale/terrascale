@@ -24,9 +24,12 @@ using TerraScale.Dashboard.Platform.Assets;
 using TerraScale.Dashboard.Platform.Development;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.Mcp;
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.Dashboard.Platform.Contracts;
 using TerraScale.Dashboard.Common.UI;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard
 {
@@ -106,11 +109,9 @@ namespace TerraScale.Dashboard
                 .AddHttpMessageHandler<ServerTiming.Handler>()
                 .AddHttpMessageHandler<RequestIdentity.Handler>()
                 .AddHttpMessageHandler<PlatformTransport.PreferHttp2>();
-            builder.Services.AddTransient<TerraBasePeerCredential>();
-            builder.Services.AddHttpClient(TerraBaseDashboardState.ClientName, client => client.Timeout = TimeSpan.FromSeconds(30))
-                .ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler)
-                .AddHttpMessageHandler<ServerTiming.Handler>()
-                .AddHttpMessageHandler<TerraBasePeerCredential>();
+            // TerraBase is reached only over MagicOnion on its private listener (Platform/Rpc).
+            builder.Services.AddSingleton<TerraBaseRpcClient>();
+            builder.Services.AddSingleton(services => new TsAuthClient(services.GetRequiredService<IHttpClientFactory>().CreateClient("platform")));
             configureTestHost?.Invoke(builder);
             var app = builder.Build();
             RazorSliceWarmup.EnsureWarmed();

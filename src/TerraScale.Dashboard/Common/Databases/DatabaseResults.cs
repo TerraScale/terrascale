@@ -1,6 +1,6 @@
-using TerraScale.DotNet.TerraBase;
+using TerraScale.Dashboard.Platform.TsAuth;
+using TerraScale.TerraBase.Contracts;
 using TerraScale.Dashboard.Features.Data;
-using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Common.Databases
 {
@@ -13,12 +13,12 @@ namespace TerraScale.Dashboard.Common.Databases
 
         internal static bool KnownFailure(Exception error)
         {
-            return error is AccountAccessException or TerraScaleAuthException or TerraBaseValidationException or TerraBaseAuthenticationException or TerraBaseForbiddenException or TerraBaseNotFoundException or TerraBaseConflictException or TerraBasePreconditionFailedException or TerraBaseUnavailableException or DatabaseProviderException or TerraBaseException { StatusCode: System.Net.HttpStatusCode.RequestEntityTooLarge or System.Net.HttpStatusCode.TooManyRequests };
+            return error is AccountAccessException or TsAuthException or TerraBaseException or DatabaseProviderException;
         }
 
         internal static int Status(Exception error)
         {
-            return error switch { AccountAccessException access => access.StatusCode, DatabaseWrongRegionException => 409, HttpRequestException { StatusCode: { } status } when (int)status is >= 400 and <= 599 => (int)status, _ => 503 };
+            return error switch { AccountAccessException access => access.StatusCode, TerraBaseException provider => provider.Status, DatabaseWrongRegionException => 409, HttpRequestException { StatusCode: { } status } when (int)status is >= 400 and <= 599 => (int)status, _ => 503 };
         }
 
         internal static string Message(Exception error)
@@ -29,7 +29,7 @@ namespace TerraScale.Dashboard.Common.Databases
 
         private static int? RetrySeconds(Exception error)
         {
-            return error is DatabaseProviderException { RetryAfter: { } wait } ? (int)Math.Ceiling(Math.Clamp(wait.TotalSeconds, 0, 86400)) : null;
+            return (error is TerraBaseException rpc ? rpc.RetryAfter : (error as DatabaseProviderException)?.RetryAfter) is { } wait ? (int)Math.Ceiling(Math.Clamp(wait.TotalSeconds, 0, 86400)) : null;
         }
 
         private static string RetryHint(Exception error)

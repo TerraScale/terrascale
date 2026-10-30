@@ -125,7 +125,7 @@ namespace TerraScale.Dashboard.Features.Auth
             { return Failure(context, flow.ReturnTo, error.Message, error.StatusCode); }
             catch (SignInRejectedException)
             { return Failure(context, flow.ReturnTo, "ts-auth could not confirm this sign-in. Sign in again.", 401); }
-            catch (TerraScale.DotNet.TerraScaleAuthException error) when (error.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            catch (TerraScale.Dashboard.Platform.TsAuth.TsAuthException error) when (error.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
             {
                 var seconds = Math.Clamp((int)Math.Ceiling(error.RetryAfter?.TotalSeconds ?? 60), 1, 3600);
                 context.Response.Headers.RetryAfter = seconds.ToString(System.Globalization.CultureInfo.InvariantCulture);

@@ -1,6 +1,7 @@
-using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Common.UI;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.Dashboard.Features.Data;
+using TerraScale.TerraBase.Contracts.Webhooks;
+using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Webhooks
 {
@@ -100,7 +101,7 @@ namespace TerraScale.Dashboard.Features.Webhooks
                 return View(http, context, DatabaseService.Database(context, id), collection, [], [], "",
                     error: error is ArgumentException ? "Enter an HTTPS URL on port 443 without credentials or a fragment (up to 2048 characters)." :
                         creation && (error is TimeoutException or IOException ||
-                            error is TerraBaseException { ErrorCode: "invalid_response" } invalid && (int?)invalid.StatusCode is >= 200 and <= 299 ||
+                            error is TerraBaseException { Status: >= 500 } ||
                             error is HttpRequestException request && (request.StatusCode is null || (int)request.StatusCode >= 500))
                             ? "The result is unknown. Check the endpoint list before retrying; delete and recreate it if its signing secret was lost." : DatabaseResults.Message(error),
                     status: error is ArgumentException ? 422 : DatabaseResults.Status(error));

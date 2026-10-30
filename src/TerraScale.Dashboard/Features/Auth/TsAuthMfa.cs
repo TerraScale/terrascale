@@ -27,8 +27,7 @@ namespace TerraScale.Dashboard.Features.Auth
         public IReadOnlyList<(string Id, string Name)> Others { get; } = others;
     }
 
-    // ts-dotnet 0.0.6 has no client for these routes, so they go to the same ts-auth origin on the
-    // platform client with the user's own bearer. Move them to ts-dotnet once it ships them.
+    // Account MFA routes use the same ts-auth origin and the user's own bearer.
     public sealed partial class TsAuthGateway : ITsAuthMfa
     {
         public const string MfaRequiredCode = "mfa_required";

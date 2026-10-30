@@ -11,11 +11,9 @@ const json = (path) => JSON.parse(read(path));
 const docs = new URL('docs/', root);
 const locales = new Set(LOCALES.map(({ code }) => code).filter((code) => code !== 'en'));
 
-test('active SDK installation pins match the dashboard manifest', async () => {
-  const url = 'https://raw.githubusercontent.com/TerraScale/ts-dashboard/main/sdk-versions.json';
-  const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-  assert.ok(response.ok, `SDK manifest returned HTTP ${response.status}`);
-  const versions = await response.json();
+test('active SDK installation pins match the dashboard manifest', () => {
+  // The dashboard's manifest lives in this monorepo (the ts-dashboard repository was merged in).
+  const versions = JSON.parse(readFileSync(new URL('../src/TerraScale.Dashboard/sdk-versions.json', root), 'utf8'));
   assert.deepEqual(Object.keys(versions).sort(), ['go', 'javascript', 'python', 'rust']);
   assert.match(versions.javascript, /^\d+\.\d+\.\d+$/);
   for (const language of ['go', 'python', 'rust']) {

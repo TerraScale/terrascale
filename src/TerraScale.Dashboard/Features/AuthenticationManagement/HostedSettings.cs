@@ -1,10 +1,10 @@
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.AuthenticationManagement
 {
     public static partial class AuthenticationConsole
     {
-        public static TerraScaleAuthProjectBranding HostedBranding(IFormCollection form)
+        public static TsAuthProjectBranding HostedBranding(IFormCollection form)
         {
             var basic = Branding(form["name"], form["logo_url"], form["theme_color"]);
             var mode = form["default_theme"].ToString();
@@ -39,7 +39,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                     throw new AccountAccessException("Each footer link needs a label of 1 to 24 characters and an HTTPS URL: Label | URL.", 422);
                 }
 
-                return new TerraScaleAuthProjectFooterLink(pair[0], pair[1]);
+                return new TsAuthProjectFooterLink(pair[0], pair[1]);
             }).ToArray();
             var message = form["email_message"].ToString().Replace("\r\n", "\n", StringComparison.Ordinal);
             if (message.Length > 500 || message.Any(character => char.IsControl(character) && character != '\n'))
@@ -58,7 +58,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             };
         }
 
-        public static TerraScaleAuthProjectConfiguration Configuration(string? redirects, string? lifetime)
+        public static TsAuthProjectConfiguration Configuration(string? redirects, string? lifetime)
         {
             var urls = Lines(redirects);
             if (urls.Length > 100 || urls.Any(url => !AllowedUrl(url, true)))

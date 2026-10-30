@@ -14,6 +14,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
+    <!-- Fake TerraBase producers serve the dashboard's MagicOnion calls through their REST fakes. -->
+    <ProjectReference Include="../../src/TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="Microsoft.Playwright" />
     <PackageReference Include="Stripe.net" />

@@ -1,8 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
@@ -51,7 +51,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                 foreach (var item in page.Items)
                 {
                     try { await ObserveAsync(item, month, cancellationToken); }
-                    catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+                    catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                     {
                         // Messages here are the dashboard's own or status lines; no response body or recipient is logged.
                         logger.AnAllowanceNotificationForOrganizationCould(item.OrganizationId, error.GetType().Name, error.Message);

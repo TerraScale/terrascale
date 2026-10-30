@@ -1,9 +1,9 @@
 using TerraScale.Dashboard.Common.UI;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Organizations.Projects
 {
-    public sealed record ProjectGrantPage(ShellModel Shell, IReadOnlyList<TerraScaleAuthPlatformProjectMember> Grants,
+    public sealed record ProjectGrantPage(ShellModel Shell, IReadOnlyList<TsAuthPlatformProjectMember> Grants,
         string? Next = null, string Error = "", bool HasPrevious = false, string DraftUserId = "", string DraftRole = "viewer", string Status = "")
     {
         public string Url => WorkspaceUrl.For(Shell.Context, "/project/members", replace: true);
@@ -95,7 +95,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             return endpoints;
         }
 
-        private static RazorSlices.RazorSlice<ProjectGrantPage> Page(HttpContext http, AccountContext context, IReadOnlyList<TerraScaleAuthPlatformProjectMember> grants,
+        private static RazorSlices.RazorSlice<ProjectGrantPage> Page(HttpContext http, AccountContext context, IReadOnlyList<TsAuthPlatformProjectMember> grants,
             string? next = null, string error = "", int status = 200, bool previous = false, string draftUserId = "", string draftRole = "viewer", string notice = "")
         {
             http.Response.Headers.CacheControl = "no-store";

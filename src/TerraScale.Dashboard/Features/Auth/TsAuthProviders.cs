@@ -12,8 +12,7 @@ namespace TerraScale.Dashboard.Features.Auth
         Task UnlinkProviderAsync(SessionRecord session, string provider, string code, CancellationToken cancellationToken);
     }
 
-    // Like the MFA routes, these account APIs are not yet exposed by the pinned ts-dotnet package.
-    // Keep the adapter on the platform client and the user's original sign-in bearer until the SDK ships them.
+    // Account provider routes use the platform client and the user's original sign-in bearer.
     public sealed partial class TsAuthGateway : ITsAuthProviders
     {
         public static bool IsSignInProvider(string provider)
