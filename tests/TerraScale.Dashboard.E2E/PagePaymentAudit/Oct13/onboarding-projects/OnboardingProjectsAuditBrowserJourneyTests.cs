@@ -14,7 +14,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.OnboardingProjects
             var root = fixture.Root;
             await using var host = await OnboardingProjectsAuditHost.StartAsync(root);
             var origin = host.Origin;
-            var output = Path.Combine(root, "docs/reviews/2026-10-13/onboarding-projects/test-results/approved-fixes/browser");
+            var output = Path.Combine(root, "test-results/dashboard/reviews/2026-10-13/onboarding-projects/test-results/approved-fixes/browser");
             Directory.CreateDirectory(output);
             using var playwright = await Playwright.CreateAsync();
             await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });

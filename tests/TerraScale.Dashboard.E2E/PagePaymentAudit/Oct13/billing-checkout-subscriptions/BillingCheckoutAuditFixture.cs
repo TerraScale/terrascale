@@ -17,9 +17,10 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.BillingCheckout
     public sealed class BillingCheckoutAuditFixture : IAsyncInitializer, IAsyncDisposable
     {
         private WebApplication? app;
+        private readonly string evidenceId = Guid.NewGuid().ToString("N");
         public string Root { get; } = FindRoot();
         public Uri Origin { get; private set; } = null!;
-        public string Evidence => Path.Combine(Root, "docs/reviews/2026-10-13/billing-checkout-subscriptions/evidence");
+        public string Evidence => Path.Combine(Root, "test-results/dashboard/reviews/2026-10-13/billing-checkout-subscriptions/evidence", evidenceId);
 
         public Task InitializeAsync()
         {

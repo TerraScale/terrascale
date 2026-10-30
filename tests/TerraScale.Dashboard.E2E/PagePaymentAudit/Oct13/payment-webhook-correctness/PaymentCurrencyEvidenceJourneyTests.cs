@@ -38,7 +38,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
             await Assert.That(await table.EvaluateAsync<bool>("el => el === document.activeElement")).IsTrue();
             var accessibility = await BrowserAccessibility.RunAsync(page, selector: "#recent-invoices");
             await Assert.That(accessibility.Violations.Length).IsEqualTo(0);
-            var evidence = Path.Combine(scenario.Root, "docs/reviews/2026-10-13/payment-webhook-correctness/evidence/test-results");
+            var evidence = Path.Combine(scenario.Root, "test-results/dashboard/reviews/2026-10-13/payment-webhook-correctness/evidence/test-results");
             Directory.CreateDirectory(evidence);
             await page.Locator("#recent-invoices").ScreenshotAsync(new() { Path = Path.Combine(evidence, "currency-" + device + ".png") });
             await page.Locator("#billing-invoice-summary").ScreenshotAsync(new() { Path = Path.Combine(evidence, "currency-" + device + "-summary.png") });

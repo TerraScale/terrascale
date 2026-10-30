@@ -182,7 +182,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13
 
         private async Task SaveEvidenceAsync(string name, string route, AuditAnalyticsProducer producer, string html)
         {
-            var directory = Path.Combine(fixture.Root, "docs/reviews/2026-10-13/usage-analytics-notifications/obj/runtime-evidence", producer.DatabaseId);
+            var directory = Path.Combine(fixture.Root, "test-results/dashboard/reviews/2026-10-13/usage-analytics-notifications/obj/runtime-evidence", producer.DatabaseId);
             Directory.CreateDirectory(directory);
             var stats = Regex.Matches(html, "<dt class=\"ts-stat-label\">([^<]+)</dt><dd class=\"ts-stat-value\"[^>]*>([^<]*)</dd>")
                 .Select(match => new { label = match.Groups[1].Value, value = match.Groups[2].Value }).ToArray();
