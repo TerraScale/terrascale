@@ -1,4 +1,0 @@
-# The SDK emits framework request-binding exceptions in this generated file.
-# BannedSymbols remains enforced for all application and test source.
-[obj/**/Microsoft.AspNetCore.Http.RequestDelegateGenerator/**/GeneratedRouteBuilderExtensions.g.cs]
-dotnet_diagnostic.RS0030.severity = none
