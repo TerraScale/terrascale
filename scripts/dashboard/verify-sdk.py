@@ -13,6 +13,7 @@ assert sdk.findtext(".//PackageId") == "TerraScale.DotNet", "The official SDK pa
 assert ET.parse(root / "Directory.Build.props").findtext(".//TargetFramework") == "net11.0"
 solution = ET.parse(root / "scripts/dashboard/TerraScale.Dashboard.slnx")
 assert [item.get("Path") for item in solution.iter("Project")] == [
+    "../../src/TerraScale.Dashboard.Analyzers/TerraScale.Dashboard.Analyzers.csproj",
     "../../src/TerraScale.Dashboard/TerraScale.Dashboard.csproj",
-    "../../tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj"], "One application project and its E2E suite"
+    "../../tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj"], "One application project, its E2E suite and the generated-binding analyzer"
 print("PASS: dashboard uses the official in-repo SDK source and .NET 11")
