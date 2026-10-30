@@ -261,7 +261,7 @@ public sealed class EmailQueueAdmissionTests(TerraBaseFixture fixture)
             // All delivery slots are stuck, as if the replica crashed during its provider calls.
             await Assert.That(await oidc.Server.MailStatesAsync()).IsEquivalentTo([.. Enumerable.Repeat("sending", blocked.Length), "queued"]);
             await using var replica = await oidc.StartReplicaAsync(clock: new ManualClock(DateTimeOffset.UtcNow + SignInMail.Lease + TimeSpan.FromSeconds(1)),
-                services: services => services.AddSingleton<IEmailSender>(captured));
+                services: services => services.AddSingleton<IEmailSender>(new GatedEmailSender(captured)));
             var (recipient, message) = await captured.NextAsync();
             await Assert.That(recipient).IsEqualTo(Owner);
             await Assert.That(message.Purpose).IsEqualTo(EmailPurpose.Authentication);
