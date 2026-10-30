@@ -5,6 +5,8 @@
     <PublishAot>false</PublishAot>
     <!-- Culture-independence journeys exercise real cultures, as in the original dashboard suite. -->
     <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- Many concurrent real hosts allocate independently; use parallel GC as in the TerraBase integration suite. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />

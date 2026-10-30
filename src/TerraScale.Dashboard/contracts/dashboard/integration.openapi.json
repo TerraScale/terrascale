@@ -1,5 +1,5 @@
 {
-  "openapi": "3.1.1",
+  "openapi": "3.2.0",
   "info": {
     "title": "TerraScale Dashboard integration API",
     "description": "Same-origin dashboard APIs. Existing /api/v1 browser paths are preserved. New public APIs use /v1. Mutations require the current session and the _csrf form token bound to the same origin; authentication and membership checks run before actions. This document covers explicitly annotated integration routes, not every UI page.",
@@ -340,6 +340,9 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "OK"
+          },
           "201": {
             "description": "Created",
             "content": {
@@ -349,9 +352,6 @@
                 }
               }
             }
-          },
-          "200": {
-            "description": "OK"
           },
           "400": {
             "description": "Bad Request",
@@ -704,7 +704,14 @@
             }
           },
           "503": {
-            "description": "Service Unavailable"
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1230,19 +1237,24 @@
         "type": "object",
         "properties": {
           "collection": {
-            "type": "string"
+            "type": "string",
+            "description": "Collection name."
           },
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "Document key."
           },
           "op": {
-            "type": "string"
+            "type": "string",
+            "description": "upsert or delete."
           },
           "version": {
-            "type": "string"
+            "type": "string",
+            "description": "Decimal operation stamp, preserved as text."
           },
           "origin": {
-            "type": "string"
+            "type": "string",
+            "description": "Original node, 16 hexadecimal digits."
           },
           "document": {
             "oneOf": [
@@ -1250,11 +1262,13 @@
                 "type": "null"
               },
               {
+                "description": "Current document on the serving machine; null if absent, including an upsert since deleted.",
                 "$ref": "#/components/schemas/JsonElement"
               }
             ]
           }
-        }
+        },
+        "description": "A committed change; deduplicate at-least-once delivery by (Origin, Version, Collection, Id)."
       }
     },
     "securitySchemes": {
@@ -1268,19 +1282,19 @@
   },
   "tags": [
     {
-      "name": "Session"
-    },
-    {
-      "name": "Workspace"
-    },
-    {
-      "name": "DocumentChangesEndpoints"
+      "name": "Billing"
     },
     {
       "name": "Credentials"
     },
     {
-      "name": "Billing"
+      "name": "DocumentChangesEndpoints"
+    },
+    {
+      "name": "Session"
+    },
+    {
+      "name": "Workspace"
     }
   ]
 }
