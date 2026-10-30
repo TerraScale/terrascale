@@ -21,6 +21,8 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+      - name: Check probe provider contracts
+        run: python3 -m unittest discover -s scripts/auth/tests -v
       - name: Fetch signup email from disposable inbox
         id: delivery
         timeout-minutes: 6
@@ -42,7 +44,7 @@ jobs:
           body = f"""The independent live signup email check failed.
 
           Commit: {os.environ['GITHUB_SHA']}
-          Environment: GitHub-hosted ubuntu-latest; production auth.terrascale.tech; mail.tm inbox
+          Environment: GitHub-hosted ubuntu-latest; production auth.terrascale.tech; mail.tm or Guerrilla Mail inbox
           Reproduce locally: `nice -n 19 make auth-mail-delivery-check`
           Expected: one hosted signup request delivers a verification code to a fresh disposable inbox within 120 seconds, then the inbox is deleted.
           Actual: a check stage failed; delivery evidence and cleanup failures are reported separately below. No account verification was submitted.

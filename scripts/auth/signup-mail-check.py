@@ -13,6 +13,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from email.utils import parseaddr
+from html import unescape
 from html.parser import HTMLParser
 
 AUTH = "https://auth.terrascale.tech"
@@ -86,6 +88,78 @@ def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def has_mx(opener, domain):
+    lookup = json.loads(request(opener, "https://dns.google/resolve?" + urllib.parse.urlencode({"name": domain, "type": "MX"}),
+        headers={"Accept": "application/dns-json"}, retry=True))
+    return lookup.get("Status") == 0 and any(record.get("type") == 15 and record.get("data", "").split()[-1:] not in ([], ["."])
+        for record in lookup.get("Answer", []))
+
+
+class MailText(HTMLParser):
+    def __init__(self, body):
+        super().__init__()
+        self.parts = []
+        self.feed(body)
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+
+class GuerrillaInbox:
+    """Independent session inbox; used only before any hosted signup is submitted."""
+    def __init__(self):
+        self.opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        self.address = None
+
+    def api(self, function, method="GET", retry=False, deadline=None, **fields):
+        data = urllib.parse.urlencode({"f": function, "lang": "en", **fields}, doseq=True).encode()
+        url = "https://www.guerrillamail.com/ajax.php"
+        body = request(self.opener, url + "?" + data.decode() if method == "GET" else url, method,
+            None if method == "GET" else data, {"Content-Type": "application/x-www-form-urlencoded"}, retry, deadline)
+        return json.loads(body)
+
+    def create(self):
+        self.address = self.api("get_email_address")["email_addr"].lower()
+        user = "ts-mail-check-" + secrets.token_hex(12)
+        self.address = self.api("set_email_user", "POST", email_user=user)["email_addr"].lower()
+        local, separator, domain = self.address.partition("@")
+        if local != user or not separator or not re.fullmatch(r"[a-z0-9.-]+", domain):
+            raise CheckFailure("Fallback inbox did not reserve the fresh requested address")
+        if not has_mx(self.opener, domain):
+            raise CheckFailure("Fallback inbox domain has no working MX records")
+        return self.address
+
+    def messages(self, deadline):
+        summaries = self.api("get_email_list", offset=0, retry=True, deadline=deadline)
+        if summaries["email"].lower() != self.address:
+            raise CheckFailure("Fallback inbox session changed unexpectedly")
+        for summary in summaries["list"]:
+            message = self.api("fetch_email", email_id=summary["mail_id"], retry=True, deadline=deadline)
+            body = MailText(message["mail_body"])
+            recipient = parseaddr(message["mail_recipient"])[1]
+            # This API returns only the local part, unlike mail.tm's full address.
+            # Bind it to the checked session; the full address must also be in the body.
+            if recipient == self.address.partition("@")[0]:
+                recipient = self.address
+            yield {"id": str(message["mail_id"]), "from": {"address": parseaddr(message["mail_from"])[1]},
+                "to": [{"address": recipient}],
+                "text": "\n".join(body.parts), "subject": unescape(message["mail_subject"])}
+
+    def close(self):
+        if self.address is None:
+            return
+        messages = self.api("get_email_list", offset=0, retry=True)
+        if messages["email"].lower() != self.address:
+            raise CheckFailure("Fallback inbox session changed before cleanup")
+        ids = [item["mail_id"] for item in messages["list"]]
+        if ids:
+            self.api("del_email", "POST", retry=True, **{"email_ids[]": ids})
+        if self.api("get_email_list", offset=0, retry=True)["list"]:
+            raise CheckFailure("Fallback inbox messages were not deleted")
+        if self.api("forget_me", "POST", retry=True, email_addr=self.address) is not True:
+            raise CheckFailure("Fallback inbox session was not released")
+
+
 def run():
     started = time.monotonic()
     stage = "mailbox_setup"
@@ -96,6 +170,7 @@ def run():
     evidence = None
     failure = None
     cleanup_failure = None
+    fallback = None
     mail = urllib.request.build_opener(NoRedirect())
     hosted = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
 
@@ -111,29 +186,29 @@ def run():
         return json.loads(body) if body else None
 
     try:
-        domains = api("/domains", retry=True)["hydra:member"]
-        stage = "mailbox_dns"
         domain = None
-        for item in domains:
-            candidate = item.get("domain", "")
-            if not item.get("isActive") or item.get("isPrivate") or not re.fullmatch(r"[a-z0-9.-]+", candidate):
-                continue
-            # A provider may advertise an active inbox domain whose DNS has expired.
-            # Fail before spending auth mail, rather than blaming delivery after 120s.
-            lookup = json.loads(request(mail, "https://dns.google/resolve?" + urllib.parse.urlencode({"name": candidate, "type": "MX"}),
-                headers={"Accept": "application/dns-json"}, retry=True))
-            if lookup.get("Status") == 0 and any(record.get("type") == 15 and record.get("data", "").split()[-1:] not in ([], ["."])
-                    for record in lookup.get("Answer", [])):
-                domain = candidate
-                break
+        try:
+            domains = api("/domains", retry=True)["hydra:member"]
+            stage = "mailbox_dns"
+            for item in domains:
+                candidate = item.get("domain", "")
+                if item.get("isActive") and not item.get("isPrivate") and re.fullmatch(r"[a-z0-9.-]+", candidate) and has_mx(mail, candidate):
+                    domain = candidate
+                    break
+        except CheckFailure:
+            # No mailbox or auth mail exists yet: an independent provider is safe.
+            domain = None
         if domain is None:
-            raise CheckFailure("Disposable inbox provider has no active public domain with working MX records")
-        stage = "mailbox_setup"
-        address = "ts-mail-check-" + secrets.token_hex(12) + "@" + domain
-        credentials = {"address": address, "password": secrets.token_urlsafe(32)}
-        creation_attempted = True
-        account_id = api("/accounts", "POST", credentials)["id"]
-        token = api("/token", "POST", credentials, retry=True)["token"]
+            stage = "fallback_mailbox_setup"
+            fallback = GuerrillaInbox()
+            address = fallback.create()
+        else:
+            stage = "mailbox_setup"
+            address = "ts-mail-check-" + secrets.token_hex(12) + "@" + domain
+            credentials = {"address": address, "password": secrets.token_urlsafe(32)}
+            creation_attempted = True
+            account_id = api("/accounts", "POST", credentials)["id"]
+            token = api("/token", "POST", credentials, retry=True)["token"]
 
         stage = "hosted_signup"
         page = request(hosted, AUTH + SIGNUP, headers={"Accept-Language": "en"}, retry=True)
@@ -150,11 +225,11 @@ def run():
         stage = "inbox_delivery"
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
-            messages = api("/messages", retry=True, deadline=deadline)["hydra:member"]
+            messages = fallback.messages(deadline) if fallback else api("/messages", retry=True, deadline=deadline)["hydra:member"]
             for summary in messages:
                 # Fetch the full message, not merely provider acceptance or an inbox summary.
                 message_id = summary["id"]
-                message = api("/messages/" + urllib.parse.quote(message_id, safe=""), retry=True, deadline=deadline)
+                message = summary if fallback else api("/messages/" + urllib.parse.quote(message_id, safe=""), retry=True, deadline=deadline)
                 recipients = [recipient.get("address", "").lower() for recipient in message.get("to", [])]
                 if message.get("from", {}).get("address", "").lower() != SENDER or address not in recipients:
                     continue
@@ -168,6 +243,7 @@ def run():
                     received_at = None
                 evidence = {
                     "status": "delivered", "recipient_sha256": digest(address),
+                    "inbox_provider": "guerrillamail.com" if fallback else "mail.tm",
                     "message_sha256": digest(message_id), "sender": SENDER,
                     "received_at": received_at,
                     "verified_at": datetime.now(timezone.utc).isoformat(),
@@ -185,6 +261,11 @@ def run():
         # Exception messages can contain credentials, URLs or a provider response body.
         failure = {"status": "failed", "stage": stage, "reason": type(error).__name__}
     finally:
+        if fallback:
+            try:
+                fallback.close()
+            except Exception:
+                cleanup_failure = {"status": "failed", "stage": "mailbox_cleanup", "reason": "Fallback inbox message deletion and session release could not be confirmed"}
         if creation_attempted:
             try:
                 # Creation may have succeeded even if its response was lost. Recover its identity
@@ -197,7 +278,7 @@ def run():
             except Exception:
                 cleanup_failure = {"status": "failed", "stage": "mailbox_cleanup", "reason": "Disposable inbox deletion could not be confirmed"}
     if evidence:
-        evidence["mailbox_cleanup"] = "failed" if cleanup_failure else "deleted"
+        evidence["mailbox_cleanup"] = "failed" if cleanup_failure else "messages_deleted_session_released" if fallback else "deleted"
         print(json.dumps(evidence), flush=True)
     if cleanup_failure:
         print(json.dumps(cleanup_failure), flush=True)
