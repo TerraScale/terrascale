@@ -1,8 +1,8 @@
 # TerraScale.Dashboard
 
 Platform UI, MCP server and billing for TerraScale. Identity belongs to ts-auth;
-persistent state lives in TerraBase through the official ts-dotnet SDK
-(`TerraScale.DotNet`). It is a .NET 11 application using RazorSlices and Datastar.
+persistent state lives in TerraBase, reached over MagicOnion through the shared
+contracts library. It is a .NET 11 application using RazorSlices and Datastar.
 
 The C# application is the only implementation; the Go application was removed.
 Production runs on OCI gru under ts-orch; see the
@@ -18,7 +18,6 @@ session-authenticated contract and links its interactive reference.
 - `tests/TerraScale.Dashboard.E2E/Demo/`: synthetic providers compiled only into test binaries.
 - `tests/TerraScale.Dashboard.E2E/`: TUnit E2E journeys; scenario and protocol controls in `Demo/`.
 - `scripts/dashboard/`: dev/demo launchers, asset builds, SDK and E2E lint checks.
-- `sdk/dotnet/`: the official SDK source, consumed from the same monorepo revision through ProjectReference.
 
 ## Commands
 Run builds and tests through the shared dev-host runner from the monorepo root:
