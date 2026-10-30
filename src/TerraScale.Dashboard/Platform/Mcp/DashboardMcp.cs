@@ -151,7 +151,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                         }
 
                         Log(request.Services).MCPToolFailedUpstreamWithCode(LoggedTool(request.Params?.Name),
-                            DatabaseResults.Status(error), error.GetType().Name, (error as TerraScale.DotNet.TerraBase.TerraBaseException)?.ErrorCode ?? "none");
+                            DatabaseResults.Status(error), error.GetType().Name, (error as TerraScale.TerraBase.Contracts.TerraBaseException)?.ErrorCode ?? "none");
                         return Failure(DatabaseResults.Message(error));
                     }
                     catch (Stripe.StripeException error)

@@ -4,8 +4,8 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
@@ -275,7 +275,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                 code = await delivery.PostAsync(new Uri(rule.WebhookUrl), body,
                     [new("X-TerraScale-Delivery", item.DeliveryId), new("X-TerraScale-Timestamp", timestamp), new("X-TerraScale-Signature", "v1=" + signature)], cancellationToken);
             }
-            catch (Exception error) when (error is HttpRequestException or ArgumentException or IOException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested) { code = 0; }
+            catch (Exception error) when (error is TerraBaseException or HttpRequestException or ArgumentException or IOException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested) { code = 0; }
             finally { CryptographicOperations.ZeroMemory(key); }
             if (code is >= 200 and <= 299)
             {

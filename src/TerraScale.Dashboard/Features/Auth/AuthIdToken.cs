@@ -2,7 +2,7 @@ using System.Net.Mail;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.Features.Auth
     // than selecting a verifier from untrusted JWT headers.
     public static class AuthIdToken
     {
-        public static AuthIdentity Validate(string? token, string issuer, string audience, string? nonce, TerraScaleAuthJwkSet keys, DateTimeOffset now)
+        public static AuthIdentity Validate(string? token, string issuer, string audience, string? nonce, TsAuthJwkSet keys, DateTimeOffset now)
         {
             try
             {

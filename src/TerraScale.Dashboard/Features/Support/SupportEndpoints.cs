@@ -74,7 +74,7 @@ namespace TerraScale.Dashboard.Features.Support
                 var sent = http.Request.Query["sent"].ToString();
                 return SupportView.Create(new(ShellModel.For(http, context, "Support"), Sent: sent.Length == 8 && sent.All(char.IsAsciiLetterOrDigit) ? sent : "")
                 {
-                    Draft = new(context.Organization?.Id ?? "", context.Project?.Id ?? "", "", "normal", "", "", AccountService.NewId(), TerraScale.DotNet.TerraScaleIds.IsValid(http.Request.Query["relatedRequestId"].ToString()) ? http.Request.Query["relatedRequestId"].ToString() : "")
+                    Draft = new(context.Organization?.Id ?? "", context.Project?.Id ?? "", "", "normal", "", "", AccountService.NewId(), TerraScale.Dashboard.Common.Accounts.TerraScaleIds.IsValid(http.Request.Query["relatedRequestId"].ToString()) ? http.Request.Query["relatedRequestId"].ToString() : "")
                 });
             });
             endpoints.MapPost("/api/v1/dashboard/support", SendAsync);
@@ -123,12 +123,12 @@ namespace TerraScale.Dashboard.Features.Support
                     throw new AccountAccessException("Describe the problem in at most 8000 characters.", 422);
                 }
 
-                if (!TerraScale.DotNet.TerraScaleIds.IsValid(draft.RequestId))
+                if (!TerraScale.Dashboard.Common.Accounts.TerraScaleIds.IsValid(draft.RequestId))
                 {
                     throw new AccountAccessException("Reload the page and send again.", 422);
                 }
 
-                if (draft.RelatedRequestId.Length > 0 && !TerraScale.DotNet.TerraScaleIds.IsValid(draft.RelatedRequestId))
+                if (draft.RelatedRequestId.Length > 0 && !TerraScale.Dashboard.Common.Accounts.TerraScaleIds.IsValid(draft.RelatedRequestId))
                 {
                     throw new AccountAccessException("Enter a 26-character request ULID.", 422);
                 }

@@ -2,7 +2,8 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using TerraScale.Dashboard.Features.Notifications;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.E2E.Features.Notifications
 {

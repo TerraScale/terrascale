@@ -1,10 +1,11 @@
-using System.Net.Http.Headers;
-using System.Net;
+using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Usage;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Features.Usage;
 using TerraScale.Dashboard.Platform.Observability;
-using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Home
 {
@@ -47,9 +48,8 @@ namespace TerraScale.Dashboard.Features.Home
         }
     }
 
-    // These producer-owned read contracts are present in ts-go but not yet in the pinned ts-dotnet candidate.
-    // Keep the adapter at this boundary until the official SDK exposes usage/metrics/status clients.
-    public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, TimeProvider time,
+    // TerraBase owns usage and analytics; ts-status owns regional latency observations.
+    public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, TerraBaseRpcClient rpc, TimeProvider time,
         TerraScale.Dashboard.Features.ApiKeys.ApiKeyService keys, IAnalyticsBackend analyticsBackend, IUsageReplication replicationBackend,
         TerraScale.Dashboard.Features.Auth.IProjectAccessTokens tokens) : IHomeMeasurements
     {
@@ -99,24 +99,23 @@ namespace TerraScale.Dashboard.Features.Home
             }
             try
             {
-                var client = http.CreateClient("platform");
-                var origin = await new TerraBaseDiscovery().ResolveAsync(cancellationToken);
                 var now = time.GetUtcNow().UtcDateTime;
                 var hour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Utc);
                 var start = range switch { "1h" => hour, "24h" => hour.AddHours(-23), "30d" => now.Date.AddDays(-29), _ => hour.AddHours(-167) };
                 // The project usage route with a project token, as the Usage page reads it (UsageBackend).
                 var token = await tokens.GetAsync(context.Session, context.Organization.Id, context.Project.Id, ["databases:read"], cancellationToken);
-                var path = $"/v1/projects/{Uri.EscapeDataString(context.Project.Id)}/usage?granularity={(range == "30d" ? "day" : "hour")}&from={Uri.EscapeDataString(start.ToString("O"))}";
-                using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(origin, path));
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                if (response.StatusCode == HttpStatusCode.NotFound)
+                TerraBaseProjectUsage usage;
+                try
+                {
+                    usage = await rpc.User<IUsageService>(token).WithCancellationToken(cancellationToken)
+                        .GetProjectUsageAsync(context.Project.Id, range == "30d" ? "day" : "hour", new DateTimeOffset(start), null);
+                }
+                catch (TerraBaseNotFoundException)
                 {
                     result.ActivityNote = "Activity for this project isn't available yet. It appears once TerraBase reports its reads and writes.";
                     return;
                 }
-                response.EnsureSuccessStatusCode();
-                using var data = await PlatformJson.ReadAsync(response.Content, cancellationToken);
+                using var data = JsonSerializer.SerializeToDocument(usage, UsageJson.Default.TerraBaseProjectUsage);
                 if (!data.RootElement.TryGetProperty("period", out var period) || period.ValueKind != JsonValueKind.Object)
                 {
                     return;
@@ -163,7 +162,7 @@ namespace TerraScale.Dashboard.Features.Home
                 result.ActivityMeasured = true;
                 result.ActivityNote = "Reads and writes metered by TerraBase.";
             }
-            catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException or JsonException or OverflowException or FormatException or KeyNotFoundException or InvalidOperationException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            catch (Exception error) when (error is AccountAccessException or TerraBaseException or HttpRequestException or IOException or JsonException or OverflowException or FormatException or KeyNotFoundException or InvalidOperationException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             {
                 ServiceSloTelemetry.MarkFailure(error);
                 result.ActivityNote = "Metered reads and writes could not be loaded. Try again shortly.";
@@ -219,7 +218,7 @@ namespace TerraScale.Dashboard.Features.Home
                         measurements[code] = (item.GetProperty("status").GetString() ?? "Not reported", latency);
                     }
                 }
-                catch (Exception error) when (error is HttpRequestException or IOException or JsonException or KeyNotFoundException or InvalidOperationException or FormatException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+                catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or JsonException or KeyNotFoundException or InvalidOperationException or FormatException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                 { ServiceSloTelemetry.MarkFailure(error); result.RegionError = "Could not load region health and latency. Retry this page."; }
             }
             result.Regions = [.. counts.Select(pair => new HomeRegion(pair.Key, measurements.GetValueOrDefault(pair.Key).Status ?? "Not reported", measurements.GetValueOrDefault(pair.Key).Latency ?? "Not reported", pair.Value))];

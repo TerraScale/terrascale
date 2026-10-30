@@ -1,3 +1,4 @@
+using TerraScale.TerraBase.Contracts;
 using System.Numerics;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
@@ -262,7 +263,7 @@ namespace TerraScale.Dashboard.Features.Billing
 
         private static bool DependencyFailure(Exception error, CancellationToken cancellationToken)
         {
-            return error is HttpRequestException or IOException or JsonException or TimeoutException or InvalidOperationException or KeyNotFoundException or OverflowException ||
+            return error is TerraBaseException or HttpRequestException or IOException or JsonException or TimeoutException or InvalidOperationException or KeyNotFoundException or OverflowException ||
             error is OperationCanceledException && !cancellationToken.IsCancellationRequested;
         }
 

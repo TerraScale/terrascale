@@ -21,6 +21,8 @@
       <Build Project="false" />
     </Project>
     <Project Path="src/TerraBase/TerraBase.csproj" />
+    <Project Path="src/TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj" />
+    <Project Path="src/TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj" />
     <Project Path="tests/TerraBase.Fast/TerraBase.Fast.csproj" />
     <Project Path="tests/TerraBase.Slow/TerraBase.Slow.csproj" />
     <Project Path="tests/TerraBase.E2E/TerraBase.E2E.csproj" />

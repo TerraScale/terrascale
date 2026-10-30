@@ -1,79 +1,83 @@
-using System.Net;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts.Functions;
+using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Functions
 {
-    public sealed record FunctionTrigger(string Collection, IReadOnlyList<string>? Events);
-    public sealed record FunctionRecord(string Name, string? Source, FunctionTrigger? Trigger, string? Cron, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
+    public sealed record FunctionRecord(string Name, string? Source, string? Cron, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
     public sealed record FunctionInvocation(string Id, DateTimeOffset At, string Trigger, string Status, double DurationMs, IReadOnlyList<string> Lines, string? Error);
 
-    // Functions belong to TerraBase (terrascale docs/functions/design.md). The SDK has no functions wrapper yet; use the
-    // platform HTTP pattern of the logs and backups pages with current project authority. A missing API (404) reads as empty.
-    public sealed partial class FunctionBackend(DatabaseService databases, IProjectAccessTokens tokens, IHttpClientFactory factory)
+    public sealed partial class FunctionBackend(DatabaseService databases, IProjectAccessTokens tokens, TerraBaseRpcClient rpc)
     {
-        // Source is at most 256 KiB and 25 invocations keep at most 50 lines of 1 KiB each; escaping can expand both.
-        private const long MaxBytes = 8 * 1024 * 1024;
-        private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
-        { RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true };
-
         public static bool ValidName(string name)
         {
             return NamePattern().IsMatch(name);
         }
 
-        public static Uri InvokeUrl(AccountContext context, DatabaseRecord database, string name)
+        public static string InvokeUrl(AccountContext context, DatabaseRecord database, string name)
         {
-            return new(TerraBaseDiscovery.Origin, Path(DatabaseService.Scope(context).ProjectId, database.Name) + "/" + Uri.EscapeDataString(name) + "/invoke");
+            return "https://api.terrascale.tech/v1/projects/" + Uri.EscapeDataString(DatabaseService.Scope(context).ProjectId) +
+                "/databases/" + Uri.EscapeDataString(database.Name) + "/functions/" + Uri.EscapeDataString(name) + "/invoke";
         }
 
         public async Task<IReadOnlyList<FunctionRecord>> ListAsync(AccountContext context, DatabaseRecord database, CancellationToken ct)
         {
-            return await SendAsync<IReadOnlyList<FunctionRecord>>(context, database, HttpMethod.Get, "", ct) ?? [];
+            var target = await ClientAsync(context, database, false, ct);
+            var result = await target.Client.ListAsync(target.ProjectId, target.Database);
+            IReadOnlyList<FunctionRecord> functions = [.. result.Select(Record)];
+            Validate(functions);
+            return functions;
         }
 
-        public Task<FunctionRecord?> ReadAsync(AccountContext context, DatabaseRecord database, string name, CancellationToken ct)
+        public async Task<FunctionRecord?> ReadAsync(AccountContext context, DatabaseRecord database, string name, CancellationToken ct)
         {
-            return SendAsync<FunctionRecord>(context, database, HttpMethod.Get, Segment(name), ct);
+            CheckName(name);
+            var target = await ClientAsync(context, database, false, ct);
+            try
+            {
+                var result = Record(await target.Client.GetAsync(target.ProjectId, target.Database, name));
+                Validate(result);
+                return result;
+            }
+            catch (TerraBaseNotFoundException)
+            {
+                return null;
+            }
         }
 
         public async Task<IReadOnlyList<FunctionInvocation>> LogsAsync(AccountContext context, DatabaseRecord database, string name, CancellationToken ct)
         {
-            return await SendAsync<IReadOnlyList<FunctionInvocation>>(context, database, HttpMethod.Get, Segment(name) + "/logs?limit=25", ct) ?? [];
+            CheckName(name);
+            var target = await ClientAsync(context, database, false, ct);
+            var result = await target.Client.LogsAsync(target.ProjectId, target.Database, name, 25);
+            IReadOnlyList<FunctionInvocation> logs = [.. result.Select(item => new FunctionInvocation(item.Id, item.At, item.Trigger,
+                item.Status, item.DurationMs, item.Lines, item.Error))];
+            Validate(logs);
+            return logs;
         }
 
-        public async Task<IReadOnlyList<TerraBaseChangeWebhookDelivery>> DeliveriesAsync(AccountContext context, DatabaseRecord database, string name, CancellationToken ct)
-        {
-            return await SendAsync<IReadOnlyList<TerraBaseChangeWebhookDelivery>>(context, database, HttpMethod.Get, Segment(name) + "/deliveries", ct) ?? [];
-        }
-
-        // False when the function was already gone (404); callers decide whether that is an error.
         public async Task<bool> DeleteAsync(AccountContext context, DatabaseRecord database, string name, CancellationToken ct)
         {
-            return await SendAsync<bool?>(context, database, HttpMethod.Delete, Segment(name), ct) == true;
+            CheckName(name);
+            var target = await ClientAsync(context, database, true, ct);
+            try
+            {
+                return await target.Client.DeleteAsync(target.ProjectId, target.Database, name);
+            }
+            catch (TerraBaseNotFoundException)
+            {
+                return false;
+            }
         }
 
-        private static string Segment(string name)
-        {
-            return "/" + (ValidName(name) ? name : throw new AccountAccessException("This function does not exist.", 404));
-        }
-
-        private static string Path(string project, string database)
-        {
-            return $"/v1/projects/{Uri.EscapeDataString(project)}/databases/{Uri.EscapeDataString(database)}/functions";
-        }
-
-        // Returns default when TerraBase answers 404 for the route or the function.
-        private async Task<T?> SendAsync<T>(AccountContext context, DatabaseRecord database, HttpMethod method, string suffix, CancellationToken ct)
+        private async Task<(IFunctionsService Client, string ProjectId, string Database)> ClientAsync(AccountContext context, DatabaseRecord database, bool write, CancellationToken ct)
         {
             context = await databases.CurrentAsync(context, ct);
             database = DatabaseService.Database(context, database.Id);
-            if (method == HttpMethod.Delete && !context.CanWriteProjectData)
+            if (write && !context.CanWriteProjectData)
             {
                 throw new AccountAccessException("Write access is required.");
             }
@@ -85,34 +89,21 @@ namespace TerraScale.Dashboard.Features.Functions
             }
 
             var home = await databases.HomeAsync(context, database, ct);
-            // Every functions route requires both document scopes (design: Auth).
             var access = await tokens.GetAsync(context.Session, scope.OrganizationId, scope.ProjectId, ["documents:read", "documents:write"], ct);
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromSeconds(30));
-            using var request = new HttpRequestMessage(method, new Uri(home.Api, Path(scope.ProjectId, database.Name) + suffix));
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", access);
-            request.Headers.Add("X-TerraScale-Region-Pin", home.Id);
-            using var response = await factory.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
-            if (response.StatusCode == HttpStatusCode.NotFound)
-            {
-                return default;
-            }
+            return (rpc.User<IFunctionsService>(access, home.Id).WithCancellationToken(ct).WithDeadline(DateTime.UtcNow.AddSeconds(30)), scope.ProjectId, database.Name);
+        }
 
-            response.EnsureSuccessStatusCode();
-            if (method == HttpMethod.Delete)
-            {
-                return (T)(object)true;
-            }
+        private static FunctionRecord Record(TerraBaseFunctionInfo function)
+        {
+            return new(function.Name, function.Source, function.Cron, function.CreatedAt, function.UpdatedAt);
+        }
 
-            if (response.Content.Headers.ContentLength > MaxBytes)
+        private static void CheckName(string name)
+        {
+            if (!ValidName(name))
             {
-                throw new HttpRequestException("Functions response is too large.");
+                throw new AccountAccessException("This function does not exist.", 404);
             }
-
-            await response.Content.LoadIntoBufferAsync(MaxBytes, timeout.Token);
-            var value = await response.Content.ReadFromJsonAsync<T>(Json, timeout.Token) ?? throw new JsonException("Functions response is missing.");
-            Validate(value);
-            return value;
         }
 
         internal static void Validate(object? value)
@@ -122,10 +113,9 @@ namespace TerraScale.Dashboard.Features.Functions
                 FunctionRecord function => Valid(function),
                 IReadOnlyList<FunctionRecord> functions => functions.Count <= 32 && functions.All(item => item is not null && Valid(item)),
                 IReadOnlyList<FunctionInvocation> logs => logs.Count <= 100 && logs.All(item => item is not null && TerraScaleIds.IsValid(item.Id) &&
-                    item.Trigger is "http" or "change" or "cron" && item.Status is "ok" or "error" && double.IsFinite(item.DurationMs) && item.DurationMs >= 0 &&
+                    item.Trigger is "http" or "cron" && item.Status is "ok" or "error" && double.IsFinite(item.DurationMs) && item.DurationMs >= 0 &&
                     item.Lines is { Count: <= 50 } && item.Lines.All(line => line is not null)) &&
                     logs.SequenceEqual(logs.OrderByDescending(item => item.At).ThenByDescending(item => item.Id, StringComparer.Ordinal)),
-                IReadOnlyList<TerraBaseChangeWebhookDelivery> deliveries => deliveries.Count <= 100 && deliveries.All(item => item is not null),
                 _ => false
             };
             if (!valid)
@@ -137,7 +127,7 @@ namespace TerraScale.Dashboard.Features.Functions
         private static bool Valid(FunctionRecord function)
         {
             return ValidName(function.Name) && (function.Source?.Length ?? 0) <= 256 * 1024 &&
-            (function.Trigger is null || function.Trigger.Collection is { Length: > 0 } && (function.Trigger.Events ?? []).All(item => item is "upsert" or "delete"));
+            (function.Cron is null || function.Cron.Length > 0);
         }
 
         [GeneratedRegex("^[a-z0-9][a-z0-9_-]{0,62}$")]

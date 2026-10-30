@@ -1,29 +1,25 @@
-using System.Net;
+using TerraScale.Dashboard.Platform.Persistence;
+using System.Text.Json.Serialization;
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Usage;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
-    public sealed class AllowanceNotificationBackend(IHttpClientFactory http, IDashboardIdentity identity, IHostEnvironment environment) : IAllowanceNotificationBackend
+    public sealed class AllowanceNotificationBackend(IHttpClientFactory http, IDashboardIdentity identity, TerraBaseRpcClient rpc) : IAllowanceNotificationBackend
     {
-        private readonly Uri origin = TerraBaseDashboardState.Origin(environment);
 
         public async Task<AllowanceUsagePage> ReadAsync(string? after, CancellationToken cancellationToken)
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(origin, "v1/usage/allowances" + (after is null ? "" : "?after=" + Uri.EscapeDataString(after))))
+            try
             {
-                Version = HttpVersion.Version20,
-                VersionPolicy = HttpVersionPolicy.RequestVersionExact
-            };
-            using var response = await http.CreateClient(TerraBaseDashboardState.ClientName).SendAsync(request, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new IOException("Allowance producer is unavailable.");
+                var answer = await rpc.Platform<IUsageService>().WithCancellationToken(cancellationToken).ListAllowancesAsync(after);
+                return answer.Deserialize(AllowanceBackendJson.Default.AllowanceUsagePage) ?? throw new IOException("Allowance producer response is empty.");
             }
-
-            return await response.Content.ReadFromJsonAsync<AllowanceUsagePage>(cancellationToken) ?? throw new IOException("Allowance producer response is empty.");
+            catch (TerraBaseException) { throw new IOException("Allowance producer is unavailable."); }
         }
 
         public async Task<string> SendAsync(AllowanceAlert alert, CancellationToken cancellationToken)
@@ -56,7 +52,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             {
                 try { await notifications.RunOnceAsync(stoppingToken); }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-                catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException or OperationCanceledException)
+                catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or OperationCanceledException)
                 {
                     logger.AllowanceNotificationsAreUnavailableRetryingNext(error.GetType().Name);
                 }
@@ -73,4 +69,8 @@ namespace TerraScale.Dashboard.Features.Notifications
             .AddSingleton<AllowanceNotifications>().AddHostedService<AllowanceNotificationWorker>();
         }
     }
+    [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
+    [JsonSerializable(typeof(AllowanceUsagePage))]
+    internal sealed partial class AllowanceBackendJson : JsonSerializerContext;
+
 }

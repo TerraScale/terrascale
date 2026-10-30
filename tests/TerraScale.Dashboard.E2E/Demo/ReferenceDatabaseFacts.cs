@@ -1,6 +1,6 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Backups;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.E2E
 {

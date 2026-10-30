@@ -1,3 +1,4 @@
+using TerraScale.TerraBase.Contracts;
 using Stripe;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 using TerraScale.Dashboard.Features.Accounts;
@@ -48,25 +49,25 @@ namespace TerraScale.Dashboard.Features.Billing
             BillingCard? paymentMethod = null;
             var paymentMethodUnavailable = false;
             try { paymentMethod = await paymentMethodRead; }
-            catch (Exception error) when (error is HttpRequestException or StripeException or BillingPaymentMethodUnavailableException ||
+            catch (Exception error) when (error is TerraBaseException or HttpRequestException or StripeException or BillingPaymentMethodUnavailableException ||
                                           error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             { paymentMethodUnavailable = true; }
             IReadOnlyList<BillingInvoice> invoices = [];
             var errorMessage = "";
             try { invoices = await invoicesRead; }
-            catch (Exception error) when (error is HttpRequestException or IOException or StripeException ||
+            catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or StripeException ||
                                           error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             { errorMessage = "Payment history could not be loaded. Apply the filters to retry."; }
             long? overage = null;
             try { overage = await overageRead; }
-            catch (Exception error) when (error is HttpRequestException or IOException or StripeException ||
+            catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or StripeException ||
                                           error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             { }
             var changes = await changesRead;
             BillingDetails? details = null;
             var detailsUnavailable = false;
             try { details = await detailsRead; }
-            catch (Exception error) when (error is HttpRequestException or IOException or StripeException ||
+            catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or StripeException ||
                 error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             { detailsUnavailable = true; }
             return page with
@@ -132,7 +133,7 @@ namespace TerraScale.Dashboard.Features.Billing
 
                     return Results.Problem(error.Message, statusCode: error is AccountAccessException access ? access.StatusCode : 422);
                 }
-                catch (Exception error) when (error is StripeException or HttpRequestException or IOException ||
+                catch (Exception error) when (error is StripeException or TerraBaseException or HttpRequestException or IOException ||
                     error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
                 {
                     // The customer sees a generic 503; the cause (such as a Stripe refusal) must reach the host log.

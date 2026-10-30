@@ -288,8 +288,8 @@ namespace TerraScale.Dashboard.Common.Accounts
             !string.IsNullOrWhiteSpace(Session.AccessToken) && Session.ExpiresAt > DateTimeOffset.UtcNow &&
             Organization is { Status: "active", Archived: false, DeletionRequested: false, MfaRequired: false } organization &&
             !PlatformDatabases.IsPlatform(organization.Id) && Organizations.Any(item => ReferenceEquals(item, organization)) &&
-            TerraScale.DotNet.TerraScaleIds.IsValid(organization.Id) &&
-            Project is { Status: "active", Role: "member" or "admin" } project && TerraScale.DotNet.TerraScaleIds.IsValid(project.Id) &&
+            TerraScale.Dashboard.Common.Accounts.TerraScaleIds.IsValid(organization.Id) &&
+            Project is { Status: "active", Role: "member" or "admin" } project && TerraScale.Dashboard.Common.Accounts.TerraScaleIds.IsValid(project.Id) &&
             project.OrganizationId == organization.Id && ReferenceEquals(organization.Projects.GetValueOrDefault(project.Id), project);
         // ts-auth's admin project role on the live project, from organization ownership/admin or an explicit grant.
         public bool CanManageProject => Project?.Role == "admin" && CanWriteProjectData;

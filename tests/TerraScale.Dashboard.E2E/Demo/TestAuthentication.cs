@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.E2E.Demo
 {
@@ -17,14 +17,14 @@ namespace TerraScale.Dashboard.E2E.Demo
 
         private sealed class Tenant
         {
-            public TerraScaleAuthProjectMethods Methods = new(true, true, true);
-            public TerraScaleAuthProjectConfiguration Configuration = new([], 1209600);
-            public TerraScaleAuthProjectBranding Branding = new("Northwind", null, "#2158e8");
-            public readonly List<TerraScaleAuthProjectUser> Users = [];
-            public readonly List<TerraScaleAuthProjectSession> Sessions = [];
-            public readonly List<TerraScaleAuthProjectOAuthClient> Clients = [];
+            public TsAuthProjectMethods Methods = new(true, true, true);
+            public TsAuthProjectConfiguration Configuration = new([], 1209600);
+            public TsAuthProjectBranding Branding = new("Northwind", null, "#2158e8");
+            public readonly List<TsAuthProjectUser> Users = [];
+            public readonly List<TsAuthProjectSession> Sessions = [];
+            public readonly List<TsAuthProjectOAuthClient> Clients = [];
             // Configured providers; the stand-in keeps no secrets, like ts-auth never returns them.
-            public readonly Dictionary<string, TerraScaleAuthProjectProviderUpdate> Providers = new(StringComparer.Ordinal);
+            public readonly Dictionary<string, TsAuthProjectProviderUpdate> Providers = new(StringComparer.Ordinal);
         }
 
         private Tenant For(string projectId)
@@ -60,21 +60,21 @@ namespace TerraScale.Dashboard.E2E.Demo
             return new("Authentication for this project, or the requested record, is unavailable.", 404);
         }
 
-        private static TerraScaleAuthPlatformPage<T> Page<T>(IEnumerable<T> items, Func<T, string> id, string? after)
+        private static TsAuthPlatformPage<T> Page<T>(IEnumerable<T> items, Func<T, string> id, string? after)
         {
             var rest = items.SkipWhile(item => after is not null && id(item) != after).Skip(after is null ? 0 : 1).Take(PageSize + 1).ToArray();
             return new(rest.Take(PageSize).ToArray(), rest.Length > PageSize ? id(rest[PageSize - 1]) : null);
         }
 
-        public Task<TerraScaleAuthProjectSettings> GetSettingsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken)
+        public Task<TsAuthProjectSettings> GetSettingsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken)
         {
             var tenant = For(projectId);
-            return Task.FromResult(Locked(tenant, () => new TerraScaleAuthProjectSettings(projectId, "https://auth.terrascale.tech/" + projectId,
+            return Task.FromResult(Locked(tenant, () => new TsAuthProjectSettings(projectId, "https://auth.terrascale.tech/" + projectId,
                 "https://auth.terrascale.tech/" + projectId + "/.well-known/openid-configuration", "https://auth.terrascale.tech/ui/" + projectId + "/sign-in",
                 tenant.Methods, tenant.Branding, new(tenant.Users.Count, tenant.Clients.Count),
                 new[] { "google", "github", "apple", "oidc" }.Select(key => tenant.Providers.TryGetValue(key, out var set)
-                    ? new TerraScaleAuthProjectProvider(key, true, set.ClientId, set.Issuer, set.TeamId, set.KeyId, Callback(projectId, key))
-                    : new TerraScaleAuthProjectProvider(key, false, null, null, null, null, Callback(projectId, key))).ToArray(), tenant.Configuration)));
+                    ? new TsAuthProjectProvider(key, true, set.ClientId, set.Issuer, set.TeamId, set.KeyId, Callback(projectId, key))
+                    : new TsAuthProjectProvider(key, false, null, null, null, null, Callback(projectId, key))).ToArray(), tenant.Configuration)));
         }
 
         private static string Callback(string projectId, string provider)
@@ -82,7 +82,7 @@ namespace TerraScale.Dashboard.E2E.Demo
             return $"https://auth.terrascale.tech/ui/{projectId}/social/{provider}/callback";
         }
 
-        public Task<TerraScaleAuthProjectSettings> SetProviderAsync(SessionRecord session, string projectId, string provider, TerraScaleAuthProjectProviderUpdate update, CancellationToken cancellationToken)
+        public Task<TsAuthProjectSettings> SetProviderAsync(SessionRecord session, string projectId, string provider, TsAuthProjectProviderUpdate update, CancellationToken cancellationToken)
         {
             var tenant = For(projectId);
             Locked(tenant, () =>
@@ -97,14 +97,14 @@ namespace TerraScale.Dashboard.E2E.Demo
             return GetSettingsAsync(session, projectId, cancellationToken);
         }
 
-        public Task<TerraScaleAuthProjectSettings> DeleteProviderAsync(SessionRecord session, string projectId, string provider, CancellationToken cancellationToken)
+        public Task<TsAuthProjectSettings> DeleteProviderAsync(SessionRecord session, string projectId, string provider, CancellationToken cancellationToken)
         {
             var tenant = For(projectId);
             Locked(tenant, () => tenant.Providers.Remove(provider));
             return GetSettingsAsync(session, projectId, cancellationToken);
         }
 
-        public Task<TerraScaleAuthProjectSettings> UpdateSettingsAsync(SessionRecord session, string projectId, TerraScaleAuthProjectSettingsUpdate update, CancellationToken cancellationToken)
+        public Task<TsAuthProjectSettings> UpdateSettingsAsync(SessionRecord session, string projectId, TsAuthProjectSettingsUpdate update, CancellationToken cancellationToken)
         {
             var tenant = For(projectId);
             Locked(tenant, () =>
@@ -122,13 +122,13 @@ namespace TerraScale.Dashboard.E2E.Demo
             return GetSettingsAsync(session, projectId, cancellationToken);
         }
 
-        public Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectUser>> ListUsersAsync(SessionRecord session, string projectId, string? query, string? after, CancellationToken cancellationToken)
+        public Task<TsAuthPlatformPage<TsAuthProjectUser>> ListUsersAsync(SessionRecord session, string projectId, string? query, string? after, CancellationToken cancellationToken)
         {
             var tenant = For(projectId);
             return Task.FromResult(Locked(tenant, () => Page(tenant.Users.Where(user => string.IsNullOrWhiteSpace(query) || user.Email.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase)), user => user.Id, after)));
         }
 
-        public Task<TerraScaleAuthProjectUser> SetUserDisabledAsync(SessionRecord session, string projectId, string userId, bool disabled, CancellationToken cancellationToken)
+        public Task<TsAuthProjectUser> SetUserDisabledAsync(SessionRecord session, string projectId, string userId, bool disabled, CancellationToken cancellationToken)
         {
             var tenant = For(projectId);
             return Task.FromResult(Locked(tenant, () =>
@@ -148,7 +148,7 @@ namespace TerraScale.Dashboard.E2E.Demo
             }));
         }
 
-        public Task<TerraScaleAuthUserExportPage> ExportUsersAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken)
+        public Task<TsAuthUserExportPage> ExportUsersAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken)
         {
             throw new AccountAccessException("Directory exports require the project's ts-auth service.", 503);
         }
@@ -160,7 +160,7 @@ namespace TerraScale.Dashboard.E2E.Demo
             return Task.CompletedTask;
         }
 
-        public Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectSession>> ListSessionsAsync(SessionRecord session, string projectId, string? userId, string? after, CancellationToken cancellationToken)
+        public Task<TsAuthPlatformPage<TsAuthProjectSession>> ListSessionsAsync(SessionRecord session, string projectId, string? userId, string? after, CancellationToken cancellationToken)
         {
             var tenant = For(projectId);
             return Task.FromResult(Locked(tenant, () => Page(tenant.Sessions.Where(item => string.IsNullOrWhiteSpace(userId) || item.UserId == userId), item => item.Id, after)));
@@ -173,18 +173,18 @@ namespace TerraScale.Dashboard.E2E.Demo
             return Task.CompletedTask;
         }
 
-        public Task<IReadOnlyList<TerraScaleAuthProjectOAuthClient>> ListClientsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken)
+        public Task<IReadOnlyList<TsAuthProjectOAuthClient>> ListClientsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken)
         {
             var tenant = For(projectId);
-            return Task.FromResult(Locked(tenant, () => (IReadOnlyList<TerraScaleAuthProjectOAuthClient>)tenant.Clients.ToArray()));
+            return Task.FromResult(Locked(tenant, () => (IReadOnlyList<TsAuthProjectOAuthClient>)tenant.Clients.ToArray()));
         }
 
-        public async Task<TerraScaleAuthProjectOAuthClient> CreateClientAsync(SessionRecord session, string projectId, TerraScaleAuthProjectCreateOAuthClient request, string proof, CancellationToken cancellationToken)
+        public async Task<TsAuthProjectOAuthClient> CreateClientAsync(SessionRecord session, string projectId, TsAuthProjectCreateOAuthClient request, string proof, CancellationToken cancellationToken)
         {
             await (StepUp ?? throw StepUpFlow.Required()).ConsumeAsync(session, proof, "create_oauth_client", "ts-auth", null, cancellationToken);
             Interlocked.Increment(ref createdClients);
             var tenant = For(projectId);
-            var client = new TerraScaleAuthProjectOAuthClient(ids.NewId(), request.Name!, request.Type!, request.RedirectUris!.ToArray(), DateTimeOffset.UtcNow);
+            var client = new TsAuthProjectOAuthClient(ids.NewId(), request.Name!, request.Type!, request.RedirectUris!.ToArray(), DateTimeOffset.UtcNow);
             Locked(tenant, () => { tenant.Clients.Add(client); return true; });
             return request.Type == "confidential" ? client with { ClientSecret = "tsas_test_" + Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)) } : client;
         }

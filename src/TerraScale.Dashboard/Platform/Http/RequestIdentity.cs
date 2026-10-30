@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using TerraScale.DotNet;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Platform.Http

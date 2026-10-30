@@ -1,7 +1,7 @@
 # ts-dashboard
 
 
-- .NET 11, RazorSlices and Datastar. Use the official Stripe.net library. Depend on ts-dotnet (`TerraScale.DotNet`), never a TerraBase project or binary.
+- .NET 11, RazorSlices and Datastar. Use the official Stripe.net library. Reach TerraBase only over MagicOnion through `src/TerraScale.TerraBase.Contracts` (Platform/Rpc), never a TerraBase project or binary; ts-auth through the dashboard-owned client in Platform/TsAuth.
 - `src/TerraScale.Dashboard/` contains `Features/`, `Platform/`, `UI/` and `web/`. Keep each product area's components and abstractions together. TUnit journeys live in `tests/TerraScale.Dashboard.E2E/`; the SDK source lives in `sdk/dotnet/` and is consumed through ProjectReference.
 - Own dashboard authentication integration, MCP, organizations, projects, users, billing, plans and Stripe management. Identity belongs to ts-auth; usage metrics and regional availability/latency come from TerraBase.
 - Production uses persistent TerraBase state through ts-dotnet and ts-auth authorization. Runtime demo paths are implementation gaps, not deployment requirements. Keep account creation and customer-SDK database round trips covered end to end.

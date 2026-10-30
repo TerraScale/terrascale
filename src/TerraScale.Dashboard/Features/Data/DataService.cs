@@ -1,12 +1,15 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts.Changes;
+using TerraScale.TerraBase.Contracts.Documents;
+using TerraScale.TerraBase.Contracts.Schema;
+using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Data
 {
     public sealed partial class DataService(DatabaseService databases, IDocumentBackend documents, IDatabaseBackend backend)
     {
-        public async Task<IReadOnlyList<TerraBaseCollection>> CollectionsAsync(AccountContext context, string databaseId, CancellationToken cancellationToken)
+        public async Task<IReadOnlyList<TerraBaseCollectionInfo>> CollectionsAsync(AccountContext context, string databaseId, CancellationToken cancellationToken)
         {
             var database = DatabaseService.Database(context, databaseId);
             return await documents.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, cancellationToken), database.Name, cancellationToken);
@@ -195,9 +198,9 @@ namespace TerraScale.Dashboard.Features.Data
             }
             try { return await documents.WriteAsync(scope, home, database.Name, collection, operation, id, document, version, cancellationToken); }
             // A create carries no version, so TerraBase's create-only precondition failing means the ID is taken.
-            catch (HttpRequestException error) when (operation == "create" && error.StatusCode is System.Net.HttpStatusCode.Conflict or System.Net.HttpStatusCode.PreconditionFailed)
+            catch (TerraBaseException error) when (operation == "create" && error.Status is 409 or 412)
             { throw new AccountAccessException("A document with this ID already exists. Choose another ID or omit it to generate one.", 409); }
-            catch (HttpRequestException error) when (error.StatusCode == System.Net.HttpStatusCode.RequestEntityTooLarge)
+            catch (TerraBaseException error) when (error.Status == 413)
             { throw new AccountAccessException("The encoded document exceeds the data API's 1 MiB request limit. Reduce its size and try again. Your draft has been kept.", 413); }
         }
 
@@ -313,7 +316,7 @@ namespace TerraScale.Dashboard.Features.Data
             var scope = DatabaseService.Scope(context);
             var home = await databases.HomeAsync(context, database, cancellationToken);
             try { await backend.CreateIndexAsync(scope, home, database.Id, collection, paths, cancellationToken); }
-            catch (HttpRequestException error) when (error.StatusCode == System.Net.HttpStatusCode.Conflict)
+            catch (TerraBaseConflictException)
             {
                 // Treat only the actual matching provider index as an idempotent
                 // replay; other conflicts must still reach the caller.
@@ -355,7 +358,7 @@ namespace TerraScale.Dashboard.Features.Data
 
         public static string ValidDocumentId(string id)
         {
-            return TerraScale.DotNet.TerraScaleIds.IsValid(id) ? id : throw new AccountAccessException(DocumentIdRule, 422);
+            return TerraScaleIds.IsValid(id) ? id : throw new AccountAccessException(DocumentIdRule, 422);
         }
 
         [GeneratedRegex("^[a-z][a-z0-9_-]{0,62}$", RegexOptions.CultureInvariant)]

@@ -2,8 +2,9 @@ using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.Dashboard.Platform.TsAuth;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Profile
 {
@@ -46,7 +47,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 }
             }
             catch (Exception error) when (Retryable(error, cancellationToken)) { Retry(error); }
-            IReadOnlyList<TerraScaleAuthDeletionProof> proofs;
+            IReadOnlyList<TsAuthDeletionProof> proofs;
             try
             {
                 proofs = await deletions.ListAsync(cancellationToken);
@@ -185,14 +186,14 @@ namespace TerraScale.Dashboard.Features.Profile
             }
         }
 
-        private async Task CleanProjectAsync(TerraScaleAuthDeletionProof proof, CancellationToken cancellationToken)
+        private async Task CleanProjectAsync(TsAuthDeletionProof proof, CancellationToken cancellationToken)
         {
             await DropProjectAsync(proof, cancellationToken);
             await projectRecords.CleanAsync(proof.OrganizationId!, proof.SubjectId, cancellationToken);
             await related.CleanProjectAsync(proof.OrganizationId!, proof.SubjectId, cancellationToken);
         }
 
-        private static void Validate(TerraScaleAuthDeletionProof proof)
+        private static void Validate(TsAuthDeletionProof proof)
         {
             if (!TerraScaleIds.IsValid(proof.Id) || !TerraScaleIds.IsValid(proof.SubjectId) || (proof.Scope switch
             {
@@ -206,7 +207,7 @@ namespace TerraScale.Dashboard.Features.Profile
             }
         }
 
-        private async Task DropProjectAsync(TerraScaleAuthDeletionProof proof, CancellationToken cancellationToken)
+        private async Task DropProjectAsync(TsAuthDeletionProof proof, CancellationToken cancellationToken)
         {
             var organizationId = proof.OrganizationId ?? throw new IOException("Deletion organization identity is missing.");
             var document = await state.GetAsync(AccountService.OrganizationsCollection, organizationId, cancellationToken);

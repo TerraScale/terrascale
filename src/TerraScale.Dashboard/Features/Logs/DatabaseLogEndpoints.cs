@@ -1,6 +1,6 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Common.UI;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts.Logs;
 
 namespace TerraScale.Dashboard.Features.Logs
 {

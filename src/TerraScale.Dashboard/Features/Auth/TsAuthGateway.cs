@@ -1,11 +1,11 @@
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
-    // Every ts-auth call goes through the official ts-dotnet client: OIDC, the
+    // The dashboard owns its ts-auth HTTP client for OIDC, the
     // RFC 8693 exchange and the platform API.
-    public sealed partial class TsAuthGateway(IDashboardIdentity identity, IHttpClientFactory http, TimeProvider time) : IAuthGateway, IAuthOidcGateway, IAuthRefreshGateway, IAuthLogoutGateway
+    public sealed partial class TsAuthGateway(IDashboardIdentity identity, IHttpClientFactory http, TimeProvider time, TsAuthClient authClient) : IAuthGateway, IAuthOidcGateway, IAuthRefreshGateway, IAuthLogoutGateway
     {
         public async Task<bool> IsActiveAsync(SessionRecord session, CancellationToken cancellationToken)
         {
@@ -37,22 +37,22 @@ namespace TerraScale.Dashboard.Features.Auth
                 credentials.AuthClientId, credentials.AuthClientSecret, session.RefreshToken ?? session.AccessToken, cancellationToken);
         }
 
-        private TerraScaleAuthClient Client()
+        private TsAuthClient Client()
         {
-            return new(http.CreateClient("platform"), new TerraScaleAuthClientOptions { BaseAddress = AuthOrigin, InstanceSlug = Tenant });
+            return authClient;
         }
 
-        private Task<TerraScaleAuthOidcDiscovery> MetadataAsync(TerraScaleAuthClient client, CancellationToken cancellationToken)
+        private Task<TsAuthOidcDiscovery> MetadataAsync(TsAuthClient client, CancellationToken cancellationToken)
         {
             return ServerTiming.PublicReadAsync((this, "oidc-metadata"), () => client.Oidc.GetDiscoveryDocumentAsync(cancellationToken));
         }
 
-        private Task<TerraScaleAuthJwkSet> SigningKeysAsync(TerraScaleAuthClient client, CancellationToken cancellationToken)
+        private Task<TsAuthJwkSet> SigningKeysAsync(TsAuthClient client, CancellationToken cancellationToken)
         {
             return ServerTiming.PublicReadAsync((this, "oidc-keys"), () => client.Oidc.GetJwksAsync(cancellationToken));
         }
 
-        private Task<TerraScaleAuthUserInfo> SessionUserInfoAsync(TerraScaleAuthClient client, SessionRecord session, CancellationToken cancellationToken)
+        private Task<TsAuthUserInfo> SessionUserInfoAsync(TsAuthClient client, SessionRecord session, CancellationToken cancellationToken)
         {
             return ServerTiming.ReadAsync((this, "oidc-userinfo", session.AccessToken, session.UserId, session.Email),
                 () => UserInfoAsync(client, session.AccessToken, cancellationToken));

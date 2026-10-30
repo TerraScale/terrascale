@@ -1,8 +1,9 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
-using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Common.UI;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.Dashboard.Features.Databases;
+using TerraScale.TerraBase.Contracts.Changes;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Data
 {
@@ -342,7 +343,7 @@ namespace TerraScale.Dashboard.Features.Data
             try { database = DatabaseService.Database(context, id); }
             catch (AccountAccessException error) { return DatabaseResults.PageFailure(http, context, error); }
             var errorMessage = "";
-            IReadOnlyList<TerraBaseCollection> collections = [];
+            IReadOnlyList<TerraBaseCollectionInfo> collections = [];
             var browse = new DocumentBrowse([], 0, 1, 1, false);
             IReadOnlyList<DatabaseIndex> indexes = [];
             IReadOnlyList<SavedQuery> queries = [];
