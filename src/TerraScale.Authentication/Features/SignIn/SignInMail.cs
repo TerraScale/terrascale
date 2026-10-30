@@ -55,6 +55,9 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
     public static readonly TimeSpan Retention = TimeSpan.FromDays(1);
 
     private const string Instance = OidcIssuer.InstanceId;
+    /// <summary>Independent deliveries allowed in flight per replica.</summary>
+    public const int DeliveryConcurrency = 8;
+
     private const int Batch = 64;
     private static readonly JsonElement OpenRows = JsonDocument.Parse("""{"or":[{"eq":["/state","queued"]},{"eq":["/state","ready"]},{"eq":["/state","sending"]}]}""").RootElement.Clone();
 
@@ -138,23 +141,46 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
     private async Task DeliverOutboxAsync()
     {
         var pruneAt = DateTimeOffset.MinValue;
+        var active = new List<Task>(DeliveryConcurrency);
         // Not stoppingToken: accepted codes are still delivered while the host shuts down.
         while (true)
         {
-            var full = false;
             try
             {
-                var rows = await store.QueryAsync(AuthStore.MailOutboxCollection, OpenRows, Batch, CancellationToken.None).ConfigureAwait(false);
-                full = rows.Count == Batch;
-                foreach (var row in rows)
+                foreach (var completed in active.Where(task => task.IsCompleted).ToArray())
                 {
-                    await this.ProcessAsync(row).ConfigureAwait(false);
+                    active.Remove(completed);
+                    await completed.ConfigureAwait(false);
                 }
 
-                if (!full)
+                // Reconcile only reservations that existed before the query. A new enqueue
+                // must not be released just because it was written after this snapshot.
+                string[] pending;
+                lock (this.admission)
                 {
-                    // Rows this replica accepted that are no longer open were finished elsewhere.
-                    this.Release(id => !rows.Any(row => row.Id == AuthStore.NaturalKeyId(Instance, AuthStore.MailOutboxCollection, id)));
+                    pending = [.. this.local];
+                }
+                if (pending.Length > 0)
+                {
+                    var open = await store.QueryAsync(AuthStore.MailOutboxCollection, OpenRows, Batch, CancellationToken.None).ConfigureAwait(false);
+                    if (open.Count < Batch)
+                    {
+                        this.Release(id => pending.Contains(id, StringComparer.Ordinal)
+                            && !open.Any(row => row.Id == AuthStore.NaturalKeyId(Instance, AuthStore.MailOutboxCollection, id)));
+                    }
+                }
+
+                if (active.Count < DeliveryConcurrency)
+                {
+                    // Apply eligibility before LIMIT: leases and deferred retries must never
+                    // fill the first batch and starve newly accepted work or spin the worker.
+                    var now = JsonSerializer.Serialize(clock.GetUtcNow(), MailJson.Default.DateTimeOffset);
+                    using var due = JsonDocument.Parse($$"""{"and":[{{OpenRows.GetRawText()}},{"lte":["/leaseUntil",{{now}}]}]}""");
+                    var rows = await store.QueryAsync(AuthStore.MailOutboxCollection, due.RootElement, DeliveryConcurrency - active.Count, CancellationToken.None).ConfigureAwait(false);
+                    foreach (var row in rows)
+                    {
+                        active.Add(this.ProcessAsync(row));
+                    }
                 }
 
                 if (clock.GetUtcNow() >= pruneAt)
@@ -178,22 +204,24 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
 
             // Processing can release the last accepted row while shutdown is waiting.
             // Observe that release before entering the next polling interval.
-            if (this.Drained)
+            if (this.Drained && active.Count == 0)
             {
                 return;
             }
 
-            if (!full)
+            // A completion frees a slot immediately; a wake admits new mail even while
+            // older provider calls are still in flight. Cancel the unused read each pass.
+            using var timeout = new CancellationTokenSource(PollInterval, clock);
+            var awakened = this.wake.Reader.ReadAsync(timeout.Token).AsTask();
+            await Task.WhenAny(active.Append(awakened)).ConfigureAwait(false);
+            await timeout.CancelAsync().ConfigureAwait(false);
+            try
             {
-                using var timeout = new CancellationTokenSource(PollInterval, clock);
-                try
-                {
-                    await this.wake.Reader.ReadAsync(timeout.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    // Poll for rows other replicas left behind.
-                }
+                await awakened.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Poll for rows other replicas left behind, or continue on completion.
             }
         }
     }
@@ -375,8 +403,8 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
     /// <summary>
     /// The instance's email configuration, read for every code so a change applies to the next email on every replica.
     /// When it cannot be read the code still goes out, with the default branding and copy: delivering it matters more.
-    /// Each queue has one worker, so a read waits at most <see cref="ConfigTimeout"/>, and after a failure the next
-    /// <see cref="ConfigBackoff"/> of emails skip the read: a stalled store costs at most one timeout per worker, not one per email.
+    /// Each read waits at most <see cref="ConfigTimeout"/>, and after a failure the next
+    /// <see cref="ConfigBackoff"/> of emails skip the read. Delivery concurrency bounds simultaneous reads.
     /// </summary>
     private async Task<EmailConfig?> ConfigAsync(string tenant, AuthEmailKind kind)
     {

@@ -285,10 +285,10 @@ guesses, 5 codes per account per hour. It signs in existing accounts only;
 accounts are created by the hosted sign-up ([accounts and limits](#accounts-passwords-and-limits)). The page is the same whether or not the address has an account, and
 the email is sent after the response, so its timing does not reveal it either.
 `SignInMail`, a hosted service, persists accepted codes in a durable TerraBase
-outbox and sends them one at a time, never a stale (replaced or expired) code and
+outbox and sends up to eight concurrently per replica, never a stale (replaced or expired) code and
 never an ambiguous send twice ([queue admission](email/queue-admission.md)).
 Lockout notices use a separate bounded queue and worker, so a slow
-relay holds at most two HTTP requests to Cloudflare, and notices cannot displace codes. The code email is
+relay holds at most nine HTTP requests to Cloudflare per replica, and notices cannot displace codes. The code email is
 rendered by `AuthEmails` (TS-583) as HTML with a plain-text alternative, in
 English or, when `Accept-Language` prefers Portuguese, Brazilian Portuguese. Delivery uses `CloudflareEmailSender` when `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_EMAIL_TOKEN` are set; otherwise
 `LoggingEmailSender` delivers nothing and logs only message sizes. Both are
