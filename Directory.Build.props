@@ -62,5 +62,8 @@
     <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
+    <!-- Give SDK-generated syntax trees an absolute path so the generated-code policy can match them. -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/obj/generated</CompilerGeneratedFilesOutputPath>
   </PropertyGroup>
 </Project>
