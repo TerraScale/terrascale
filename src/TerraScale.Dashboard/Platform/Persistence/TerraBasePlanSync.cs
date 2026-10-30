@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
-using System.Net;
 using System.Text.Json.Serialization;
-using TerraScale.DotNet;
+using System.Text.Json;
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Platform;
 
 namespace TerraScale.Dashboard.Platform.Persistence
 {
@@ -12,10 +14,8 @@ namespace TerraScale.Dashboard.Platform.Persistence
     // or answered 404 because there is nothing to set it on yet) is checked again every five minutes, so a wipe converges
     // without re-sending every organization each 30 seconds; a failed publish retries with backoff. TerraBase keeps a paid
     // plan published before the first database.
-    public sealed class TerraBasePlanSync(IHttpClientFactory http, IHostEnvironment environment, TimeProvider time, ILogger<TerraBasePlanSync> logger)
+    public sealed class TerraBasePlanSync(TerraBaseRpcClient rpc, TimeProvider time, ILogger<TerraBasePlanSync> logger)
     {
-        // Request metadata identifies this publisher's storage-only writes; it is never an incoming header or setting.
-        internal static readonly HttpRequestOptionsKey<PlanBody> Publication = new("TerraScale.StoragePlanPublication");
         // Views skip a publish this recent; the reconciler always publishes.
         private static readonly TimeSpan Fresh = TimeSpan.FromSeconds(30);
         // A view never waits longer than this on TerraBase: the reconciler republishes within 30 seconds, while a
@@ -25,7 +25,6 @@ namespace TerraScale.Dashboard.Platform.Persistence
         public static readonly TimeSpan Refresh = TimeSpan.FromMinutes(5);
         // The reconciler retries a failed publish on its next pass, then waits this long, doubling per failure up to Refresh.
         private static readonly TimeSpan RetryAfter = TimeSpan.FromSeconds(30);
-        private readonly Uri origin = TerraBaseDashboardState.Origin(environment);
         private readonly ConcurrentDictionary<string, Attempt> published = new(StringComparer.Ordinal);
 
         // The last plan tried for an organization: settled when TerraBase stored it or had nothing to set it on (404).
@@ -95,13 +94,13 @@ namespace TerraScale.Dashboard.Platform.Persistence
             var settled = false;
             try
             {
-                using var response = await PutAsync($"admin/organizations/{organization.Id}/plan", plan, budget.Token);
-                if (response.StatusCode != HttpStatusCode.NotFound)
+                var response = await PutAsync(organization.Id, plan, false, budget.Token);
+                if (response != 404)
                 {
-                    settled = response.IsSuccessStatusCode;
+                    settled = response is >= 200 and <= 299;
                     if (!settled)
                     {
-                        logger.TerraBaseRefusedPlanForOrganization(plan, organization.Id, (int)response.StatusCode);
+                        logger.TerraBaseRefusedPlanForOrganization(plan, organization.Id, response);
                     }
 
                     return;
@@ -112,35 +111,35 @@ namespace TerraScale.Dashboard.Platform.Persistence
                 settled = true;
                 foreach (var project in organization.Projects.Keys)
                 {
-                    using var enrolled = await PutAsync($"admin/projects/{project}/plan", plan, budget.Token);
-                    if (enrolled.IsSuccessStatusCode || enrolled.StatusCode == HttpStatusCode.NotFound)
+                    var enrolled = await PutAsync(project, plan, true, budget.Token);
+                    if (enrolled is >= 200 and <= 299 or 404)
                     {
                         continue;
                     }
 
                     settled = false;
-                    logger.TerraBaseRefusedPlanForProject(plan, project, (int)enrolled.StatusCode);
+                    logger.TerraBaseRefusedPlanForProject(plan, project, enrolled);
                 }
             }
             // The page, webhook or reconciler pass that triggered this still succeeds; a later one publishes again.
-            catch (HttpRequestException error) { logger.TerraBasePlanPublishFailedForOrganization(organization.Id, error.GetType().Name); }
+            catch (Exception error) when (error is HttpRequestException or TerraBaseException) { logger.TerraBasePlanPublishFailedForOrganization(organization.Id, error.GetType().Name); }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { logger.TerraBasePlanPublishTimedOutFor(organization.Id); }
             finally { published[organization.Id] = new(plan, now, settled, settled ? 0 : failures + 1); }
         }
 
-        private async Task<HttpResponseMessage> PutAsync(string path, string plan, CancellationToken cancellationToken)
+        private async Task<int> PutAsync(string id, string plan, bool project, CancellationToken cancellationToken)
         {
-            var publication = new PlanBody(plan);
-            // The private listener speaks only HTTP/2 without TLS, so the request needs prior knowledge, as the SDK sends it.
-            using var request = new HttpRequestMessage(HttpMethod.Put, new Uri(origin, path))
+            var request = JsonSerializer.SerializeToElement(new PlanBody(plan), PlanSyncJson.Default.PlanBody);
+            var client = rpc.Platform<IPlatformService>().WithCancellationToken(cancellationToken);
+            try
             {
-                Version = HttpVersion.Version20,
-                VersionPolicy = HttpVersionPolicy.RequestVersionExact,
-                Content = JsonContent.Create(publication, PlanSyncJson.Default.PlanBody),
-            };
-            request.Options.Set(Publication, publication);
-            return await http.CreateClient(TerraBaseDashboardState.ClientName).SendAsync(request, cancellationToken);
+                if (project) { await client.SetProjectPlanAsync(id, request); }
+                else { await client.SetOrganizationPlanAsync(id, request); }
+                return 200;
+            }
+            catch (TerraBaseException error) { return error.Status; }
         }
+
     }
 
     public sealed record PlanBody(string Plan);

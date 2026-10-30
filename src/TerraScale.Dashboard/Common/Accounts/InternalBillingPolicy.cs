@@ -1,4 +1,3 @@
-using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Common.Accounts
 {

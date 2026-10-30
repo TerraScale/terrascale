@@ -1,31 +1,27 @@
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Backups;
+using TerraScale.TerraBase.Contracts.Management;
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Backups
 {
-    // ts-dotnet has no backup wrappers yet. These call TerraBase's published project backup routes,
-    // /v1/projects/{project}/databases/{name}/backups..., with the same current-user, action-scoped project
-    // token as the SDK calls (databases:read to read, databases:write to change). The legacy organization
-    // aliases with the session token answered 404 for dashboard-created databases.
-    // Restore is confirmed by reading the new database back before dashboard state is updated.
-    public sealed class BackupBackend(IHttpClientFactory factory, IProjectAccessTokens tokens, IDatabaseBackend databases) : IBackupBackend
+    // Backup calls retain current-user scopes and route to the database home region.
+    public sealed class BackupBackend(TerraBaseRpcClient rpc, IProjectAccessTokens tokens, IDatabaseBackend databases) : IBackupBackend
     {
-        private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
-        { RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true };
-
         public async Task<IReadOnlyList<ProducerBackup>> ListAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
-            var path = await PathAsync(scope, home, databaseId, cancellationToken);
+            var database = await NameAsync(scope, home, databaseId, cancellationToken);
             var result = new List<ProducerBackup>();
             var cursors = new HashSet<string>(StringComparer.Ordinal);
             string? after = null;
             do
             {
-                var page = await SendAsync<BackupResponse>(scope, home, "databases:read", HttpMethod.Get, path + "/backups?limit=100" +
-                    (string.IsNullOrEmpty(after) ? "" : "&after=" + Segment(after)), null, cancellationToken);
+                var page = await CallAsync(scope, home, "databases:read", client => client.ListAsync(scope.ProjectId, database, after).ResponseAsync, BackupBackendJson.Default.BackupResponse, cancellationToken);
                 result.AddRange(page.Items);
                 after = page.Next;
                 if (!string.IsNullOrEmpty(after) && !cursors.Add(after))
@@ -38,61 +34,74 @@ namespace TerraScale.Dashboard.Features.Backups
 
         public async Task<ProducerBackup> CreateAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
-            return await SendAsync<ProducerBackup>(scope, home, "databases:write", HttpMethod.Post, await PathAsync(scope, home, databaseId, cancellationToken) + "/backups", null, cancellationToken);
+            var database = await NameAsync(scope, home, databaseId, cancellationToken);
+            return await CallAsync(scope, home, "databases:write", client => client.CreateAsync(scope.ProjectId, database).ResponseAsync, BackupBackendJson.Default.ProducerBackup, cancellationToken);
         }
 
         public async Task<ProducerBackupPolicy> PolicyAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
-            return await SendAsync<ProducerBackupPolicy>(scope, home, "databases:read", HttpMethod.Get, await PathAsync(scope, home, databaseId, cancellationToken) + "/backup-policy", null, cancellationToken);
+            var database = await NameAsync(scope, home, databaseId, cancellationToken);
+            return await CallAsync(scope, home, "databases:read", client => client.GetPolicyAsync(scope.ProjectId, database).ResponseAsync, BackupBackendJson.Default.ProducerBackupPolicy, cancellationToken);
         }
 
         public async Task<ProducerBackupPolicy> SetPolicyAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? fullBackupCron,
                 int retentionDays, bool disabled, CancellationToken cancellationToken)
         {
-            return await SendAsync<ProducerBackupPolicy>(scope, home, "databases:write", HttpMethod.Put, await PathAsync(scope, home, databaseId, cancellationToken) + "/backup-policy",
-                    new { fullBackupCron, retentionDays, disabled }, cancellationToken);
+            var database = await NameAsync(scope, home, databaseId, cancellationToken);
+            var request = JsonSerializer.SerializeToElement(new BackupPolicyRequest(fullBackupCron, retentionDays, disabled), BackupBackendJson.Default.BackupPolicyRequest);
+            return await CallAsync(scope, home, "databases:write", client => client.SetPolicyAsync(scope.ProjectId, database, request).ResponseAsync, BackupBackendJson.Default.ProducerBackupPolicy, cancellationToken, "backup-policy");
         }
 
         // The destination is the project's; mode both keeps platform backups and mirrors them to the customer's bucket.
         public async Task<BackupDestinationView?> DestinationAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken)
         {
-            try { return await SendAsync<BackupDestinationView>(scope, home, "databases:read", HttpMethod.Get, ProjectPath(scope) + "/backup-destination", null, cancellationToken); }
+            try { return await CallAsync(scope, home, "databases:read", client => client.GetDestinationAsync(scope.ProjectId).ResponseAsync, BackupBackendJson.Default.BackupDestinationView, cancellationToken); }
             catch (DatabaseProviderException error) when (error.StatusCode == HttpStatusCode.NotFound) { return null; }
         }
         public Task<BackupDestinationView> SetDestinationAsync(DatabaseScope scope, DatabaseRegion home, string endpoint, string region, string bucket,
             string accessKeyId, string secretKey, CancellationToken cancellationToken)
         {
-            return SendAsync<BackupDestinationView>(scope, home, "databases:write", HttpMethod.Put, ProjectPath(scope) + "/backup-destination",
-                new { endpoint, region, bucket, accessKeyId, secretKey, mode = "both" }, cancellationToken);
+            var request = JsonSerializer.SerializeToElement(new BackupDestinationRequest(endpoint, region, bucket, accessKeyId, secretKey, "both"), BackupBackendJson.Default.BackupDestinationRequest);
+            return CallAsync(scope, home, "databases:write", client => client.SetDestinationAsync(scope.ProjectId, request).ResponseAsync, BackupBackendJson.Default.BackupDestinationView, cancellationToken);
         }
 
-        public Task RemoveDestinationAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken)
+        public async Task RemoveDestinationAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken)
         {
-            return SendAsync<JsonElement?>(scope, home, "databases:write", HttpMethod.Delete, ProjectPath(scope) + "/backup-destination", null, cancellationToken);
+            var client = await ClientAsync(scope, home, "databases:write", cancellationToken);
+            try { await client.RemoveDestinationAsync(scope.ProjectId); }
+            catch (TerraBaseException error) { throw Failure(error, ""); }
         }
 
         public async Task<ExportScheduleView> ExportScheduleAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
-            return await SendAsync<ExportScheduleView>(scope, home, "databases:read", HttpMethod.Get, await PathAsync(scope, home, databaseId, cancellationToken) + "/export-schedule", null, cancellationToken);
+            var database = await NameAsync(scope, home, databaseId, cancellationToken);
+            return await CallAsync(scope, home, "databases:read", client => client.GetExportScheduleAsync(scope.ProjectId, database).ResponseAsync, BackupBackendJson.Default.ExportScheduleView, cancellationToken);
         }
 
         public async Task<ExportScheduleView> SetExportScheduleAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? cron, CancellationToken cancellationToken)
         {
-            return await SendAsync<ExportScheduleView>(scope, home, "databases:write", HttpMethod.Put, await PathAsync(scope, home, databaseId, cancellationToken) + "/export-schedule", new { cron }, cancellationToken);
+            var database = await NameAsync(scope, home, databaseId, cancellationToken);
+            var request = JsonSerializer.SerializeToElement(new ExportScheduleRequest(cron), BackupBackendJson.Default.ExportScheduleRequest);
+            return await CallAsync(scope, home, "databases:write", client => client.SetExportScheduleAsync(scope.ProjectId, database, request).ResponseAsync, BackupBackendJson.Default.ExportScheduleView, cancellationToken);
         }
 
         public async Task<ManagedDatabase> RestoreAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string backupId, string? name, CancellationToken cancellationToken)
         {
-            var restored = await SendAsync<ManagedDatabase>(scope, home, "databases:write", HttpMethod.Post,
-                await PathAsync(scope, home, databaseId, cancellationToken) + "/backups/" + Segment(backupId) + "/restore", new { name }, cancellationToken);
-            if (!TerraScale.DotNet.TerraScaleIds.IsValid(restored.Id) || restored.ProjectId != scope.ProjectId ||
+            var database = await NameAsync(scope, home, databaseId, cancellationToken);
+            var request = JsonSerializer.SerializeToElement(new BackupRestoreRequest(name), BackupBackendJson.Default.BackupRestoreRequest);
+            var restored = await CallAsync(scope, home, "databases:write", client => client.RestoreBackupAsync(scope.ProjectId, database, backupId, request).ResponseAsync,
+                BackupBackendJson.Default.ManagedDatabase, cancellationToken, "restore");
+            if (!TerraScaleIds.IsValid(restored.Id) || restored.ProjectId != scope.ProjectId ||
                 restored.Id == databaseId || restored.BranchedFrom != databaseId)
             {
                 throw new HttpRequestException("Backup restoration returned an invalid database identity.");
             }
             // The restore route returns the raw catalog record: null replicas is legitimate there.
             // The managed GET body normalizes the actual current placement.
-            var placed = await SendAsync<ManagedDatabase>(scope, home, "databases:read", HttpMethod.Get, ProjectPath(scope) + "/databases/" + Segment(restored.Name), null, cancellationToken);
+            var token = await AccessAsync(scope, "databases:read", cancellationToken);
+            var readback = await rpc.User<IManagementService>(token, home.Id).WithCancellationToken(cancellationToken).GetDatabaseAsync(scope.ProjectId, restored.Name);
+            var placed = new ManagedDatabase(readback.Id, readback.ProjectId, readback.Name, readback.CreatedAt, readback.BranchedFrom,
+                readback.HomeRegion, readback.ReplicaRegions, readback.AllRegions);
             if (placed.Id != restored.Id || placed.ProjectId != scope.ProjectId || placed.Name != restored.Name ||
                 placed.BranchedFrom != databaseId || placed.CreatedAt != restored.CreatedAt ||
                 placed.HomeRegion != home.Id || placed.ReplicaRegions is null)
@@ -103,87 +112,79 @@ namespace TerraScale.Dashboard.Features.Backups
             return placed;
         }
 
-        private async Task<T> SendAsync<T>(DatabaseScope scope, DatabaseRegion home, string permission, HttpMethod method, string path, object? body, CancellationToken cancellationToken)
+        private async Task<T> CallAsync<T>(DatabaseScope scope, DatabaseRegion home, string permission, Func<IBackupsService, Task<JsonElement>> call,
+            JsonTypeInfo<T> type, CancellationToken cancellationToken, string operation = "")
         {
-            var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
-            var token = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, [permission], cancellationToken);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(30));
-            using var request = new HttpRequestMessage(method, new Uri(home.Api, path));
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            request.Headers.Accept.ParseAdd("application/json");
-            request.Headers.Add("X-TerraScale-Region-Pin", home.Id);
-            if (body is not null)
-            {
-                request.Content = JsonContent.Create(body, options: Json);
-            }
-
-            using var response = await factory.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
-            if (response.StatusCode == HttpStatusCode.MisdirectedRequest)
-            {
-                throw DatabaseWrongRegionException.From(response);
-            }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                throw await FailureAsync(response, path, timeout.Token);
-            }
-
-            if (response.StatusCode == HttpStatusCode.NoContent && default(T) is null)
-            {
-                return default!;
-            }
-
-            using var document = await PlatformJson.ReadAsync(response.Content, timeout.Token);
-            try { return document.RootElement.Deserialize<T>(Json) ?? throw new HttpRequestException("The backup provider returned an invalid response."); }
-            catch (JsonException error) { throw new HttpRequestException("The backup provider returned an invalid response.", error); }
+            var client = await ClientAsync(scope, home, permission, timeout.Token);
+            try { return (await call(client)).Deserialize(type) ?? throw new JsonException("Invalid backup response."); }
+            catch (TerraBaseException error) { throw Failure(error, operation); }
         }
 
-        private static async Task<Exception> FailureAsync(HttpResponseMessage response, string path, CancellationToken cancellationToken)
+        private async Task<IBackupsService> ClientAsync(DatabaseScope scope, DatabaseRegion home, string permission, CancellationToken ct)
         {
-            // Read a bounded envelope, keep only a recognized code, and never retain upstream text in exceptions or logs.
-            string? code = null;
-            try
+            return rpc.User<IBackupsService>(await AccessAsync(scope, permission, ct), home.Id).WithCancellationToken(ct);
+        }
+
+        private async Task<string> AccessAsync(DatabaseScope scope, string permission, CancellationToken ct)
+        {
+            var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
+            return await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, [permission], ct);
+        }
+
+        private static Exception Failure(TerraBaseException error, string path)
+        {
+            if (error is TerraBaseWrongRegionException wrong)
             {
-                using var json = await PlatformJson.ReadAsync(response.Content, cancellationToken);
-                if (json.RootElement.ValueKind == JsonValueKind.Object && json.RootElement.TryGetProperty("error", out var error) &&
-                    error.ValueKind == JsonValueKind.Object && error.TryGetProperty("code", out var value) && value.ValueKind == JsonValueKind.String)
-                {
-                    code = value.GetString();
-                }
+                return new DatabaseWrongRegionException(wrong.Region, wrong.HomeRegion, wrong.Regions);
             }
-            catch (Exception error) when (error is JsonException or HttpRequestException or IOException) { }
-            var message = ((int)response.StatusCode, code) switch
+
+            var code = error.ErrorCode;
+            var message = (error.Status, code) switch
             {
                 (409, "database_limit") => "Your organization has reached its database limit. Remove an unused database or upgrade your plan, then restore again.",
                 (409, "name_taken") => "That database name is already in use. Choose a different name for the restored database.",
-                (404, "not_found") when path.EndsWith("/restore", StringComparison.Ordinal) => "That snapshot could not be opened. Refresh the backup list and try again. If it is still listed, contact support.",
+                (404, "not_found") when path == "restore" => "That snapshot could not be opened. Refresh the backup list and try again. If it is still listed, contact support.",
                 (429 or 503, "capacity") => "Backup capacity is temporarily unavailable. Wait a moment, then try again.",
-                (400, "invalid_request") when path.EndsWith("/backup-policy", StringComparison.Ordinal) => "Set snapshot retention from 1 to 35 days and use a valid 5-field UTC cron schedule.",
-                (400, "invalid_request") when path.EndsWith("/restore", StringComparison.Ordinal) => "Choose a valid name for the restored database. " + DatabaseService.NameHint + " Leave the name blank to choose it automatically.",
+                (400, "invalid_request") when path == "backup-policy" => "Set snapshot retention from 1 to 35 days and use a valid 5-field UTC cron schedule.",
+                (400, "invalid_request") when path == "restore" => "Choose a valid name for the restored database. " + DatabaseService.NameHint + " Leave the name blank to choose it automatically.",
                 _ => null
             };
-            return message is null ? new DatabaseProviderException(response.StatusCode)
-                : new AccountAccessException(message, (int)response.StatusCode, code!);
+            return message is null ? new DatabaseProviderException((HttpStatusCode)error.Status) { RetryAfter = error.RetryAfter }
+                : new AccountAccessException(message, error.Status, code!);
         }
 
         // UI URLs use database IDs; the authoritative project list resolves them to the route names TerraBase expects.
-        private async Task<string> PathAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
+        private async Task<string> NameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
-            return ProjectPath(scope) + "/databases/" + Segment((await databases.ListAsync(scope, home, cancellationToken)).SingleOrDefault(item => item.Id == databaseId)?.Name
-                ?? throw new DatabaseProviderException(HttpStatusCode.NotFound));
+            return (await databases.ListAsync(scope, home, cancellationToken)).SingleOrDefault(item => item.Id == databaseId)?.Name
+                ?? throw new DatabaseProviderException(HttpStatusCode.NotFound);
         }
-
-        private static string Segment(string value)
-        {
-            return Uri.EscapeDataString(value);
-        }
-
-        private static string ProjectPath(DatabaseScope scope)
-        {
-            return "/v1/projects/" + Segment(scope.ProjectId);
-        }
-
-        private sealed record BackupResponse(IReadOnlyList<ProducerBackup> Items, string? Next);
     }
+
+    internal sealed record BackupResponse(IReadOnlyList<ProducerBackup> Items, string? Next);
+    internal sealed record BackupPolicyRequest(string? FullBackupCron, int RetentionDays, bool Disabled);
+    internal sealed record ExportScheduleRequest(string? Cron);
+    internal sealed record BackupRestoreRequest(string? Name);
+    internal sealed record BackupDestinationRequest(string Endpoint, string Region, string Bucket, string AccessKeyId, string SecretKey, string Mode)
+    {
+        public override string ToString()
+        {
+            return "Backup destination [REDACTED]";
+        }
+    }
+
+    [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true)]
+    [JsonSerializable(typeof(BackupResponse))]
+    [JsonSerializable(typeof(ProducerBackup))]
+    [JsonSerializable(typeof(ProducerBackupPolicy))]
+    [JsonSerializable(typeof(BackupDestinationView))]
+    [JsonSerializable(typeof(ExportScheduleView))]
+    [JsonSerializable(typeof(ManagedDatabase))]
+    [JsonSerializable(typeof(BackupPolicyRequest))]
+    [JsonSerializable(typeof(ExportScheduleRequest))]
+    [JsonSerializable(typeof(BackupRestoreRequest))]
+    [JsonSerializable(typeof(BackupDestinationRequest))]
+    internal sealed partial class BackupBackendJson : JsonSerializerContext;
 }

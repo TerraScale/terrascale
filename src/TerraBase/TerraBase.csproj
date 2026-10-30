@@ -37,6 +37,7 @@
   <ItemGroup>
     <ProjectReference Include="../TerraBase.Analyzers/TerraBase.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
     <ProjectReference Include="../TerraScale.Logging/TerraScale.Logging.csproj" />
+    <ProjectReference Include="../TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj" />
   </ItemGroup>
 
   <ItemGroup>

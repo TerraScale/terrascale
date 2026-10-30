@@ -18,8 +18,9 @@ using TerraScale.Dashboard.Features.Backups;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Organizations;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.Dashboard.Platform.TsAuth;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.E2E
 {

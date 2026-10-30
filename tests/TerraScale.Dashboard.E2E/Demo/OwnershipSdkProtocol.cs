@@ -7,7 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Organizations;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.E2E
 {
@@ -185,7 +185,7 @@ namespace TerraScale.Dashboard.E2E
             }
         }
 
-        private async Task<TerraScaleAuthPlatformMember> MemberAsync(SessionRecord session, string organization, string user, CancellationToken token)
+        private async Task<TsAuthPlatformMember> MemberAsync(SessionRecord session, string organization, string user, CancellationToken token)
         {
             return (await workspace.ListMembersAsync(session, organization, token)).Single(member => member.UserId == user);
         }

@@ -2,16 +2,19 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
+using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Platform.Datastar;
-using TerraScale.Dashboard.Common.UI;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts.Import;
+using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Importing
 {
     public static class ImportEndpoints
     {
+        private static readonly ImportJson Json = new(new JsonSerializerOptions(JsonSerializerDefaults.Web) { MaxDepth = 256 });
+
         public static IServiceCollection AddImportFeatures(this IServiceCollection services)
         {
             return services.AddSingleton<ImportService>();
@@ -35,7 +38,7 @@ namespace TerraScale.Dashboard.Features.Importing
                 try
                 {
                     var (jobs, partial) = await imports.JobsAsync(context, http.RequestAborted);
-                    return partial ? Results.Problem(Partial, statusCode: 503) : Results.Json(jobs);
+                    return partial ? Results.Problem(Partial, statusCode: 503) : Results.Json(jobs, Json.IReadOnlyListTerraBaseImportJob);
                 }
                 catch (Exception error) when (KnownFailure(http, error)) { return Failure(error); }
             });
@@ -59,7 +62,7 @@ namespace TerraScale.Dashboard.Features.Importing
                     var job = await imports.CreateAsync(context, form["database"].ToString(), form["format"].ToString(),
                         long.TryParse(form["sourceBytes"], NumberStyles.None, CultureInfo.InvariantCulture, out var bytes) ? bytes : 0,
                         form["sourceSha256"].ToString(), form["collection"].ToString(), http.RequestAborted);
-                    return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(JobPath(job.Database)) : Results.Json(job, statusCode: 201);
+                    return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(JobPath(job.Database)) : Results.Json(job, Json.TerraBaseImportJob, statusCode: 201);
                 }
                 catch (Exception error) when (KnownFailure(http, error))
                 {
@@ -97,7 +100,7 @@ namespace TerraScale.Dashboard.Features.Importing
                     http.Features.Get<IHttpMaxRequestBodySizeFeature>()!.MaxRequestBodySize = ImportService.MaxPartBytes;
                     var part = new byte[bytes];
                     await http.Request.Body.ReadExactlyAsync(part, http.RequestAborted);
-                    return Results.Json(await imports.UploadAsync(context, database, offset, part, token, http.RequestAborted));
+                    return Results.Json(await imports.UploadAsync(context, database, offset, part, token, http.RequestAborted), Json.TerraBaseImportJob);
                 }
                 catch (Exception error) when (KnownFailure(http, error)) { return Failure(error); }
             });
@@ -129,7 +132,7 @@ namespace TerraScale.Dashboard.Features.Importing
                     return Results.Unauthorized();
                 }
 
-                try { return Results.Json(await imports.JobAsync(context, database, http.RequestAborted)); }
+                try { return Results.Json(await imports.JobAsync(context, database, http.RequestAborted), Json.TerraBaseImportJob); }
                 catch (Exception error) when (KnownFailure(http, error)) { return Failure(error); }
             });
             foreach (var operation in new[] { "options", "start", "cancel", "resume" })
@@ -159,7 +162,7 @@ namespace TerraScale.Dashboard.Features.Importing
                             "cancel" => await imports.CancelAsync(context, database, http.RequestAborted),
                             _ => await imports.ResumeAsync(context, database, http.RequestAborted)
                         };
-                        return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(JobPath(job.Database)) : Results.Json(job, statusCode: 202);
+                        return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(JobPath(job.Database)) : Results.Json(job, Json.TerraBaseImportJob, statusCode: 202);
                     }
                     catch (Exception error) when (KnownFailure(http, error))
                     {

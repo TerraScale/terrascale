@@ -1,32 +1,30 @@
-using System.Net;
 using System.Text.Json;
-using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts.Logs;
+using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Logs
 {
     // The same document as the public database logs route, read over the dashboard's private TerraBase listener.
-    public sealed class LogDrainSource(IHttpClientFactory http, IHostEnvironment environment) : ILogDrainSource
+    public sealed class LogDrainSource(TerraBaseRpcClient rpc) : ILogDrainSource
     {
-        private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true };
-        private readonly Uri origin = TerraBaseDashboardState.Origin(environment);
-
         public async Task<DatabaseLogBatch> ReadAsync(string projectId, string databaseId, string after, CancellationToken cancellationToken)
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(origin,
-                $"v1/usage/projects/{Uri.EscapeDataString(projectId)}/databases/{Uri.EscapeDataString(databaseId)}/logs?after={Uri.EscapeDataString(after)}"))
-            { Version = HttpVersion.Version20, VersionPolicy = HttpVersionPolicy.RequestVersionExact };
-            using var response = await http.CreateClient(TerraBaseDashboardState.ClientName).SendAsync(request, cancellationToken);
-            if (response.StatusCode == HttpStatusCode.NotFound)
+            TerraBaseRequestLogPage result;
+            try
+            {
+                result = await rpc.Platform<ILogsService>().WithCancellationToken(cancellationToken).ReadDrainAsync(projectId, databaseId, after);
+            }
+            catch (TerraBaseNotFoundException)
             {
                 return new(databaseId, [], false, false, after);
             }
-
-            if (!response.IsSuccessStatusCode)
+            catch (TerraBaseException error)
             {
-                throw new IOException("Database request logs are unavailable.");
+                throw new IOException("Database request logs are unavailable.", error);
             }
 
-            var batch = await response.Content.ReadFromJsonAsync<DatabaseLogBatch>(Json, cancellationToken) ?? throw new JsonException("Request logs are missing.");
+            var batch = DatabaseLogBackend.Batch(result);
             DatabaseLogBackend.Validate(batch, databaseId, "", cursor: true);
             return batch;
         }
@@ -41,7 +39,7 @@ namespace TerraScale.Dashboard.Features.Logs
             {
                 try { await drains.RunOnceAsync(stoppingToken); }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-                catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException or OperationCanceledException)
+                catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or OperationCanceledException)
                 {
                     logger.LogDrainsAreUnavailableRetryingShortly(error.GetType().Name);
                 }

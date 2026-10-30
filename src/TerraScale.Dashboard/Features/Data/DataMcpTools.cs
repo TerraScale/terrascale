@@ -1,9 +1,9 @@
 using System.ComponentModel;
-using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Platform.Mcp;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts.Schema;
 
 namespace TerraScale.Dashboard.Features.Data
 {

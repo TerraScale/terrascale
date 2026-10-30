@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.E2E.Demo
@@ -391,7 +391,7 @@ namespace TerraScale.Dashboard.E2E.Demo
             return new(status) { Content = new StringContent(JsonSerializer.Serialize(value), new MediaTypeHeaderValue("application/json")) };
         }
 
-        // ts-auth management errors use the nested envelope (TerraScaleAuthErrors).
+        // ts-auth management errors use the nested envelope (TsAuthErrors).
         private static HttpResponseMessage Error(HttpStatusCode status, string code, string message = "Test ts-auth rejected the request")
         {
             return Json(new { error = new { code, message } }, status);

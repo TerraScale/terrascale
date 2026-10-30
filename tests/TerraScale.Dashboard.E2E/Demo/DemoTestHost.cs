@@ -17,9 +17,6 @@ namespace TerraScale.Dashboard.E2E
             {
                 TestHttps.Configure(builder);
                 builder.Services.AddSingleton<TestInitializerDiagnostics>();
-                var fallback = (IHttpClientFactory)builder.Services.Last(service => service.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
-                builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TestTerraBasePlans(fallback, environment.Databases,
-                    TerraScale.Dashboard.Platform.Persistence.TerraBaseDashboardState.Origin(builder.Environment))));
                 builder.Services.AddSingleton(services =>
                 {
                     var gateway = StepUps.GetValue(environment, _ => new(services.GetRequiredService<TimeProvider>(), environment.Auth.ResolveAccessToken));

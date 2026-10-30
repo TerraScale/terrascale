@@ -2,7 +2,7 @@ using System.ComponentModel;
 using System.Text.Json.Serialization;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Organizations.Projects;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
@@ -61,7 +61,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         }
 
         private ProjectGrantService ProjectGrants => http.HttpContext!.RequestServices.GetRequiredService<ProjectGrantService>();
-        private static ProjectGrantMcpMember GrantView(TerraScaleAuthPlatformProjectMember grant)
+        private static ProjectGrantMcpMember GrantView(TsAuthPlatformProjectMember grant)
         {
             return new(grant.UserId, grant.Email, grant.Role, grant.GrantedAt);
         }

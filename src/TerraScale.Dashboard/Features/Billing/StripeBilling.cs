@@ -2,7 +2,8 @@ using System.Text.Json;
 using Stripe;
 using TerraScale.Dashboard.Features.Billing.Internal;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 using TerraScale.Dashboard.Common.Validation;
 
@@ -189,7 +190,7 @@ namespace TerraScale.Dashboard.Features.Billing
                         await client.V1.Checkout.Sessions.ExpireAsync(checkout.Id, cancellationToken: cleanup.Token);
                     }
                 }
-                catch (Exception error) when (error is IOException or HttpRequestException or StripeException or OperationCanceledException) { }
+                catch (Exception error) when (error is IOException or TerraBaseException or HttpRequestException or StripeException or OperationCanceledException) { }
                 throw;
             }
             await IndexCheckoutAsync(binding, cancellationToken);
@@ -295,7 +296,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 await RefreshAsync(orgId, cancellationToken);
             }
             // Not applied: the endpoint answers 503 so Stripe redelivers it; a redelivery re-reads Stripe's current state.
-            catch (Exception error) when (error is IOException or HttpRequestException or TimeoutException or StripeException ||
+            catch (Exception error) when (error is IOException or TerraBaseException or HttpRequestException or TimeoutException or StripeException ||
                                           error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             { throw new StripeWebhookDeferredException(@event.Id, @event.Type, error); }
             logger.StripeEventAppliedForOrganization(@event.Id, @event.Type, orgId);

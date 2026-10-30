@@ -110,7 +110,7 @@ namespace TerraScale.Dashboard.Features.Settings
         public async Task RestoreBackupAsync(AccountContext context, string databaseId, string backupId, CancellationToken cancellationToken)
         {
             context = await FreshAsync(context, true, cancellationToken);
-            if (backupId.Length > 0 && !TerraScale.DotNet.TerraScaleIds.IsValid(backupId))
+            if (backupId.Length > 0 && !TerraScale.Dashboard.Common.Accounts.TerraScaleIds.IsValid(backupId))
             {
                 throw new AccountAccessException("That backup ID is not a verified provider restore point.", 400);
             }

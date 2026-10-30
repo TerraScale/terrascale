@@ -1,3 +1,4 @@
+using TerraScale.TerraBase.Contracts;
 using System.ComponentModel;
 using ModelContextProtocol.Server;
 using Stripe;
@@ -114,7 +115,7 @@ namespace TerraScale.Dashboard.Features.Billing
         {
             try { return await action(); }
             catch (OnboardingValidationException error) { throw new AccountAccessException(error.Message, 400); }
-            catch (Exception error) when (error is StripeException or HttpRequestException or IOException ||
+            catch (Exception error) when (error is StripeException or TerraBaseException or HttpRequestException or IOException ||
                                           error is OperationCanceledException && !Cancellation.IsCancellationRequested)
             {
                 logger.BillingMCPToolFailed(error.GetType().Name, BillingPlanEndpoints.Describe(error));

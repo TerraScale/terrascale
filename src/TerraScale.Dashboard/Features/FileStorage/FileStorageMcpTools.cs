@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Platform.Mcp;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts.FileStorage;
 
 namespace TerraScale.Dashboard.Features.FileStorage
 {

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Common.Databases
 {
@@ -417,7 +418,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 var listings = await Task.WhenAll(homes.Select(async home =>
                 {
                     try { return (home, Listed: await backend.ListAsync(scope, home, cancellationToken)); }
-                    catch (Exception error) when (!cancellationToken.IsCancellationRequested && (error is HttpRequestException or JsonException || DatabaseResults.KnownFailure(error)))
+                    catch (Exception error) when (!cancellationToken.IsCancellationRequested && (error is TerraBaseException or HttpRequestException or JsonException || DatabaseResults.KnownFailure(error)))
                     { return (home, Listed: (IReadOnlyList<ManagedDatabase>?)null); }
                 }));
                 var remote = listings.SelectMany(listing => listing.Listed ?? []).Where(database => database.ProjectId == project.Id).DistinctBy(database => database.Id).ToArray();
@@ -442,7 +443,7 @@ namespace TerraScale.Dashboard.Common.Databases
                             refreshed.Add(record);
                         }
                     }
-                    catch (HttpRequestException) { }
+                    catch (Exception error) when (error is HttpRequestException or TerraBaseException) { }
                 }
                 var renamed = remote.Where(database => observed.TryGetValue(database.Id, out var before) &&
                     (before.Name != database.Name || before.PreviousName != database.PreviousName || before.ConflictOf != database.ConflictOf)).ToArray();
@@ -512,7 +513,7 @@ namespace TerraScale.Dashboard.Common.Databases
                     project.Databases = saved.Databases;
                 }
             }
-            catch (Exception error) when (!cancellationToken.IsCancellationRequested && (error is HttpRequestException or JsonException || DatabaseResults.KnownFailure(error))) { }
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested && (error is TerraBaseException or HttpRequestException or JsonException || DatabaseResults.KnownFailure(error))) { }
         }
 
         public static string ValidName(string name)

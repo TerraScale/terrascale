@@ -11,7 +11,8 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Stripe;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness

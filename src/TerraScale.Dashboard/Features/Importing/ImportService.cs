@@ -1,16 +1,20 @@
+using System.Text.Json.Serialization.Metadata;
 using System.Text.Json;
+using MagicOnion;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts.Import;
+using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Importing
 {
-    // Current TerraBase generated-ULID import contract through the official SDK's import client: the destination's home-region client listener,
+    // Current TerraBase generated-ULID import contract through MagicOnion in the destination's home region,
     // pinned to that region, as a ts-auth project access token. The destination itself comes from the
     // dashboard's createDatabase path, which also owns the plan's database-count limit.
-    public sealed partial class ImportService(DatabaseService databases, IHttpClientFactory http, IProjectAccessTokens projectTokens)
+    public sealed partial class ImportService(DatabaseService databases, TerraBaseRpcClient rpc, IProjectAccessTokens projectTokens)
     {
-        public const long MaxSourceBytes = 1L << 30;
-        public const int MaxPartBytes = TerraBaseDatabase.MaxImportSourcePartBytes;
+        public const long MaxSourceBytes = ImportLimits.MaxSourceBytes;
+        public const int MaxPartBytes = ImportLimits.MaxSourcePartBytes;
         // Exactly each route's scopes (contract section 2); the ts-auth exchange grants them by role on every call.
         private static readonly string[] Read = ["databases:read"];
         private static readonly string[] Cancel = ["databases:write"];
@@ -27,10 +31,10 @@ namespace TerraScale.Dashboard.Features.Importing
             ["text"] = "string with the exact dumped text"
         };
 
-        // The contract's wire name, e.g. awaiting_source, from the SDK enum's own converter.
+        // The contract's wire name, e.g. awaiting_source, from the shared enum converter.
         public static string Wire<T>(T value) where T : struct, Enum
         {
-            return JsonSerializer.Serialize(value)[1..^1];
+            return JsonSerializer.Serialize(value, (JsonTypeInfo<T>)ImportJson.Default.GetTypeInfo(typeof(T))!)[1..^1];
         }
 
         public static string FormatLabel(TerraBaseImportFormat format)
@@ -62,9 +66,9 @@ namespace TerraScale.Dashboard.Features.Importing
             var scope = DatabaseService.Scope(context);
             var reads = await Task.WhenAll(context.Project!.Databases.Values.Select(async database =>
             {
-                try { return (Job: Validate(scope, await Import(context, await databases.HomeAsync(context, database, ct), database.Name, Read).GetImportAsync(ct), database.Name), Failed: false); }
+                try { return (Job: Validate(scope, await (await Import(context, await databases.HomeAsync(context, database, ct), Read, ct)).GetImportAsync(scope.ProjectId, database.Name), database.Name), Failed: false); }
                 catch (TerraBaseNotFoundException error) when (error.ErrorCode == "unknown_import") { return (Job: (TerraBaseImportJob?)null, Failed: false); }
-                catch (Exception error) when (error is HttpRequestException or JsonException or InvalidDataException or OperationCanceledException && !ct.IsCancellationRequested)
+                catch (Exception error) when (error is TerraBaseException or HttpRequestException or JsonException or InvalidDataException or OperationCanceledException && !ct.IsCancellationRequested)
                 { return (Job: null, Failed: true); }
             }));
             return (reads.Where(read => read.Job is not null).Select(read => read.Job!).OrderByDescending(job => job.CreatedAt).ToArray(), reads.Any(read => read.Failed));
@@ -75,7 +79,7 @@ namespace TerraScale.Dashboard.Features.Importing
             database = Name(database);
             context = await databases.CurrentAsync(context, ct);
             var (scope, home) = await RouteAsync(context, database, ct);
-            return Validate(scope, await Import(context, home, database, Read).GetImportAsync(ct), database);
+            return Validate(scope, await (await Import(context, home, Read, ct)).GetImportAsync(scope.ProjectId, database), database);
         }
 
         // The guided flow: a fresh import-<ULID> destination from the existing createDatabase (home region
@@ -115,8 +119,8 @@ namespace TerraScale.Dashboard.Features.Importing
             var destination = context.Project!.Databases.Values.FirstOrDefault(item => item.Name == database)
                 ?? await databases.CreateAsync(context, database, [context.Project.Region], false, ct);
             var scope = DatabaseService.Scope(context);
-            var job = await Import(context, await databases.HomeAsync(context, destination, ct), database, Write)
-                .CreateImportAsync(Formats.First(item => Wire(item.Key) == format).Key, bytes, sha256, options, ct);
+            var job = await (await Import(context, await databases.HomeAsync(context, destination, ct), Write, ct))
+                .CreateImportAsync(scope.ProjectId, database, Formats.First(item => Wire(item.Key) == format).Key, bytes, sha256, options);
             return Validate(scope, job, database);
         }
 
@@ -133,7 +137,7 @@ namespace TerraScale.Dashboard.Features.Importing
             database = Name(database);
             context = await Manage(context, ct);
             var (scope, home) = await RouteAsync(context, database, ct);
-            return Validate(scope, await Import(context, home, database, Write, granted: token).UploadImportSourceAsync(offset, part, ct), database);
+            return Validate(scope, await (await Import(context, home, Write, ct, granted: token)).UploadImportSourceAsync(scope.ProjectId, database, offset, part.ToArray()), database);
         }
 
         public async Task<TerraBaseImportJob> UpdateAsync(AccountContext context, string database, IReadOnlyList<string> exclude, CancellationToken ct)
@@ -146,9 +150,9 @@ namespace TerraScale.Dashboard.Features.Importing
 
             context = await Manage(context, ct);
             var (scope, home) = await RouteAsync(context, database, ct);
-            var current = Validate(scope, await Import(context, home, database, Read).GetImportAsync(ct), database);
+            var current = Validate(scope, await (await Import(context, home, Read, ct)).GetImportAsync(scope.ProjectId, database), database);
             var options = new TerraBaseImportOptions(exclude, current.Options.Collection);
-            return Validate(scope, await Import(context, home, database, Write).UpdateImportAsync(options, ct), database);
+            return Validate(scope, await (await Import(context, home, Write, ct)).UpdateImportAsync(scope.ProjectId, database, options), database);
         }
 
         // Start only the exact preview the user reviewed; TerraBase refuses any other with preview_changed.
@@ -157,7 +161,7 @@ namespace TerraScale.Dashboard.Features.Importing
             database = Name(database);
             context = await Manage(context, ct);
             var (scope, home) = await RouteAsync(context, database, ct);
-            var job = Validate(scope, await Import(context, home, database, Read).GetImportAsync(ct), database);
+            var job = Validate(scope, await (await Import(context, home, Read, ct)).GetImportAsync(scope.ProjectId, database), database);
             if (job.State is TerraBaseImportState.Queued or TerraBaseImportState.Running && job.ConfirmedPreviewId == previewId)
             {
                 return job;
@@ -183,17 +187,17 @@ namespace TerraScale.Dashboard.Features.Importing
                 throw new AccountAccessException("Confirm that you reviewed this preview and accept its differences.", 422);
             }
 
-            return Validate(scope, await Import(context, home, database, Write).StartImportAsync(previewId, ct), database);
+            return Validate(scope, await (await Import(context, home, Write, ct)).StartImportAsync(scope.ProjectId, database, previewId), database);
         }
 
         public Task<TerraBaseImportJob> CancelAsync(AccountContext context, string database, CancellationToken ct)
         {
-            return ChangeAsync(context, database, Cancel, (import, token) => import.CancelImportAsync(token), ct);
+            return ChangeAsync(context, database, Cancel, (import, project, name) => import.CancelImportAsync(project, name), ct);
         }
 
         public Task<TerraBaseImportJob> ResumeAsync(AccountContext context, string database, CancellationToken ct)
         {
-            return ChangeAsync(context, database, Write, (import, token) => import.ResumeImportAsync(token), ct);
+            return ChangeAsync(context, database, Write, (import, project, name) => import.ResumeImportAsync(project, name), ct);
         }
 
         public static ImportDifferences Differences(TerraBaseImportJob job)
@@ -262,25 +266,19 @@ namespace TerraScale.Dashboard.Features.Importing
             return "import-" + string.Concat(Enumerable.Range(0, 26).Select(index => alphabet[(int)(value >> (5 * (25 - index)) & 31)]));
         }
 
-        // One exchange per SDK request; the audience stays TerraBase's global one, the pin names the home region.
-        private TerraBaseDatabase Import(AccountContext context, DatabaseRegion home, string database, string[] scopes, string? granted = null)
+        // Exchange current authority for every RPC, routing to the destination's home region.
+        private async Task<IImportService> Import(AccountContext context, DatabaseRegion home, string[] scopes, CancellationToken ct, string? granted = null)
         {
-            var client = http.CreateClient("platform");
-            return new TerraBaseDocumentsClient(client, new TerraBaseDocumentsClientOptions
-            {
-                BaseAddress = home.Api,
-                Region = home.Id,
-                AccessTokenProvider = granted is not null ? _ => ValueTask.FromResult(granted)
-                    : token => new(projectTokens.GetAsync(context.Session, context.Organization!.Id, context.Project!.Id, scopes, token))
-            }).Database(context.Project!.Id, database);
+            var token = granted ?? await projectTokens.GetAsync(context.Session, context.Organization!.Id, context.Project!.Id, scopes, ct);
+            return rpc.User<IImportService>(token, home.Id).WithCancellationToken(ct);
         }
 
-        private async Task<TerraBaseImportJob> ChangeAsync(AccountContext context, string database, string[] scopes, Func<TerraBaseDatabase, CancellationToken, Task<TerraBaseImportJob>> change, CancellationToken ct)
+        private async Task<TerraBaseImportJob> ChangeAsync(AccountContext context, string database, string[] scopes, Func<IImportService, string, string, UnaryResult<TerraBaseImportJob>> change, CancellationToken ct)
         {
             database = Name(database);
             context = await Manage(context, ct);
             var (scope, home) = await RouteAsync(context, database, ct);
-            return Validate(scope, await change(Import(context, home, database, scopes), ct), database);
+            return Validate(scope, await change(await Import(context, home, scopes, ct), scope.ProjectId, database), database);
         }
 
         // Cached exchanged tokens cannot carry a previous role into the next request.
@@ -332,7 +330,7 @@ namespace TerraScale.Dashboard.Features.Importing
             catch (AccountAccessException) { throw new AccountAccessException("This import is unavailable.", 404); }
         }
 
-        // The SDK checks shapes; this checks the job belongs to the request.
+        // Check that the job belongs to the request.
         private static TerraBaseImportJob Validate(DatabaseScope scope, TerraBaseImportJob job, string database)
         {
             if (job.Project != scope.ProjectId || job.Database != database || job.Source.ReceivedBytes < 0 || job.Source.ReceivedBytes > job.Source.Bytes ||

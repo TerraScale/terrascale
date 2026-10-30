@@ -1,25 +1,25 @@
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
     public partial interface ITsAuthPlatform
     {
-        Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformProjectMember>> ListProjectMembersAsync(SessionRecord session,
+        Task<TsAuthPlatformPage<TsAuthPlatformProjectMember>> ListProjectMembersAsync(SessionRecord session,
             string organizationId, string projectId, string? after, CancellationToken cancellationToken);
-        Task<TerraScaleAuthPlatformProjectMember> SetProjectMemberRoleAsync(SessionRecord session, string organizationId,
+        Task<TsAuthPlatformProjectMember> SetProjectMemberRoleAsync(SessionRecord session, string organizationId,
             string projectId, string userId, string role, CancellationToken cancellationToken);
         Task RemoveProjectMemberAsync(SessionRecord session, string organizationId, string projectId, string userId, CancellationToken cancellationToken);
     }
 
     public sealed partial class TsAuthGateway
     {
-        public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformProjectMember>> ListProjectMembersAsync(SessionRecord session,
+        public Task<TsAuthPlatformPage<TsAuthPlatformProjectMember>> ListProjectMembersAsync(SessionRecord session,
             string organizationId, string projectId, string? after, CancellationToken cancellationToken)
         {
             return PlatformAsync(() => Client().Platform.ListProjectMembersAsync(Bearer(session), Id(organizationId), Id(projectId), 25, after, cancellationToken));
         }
 
-        public Task<TerraScaleAuthPlatformProjectMember> SetProjectMemberRoleAsync(SessionRecord session, string organizationId,
+        public Task<TsAuthPlatformProjectMember> SetProjectMemberRoleAsync(SessionRecord session, string organizationId,
             string projectId, string userId, string role, CancellationToken cancellationToken)
         {
             return PlatformAsync(() => Client().Platform.SetProjectMemberRoleAsync(Bearer(session), Id(organizationId), Id(projectId), Id(userId), new(role), cancellationToken));

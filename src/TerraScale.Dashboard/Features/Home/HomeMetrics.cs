@@ -1,3 +1,4 @@
+using TerraScale.TerraBase.Contracts;
 using TerraScale.Dashboard.Platform.Observability;
 using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Features.Usage;
@@ -100,7 +101,7 @@ namespace TerraScale.Dashboard.Features.Home
 
         private static bool MeasurementFailure(Exception error, CancellationToken cancellationToken)
         {
-            return error is AccountAccessException or HttpRequestException or IOException or System.Text.Json.JsonException or KeyNotFoundException or InvalidOperationException or FormatException or OverflowException or ArgumentException ||
+            return error is AccountAccessException or TerraBaseException or HttpRequestException or IOException or System.Text.Json.JsonException or KeyNotFoundException or InvalidOperationException or FormatException or OverflowException or ArgumentException ||
             error is OperationCanceledException && !cancellationToken.IsCancellationRequested;
         }
     }

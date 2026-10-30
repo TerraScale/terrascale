@@ -7,8 +7,9 @@ using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.Dashboard.Platform.TsAuth;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.E2E
 {
@@ -104,12 +105,12 @@ namespace TerraScale.Dashboard.E2E
         }
         private sealed class EmptyDeletions : ITsAuthDeletions
         {
-            public Task<IReadOnlyList<TerraScaleAuthDeletionProof>> ListAsync(CancellationToken ct)
+            public Task<IReadOnlyList<TsAuthDeletionProof>> ListAsync(CancellationToken ct)
             {
-                return Task.FromResult<IReadOnlyList<TerraScaleAuthDeletionProof>>([]);
+                return Task.FromResult<IReadOnlyList<TsAuthDeletionProof>>([]);
             }
 
-            public Task AcknowledgeAsync(TerraScaleAuthDeletionProof proof, CancellationToken ct)
+            public Task AcknowledgeAsync(TsAuthDeletionProof proof, CancellationToken ct)
             {
                 return Task.CompletedTask;
             }

@@ -4,7 +4,8 @@ using TerraScale.Dashboard.Features.Billing.Internal;
 using TerraScale.Dashboard.Features.Notifications;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Profile
 {

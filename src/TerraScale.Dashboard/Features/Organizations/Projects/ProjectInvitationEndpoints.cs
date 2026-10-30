@@ -1,9 +1,9 @@
 using TerraScale.Dashboard.Common.UI;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Organizations.Projects
 {
-    public sealed record ProjectInvitationPage(ShellModel Shell, IReadOnlyList<TerraScaleAuthPlatformInvitation> Invitations,
+    public sealed record ProjectInvitationPage(ShellModel Shell, IReadOnlyList<TsAuthPlatformInvitation> Invitations,
         string? Next = null, string Error = "", bool HasPrevious = false, string After = "", string Notice = "")
     {
         public string PostUrl => WorkspaceUrl.For(Shell.Context, "/api/v1/dashboard/project/invitations/revoke", replace: true);
@@ -79,7 +79,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             return endpoints;
         }
 
-        private static RazorSlices.RazorSlice<ProjectInvitationPage> Page(HttpContext http, AccountContext context, IReadOnlyList<TerraScaleAuthPlatformInvitation> invitations,
+        private static RazorSlices.RazorSlice<ProjectInvitationPage> Page(HttpContext http, AccountContext context, IReadOnlyList<TsAuthPlatformInvitation> invitations,
             string? next = null, string error = "", int status = 200, bool previous = false, string after = "", string notice = "")
         {
             http.Response.Headers.CacheControl = "no-store";

@@ -1,8 +1,9 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Common.UI;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts.Schema;
 
 namespace TerraScale.Dashboard.Features.Data
 {
@@ -17,7 +18,7 @@ namespace TerraScale.Dashboard.Features.Data
         public static IEndpointRouteBuilder MapDeclaredSchema(this IEndpointRouteBuilder endpoints)
         {
             endpoints.MapMethods("/databases/{databaseId}/schema", ["GET", "POST"], async Task<IResult> (HttpContext http, string databaseId,
-                DashboardSessions sessions, AccountService accounts, DataService data, DatabaseService databases, IHttpClientFactory factory, IProjectAccessTokens tokens) =>
+                DashboardSessions sessions, AccountService accounts, DataService data, DatabaseService databases, TerraBaseRpcClient rpc, IProjectAccessTokens tokens) =>
             {
                 // HTML-safe C1 escapes can triple UTF-8 size; validate compact JSON separately.
                 if (http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit)
@@ -72,8 +73,7 @@ namespace TerraScale.Dashboard.Features.Data
 
                         var home = await databases.HomeAsync(context, database, http.RequestAborted);
                         var access = await tokens.GetAsync(scope.Session!, scope.OrganizationId, scope.ProjectId, [submitted ? "documents:write" : "documents:read"], http.RequestAborted);
-                        var sdk = new TerraBaseDocumentsClient(factory.CreateClient("platform"), new TerraBaseDocumentsClientOptions
-                        { BaseAddress = home.Api, Region = home.Id, AccessTokenProvider = _ => ValueTask.FromResult(access) }).Database(scope.ProjectId, database.Name);
+                        var service = rpc.User<ISchemaService>(access, home.Id).WithCancellationToken(http.RequestAborted);
                         if (form is not null)
                         {
                             if (form["operation"] == "remove")
@@ -83,7 +83,7 @@ namespace TerraScale.Dashboard.Features.Data
                                     throw new AccountAccessException("Type the collection name to confirm removal.", 422);
                                 }
 
-                                await sdk.DeleteDeclaredSchemaAsync(page.Collection, http.RequestAborted);
+                                await service.DeleteDeclaredSchemaAsync(scope.ProjectId, database.Name, page.Collection);
                             }
                             else if (form["operation"] == "apply")
                             {
@@ -107,7 +107,7 @@ namespace TerraScale.Dashboard.Features.Data
                                         throw new AccountAccessException("A JSON Schema must be an object or boolean.", 422);
                                     }
 
-                                    await sdk.PutDeclaredSchemaAsync(page.Collection, schema.RootElement, http.RequestAborted);
+                                    await service.PutDeclaredSchemaAsync(scope.ProjectId, database.Name, page.Collection, schema.RootElement);
                                 }
                             }
                             else
@@ -117,7 +117,7 @@ namespace TerraScale.Dashboard.Features.Data
 
                             return HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "schema", page.Collection) + "&saved=" + (form["operation"] == "remove" ? "removed" : "applied"));
                         }
-                        var declared = await sdk.GetDeclaredSchemaAsync(page.Collection, http.RequestAborted);
+                        var declared = await service.GetDeclaredSchemaAsync(scope.ProjectId, database.Name, page.Collection);
                         var json = declared.Schema is { ValueKind: not JsonValueKind.Null } value ? JsonDraft.Format(value, MaxSchemaBytes) : "";
                         page = page with { Declared = json, Draft = json.Length > 0 ? json : "{}", Notice = http.Request.Query["saved"] == "applied" ? "Validation schema applied." : http.Request.Query["saved"] == "removed" ? "Validation schema removed." : "" };
                         page = page with { Inferred = JsonSerializer.Serialize(await data.SchemaAsync(context, databaseId, page.Collection, http.RequestAborted), Json) };
