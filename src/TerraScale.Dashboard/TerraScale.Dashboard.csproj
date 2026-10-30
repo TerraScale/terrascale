@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
+    <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
     <RootNamespace>TerraScale.Dashboard</RootNamespace>
     <AssemblyName>TerraScale.Dashboard</AssemblyName>
     <WebRoot>web/static</WebRoot>
