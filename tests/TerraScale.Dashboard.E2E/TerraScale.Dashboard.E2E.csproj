@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
     <OutputType>Exe</OutputType>
     <PublishAot>false</PublishAot>
     <!-- Culture-independence journeys exercise real cultures, as in the original dashboard suite. -->
