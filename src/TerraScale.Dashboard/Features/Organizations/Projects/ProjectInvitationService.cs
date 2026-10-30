@@ -1,11 +1,11 @@
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Organizations.Projects
 {
     public sealed class ProjectInvitationService(AccountService accounts, ITsAuthPlatform platform)
     {
-        public async Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformInvitation>> ReadAsync(AccountContext context,
+        public async Task<TsAuthPlatformPage<TsAuthPlatformInvitation>> ReadAsync(AccountContext context,
             string? after, CancellationToken cancellationToken)
         {
             context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);

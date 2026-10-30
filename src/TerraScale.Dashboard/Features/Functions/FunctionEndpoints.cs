@@ -1,11 +1,11 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Common.UI;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Functions
 {
     public sealed record FunctionsPage(ShellModel Shell, DatabaseRecord Database, IReadOnlyList<FunctionRecord> Functions, FunctionRecord? Selected,
-        Uri? InvokeUrl, IReadOnlyList<FunctionInvocation> Logs, IReadOnlyList<TerraBaseChangeWebhookDelivery> Deliveries, string Error);
+        string? InvokeUrl, IReadOnlyList<FunctionInvocation> Logs, string Error);
 
     public static class FunctionEndpoints
     {
@@ -35,19 +35,18 @@ namespace TerraScale.Dashboard.Features.Functions
                     items = await functions.ListAsync(context, database, http.RequestAborted);
                     if (name.Length == 0)
                     {
-                        return View(http, context, database, items, null, [], []);
+                        return View(http, context, database, items, null, []);
                     }
 
                     var selected = await functions.ReadAsync(context, database, name, http.RequestAborted)
                         ?? throw new AccountAccessException("This function does not exist.", 404);
                     var logs = await functions.LogsAsync(context, database, name, http.RequestAborted);
-                    var deliveries = selected.Trigger is null ? [] : await functions.DeliveriesAsync(context, database, name, http.RequestAborted);
-                    return View(http, context, database, items, selected, logs, deliveries);
+                    return View(http, context, database, items, selected, logs);
                 }
                 catch (Exception error) when (KnownFailure(error, http))
                 {
                     var missing = error is AccountAccessException { StatusCode: 404 };
-                    return View(http, context, database, items, null, [], [], missing ? error.Message : Message(error), missing ? 404 : Status(error));
+                    return View(http, context, database, items, null, [], missing ? error.Message : Message(error), missing ? 404 : Status(error));
                 }
             });
             endpoints.MapPost("/api/v1/dashboard/functions/delete", async (HttpContext http, DashboardSessions sessions, AccountService accounts, FunctionBackend functions) =>
@@ -84,7 +83,7 @@ namespace TerraScale.Dashboard.Features.Functions
                     IReadOnlyList<FunctionRecord> items = [];
                     try { items = await functions.ListAsync(context, database, http.RequestAborted); }
                     catch (Exception again) when (KnownFailure(again, http)) { }
-                    return View(http, context, database, items, null, [], [], "The function was not deleted. " + Message(error), Status(error));
+                    return View(http, context, database, items, null, [], "The function was not deleted. " + Message(error), Status(error));
                 }
             });
             return endpoints;
@@ -98,7 +97,8 @@ namespace TerraScale.Dashboard.Features.Functions
 
         private static int Status(Exception error)
         {
-            return error is AccountAccessException { StatusCode: var code } ? code :
+            return error is TerraBaseException { Status: var rpcStatus } ? rpcStatus :
+            error is AccountAccessException { StatusCode: var code } ? code :
             error is HttpRequestException { StatusCode: { } status } && (int)status is 401 or 403 ? (int)status : 503;
         }
 
@@ -113,10 +113,10 @@ namespace TerraScale.Dashboard.Features.Functions
         }
 
         private static RazorSlices.RazorSlice<FunctionsPage> View(HttpContext http, AccountContext context, DatabaseRecord database, IReadOnlyList<FunctionRecord> items, FunctionRecord? selected,
-            IReadOnlyList<FunctionInvocation> logs, IReadOnlyList<TerraBaseChangeWebhookDelivery> deliveries, string error = "", int status = 200)
+            IReadOnlyList<FunctionInvocation> logs, string error = "", int status = 200)
         {
             var page = FunctionsView.Create(new(ShellModel.For(http, context, database.Name + " · Functions"), database, items, selected,
-                selected is null ? null : FunctionBackend.InvokeUrl(context, database, selected.Name), logs, deliveries, error));
+                selected is null ? null : FunctionBackend.InvokeUrl(context, database, selected.Name), logs, error));
             page.StatusCode = status;
             return page;
         }

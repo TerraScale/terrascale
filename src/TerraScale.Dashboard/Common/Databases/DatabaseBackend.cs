@@ -1,11 +1,11 @@
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts.Management;
+using TerraScale.TerraBase.Contracts.Regions;
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.DotNet;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Common.Databases
 {
@@ -90,8 +90,8 @@ namespace TerraScale.Dashboard.Common.Databases
 
     }
 
-    // Canonical data operations use the official SDK with current action-scoped authority.
-    public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTokens tokens) : IDatabaseBackend
+    // Canonical data operations use TerraBase RPC with current action-scoped authority.
+    public sealed class DatabaseBackend(TerraBaseRpcClient rpc, IProjectAccessTokens tokens) : IDatabaseBackend
     {
         // TerraBase's anonymous GET /v1/regions answers {"regions":[...]}: the id of every region it serves now, from any region,
         // so a new region appears without a change here. gru, fra and sjc keep their display order; others follow by id. While
@@ -104,7 +104,7 @@ namespace TerraScale.Dashboard.Common.Databases
         private async Task<IReadOnlyList<DatabaseRegion>> ReadRegionsAsync(CancellationToken cancellationToken)
         {
             try { return await CatalogAsync(cancellationToken); }
-            catch (Exception error) when (error is HttpRequestException or JsonException) { return await AnsweringRegionAsync(cancellationToken); }
+            catch (Exception error) when (error is TerraBaseException or HttpRequestException or JsonException) { return await AnsweringRegionAsync(cancellationToken); }
         }
 
         // Absence requires a complete catalog: a health-only fallback cannot discover an unknown home.
@@ -115,15 +115,8 @@ namespace TerraScale.Dashboard.Common.Databases
 
         private async Task<IReadOnlyList<DatabaseRegion>> ReadCatalogAsync(CancellationToken cancellationToken)
         {
-            using var response = await factory.CreateClient("platform").GetAsync(new Uri(TerraBaseDiscovery.Origin, "/v1/regions"), HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            response.EnsureSuccessStatusCode();
-            using var document = await PlatformJson.ReadAsync(response.Content, cancellationToken);
-            if (document.RootElement.ValueKind != JsonValueKind.Object || !document.RootElement.TryGetProperty("regions", out var ids) || ids.ValueKind != JsonValueKind.Array)
-            {
-                throw new HttpRequestException("TerraBase returned an invalid region catalog.");
-            }
-
-            var regions = ids.EnumerateArray().Select(id => id.ValueKind == JsonValueKind.String ? DatabaseRegion.FromId(id.GetString()) : null).ToArray();
+            var catalog = await rpc.Platform<IRegionsService>().WithCancellationToken(cancellationToken).ListAsync();
+            var regions = catalog.Regions.Select(DatabaseRegion.FromId).ToArray();
             if (regions.Length == 0 || regions.Any(region => region is null) || regions.DistinctBy(region => region!.Id).Count() != regions.Length)
             {
                 throw new HttpRequestException("TerraBase returned an invalid region catalog.");
@@ -136,18 +129,8 @@ namespace TerraScale.Dashboard.Common.Databases
         // necessarily the nearest, a database's home, or every serving region.
         private async Task<IReadOnlyList<DatabaseRegion>> AnsweringRegionAsync(CancellationToken cancellationToken)
         {
-            using var response = await factory.CreateClient("platform").GetAsync(new Uri(TerraBaseDiscovery.Origin, "/healthz"), HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            response.EnsureSuccessStatusCode();
-            string? region;
-            try
-            {
-                using var document = await PlatformJson.ReadAsync(response.Content, cancellationToken);
-                region = document.RootElement.ValueKind == JsonValueKind.Object && document.RootElement.TryGetProperty("region", out var value) &&
-                    value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-            }
-            catch (JsonException error) { throw new HttpRequestException("TerraBase returned an invalid health answer.", error); }
-            if (!response.Headers.TryGetValues("X-TerraBase-Region", out var named) || named.Count() != 1 || named.Single() != region ||
-                DatabaseRegion.FromId(region) is not { } serving)
+            var health = await rpc.Platform<IRegionsService>().WithCancellationToken(cancellationToken).HealthAsync();
+            if (DatabaseRegion.FromId(health.Region) is not { } serving)
             {
                 throw new HttpRequestException("TerraBase did not name a valid serving region.");
             }
@@ -163,14 +146,14 @@ namespace TerraScale.Dashboard.Common.Databases
 
         private async Task<IReadOnlyList<ManagedDatabase>> ReadDatabasesAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken)
         {
-            var sdk = await ClientAsync(scope, home, "databases:read", cancellationToken);
+            var client = await ClientAsync(scope, home, "databases:read", cancellationToken);
             var result = new List<ManagedDatabase>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
             string? next = null;
             var pages = 0;
             do
             {
-                var page = await RunAsync(() => sdk.Project(scope.ProjectId).ListDatabasesAsync(next, 100, cancellationToken));
+                var page = await RunAsync(() => client.ListDatabasesAsync(scope.ProjectId, next, 100).ResponseAsync);
                 foreach (var item in page.Items)
                 {
                     if (item.ProjectId != scope.ProjectId || !TerraScaleIds.IsValid(item.Id) ||
@@ -192,17 +175,18 @@ namespace TerraScale.Dashboard.Common.Databases
 
         public async Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken)
         {
-            var sdk = await ClientAsync(scope, placement[0], "databases:write", cancellationToken);
+            var client = await ClientAsync(scope, placement[0], "databases:write", cancellationToken);
             // TerraBase refuses allRegions together with any replicaRegions list, even an empty one, and refuses an empty list on
             // a cell (decision 0013a: two regions or more). With only the home chosen, it places the database in every other serving region.
-            return Map(await RunAsync(() => sdk.Project(scope.ProjectId).CreateDatabaseAsync(name, placement[0].Id,
-                allRegions || placement.Count == 1 ? null : placement.Skip(1).Select(region => region.Id).ToArray(), allRegions ? true : null, cancellationToken)));
+            return Map(await RunAsync(() => client.CreateDatabaseAsync(scope.ProjectId, new(Name: name, HomeRegion: placement[0].Id, ReplicaRegions:
+                allRegions || placement.Count == 1 ? null : placement.Skip(1).Select(region => region.Id).ToArray(), allRegions ? true : null)).ResponseAsync));
         }
 
         public async Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
         {
-            var database = await DatabaseAsync(scope, home, databaseId, "databases:write", cancellationToken);
-            return Map(await RunAsync(() => database.BranchAsync(name, cancellationToken)));
+            var source = await NameAsync(scope, home, databaseId, cancellationToken);
+            var client = await ClientAsync(scope, home, "databases:write", cancellationToken);
+            return Map(await RunAsync(() => client.BranchAsync(scope.ProjectId, source, name).ResponseAsync));
         }
 
         public async Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
@@ -214,8 +198,8 @@ namespace TerraScale.Dashboard.Common.Databases
                 return;
             }
 
-            var project = (await ClientAsync(scope, home, "databases:write", cancellationToken)).Project(scope.ProjectId);
-            await CommittedStepAsync(() => project.DeleteDatabaseAsync(database.Name, cancellationToken), cancellationToken);
+            var project = await ClientAsync(scope, home, "databases:write", cancellationToken);
+            await CommittedStepAsync(() => project.DeleteDatabaseAsync(scope.ProjectId, database.Name).ResponseAsync, cancellationToken);
         }
 
         // TerraBase answers 503 catalog_anchor_unavailable when it committed a catalog change but could not write its restore
@@ -234,25 +218,26 @@ namespace TerraScale.Dashboard.Common.Databases
 
         public async Task<ManagedDatabase> RenameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
         {
-            var project = (await ClientAsync(scope, home, "databases:write", cancellationToken)).Project(scope.ProjectId);
-            return Map(await RunAsync(() => project.RenameDatabaseAsync(databaseId, name, cancellationToken)));
+            var project = await ClientAsync(scope, home, "databases:write", cancellationToken);
+            return Map(await RunAsync(() => project.SetDatabaseAsync(scope.ProjectId, databaseId, new(Name: name)).ResponseAsync));
         }
 
         public async Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken)
         {
             var name = await NameAsync(scope, home, databaseId, cancellationToken);
-            var project = (await ClientAsync(scope, home, "databases:write", cancellationToken)).Project(scope.ProjectId);
-            return Map(await RunAsync(() => allRegions ? project.SetDatabaseAllRegionsAsync(name, cancellationToken)
-                : project.SetDatabaseRegionsAsync(name, [.. placement.Skip(1).Select(region => region.Id)], cancellationToken)));
+            var project = await ClientAsync(scope, home, "databases:write", cancellationToken);
+            return Map(await RunAsync(() => project.SetDatabaseAsync(scope.ProjectId, name,
+                new(ReplicaRegions: allRegions ? null : [.. placement.Skip(1).Select(region => region.Id)], AllRegions: allRegions ? true : null)).ResponseAsync));
         }
 
         public async Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
-            var database = await DatabaseAsync(scope, home, databaseId, "databases:read", cancellationToken);
-            return [.. (await RunAsync(() => database.ListCollectionStatsAsync(cancellationToken))).Items.Select(item => new CollectionStats(item.Name, item.Documents, item.Bytes))];
+            var name = await NameAsync(scope, home, databaseId, cancellationToken);
+            var database = await ClientAsync(scope, home, "databases:read", cancellationToken);
+            return [.. (await RunAsync(() => database.ListCollectionStatsAsync(scope.ProjectId, name).ResponseAsync)).Items.Select(item => new CollectionStats(item.Name, item.Documents, item.Bytes))];
         }
 
-        // SQL HTTP bridge (TS-907): execution and catalog batches share current-user authority, region pin and JSON bounds.
+        // SQL execution and catalog batches share current-user authority, home-region routing and JSON bounds.
         public async Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, bool write, CancellationToken cancellationToken)
         {
             var result = (await SqlBatchAsync(scope, home, databaseId, [new(statement)], write, cancellationToken))[0];
@@ -278,7 +263,7 @@ namespace TerraScale.Dashboard.Common.Databases
             var attemptId = AccountService.NewId();
             try { return await ExecuteSqlAsync(home, scope.ProjectId, name, token, statements, cancellationToken); }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested && (error is TimeoutException or IOException or OperationCanceledException ||
-                error is HttpRequestException { StatusCode: null } || error is HttpRequestException { StatusCode: { } status } && (int)status >= 500))
+                error is TerraBaseException { Status: >= 500 } || error is HttpRequestException { StatusCode: null } || error is HttpRequestException { StatusCode: { } status } && (int)status >= 500))
             {
                 // A lost, cut, timed-out or malformed answer may follow a commit, and /sql/execute has no idempotency key.
                 throw new SqlOutcomeUnknownException(attemptId);
@@ -290,32 +275,18 @@ namespace TerraScale.Dashboard.Common.Databases
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(60));
-            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(home.Api, "/v1/projects/" + Uri.EscapeDataString(projectId) + "/databases/" + Uri.EscapeDataString(name) + "/sql/execute"))
-            { Content = JsonContent.Create(new SqlExecuteRequest(statements), DatabaseSqlJson.Default.SqlExecuteRequest) };
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            request.Headers.Accept.ParseAdd("application/json");
-            request.Headers.Add("X-TerraScale-Region-Pin", home.Id);
-            using var response = await factory.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
-            if (response.StatusCode == HttpStatusCode.MisdirectedRequest)
-            {
-                throw DatabaseWrongRegionException.From(response);
-            }
-
-            SqlExecuteResponse? body = null;
+            SqlExecuteResponse? body;
             try
             {
-                await response.Content.LoadIntoBufferAsync(8 * 1024 * 1024, timeout.Token);
-                body = await response.Content.ReadFromJsonAsync(DatabaseSqlJson.Default.SqlExecuteResponse, timeout.Token);
+                var answer = await rpc.User<IManagementService>(token, home.Id).WithCancellationToken(timeout.Token)
+                    .ExecuteSqlAsync(projectId, name, JsonSerializer.SerializeToElement(new SqlExecuteRequest(statements), DatabaseSqlJson.Default.SqlExecuteRequest));
+                body = answer.Deserialize(DatabaseSqlJson.Default.SqlExecuteResponse);
             }
-            catch (JsonException) when (!response.IsSuccessStatusCode) { }
-            catch (JsonException error) { throw new HttpRequestException("TerraBase returned an invalid SQL result.", error); }
-            if (!response.IsSuccessStatusCode)
+            catch (TerraBaseWrongRegionException error) { throw new DatabaseWrongRegionException(error.Region, error.HomeRegion, error.Regions); }
+            catch (TerraBaseException error) when (error.Status is 400 or 403 or 409 or 413)
             {
-                throw (int)response.StatusCode is 400 or 403 or 409 or 413 && body?.Error is { Message.Length: > 0 } refused
-                    ? new DatabaseSqlException(response.StatusCode, refused.Code == "forbidden_scope" ? "Write access is required to change data or schema." : refused.Message, refused.SqliteCode)
-                    : new DatabaseProviderException(response.StatusCode) { RetryAfter = RetryAfter(response) };
+                throw new DatabaseSqlException((HttpStatusCode)error.Status, error.ErrorCode == "forbidden_scope" ? "Write access is required to change data or schema." : error.Message);
             }
-
             if (body?.Results is not { } results || results.Count != statements.Count || results.Any(result => result is null || result.Columns is null || result.Rows is null ||
                 result.Columns.Any(column => column is null) || result.Rows.Any(row => row is null || row.Count != result.Columns.Count)))
             {
@@ -323,16 +294,6 @@ namespace TerraScale.Dashboard.Common.Databases
             }
 
             return results;
-        }
-
-        private static TimeSpan? RetryAfter(HttpResponseMessage response)
-        {
-            return response.Headers.RetryAfter switch
-            {
-                { Delta: { } delta } => delta,
-                { Date: { } date } => date - DateTimeOffset.UtcNow is var wait && wait > TimeSpan.Zero ? wait : TimeSpan.Zero,
-                _ => null
-            };
         }
 
         public async Task<DatabaseSqlCatalog> SqlTablesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
@@ -380,23 +341,26 @@ namespace TerraScale.Dashboard.Common.Databases
 
         public async Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
-            var database = await DatabaseAsync(scope, home, databaseId, "databases:read", cancellationToken);
-            return [.. (await RunAsync(() => database.ListIndexesAsync(cancellationToken: cancellationToken))).Items.Select(Map)];
+            var name = await NameAsync(scope, home, databaseId, cancellationToken);
+            var database = await ClientAsync(scope, home, "databases:read", cancellationToken);
+            return [.. (await RunAsync(() => database.ListIndexesAsync(scope.ProjectId, name).ResponseAsync)).Items.Select(Map)];
         }
 
         public async Task<DatabaseIndex> CreateIndexAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string collection, IReadOnlyList<string> fields, CancellationToken cancellationToken)
         {
-            var database = await DatabaseAsync(scope, home, databaseId, "databases:write", cancellationToken);
-            return Map(await RunAsync(() => database.CreateIndexAsync(collection, fields, cancellationToken: cancellationToken)));
+            var databaseName = await NameAsync(scope, home, databaseId, cancellationToken);
+            var database = await ClientAsync(scope, home, "databases:write", cancellationToken);
+            return Map(await RunAsync(() => database.CreateIndexAsync(scope.ProjectId, databaseName, new(collection, fields)).ResponseAsync));
         }
 
         public async Task DropIndexAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
         {
-            var database = await DatabaseAsync(scope, home, databaseId, "databases:write", cancellationToken);
-            await RunAsync(() => database.DropIndexAsync(name, cancellationToken));
+            var databaseName = await NameAsync(scope, home, databaseId, cancellationToken);
+            var database = await ClientAsync(scope, home, "databases:write", cancellationToken);
+            await RunAsync(() => database.DropIndexAsync(scope.ProjectId, databaseName, name).ResponseAsync);
         }
 
-        private async Task<TerraBaseDocumentsClient> ClientAsync(DatabaseScope scope, DatabaseRegion home, string permission, CancellationToken cancellationToken)
+        private async Task<IManagementService> ClientAsync(DatabaseScope scope, DatabaseRegion home, string permission, CancellationToken cancellationToken)
         {
             if (PlatformDatabases.IsPlatform(scope.OrganizationId))
             {
@@ -405,21 +369,14 @@ namespace TerraScale.Dashboard.Common.Databases
 
             var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
             var token = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, [permission], cancellationToken);
-            return new(factory.CreateClient("platform"), new TerraBaseDocumentsClientOptions
-            { BaseAddress = home.Api, Region = home.Id, AccessTokenProvider = _ => ValueTask.FromResult(token) });
+            return rpc.User<IManagementService>(token, home.Id).WithCancellationToken(cancellationToken);
         }
 
-        // UI URLs use database IDs; the authoritative SDK list resolves those IDs to canonical route names.
+        // UI URLs use database IDs; the authoritative database list resolves those IDs to canonical route names.
         private async Task<string> NameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
             return (await ListAsync(scope, home, cancellationToken)).SingleOrDefault(item => item.Id == databaseId)?.Name
                 ?? throw new DatabaseProviderException(HttpStatusCode.NotFound);
-        }
-
-        private async Task<TerraBaseDatabase> DatabaseAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string permission, CancellationToken cancellationToken)
-        {
-            var name = await NameAsync(scope, home, databaseId, cancellationToken);
-            return (await ClientAsync(scope, home, permission, cancellationToken)).Database(scope.ProjectId, name);
         }
 
         private static ManagedDatabase Map(TerraBaseManagedDatabase item)
@@ -482,9 +439,7 @@ namespace TerraScale.Dashboard.Common.Databases
     // A successful producer's invalid listing cannot be treated as an unreachable region.
     internal sealed class DatabaseListingException(string message) : DatabaseProviderException(HttpStatusCode.ServiceUnavailable, message);
 
-    // TerraBase's 421 wrong_region, as ts-dotnet 0.0.2's TerraBaseWrongRegionException reads it: the answering region
-    // (X-TerraBase-Region) and the database's home and serving regions (X-TerraBase-Database-Home/-Regions). Nothing is
-    // retried or redirected; malformed region names are dropped.
+    // TerraBase's wrong-region refusal retains the answering region and the database's placement; calls are never redirected.
     public sealed class DatabaseWrongRegionException(string? region, string? homeRegion, IReadOnlyList<string> regions)
         : DatabaseProviderException(HttpStatusCode.MisdirectedRequest, homeRegion is null
             ? "The database is served in another region. Nothing was changed."
@@ -494,20 +449,5 @@ namespace TerraScale.Dashboard.Common.Databases
         public string? HomeRegion { get; } = homeRegion;
         public IReadOnlyList<string> Regions { get; } = regions;
 
-        public static DatabaseWrongRegionException From(HttpResponseMessage response)
-        {
-            string? Header(string name)
-            {
-                return response.Headers.TryGetValues(name, out var values) && values.Count() == 1 ? values.Single() : null;
-            }
-
-            string? Valid(string? id)
-            {
-                return DatabaseRegion.FromId(id)?.Id;
-            }
-
-            return new(Valid(Header("X-TerraBase-Region")), Valid(Header("X-TerraBase-Database-Home")),
-                [.. (Header("X-TerraBase-Database-Regions") ?? "").Split(',').Select(Valid).OfType<string>()]);
-        }
     }
 }

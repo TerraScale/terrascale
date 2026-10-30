@@ -9,7 +9,8 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
+using TerraScale.TerraBase.Rpc;
 
 namespace TerraScale.Dashboard.E2E.Platform
 {
@@ -29,7 +30,12 @@ namespace TerraScale.Dashboard.E2E.Platform
             // The private listener speaks HTTP/2 with prior knowledge, like TerraBase's.
             builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, terraBasePort, listen => listen.Protocols = HttpProtocols.Http2));
             builder.Logging.ClearProviders();
+            builder.Services.AddTerraBaseRestRpc(static (_, _) => { });
             await using var terraBase = builder.Build();
+            // The dashboard's MagicOnion calls run through these REST fakes, as TerraBase serves them through its routes.
+            terraBase.UseTerraBaseRestPipeline();
+            terraBase.UseRouting();
+            terraBase.MapTerraBaseRestRpc();
             // Test-only HTTP fake of TerraBase's private listener: every seeded collection exists.
             terraBase.MapGet("/v1/projects/{project}/databases/ts-dashboard/collections", (HttpContext http) =>
             {

@@ -4,6 +4,8 @@
     "projects": [
       "src/TerraBase.Analyzers/TerraBase.Analyzers.csproj",
       "src/TerraBase/TerraBase.csproj",
+      "src/TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj",
+      "src/TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj",
       "src/vendor/Turso.Data.Sqlite/src/Turso.Raw/Turso.Raw.csproj",
       "src/vendor/Turso.Data.Sqlite/src/Turso.Data/Turso.Data.csproj",
       "src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj",

@@ -1,9 +1,7 @@
-using System.Net.Http.Headers;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts.Logs;
 
 namespace TerraScale.Dashboard.Features.Logs
 {
@@ -13,11 +11,8 @@ namespace TerraScale.Dashboard.Features.Logs
     public sealed record DatabaseLogBatch(string DatabaseId, IReadOnlyList<DatabaseLogEntry> Items, bool Truncated, bool RecordingLimited,
         string? NextCursor = null, bool Gap = false);
 
-    public sealed class DatabaseLogBackend(IHttpClientFactory factory, IProjectAccessTokens tokens, IDatabaseBackend databases, TimeProvider time)
+    public sealed class DatabaseLogBackend(TerraBaseRpcClient rpc, IProjectAccessTokens tokens, IDatabaseBackend databases, TimeProvider time)
     {
-        private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
-        { RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true };
-
         public async Task<DatabaseLogBatch> ReadAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string status, CancellationToken cancellationToken)
         {
             if (status is not ("" or "2xx" or "3xx" or "4xx" or "5xx"))
@@ -29,23 +24,16 @@ namespace TerraScale.Dashboard.Features.Logs
             {
                 throw PlatformDatabases.ReadOnly();
             }
-            // Resolve the UI's ULID through the official SDK rather than trusting a cached route name.
+            // Resolve the UI identity against the current database catalog.
             var database = (await databases.ListAsync(scope, home, cancellationToken)).SingleOrDefault(item => item.Id == databaseId)
                 ?? throw new AccountAccessException("Database is unavailable.", 404);
             var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
             var access = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, ["databases:read"], cancellationToken);
-            var path = $"/v1/projects/{Uri.EscapeDataString(scope.ProjectId)}/databases/{Uri.EscapeDataString(database.Name)}/logs" +
-                (status.Length == 0 ? "" : "?status=" + status);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(30));
-            // The SDK has no logs wrapper yet; use the existing platform HTTP extension pattern with current project authority.
-            using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(home.Api, path));
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", access);
-            request.Headers.Add("X-TerraScale-Region-Pin", home.Id);
-            using var response = await factory.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
-            response.EnsureSuccessStatusCode();
-            using var document = await PlatformJson.ReadAsync(response.Content, timeout.Token);
-            var batch = document.RootElement.Deserialize<DatabaseLogBatch>(Json) ?? throw new JsonException("Request logs are missing.");
+            var result = await rpc.User<ILogsService>(access, home.Id).WithCancellationToken(timeout.Token)
+                .ReadAsync(scope.ProjectId, database.Name, status.Length == 0 ? null : status, null);
+            var batch = Batch(result);
             Validate(batch, databaseId, status);
             return batch;
         }
@@ -63,14 +51,8 @@ namespace TerraScale.Dashboard.Features.Logs
                 ?? throw new AccountAccessException("Database is unavailable.", 404);
             var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
             var access = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, ["databases:read"], deadline.Token);
-            using var http = factory.CreateClient("platform");
-            var sdk = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
-            {
-                BaseAddress = home.Api,
-                Region = home.Id,
-                AccessTokenProvider = _ => ValueTask.FromResult(access)
-            });
-            var shapes = await sdk.Database(scope.ProjectId, database.Name).ListQueryShapesAsync(deadline.Token);
+            var shapes = await rpc.User<ILogsService>(access, home.Id).WithCancellationToken(deadline.Token)
+                .ListQueryShapesAsync(scope.ProjectId, database.Name);
             if (shapes.Items is null || shapes.Items.Any(item => item is null || string.IsNullOrEmpty(item.Collection) || string.IsNullOrEmpty(item.Shape) ||
                 item.Queries < 0 || item.RowsScanned < 0 || item.LastSeenAt == default ||
                 !double.IsFinite(item.TotalLatencyMs) || item.TotalLatencyMs < 0 || !double.IsFinite(item.MaxLatencyMs) || item.MaxLatencyMs < 0 ||
@@ -83,6 +65,13 @@ namespace TerraScale.Dashboard.Features.Logs
             return [.. shapes.Items.Where(item => item.LastSeenAt >= now.AddHours(-24) && item.LastSeenAt <= now)
                 .OrderByDescending(item => item.P95LatencyMs ?? item.MaxLatencyMs)
                 .ThenBy(item => item.Collection, StringComparer.Ordinal).ThenBy(item => item.Id, StringComparer.Ordinal)];
+        }
+
+        internal static DatabaseLogBatch Batch(TerraBaseRequestLogPage result)
+        {
+            return new(result.DatabaseId, [.. result.Items.Select(item => new DatabaseLogEntry(item.Id, item.Time, item.Region,
+                item.Method, item.Route, item.Status, item.LatencyMs, item.Operations, item.IsQuery, item.RequestId))],
+                result.Truncated, result.RecordingLimited, result.NextCursor, result.Gap);
         }
 
         internal static void Validate(DatabaseLogBatch batch, string databaseId, string status, bool cursor = false)

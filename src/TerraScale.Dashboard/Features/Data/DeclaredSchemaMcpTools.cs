@@ -1,15 +1,16 @@
 using System.ComponentModel;
-using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Mcp;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts.Schema;
 
 namespace TerraScale.Dashboard.Features.Data
 {
     [McpServerToolType]
-    public sealed class DeclaredSchemaMcpTools(IHttpContextAccessor http, DatabaseService databases, IProjectAccessTokens tokens, IHttpClientFactory factory)
+    public sealed class DeclaredSchemaMcpTools(IHttpContextAccessor http, DatabaseService databases, IProjectAccessTokens tokens, TerraBaseRpcClient rpc)
     {
         [McpServerTool(Name = "get_collection_validation", Title = "Get collection validation", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read declared JSON Schema validation, separate from inferred fields. Schema and dialect are explicitly null when detached; boolean false is an attached schema rejecting future local writes.")]
         public async Task<McpDeclaredValidation> Validation(string databaseId, string collection, string? organizationId = null, string? projectId = null)
@@ -53,16 +54,11 @@ namespace TerraScale.Dashboard.Features.Data
 
             var database = DatabaseService.Database(context, databaseId);
             var home = await databases.HomeAsync(context, database, Cancellation);
-            using var transport = factory.CreateClient("platform");
-            var sdk = new TerraBaseDocumentsClient(transport, new TerraBaseDocumentsClientOptions
-            {
-                BaseAddress = home.Api,
-                Region = home.Id,
-                AccessTokenProvider = async cancellationToken => await tokens.GetAsync(scope.Session!, scope.OrganizationId, scope.ProjectId,
-                    [schema.HasValue ? "documents:write" : "documents:read"], cancellationToken)
-            }).Database(scope.ProjectId, database.Name);
-            return schema.HasValue ? await sdk.PutDeclaredSchemaAsync(collection, schema.Value, Cancellation)
-                : await sdk.GetDeclaredSchemaAsync(collection, Cancellation);
+            var access = await tokens.GetAsync(scope.Session!, scope.OrganizationId, scope.ProjectId,
+                [schema.HasValue ? "documents:write" : "documents:read"], Cancellation);
+            var service = rpc.User<ISchemaService>(access, home.Id).WithCancellationToken(Cancellation);
+            return schema.HasValue ? await service.PutDeclaredSchemaAsync(scope.ProjectId, database.Name, collection, schema.Value)
+                : await service.GetDeclaredSchemaAsync(scope.ProjectId, database.Name, collection);
         }
 
         private static void ValidateCollection(AccountContext context, string databaseId, string collection)

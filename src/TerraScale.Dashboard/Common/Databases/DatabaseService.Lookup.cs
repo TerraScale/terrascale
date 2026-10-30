@@ -1,7 +1,7 @@
+using TerraScale.TerraBase.Contracts;
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Common.Databases
 {
@@ -45,7 +45,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 var listings = await Task.WhenAll(catalog.Select(async region =>
                 {
                     try { return (Region: region.Id, Items: (IReadOnlyList<ManagedDatabase>?)await backend.ListAsync(scope, region, ct)); }
-                    catch (Exception error) when (!ct.IsCancellationRequested && (error is OperationCanceledException || error is IOException ||
+                    catch (Exception error) when (!ct.IsCancellationRequested && (error is OperationCanceledException || error is IOException || error is TerraBaseException { Status: 404 or 429 or 421 or >= 500 } ||
                         error is HttpRequestException request && request is not DatabaseListingException &&
                         (request.StatusCode is null or HttpStatusCode.NotFound or HttpStatusCode.TooManyRequests or HttpStatusCode.MisdirectedRequest ||
                             request.StatusCode is { } status && (int)status >= 500)))
@@ -81,7 +81,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 }
             }
             catch (Exception error) when (!ct.IsCancellationRequested &&
-                (DatabaseResults.KnownFailure(error) || error is HttpRequestException or IOException or InvalidDataException or JsonException or OperationCanceledException))
+                (DatabaseResults.KnownFailure(error) || error is TerraBaseException or HttpRequestException or IOException or InvalidDataException or JsonException or OperationCanceledException))
             { throw Unavailable(); }
             // Only complete, successful regional pagination can establish absence.
             if (imported is null)

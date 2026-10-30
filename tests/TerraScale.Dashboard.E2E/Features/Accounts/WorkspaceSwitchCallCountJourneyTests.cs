@@ -6,8 +6,9 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.DotNet;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.Dashboard.Platform.TsAuth;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.E2E.Features.Accounts
 {
@@ -101,7 +102,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
                 Calls.AddOrUpdate(method!.Name, 1, (_, count) => count + 1);
                 if (method.Name == nameof(ITsAuthPlatform.ListProjectsAsync) && (string)args![1]! == Blocked)
                 {
-                    return Task.FromException<IReadOnlyList<TerraScaleAuthPlatformProject>>(new AccountAccessException("Two-factor required.", 403, TsAuthGateway.MfaRequiredCode));
+                    return Task.FromException<IReadOnlyList<TsAuthPlatformProject>>(new AccountAccessException("Two-factor required.", 403, TsAuthGateway.MfaRequiredCode));
                 }
 
                 try { return method.Invoke(Inner, args); }

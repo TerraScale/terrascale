@@ -1,12 +1,13 @@
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Backups;
 using System.Globalization;
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Data;
-using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Common.UI;
 
 namespace TerraScale.Dashboard.Features.Backups
@@ -29,8 +30,8 @@ namespace TerraScale.Dashboard.Features.Backups
     public sealed record SelectiveRecoveryPage(ShellModel Shell, DatabaseRecord Database, RecoveryWindow? Window = null,
         string Point = "", string Collection = "", string Ids = "", RecoveryPreview? Preview = null, string Error = "", int? Applied = null);
 
-    // Backup APIs absent from the packaged SDK use the existing project-token/home-region HTTP boundary.
-    public sealed class SelectiveRecovery(IHttpClientFactory factory, IProjectAccessTokens tokens, DatabaseService databases)
+    // Recovery uses current project authority in the database home region.
+    public sealed class SelectiveRecovery(TerraBaseRpcClient rpc, IProjectAccessTokens tokens, DatabaseService databases)
     {
         public async Task<RecoveryWindow?> WindowAsync(AccountContext context, DatabaseRecord database, CancellationToken ct)
         {
@@ -79,7 +80,7 @@ namespace TerraScale.Dashboard.Features.Backups
             if (string.IsNullOrWhiteSpace(result.Approval) || result.Approval.Length > 131072 || result.ExpiresAt == default || result.Records is null ||
                 result.Records.Count > 100 || result.Records.Any(record => record is null) ||
                 result.Records.Select(record => record.Id).Distinct(StringComparer.Ordinal).Count() != result.Records.Count ||
-                result.Records.Any(record => record.Collection != collection || !TerraScale.DotNet.TerraScaleIds.IsValid(record.Id) ||
+                result.Records.Any(record => record.Collection != collection || !TerraScaleIds.IsValid(record.Id) ||
                     selected.Length > 0 && !selected.Contains(record.Id, StringComparer.Ordinal) || record.Historical.ValueKind != JsonValueKind.Object ||
                     record.Current is { ValueKind: not (JsonValueKind.Null or JsonValueKind.Object) }) ||
                 result.Records.Sum(record => System.Text.Encoding.UTF8.GetByteCount(record.Historical.GetRawText()) +
@@ -123,44 +124,37 @@ namespace TerraScale.Dashboard.Features.Backups
             var home = await databases.HomeAsync(context, database, ct);
             var access = await tokens.GetAsync(scope.Session!, scope.OrganizationId, scope.ProjectId, operation.Length == 0 ? ["databases:read"] :
                 ["databases:write", operation == "recovery-preview" ? "documents:read" : "documents:write"], ct);
-            var path = $"/v1/projects/{Uri.EscapeDataString(scope.ProjectId)}/databases/{Uri.EscapeDataString(database.Name)}/point-in-time" +
-                (operation.Length == 0 ? "" : "/" + operation);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(30));
-            using var request = new HttpRequestMessage(operation.Length == 0 ? HttpMethod.Get : HttpMethod.Post, new Uri(home.Api, path))
-            { Content = body is null ? null : JsonContent.Create(body, requestType) };
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", access);
-            request.Headers.Add("X-TerraScale-Region-Pin", home.Id);
-            using var response = await factory.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
-            if (response.StatusCode == HttpStatusCode.MisdirectedRequest)
+            var client = rpc.User<IBackupsService>(access, home.Id).WithCancellationToken(timeout.Token);
+            try
             {
-                throw DatabaseWrongRegionException.From(response);
+                var request = body is null ? default : JsonSerializer.SerializeToElement(body, requestType);
+                var result = operation switch
+                {
+                    "" => JsonSerializer.SerializeToElement(await client.GetRestoreWindowAsync(scope.ProjectId, database.Name, null), BackupsJson.Default.TerraBaseRestoreWindow),
+                    "recovery-preview" => await client.PreviewRecoveryAsync(scope.ProjectId, database.Name, request),
+                    "recover" => await client.RecoverAsync(scope.ProjectId, database.Name, request),
+                    _ => throw new InvalidOperationException("Unknown recovery operation.")
+                };
+                return result.Deserialize(responseType) ?? throw new JsonException("Invalid recovery response.");
             }
-
-            if (response.StatusCode is HttpStatusCode.Conflict or HttpStatusCode.PreconditionFailed or HttpStatusCode.Gone)
+            catch (TerraBaseWrongRegionException error) { throw new DatabaseWrongRegionException(error.Region, error.HomeRegion, error.Regions); }
+            catch (TerraBaseException error) when (error.Status is 409 or 412 or 410)
             {
                 throw new AccountAccessException("Recovery approval is stale, expired, or unavailable on this node. No records were restored. Preview again and review current differences.", 409);
             }
-
-            if (response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.UnprocessableEntity or HttpStatusCode.RequestEntityTooLarge)
+            catch (TerraBaseException error) when (error.Status is 400 or 422 or 413)
             {
                 throw new AccountAccessException("Recovery was refused. Use a retained point and smaller explicit ID batches (100 records / 1 MiB). The collection must currently exist; recreate a dropped collection explicitly before previewing again.", 422);
             }
-
-            if (response.StatusCode == HttpStatusCode.ServiceUnavailable)
+            catch (TerraBaseException error) when (error.Status == 503)
             {
                 throw new AccountAccessException("Recovery is busy or temporarily unavailable. " +
-                    (response.Headers.RetryAfter?.Delta is { } delay ? $"Retry after {Math.Ceiling(delay.TotalSeconds)} seconds. " : "Try again shortly. ") +
+                    (error.RetryAfter is { } delay ? $"Retry after {Math.Ceiling(delay.TotalSeconds)} seconds. " : "Try again shortly. ") +
                     "Preview again before approving records.", 503);
             }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new DatabaseProviderException(response.StatusCode);
-            }
-            // One MiB of current/historical values plus approval and per-record envelope overhead.
-            using var document = await PlatformJson.ReadAsync(response.Content, timeout.Token, 2 * 1024 * 1024);
-            return document.RootElement.Deserialize(responseType) ?? throw new JsonException("Invalid recovery response.");
+            catch (TerraBaseException error) { throw new DatabaseProviderException((HttpStatusCode)error.Status); }
         }
     }
 

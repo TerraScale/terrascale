@@ -1,7 +1,7 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Importing.ImportJobPage>
 @using TerraScale.Dashboard.Features.Importing
 @using TerraScale.Dashboard.Features.Databases
-@using TerraScale.DotNet.TerraBase
+@using TerraScale.TerraBase.Contracts.Import
 @{
     var job = Model.Job; var state = Model.State; var preview = job.Preview; var culture = System.Globalization.CultureInfo.InvariantCulture;
     var canWrite = Model.Shell.Context.CanWriteProjectData;
@@ -68,7 +68,7 @@ else if(stopped){
 @for(var index = 0; index < preview.Tables.Count; index++){
     var table = preview.Tables[index]; var id = "import-table-" + index.ToString(culture);
     var blocking = table.Issues.Count(issue => issue.Severity == "blocking");
-<div class="ts-import-table"><div class="ts-row-between"><span class="ts-list-main"><span class="ts-strong ts-mono">@table.Source → @table.Collection</span><span class="ts-meta">@Number(table.Rows) rows · @(job.Source.Format == TerraScale.DotNet.TerraBase.TerraBaseImportFormat.Ndjson ? "exported ids kept" : "generated ULIDs")@(table.PrimaryKey.Count > 0 ? " · source primary key fields: " + string.Join(", ", table.PrimaryKey) : " · no source primary key required")@(table.Excluded ? " · excluded" : "")</span></span>
+<div class="ts-import-table"><div class="ts-row-between"><span class="ts-list-main"><span class="ts-strong ts-mono">@table.Source → @table.Collection</span><span class="ts-meta">@Number(table.Rows) rows · @(job.Source.Format == TerraScale.TerraBase.Contracts.Import.TerraBaseImportFormat.Ndjson ? "exported ids kept" : "generated ULIDs")@(table.PrimaryKey.Count > 0 ? " · source primary key fields: " + string.Join(", ", table.PrimaryKey) : " · no source primary key required")@(table.Excluded ? " · excluded" : "")</span></span>
 <span class="ts-row">@if(blocking > 0){<span class="ts-badge ts-badge-danger">@blocking blocking</span>}@if(table.Constraints.Count > 0){<span class="ts-badge ts-badge-info">@table.Constraints.Count not enforced</span>}<label class="ts-check" for="@id"><input type="checkbox" id="@id" name="exclude" value="@table.Source" checked="@table.Excluded" /><span>Exclude table</span></label></span></div>
 @if(table.Issues.Count > 0){<ul class="ts-import-issues">@foreach(var issue in table.Issues){<li><span class="ts-badge @(issue.Severity == "blocking" ? "ts-badge-danger" : "ts-badge-warning")">@issue.Severity</span> @ImportService.Issue(table)(issue)</li>}</ul>}
 <details class="ts-import-details" open="@(blocking > 0)"><summary class="ts-meta">@table.Columns.Count columns, @table.Constraints.Count constraints</summary><div class="ts-table-wrap"><table class="ts-table"><caption class="ts-sr-only">@table.Source type mapping</caption><thead><tr><th>Column</th><th>Source type</th><th>Stored as</th><th>Exclude</th></tr></thead><tbody>

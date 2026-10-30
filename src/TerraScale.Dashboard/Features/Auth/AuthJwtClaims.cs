@@ -1,14 +1,14 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
     // One signature and lifetime boundary for the issuer's ES256/P-256 tokens.
     internal static class AuthJwtClaims
     {
-        public static JsonElement Read(string? token, string issuer, string audience, TerraScaleAuthJwkSet keys, DateTimeOffset now,
+        public static JsonElement Read(string? token, string issuer, string audience, TsAuthJwkSet keys, DateTimeOffset now,
             string? requiredType = null, int maxLength = 65536)
         {
             try

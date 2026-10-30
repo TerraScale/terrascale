@@ -2,7 +2,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.ComponentModel;
 using Stripe;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 
 namespace TerraScale.Dashboard.Features.Billing
@@ -481,7 +482,7 @@ namespace TerraScale.Dashboard.Features.Billing
             // Stripe accepted the operation, so it is the outcome even when the local projection loses a race with the
             // webhooks reconciling the same change; they and the next billing view finish it from Stripe's facts.
             try { await ReconcileChangeAsync(context, receipt); }
-            catch (Exception error) when (error is IOException or HttpRequestException or StripeException or AccountAccessException or OperationCanceledException)
+            catch (Exception error) when (error is IOException or TerraBaseException or HttpRequestException or StripeException or AccountAccessException or OperationCanceledException)
             { logger.BillingAppliedInStripeReconciliationDeferred(receipt.Action, receipt.RequestId, error.GetType().Name, BillingPlanEndpoints.Describe(error)); }
         }
         private async Task ReconcileChangeAsync(AccountContext context, BillingChangeReceipt receipt)

@@ -3,7 +3,7 @@ using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.NotFound;
 using TerraScale.Dashboard.Common.UI;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.AuthenticationManagement
 {
@@ -134,13 +134,13 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         }
 
         // At least one first factor stays on; ts-auth enforces the same rule.
-        public static TerraScaleAuthProjectMethods Methods(bool passcode, bool password, bool signUp)
+        public static TsAuthProjectMethods Methods(bool passcode, bool password, bool signUp)
         {
             return passcode || password ? new(passcode, password, signUp) : throw new AccountAccessException("Keep email passcode or password sign-in on.", 422);
         }
 
         // Empty values clear a branding field.
-        public static TerraScaleAuthProjectBranding Branding(string? name, string? logoUrl, string? themeColor)
+        public static TsAuthProjectBranding Branding(string? name, string? logoUrl, string? themeColor)
         {
             static string? Clean(string? value)
             {
@@ -167,7 +167,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         }
 
         // A blank secret keeps the stored one; ts-auth requires it the first time. Never log the update.
-        public static TerraScaleAuthProjectProviderUpdate Provider(string provider, string? clientId, string? clientSecret, string? issuer, string? teamId, string? keyId)
+        public static TsAuthProjectProviderUpdate Provider(string provider, string? clientId, string? clientSecret, string? issuer, string? teamId, string? keyId)
         {
             static string? Clean(string? value)
             {
@@ -211,7 +211,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         [GeneratedRegex("^[A-Z0-9]{10}$")]
         private static partial Regex AppleId();
 
-        public static TerraScaleAuthProjectCreateOAuthClient NewClient(string? name, string? type, IEnumerable<string> redirectUris)
+        public static TsAuthProjectCreateOAuthClient NewClient(string? name, string? type, IEnumerable<string> redirectUris)
         {
             var uris = redirectUris.Select(uri => uri.Trim()).Where(uri => uri.Length > 0).ToArray();
             if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > 64)
@@ -262,7 +262,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         }
 
         private static async Task<IResult> PageAsync(HttpContext http, AccountContext context, ITsAuthProjects projects, string key, string error = "", int status = 200,
-            TerraScaleAuthProjectOAuthClient? created = null)
+            TsAuthProjectOAuthClient? created = null)
         {
             var section = AuthenticationSection.Find(key)!;
             if (key == "branding")
@@ -307,13 +307,13 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
     }
 
     public sealed record AuthenticationPage(ShellModel Shell, AuthenticationSection Section, string Search, string After, string User, string Error,
-        TerraScaleAuthProjectOAuthClient? Created)
+        TsAuthProjectOAuthClient? Created)
     {
         public AccountContext Context => Shell.Context;
-        public TerraScaleAuthProjectSettings? Settings { get; init; }
-        public IReadOnlyList<TerraScaleAuthProjectUser>? Users { get; init; }
-        public IReadOnlyList<TerraScaleAuthProjectSession>? Sessions { get; init; }
-        public IReadOnlyList<TerraScaleAuthProjectOAuthClient>? Clients { get; init; }
+        public TsAuthProjectSettings? Settings { get; init; }
+        public IReadOnlyList<TsAuthProjectUser>? Users { get; init; }
+        public IReadOnlyList<TsAuthProjectSession>? Sessions { get; init; }
+        public IReadOnlyList<TsAuthProjectOAuthClient>? Clients { get; init; }
         public string? Next { get; init; }
         public IFormCollection? Draft { get; init; }
         public bool Saved { get; init; }

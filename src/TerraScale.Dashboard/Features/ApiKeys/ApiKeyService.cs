@@ -2,12 +2,12 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.ApiKeys
 {
     // ts-auth owns key metadata and issuance. Secrets are returned once and never stored by the dashboard.
-    public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
+    public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time, TsAuthClient authClient)
     {
         public async Task<IReadOnlyList<ProjectCredential>> ListAsync(AccountContext context, CancellationToken cancellationToken)
         {
@@ -69,7 +69,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return new(key, result.Key);
         }
 
-        internal TerraScaleAuthPlatformCreateApiKey PrepareCreate(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs)
+        internal TsAuthPlatformCreateApiKey PrepareCreate(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs)
         {
             if (!context.CanManage)
             {
@@ -217,13 +217,13 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 throw new HttpRequestException("Credential lookup returned a different key.");
             }
 
-            TerraScaleAuthPlatformApiKeySecret result;
+            TsAuthPlatformApiKeySecret result;
             try
             {
                 result = await ProtectedAsync(() => client.RotateProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId,
-                stepUpProof, new TerraScaleAuthPlatformRotateApiKey(previousSecretTtl), cancellationToken));
+                stepUpProof, new TsAuthPlatformRotateApiKey(previousSecretTtl), cancellationToken));
             }
-            catch (TerraScaleAuthException error) when (error.ErrorCode == "rotation_pending")
+            catch (TsAuthException error) when (error.ErrorCode == "rotation_pending")
             {
                 throw new AccountAccessException("This key's previous secret is still in its grace period. Rotate again after it expires.", 409);
             }
@@ -311,10 +311,9 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             { CreatedByUserId = value.CreatedByUserId, DatabaseName = value.DatabaseName, AllowedCidrs = value.AllowedCidrs };
         }
 
-        private TerraScaleAuthPlatformClient Client()
+        private TsAuthPlatformClient Client()
         {
-            return new TerraScaleAuthClient(http.CreateClient("platform"),
-            new TerraScaleAuthClientOptions { BaseAddress = AuthOrigin, InstanceSlug = "terrascale" }).Platform;
+            return authClient.Platform;
         }
 
         private static readonly Uri AuthOrigin = new("https://auth.terrascale.tech/");
@@ -386,13 +385,13 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
         private ProjectCredential Map(AccountContext context, JsonElement body)
         {
-            TerraScaleAuthPlatformApiKey? key;
-            try { key = body.ValueKind == JsonValueKind.Object ? body.Deserialize(ApiKeyAuthJson.Default.TerraScaleAuthPlatformApiKey) : null; }
+            TsAuthPlatformApiKey? key;
+            try { key = body.ValueKind == JsonValueKind.Object ? body.Deserialize(ApiKeyAuthJson.Default.TsAuthPlatformApiKey) : null; }
             catch (JsonException) { key = null; }
             return Map(context, key ?? throw new HttpRequestException("Credential returned invalid metadata or scope identity.")) with { AllowedCidrs = Cidrs(body) };
         }
 
-        private ProjectCredential Map(AccountContext context, TerraScaleAuthPlatformApiKey key)
+        private ProjectCredential Map(AccountContext context, TsAuthPlatformApiKey key)
         {
             var scope = DatabaseService.Scope(context);
             if (!TerraScaleIds.IsValid(key.Id) || key.OrganizationId != scope.OrganizationId || key.ProjectId != scope.ProjectId ||
@@ -427,7 +426,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         private static async Task<T> ProtectedAsync<T>(Func<Task<T>> send)
         {
             try { return await send(); }
-            catch (TerraScaleAuthException error) when (error.ErrorCode == "step_up_required") { throw StepUpFlow.Required(); }
+            catch (TsAuthException error) when (error.ErrorCode == "step_up_required") { throw StepUpFlow.Required(); }
         }
 
         private static string Format(DateTimeOffset value)

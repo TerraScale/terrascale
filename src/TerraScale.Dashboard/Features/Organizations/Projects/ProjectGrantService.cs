@@ -1,11 +1,11 @@
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Organizations.Projects
 {
     public sealed class ProjectGrantService(AccountService accounts, ITsAuthPlatform platform)
     {
-        public async Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformProjectMember>> ReadAsync(AccountContext context,
+        public async Task<TsAuthPlatformPage<TsAuthPlatformProjectMember>> ReadAsync(AccountContext context,
             string? after, CancellationToken cancellationToken)
         {
             context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
@@ -35,7 +35,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             return value.Length is > 0 and <= 512 && !value.Any(char.IsControl);
         }
 
-        public async Task<TerraScaleAuthPlatformProjectMember> SetAsync(AccountContext context, string userId, string role, CancellationToken cancellationToken)
+        public async Task<TsAuthPlatformProjectMember> SetAsync(AccountContext context, string userId, string role, CancellationToken cancellationToken)
         {
             context = await AdminAsync(context, userId, cancellationToken);
             OrganizationOperations.AvailableRole(role);

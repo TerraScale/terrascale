@@ -1,3 +1,4 @@
+using TerraScale.TerraBase.Contracts;
 using System.Globalization;
 using TerraScale.Dashboard.Common.Formatting;
 
@@ -27,7 +28,7 @@ namespace TerraScale.Dashboard.Features.Billing.Plans
             if (subscribed)
             {
                 try { state = await billing.PlanStateAsync(context, cancellationToken); }
-                catch (Exception error) when (error is Stripe.StripeException or HttpRequestException or IOException or AccountAccessException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+                catch (Exception error) when (error is Stripe.StripeException or TerraBaseException or HttpRequestException or IOException or AccountAccessException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                 { stateError = "Could not load billing changes. Reload billing to retry."; }
             }
 
@@ -91,7 +92,7 @@ namespace TerraScale.Dashboard.Features.Billing.Plans
                             estimate = quote.Immediate ? MoneyFormat.Money(quote.AmountDueCents, quote.Currency) + " estimated by Stripe (including " + MoneyFormat.Money(quote.ProrationCents, quote.Currency) + " in prorations)" : "No charge today";
                         }
                         catch (AccountAccessException access) { errorMessage = access.Message; }
-                        catch (Exception error) when (error is Stripe.StripeException or HttpRequestException or IOException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+                        catch (Exception error) when (error is Stripe.StripeException or TerraBaseException or HttpRequestException or IOException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                         { errorMessage = "Stripe could not calculate the estimated charge. Try again."; }
                     }
                 }

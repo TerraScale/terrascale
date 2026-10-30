@@ -1,24 +1,19 @@
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts.Usage;
 using TerraScale.Dashboard.Platform.Observability;
-using System.Net;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Usage
 {
     // TerraBase owns counters; dashboard billing remains separate from these best-effort observations.
-    public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, IProjectAccessTokens tokens) : IUsageMeasurements
+    public sealed class UsageBackend(TerraBaseRpcClient rpc, TimeProvider time, IProjectAccessTokens tokens) : IUsageMeasurements
     {
         public async Task<UsageMeasurements> ReadAsync(UsageSelection selection, CancellationToken cancellationToken)
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             deadline.CancelAfter(TimeSpan.FromSeconds(5));
-            var client = factory.CreateClient("platform");
-            Uri origin;
-            try { origin = await new TerraBaseDiscovery().ResolveAsync(deadline.Token); }
-            catch (Exception error) when (Failure(error, cancellationToken))
-            { ServiceSloTelemetry.MarkFailure(error); return new(new(UsageSourceState.Unavailable), selection.Context.Organization!.Projects.Keys.ToDictionary(id => id, _ => new UsageObservation(UsageSourceState.Unavailable))); }
             var now = time.GetUtcNow();
             var utc = now.UtcDateTime;
             var month = new DateTimeOffset(utc.Year, utc.Month, 1, 0, 0, 0, TimeSpan.Zero);
@@ -59,13 +54,6 @@ namespace TerraScale.Dashboard.Features.Usage
 
                     var token = await tokens.GetAsync(context.Session, context.Organization.Id, project.Id, ["databases:read"], deadline.Token);
                     authorized = true;
-                    var tap = new MonthTap(client);
-                    using var tapped = new HttpClient(tap);
-                    var sdk = new TerraBaseDocumentsClient(tapped, new TerraBaseDocumentsClientOptions
-                    {
-                        BaseAddress = origin,
-                        AccessTokenProvider = _ => ValueTask.FromResult(token)
-                    });
                     if (databaseId.Length > 0)
                     {
                         if (!project.Databases.TryGetValue(databaseId, out var configured) || configured.ProjectId != project.Id)
@@ -73,7 +61,8 @@ namespace TerraScale.Dashboard.Features.Usage
                             throw new JsonException("Usage database scope is invalid.");
                         }
 
-                        var row = await sdk.Database(project.Id, configured.Name).GetUsageAsync(bucket, first, now, deadline.Token);
+                        var row = await rpc.User<IUsageService>(token, configured.Region.Length == 0 ? null : configured.Region.ToLowerInvariant()).WithCancellationToken(deadline.Token)
+                            .GetDatabaseUsageAsync(project.Id, configured.Name, bucket, first, now);
                         if (row.DatabaseId != databaseId)
                         {
                             throw new JsonException("Usage returned a different database.");
@@ -81,7 +70,7 @@ namespace TerraScale.Dashboard.Features.Usage
 
                         return new(UsageSourceState.Measured, DatabaseReading(row, project, first, now, bucket));
                     }
-                    var totals = await sdk.Project(project.Id).GetUsageAsync(bucket, first, now, deadline.Token);
+                    var totals = await rpc.User<IUsageService>(token).WithCancellationToken(deadline.Token).GetProjectUsageAsync(project.Id, bucket, first, now);
                     if (totals.ProjectId != project.Id || Count(totals.Databases) != totals.Items.Count ||
                         totals.Items.Select(item => item.DatabaseId).Distinct(StringComparer.Ordinal).Count() != totals.Items.Count)
                     {
@@ -101,17 +90,17 @@ namespace TerraScale.Dashboard.Features.Usage
 
                     return new(UsageSourceState.Measured, new(project.Id, "", Count(totals.LogicalBytes), Count(totals.Documents),
                         Period(totals.Period, first, now, bucket), Points(totals.Series, totals.Period, bucket),
-                        [.. totals.Items.Select(item => DatabaseReading(item, project, first, now, bucket, true))], tap.Month));
+                        [.. totals.Items.Select(item => DatabaseReading(item, project, first, now, bucket, true))], totals.Month is { } monthUsage ? new UsageMonth(monthUsage.Month is { Length: 7 } monthName ? monthName : throw new JsonException("Usage month is invalid."), Count(monthUsage.ReadUnits), Count(monthUsage.WriteUnits), Count(monthUsage.Units), monthUsage.OrganizationUnits is { } organizationUnits ? Count(organizationUnits) : null) : null));
                 }
-                catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                catch (TerraBaseException error) when (error.Status is 401 or 403)
                 { return new(UsageSourceState.Unauthorized); }
                 // Only a producer 404 after authorization can describe an unregistered empty project.
                 // It provides no authoritative monthly organization ledger, including deleted-project usage.
-                catch (HttpRequestException error) when (authorized && error.StatusCode == HttpStatusCode.NotFound && databaseId.Length == 0 && project.Databases.Count == 0)
+                catch (TerraBaseException error) when (authorized && error.Status == 404 && databaseId.Length == 0 && project.Databases.Count == 0)
                 { return new(UsageSourceState.Measured, new(project.Id, "", 0, 0, new(first, End(now, bucket), bucket, 0, 0), [], [])); }
-                catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.NotFound)
+                catch (TerraBaseException error) when (error.Status == 404)
                 { return new(UsageSourceState.Restricted); }
-                catch (TerraBaseException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.ErrorCode == "invalid_query")
+                catch (TerraBaseException error) when (error.Status == 400 && error.ErrorCode == "invalid_query")
                 { return new(UsageSourceState.QueryTooExpensive); }
                 catch (Exception error) when (Failure(error, cancellationToken)) { ServiceSloTelemetry.MarkFailure(error); return new(UsageSourceState.Unavailable); }
             }
@@ -169,51 +158,6 @@ namespace TerraScale.Dashboard.Features.Usage
             return points;
         }
 
-        // The pinned SDK drops TerraBase's `month` operation units, so read them from the same usage response.
-        private sealed class MonthTap(HttpClient inner) : HttpMessageHandler
-        {
-            public UsageMonth? Month { get; private set; }
-            protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-            {
-                if (request.Content is not null)
-                {
-                    throw new InvalidOperationException("Usage reads carry no body.");
-                }
-
-                var copy = new HttpRequestMessage(request.Method, request.RequestUri) { Version = request.Version, VersionPolicy = request.VersionPolicy };
-                foreach (var header in request.Headers)
-                {
-                    copy.Headers.TryAddWithoutValidation(header.Key, header.Value);
-                }
-
-                var response = await inner.SendAsync(copy, cancellationToken);
-                if (!response.IsSuccessStatusCode)
-                {
-                    return response;
-                }
-
-                var body = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-                using (var json = JsonDocument.Parse(body))
-                {
-                    Month = json.RootElement.ValueKind == JsonValueKind.Object && json.RootElement.TryGetProperty("month", out var month) && month.ValueKind == JsonValueKind.Object
-                        ? new(month.GetProperty("month").GetString() is { Length: 7 } name ? name : throw new JsonException("Usage month is invalid."),
-                            Count(month.GetProperty("readUnits").GetInt64()), Count(month.GetProperty("writeUnits").GetInt64()), Count(month.GetProperty("units").GetInt64()),
-                            month.TryGetProperty("organizationUnits", out var units) ? Count(units.GetInt64()) : null)
-                        : null;
-                }
-
-                var content = new ByteArrayContent(body);
-                foreach (var header in response.Content.Headers)
-                {
-                    content.Headers.TryAddWithoutValidation(header.Key, header.Value);
-                }
-
-                response.Content.Dispose();
-                response.Content = content;
-                return response;
-            }
-        }
-
         private static long Count(long count)
         {
             return count >= 0 ? count : throw new JsonException("Usage counters must be nonnegative.");
@@ -221,7 +165,7 @@ namespace TerraScale.Dashboard.Features.Usage
 
         private static bool Failure(Exception error, CancellationToken cancellationToken)
         {
-            return error is HttpRequestException or IOException or JsonException or KeyNotFoundException or InvalidOperationException or FormatException or OverflowException or TimeoutException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested;
+            return error is TerraBaseException or HttpRequestException or IOException or JsonException or KeyNotFoundException or InvalidOperationException or FormatException or OverflowException or TimeoutException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested;
         }
     }
 }

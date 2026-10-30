@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>TerraScale.TerraBase.Rpc</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="MagicOnion.Server" />
+    <ProjectReference Include="../TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj" />
+  </ItemGroup>
+</Project>

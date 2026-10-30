@@ -1,6 +1,5 @@
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
-using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Platform.Http
 {

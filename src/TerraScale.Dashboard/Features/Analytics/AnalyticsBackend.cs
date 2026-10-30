@@ -1,22 +1,18 @@
-using System.Net;
-using System.Net.Http.Headers;
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Usage;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Analytics
 {
-    // shortcut: SDK 0.0.3 has usage but no analytics client; use the served TerraBase
-    // analytics route with scoped authority until the SDK exposes it.
-    public sealed class AnalyticsBackend(IHttpClientFactory factory, IProjectAccessTokens projectTokens, IDatabaseBackend databases) : IAnalyticsBackend
+    public sealed class AnalyticsBackend(TerraBaseRpcClient rpc, IProjectAccessTokens projectTokens, IDatabaseBackend databases) : IAnalyticsBackend
     {
         public async Task<AnalyticsBatch> ReadAsync(AnalyticsSelection selection, CancellationToken cancellationToken)
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             deadline.CancelAfter(TimeSpan.FromSeconds(5));
             var token = deadline.Token;
-            var client = factory.CreateClient("platform");
-            var origin = await new TerraBaseDiscovery().ResolveAsync(token);
             var context = selection.Context;
             var project = context.Project!;
             var organization = context.Organization ?? throw new InvalidOperationException("Analytics requires an organization scope.");
@@ -25,21 +21,14 @@ namespace TerraScale.Dashboard.Features.Analytics
             var requestedRegion = selection.Region.Length == 0 ? "" :
                 DatabaseRegion.Resolve(regions, selection.Region)?.Id ?? throw new HttpRequestException("The selected region is unavailable.");
             var scopedToken = await projectTokens.GetAsync(context.Session, organization.Id, project.Id, ["databases:read"], token);
-            var query = $"?range={selection.Range}" +
-                (selection.DatabaseId.Length > 0 ? "&database=" + Uri.EscapeDataString(selection.DatabaseId) : "") +
-                (requestedRegion.Length > 0 ? "&region=" + Uri.EscapeDataString(requestedRegion) : "");
-            var path = $"/v1/projects/{Uri.EscapeDataString(project.Id)}/analytics{query}";
-            using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(origin, path));
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", scopedToken);
-            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
-            if (response.StatusCode == HttpStatusCode.NotFound)
+            JsonElement root;
+            try
             {
-                return new(AnalyticsSourceState.NotMetered, []);
+                root = await rpc.User<IUsageService>(scopedToken).WithCancellationToken(token)
+                    .GetAnalyticsAsync(project.Id, selection.Range, selection.DatabaseId.Length == 0 ? null : selection.DatabaseId,
+                        requestedRegion.Length == 0 ? null : requestedRegion);
             }
-
-            response.EnsureSuccessStatusCode();
-            using var document = await ReadAnalyticsAsync(response.Content, token);
-            var root = document.RootElement;
+            catch (TerraBaseNotFoundException) { return new(AnalyticsSourceState.NotMetered, []); }
             var bucketSeconds = selection.Range switch { "1h" => 60, "24h" => 3600, "7d" => 21600, "30d" => 86400, _ => throw new JsonException("Unknown analytics range.") };
             if (root.GetProperty("projectId").GetString() != project.Id || root.GetProperty("range").GetString() != selection.Range ||
                 root.GetProperty("bucketSeconds").GetInt32() != bucketSeconds)
@@ -111,36 +100,6 @@ namespace TerraScale.Dashboard.Features.Analytics
                 }
             }
             return new(AnalyticsSourceState.Available, points);
-        }
-
-        private static async Task<JsonDocument> ReadAnalyticsAsync(HttpContent content, CancellationToken cancellationToken)
-        {
-            // Match the SDK body bound for dense series; identity/token envelopes keep their smaller shared limit.
-            const int maxBytes = 64 * 1024 * 1024;
-            if (content.Headers.ContentLength > maxBytes)
-            {
-                throw new HttpRequestException("Analytics response is too large.");
-            }
-
-            await using var stream = await content.ReadAsStreamAsync(cancellationToken);
-            using var body = new MemoryStream();
-            var buffer = new byte[65536];
-            while (true)
-            {
-                var count = await stream.ReadAsync(buffer, cancellationToken);
-                if (count == 0)
-                {
-                    break;
-                }
-
-                if (count > maxBytes - body.Length)
-                {
-                    throw new HttpRequestException("Analytics response is too large.");
-                }
-
-                body.Write(buffer, 0, count);
-            }
-            return JsonDocument.Parse(body.GetBuffer().AsMemory(0, checked((int)body.Length)));
         }
 
         private static bool ValidRegionId(string region)

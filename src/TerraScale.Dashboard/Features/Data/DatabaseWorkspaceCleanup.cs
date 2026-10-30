@@ -1,7 +1,7 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts.Documents;
+using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Data
 {
