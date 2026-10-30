@@ -7,7 +7,7 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: "47 2-23/3 * * *"
+    - cron: "29 0-23/3 * * *"
   workflow_dispatch:
     inputs:
       native_artifacts:
