@@ -113,7 +113,11 @@ namespace TerraScale.Dashboard.E2E
                 {
                     var region = http.Request.Host.Host switch
                     {
-                        "127.0.0.1" => "gru", "127.0.0.2" => "sfo", "127.0.0.3" => "sjc", "127.0.0.4" => "fra", _ => ""
+                        "127.0.0.1" => "gru",
+                        "127.0.0.2" => "sfo",
+                        "127.0.0.3" => "sjc",
+                        "127.0.0.4" => "fra",
+                        _ => ""
                     };
                     http.Request.Host = new HostString(region.Length == 0 ? "api.terrascale.tech" : region + ".api.terrascale.tech");
                 }
