@@ -97,7 +97,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                 ["bytes"] = body.Length,
                 ["bearer"] = resolveProjectToken(token)?.UserId,
                 ["scopes"] = resolveProjectToken(token) is { } granted ? string.Join(' ', granted.Scopes.Order(StringComparer.Ordinal)) : null,
-                ["pin"] = request.Headers.TryGetValues("X-TerraScale-Region-Pin", out var pins) ? string.Join(",", pins) : null,
+                ["peerCredential"] = request.Headers.TryGetValues(TerraScale.TerraBase.Contracts.TerraBaseRpc.PeerCredentialHeader, out var peers) && peers.Single() == TestIdentity.PeerSecret,
                 ["fields"] = request.Content?.Headers.ContentType?.MediaType == "application/json" && JsonNode.Parse(body) is JsonObject json
                     ? new JsonArray(json.Select(field => (JsonNode?)field.Key).ToArray()) : null
             });

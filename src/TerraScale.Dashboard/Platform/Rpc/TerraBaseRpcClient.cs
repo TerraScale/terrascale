@@ -163,7 +163,8 @@ namespace TerraScale.Dashboard.Platform.Rpc
             // Reads are named as such; any other call may change state, so it invalidates the request's earlier reads.
             private static bool Mutates(string method)
             {
-                return !(method.StartsWith("Get", StringComparison.Ordinal) || method.StartsWith("List", StringComparison.Ordinal) ||
+                // Publishing storage allowances changes no dashboard account authority or membership.
+                return !(method is "SetOrganizationPlanAsync" or "SetProjectPlanAsync" || method.StartsWith("Get", StringComparison.Ordinal) || method.StartsWith("List", StringComparison.Ordinal) ||
                     method.StartsWith("Query", StringComparison.Ordinal) || method.StartsWith("Read", StringComparison.Ordinal) ||
                     method.StartsWith("Health", StringComparison.Ordinal) || method.StartsWith("Preview", StringComparison.Ordinal) ||
                     method.StartsWith("Stream", StringComparison.Ordinal) || method.StartsWith("Export", StringComparison.Ordinal));

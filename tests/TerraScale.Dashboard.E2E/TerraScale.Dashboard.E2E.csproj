@@ -16,6 +16,8 @@
     <ProjectReference Include="../../src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
     <!-- Fake TerraBase producers serve the dashboard's MagicOnion calls through their REST fakes. -->
     <ProjectReference Include="../../src/TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj" />
+    <!-- Customer journeys exercise the public SDK independently of dashboard RPC. -->
+    <ProjectReference Include="../../sdk/dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="Microsoft.Playwright" />
     <PackageReference Include="Stripe.net" />

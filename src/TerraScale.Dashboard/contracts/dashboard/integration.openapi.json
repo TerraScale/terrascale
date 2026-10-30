@@ -1237,24 +1237,19 @@
         "type": "object",
         "properties": {
           "collection": {
-            "type": "string",
-            "description": "Collection name."
+            "type": "string"
           },
           "id": {
-            "type": "string",
-            "description": "Document key."
+            "type": "string"
           },
           "op": {
-            "type": "string",
-            "description": "upsert or delete."
+            "type": "string"
           },
           "version": {
-            "type": "string",
-            "description": "Decimal operation stamp, preserved as text."
+            "type": "string"
           },
           "origin": {
-            "type": "string",
-            "description": "Original node, 16 hexadecimal digits."
+            "type": "string"
           },
           "document": {
             "oneOf": [
@@ -1262,13 +1257,12 @@
                 "type": "null"
               },
               {
-                "description": "Current document on the serving machine; null if absent, including an upsert since deleted.",
                 "$ref": "#/components/schemas/JsonElement"
               }
             ]
           }
         },
-        "description": "A committed change; deduplicate at-least-once delivery by (Origin, Version, Collection, Id)."
+        "description": "A committed mutation; deduplicate by origin, version, collection and id."
       }
     },
     "securitySchemes": {

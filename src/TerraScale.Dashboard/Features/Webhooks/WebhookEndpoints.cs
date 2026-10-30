@@ -98,13 +98,14 @@ namespace TerraScale.Dashboard.Features.Webhooks
 
             try
             {
+                var unknown = creation && (error is TimeoutException or IOException ||
+                    error is TerraBaseException { Status: >= 500 } ||
+                    error is HttpRequestException request && (request.StatusCode is null || (int)request.StatusCode >= 500));
                 return View(http, context, DatabaseService.Database(context, id), collection, [], [], "",
                     error: error is ArgumentException ? "Enter an HTTPS URL on port 443 without credentials or a fragment (up to 2048 characters)." :
-                        creation && (error is TimeoutException or IOException ||
-                            error is TerraBaseException { Status: >= 500 } ||
-                            error is HttpRequestException request && (request.StatusCode is null || (int)request.StatusCode >= 500))
+                        unknown
                             ? "The result is unknown. Check the endpoint list before retrying; delete and recreate it if its signing secret was lost." : DatabaseResults.Message(error),
-                    status: error is ArgumentException ? 422 : DatabaseResults.Status(error));
+                    status: error is ArgumentException ? 422 : unknown ? 503 : DatabaseResults.Status(error));
             }
             catch (AccountAccessException access) { return DatabaseResults.PageFailure(http, context, access); }
         }

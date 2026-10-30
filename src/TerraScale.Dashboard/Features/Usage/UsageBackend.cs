@@ -1,3 +1,4 @@
+using System.Net;
 using TerraScale.Dashboard.Platform.Rpc;
 using TerraScale.TerraBase.Contracts.Usage;
 using TerraScale.Dashboard.Platform.Observability;
@@ -77,6 +78,12 @@ namespace TerraScale.Dashboard.Features.Usage
                         throw new JsonException("Usage returned a different project or repeated database.");
                     }
 
+                    // The typed RPC response can contain null nested values from a malformed producer.
+                    if (totals.Period is null || totals.Items.Any(item => item.Period is null))
+                    {
+                        throw new JsonException("Usage returned no metering period.");
+                    }
+
                     if (Count(totals.StorageBytes) != checked(totals.Items.Sum(item => Count(item.StorageBytes)) + Count(totals.FileBytes)) ||
                         Count(totals.LogicalBytes) != checked(totals.Items.Sum(item => Count(item.LogicalBytes)) + Count(totals.FileBytes)) ||
                         Count(totals.Documents) != totals.Items.Sum(item => Count(item.Documents)) ||
@@ -92,13 +99,13 @@ namespace TerraScale.Dashboard.Features.Usage
                         Period(totals.Period, first, now, bucket), Points(totals.Series, totals.Period, bucket),
                         [.. totals.Items.Select(item => DatabaseReading(item, project, first, now, bucket, true))], totals.Month is { } monthUsage ? new UsageMonth(monthUsage.Month is { Length: 7 } monthName ? monthName : throw new JsonException("Usage month is invalid."), Count(monthUsage.ReadUnits), Count(monthUsage.WriteUnits), Count(monthUsage.Units), monthUsage.OrganizationUnits is { } organizationUnits ? Count(organizationUnits) : null) : null));
                 }
-                catch (TerraBaseException error) when (error.Status is 401 or 403)
+                catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                 { return new(UsageSourceState.Unauthorized); }
                 // Only a producer 404 after authorization can describe an unregistered empty project.
                 // It provides no authoritative monthly organization ledger, including deleted-project usage.
-                catch (TerraBaseException error) when (authorized && error.Status == 404 && databaseId.Length == 0 && project.Databases.Count == 0)
+                catch (HttpRequestException error) when (authorized && error.StatusCode == HttpStatusCode.NotFound && databaseId.Length == 0 && project.Databases.Count == 0)
                 { return new(UsageSourceState.Measured, new(project.Id, "", 0, 0, new(first, End(now, bucket), bucket, 0, 0), [], [])); }
-                catch (TerraBaseException error) when (error.Status == 404)
+                catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.NotFound)
                 { return new(UsageSourceState.Restricted); }
                 catch (TerraBaseException error) when (error.Status == 400 && error.ErrorCode == "invalid_query")
                 { return new(UsageSourceState.QueryTooExpensive); }
@@ -117,10 +124,10 @@ namespace TerraScale.Dashboard.Features.Usage
                 Points(row.Series, row.Period, bucket, child), []);
         }
 
-        private static UsagePeriod Period(TerraBaseUsagePeriod period, DateTimeOffset from, DateTimeOffset now, string bucket)
+        private static UsagePeriod Period(TerraBaseUsagePeriod? period, DateTimeOffset from, DateTimeOffset now, string bucket)
         {
             var roundedEnd = End(now, bucket);
-            if (period.From != from || period.To != roundedEnd || period.To <= period.From || period.Granularity != bucket)
+            if (period is null || period.From != from || period.To != roundedEnd || period.To <= period.From || period.Granularity != bucket)
             {
                 throw new JsonException("Usage returned an invalid UTC period.");
             }
