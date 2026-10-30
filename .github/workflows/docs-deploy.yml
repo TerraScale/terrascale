@@ -10,6 +10,7 @@ on:
 permissions:
   contents: read
   statuses: read
+  actions: read
 
 concurrency:
   group: docs-production
@@ -17,7 +18,7 @@ concurrency:
 
 jobs:
   eligible:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -64,12 +65,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 ../scripts/docs/check-proof.py docs "$REVISION"
-          gh run list --repo TerraScale/terrascale --branch main --commit "$REVISION" --event push --limit 100 --json status,conclusion > "$RUNNER_TEMP/docs-main-runs.json"
-          python3 - "$RUNNER_TEMP/docs-main-runs.json" <<'PY'
-          import json, sys
-          runs = json.load(open(sys.argv[1]))
-          assert runs and all(run['status'] == 'completed' and run['conclusion'] in ('success', 'skipped') for run in runs), 'Main must be green before deployment'
-          PY
+          python3 scripts/check-main.py "$REVISION"
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: docs-site/.node-version

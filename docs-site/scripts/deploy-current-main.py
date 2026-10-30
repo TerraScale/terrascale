@@ -28,11 +28,7 @@ def main():
     run('git', 'fetch', '--no-tags', 'origin', 'main')
     if revision != run('git', 'rev-parse', 'FETCH_HEAD', capture=True).strip():
         raise SystemExit('Deploy only the current monorepo main revision')
-    runs = json.loads(run('gh', 'run', 'list', '--repo', 'TerraScale/terrascale',
-                          '--branch', 'main', '--commit', revision, '--event', 'push',
-                          '--limit', '100', '--json', 'status,conclusion', capture=True))
-    if not runs or any(item['status'] != 'completed' or item['conclusion'] not in ('success', 'skipped') for item in runs):
-        raise SystemExit('Wait for green main before deploying')
+    run(sys.executable, str(AREA / 'scripts/check-main.py'), revision)
     run(sys.executable, str(ROOT / 'scripts/docs/check-proof.py'), 'docs', revision)
     statuses = json.loads(run('gh', 'api', '--paginate', '--slurp',
                               f'repos/TerraScale/terrascale/commits/{revision}/statuses?per_page=100', capture=True))
