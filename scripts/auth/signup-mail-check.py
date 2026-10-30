@@ -112,9 +112,23 @@ def run():
 
     try:
         domains = api("/domains", retry=True)["hydra:member"]
-        domain = next((item["domain"] for item in domains if item.get("isActive") and not item.get("isPrivate")), None)
-        if not domain or not re.fullmatch(r"[a-z0-9.-]+", domain):
-            raise CheckFailure("No active public disposable email domain")
+        stage = "mailbox_dns"
+        domain = None
+        for item in domains:
+            candidate = item.get("domain", "")
+            if not item.get("isActive") or item.get("isPrivate") or not re.fullmatch(r"[a-z0-9.-]+", candidate):
+                continue
+            # A provider may advertise an active inbox domain whose DNS has expired.
+            # Fail before spending auth mail, rather than blaming delivery after 120s.
+            lookup = json.loads(request(mail, "https://dns.google/resolve?" + urllib.parse.urlencode({"name": candidate, "type": "MX"}),
+                headers={"Accept": "application/dns-json"}, retry=True))
+            if lookup.get("Status") == 0 and any(record.get("type") == 15 and record.get("data", "").split()[-1:] not in ([], ["."])
+                    for record in lookup.get("Answer", [])):
+                domain = candidate
+                break
+        if domain is None:
+            raise CheckFailure("Disposable inbox provider has no active public domain with working MX records")
+        stage = "mailbox_setup"
         address = "ts-mail-check-" + secrets.token_hex(12) + "@" + domain
         credentials = {"address": address, "password": secrets.token_urlsafe(32)}
         creation_attempted = True

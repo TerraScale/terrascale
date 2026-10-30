@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
@@ -8,6 +9,7 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
+using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Store;
 using TerraScale.DotNet.TerraBase;
@@ -240,6 +242,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
             return;
         }
 
+        AuthMetrics.EmailStage(row.Attempts == 0 ? "queue" : "retry_wait", (clock.GetUtcNow() - row.CreatedAt).TotalSeconds);
         try
         {
             await this.AdvanceAsync(claimed.Row, claimed.Version).ConfigureAwait(false);
@@ -260,6 +263,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
             return;
         }
 
+        var preparing = Stopwatch.GetTimestamp();
         var work = this.Open(row);
         if (row.State == "queued")
         {
@@ -311,6 +315,8 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
             return;
         }
 
+        AuthMetrics.EmailStage("prepare", Stopwatch.GetElapsedTime(preparing).TotalSeconds);
+        var sendingAt = Stopwatch.GetTimestamp();
         EmailDeliveryOutcome outcome;
         try
         {
@@ -320,6 +326,10 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         {
             logger.ZLogError(failure, $"Authentication email delivery failed");
             outcome = EmailDeliveryOutcome.Unknown;
+        }
+        finally
+        {
+            AuthMetrics.EmailStage("send", Stopwatch.GetElapsedTime(sendingAt).TotalSeconds);
         }
 
         await this.SaveAsync(outcome == EmailDeliveryOutcome.Retryable && row.Attempts + 1 < MaxAttempts
