@@ -107,7 +107,7 @@ for area in ("auth", "terrabase"):
     assert "needs: [changes, native]" in slow, "Slow must not wait for image publication or rollout"
     assert "cancel-in-progress: true" not in slow, "Main results must survive superseding pushes"
     assert "github.event_name == 'schedule'" in slow, "Slow must leave the push path"
-assert 'cron: "29 0-23/3 * * *"' in workflow
+assert 'cron: "7 1-23/3 * * *"' in workflow
 assert "restore-keys: ${{ runner.os }}-nuget-monorepo-" in workflow
 
 inputs = dockerfile.split("FROM base AS restore-inputs\n", 1)[1].split("\nFROM base AS restored", 1)[0]
