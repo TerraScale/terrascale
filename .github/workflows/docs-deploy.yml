@@ -1,10 +1,11 @@
 name: Docs Deploy
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
+  workflow_call:
+    inputs:
+      revision:
+        required: true
+        type: string
   workflow_dispatch:
 
 permissions:
@@ -18,7 +19,6 @@ concurrency:
 
 jobs:
   eligible:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -28,8 +28,7 @@ jobs:
       - id: proof
         env:
           GH_TOKEN: ${{ github.token }}
-          REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
-          EVENT_NAME: ${{ github.event_name }}
+          REVISION: ${{ inputs.revision || github.sha }}
         run: |
           main=$(gh api repos/TerraScale/terrascale/git/ref/heads/main --jq .object.sha)
           [[ "$REVISION" = "$main" ]] || { echo 'A newer main revision superseded this deployment.'; exit 0; }
@@ -39,7 +38,7 @@ jobs:
           statuses = [item for page in json.load(open(sys.argv[1])) for item in page]
           proof = next((item for item in statuses if item['context'] == 'docs-release/docs'), None)
           qualified = proof and proof['state'] == 'success' and proof['creator']['login'] == 'MarioGK'
-          if not qualified and os.environ['EVENT_NAME'] == 'workflow_dispatch':
+          if not qualified:
               raise SystemExit('Qualify this exact docs commit on a dev host before deploying it')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write(f"deploy={'true' if qualified else 'false'}\nrevision={os.environ['REVISION']}\n")
@@ -65,7 +64,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 ../scripts/docs/check-proof.py docs "$REVISION"
-          python3 scripts/check-main.py "$REVISION"
+          # Automatic deployment depends on Docs Fast in the path-filtered caller.
+          # Manual operator deployment retains the repository-wide green-main check.
+          if [[ "${{ github.event_name }}" == workflow_dispatch ]]; then
+            python3 scripts/check-main.py "$REVISION"
+          fi
+          main=$(gh api repos/TerraScale/terrascale/git/ref/heads/main --jq .object.sha)
+          [[ "$REVISION" = "$main" ]]
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: docs-site/.node-version

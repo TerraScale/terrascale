@@ -20,6 +20,7 @@ on:
 permissions:
   contents: read
   statuses: read
+  actions: read
 
 jobs:
   fast:
@@ -35,3 +36,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python3 scripts/docs/check-proof.py docs "$REVISION"
+
+  deploy:
+    needs: fast
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/docs-deploy.yml
+    with:
+      revision: ${{ github.sha }}
+    secrets: inherit
