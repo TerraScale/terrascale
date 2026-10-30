@@ -72,7 +72,3 @@ dotnet_diagnostic.IDE0350.severity = silent
 
 # Soft limit for editors; long string literals may exceed it.
 max_line_length = 140
-
-# SDK-owned request binding constructs framework exceptions; authored source remains subject to RS0030.
-[GeneratedRouteBuilderExtensions.g.cs]
-dotnet_diagnostic.RS0030.severity = none
