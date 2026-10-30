@@ -86,7 +86,11 @@ public sealed class EmailDispatchTests(TerraBaseFixture fixture)
             await oidc.CreateUserAsync(recipient);
             await StartAsync(oidc, recipient);
             await Assert.That((await oidc.Email.NextAsync()).Recipient).IsEqualTo(recipient);
-            await Assert.That((await oidc.Server.MailStatesAsync()).Count(state => state == "sending")).IsEqualTo(64);
+            // Provider completion can precede the new row's final state write. Inspect
+            // the leased rows themselves rather than counting that unrelated send.
+            var leased = await Task.WhenAll(ids.Select(id => store.GetAsync(AuthStore.MailOutboxCollection, OidcIssuer.InstanceId, id)));
+            await Assert.That(leased.Select(row => row!.Document.GetProperty("state").GetString()).ToArray())
+                .IsEquivalentTo(Enumerable.Repeat("sending", 64).ToArray());
         }
         finally
         {
