@@ -25,7 +25,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 return null;
             }
 
-            if (values.Count != 1 || !TerraScale.DotNet.TerraScaleIds.IsValid(values[0]))
+            if (values.Count != 1 || !TerraScale.Dashboard.Common.Accounts.TerraScaleIds.IsValid(values[0]))
             {
                 throw new AccountAccessException("Workspace identity is invalid.", 400);
             }

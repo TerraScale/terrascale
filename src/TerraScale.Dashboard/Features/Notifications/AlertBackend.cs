@@ -1,33 +1,24 @@
-using System.Net;
+using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Usage;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
-    public sealed class AlertSource(IHttpClientFactory http, IDashboardIdentity identity, IAllowanceNotificationBackend allowances, IHostEnvironment environment) : IAlertSource
+    public sealed class AlertSource(IHttpClientFactory http, IDashboardIdentity identity, IAllowanceNotificationBackend allowances, TerraBaseRpcClient rpc) : IAlertSource
     {
         private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
-        private readonly Uri origin = TerraBaseDashboardState.Origin(environment);
 
         // The same document as the public /v1/projects/{project}/analytics, read over the dashboard's private TerraBase listener.
         public async Task<AlertAnalytics> ReadAnalyticsAsync(string projectId, CancellationToken cancellationToken)
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(origin, $"v1/usage/projects/{Uri.EscapeDataString(projectId)}/analytics?range=1h"))
-            { Version = HttpVersion.Version20, VersionPolicy = HttpVersionPolicy.RequestVersionExact };
-            using var response = await http.CreateClient(TerraBaseDashboardState.ClientName).SendAsync(request, cancellationToken);
-            if (response.StatusCode == HttpStatusCode.NotFound)
-            {
-                return new(DateTimeOffset.UnixEpoch, []);
-            }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new IOException("Project analytics are unavailable.");
-            }
-
-            var root = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+            JsonElement root;
+            try { root = await rpc.Platform<IUsageService>().WithCancellationToken(cancellationToken).GetOperatorAnalyticsAsync(projectId); }
+            catch (TerraBaseNotFoundException) { return new(DateTimeOffset.UnixEpoch, []); }
+            catch (TerraBaseException) { throw new IOException("Project analytics are unavailable."); }
             if (root.GetProperty("projectId").GetString() != projectId || root.GetProperty("bucketSeconds").GetInt32() != 60)
             {
                 throw new JsonException("Analytics returned a different project or window.");
@@ -94,7 +85,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             {
                 try { await rules.RunOnceAsync(stoppingToken); }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-                catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException or OperationCanceledException)
+                catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or OperationCanceledException)
                 {
                     logger.AlertRulesAreUnavailableRetryingNext(error.GetType().Name);
                 }

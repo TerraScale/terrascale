@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
@@ -35,13 +35,13 @@ namespace TerraScale.Dashboard.Features.Auth
             }
 
             var credentials = await identity.ReadAsync(cancellationToken);
-            TerraScaleAuthTokenResponse tokens;
+            TsAuthTokenResponse tokens;
             try
             {
                 tokens = await Client().Oidc.ExchangeAuthorizationCodeAsync(
                     credentials.AuthClientId, credentials.AuthClientSecret, code, flow.RedirectUri, flow.Verifier, cancellationToken);
             }
-            catch (TerraScaleAuthException error) when (error.ErrorCode == "invalid_grant") { throw new SignInRejectedException(); }
+            catch (TsAuthException error) when (error.ErrorCode == "invalid_grant") { throw new SignInRejectedException(); }
             return await SessionAsync(tokens, credentials, flow.Nonce, cancellationToken);
         }
 
@@ -58,16 +58,16 @@ namespace TerraScale.Dashboard.Features.Auth
             var keysRead = SigningKeysAsync(client, cancellationToken);
             // Observe speculative failures even when refresh fails or returns no ID token.
             _ = ObservePublicReadsAsync(metadataRead, keysRead);
-            TerraScaleAuthTokenResponse tokens;
+            TsAuthTokenResponse tokens;
             try
             {
                 tokens = await client.Oidc.RefreshTokenAsync(credentials.AuthClientId, credentials.AuthClientSecret, session.RefreshToken, cancellationToken);
             }
-            catch (TerraScaleAuthException error) when (error.ErrorCode == "invalid_grant" || error.StatusCode is System.Net.HttpStatusCode.BadRequest or System.Net.HttpStatusCode.Unauthorized)
+            catch (TsAuthException error) when (error.ErrorCode == "invalid_grant" || error.StatusCode is System.Net.HttpStatusCode.BadRequest or System.Net.HttpStatusCode.Unauthorized)
             { throw new SignInRejectedException(); }
-            catch (TerraScaleAuthException error) when (error.ErrorCode == "temporarily_unavailable" || error.StatusCode is System.Net.HttpStatusCode.TooManyRequests)
+            catch (TsAuthException error) when (error.ErrorCode == "temporarily_unavailable" || error.StatusCode is System.Net.HttpStatusCode.TooManyRequests)
             { throw new RefreshNotStartedException(error); }
-            catch (HttpRequestException error) when (error is not TerraScaleAuthException && error.HttpRequestError is HttpRequestError.ConnectionError or HttpRequestError.NameResolutionError)
+            catch (HttpRequestException error) when (error is not TsAuthException && error.HttpRequestError is HttpRequestError.ConnectionError or HttpRequestError.NameResolutionError)
             { throw new RefreshNotStartedException(error); }
             if (tokens.ExpiresIn is <= 0 or > 86400 || !string.Equals(tokens.TokenType, "Bearer", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(tokens.AccessToken))
             {
@@ -139,7 +139,7 @@ namespace TerraScale.Dashboard.Features.Auth
             catch (HttpRequestException) { return "/login"; }
         }
 
-        private async Task<SessionRecord> SessionAsync(TerraScaleAuthTokenResponse tokens, DashboardCredentials credentials, string? nonce, CancellationToken cancellationToken)
+        private async Task<SessionRecord> SessionAsync(TsAuthTokenResponse tokens, DashboardCredentials credentials, string? nonce, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(tokens.AccessToken) || tokens.ExpiresIn is <= 0 or > 86400 ||
                 !string.Equals(tokens.TokenType, "Bearer", StringComparison.OrdinalIgnoreCase))
@@ -201,10 +201,10 @@ namespace TerraScale.Dashboard.Features.Auth
             return uri.AbsoluteUri.TrimEnd('/');
         }
 
-        private static async Task<TerraScaleAuthUserInfo> UserInfoAsync(TerraScaleAuthClient client, string accessToken, CancellationToken cancellationToken)
+        private static async Task<TsAuthUserInfo> UserInfoAsync(TsAuthClient client, string accessToken, CancellationToken cancellationToken)
         {
             try { return await client.Oidc.GetUserInfoAsync(accessToken, cancellationToken); }
-            catch (TerraScaleAuthException error) when (error.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            catch (TsAuthException error) when (error.StatusCode == System.Net.HttpStatusCode.Unauthorized)
             { throw new SignInRejectedException(); }
         }
 

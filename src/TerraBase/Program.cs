@@ -15,6 +15,8 @@ using TerraBase.Features.Platform;
 using TerraBase.Features.Pressure;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Regions;
+using TerraBase.Features.Rpc;
+using TerraScale.TerraBase.Rpc;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Sql;
 using TerraBase.Features.Stats;
@@ -107,6 +109,7 @@ builder.Services.AddTerraBaseImport();
 TerraBase.Features.Shapes.ShapesExtensions.AddTerraBaseShapes(builder.Services);
 TerraBase.Features.Shapes.ShapeResumeExtensions.AddTerraBaseShapeResume(builder.Services);
 builder.Services.AddTerraBaseCatalog();
+builder.Services.AddTerraBaseRpc();
 
 try
 {
@@ -122,6 +125,7 @@ try
     }
 
     var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+    app.UseTerraBaseRestPipeline();
     app.UseTerraScaleRequestIdentity(() => TerraBase.Primitives.EntityIds.New().ToString(),
         app.Services.GetRequiredService<InternalCredential>().CorrelationKey);
     app.UseTerraBasePrivateResponses();
@@ -156,6 +160,7 @@ try
     app.MapTerraScaleEndpoints();
     app.MapTerraScaleOpenApi().WithMetadata(new ListenerMetadata(TerraBaseListener.Client));
     app.MapTerraBaseMetrics();
+    app.MapTerraBaseRestRpc();
     await ApplicationRunCompletion.RunAsync(app);
     return 0;
 }

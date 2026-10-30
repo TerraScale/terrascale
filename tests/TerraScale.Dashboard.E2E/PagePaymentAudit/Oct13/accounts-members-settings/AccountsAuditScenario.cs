@@ -9,7 +9,8 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Dashboard.Features.Organizations;
 using TerraScale.Dashboard.Features.Settings;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 using TUnit.Core.Interfaces;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.AccountsMembersSettings

@@ -1,7 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
-using TerraScale.DotNet;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Platform.Persistence
 {

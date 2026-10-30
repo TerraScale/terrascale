@@ -2,7 +2,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Platform.Identity
 {
@@ -340,7 +341,7 @@ namespace TerraScale.Dashboard.Platform.Identity
                     {
                         // The lease stays until it expires; the next request after that replays the refresh once.
                         logger.RefreshOfAStoredTsAuth(collection,
-                            error.GetType().Name, (error as HttpRequestException)?.StatusCode, (error as TerraScale.DotNet.TerraScaleAuthException)?.ErrorCode ?? "none");
+                            error.GetType().Name, (error as HttpRequestException)?.StatusCode, (error as TerraScale.Dashboard.Platform.TsAuth.TsAuthException)?.ErrorCode ?? "none");
                         throw;
                     }
                     catch (RefreshNotStartedException)

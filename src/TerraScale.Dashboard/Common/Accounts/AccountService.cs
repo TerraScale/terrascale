@@ -3,15 +3,17 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet.TerraBase;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 using TerraScale.Dashboard.Features.Auth;
 namespace TerraScale.Dashboard.Common.Accounts
 {
     // ts-auth decides which organizations and projects exist and the caller's role
     // in them. The dashboard stores only its own state for those IDs.
-    public sealed class AccountService(IDashboardState state, TimeProvider time, ITsAuthPlatform platform, IPlatformRoleGateway roles, IHttpClientFactory http, TerraBasePlanSync plans,
+    public sealed class AccountService(IDashboardState state, TimeProvider time, ITsAuthPlatform platform, IPlatformRoleGateway roles, TerraBaseRpcClient rpc, TerraBasePlanSync plans,
         IHttpContextAccessor requests, ILogger<AccountService> logger)
     {
         public const string AccountsCollection = "dashboard_accounts";
@@ -224,9 +226,9 @@ namespace TerraScale.Dashboard.Common.Accounts
             return org;
         }
 
-        private async Task<TerraScaleAuthPlatformProject> PersonalProjectAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+        private async Task<TsAuthPlatformProject> PersonalProjectAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
         {
-            static TerraScaleAuthPlatformProject? Existing(IEnumerable<TerraScaleAuthPlatformProject> projects)
+            static TsAuthPlatformProject? Existing(IEnumerable<TsAuthPlatformProject> projects)
             {
                 return projects.Where(project => project.Name == PersonalName)
                 .OrderBy(project => project.CreatedAt).ThenBy(project => project.Id, StringComparer.Ordinal).FirstOrDefault();
@@ -294,7 +296,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 var org = await stored;
                 // ts-auth refuses an organization that requires two-factor to a caller without it; the
                 // organization stays listed, keeps its stored projects and is blocked when selected.
-                IReadOnlyList<TerraScaleAuthPlatformProject>? listed = null;
+                IReadOnlyList<TsAuthPlatformProject>? listed = null;
                 try { listed = await projects; }
                 catch (AccountAccessException error) when (error.Code == TsAuthGateway.MfaRequiredCode) { org.MfaRequired = true; }
                 Hydrate(org, live, listed, session);
@@ -321,7 +323,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 await plans.PublishAsync(org, cancellationToken);
                 if (platformOrg)
                 {
-                    try { await PlatformDatabases.HydrateAsync(org, http.CreateClient("platform"), session, cancellationToken); }
+                    try { await PlatformDatabases.HydrateAsync(org, rpc, session, cancellationToken); }
                     // Listed without databases while TerraBase does not answer; never cached.
                     catch (Exception error) when (error is HttpRequestException or AccountAccessException or JsonException or KeyNotFoundException or InvalidOperationException) { }
                 }
@@ -391,7 +393,7 @@ namespace TerraScale.Dashboard.Common.Accounts
         }
 
         // An organization created outside the dashboard starts as a business workspace that needs billing.
-        private async Task<OrganizationRecord> OrganizationStateAsync(TerraScaleAuthPlatformOrganization live, CancellationToken cancellationToken, bool create = true)
+        private async Task<OrganizationRecord> OrganizationStateAsync(TsAuthPlatformOrganization live, CancellationToken cancellationToken, bool create = true)
         {
             var document = await state.GetAsync(OrganizationsCollection, live.Id, cancellationToken);
             if (document is null)
@@ -427,7 +429,7 @@ namespace TerraScale.Dashboard.Common.Accounts
         }
 
         // ts-auth's name, the caller's role and the project list replace the stored projection in this view.
-        private static void Hydrate(OrganizationRecord org, TerraScaleAuthPlatformOrganization live, IReadOnlyList<TerraScaleAuthPlatformProject>? projects, SessionRecord session)
+        private static void Hydrate(OrganizationRecord org, TsAuthPlatformOrganization live, IReadOnlyList<TsAuthPlatformProject>? projects, SessionRecord session)
         {
             org.Name = live.Name;
             org.Slug = Slug(live.Name);
@@ -499,7 +501,7 @@ namespace TerraScale.Dashboard.Common.Accounts
             ApplyAccess(org, session, await FetchAccessAsync(session, org.Id, cancellationToken));
         }
 
-        private sealed record OrganizationAccess(IReadOnlyList<TerraScaleAuthPlatformMember> Members, TerraScaleAuthPlatformOwnershipTransfer? Transfer);
+        private sealed record OrganizationAccess(IReadOnlyList<TsAuthPlatformMember> Members, TsAuthPlatformOwnershipTransfer? Transfer);
 
         // The two ts-auth reads are independent, so they run together.
         private async Task<OrganizationAccess> FetchAccessAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)

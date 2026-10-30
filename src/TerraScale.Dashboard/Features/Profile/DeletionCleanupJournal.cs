@@ -1,8 +1,9 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.Dashboard.Platform.TsAuth;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Profile
 {
@@ -11,9 +12,9 @@ namespace TerraScale.Dashboard.Features.Profile
     public sealed class DeletionCleanupJournal(IDashboardState state)
     {
         public const string Collection = "dashboard_deletion_cleanup";
-        public sealed record Entry(TerraScaleAuthDeletionProof Proof, string[] ProjectIds, string[] CustomerIds);
+        public sealed record Entry(TsAuthDeletionProof Proof, string[] ProjectIds, string[] CustomerIds);
 
-        public async Task<Entry> RememberAsync(TerraScaleAuthDeletionProof proof, CancellationToken cancellationToken)
+        public async Task<Entry> RememberAsync(TsAuthDeletionProof proof, CancellationToken cancellationToken)
         {
             if (await state.GetAsync(Collection, proof.Id, cancellationToken) is { } existing)
             {
@@ -84,7 +85,7 @@ namespace TerraScale.Dashboard.Features.Profile
             return Match(stored, entry.Proof);
         }
 
-        private static Entry Match(TerraBaseDocument document, TerraScaleAuthDeletionProof proof)
+        private static Entry Match(TerraBaseDocument document, TsAuthDeletionProof proof)
         {
             var entry = AccountService.Read<Entry>(document);
             if (document.Id != proof.Id || entry.Proof is null || entry.Proof.Id != proof.Id || entry.Proof.Scope != proof.Scope || entry.Proof.SubjectId != proof.SubjectId || entry.Proof.OrganizationId != proof.OrganizationId || entry.ProjectIds is null || entry.CustomerIds is null)

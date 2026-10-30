@@ -9,7 +9,7 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.E2E.Platform
 {

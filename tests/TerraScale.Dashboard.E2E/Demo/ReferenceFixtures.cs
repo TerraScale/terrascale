@@ -5,8 +5,9 @@ using System.Globalization;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Home;
-using TerraScale.DotNet.TerraBase;
-using TerraScale.DotNet;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.E2E
 {

@@ -4,7 +4,8 @@ using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Auth
 {

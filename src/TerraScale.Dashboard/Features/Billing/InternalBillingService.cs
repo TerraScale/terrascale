@@ -5,8 +5,8 @@ using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing.Internal;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Common.Formatting;
-using TerraScale.DotNet.TerraBase;
-using TerraScale.DotNet;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
@@ -94,7 +94,7 @@ namespace TerraScale.Dashboard.Features.Billing
             if (bill is { Available: true, CapReached: true })
             {
                 try { await RecordAlertAsync(principal, organization, bill, refreshAuthority, cancellationToken); }
-                catch (Exception error) when (error is AccountAccessException or IOException or HttpRequestException or JsonException or TimeoutException ||
+                catch (Exception error) when (error is AccountAccessException or IOException or TerraBaseException or HttpRequestException or JsonException or TimeoutException ||
                                               error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                 { throw new InternalBillingReportException(bill, error); }
             }

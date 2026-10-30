@@ -1,5 +1,5 @@
 using System.Text.Json.Serialization;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.ApiKeys
 {
@@ -40,6 +40,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
     [JsonSourceGenerationOptions(RespectNullableAnnotations = true)]
     [JsonSerializable(typeof(AuthAllowedCidrsBody))]
-    [JsonSerializable(typeof(TerraScaleAuthPlatformApiKey))]
+    [JsonSerializable(typeof(TsAuthPlatformApiKey))]
     internal sealed partial class ApiKeyAuthJson : JsonSerializerContext;
 }

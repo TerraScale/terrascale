@@ -1,7 +1,7 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.FileStorage.FileStoragePage>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 @using TerraScale.Dashboard.Features.FileStorage
-@using TerraScale.DotNet.TerraBase
+@using TerraScale.TerraBase.Contracts.FileStorage
 @inject AssetUrls Assets
 @{
     var canWrite = Model.Shell.Context.CanWriteProjectData;

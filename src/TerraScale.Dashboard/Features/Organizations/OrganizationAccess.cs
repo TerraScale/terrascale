@@ -1,6 +1,6 @@
 using System.Net.Mail;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
@@ -108,7 +108,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 default: throw new AccountAccessException("Unknown transfer operation.", 422);
             }
         }
-        public static InvitationRecord Invitation(string organizationId, TerraScaleAuthPlatformInvitation remote)
+        public static InvitationRecord Invitation(string organizationId, TsAuthPlatformInvitation remote)
         {
             return new()
             {
