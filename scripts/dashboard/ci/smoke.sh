@@ -59,6 +59,13 @@ def listen(container):
             raise RuntimeError("Production container exited before announcing its listening server")
         if "Now listening on:" in line or "Application started." in line:
             return
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        # The application's framework logger intentionally redacts message text.
+        if event.get("Category") == "Microsoft.Hosting.Lifetime" and event.get("EventId") == 0:
+            return
 
 
 def request(origin, path):
