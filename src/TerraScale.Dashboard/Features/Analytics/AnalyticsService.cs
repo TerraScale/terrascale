@@ -1,3 +1,4 @@
+using TerraScale.TerraBase.Contracts;
 using TerraScale.Dashboard.Platform.Observability;
 using System.Text.Json;
 using TerraScale.Dashboard.Common.UI;
@@ -47,7 +48,7 @@ namespace TerraScale.Dashboard.Features.Analytics
                 var (totals, charts) = Build(selection, batch.Points);
                 return new(shell, selection, totals, charts);
             }
-            catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException ||
+            catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException ||
                 error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             { ServiceSloTelemetry.MarkFailure(error); return new(shell, selection, null, [], "Could not load analytics measurements. Apply the filters to retry."); }
         }

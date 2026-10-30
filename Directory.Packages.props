@@ -22,6 +22,18 @@
     <PackageVersion Include="Google.Protobuf" Version="3.36.2" />
     <PackageVersion Include="Grpc.Tools" Version="2.84.0" />
   </ItemGroup>
+  <!-- Dashboard-to-TerraBase RPC (src/TerraScale.TerraBase.Contracts): MagicOnion over gRPC with MessagePack. -->
+  <ItemGroup Label="MagicOnion">
+    <PackageVersion Include="MagicOnion.Abstractions" Version="7.11.0" />
+    <PackageVersion Include="MagicOnion.Client" Version="7.11.0" />
+    <PackageVersion Include="MagicOnion.Server" Version="7.11.0" />
+    <PackageVersion Include="MessagePack" Version="3.1.12" />
+    <!-- MagicOnion's gRPC dependencies, pinned to the Grpc.Tools release train above. -->
+    <PackageVersion Include="Grpc.AspNetCore.Server" Version="2.84.0" />
+    <PackageVersion Include="Grpc.Core.Api" Version="2.84.0" />
+    <PackageVersion Include="Grpc.Net.Client" Version="2.84.0" />
+    <PackageVersion Include="Grpc.Net.Common" Version="2.84.0" />
+  </ItemGroup>
   <ItemGroup Label="Microsoft Extensions (Core)">
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="11.0.0-rc.1.26425.128" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="11.0.0-rc.1.26425.128" />

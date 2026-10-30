@@ -2,6 +2,8 @@
   <Folder Name="/src/">
     <Project Path="../../src/TerraScale.Dashboard.Analyzers/TerraScale.Dashboard.Analyzers.csproj" />
     <Project Path="../../src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
+    <Project Path="../../src/TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj" />
+    <Project Path="../../src/TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="../../tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj" />

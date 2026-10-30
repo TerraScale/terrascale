@@ -1,9 +1,9 @@
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Usage;
 using TerraScale.Dashboard.Platform.Observability;
-using System.Net;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Usage
 {
@@ -26,10 +26,8 @@ namespace TerraScale.Dashboard.Features.Usage
         Task<UsageReplication> ReadAsync(UsageSelection selection, CancellationToken cancellationToken);
     }
 
-    // TerraBase currently exposes replication as a project-scoped reporting endpoint,
-    // not through the pinned database SDK. Keep this adapter aligned to that wire
-    // contract and obtain its narrowly scoped token through ts-auth.
-    public sealed class UsageReplicationBackend(IHttpClientFactory factory, IProjectAccessTokens projectTokens, IDatabaseBackend databases) : IUsageReplication
+    // Project-scoped replication observations with current-user authority.
+    public sealed class UsageReplicationBackend(TerraBaseRpcClient rpc, IProjectAccessTokens projectTokens, IDatabaseBackend databases) : IUsageReplication
     {
         public async Task<UsageReplication> ReadAsync(UsageSelection selection, CancellationToken cancellationToken)
         {
@@ -53,32 +51,18 @@ namespace TerraScale.Dashboard.Features.Usage
             deadline.CancelAfter(TimeSpan.FromSeconds(5));
             try
             {
-                var client = factory.CreateClient("platform");
-                var origin = await new TerraBaseDiscovery().ResolveAsync(deadline.Token);
                 var token = await projectTokens.GetAsync(context.Session, organization.Id, project.Id, ["databases:read"], deadline.Token);
-                var path = $"/v1/projects/{Uri.EscapeDataString(project.Id)}/replication?range={Uri.EscapeDataString(selection.Range)}";
-                if (selection.DatabaseId.Length > 0)
+                JsonElement root;
+                try
                 {
-                    path += "&database=" + Uri.EscapeDataString(selection.DatabaseId);
+                    root = await rpc.User<IUsageService>(token).WithCancellationToken(deadline.Token)
+                        .GetReplicationAsync(project.Id, selection.Range, selection.DatabaseId.Length == 0 ? null : selection.DatabaseId);
                 }
-
-                using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(origin, path));
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
-                if (response.StatusCode == HttpStatusCode.NotFound)
-                {
-                    return new([], [], Error: "TerraBase couldn't find this project for replication reporting.");
-                }
-
-                if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-                {
-                    return new([], [], Error: "TerraBase didn't authorize replication data for this project.");
-                }
-
-                response.EnsureSuccessStatusCode();
-                using var json = await PlatformJson.ReadAsync(response.Content, deadline.Token);
+                catch (TerraBaseNotFoundException) { return new([], [], Error: "TerraBase couldn't find this project for replication reporting."); }
+                catch (TerraBaseException error) when (error.Status is 401 or 403)
+                { return new([], [], Error: "TerraBase didn't authorize replication data for this project."); }
                 var regionCatalog = await databases.RegionsAsync(deadline.Token);
-                return Parse(json.RootElement, project, selection.DatabaseId, selection.Range, regionCatalog);
+                return Parse(root, project, selection.DatabaseId, selection.Range, regionCatalog);
             }
             catch (Exception error) when (Unavailable(error, cancellationToken))
             {
@@ -282,7 +266,7 @@ namespace TerraScale.Dashboard.Features.Usage
         }
         private static bool Unavailable(Exception error, CancellationToken cancellationToken)
         {
-            return error is HttpRequestException or IOException or JsonException or KeyNotFoundException or InvalidOperationException or FormatException or OverflowException or ArgumentException ||
+            return error is TerraBaseException or HttpRequestException or IOException or JsonException or KeyNotFoundException or InvalidOperationException or FormatException or OverflowException or ArgumentException ||
             error is OperationCanceledException && !cancellationToken.IsCancellationRequested;
         }
     }

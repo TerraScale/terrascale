@@ -13,5 +13,6 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Npgsql" />
+    <PackageReference Include="MagicOnion.Client" />
   </ItemGroup>
 </Project>

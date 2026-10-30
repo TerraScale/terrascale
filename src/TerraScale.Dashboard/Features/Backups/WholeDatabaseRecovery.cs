@@ -1,7 +1,11 @@
+using System.Text.Json;
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts.Management;
+using TerraScale.TerraBase.Contracts.Backups;
 using System.Globalization;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Common.UI;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Backups
 {
@@ -9,7 +13,7 @@ namespace TerraScale.Dashboard.Features.Backups
     public sealed record WholeDatabaseRecoveryPage(ShellModel Shell, DatabaseRecord Database, string Destination = "platform", string Point = "",
         string Name = "", string ConfirmName = "", WholeDatabaseWindow? Available = null, TerraBasePointInTimePlan? Plan = null, string Error = "");
 
-    public sealed class WholeDatabaseRecovery(IHttpClientFactory factory, IProjectAccessTokens tokens, DatabaseService databases, BackupService backups)
+    public sealed class WholeDatabaseRecovery(TerraBaseRpcClient rpc, IProjectAccessTokens tokens, DatabaseService databases, BackupService backups)
     {
         public async Task<(AccountContext Context, DatabaseRecord Database)> SourceAsync(AccountContext context, string id, CancellationToken ct)
         {
@@ -38,7 +42,7 @@ namespace TerraScale.Dashboard.Features.Backups
             (context, var source) = await SourceAsync(context, databaseId, ct);
             Destination(destination);
             TerraBaseRestoreWindow? window = null;
-            try { window = await SafeAsync(async () => await (await ClientAsync(context, source, "databases:read", ct)).Database(context.Project!.Id, source.Name).GetRestoreWindowAsync(destination, ct)); }
+            try { window = await SafeAsync(async () => await (await ClientAsync(context, source, "databases:read", ct)).GetRestoreWindowAsync(context.Project!.Id, source.Name, destination)); }
             catch (AccountAccessException error) when (error.StatusCode == 404) { }
             if (window is not null && (window.Earliest == default || window.Latest < window.Earliest))
             {
@@ -52,7 +56,7 @@ namespace TerraScale.Dashboard.Features.Backups
         {
             (context, var source) = await SourceAsync(context, databaseId, ct);
             var instant = Instant(point, await WindowAsync(context, databaseId, destination, ct));
-            var plan = await SafeAsync(async () => await (await ClientAsync(context, source, "databases:read", ct)).Database(context.Project!.Id, source.Name).PlanPointInTimeAsync(instant, destination, ct));
+            var plan = await SafeAsync(async () => await (await ClientAsync(context, source, "databases:read", ct)).PlanPointInTimeAsync(context.Project!.Id, source.Name, new(instant, null, destination)));
             if (plan.HistoryCheck != "metadata" || plan.PointInTime != instant || plan.SnapshotAt == default || plan.SnapshotAt > instant || plan.SegmentCount < 0 ||
                 plan.Window is null || plan.Window.Earliest > instant || plan.Window.Latest < instant)
             {
@@ -76,13 +80,15 @@ namespace TerraScale.Dashboard.Features.Backups
 
             var instant = Instant(point, await WindowAsync(context, databaseId, destination, ct));
             var home = await databases.HomeAsync(context, source, ct);
-            var restored = await SafeAsync(async () => await (await ClientAsync(context, source, "databases:write", ct)).Database(context.Project!.Id, source.Name).RestorePointInTimeAsync(instant, name, destination, ct));
+            var restoredJson = await SafeAsync(async () => await (await ClientAsync(context, source, "databases:write", ct)).RestorePointInTimeAsync(context.Project!.Id, source.Name, new(instant, name, destination)));
+            var restored = restoredJson.Deserialize(BackupBackendJson.Default.ManagedDatabase) ?? throw new JsonException("Invalid restored database.");
             if (restored.Id == source.Id || restored.Name != name || restored.ProjectId != context.Project!.Id || restored.BranchedFrom != source.Id)
             {
                 throw new AccountAccessException("Restore could not be confirmed. Check the database list before submitting another restore.", 503);
             }
 
-            var placed = await SafeAsync(async () => await (await ClientAsync(context, source, "databases:read", ct)).Project(context.Project!.Id).GetDatabaseAsync(name, ct));
+            var readToken = await tokens.GetAsync(context.Session, context.Organization!.Id, context.Project!.Id, ["databases:read"], ct);
+            var placed = await SafeAsync(async () => await rpc.User<IManagementService>(readToken, home.Id).WithCancellationToken(ct).GetDatabaseAsync(context.Project.Id, name));
             if (placed.Id != restored.Id || placed.CreatedAt != restored.CreatedAt || placed.ReplicaRegions is null)
             {
                 throw new AccountAccessException("Restore readback could not be confirmed. Check the database list before submitting another restore.", 503);
@@ -116,12 +122,11 @@ namespace TerraScale.Dashboard.Features.Backups
 
             return instant;
         }
-        private async Task<TerraBaseDocumentsClient> ClientAsync(AccountContext context, DatabaseRecord source, string permission, CancellationToken ct)
+        private async Task<IBackupsService> ClientAsync(AccountContext context, DatabaseRecord source, string permission, CancellationToken ct)
         {
             var home = await databases.HomeAsync(context, source, ct);
             var access = await tokens.GetAsync(context.Session, context.Organization!.Id, context.Project!.Id, [permission], ct);
-            return new(factory.CreateClient("platform"), new TerraBaseDocumentsClientOptions
-            { BaseAddress = home.Api, Region = home.Id, AccessTokenProvider = _ => ValueTask.FromResult(access) });
+            return rpc.User<IBackupsService>(access, home.Id).WithCancellationToken(ct);
         }
         private static async Task<T> SafeAsync<T>(Func<Task<T>> action)
         {
@@ -137,16 +142,16 @@ namespace TerraScale.Dashboard.Features.Backups
                     "backup_unreadable" => "Required backup history could not be verified. Contact support with the request ID.",
                     "database_limit" => "Restoring needs one free database slot in your organization allowance. No quota is increased.",
                     "name_taken" => "That database name is already in use. Choose a new name.",
-                    _ => error.StatusCode switch
+                    _ => error.Status switch
                     {
-                        System.Net.HttpStatusCode.BadRequest => "The time is outside retained history or the recovery input is invalid. Refresh the window.",
-                        System.Net.HttpStatusCode.NotFound => "No retained PITR history is available for this source bucket.",
-                        System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.Unauthorized => "Recovery access was refused. Check your organization and project access.",
-                        System.Net.HttpStatusCode.Conflict => "Recovery conflicts with the current database state. Refresh the window and review the new name.",
+                        400 => "The time is outside retained history or the recovery input is invalid. Refresh the window.",
+                        404 => "No retained PITR history is available for this source bucket.",
+                        403 or 401 => "Recovery access was refused. Check your organization and project access.",
+                        409 => "Recovery conflicts with the current database state. Refresh the window and review the new name.",
                         _ => "Recovery is temporarily unavailable. Check the database list before retrying a restore; its outcome may be unknown."
                     }
                 };
-                throw new AccountAccessException(message, (int?)error.StatusCode ?? 503);
+                throw new AccountAccessException(message, error.Status);
             }
             catch (Exception error) when (error is HttpRequestException or IOException or TimeoutException or System.Text.Json.JsonException or OperationCanceledException)
             { throw new AccountAccessException("Recovery could not be confirmed. Check the database list before retrying a restore; its outcome may be unknown.", 503); }

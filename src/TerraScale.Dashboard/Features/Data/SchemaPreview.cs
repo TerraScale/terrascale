@@ -1,9 +1,9 @@
-using System.Net;
-using System.Net.Http.Headers;
 using System.Text.Json;
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Common.UI;
-using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts.Schema;
+using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Data
 {
@@ -13,11 +13,8 @@ namespace TerraScale.Dashboard.Features.Data
     public sealed record SchemaPreviewPage(ShellModel Shell, DatabaseRecord Database, string Collection, string Schema = "{}",
         string Cursor = "", SchemaPreviewResult? Preview = null, string Error = "");
 
-    public sealed class SchemaPreview(IHttpClientFactory factory, IProjectAccessTokens tokens, DatabaseService databases)
+    public sealed class SchemaPreview(TerraBaseRpcClient rpc, IProjectAccessTokens tokens, DatabaseService databases)
     {
-        private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
-        { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower, RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true };
-
         public async Task<SchemaPreviewResult> ReadAsync(AccountContext context, DatabaseRecord database, string collection, string schema, string cursor, CancellationToken cancellationToken)
         {
             if (context.Role != "owner")
@@ -48,24 +45,17 @@ namespace TerraScale.Dashboard.Features.Data
             var scope = DatabaseService.Scope(context);
             var home = await databases.HomeAsync(context, database, cancellationToken);
             var access = await tokens.GetAsync(scope.Session!, scope.OrganizationId, scope.ProjectId, ["documents:read", "documents:write"], cancellationToken);
-            var path = $"/v1/projects/{Uri.EscapeDataString(scope.ProjectId)}/databases/{Uri.EscapeDataString(database.Name)}/collections/{Uri.EscapeDataString(collection)}/schema/preview";
-            if (cursor.Length > 0)
+            TerraBaseSchemaPreview result;
+            try
             {
-                path += "?cursor=" + Uri.EscapeDataString(cursor);
+                result = await rpc.User<ISchemaService>(access, home.Id).WithCancellationToken(cancellationToken)
+                    .PreviewSchemaAsync(scope.ProjectId, database.Name, collection, parsed.RootElement, cursor.Length == 0 ? null : cursor);
             }
-
-            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(home.Api, path)) { Content = new StringContent(schema, System.Text.Encoding.UTF8, "application/json") };
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", access);
-            request.Headers.Add("X-TerraScale-Region-Pin", home.Id);
-            using var response = await factory.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            if (response.StatusCode == HttpStatusCode.Conflict)
+            catch (TerraBaseConflictException)
             {
                 throw new AccountAccessException("This preview is stale. Data changed or the continuation expired. Start again; previous progress has been cleared.", 409);
             }
 
-            response.EnsureSuccessStatusCode();
-            using var document = await PlatformJson.ReadAsync(response.Content, cancellationToken);
-            var result = document.RootElement.Deserialize<SchemaPreviewResult>(Json) ?? throw new JsonException();
             if (result.Examined is < 0 or > 100 || result.Valid < 0 || result.Invalid < 0 || result.Valid + result.Invalid != result.Examined ||
                 result.Diagnostics is null || result.Diagnostics.Count > 16 || result.SchemaHash is not { Length: 64 } || !result.SchemaHash.All(char.IsAsciiHexDigit) ||
                 result.Frontier is not { Length: 64 } || !result.Frontier.All(char.IsAsciiHexDigit) ||
@@ -76,7 +66,9 @@ namespace TerraScale.Dashboard.Features.Data
                 throw new JsonException("Schema preview response is invalid.");
             }
 
-            return result;
+            return new(result.Examined, result.Valid, result.Invalid,
+                [.. result.Diagnostics.Select(item => new SchemaPreviewDiagnostic(item.IdHash, item.PathHash, item.Keyword))],
+                result.SchemaHash, result.Frontier, result.Complete, result.NextCursor);
         }
     }
 
@@ -115,7 +107,7 @@ namespace TerraScale.Dashboard.Features.Data
                         var result = await preview.ReadAsync(context, database, page.Collection, page.Schema, form["cursor"].ToString(), http.RequestAborted);
                         page = page with { Preview = result, Cursor = result.NextCursor ?? "" };
                     }
-                    catch (Exception error) when (error is JsonException or HttpRequestException or IOException or AccountAccessException)
+                    catch (Exception error) when (error is JsonException or HttpRequestException or IOException or AccountAccessException or TerraBaseException)
                     {
                         status = error is JsonException ? 503 : DatabaseResults.Status(error);
                         page = page with { Error = error is JsonException ? "The preview service returned an invalid response. Start again shortly." : DatabaseResults.Message(error) };

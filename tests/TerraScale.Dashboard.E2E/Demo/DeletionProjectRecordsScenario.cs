@@ -9,7 +9,8 @@ using TerraScale.Dashboard.Features.Logs;
 using TerraScale.Dashboard.Features.Notifications;
 using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.E2E
 {

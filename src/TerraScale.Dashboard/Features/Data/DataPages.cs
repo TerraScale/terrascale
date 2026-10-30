@@ -1,12 +1,12 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Common.Formatting;
 using TerraScale.Dashboard.Common.UI;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Data
 {
     public sealed record DataPage(ShellModel Shell, DatabaseRecord Database, string Section, string Collection,
-        IReadOnlyList<TerraBaseCollection> Collections, DocumentBrowse Browse, string Search = "", string Sort = "", bool Descending = false,
+        IReadOnlyList<TerraBaseCollectionInfo> Collections, DocumentBrowse Browse, string Search = "", string Sort = "", bool Descending = false,
         string Layout = "grid", string Error = "", string FormError = "", string Dialog = "", string DocumentId = "", string DocumentJson = "{}",
         string Version = "", string Operation = "replace", string Sql = "", DatabaseSqlResult? SqlResult = null,
         IReadOnlyList<DatabaseIndex>? Indexes = null, string Schema = "", IReadOnlyList<SavedQuery>? SavedQueries = null, string QueryName = "",

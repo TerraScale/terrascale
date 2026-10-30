@@ -1,7 +1,5 @@
 using System.Diagnostics;
 using System.Globalization;
-using TerraScale.DotNet;
-using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Platform.Http
 {
@@ -80,25 +78,12 @@ namespace TerraScale.Dashboard.Platform.Http
             }
         }
 
-        // Token grants and publishing storage allowances change none of the account/permission/billing
-        // records the dashboard context reads. All other mutations still invalidate it, including failed writes.
+        // Token grants change none of the account/permission/billing records the dashboard context reads.
+        // All other HTTP mutations invalidate it, including failed writes.
         private static bool Mutates(HttpRequestMessage request)
         {
             return request.Method != HttpMethod.Get && request.Method != HttpMethod.Head && request.Method != HttpMethod.Options &&
-            !(Upstream(request.RequestUri) == "auth" && request.RequestUri!.AbsolutePath.EndsWith("/oauth/token", StringComparison.Ordinal)) &&
-            !PublishesPlan(request);
-        }
-
-        private static bool PublishesPlan(HttpRequestMessage request)
-        {
-            if (request.Method != HttpMethod.Put || Upstream(request.RequestUri) != "state" ||
-                !request.Options.TryGetValue(TerraBasePlanSync.Publication, out _))
-            {
-                return false;
-            }
-
-            return request.RequestUri!.AbsolutePath.Split('/') is
-                ["", "admin", "organizations" or "projects", var id, "plan"] && TerraScaleIds.IsValid(id);
+            !(Upstream(request.RequestUri) == "auth" && request.RequestUri!.AbsolutePath.EndsWith("/oauth/token", StringComparison.Ordinal));
         }
 
         // Upstream names by host: ts-auth, TerraBase's public API, the dashboard's own state database, Stripe.
@@ -197,6 +182,45 @@ namespace TerraScale.Dashboard.Platform.Http
         }
 
         // Times every request sent through a dashboard HttpClient into the current page's record.
+        // A TerraBase MagicOnion call (Platform/Rpc) counts like an HTTP one: a mutation invalidates this request's
+        // earlier reads, and the call is timed and logged under its fixed service/method name.
+        public static async Task<T> RpcAsync<T>(string operation, bool mutation, Func<Task<T>> call)
+        {
+            var timing = Current.Value;
+            if (timing is null)
+            {
+                return await call();
+            }
+
+            if (mutation)
+            {
+                Interlocked.Increment(ref timing.pendingWrites);
+                Interlocked.Increment(ref timing.writes);
+            }
+            var started = timing.clock.Elapsed.TotalMilliseconds;
+            var status = 0;
+            try
+            {
+                var result = await call();
+                status = 200;
+                return result;
+            }
+            finally
+            {
+                if (mutation)
+                {
+                    Interlocked.Increment(ref timing.writes);
+                    Interlocked.Decrement(ref timing.pendingWrites);
+                }
+                var ended = timing.clock.Elapsed.TotalMilliseconds;
+                timing.Record("terrabase", started, ended);
+                if (!timing.probe && timing.logger is { } logger && logger.IsEnabled(LogLevel.Information))
+                {
+                    logger.UpstreamTimingStartMsDurationMs("terrabase", "rpc", "RPC", operation, status, started, ended - started);
+                }
+            }
+        }
+
         public sealed class Handler : DelegatingHandler
         {
             protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

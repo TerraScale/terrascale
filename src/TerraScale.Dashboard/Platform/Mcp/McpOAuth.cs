@@ -6,7 +6,8 @@ using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Common.UI;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Platform.Mcp
 {

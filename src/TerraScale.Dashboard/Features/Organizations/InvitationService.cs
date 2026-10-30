@@ -1,10 +1,10 @@
 using System.Net.Mail;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
-    public sealed record PendingInvitation(OrganizationRecord Organization, InvitationRecord Invitation, TerraScaleAuthPlatformNamed? Project = null);
+    public sealed record PendingInvitation(OrganizationRecord Organization, InvitationRecord Invitation, TsAuthPlatformNamed? Project = null);
 
     // ts-auth stores invitations and their tokens, checks the invitee's verified
     // email and grants the membership. The dashboard keeps no token or index; it
@@ -130,7 +130,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 new InvitationRecord { OrganizationId = found.Organization.Id, ProjectId = found.Project?.Id, Email = found.Email, Role = found.Role, ExpiresAt = found.ExpiresAt }, found.Project);
         }
 
-        private static bool ValidNamed(TerraScaleAuthPlatformNamed? named)
+        private static bool ValidNamed(TsAuthPlatformNamed? named)
         {
             return named is not null && TerraScaleIds.IsValid(named.Id) &&
             named.Name is { Length: >= 1 and <= 128 } name && name == name.Trim() && name.Any(char.IsLetterOrDigit) && !name.Any(char.IsControl);
@@ -196,7 +196,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         // its recorded id or, for a lost response, an invitation for its email and target that it did not know and
         // that no other reservation records. Each listed invitation ends at most one reservation, within this
         // compare-and-set, so the reservations left for an email cover every request for it that may still commit.
-        private static void Reconcile(OrganizationRecord org, IReadOnlyList<TerraScaleAuthPlatformInvitation> invitations)
+        private static void Reconcile(OrganizationRecord org, IReadOnlyList<TsAuthPlatformInvitation> invitations)
         {
             foreach (var key in org.InvitationReservations.Keys.ToArray())
             {
@@ -222,7 +222,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         }
 
         // ts-auth holds one pending invitation per email and target: the organization, or one of its projects.
-        private static bool Same(TerraScaleAuthPlatformInvitation invitation, InvitationReservation reservation)
+        private static bool Same(TsAuthPlatformInvitation invitation, InvitationReservation reservation)
         {
             return invitation.Email.Equals(reservation.Email, StringComparison.OrdinalIgnoreCase) && invitation.ProjectId == reservation.ProjectId;
         }
@@ -232,7 +232,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         // just accepted counts once. No clock decides anything here.
         // An email that already holds a reservation is invited again on that slot: ts-auth keeps one pending
         // invitation per email and target, so a retry and the request it replaces never both hold an invitation.
-        private static void Capacity(OrganizationRecord org, IReadOnlyList<TerraScaleAuthPlatformMember> members, IReadOnlyList<TerraScaleAuthPlatformInvitation> invitations, string email)
+        private static void Capacity(OrganizationRecord org, IReadOnlyList<TsAuthPlatformMember> members, IReadOnlyList<TsAuthPlatformInvitation> invitations, string email)
         {
             if (org.DeletionRequested)
             {

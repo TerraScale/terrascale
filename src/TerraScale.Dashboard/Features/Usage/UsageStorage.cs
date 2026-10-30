@@ -1,3 +1,4 @@
+using TerraScale.TerraBase.Contracts;
 using TerraScale.Dashboard.Platform.Observability;
 using System.Text.Json;
 
@@ -174,11 +175,10 @@ namespace TerraScale.Dashboard.Features.Usage
 
         // This filter only surrounds discovery/statistics IO after fresh scope
         // authorization. A producer rejection is unknown storage, not a zero or a
-        // substitute authorization decision for the dashboard. HttpRequestException
-        // also covers the official SDK's TerraBaseException status subclasses.
+        // substitute authorization decision for the dashboard.
         private static bool Unavailable(Exception error, CancellationToken cancellationToken)
         {
-            return error is HttpRequestException or IOException or JsonException or InvalidOperationException or OverflowException ||
+            return error is TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or OverflowException ||
             error is OperationCanceledException && !cancellationToken.IsCancellationRequested;
         }
     }

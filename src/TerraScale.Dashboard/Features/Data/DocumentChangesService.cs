@@ -1,14 +1,15 @@
-using System.Net;
 using System.Runtime.CompilerServices;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Contracts.Changes;
+using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Data
 {
     public sealed record DocumentChangesUpdate(string State, string? Cursor, TerraBaseChange? Change = null, string? Region = null);
 
-    // One SDK connection per request. The consumer owns reconnects and keeps the collection filter unchanged.
-    public sealed class DocumentChangesService(DatabaseService databases, IProjectAccessTokens tokens, IHttpClientFactory http)
+    // One RPC stream per request. The consumer owns reconnects and keeps the collection filter unchanged.
+    public sealed class DocumentChangesService(DatabaseService databases, IProjectAccessTokens tokens, TerraBaseRpcClient rpc)
     {
         public async IAsyncEnumerable<DocumentChangesUpdate> ReadAsync(AccountContext context, string databaseId, string collection,
             string? cursor = null, string? lastEventId = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -18,23 +19,18 @@ namespace TerraScale.Dashboard.Features.Data
             var home = await databases.HomeAsync(context, database, cancellationToken);
             var scope = DatabaseService.Scope(context);
             var token = await tokens.GetAsync(context.Session, scope.OrganizationId, scope.ProjectId, ["documents:read"], cancellationToken);
-            var client = new TerraBaseDocumentsClient(http.CreateClient("platform"), new TerraBaseDocumentsClientOptions
-            {
-                BaseAddress = home.Api,
-                Region = home.Id,
-                AccessTokenProvider = _ => ValueTask.FromResult(token)
-            });
+            var client = rpc.User<IChangesService>(token, home.Id).WithCancellationToken(cancellationToken);
             var seen = new HashSet<(string Origin, string Version, string Collection, string Id)>();
             var order = new Queue<(string Origin, string Version, string Collection, string Id)>();
             var checkpoint = lastEventId ?? (cursor == "now" ? null : cursor);
-            await using var stream = client.Database(scope.ProjectId, database.Name)
-                .StreamChangesAsync(cursor, lastEventId, [collection], cancellationToken).GetAsyncEnumerator(cancellationToken);
+            await using var stream = RpcStreams.Read(client.StreamChangesAsync(scope.ProjectId, database.Name, cursor, lastEventId, [collection]), cancellationToken)
+                .GetAsyncEnumerator(cancellationToken);
             while (true)
             {
                 var expired = false;
                 bool hasNext;
                 try { hasNext = await stream.MoveNextAsync(); }
-                catch (TerraBaseException error) when (error.StatusCode == HttpStatusCode.Gone && error.ErrorCode == "cursor_expired")
+                catch (TerraBaseException error) when (error.Status == 410 && error.ErrorCode == "cursor_expired")
                 { hasNext = false; expired = true; }
                 if (expired)
                 {

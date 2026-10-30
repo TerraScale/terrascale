@@ -6,8 +6,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.Dashboard.Platform.TsAuth;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.E2E.Features.Organizations
 {
@@ -300,7 +301,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 return members.Select(member => member.Email).Union(invitations.Where(invitation => invitation.Status == "pending").Select(invitation => invitation.Email), StringComparer.OrdinalIgnoreCase).Count();
             }
 
-            public async Task<IReadOnlyList<TerraScaleAuthPlatformInvitation>> InvitationsAsync(string email)
+            public async Task<IReadOnlyList<TsAuthPlatformInvitation>> InvitationsAsync(string email)
             {
                 return [.. (await Platform.ListInvitationsAsync(owner, organizationId, default)).Where(invitation => invitation.Email == email)];
             }
@@ -421,13 +422,13 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
 
             private static SessionRecord Invitee => new("invitee", "Invitee", "", "", null, DateTimeOffset.UtcNow.AddHours(1));
 
-            public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformInvitation>> ListProjectInvitationsAsync(SessionRecord session,
+            public Task<TsAuthPlatformPage<TsAuthPlatformInvitation>> ListProjectInvitationsAsync(SessionRecord session,
                 string organizationId, string projectId, string? after, CancellationToken cancellationToken)
             {
                 return inner.ListProjectInvitationsAsync(session, organizationId, projectId, after, cancellationToken);
             }
 
-            public async Task<IReadOnlyList<TerraScaleAuthPlatformInvitation>> ListInvitationsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+            public async Task<IReadOnlyList<TsAuthPlatformInvitation>> ListInvitationsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
             {
                 var result = await inner.ListInvitationsAsync(session, organizationId, cancellationToken);
                 Interlocked.CompareExchange(ref pauseMembers, 2, 1);
@@ -438,7 +439,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 return ListedExpiry is { } expiry ? [.. result.Select(invitation => invitation with { ExpiresAt = DateTimeOffset.UtcNow + expiry })] : result;
             }
 
-            public async Task<TerraScaleAuthPlatformCreatedInvitation> CreateInvitationAsync(SessionRecord session, string organizationId, string email, string role, CancellationToken cancellationToken)
+            public async Task<TsAuthPlatformCreatedInvitation> CreateInvitationAsync(SessionRecord session, string organizationId, string email, string role, CancellationToken cancellationToken)
             {
                 Interlocked.Increment(ref creates);
                 if (email == DeferredEmail)
@@ -462,12 +463,12 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 return created;
             }
 
-            public Task<IReadOnlyList<TerraScaleAuthPlatformOrganization>> ListOrganizationsAsync(SessionRecord session, CancellationToken cancellationToken)
+            public Task<IReadOnlyList<TsAuthPlatformOrganization>> ListOrganizationsAsync(SessionRecord session, CancellationToken cancellationToken)
             {
                 return inner.ListOrganizationsAsync(session, cancellationToken);
             }
 
-            public Task<TerraScaleAuthPlatformOrganization> CreateOrganizationAsync(SessionRecord session, string name, CancellationToken cancellationToken)
+            public Task<TsAuthPlatformOrganization> CreateOrganizationAsync(SessionRecord session, string name, CancellationToken cancellationToken)
             {
                 return inner.CreateOrganizationAsync(session, name, cancellationToken);
             }
@@ -492,7 +493,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 return inner.DeleteOrganizationAsync(session, organizationId, cancellationToken);
             }
 
-            public async Task<IReadOnlyList<TerraScaleAuthPlatformMember>> ListMembersAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+            public async Task<IReadOnlyList<TsAuthPlatformMember>> ListMembersAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
             {
                 var members = await inner.ListMembersAsync(session, organizationId, cancellationToken);
                 if (Interlocked.CompareExchange(ref pauseMembers, 0, 2) == 2) { MembersArrived.TrySetResult(); await MembersRelease.Task.WaitAsync(cancellationToken); }
@@ -508,7 +509,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 return inner.RemoveMemberAsync(session, organizationId, userId, cancellationToken);
             }
 
-            public Task<TerraScaleAuthPlatformProjectMember> SetProjectMemberRoleAsync(SessionRecord session, string organizationId, string projectId, string userId, string role, CancellationToken cancellationToken)
+            public Task<TsAuthPlatformProjectMember> SetProjectMemberRoleAsync(SessionRecord session, string organizationId, string projectId, string userId, string role, CancellationToken cancellationToken)
             {
                 return inner.SetProjectMemberRoleAsync(session, organizationId, projectId, userId, role, cancellationToken);
             }
@@ -518,17 +519,17 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 return inner.RemoveProjectMemberAsync(session, organizationId, projectId, userId, cancellationToken);
             }
 
-            public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformProjectMember>> ListProjectMembersAsync(SessionRecord session, string organizationId, string projectId, string? after, CancellationToken cancellationToken)
+            public Task<TsAuthPlatformPage<TsAuthPlatformProjectMember>> ListProjectMembersAsync(SessionRecord session, string organizationId, string projectId, string? after, CancellationToken cancellationToken)
             {
                 return inner.ListProjectMembersAsync(session, organizationId, projectId, after, cancellationToken);
             }
 
-            public Task<IReadOnlyList<TerraScaleAuthPlatformProject>> ListProjectsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+            public Task<IReadOnlyList<TsAuthPlatformProject>> ListProjectsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
             {
                 return inner.ListProjectsAsync(session, organizationId, cancellationToken);
             }
 
-            public Task<TerraScaleAuthPlatformProject> CreateProjectAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken)
+            public Task<TsAuthPlatformProject> CreateProjectAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken)
             {
                 return inner.CreateProjectAsync(session, organizationId, name, cancellationToken);
             }
@@ -561,12 +562,12 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                     throw new HttpRequestException("Synthetic lost revoke response after commit.");
                 }
             }
-            public Task<TerraScaleAuthPlatformInvitationLookup?> LookupInvitationAsync(SessionRecord session, string token, CancellationToken cancellationToken)
+            public Task<TsAuthPlatformInvitationLookup?> LookupInvitationAsync(SessionRecord session, string token, CancellationToken cancellationToken)
             {
                 return inner.LookupInvitationAsync(session, token, cancellationToken);
             }
 
-            public Task<TerraScaleAuthPlatformAcceptedInvitation> AcceptInvitationAsync(SessionRecord session, string token, CancellationToken cancellationToken)
+            public Task<TsAuthPlatformAcceptedInvitation> AcceptInvitationAsync(SessionRecord session, string token, CancellationToken cancellationToken)
             {
                 return inner.AcceptInvitationAsync(session, token, cancellationToken);
             }
@@ -576,7 +577,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 return inner.DeclineInvitationAsync(session, token, cancellationToken);
             }
 
-            public Task<TerraScaleAuthPlatformOwnershipTransfer?> GetOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+            public Task<TsAuthPlatformOwnershipTransfer?> GetOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
             {
                 return inner.GetOwnershipTransferAsync(session, organizationId, cancellationToken);
             }
@@ -596,7 +597,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 return inner.CancelOwnershipTransferAsync(session, organizationId, cancellationToken);
             }
 
-            public Task<IReadOnlyList<TerraScaleAuthPlatformAuditEvent>> ListAuditEventsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+            public Task<IReadOnlyList<TsAuthPlatformAuditEvent>> ListAuditEventsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
             {
                 return inner.ListAuditEventsAsync(session, organizationId, cancellationToken);
             }

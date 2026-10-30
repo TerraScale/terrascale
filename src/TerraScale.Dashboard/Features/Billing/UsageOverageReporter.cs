@@ -1,3 +1,4 @@
+using TerraScale.TerraBase.Contracts;
 using System.Text.Json;
 using StripeException = Stripe.StripeException;
 using TerraScale.Dashboard.Features.Notifications;
@@ -24,7 +25,7 @@ namespace TerraScale.Dashboard.Features.Billing
                     }
 
                     try { await ReportAsync(item.OrganizationId, units, month, cancellationToken); }
-                    catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException or StripeException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+                    catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or StripeException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                     {
                         logger.UsageOverageCouldNotBeReported(error.GetType().Name);
                     }
@@ -77,7 +78,7 @@ namespace TerraScale.Dashboard.Features.Billing
             {
                 try { await reporter.RunOnceAsync(stoppingToken); }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-                catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException or StripeException or OperationCanceledException)
+                catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or StripeException or OperationCanceledException)
                 {
                     logger.UsageOverageReportingIsUnavailableRetrying(error.GetType().Name);
                 }

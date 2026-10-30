@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Logs
 {
