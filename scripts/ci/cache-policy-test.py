@@ -8,13 +8,15 @@ import tempfile
 
 root = Path(__file__).resolve().parents[2]
 workflow = (root / ".github/workflows/ci.yml").read_text()
+slow_workflow = (root / ".github/workflows/slow.yml").read_text()
 dockerfile = (root / "Dockerfile").read_text()
-writers = re.findall(r"^\s+cache-to: (.+)$", workflow, re.M)
+writers = re.findall(r"^\s+cache-to: (.+)$", workflow + slow_workflow, re.M)
 assert writers == ["type=gha,mode=min,scope=ci-base"], writers
-docker_writer = workflow.split("      - name: Cache shared Docker base layers\n", 1)[1].split("\n      #", 1)[0]
-assert "github.event_name == 'schedule' && github.ref == 'refs/heads/main'" in docker_writer
+docker_writer = slow_workflow.split("      - name: Cache shared Docker base layers\n", 1)[1].split("\n      #", 1)[0]
+assert "if: env.AREA == 'auth'" in docker_writer
+assert "if: github.ref == 'refs/heads/main'" in slow_workflow
 assert "target: restored" in docker_writer
-assert "cache-from: &cache-from type=gha,scope=ci-base" in workflow
+assert "cache-from: &cache-from type=gha,scope=ci-base" in slow_workflow
 assert "mode=max" not in workflow, "Published binaries and source snapshots must not fill GHA"
 # setup-dotnet saves its NuGet cache after any successful job, pull requests included: no job may enable it.
 assert "cache: true" not in workflow
@@ -28,8 +30,8 @@ assert "DeterministicSourcePaths: false" in workflow, "CallerFilePath fixtures n
 assert "ContinuousIntegrationBuild: false" not in workflow
 assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workflow.split("\npermissions:", 1)[0]
 assert 'bash scripts/ci/test-area.sh fast "$AREA"' in workflow
-assert "no-cache-filters: slow-${{ env.AREA }}-run" in workflow
-assert "steps: *slow-steps" in workflow
+assert "no-cache-filters: slow-${{ env.AREA }}-run" in slow_workflow
+assert "steps: *slow-steps" in slow_workflow
 auth_job = workflow.split("\n  auth:\n", 1)[1].split("\n  auth-package:\n", 1)[0]
 assert "bash scripts/ci/auth-build.sh" in auth_job
 assert "docker/build-push-action" not in auth_job
@@ -75,7 +77,7 @@ for area in ("libs", "auth", "terrabase"):
 build_check = "src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj"
 assert f"dotnet format whitespace {build_check} --verify-no-changes --no-restore" in stages["build-terrabase"][1]
 # Imported areas qualify on dev hosts; the existing hosted jobs format their own service graphs.
-imported_projects = {p for p in all_projects if p.startswith(('sdk/', 'src/TerraScale.Dashboard/', 'tests/TerraScale.Dashboard.'))}
+imported_projects = {p for p in all_projects if p.startswith(('sdk/', 'src/TerraScale.Dashboard', 'tests/TerraScale.Dashboard.'))}
 assert all_projects <= formatted | {build_check} | imported_projects, all_projects - formatted - {build_check} - imported_projects
 assert "needs: [changes, native, libs, auth, auth-package, terrabase-build, terrabase, terrabase-package]" in workflow, "Native/Fast must gate required test; Slow must not delay it"
 assert "merge_group" not in workflow, "Merge queue checks are gone: pull requests and main are the only gates"
@@ -103,11 +105,17 @@ for check in ("path-filter-test.py", "slow-report-test.py", "cache-policy-test.p
               "storage-format-check.sh"):
     assert check in changes, f"{check} must run before builds"
 for area in ("auth", "terrabase"):
-    slow = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split(f"\n  slow-{area}-main:\n", 1)[1], maxsplit=1)[0]
+    slow = re.split(r"\n  [a-z][a-z0-9-]*:\n", slow_workflow.split(f"\n  slow-{area}-main:\n", 1)[1], maxsplit=1)[0]
     assert "needs: [changes, native]" in slow, "Slow must not wait for image publication or rollout"
     assert "cancel-in-progress: true" not in slow, "Main results must survive superseding pushes"
-    assert "github.event_name == 'schedule'" in slow, "Slow must leave the push path"
-assert 'cron: "7 1-23/3 * * *"' in workflow
+    assert "needs.native.result == 'success'" in slow
+    assert f"slow-{area}-main:" not in workflow, "Slow must leave the push path"
+assert 'cron: "7 1-23/3 * * *"' in slow_workflow
+slow_events = slow_workflow.split("\npermissions:", 1)[0]
+assert "  schedule:" in slow_events and "  workflow_dispatch:" in slow_events
+assert "  push:" not in slow_events and "  pull_request:" not in slow_events
+assert "  schedule:" not in workflow
+assert "slow-state.py" in slow_workflow and "ref: main" in slow_workflow
 assert "restore-keys: ${{ runner.os }}-nuget-monorepo-" in workflow
 
 inputs = dockerfile.split("FROM base AS restore-inputs\n", 1)[1].split("\nFROM base AS restored", 1)[0]

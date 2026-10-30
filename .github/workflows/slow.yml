@@ -1,0 +1,162 @@
+name: Slow
+
+on:
+  schedule:
+    - cron: "7 1-23/3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TS_DOTNET_DIR: sdk/dotnet
+  TsDotnetRoot: ${{ github.workspace }}/terrascale/sdk/dotnet
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  ASPNETCORE_HTTP_PORTS: ''
+  DeterministicSourcePaths: false
+
+jobs:
+  changes:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      slow: ${{ steps.slow.outputs.slow }}
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: main
+          persist-credentials: false
+      - id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - id: slow
+        name: Select changed Slow suites since their last actual scheduled execution
+        run: python3 scripts/ci/slow-state.py
+
+  native:
+    needs: changes
+    if: needs.changes.outputs.slow != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ needs.changes.outputs.sha }}
+      - name: Download and verify the pinned FTS + contract1 release
+        run: scripts/vendor/download-turso-native.sh native-output
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: turso-native-verified
+          path: native-output/
+          if-no-files-found: error
+
+  slow-auth-main:
+    needs: [changes, native]
+    if: >-
+      !cancelled() && needs.native.result == 'success'
+      && contains(fromJSON(needs.changes.outputs.slow), 'auth')
+    concurrency:
+      group: scheduled-slow-auth
+      cancel-in-progress: false
+    env:
+      AREA: auth
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      issues: write
+    steps: &slow-steps
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          path: terrascale
+          persist-credentials: false
+          ref: ${{ needs.changes.outputs.sha }}
+      - name: Download this run's verified pinned release cores
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: turso-native-verified
+          path: terrascale/src/vendor/Turso.Data.Sqlite/native
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Supply bucket-scoped CI storage credentials
+        if: env.AREA == 'terrabase'
+        continue-on-error: true
+        env:
+          TIGRIS_CI_CREDENTIALS: ${{ secrets.TIGRIS_CI_CREDENTIALS }}
+        run: |
+          [[ -n $TIGRIS_CI_CREDENTIALS ]] || { echo 'TIGRIS_CI_CREDENTIALS is required' >&2; exit 1; }
+          umask 077
+          printf '%s\n' "$TIGRIS_CI_CREDENTIALS" > "$RUNNER_TEMP/tigris-ci.env"
+      - name: Cache shared Docker base layers
+        if: env.AREA == 'auth'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: terrascale
+          file: terrascale/Dockerfile
+          build-contexts: ts-dotnet=terrascale/sdk/dotnet
+          target: restored
+          build-args: &build-args |
+            TERRABASE_REVISION=${{ needs.changes.outputs.sha }}
+            TS_AUTH_REVISION=${{ needs.changes.outputs.sha }}
+            DOTNET_PROCESSOR_COUNT=8
+            DOTNET_GCHeapCount=8
+          cache-from: &cache-from type=gha,scope=ci-base
+          cache-to: type=gha,mode=min,scope=ci-base
+      # Slow restores packages directly over main's cached base layers and builds its test graph independently of required Fast.
+      - continue-on-error: true
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: terrascale
+          file: terrascale/Dockerfile
+          build-contexts: ts-dotnet=terrascale/sdk/dotnet
+          target: test-slow-${{ env.AREA }}
+          secret-files: ${{ env.AREA == 'terrabase' && format('tigris-ci={0}/tigris-ci.env', runner.temp) || '' }}
+          build-args: *build-args
+          # A rerun of the same commit runs the suites again instead of reusing the stored result.
+          no-cache-filters: slow-${{ env.AREA }}-run
+          outputs: type=local,dest=slow
+          cache-from: *cache-from
+      - name: Remove the CI credential file
+        if: ${{ always() && env.AREA == 'terrabase' }}
+        run: rm -f "$RUNNER_TEMP/tigris-ci.env"
+      - name: Report the Slow result
+        id: slow-report
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.changes.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash terrascale/scripts/ci/slow-report.sh
+
+      - name: Record the actual scheduled suite inputs
+        id: slow-record
+        if: ${{ always() && steps.slow-report.outputs.completed == 'true' && github.event_name == 'schedule' && hashFiles('slow/exit') != '' }}
+        working-directory: terrascale
+        run: |
+          mkdir -p slow
+          python3 scripts/ci/slow-state.py record "$AREA"
+      - name: Retain last actual scheduled suite inputs
+        if: ${{ always() && steps.slow-report.outputs.completed == 'true' && github.event_name == 'schedule' && hashFiles('terrascale/slow/fingerprint') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: slow-state-${{ env.AREA }}-${{ steps.slow-record.outputs.fingerprint }}
+          path: terrascale/slow/fingerprint
+          retention-days: 90
+
+  slow-terrabase-main:
+    needs: [changes, native]
+    if: >-
+      !cancelled() && needs.native.result == 'success'
+      && contains(fromJSON(needs.changes.outputs.slow), 'terrabase')
+    concurrency:
+      group: scheduled-slow-terrabase
+      cancel-in-progress: false
+    env:
+      AREA: terrabase
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      issues: write
+    steps: *slow-steps

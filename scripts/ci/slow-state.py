@@ -18,7 +18,7 @@ def fingerprint(area, revision="HEAD"):
              "src/TerraScale.Endpoints*", "src/TerraScale.Logging", "src/vendor",
              "src/TerraBase*", "src/TerraScale.Authentication*", "sdk/dotnet",
              "scripts/vendor", "scripts/ci/slow-state.py",
-             ".github/workflows/ci.yml"]
+             ".github/workflows/slow.yml", "scripts/ci/slow-report.sh"]
     if area == "auth":
         paths += ["src/TerraScale.Authentication*", "tests/TerraScale.Authentication*",
                   "scripts/auth", "docs/auth/*.yaml"]

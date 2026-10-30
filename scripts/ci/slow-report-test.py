@@ -10,9 +10,9 @@ import subprocess
 import tempfile
 import textwrap
 
-workflow = Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml"
+workflow = Path(__file__).resolve().parents[2] / ".github/workflows/slow.yml"
 workflow_text = workflow.read_text()
-match = re.search(r"      - name: Report the Slow result\n.*?        run: \|\n(.*?)(?=\n      - |\n  [a-z][a-z0-9-]*:|\Z)", workflow_text, re.DOTALL)
+match = re.search(r"      - name: Report the Slow result\n.*?        run: bash terrascale/scripts/ci/slow-report.sh\n", workflow_text, re.DOTALL)
 assert match, "Slow report block not found"
 report_header = match[0].split("        run: |", 1)[0]
 assert "if: ${{ always() }}" in report_header, "Report setup/build failures too"
@@ -23,12 +23,11 @@ assert match.end() <= record_start < upload_start, "Record suite inputs only aft
 for start in (record_start, upload_start):
     marker_header = workflow_text[start:].split("\n      - ", 1)[0]
     assert "steps.slow-report.outputs.completed == 'true'" in marker_header, "Markers require completed reporting"
-required = workflow_text.split("\n  test:\n", 1)[1]
+required = (workflow.parent / "ci.yml").read_text().split("\n  test:\n", 1)[1]
 needs = re.search(r"^    needs: \[(.+)\]$", required, re.M)
 assert needs and not any("slow" in job for job in needs[1].split(",")), "Slow must not block required test"
-assert workflow_text.count("steps: *slow-steps") == 3, "All four Slow jobs must share the reporter"
-script = "set -euo pipefail\n" + textwrap.dedent(match[1])
-script = script.replace("${{ env.AREA }}", "auth").replace("${{ github.job }}", "main")
+assert workflow_text.count("steps: *slow-steps") == 1, "Both main Slow jobs must share the reporter"
+script = (workflow.parents[2] / "scripts/ci/slow-report.sh").read_text()
 assert "${{" not in script, "Unhandled workflow expression"
 
 
@@ -62,7 +61,7 @@ def check(case):
         env = {**os.environ, "PATH": f"{bin_path}:{os.environ['PATH']}", "CALLS": str(calls_path),
                "GITHUB_OUTPUT": str(output_path), "FAIL_ISSUE_CREATE": str(api_failure).lower(),
                "GITHUB_STEP_SUMMARY": str(root / "summary"), "GITHUB_REPOSITORY": "fixture/fixture",
-               "GITHUB_SHA": "fixture-sha", "RUN_URL": "https://example.invalid/run",
+               "GITHUB_SHA": "fixture-sha", "AREA": "auth", "GITHUB_JOB": "main", "RUN_URL": "https://example.invalid/run",
                "GITHUB_REF": "refs/heads/main" if main else "refs/heads/fixture"}
         run = subprocess.run(["bash", "-c", script], cwd=root, env=env, capture_output=True, text=True)
         expected_code = 73 if api_failure else code if code is not None else 1

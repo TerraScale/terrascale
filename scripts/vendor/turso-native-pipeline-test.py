@@ -20,7 +20,7 @@ assert 'cmp "native-builds/turso-native-build-$arch-1/runtimes/$rid/native/libtu
 aggregate = workflow.split("\n  test:\n", 1)[1]
 assert "name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && 'native-maintenance-unqualified' || 'test' }}" in aggregate
 assert "if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts) }}" in aggregate
-assert "needs: [changes, native, libs, auth, auth-package, terrabase-build, terrabase]" in aggregate
+assert "needs: [changes, native, libs, auth, auth-package, terrabase-build, terrabase, terrabase-package]" in aggregate
 assert "name: turso-native-verified" in workflow
 recipe = (root / "scripts/vendor/Dockerfile.turso-native").read_text()
 assert "--features turso_sdk_kit/fts" in recipe
