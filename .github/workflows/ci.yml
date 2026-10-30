@@ -452,7 +452,7 @@ jobs:
           else
             echo 'verified=false' >> "$GITHUB_OUTPUT"
           fi
-      - name: Checked build and single-file packaging proof
+      - name: Checked build and native single-file execution proof
         working-directory: terrascale
         run: bash scripts/ci/test-area.sh build terrabase
       - name: Qualify integration proofs outside the dev-host Fast target
@@ -468,21 +468,6 @@ jobs:
           name: terrabase-e2e-results
           path: terrascale/tests/TerraBase.E2E/bin/e2e-results.jsonl
           retention-days: 7
-      - name: Reuse the checked TerraBase build for both runtime payloads
-        if: github.event_name != 'pull_request'
-        working-directory: terrascale
-        run: |
-          bash scripts/ci/image-payloads.sh terrabase
-          bash scripts/ci/image-payloads.sh pack terrabase
-      - name: Retain TerraBase runtime payloads
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: image-payloads-terrabase
-          path: ${{ runner.temp }}/image-payloads-terrabase.tar
-          compression-level: 1
-          retention-days: 1
-          if-no-files-found: error
       - name: Pack this commit's build outputs
         if: steps.fast-proof.outputs.verified != 'true'
         working-directory: terrascale
@@ -502,6 +487,44 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           retention-days: 1
+
+
+  # Publish once per architecture, in parallel with Fast compilation. The image
+  # job wraps these exact checked single-file outputs without another build.
+  terrabase-package:
+    needs: [changes, native]
+    if: >-
+      contains(fromJSON(needs.changes.outputs.fast), 'terrabase')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJSON(github.event_name == 'pull_request' && '["amd64"]' || '["amd64","arm64"]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - *checkout
+      - *native-artifacts
+      - *setup-dotnet
+      - *nuget-cache
+      - *locked-restore
+      - name: Check production single-file packaging and retain its output
+        working-directory: terrascale
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          bash scripts/ci/image-payloads.sh terrabase "$ARCH"
+          bash scripts/ci/image-payloads.sh pack terrabase "$ARCH"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: github.event_name != 'pull_request'
+        with:
+          name: image-payloads-terrabase-${{ matrix.arch }}
+          path: ${{ runner.temp }}/image-payloads-terrabase-${{ matrix.arch }}.tar
+          compression-level: 1
+          retention-days: 1
+          if-no-files-found: error
 
   terrabase:
     needs: [changes, terrabase-build]
@@ -546,9 +569,9 @@ jobs:
           retention-days: 7
 
   main:
-    needs: [changes, native, terrabase]
+    needs: [changes, native, terrabase, terrabase-package]
     if: >-
-      !cancelled() && needs.terrabase.result == 'success'
+      !cancelled() && needs.terrabase.result == 'success' && needs.terrabase-package.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'terrabase')
     concurrency:
@@ -570,13 +593,16 @@ jobs:
       - name: Download this area's checked runtime payloads
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: image-payloads-${{ env.AREA }}
+          pattern: image-payloads-${{ env.AREA }}*
+          merge-multiple: true
           path: ${{ runner.temp }}
       - name: Prepare the runtime-only image context
         working-directory: terrascale
         run: |
           mkdir -p "$RUNNER_TEMP/image-payloads"
-          tar -C "$RUNNER_TEMP/image-payloads" -xf "$RUNNER_TEMP/image-payloads-$AREA.tar"
+          for payload in "$RUNNER_TEMP"/image-payloads-"$AREA"*.tar; do
+            tar -C "$RUNNER_TEMP/image-payloads" -xf "$payload"
+          done
           bash scripts/ci/image-payloads.sh runtime-dockerfile "$AREA" > "$RUNNER_TEMP/image-payloads/Dockerfile"
       - *setup-builder
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -844,7 +870,7 @@ jobs:
 
   test:
     name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && 'native-maintenance-unqualified' || 'test' }}
-    needs: [changes, native, libs, auth, auth-package, terrabase-build, terrabase]
+    needs: [changes, native, libs, auth, auth-package, terrabase-build, terrabase, terrabase-package]
     if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

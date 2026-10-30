@@ -77,14 +77,14 @@ assert f"dotnet format whitespace {build_check} --verify-no-changes --no-restore
 # Imported areas qualify on dev hosts; the existing hosted jobs format their own service graphs.
 imported_projects = {p for p in all_projects if p.startswith(('sdk/', 'src/TerraScale.Dashboard/', 'tests/TerraScale.Dashboard.'))}
 assert all_projects <= formatted | {build_check} | imported_projects, all_projects - formatted - {build_check} - imported_projects
-assert "needs: [changes, native, libs, auth, auth-package, terrabase-build, terrabase]" in workflow, "Native/Fast must gate required test; Slow must not delay it"
+assert "needs: [changes, native, libs, auth, auth-package, terrabase-build, terrabase, terrabase-package]" in workflow, "Native/Fast must gate required test; Slow must not delay it"
 assert "merge_group" not in workflow, "Merge queue checks are gone: pull requests and main are the only gates"
 for job in ("libs", "auth", "terrabase-build", "terrabase"):
     block = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split(f"\n  {job}:\n", 1)[1], maxsplit=1)[0]
     assert "event_name != 'push'" not in block, f"{job} must run on pushes to main"
 test_job = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  test:\n", 1)[1], maxsplit=1)[0]
 main_job = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  main:\n", 1)[1], maxsplit=1)[0]
-assert "    needs: [changes, native, terrabase]\n" in main_job, "TerraBase releases must wait for their own Fast shards"
+assert "    needs: [changes, native, terrabase, terrabase-package]\n" in main_job, "TerraBase releases must wait for their own Fast shards and production packaging"
 assert "!cancelled() && needs.terrabase.result == 'success'" in main_job
 main_auth = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  main-auth:\n", 1)[1], maxsplit=1)[0]
 assert "    needs: [changes, native, auth, auth-package]\n" in main_auth, "Auth releases must wait for Auth Fast"
