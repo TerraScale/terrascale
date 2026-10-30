@@ -55,6 +55,7 @@
 - Each product owns its data. ts-auth owns identity/access, organizations, projects and API credentials. TerraBase owns databases, documents, queries, transactions, backups, indexes, schema and usage metering. Dashboard owns platform UI/API/MCP, plans, subscriptions, billing and spending caps. ts-orch owns placement, scaling and rollout. Services call other products through SDKs; never read their storage. TerraBase validates ts-auth tokens offline.
 - Prefer mature maintained packages and simple code. Add abstractions only for real boundaries or meaningful duplication. Verify APIs, dependencies and claimed guarantees against implementation and integration evidence. Use mutually compatible current versions and reproducible builds.
 - Update API, storage and authentication docs with behavior changes. Shared docs get new files listed by their index instead of conflicting in-place edits. Workflow changes go through the CI owner.
+- Go-live formalities (SDK publishing, legal terms, secret rolls) are deferred until the user says go live; don't start these. See `docs/decisions/go-live.md`.
 
 ## .NET
 
