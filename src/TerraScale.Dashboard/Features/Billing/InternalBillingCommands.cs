@@ -32,7 +32,7 @@ namespace TerraScale.Dashboard.Features.Billing
             try { options = Parse(args); }
             catch (CommandRejectedException rejected)
             {
-                await error.WriteLineAsync(command + ": " + rejected.Message, cancellationToken);
+                await error.WriteLineAsync(command + ": " + rejected.Message);
                 return 1;
             }
 
@@ -70,12 +70,12 @@ namespace TerraScale.Dashboard.Features.Billing
                 {
                     await internalBilling.ConfigureAsync(context, new(options.OrganizationId, options.BasePlanKey,
                         options.SpendCapCents, options.WriteCentsPerMillion, options.StorageCentsPerGBMonth), RefreshAuthorityAsync, cancellationToken);
-                    await output.WriteLineAsync($"configured report-only internal billing for organization {options.OrganizationId} using base plan {options.BasePlanKey}", cancellationToken);
+                    await output.WriteLineAsync($"configured report-only internal billing for organization {options.OrganizationId} using base plan {options.BasePlanKey}");
                 }
                 else
                 {
                     var bill = await internalBilling.ReportAsync(context, options.OrganizationId, RefreshAuthorityAsync, cancellationToken);
-                    await output.WriteLineAsync(JsonSerializer.Serialize(bill, Json), cancellationToken);
+                    await output.WriteLineAsync(JsonSerializer.Serialize(bill, Json));
                     if (!bill.Available)
                     {
                         throw new AccountAccessException(bill.Error ?? "Internal bill is unavailable.", 503);
@@ -84,7 +84,7 @@ namespace TerraScale.Dashboard.Features.Billing
             }
             catch (InternalBillingReportException report)
             {
-                await output.WriteLineAsync(JsonSerializer.Serialize(report.Bill, Json), cancellationToken);
+                await output.WriteLineAsync(JsonSerializer.Serialize(report.Bill, Json));
                 failure = report.InnerException is AccountAccessException rejected ? rejected.Message : "Internal billing dependencies are unavailable.";
             }
             catch (Exception dependency) when (DependencyFailure(dependency, cancellationToken))
@@ -114,7 +114,7 @@ namespace TerraScale.Dashboard.Features.Billing
             }
             if (failure is not null)
             {
-                await error.WriteLineAsync(command + ": " + failure, cancellationToken);
+                await error.WriteLineAsync(command + ": " + failure);
                 return 1;
             }
             return 0;
