@@ -1,6 +1,6 @@
 # Live signup email delivery check
 
-`nice -n 19 make auth-mail-delivery-check` checks production delivery with a fresh free disposable inbox. The independent **Live signup email delivery** workflow runs it daily and on manual dispatch; it is not a merge or release gate. Failures create or update an open GitHub issue, including sanitized evidence and the run URL. Provider contract tests run before the live check.
+`nice -n 19 make auth-mail-delivery-check` checks production delivery with a fresh free disposable inbox. The independent **Live signup email delivery** workflow runs it daily and on manual dispatch; it is not a merge or release gate. Failures create or update an open GitHub issue, including sanitized evidence and the run URL.
 
 Before spending authentication mail, the check verifies a non-null public MX record using Google DNS over HTTPS. It prefers an active public mail.tm domain. If mail.tm is unavailable or advertises only expired domains, it reserves a cryptographically random address in an independent Guerrilla Mail session and validates that domain's MX. Fallback happens only before creating the primary mailbox or submitting signup; an ambiguous signup or delivery failure never triggers another send. If neither inbox can receive mail, the check still fails visibly.
 
@@ -11,3 +11,5 @@ Credentials, cookies, pending tokens, codes, subjects containing codes and messa
 Manual workflow dispatch must select `main`; other branches are skipped so unreviewed code cannot spend production mail capacity.
 
 The mail.tm API paths are documented in `https://api.mail.tm/docs.jsonopenapi`: `GET /domains`, `POST /accounts`, `POST /token`, `GET /me`, `GET /messages`, `GET /messages/{id}` and `DELETE /accounts/{id}`. If creation's response is lost, cleanup authenticates with the generated credentials and recovers the account ID through `/me`. Guerrilla Mail's session, message retrieval, deletion and release operations are documented at `https://www.guerrillamail.com/GuerrillaMailAPI.html`; the client uses its HTTPS `www.guerrillamail.com/ajax.php` endpoint and maintains the session cookies in memory. The script uses Python's standard library and does not install packages.
+
+Run `python3 -m unittest discover -s scripts/auth/tests -v` to exercise primary/fallback inbox contracts, recipient validation, one-send behavior and cleanup failures without contacting production.
