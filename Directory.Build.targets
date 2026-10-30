@@ -37,6 +37,18 @@
     </ItemGroup>
   </Target>
 
+  <!-- Source-generated trees do not inherit directory editorconfigs. Match only the SDK route generator's absolute output. -->
+  <Target Name="ConfigureDashboardGeneratedRoutePolicy" BeforeTargets="CoreCompile" Condition="'$(IsDashboardArea)' == 'true'">
+    <PropertyGroup>
+      <_DashboardGeneratedPolicy>$(IntermediateOutputPath)dashboard-generated.globalconfig</_DashboardGeneratedPolicy>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(_DashboardGeneratedPolicy)" Overwrite="true" WriteOnlyWhenDifferent="true"
+      Lines="is_global = true;[$(CompilerGeneratedFilesOutputPath)/Microsoft.AspNetCore.Http.RequestDelegateGenerator/Microsoft.AspNetCore.Http.RequestDelegateGenerator.RequestDelegateGenerator/GeneratedRouteBuilderExtensions.g.cs];dotnet_diagnostic.RS0030.severity = none" />
+    <ItemGroup>
+      <EditorConfigFiles Include="$(_DashboardGeneratedPolicy)" />
+    </ItemGroup>
+  </Target>
+
   <!-- Every test project: not packable. -->
   <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
     <IsPackable>false</IsPackable>
