@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="../../src/TerraScale.Dashboard.Analyzers/TerraScale.Dashboard.Analyzers.csproj" />
     <Project Path="../../src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
   </Folder>
   <Folder Name="/tests/">
