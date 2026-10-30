@@ -22,7 +22,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
                 plans = new(original, environment.Databases, new Uri("http://127.0.0.1:8081"));
                 builder.Services.Replace(ServiceDescriptor.Singleton<TestRestRpcHost>(_ => TestRestRpcHost.StartAsync(
                     plans, "http://127.0.0.1:8081", "terrabase-state").GetAwaiter().GetResult()));
-                builder.Services.Replace(ServiceDescriptor.Singleton<TerraBaseRpcClient>(services => services.GetRequiredService<TestRestRpcHost>().Client));
+                TestRestRpcHost.UseRegisteredHost(builder.Services);
                 vendor = new(plans);
                 builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(vendor));
             });

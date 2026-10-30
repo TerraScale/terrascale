@@ -42,7 +42,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
                 var original = (IHttpClientFactory)builder.Services.Last(item => item.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
                 builder.Services.Replace(ServiceDescriptor.Singleton<TestRestRpcHost>(_ => TestRestRpcHost.StartAsync(
                     new RestoreTransportFailure(original, () => Interlocked.Increment(ref failures)), "https://gru.api.terrascale.tech/").GetAwaiter().GetResult()));
-                builder.Services.Replace(ServiceDescriptor.Singleton<TerraBaseRpcClient>(services => services.GetRequiredService<TestRestRpcHost>().Client));
+                TestRestRpcHost.UseRegisteredHost(builder.Services);
             }, producerExtension: http =>
             {
                 IResult? result = null;

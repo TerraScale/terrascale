@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace TerraScale.Dashboard.E2E
 {
@@ -26,6 +27,12 @@ namespace TerraScale.Dashboard.E2E
             this.application = application;
             Origin = origin;
             Client = new(new TestIdentity(), origin, "gru", null, application.Services.GetRequiredService<IMeterFactory>());
+        }
+
+        // Points the dashboard's TerraBase client at the registered host's MagicOnion services.
+        public static void UseRegisteredHost(IServiceCollection services)
+        {
+            services.Replace(ServiceDescriptor.Singleton<TerraBaseRpcClient>(provider => provider.GetRequiredService<TestRestRpcHost>().Client));
         }
 
         public static async Task<TestRestRpcHost> StartAsync(IHttpClientFactory factory, string origin = "https://api.terrascale.tech/", string clientName = "platform")
