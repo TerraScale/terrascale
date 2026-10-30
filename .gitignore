@@ -32,3 +32,6 @@ __pycache__/
 /.terrascale-develop-release/
 
 .ts-heavy-last-used
+
+# Dashboard test artifacts, as ignored in the source repository.
+/test-results/

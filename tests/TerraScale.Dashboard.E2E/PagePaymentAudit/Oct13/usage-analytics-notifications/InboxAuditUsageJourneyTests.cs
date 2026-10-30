@@ -107,7 +107,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13
             using var response = await client.GetAsync(route);
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
             var csv = await response.Content.ReadAsStringAsync();
-            var directory = Path.Combine(fixture.Root, "docs/reviews/2026-10-13/usage-analytics-notifications/obj/runtime-evidence");
+            var directory = Path.Combine(fixture.Root, "test-results/dashboard/reviews/2026-10-13/usage-analytics-notifications/obj/runtime-evidence");
             Directory.CreateDirectory(directory);
             await File.WriteAllTextAsync(Path.Combine(directory, "unknown-severity.csv"), csv);
             using var filtered = JsonDocument.Parse(await client.GetStringAsync("/audit/export?format=json&range=24h&severity=info&action=audit.unknown"));
@@ -149,7 +149,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13
             await Assert.That(overview.Length).IsGreaterThan(0);
             await Assert.That(QueryHelpers.ParseQuery(new Uri(client.BaseAddress!, overview).Query)["tab"].ToString()).IsEqualTo("overview");
             var restored = await client.GetStringAsync(overview);
-            var directory = Path.Combine(fixture.Root, "docs/reviews/2026-10-13/usage-analytics-notifications/obj/runtime-evidence");
+            var directory = Path.Combine(fixture.Root, "test-results/dashboard/reviews/2026-10-13/usage-analytics-notifications/obj/runtime-evidence");
             Directory.CreateDirectory(directory);
             await File.WriteAllTextAsync(Path.Combine(directory, "usage-filter.json"), JsonSerializer.Serialize(new
             {

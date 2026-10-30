@@ -70,7 +70,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.DatabaseDataAccess
             await open.ClickAsync();
             await dialog.WaitForAsync();
             await dialog.EvaluateAsync("async el => { await Promise.allSettled(el.getAnimations({subtree:true}).map(animation => animation.finished)); }");
-            var evidence = Path.Combine(fixture.Root, "docs/reviews/2026-10-13/database-data-access/obj/evidence");
+            var evidence = Path.Combine(fixture.Root, "test-results/dashboard/reviews/2026-10-13/database-data-access/obj/evidence");
             Directory.CreateDirectory(evidence);
             await page.ScreenshotAsync(new() { Path = Path.Combine(evidence, $"api-key-dialog-{width}.png"), FullPage = true });
             var accessibility = await BrowserAccessibility.RunAsync(page);
@@ -109,7 +109,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.DatabaseDataAccess
             await Assert.That(await page.Locator("#sql").InputValueAsync()).IsEqualTo(statement);
             await Assert.That(await page.Locator("#sql-result").CountAsync()).IsEqualTo(0);
             var passed = await page.GetByText("Input checks passed. SQL validity has not been checked.", new() { Exact = true }).CountAsync();
-            var evidence = Path.Combine(fixture.Root, "docs/reviews/2026-10-13/database-data-access/obj/evidence");
+            var evidence = Path.Combine(fixture.Root, "test-results/dashboard/reviews/2026-10-13/database-data-access/obj/evidence");
             Directory.CreateDirectory(evidence);
             await page.ScreenshotAsync(new() { Path = Path.Combine(evidence, $"sql-check-{width}.png"), FullPage = true });
             await Assert.That(passed).IsEqualTo(0)
@@ -141,7 +141,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.DatabaseDataAccess
             await page.Locator("#sql-editor ts-code-editor[data-ready]").WaitForAsync();
             const string draft = "SELECT name FROM users WHERE name = 'audit-local' LIMIT 5";
             await EditConsoleAsync(page, draft);
-            var evidence = Path.Combine(fixture.Root, "docs/reviews/2026-10-13/database-data-access/obj/evidence");
+            var evidence = Path.Combine(fixture.Root, "test-results/dashboard/reviews/2026-10-13/database-data-access/obj/evidence");
             Directory.CreateDirectory(evidence);
             await page.ScreenshotAsync(new() { Path = Path.Combine(evidence, $"query-draft-{width}.png"), FullPage = true });
             var open = page.Locator("button[commandfor='save-query'][command='show-modal']");

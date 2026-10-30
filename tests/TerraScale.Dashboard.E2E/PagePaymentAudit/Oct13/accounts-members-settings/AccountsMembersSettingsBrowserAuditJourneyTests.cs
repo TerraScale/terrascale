@@ -105,7 +105,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.AccountsMembersSetting
 
         private Task<byte[]> ShotAsync(IPage page, string name)
         {
-            var directory = Path.Combine(scenario.Root, "docs/reviews/2026-10-13/accounts-members-settings/evidence");
+            var directory = Path.Combine(scenario.Root, "test-results/dashboard/reviews/2026-10-13/accounts-members-settings/evidence");
             Directory.CreateDirectory(directory);
             return page.ScreenshotAsync(new() { Path = Path.Combine(directory, name + ".png") });
         }
