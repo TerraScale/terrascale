@@ -136,6 +136,15 @@ namespace TerraScale.Dashboard.E2E.Demo
             app.MapGet("/__test/billing/plans/subscriptions/{organizationId}", async (HttpContext http, DashboardSessions sessions, AccountService accounts, string organizationId) =>
                 await AccountRequest.RequireAsync(http, sessions, accounts) is null ? Results.Unauthorized() : Results.Json(subscriptions.Values
                     .Where(item => item["metadata"]?["organization_id"]?.GetValue<string>() == organizationId).Select(item => item["status"]!.GetValue<string>()).ToArray()));
+            app.MapGet("/__test/billing/plans/source-race-wait", async (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
+            {
+                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+                if (context is null) { return Results.Unauthorized(); }
+                var binding = await billing.ReadBindingAsync(context, http.RequestAborted);
+                if (binding is null || !barriers.TryGetValue(binding.CustomerId, out var barrier)) { return Results.NotFound(); }
+                await barrier.Waiting.Task.WaitAsync(http.RequestAborted);
+                return Results.NoContent();
+            });
             app.MapGet("/__test/billing/plans/probe", async (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
             {
                 var context = await AccountRequest.RequireAsync(http, sessions, accounts);

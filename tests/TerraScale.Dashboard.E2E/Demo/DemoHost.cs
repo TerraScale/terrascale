@@ -2,7 +2,6 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
-using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -123,6 +122,9 @@ namespace TerraScale.Dashboard.E2E.Demo
                 builder.Services.Remove(builder.Services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == typeof(TerraScale.Dashboard.Features.Profile.DeletionReconciler)));
                 builder.Logging.ClearProviders();
                 builder.Logging.AddConsole().SetMinimumLevel(LogLevel.Warning);
+                // Reporting and imports use the production MagicOnion services over the scenario's REST handlers.
+                builder.Services.AddSingleton(services => TestRestRpcHost.StartAsync(services.GetRequiredService<IHttpClientFactory>(), "https://gru.api.terrascale.tech/").GetAwaiter().GetResult());
+                builder.Services.Replace(ServiceDescriptor.Singleton<TerraScale.Dashboard.Platform.Rpc.TerraBaseRpcClient>(services => services.GetRequiredService<TestRestRpcHost>().Client));
                 configureScenario?.Invoke(builder);
             });
             app.MapGet("/__test/checkout", (string id) => Results.Redirect(stripe.Complete(id)));
@@ -486,8 +488,7 @@ namespace TerraScale.Dashboard.E2E.Demo
         }
         private static Exception PreconditionFailed()
         {
-            return (Exception)Activator.CreateInstance(typeof(TerraBasePreconditionFailedException), BindingFlags.Instance | BindingFlags.NonPublic,
-            binder: null, args: [HttpStatusCode.PreconditionFailed, "Test version precondition failed", null, null], culture: null)!;
+            return new TerraBasePreconditionFailedException(new TerraBaseFault(412, "precondition_failed", "Test version precondition failed"));
         }
     }
 
@@ -1321,12 +1322,12 @@ namespace TerraScale.Dashboard.E2E.Demo
                 var previous = items.GetValueOrDefault(id);
                 if (operation == "create" && previous is not null)
                 {
-                    throw ProviderError(typeof(TerraBaseConflictException), HttpStatusCode.Conflict, "Test document exists.");
+                    throw ProviderError(HttpStatusCode.Conflict, "Test document exists.");
                 }
 
                 if (version.Length != 0 && previous?.Version != version)
                 {
-                    throw ProviderError(typeof(TerraBasePreconditionFailedException), HttpStatusCode.PreconditionFailed, "Test document version changed.");
+                    throw ProviderError(HttpStatusCode.PreconditionFailed, "Test document version changed.");
                 }
 
                 var nextVersion = "tbv1-" + Guid.NewGuid().ToString("N");
@@ -1366,7 +1367,7 @@ namespace TerraScale.Dashboard.E2E.Demo
             var match = Regex.Match(statement, "^SELECT \\* FROM ([a-z][a-z0-9_-]*) LIMIT ([0-9]+)$", RegexOptions.IgnoreCase);
             if (!match.Success)
             {
-                throw ProviderError(typeof(TerraBaseValidationException), HttpStatusCode.BadRequest, "Demo SQL fixture supports SELECT * FROM collection LIMIT n.");
+                throw ProviderError(HttpStatusCode.BadRequest, "Demo SQL fixture supports SELECT * FROM collection LIMIT n.");
             }
 
             lock (collections)
@@ -1400,9 +1401,10 @@ namespace TerraScale.Dashboard.E2E.Demo
             }
             return value;
         }
-        private static Exception ProviderError(Type type, HttpStatusCode status, string message)
+        private static Exception ProviderError(HttpStatusCode status, string message)
         {
-            return (Exception)Activator.CreateInstance(type, BindingFlags.Instance | BindingFlags.NonPublic, binder: null, args: [status, message, status == HttpStatusCode.PreconditionFailed ? "precondition_failed" : "name_taken", null], culture: null)!;
+            return TerraBaseException.From(new TerraBaseFault((int)status,
+                status == HttpStatusCode.PreconditionFailed ? "precondition_failed" : "name_taken", message));
         }
     }
 

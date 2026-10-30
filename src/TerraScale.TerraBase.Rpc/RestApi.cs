@@ -1,4 +1,8 @@
 using System.Globalization;
+using System.Buffers;
+using System.Buffers.Text;
+using System.Text;
+using System.Text.Encodings.Web;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
@@ -119,15 +123,86 @@ namespace TerraScale.TerraBase.Rpc
         /// <summary>The UTF-8 JSON of <paramref name="value"/>.</summary>
         public static ReadOnlyMemory<byte> Json<T>(T value, JsonTypeInfo<T> type)
         {
-            return JsonSerializer.SerializeToUtf8Bytes(value, type);
+            var buffer = new ArrayBufferWriter<byte>();
+            using var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions
+            {
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+                MaxDepth = 256,
+            });
+            JsonSerializer.Serialize(writer, value, type);
+            writer.Flush();
+            return Compact(buffer.WrittenSpan);
+        }
+
+        // JSON API payloads keep optional Unicode escapes compact, including C1 characters that the encoder's
+        // global blocklist escapes even with UnsafeRelaxedJsonEscaping. Required JSON escapes stay intact.
+        private static ReadOnlyMemory<byte> Compact(ReadOnlySpan<byte> json)
+        {
+            var output = new ArrayBufferWriter<byte>(json.Length);
+            for (var index = 0; index < json.Length;)
+            {
+                if (json[index] == '\\' && index + 1 < json.Length)
+                {
+                    if (TryRune(json[index..], out var rune, out var consumed))
+                    {
+                        var bytes = rune.EncodeToUtf8(output.GetSpan(4));
+                        output.Advance(bytes);
+                        index += consumed;
+                        continue;
+                    }
+                    // Consume escaped backslashes together, so literal \\u text cannot become a Unicode escape.
+                    json.Slice(index, 2).CopyTo(output.GetSpan(2));
+                    output.Advance(2);
+                    index += 2;
+                    continue;
+                }
+                output.GetSpan(1)[0] = json[index++];
+                output.Advance(1);
+            }
+            return output.WrittenMemory;
+        }
+
+        private static bool TryRune(ReadOnlySpan<byte> json, out Rune rune, out int consumed)
+        {
+            rune = default;
+            consumed = 0;
+            if (json.Length < 6 || json[1] != 'u' || !Utf8Parser.TryParse(json.Slice(2, 4), out ushort value, out var digits, 'X') ||
+                digits != 4 || value < 0x20 || value is '"' or '\\')
+            {
+                return false;
+            }
+            consumed = 6;
+            if (Rune.TryCreate((char)value, out rune))
+            {
+                return true;
+            }
+            if (json.Length >= 12 && json[6] == '\\' && json[7] == 'u' &&
+                Utf8Parser.TryParse(json.Slice(8, 4), out ushort low, out digits, 'X') && digits == 4 &&
+                Rune.TryCreate((char)value, (char)low, out rune))
+            {
+                consumed = 12;
+                return true;
+            }
+            return false;
         }
 
         /// <summary>The answer's JSON body; a refusal throws its fault.</summary>
         public static T Read<T>(RestAnswer answer, JsonTypeInfo<T> type)
         {
             Ensure(answer);
-            return JsonSerializer.Deserialize(answer.Body.Span, type)
-                ?? throw Fault(answer with { Status = StatusCodes.Status502BadGateway, Body = ReadOnlyMemory<byte>.Empty });
+            try
+            {
+                return JsonSerializer.Deserialize(answer.Body.Span, type)
+                    ?? throw new JsonException("The REST response is null.");
+            }
+            catch (JsonException)
+            {
+                throw Fault(answer with
+                {
+                    Status = StatusCodes.Status502BadGateway,
+                    Body = "{\"error\":{\"code\":\"invalid_response\",\"message\":\"TerraBase returned an invalid response.\"}}"u8.ToArray(),
+                });
+            }
         }
 
         /// <summary>Throws the fault of a refusal.</summary>
@@ -144,7 +219,7 @@ namespace TerraScale.TerraBase.Rpc
         public static TerraBaseFault FaultOf(RestAnswer answer)
         {
             ArgumentNullException.ThrowIfNull(answer);
-            string? code = null, message = null, region = null;
+            string? code = null, message = null, region = null, sqliteCode = null;
             int? op = null;
             List<TerraBaseFaultDetail>? details = null;
             try
@@ -157,6 +232,7 @@ namespace TerraScale.TerraBase.Rpc
                         code = Text(error, "code");
                         message = Text(error, "message");
                         region = Text(error, "region");
+                        sqliteCode = Text(error, "sqlite_code");
                         op = error.TryGetProperty("op", out var index) && index.ValueKind == JsonValueKind.Number && index.TryGetInt32(out var value) ? value : null;
                         if (error.TryGetProperty("details", out var issues) && issues.ValueKind == JsonValueKind.Array)
                         {
@@ -176,7 +252,7 @@ namespace TerraScale.TerraBase.Rpc
             var regions = Header(answer, "X-TerraBase-Database-Regions")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             var retry = Header(answer, HeaderNames.RetryAfter) is { } seconds && int.TryParse(seconds, NumberStyles.None, CultureInfo.InvariantCulture, out var wait) ? wait : (int?)null;
             return new TerraBaseFault(answer.Status, code ?? "http_" + answer.Status.ToString(CultureInfo.InvariantCulture),
-                message ?? $"TerraBase answered HTTP {answer.Status}", region ?? Header(answer, "X-TerraBase-Region"), home, regions, op, retry, details);
+                message ?? $"TerraBase answered HTTP {answer.Status}", region ?? Header(answer, "X-TerraBase-Region"), home, regions, op, retry, details, sqliteCode);
         }
 
         /// <summary>The gRPC refusal that carries the answer's fault in <see cref="TerraBaseRpc.FaultTrailer"/>.</summary>

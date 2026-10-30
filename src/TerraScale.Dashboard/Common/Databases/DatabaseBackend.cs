@@ -129,7 +129,12 @@ namespace TerraScale.Dashboard.Common.Databases
         // necessarily the nearest, a database's home, or every serving region.
         private async Task<IReadOnlyList<DatabaseRegion>> AnsweringRegionAsync(CancellationToken cancellationToken)
         {
-            var health = await rpc.Platform<IRegionsService>().WithCancellationToken(cancellationToken).HealthAsync();
+            TerraBaseHealth health;
+            try { health = await rpc.Platform<IRegionsService>().WithCancellationToken(cancellationToken).HealthAsync(); }
+            catch (TerraBaseException error)
+            {
+                throw new HttpRequestException("TerraBase did not name a verified serving region.", error);
+            }
             if (DatabaseRegion.FromId(health.Region) is not { } serving)
             {
                 throw new HttpRequestException("TerraBase did not name a valid serving region.");
@@ -153,7 +158,12 @@ namespace TerraScale.Dashboard.Common.Databases
             var pages = 0;
             do
             {
-                var page = await RunAsync(() => client.ListDatabasesAsync(scope.ProjectId, next, 100).ResponseAsync);
+                TerraBaseDatabasePage page;
+                try { page = await RunAsync(() => client.ListDatabasesAsync(scope.ProjectId, next, 100).ResponseAsync); }
+                catch (TerraBaseException error) when (error.ErrorCode == "invalid_response")
+                {
+                    throw new DatabaseListingException("Database listing returned an invalid response.");
+                }
                 foreach (var item in page.Items)
                 {
                     if (item.ProjectId != scope.ProjectId || !TerraScaleIds.IsValid(item.Id) ||
@@ -285,7 +295,7 @@ namespace TerraScale.Dashboard.Common.Databases
             catch (TerraBaseWrongRegionException error) { throw new DatabaseWrongRegionException(error.Region, error.HomeRegion, error.Regions); }
             catch (TerraBaseException error) when (error.Status is 400 or 403 or 409 or 413)
             {
-                throw new DatabaseSqlException((HttpStatusCode)error.Status, error.ErrorCode == "forbidden_scope" ? "Write access is required to change data or schema." : error.Message);
+                throw new DatabaseSqlException((HttpStatusCode)error.Status, error.ErrorCode == "forbidden_scope" ? "Write access is required to change data or schema." : error.Message, error.Fault.SqliteCode);
             }
             if (body?.Results is not { } results || results.Count != statements.Count || results.Any(result => result is null || result.Columns is null || result.Rows is null ||
                 result.Columns.Any(column => column is null) || result.Rows.Any(row => row is null || row.Count != result.Columns.Count)))

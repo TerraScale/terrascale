@@ -1,4 +1,9 @@
 using Cronos;
+using System.Net;
+using System.Diagnostics.Metrics;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
+using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.TerraBase.Rpc;
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
@@ -24,14 +29,15 @@ using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.E2E
 {
-    // An external HTTP producer for application E2E tests. The dashboard keeps its production database, document, changes and
-    // API-key adapters with the official SDK. Data routes follow I2 contracts/terrabase (canonical /v1/projects lifecycle by
+    // A REST producer behind the real MagicOnion services for application E2E tests. The dashboard keeps its production
+    // database, document, changes and ts-auth adapters. Customer SDK callers reach the same producer over public REST. Data routes follow I2 contracts/terrabase (canonical /v1/projects lifecycle by
     // database name, exchanged action-scoped project bearers, SSE changes); project keys follow I1 contracts/auth at the
     // global ts-auth origin only. No customer key reaches TerraBase and no key is stored by the dashboard. Management routes
     // remain only for workspace/backup callers not yet moved. This fixture does not qualify a live deployment.
     public sealed class DatabaseSdkScenario : IAsyncDisposable
     {
         private WebApplication? producer;
+        private readonly string peersFile = Path.Combine(Path.GetTempPath(), "dashboard-rpc-peers-" + Guid.NewGuid().ToString("N"));
         private WebApplication? first;
         private WebApplication? second;
         private ProducerTransport? transport;
@@ -70,7 +76,10 @@ namespace TerraScale.Dashboard.E2E
 
         public HttpClient CreateProviderClient()
         {
-            return Client(ProviderOrigin);
+            var client = new HttpClient(new H2cTestTransport()) { BaseAddress = ProviderOrigin, Timeout = TimeSpan.FromSeconds(30) };
+            client.DefaultRequestVersion = HttpVersion.Version20;
+            client.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact;
+            return client;
         }
 
         public void AddSqlViewer(string organizationId, string userId, string email)
@@ -91,12 +100,29 @@ namespace TerraScale.Dashboard.E2E
         private async Task InitializeAsync(string root, Action<WebApplicationBuilder>? configureScenario, Action<WebApplication>? configureApp)
         {
             var builder = WebApplication.CreateBuilder();
-            builder.WebHost.UseUrls("http://127.0.0.1:0");
+            builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Any, 0, listener => listener.Protocols = HttpProtocols.Http2));
             builder.Logging.ClearProviders();
+            builder.Services.AddTerraBaseRestRpc(static (_, _) => { });
             producer = builder.Build();
+            producer.UseTerraBaseRestPipeline();
+            producer.UseRouting();
+            producer.MapTerraBaseRestRpc();
+            producer.Use(async (http, next) =>
+            {
+                if (http.Request.Host.Host.StartsWith("127.", StringComparison.Ordinal) && !http.Request.Path.StartsWithSegments("/__test"))
+                {
+                    var region = http.Request.Host.Host switch
+                    {
+                        "127.0.0.1" => "gru", "127.0.0.2" => "sfo", "127.0.0.3" => "sjc", "127.0.0.4" => "fra", _ => ""
+                    };
+                    http.Request.Host = new HostString(region.Length == 0 ? "api.terrascale.tech" : region + ".api.terrascale.tech");
+                }
+                await next(http);
+            });
             producer.MapMethods("/{**path}", ["GET", "POST", "PUT", "PATCH", "DELETE"], (Func<HttpContext, Task<IResult>>)protocol.DispatchAsync);
             await producer.StartAsync();
-            ProviderOrigin = Address(producer);
+            ProviderOrigin = new UriBuilder(Address(producer)) { Host = "127.0.0.10" }.Uri;
+            await File.WriteAllTextAsync(peersFile, "gru gru 127.0.0.1\nsfo sfo 127.0.0.2\nsjc sjc 127.0.0.3\nfra fra 127.0.0.4\n");
             transport = new(ProviderOrigin);
             var environment = new DemoEnvironment();
             await environment.InitializeAsync();
@@ -114,6 +140,8 @@ namespace TerraScale.Dashboard.E2E
                 transport!.ApiKeys = protocol.ApiKeys;
                 application.Services.Replace(ServiceDescriptor.Singleton<IDashboardState>(state));
                 application.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new ProducerFactory(transport)));
+                application.Services.Replace(ServiceDescriptor.Singleton<TerraBaseRpcClient>(services => new(
+                    services.GetRequiredService<IDashboardIdentity>(), ProviderOrigin, null, peersFile, services.GetRequiredService<IMeterFactory>())));
                 application.Services.Replace(ServiceDescriptor.Singleton<IDatabaseBackend, DatabaseBackend>());
                 application.Services.Replace(ServiceDescriptor.Singleton<IDocumentBackend>(services => services.GetRequiredService<DocumentBackend>()));
                 application.Services.Replace(ServiceDescriptor.Singleton<IOrganizationAccess, TsOrganizationAccess>());
@@ -143,6 +171,7 @@ namespace TerraScale.Dashboard.E2E
             if (first is not null) { await first.StopAsync(); await first.DisposeAsync(); first = null; }
             if (producer is not null) { await producer.StopAsync(); await producer.DisposeAsync(); producer = null; }
             transport?.Dispose();
+            File.Delete(peersFile);
         }
 
         private sealed class ProducerFactory(ProducerTransport transport) : IHttpClientFactory
@@ -158,6 +187,8 @@ namespace TerraScale.Dashboard.E2E
             public TestAuthApiKeys? ApiKeys { get; set; }
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
             {
+                request.Version = HttpVersion.Version20;
+                request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
                 var uri = request.RequestUri!;
                 if (uri.Host == "auth.terrascale.tech")
                 {
@@ -506,6 +537,21 @@ namespace TerraScale.Dashboard.E2E
                         return Observations();
                     }
 
+                    if (path.Split('/') is ["", "admin", "organizations" or "projects", var planOwner, "plan"])
+                    {
+                        Require(http.Request.Method == "PUT" && http.Request.Headers.Authorization.Count == 0 &&
+                            http.Request.Headers[TerraScale.TerraBase.Contracts.TerraBaseRpc.PeerCredentialHeader] == TestIdentity.PeerSecret,
+                            "Only the credentialed operator publishes platform plans.");
+                        using var body = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
+                        var plan = body.RootElement.GetProperty("plan").GetString();
+                        Require(plan is "hobby" or "starter" or "pro" or "team" or "enterprise", "A platform publish carries a known storage plan.");
+                        lock (gate)
+                        {
+                            var enrolled = databases.Values.Any(database => database.ProjectId == planOwner);
+                            return enrolled ? Results.Json(new { plan }) : Error(404, "not_found");
+                        }
+                    }
+
                     Require(http.Request.Host.Host is "api.terrascale.tech" or "gru.api.terrascale.tech" or "sfo.api.terrascale.tech" or "sjc.api.terrascale.tech" or "fra.api.terrascale.tech", "Trusted producer host");
                     // terrascale e30ffdc2 (region-identity.md): every answer names its region; api.terrascale.tech answers in ApiRegion.
                     var answering = http.Request.Host.Host switch
@@ -577,7 +623,7 @@ namespace TerraScale.Dashboard.E2E
                     }
                     throw new InvalidOperationException("Unexpected producer route: " + http.Request.Method + " " + path);
                 }
-                catch (Exception error) when (error is InvalidOperationException or JsonException)
+                catch (Exception error) when (!http.Response.HasStarted && error is InvalidOperationException or JsonException)
                 {
                     failures.Enqueue(error.Message);
                     return Error(500, "test_contract_failure");
