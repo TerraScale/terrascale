@@ -155,8 +155,8 @@ jobs:
           file: scripts/dashboard/ci/Dockerfile.runtime
           platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/terrascale/ts-dashboard:${{ github.sha }}
-            ghcr.io/terrascale/ts-dashboard:main
+            ghcr.io/terrascale/terrascale-dashboard:${{ github.sha }}
+            ghcr.io/terrascale/terrascale-dashboard:main
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -165,15 +165,16 @@ jobs:
           push: true
       - name: Inspect the published manifest
         run: |
-          { echo '```'; docker buildx imagetools inspect "ghcr.io/terrascale/ts-dashboard@${{ steps.push.outputs.digest }}"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+          { echo '```'; docker buildx imagetools inspect "ghcr.io/terrascale/terrascale-dashboard@${{ steps.push.outputs.digest }}"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Release to every region
         env:
           GH_TOKEN: ${{ github.token }}
           SERVICE: ts-dashboard
+          IMAGE: ghcr.io/terrascale/terrascale-dashboard
           INDEX: ${{ steps.push.outputs.digest }}
         run: |
           set -euo pipefail
-          image="ghcr.io/terrascale/${SERVICE}"
+          image="$IMAGE"
           arm64=$(docker buildx imagetools inspect "${image}@${INDEX}" --format '{{json .Manifest}}' |
             jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest')
           test -n "$arm64"
