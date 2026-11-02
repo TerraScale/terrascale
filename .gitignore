@@ -24,7 +24,8 @@ __pycache__/
 
 # Fleet builder worktrees (never tracked).
 /.worktrees/
-/.claude/
+/.claude/*
+!/.claude/skills/
 .codex-worktrees/
 .codex/
 

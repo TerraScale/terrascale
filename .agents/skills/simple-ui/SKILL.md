@@ -1,0 +1,39 @@
+---
+name: simple-ui
+description: TerraScale UI standard — simple purpose, architecture, design and implementation, like Linear or Apple Notes. No taglines, helper text or secondary labels. Use whenever you create, change, review or write copy for any TerraScale page, screen, dialog, email or component (dashboard, ts-auth hosted pages, landing-site, docs-site chrome).
+---
+
+# Simple UI
+
+> I want this to be as perfect as Linear's website or Apple Notes: simple purpose, simple architecture, simple design, simple implementation. Cut taglines, helper text and secondary labels. If a screen needs them to make sense, fix the layout. Every decision should elevate the user experience (UX), developer experience (DX) and agent experience (AX) at once, without breaking anything.
+
+## Rules
+
+1. One purpose per screen. A title, the content, one primary action.
+2. Cards have a title only. No subtitle or description; rename the title if it is unclear.
+3. Fields have a label only. No hint text. Encode format in the placeholder and input constraints (`type`, `min`, `max`, `pattern`, `maxlength`, sensible defaults). Explain only on validation failure.
+4. Stats show label and value. No captions; exact metric definitions belong in `docs/`.
+5. Empty states: one sentence, one action.
+6. Dialogs: title and controls. Irreversible actions keep one short consequence sentence.
+7. No eyebrows, taglines, subheadlines, "Recommended", "(optional)", "Visual preview" or similar secondary labels.
+8. If removing text makes a screen confusing, change the layout, defaults, grouping or naming — never put the text back.
+
+## Never cut
+
+- Error and validation messages, status announcements (`role="status"`, `aria-live`).
+- Security and consent safeguards: secret-shown-once notices, irreversible-action consequences, CLI device-code match checks, recovery-code warnings, legal text.
+- Accessibility: `aria-label`, `ts-sr-only` text, `<label>` and `<legend>`. Drop `aria-describedby` that pointed at removed hints.
+- Data itself (values, names, timestamps, code snippets the user copies).
+
+## DX and AX
+
+- Delete CSS classes, slice parameters and C# properties that only fed removed text; no dead code.
+- Keep stable IDs, names and `data-*` hooks that tests, Datastar or agents use. Machine-readable content (OpenAPI, MCP, SVG map data) stays complete.
+- Prefer native elements and existing components over new abstractions.
+- Dashboard lint rejects the removed helper classes (`ts-hint`, `ts-card-description`, `ts-empty-detail`, `ts-stat-detail`, `ts-eyebrow`); do not reintroduce them under new names.
+
+## Proof
+
+- Before/after screenshots of every changed page (repo rule).
+- Run the area's Fast suite through `ts-ship`; run browser journeys (`make dashboard-test-slow`) through `ts-heavy-any` when dashboard markup changes.
+- Update tests that asserted removed copy to assert behavior instead; never weaken them.

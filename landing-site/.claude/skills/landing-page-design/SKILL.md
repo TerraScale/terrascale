@@ -13,7 +13,7 @@ This skill has two halves. **Part A** decides what the page says and how it is s
 
 ## Scope
 
-Apply to all web UI work: landing pages, marketing sites, components, dashboards, prototypes, and design reviews. When a rule here conflicts with a framework default, this file wins. When the user's explicit prompt conflicts with a rule, the user wins.
+Apply to all web UI work: landing pages, marketing sites, components, dashboards, prototypes, and design reviews. When a rule here conflicts with a framework default, this file wins. When the user's explicit prompt conflicts with a rule, the user wins. The repository's `simple-ui` skill (`.agents/skills/simple-ui/SKILL.md`) overrides this file: no subheadlines, taglines, tagline sections or secondary labels.
 
 **Companion skill.** For upgrading an *existing* site rather than building a new one, use `redesign-existing-projects` ([github.com/elayadesign/redesign-skill](https://github.com/elayadesign/redesign-skill)). It diagnoses generic patterns and defers to this file for every concrete value.
 
@@ -53,23 +53,20 @@ If the user cannot answer, make a reasonable assumption, state it in one line, a
 
 **Above the fold (required)**
 1. Headline, outcome plus audience
-2. Subheadline, clarifies how and adds specificity
-3. Primary CTA, clear verb plus what they get
-4. One proof signal, logo strip, stat, or short testimonial
-5. Hero visual, product screenshot or video, or a strong illustration
+2. Primary CTA, clear verb plus what they get
+3. One proof signal, logo strip, stat, or short testimonial
+4. Hero visual, product screenshot or video, or a strong illustration
 
 **Mid page (the argument)**
-6. Problem to solution, one section
-7. Benefits, three to five, outcome driven
-8. How it works, three steps
-9. Social proof, testimonials or a case study
+5. Problem to solution, one section
+6. Benefits, three to five, outcome driven
+7. How it works, three steps
+8. Social proof, testimonials or a case study
 
 **Bottom (objection handling)**
-10. FAQ, six to twelve questions
-11. Risk reversal, trial, cancel anytime, guarantee
-12. Final CTA, identical to the top
-
-Include the mandatory tagline reveal section from B11 somewhere in the mid page argument, typically right after the hero or after benefits.
+9. FAQ, six to twelve questions
+10. Risk reversal, trial, cancel anytime, guarantee
+11. Final CTA, identical to the top
 
 ## A3. Layout selection
 
@@ -104,8 +101,6 @@ Pick one and say why.
 - "{Outcome} without {pain}"
 - "The {category} for {audience}"
 - "Ship {result} in {time}"
-
-**Subheadline.** One or two sentences. Clarify what it is and who it is for.
 
 **CTA.** Verb plus what they get. Never "Learn more" or "Submit". Use "Start free trial", "Book a demo", "Get the checklist".
 
@@ -254,7 +249,7 @@ This is the one place gradients are used, and only on text, never on the backgro
 
 ### Layout
 
-- Heading and subheading both get a **max width of 680px**.
+- The heading gets a **max width of 680px**.
 - Read the heading copy and insert line breaks at **meaningful** points.
 - Never break a line in a way that cuts a phrase awkwardly or makes the sentence harder to read. Break where the thought breaks.
 
@@ -332,23 +327,6 @@ Things that get forgotten and make a page feel unfinished:
 - Semantic HTML: `<nav>`, `<main>`, `<article>`, `<aside>`, `<section>`
 - A way back from every page
 
-## B11. Tagline reveal section (mandatory)
-
-Every landing page includes one large type section stating the core benefit or tagline, separate from the hero. It sits further down the page as its own moment, not stacked directly under the hero.
-
-**Copy**
-- Minimum two lines of text.
-- A benefit statement or tagline, written in the voice of A5, not a generic section heading.
-
-**Typography**
-- Size `text-4xl` to `text-6xl` depending on line count, following the B1 type scale.
-- Max width capped like the hero, so lines break at meaningful points per B5.
-
-**Animation**
-- Text starts in a subtle, muted tone, roughly 25 to 35% opacity of the theme's base text color.
-- As the section scrolls into view, each word transitions individually from that muted tone to the full text color, in reading order.
-- Words activate one at a time as they cross a trigger line, not the entire block flipping at once. The transition uses the base curve from B7, never a linear fade.
-- Implement with `IntersectionObserver` per word, or a single scroll listener throttled through `requestAnimationFrame`. Never an unthrottled `window.addEventListener('scroll')`, per B7.
 
 ---
 
@@ -357,7 +335,7 @@ Every landing page includes one large type section stating the core benefit or t
 When generating a landing page from scratch, return these in order before writing code:
 
 1. **Page outline** — sections and their order
-2. **Hero copy** — headline, subheadline, CTA, proof line
+2. **Hero copy** — headline, CTA, proof line
 3. **Benefits** — three to five outcome driven bullets
 4. **How it works** — three steps
 5. **FAQ** — six to twelve questions and answers
@@ -385,10 +363,9 @@ Then build section by section per A6.
 - [ ] Every spacing value comes from the spacing table
 - [ ] Nested radii follow the formula
 - [ ] No single sided card borders, no background gradients
-- [ ] Hero heading and subheading capped at 680px with meaningful line breaks
+- [ ] Hero heading capped at 680px with meaningful line breaks
 - [ ] Icons from Phosphor, Solar, or Iconamoon
 - [ ] Every transition uses the B7 base curve, scroll reveals use IntersectionObserver
-- [ ] Tagline reveal section present, minimum two lines, words activate one at a time on scroll
 
 **Content and ship**
 - [ ] Real draft copy, believable names and numbers, no banned filler words
