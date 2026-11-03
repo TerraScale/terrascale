@@ -101,7 +101,15 @@ namespace TerraScale.Dashboard.E2E
             return client;
         }
 
+        // Starts both replicas and waits until each has initialized its state, whether in its bounded startup attempt
+        // or on a background retry: a loaded host can need longer than the startup attempt allows.
         public async Task<bool> StartHostsAsync(bool simultaneous = false)
+        {
+            return await StartHostsWithoutWaitingAsync(simultaneous) || (StartupError == "not-initialized" && await WaitInitializedAsync());
+        }
+
+        // Starts both replicas and reports whether their bounded startup attempt alone initialized the state.
+        public async Task<bool> StartHostsWithoutWaitingAsync(bool simultaneous = false)
         {
             first = Host(); second = Host(); StartupError = null;
             try
@@ -133,17 +141,12 @@ namespace TerraScale.Dashboard.E2E
         public bool Initialized => new[] { first, second }.All(app => app?.Services.GetRequiredService<DashboardStateInitializer>().Initialized == true);
 
         // Waits for both running replicas to finish state initialization on their own, without a restart.
-        public async Task<bool> WaitInitializedAsync(TimeSpan timeout)
+        public async Task<bool> WaitInitializedAsync()
         {
-            using var deadline = new CancellationTokenSource(timeout);
-            using var client = CreateClient();
-            while (!Initialized && !deadline.IsCancellationRequested)
-            {
-                try { using var response = await client.GetAsync("/readyz", deadline.Token); }
-                catch (OperationCanceledException) when (deadline.IsCancellationRequested) { break; }
-            }
-
-            return Initialized;
+            try { await Task.WhenAll(new[] { first!, second! }.Select(TestDeadline.StateInitializedAsync)); }
+            catch (TimeoutException) { return false; }
+            StartupError = null;
+            return true;
         }
 
         public async Task<bool> RestartAsync()

@@ -31,6 +31,7 @@ namespace TerraScale.Dashboard.E2E
                 second = environment.CreateTestHost(Root, 0, Origin.ToString().TrimEnd('/'));
                 await second.StartAsync();
                 ReplicaOrigin = Address(second);
+                await Task.WhenAll(TestDeadline.StateInitializedAsync(first), TestDeadline.StateInitializedAsync(second));
                 using var client = CreateClient();
                 using var response = await client.GetAsync("/readyz");
                 response.EnsureSuccessStatusCode();

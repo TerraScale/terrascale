@@ -11,9 +11,12 @@ namespace TerraScale.Dashboard.Platform.Persistence
         private static readonly TimeSpan LongestRetry = TimeSpan.FromSeconds(30);
         // The first attempt runs inside startup, bounded, so a healthy start admits traffic as soon as it listens.
         private static readonly TimeSpan StartupAttempt = TimeSpan.FromSeconds(10);
-        private volatile bool initialized;
+        private readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public bool Initialized => initialized;
+        public bool Initialized => ready.Task.IsCompleted;
+
+        // Completes once the fixed schema is initialized, whether at startup or on a later retry.
+        public Task WhenInitialized => ready.Task;
 
         public override async Task StartAsync(CancellationToken cancellationToken)
         {
@@ -21,7 +24,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
             using (var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
             {
                 attempt.CancelAfter(StartupAttempt);
-                try { await state.InitializeAsync(attempt.Token); initialized = true; }
+                try { await state.InitializeAsync(attempt.Token); ready.TrySetResult(); }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested)
                 {
                     logger.DashboardStateIsNotInitializedAt(error.GetType().Name, error.Message);
@@ -32,7 +35,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            if (initialized)
+            if (Initialized)
             {
                 return;
             }
@@ -44,7 +47,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
                 try
                 {
                     await state.InitializeAsync(stoppingToken);
-                    initialized = true;
+                    ready.TrySetResult();
                     logger.DashboardStateInitializedAfterAttempts(attempt + 1);
                     return;
                 }

@@ -176,7 +176,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             var submit = button.ClickAsync();
             try
             {
-                await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                await entered.Task.WaitAsync(TestDeadline.Signal);
             }
             finally { release.TrySetResult(); }
             await submit;

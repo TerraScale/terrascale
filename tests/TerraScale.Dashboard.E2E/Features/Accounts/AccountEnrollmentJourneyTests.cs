@@ -73,7 +73,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             using var control = scenario.Client();
             try
             {
-                await scenario.Paused.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                await scenario.Paused.Task.WaitAsync(TestDeadline.Signal);
                 remembered = await scenario.ReferencesAsync(scenario.User);
                 await Assert.That(remembered.Any(reference => reference.Collection == collection && reference.RecordId == scenario.PausedId)).IsTrue();
                 // The journal contains exactly opaque ownership/reference IDs.

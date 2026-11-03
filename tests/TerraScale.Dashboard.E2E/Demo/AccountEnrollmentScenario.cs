@@ -73,6 +73,7 @@ namespace TerraScale.Dashboard.E2E
                 return Results.NoContent();
             });
             await scenario.app.StartAsync();
+            await TestDeadline.StateInitializedAsync(scenario.app);
             return scenario;
         }
 

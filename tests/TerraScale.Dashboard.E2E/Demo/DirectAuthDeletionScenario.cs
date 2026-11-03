@@ -115,6 +115,7 @@ namespace TerraScale.Dashboard.E2E
                 catch (AccountAccessException error) { return Microsoft.AspNetCore.Http.Results.StatusCode(error.StatusCode); }
             });
             await scenario.App.StartAsync();
+            await TestDeadline.StateInitializedAsync(scenario.App);
             return scenario;
         }
 

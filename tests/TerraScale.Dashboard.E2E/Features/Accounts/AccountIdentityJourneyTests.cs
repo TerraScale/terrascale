@@ -359,7 +359,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
 
         private static async Task WaitFor(HttpClient producer, Func<JsonElement, bool> predicate, string failure)
         {
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            using var deadline = TestDeadline.Start();
             try
             {
                 while (!predicate(await Observations(producer, deadline.Token)))

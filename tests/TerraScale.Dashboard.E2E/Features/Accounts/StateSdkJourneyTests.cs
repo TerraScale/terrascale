@@ -170,7 +170,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             await using var scenario = await StateSdkScenario.PrepareAsync(fixture.Root);
             using var controls = scenario.CreateProviderClient();
             await ControlAsync(controls, new { command = "mode", value = "interrupted" });
-            Check(!await scenario.StartHostsAsync(), "A producer outage during creation leaves the app running but not initialized.");
+            Check(!await scenario.StartHostsWithoutWaitingAsync(), "A producer outage during creation leaves the app running but not initialized.");
             var partial = await ObserveAsync(controls);
             Check(partial.GetProperty("collections").GetArrayLength() is > 0 and < 16, "The interrupted cold start leaves real, partial producer metadata.");
             using (var waiting = scenario.CreateClient())
@@ -193,7 +193,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
                 }
             }
             await ControlAsync(controls, new { command = "mode", value = "" });
-            Check(await scenario.WaitInitializedAsync(TimeSpan.FromSeconds(20)),
+            Check(await scenario.WaitInitializedAsync(),
                 "Once TerraBase answers, the same running replicas resume existing collections and establish the remainder without a restart.");
             var recovered = await ObserveAsync(controls);
             CheckSchema(recovered);
@@ -239,7 +239,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             await using var scenario = await StateSdkScenario.PrepareAsync(fixture.Root);
             using var controls = scenario.CreateProviderClient();
             await ControlAsync(controls, new { command = "mode", value = "unreachable" });
-            Check(!await scenario.StartHostsAsync() && scenario.StartupError == "not-initialized",
+            Check(!await scenario.StartHostsWithoutWaitingAsync() && scenario.StartupError == "not-initialized",
                 "Startup completes while TerraBase drops every connection; the app is running, not initialized: " + scenario.StartupError);
             using var client = scenario.CreateClient();
             using (var live = await client.GetAsync("/healthz"))
@@ -261,7 +261,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             Check(!scenario.Initialized, "The running app stays uninitialized until TerraBase recovers.");
 
             await ControlAsync(controls, new { command = "mode", value = "" });
-            Check(await scenario.WaitInitializedAsync(TimeSpan.FromSeconds(40)), "Once TerraBase answers, the same processes initialize the state on their own.");
+            Check(await scenario.WaitInitializedAsync(), "Once TerraBase answers, the same processes initialize the state on their own.");
             await ReadyAsync(client);
             await NativeAccountAsync(client);
             Check((await MeAsync(client)).GetProperty("email").GetString() is { Length: > 0 }, "A signed-in request works on the replica that started without TerraBase.");
@@ -297,7 +297,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             await using var scenario = await StateSdkScenario.PrepareAsync(fixture.Root);
             using var controls = scenario.CreateProviderClient();
             await ControlAsync(controls, new { command = "mode", value = failure });
-            Check(!await scenario.StartHostsAsync(), "Actual hosted startup must fail closed for " + failure);
+            Check(!await scenario.StartHostsWithoutWaitingAsync(), "Actual hosted startup must fail closed for " + failure);
             if (scenario.StartupError == "not-initialized")
             {
                 // A TerraBase refusal keeps the app running and retrying, but nothing is admitted.
@@ -543,7 +543,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
         { using var response = await client.GetAsync("/__test/observations", cancellationToken); response.EnsureSuccessStatusCode(); using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync()); return json.RootElement.Clone(); }
         private static async Task WaitAsync(HttpClient client, string counter, int expected)
         {
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            using var deadline = TestDeadline.Start();
             while ((await ObserveAsync(client, deadline.Token)).GetProperty(counter).GetInt32() < expected)
             {
                 deadline.Token.ThrowIfCancellationRequested();

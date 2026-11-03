@@ -97,7 +97,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             var request = owner.PostAsync("/__test/deletions/ensure", null);
             try
             {
-                await scenario.CreationPaused.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                await scenario.CreationPaused.Task.WaitAsync(TestDeadline.Signal);
                 scenario.Auth.ChangePassword(Scenario.Email(scenario.User), "revoked-during-creation");
                 scenario.Producer.Proofs.Add(new(scenario.Id(), "account", scenario.User, null));
                 await scenario.RunAsync();
@@ -227,7 +227,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             { ["_csrf"] = csrf, ["plan"] = "starter", ["interval"] = "annual", ["return"] = "/organization?tab=billing" });
             try
             {
-                await scenario.CreationPaused.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                await scenario.CreationPaused.Task.WaitAsync(TestDeadline.Signal);
                 var pending = StripeBilling.ReadBinding((await scenario.GetAsync(StripeBilling.Collection, organizationId))!, organizationId);
                 await Assert.That(pending.CustomerId.Length).IsGreaterThan(0);
                 await Assert.That(pending.CheckoutId).IsEqualTo("");
@@ -288,7 +288,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             string customerId;
             try
             {
-                await scenario.CreationPaused.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                await scenario.CreationPaused.Task.WaitAsync(TestDeadline.Signal);
                 customerId = StripeBilling.ReadBinding((await scenario.GetAsync(StripeBilling.Collection, organizationId))!, organizationId).CustomerId;
                 scenario.Producer.Proofs.Add(new(scenario.Id(), "organization", organizationId, organizationId));
                 await scenario.RunAsync();
@@ -475,7 +475,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             var hydration = owner.PostAsync("/__test/deletions/context", null);
             try
             {
-                await scenario.CreationPaused.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                await scenario.CreationPaused.Task.WaitAsync(TestDeadline.Signal);
                 scenario.Producer.Proofs.Add(new(scenario.Id(), "organization", organizationId, organizationId));
                 await scenario.RunAsync();
                 await Assert.That(scenario.Producer.Acknowledgements).IsEqualTo(1);
@@ -511,7 +511,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             var mutation = owner.PostAsync("/__test/deletions/context?mutate=true", null);
             try
             {
-                await scenario.CreationPaused.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                await scenario.CreationPaused.Task.WaitAsync(TestDeadline.Signal);
                 scenario.Producer.Proofs.Add(new(scenario.Id(), "project", projectId, organizationId));
                 await scenario.RunAsync();
                 await Assert.That(scenario.Producer.Acknowledgements).IsEqualTo(1);
@@ -540,7 +540,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             var hydration = owner.PostAsync("/__test/deletions/context", null);
             try
             {
-                await scenario.CreationPaused.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                await scenario.CreationPaused.Task.WaitAsync(TestDeadline.Signal);
                 scenario.Producer.Proofs.Add(new(scenario.Id(), "project", projectId, organizationId));
                 await scenario.RunAsync();
                 await Assert.That(scenario.Producer.Acknowledgements).IsEqualTo(1);

@@ -115,6 +115,7 @@ namespace TerraScale.Dashboard.E2E
             second = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
             await first.StartAsync();
             await second.StartAsync();
+            await Task.WhenAll(TestDeadline.StateInitializedAsync(first), TestDeadline.StateInitializedAsync(second));
             Origin = Address(first);
             ReplicaOrigin = Address(second);
             RegisterProvider();
@@ -184,6 +185,7 @@ namespace TerraScale.Dashboard.E2E
             first = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
             second = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
             await first.StartAsync(); await second.StartAsync();
+            await Task.WhenAll(TestDeadline.StateInitializedAsync(first), TestDeadline.StateInitializedAsync(second));
             Origin = Address(first); ReplicaOrigin = Address(second);
             RegisterProvider();
         }
