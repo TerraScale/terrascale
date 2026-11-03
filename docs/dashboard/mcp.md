@@ -89,11 +89,14 @@ Keep scope and filters unchanged; page size may change. Cursors select positions
 not snapshots: concurrent inserts before the checkpoint need a fresh traversal.
 
 The source reads keys, databases, members and invitations 100 at a time, failing
-instead of truncating after 100 upstream pages. Backups drain 100-item pages;
-OAuth applications and saved-query/subscription metadata are complete sources.
-The browser document REST endpoint uses the same continuation fields and returns
-`documents`; native TerraBase cursors survive empty filtered pages. Its limit is
-1–100, default 100; upstream may end a page early for its byte budget.
+instead of truncating after 100 upstream pages. `list_api_keys` is different: it
+forwards its cursor to ts-auth and returns exactly one bounded issuer page per
+call (creation order, no total), continuing while `hasMore` stays true; a cursor
+the issuer repeats ends the traversal instead of looping. Backups drain 100-item
+pages; OAuth applications and saved-query/subscription metadata are complete
+sources. The browser document REST endpoint uses the same continuation fields and
+returns `documents`; native TerraBase cursors survive empty filtered pages. Its
+limit is 1–100, default 100; upstream may end a page early for its byte budget.
 
 `list_documents` also accepts `after` with query ordering (`sort` or `descending`).
 Its effective `limit` defaults to 100 for native ID order and 25 for query order;

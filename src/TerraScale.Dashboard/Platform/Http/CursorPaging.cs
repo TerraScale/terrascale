@@ -16,6 +16,9 @@ namespace TerraScale.Dashboard.Platform.Http
     {
         public const string Description = "Cursor paging: limit 1–100 (default 100); pass nextCursor as after with the same scope and filters. Ordinal immutable-ID order. Continue until hasMore=false; nextCursor is then null. Invalid limits/cursors are rejected.";
 
+        // Same contract without the order claim: the issuer owns the order and its cursor is opaque.
+        public const string IssuerDescription = "Cursor paging: limit 1–100 (default 100); pass nextCursor as after with the same scope and filters. Continue until hasMore=false; nextCursor is then null. Invalid limits/cursors are rejected. A cursor the issuer repeats ends the traversal.";
+
         public static (int Limit, string After) Read(HttpRequest request)
         {
             var limit = 100;

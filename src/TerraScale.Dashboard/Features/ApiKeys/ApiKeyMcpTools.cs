@@ -8,11 +8,11 @@ namespace TerraScale.Dashboard.Features.ApiKeys
     [McpServerToolType]
     public sealed class ApiKeyMcpTools(IHttpContextAccessor http, ApiKeyService keys, AccountService accounts)
     {
-        [McpServerTool(Name = "list_api_keys", Title = "List API keys", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a project's API key metadata without secrets. An API key is also the machine credential: services exchange it with grant_type=client_credentials at ts-auth.")]
+        [McpServerTool(Name = "list_api_keys", Title = "List API keys", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a project's API key metadata without secrets, one bounded issuer page per call. An API key is also the machine credential: services exchange it with grant_type=client_credentials at ts-auth.")]
         public async Task<McpCredentialList> ListApiKeys(
             [Description("active, inactive, or empty for both.")] string status = "",
             string databaseId = "", string search = "", string? organizationId = null, string? projectId = null,
-            [Description(CursorPaging.Description)] int limit = 100, string after = "")
+            [Description(CursorPaging.IssuerDescription)] int limit = 100, string after = "")
         {
             if (status is not ("" or "active" or "inactive"))
             {
@@ -26,11 +26,10 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             }
 
             search = search.Trim();
-            var list = await keys.ListAsync(context, Cancellation);
-            var page = CursorPaging.Page(list.Where(key => (status.Length == 0 || status == "active" == key.IsActive) && (databaseId.Length == 0 || databaseId == key.DatabaseId)
-                && (search.Length == 0 || (key.Name + " " + key.Id + "_").Contains(search, StringComparison.OrdinalIgnoreCase))).Select(ApiKeyService.CredentialMetadata),
-                key => key.KeyId, CursorPaging.Scope(context, "credentials", "", status, databaseId, search), limit, after);
-            return new(page.Items, page.NextCursor, page.HasMore, page.Limit);
+            var page = await keys.ListPageAsync(context, after.Length == 0 ? null : after, limit, Cancellation);
+            var credentials = page.Items.Where(key => (status.Length == 0 || status == "active" == key.IsActive) && (databaseId.Length == 0 || databaseId == key.DatabaseId)
+                && (search.Length == 0 || (key.Name + " " + key.Id + "_").Contains(search, StringComparison.OrdinalIgnoreCase))).Select(ApiKeyService.CredentialMetadata).ToArray();
+            return new(credentials, page.NextCursor, page.HasMore, limit);
         }
 
         [McpServerTool(Name = "create_api_key", Title = "Create API key", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a project API key from the dashboard after hosted confirmation. Unattended MCP calls return step_up_required. The dashboard reveals the secret once. expiresInDays is 0 (default, works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, empty = any IP) limits where requests with the key may come from. Requires an owner or admin role.")]
