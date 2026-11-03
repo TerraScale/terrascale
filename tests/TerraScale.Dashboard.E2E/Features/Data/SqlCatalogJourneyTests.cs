@@ -41,7 +41,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
 
                 using var body = await JsonDocument.ParseAsync(http.Request.Body);
                 var statements = body.RootElement.GetProperty("statements").EnumerateArray().Select(item => item.GetProperty("sql").GetString()!).ToArray();
-                var listing = statements[0] == "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name LIMIT 101";
+                var listing = statements[0] == "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name LIMIT 10000";
                 if (!listing && !statements[0].StartsWith("PRAGMA table_info(", StringComparison.Ordinal))
                 { Interlocked.Increment(ref executions); return Results.Json(new { results = new[] { new { columns = Array.Empty<object>(), rows = Array.Empty<object>(), rows_affected = 1 } } }); }
                 if (http.Request.Method != "POST" || http.Request.QueryString.HasValue || http.Request.Headers[TerraScale.TerraBase.Contracts.TerraBaseRpc.PeerCredentialHeader] != TestIdentity.PeerSecret ||
@@ -51,7 +51,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 }
 
                 if (listing)
-                { Interlocked.Increment(ref catalogs); return answer == "listing-denied" ? Results.StatusCode(403) : Results.Json(new { results = new[] { Result(["name"], names.Select(name => new object?[] { name }).ToArray()) } }); }
+                { Interlocked.Increment(ref catalogs); return answer == "listing-denied" ? Results.StatusCode(403) : Results.Json(new { results = new[] { Result(["name"], EngineTables.Concat(names).Order(StringComparer.Ordinal).Select(name => new object?[] { name }).ToArray()) } }); }
                 Interlocked.Increment(ref batches);
                 await Assert.That(statements.SequenceEqual(names.Take(100).Select(name => "PRAGMA table_info('" + name.Replace("'", "''", StringComparison.Ordinal) + "')"))).IsTrue();
                 return answer switch
@@ -118,6 +118,9 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             await Assert.That(Volatile.Read(ref executions)).IsEqualTo(1);
             await Assert.That(Volatile.Read(ref documentReads)).IsEqualTo(0);
         }
+
+        // sqlite_master lists the engine's own tables next to the user's; TerraBase refuses PRAGMA table_info on them, so the catalog never asks.
+        private static readonly string[] EngineTables = ["_tb_meta", "collections", "commit_offset", "sqlite_sequence", "turso_cdc"];
 
         internal static object Result(string[] fields, object?[][] rows)
         {

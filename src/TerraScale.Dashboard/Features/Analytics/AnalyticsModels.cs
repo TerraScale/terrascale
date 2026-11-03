@@ -39,7 +39,7 @@ namespace TerraScale.Dashboard.Features.Analytics
 
     public sealed record AnalyticsPoint(string DatabaseId, string Region, DateTimeOffset Start, IReadOnlyDictionary<string, long> Requests,
         IReadOnlyDictionary<string, long> Operations, long Errors, double? P50Ms, double? P95Ms, double? P99Ms,
-        long? StorageBytes, long ClientSentBytes, long ClientReceivedBytes, long ReplicationSentBytes, long ReplicationReceivedBytes);
+        long? StorageBytes, long ClientSentBytes, long ClientReceivedBytes);
     public sealed record AnalyticsBatch(AnalyticsSourceState State, IReadOnlyList<AnalyticsPoint> Points);
     public interface IAnalyticsBackend
     {
