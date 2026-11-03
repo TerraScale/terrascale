@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO.Compression;
 using System.Net;
 using System.Text;
+using System.Threading.Channels;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -16,7 +17,6 @@ using ZLogger;
 
 namespace TerraScale.Authentication.Slow.Security;
 
-[NotInParallel(nameof(ErrorReportingTests))]
 public sealed class ErrorReportingTests
 {
     private const string BearerSecret = "bearer-secret-7f3a9c";
@@ -45,10 +45,12 @@ public sealed class ErrorReportingTests
         "synthetic failure", "upstream rejected",
     ];
 
-    // A failure whose messages, scope and breadcrumbs carry every kind of credential.
-    private static IResult Crash()
+    // A failure whose messages, scope and breadcrumbs carry every kind of credential. Only the server's own hub is touched,
+    // so a crash on a server without Sentry never reaches the process-wide SDK another test's server initialized.
+    private static IResult Crash(HttpContext context)
     {
-        Sentry.SentrySdk.ConfigureScope(scope =>
+        var hub = context.RequestServices.GetService<Sentry.IHub>();
+        hub?.ConfigureScope(scope =>
         {
             scope.SetTag("session", TagSecret);
             scope.SetTag("component", $"passwd={TagSecret}");
@@ -59,7 +61,7 @@ public sealed class ErrorReportingTests
             scope.Contexts["upstream"] = new { password = ContextSecret };
             scope.AddEventProcessor(new FrameSecretPlanter());
         });
-        Sentry.SentrySdk.AddBreadcrumb(
+        hub?.AddBreadcrumb(
             $"calling https://alice:{UserInfoSecret}@idp.example/token with session={BreadcrumbSecret}",
             data: new Dictionary<string, string> { ["session"] = BreadcrumbSecret, ["url"] = $"https://idp.example/cb?code={BreadcrumbSecret}" });
         throw new InvalidOperationException(
@@ -86,7 +88,7 @@ public sealed class ErrorReportingTests
         using var response = await server.Client.SendAsync(request);
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
-        var envelope = await collector.WaitForEventAsync(TimeSpan.FromSeconds(20));
+        var envelope = await collector.WaitForEventAsync("/__test/crash", TimeSpan.FromSeconds(20));
         // Enough to debug: exception types, stack frames and the route.
         await Assert.That(envelope).Contains("System.InvalidOperationException");
         await Assert.That(envelope).Contains("System.Net.Http.HttpRequestException");
@@ -495,9 +497,9 @@ public sealed class ErrorReportingTests
     private sealed class FakeGlitchTip : IAsyncDisposable
     {
         private readonly WebApplication app;
-        private readonly ConcurrentQueue<string> received;
+        private readonly Channel<string> received;
 
-        private FakeGlitchTip(WebApplication app, ConcurrentQueue<string> received, string dsn)
+        private FakeGlitchTip(WebApplication app, Channel<string> received, string dsn)
         {
             this.app = app;
             this.received = received;
@@ -511,7 +513,7 @@ public sealed class ErrorReportingTests
             var builder = WebApplication.CreateSlimBuilder();
             builder.WebHost.UseUrls("http://127.0.0.1:0");
             var app = builder.Build();
-            var received = new ConcurrentQueue<string>();
+            var received = Channel.CreateUnbounded<string>();
             app.MapPost("/api/{project}/envelope/", async (HttpContext context) =>
             {
                 Stream body = context.Request.Body;
@@ -521,7 +523,7 @@ public sealed class ErrorReportingTests
                 }
 
                 using var reader = new StreamReader(body, Encoding.UTF8);
-                received.Enqueue(await reader.ReadToEndAsync());
+                await received.Writer.WriteAsync(await reader.ReadToEndAsync());
                 return Results.Ok();
             });
             await app.StartAsync();
@@ -529,25 +531,28 @@ public sealed class ErrorReportingTests
             return new FakeGlitchTip(app, received, $"http://publickey@127.0.0.1:{address.Port}/1");
         }
 
-        public async Task<string> WaitForEventAsync(TimeSpan timeout)
+        /// <summary>The first error event from <paramref name="route"/>; other envelopes, and events from elsewhere in the process, are skipped.</summary>
+        public async Task<string> WaitForEventAsync(string route, TimeSpan timeout)
         {
-            var deadline = DateTimeOffset.UtcNow + timeout;
+            using var deadline = new CancellationTokenSource(timeout);
             var others = 0;
-            while (DateTimeOffset.UtcNow < deadline)
+            try
             {
-                while (this.received.TryDequeue(out var envelope))
+                await foreach (var envelope in this.received.Reader.ReadAllAsync(deadline.Token))
                 {
-                    others++;
-                    if (envelope.Contains("\"type\":\"event\"", StringComparison.Ordinal))
+                    if (envelope.Contains("\"type\":\"event\"", StringComparison.Ordinal) && envelope.Contains(route, StringComparison.Ordinal))
                     {
                         return envelope;
                     }
-                }
 
-                await Task.Delay(100);
+                    others++;
+                }
+            }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+            {
             }
 
-            throw new TimeoutException($"No error event reached the collector ({others} other envelopes).");
+            throw new TimeoutException($"No error event from {route} reached the collector ({others} other envelopes).");
         }
 
         public async ValueTask DisposeAsync()

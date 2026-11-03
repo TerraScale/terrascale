@@ -526,52 +526,199 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    // Its bound is wall-clock time, so it runs alone rather than beside the suite's TerraBase-heavy tests.
-    [NotInParallel]
     public async Task A_stalled_configuration_read_delays_a_backlog_of_codes_once_and_they_go_out_with_the_defaults()
     {
+        // The test owns the read's timeout: nothing times out until it fires the held timer, whatever the host's load.
+        var clock = new HeldTimeoutClock(DateTimeOffset.UtcNow, SignInMail.ConfigTimeout);
         var stalled = new StallingHandler("/email_configs/") { InnerHandler = TerraBaseFixture.NewHandler() };
-        await using var oidc = await OidcHarness.StartAsync(fixture, services: services => services.AddSingleton(new HttpClient(stalled)));
-        string[] addresses = [.. Enumerable.Range(0, 4).Select(index => $"user{index}@example.test")];
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services => services.AddSingleton(new HttpClient(stalled)));
+        string[] addresses = [.. Enumerable.Range(0, 6).Select(index => $"user{index}@example.test")];
         foreach (var address in addresses)
         {
             await oidc.CreateUserAsync(address);
         }
 
-        var elapsed = System.Diagnostics.Stopwatch.StartNew();
-        foreach (var address in addresses)
+        async Task SignInAsync(string address)
         {
             using var response = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-in", new() { ["email"] = address, ["next"] = string.Empty });
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
 
-        foreach (var _ in addresses)
+        async Task<string> DeliveredAsync()
         {
-            var (_, message) = await oidc.Email.NextAsync();
+            var (recipient, message) = await oidc.Email.NextAsync();
             await Assert.That(message.Subject).EndsWith(" is your TerraScale sign-in code");
+            return recipient;
         }
 
-        // One read timed out; the rest of the backlog skipped it instead of waiting 3 s each.
-        await Assert.That(elapsed.Elapsed).IsLessThan(SignInMail.ConfigTimeout * 2);
+        // A backlog of four codes arrives while the first configuration read is stalled.
+        string[] backlog = addresses[..4];
+        foreach (var address in backlog)
+        {
+            await SignInAsync(address);
+        }
+
+        await stalled.EnteredAsync(1);
+        await Assert.That(oidc.Email.HasPending).IsFalse().Because("no code goes out before the stalled read times out");
+
+        // The one read times out; the whole backlog goes out with the defaults instead of each code paying a timeout.
+        await Assert.That(clock.FireAll()).IsEqualTo(1);
+        List<string> delivered = [];
+        foreach (var _ in backlog)
+        {
+            delivered.Add(await DeliveredAsync());
+        }
+
+        await Assert.That(delivered).IsEquivalentTo(backlog);
         await Assert.That(stalled.Calls).IsEqualTo(1);
+        await Assert.That(clock.Held).IsEqualTo(1);
+
+        // Inside the backoff the next code skips the read entirely.
+        await SignInAsync(addresses[4]);
+        await Assert.That(await DeliveredAsync()).IsEqualTo(addresses[4]);
+        await Assert.That(stalled.Calls).IsEqualTo(1);
+        await Assert.That(clock.Held).IsEqualTo(1);
+
+        // Once the backoff lapses the next code reads again, and goes out with the defaults when that read times out too.
+        clock.Advance(SignInMail.ConfigBackoff);
+        await SignInAsync(addresses[5]);
+        await stalled.EnteredAsync(2);
+        await Assert.That(oidc.Email.HasPending).IsFalse();
+        await Assert.That(clock.FireAll()).IsEqualTo(1);
+        await Assert.That(await DeliveredAsync()).IsEqualTo(addresses[5]);
+        await Assert.That(stalled.Calls).IsEqualTo(2);
     }
 
     /// <summary>Holds every TerraBase request whose path contains <c>fragment</c> until it is canceled.</summary>
     private sealed class StallingHandler(string fragment) : DelegatingHandler
     {
+        private readonly SemaphoreSlim entered = new(0);
         private int calls;
 
         public int Calls => Volatile.Read(ref this.calls);
+
+        /// <summary>Waits until the stalled path has been requested <paramref name="count"/> times in total.</summary>
+        public async Task EnteredAsync(int count)
+        {
+            while (this.Calls < count)
+            {
+                await Assert.That(await this.entered.WaitAsync(TimeSpan.FromSeconds(30))).IsTrue().Because($"request {count} to {fragment} never arrived");
+            }
+        }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (request.RequestUri!.AbsolutePath.Contains(fragment, StringComparison.Ordinal))
             {
                 Interlocked.Increment(ref this.calls);
+                this.entered.Release();
                 await Task.Delay(Timeout.Infinite, cancellationToken);
             }
 
             return await base.SendAsync(request, cancellationToken);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                this.entered.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+    }
+
+    /// <summary>
+    /// A wall clock the test moves by hand. A timer armed as a one-shot after <c>held</c> fires only when the test calls
+    /// <see cref="FireAll"/>; every other timer runs on the system clock.
+    /// </summary>
+    private sealed class HeldTimeoutClock(DateTimeOffset start, TimeSpan held) : TimeProvider
+    {
+        private readonly global::System.Collections.Concurrent.ConcurrentQueue<GateTimer> armed = new();
+        private readonly TimeSpan heldDue = held;
+        private long ticks = start.UtcTicks;
+        private int arms;
+
+        /// <summary>How many times a timer has been armed for the held due time.</summary>
+        public int Held => Volatile.Read(ref this.arms);
+
+        public void Advance(TimeSpan by) => Interlocked.Add(ref this.ticks, by.Ticks);
+
+        public override DateTimeOffset GetUtcNow() => new(Interlocked.Read(ref this.ticks), TimeSpan.Zero);
+
+        /// <summary>Fires every held timer still armed and returns how many fired.</summary>
+        public int FireAll()
+        {
+            var fired = 0;
+            while (this.armed.TryDequeue(out var timer))
+            {
+                fired += timer.Fire() ? 1 : 0;
+            }
+
+            return fired;
+        }
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new GateTimer(this, callback, state);
+            timer.Change(dueTime, period);
+            return timer;
+        }
+
+        private sealed class GateTimer : ITimer
+        {
+            private readonly HeldTimeoutClock clock;
+            private readonly TimerCallback callback;
+            private readonly object? state;
+            private readonly ITimer inner;
+            private int holding;
+
+            public GateTimer(HeldTimeoutClock clock, TimerCallback callback, object? state)
+            {
+                this.clock = clock;
+                this.callback = callback;
+                this.state = state;
+                this.inner = TimeProvider.System.CreateTimer(callback, state, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            }
+
+            public bool Fire()
+            {
+                if (Interlocked.Exchange(ref this.holding, 0) == 0)
+                {
+                    return false;
+                }
+
+                this.callback(this.state);
+                return true;
+            }
+
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                if (dueTime == this.clock.heldDue && period == Timeout.InfiniteTimeSpan)
+                {
+                    _ = this.inner.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                    Volatile.Write(ref this.holding, 1);
+                    Interlocked.Increment(ref this.clock.arms);
+                    this.clock.armed.Enqueue(this);
+                    return true;
+                }
+
+                Volatile.Write(ref this.holding, 0);
+                return this.inner.Change(dueTime, period);
+            }
+
+            public void Dispose()
+            {
+                Volatile.Write(ref this.holding, 0);
+                this.inner.Dispose();
+            }
+
+            public ValueTask DisposeAsync()
+            {
+                Volatile.Write(ref this.holding, 0);
+                return this.inner.DisposeAsync();
+            }
         }
     }
 

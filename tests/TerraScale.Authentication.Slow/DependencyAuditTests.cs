@@ -7,9 +7,8 @@ namespace TerraScale.Authentication.Slow;
 /// throwaway projects, so its fail-closed behaviour is proven end to end, not only when the
 /// current dependency graph happens to be clean.
 /// </summary>
-// Every case runs `dotnet run` on the same file-based script, which builds into one shared
-// runfile cache directory; concurrent builds collide there, so the cases run one at a time.
-[NotInParallel(nameof(DependencyAuditTests))]
+// Every case runs `dotnet run` on the same file-based script; each builds it into its own
+// artifacts directory, so concurrent cases never share the default runfile cache.
 public sealed class DependencyAuditTests
 {
     [Test]
@@ -98,7 +97,7 @@ public sealed class DependencyAuditTests
             }
             return await RunAsync(
                 realDotnet,
-                ["run", Path.Combine(repo, "scripts", "auth", "check-nuget-vulnerabilities.cs"), project],
+                ["run", "--artifacts-path", Path.Combine(directory.FullName, "artifacts"), Path.Combine(repo, "scripts", "auth", "check-nuget-vulnerabilities.cs"), project],
                 repo,
                 new Dictionary<string, string> { ["PATH"] = $"{bin}:{Environment.GetEnvironmentVariable("PATH")}" });
         }
@@ -160,7 +159,7 @@ public sealed class DependencyAuditTests
             await RunAsync("dotnet", ["restore", directory.FullName], directory.FullName);
             return await RunAsync(
                 "dotnet",
-                ["run", Path.Combine(repo, "scripts", "auth", "check-nuget-vulnerabilities.cs"), Path.Combine(directory.FullName, "Probe.csproj")],
+                ["run", "--artifacts-path", Path.Combine(directory.FullName, "artifacts"), Path.Combine(repo, "scripts", "auth", "check-nuget-vulnerabilities.cs"), Path.Combine(directory.FullName, "Probe.csproj")],
                 repo);
         }
         finally
