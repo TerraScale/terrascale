@@ -92,9 +92,11 @@ The source reads keys, databases, members and invitations 100 at a time, failing
 instead of truncating after 100 upstream pages. `list_api_keys` is different: it
 forwards its cursor to ts-auth and returns exactly one bounded issuer page per
 call (creation order, no total), continuing while `hasMore` stays true; a cursor
-the issuer repeats ends the traversal instead of looping. Backups drain 100-item
-pages; OAuth applications and saved-query/subscription metadata are complete
-sources. The browser document REST endpoint uses the same continuation fields and
+the issuer repeats ends the traversal instead of looping. `list_backups` does
+the same with TerraBase's own backup cursor: one bounded producer page per call
+(newest first, no total), and a repeated producer cursor ends the traversal.
+OAuth applications and saved-query/subscription metadata are complete sources.
+The browser document REST endpoint uses the same continuation fields and
 returns `documents`; native TerraBase cursors survive empty filtered pages. Its
 limit is 1–100, default 100; upstream may end a page early for its byte budget.
 
