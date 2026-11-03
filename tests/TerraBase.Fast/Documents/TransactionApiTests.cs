@@ -170,6 +170,34 @@ public sealed class TransactionApiTests
         await Assert.That(write.Json.GetProperty("offset").ValueKind).IsEqualTo(JsonValueKind.String);
     }
 
+    [Test]
+    public async Task An_over_budget_transaction_is_refused_as_capacity_and_rolls_back()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var ids = (document: DocumentApi.NewId(), under: DocumentApi.NewId());
+        var pad = new string('a', 710_000);
+        var over = await api.SendRawAsync(HttpMethod.Post, api.Transactions,
+            $$"""
+            {"ops":[
+              {"op":"create","collection":"items","id":"{{ids.document}}","document":{"pad":"{{pad}}"}},
+              {"op":"create","collection":"items","id":"{{ids.under}}","document":{"pad":"{{pad}}"}},
+              {"op":"create","collection":"items","id":"{{DocumentApi.NewId()}}","document":{"pad":"{{pad}}"}}
+            ]}
+            """,
+            "application/json");
+        var readOver = await api.GetAsync(ids.document);
+        var readUnder = await api.GetAsync(ids.under);
+        var underBudget = await api.TransactAsync(
+            new { op = "create", collection = "items", id = DocumentApi.NewId(), document = new { pad = "small" } });
+
+        await Assert.That((over.Status, over.Code)).IsEqualTo((HttpStatusCode.ServiceUnavailable, "capacity"));
+        await Assert.That(over.Message).Contains("2 MiB");
+        await Assert.That(over.Json.GetProperty("error").TryGetProperty("op", out _)).IsFalse();
+        await Assert.That(readOver.Status).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(readUnder.Status).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(underBudget.Status).IsEqualTo(HttpStatusCode.OK);
+    }
+
     private static long Offset(ApiResponse response) =>
         long.Parse(response.Json.GetProperty("offset").GetString()!, System.Globalization.CultureInfo.InvariantCulture);
 }

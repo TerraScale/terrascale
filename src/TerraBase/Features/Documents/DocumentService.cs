@@ -37,7 +37,8 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
     private static readonly Validation AssertRequiresIndex = new("assert_count examines at most 10000 documents", "assert_requires_index");
     private static readonly PayloadTooLarge WriteLimits = new("a transaction exceeds the storage write limits");
     private static readonly Unavailable OffsetExhausted = new("the commit offset is exhausted", "capacity");
-    private static readonly Unavailable ChangeGroupCapacity = new("a write transaction holds at most 1024 changes and 2 MiB of change content", "capacity");
+    private static readonly Unavailable ChangeGroupCapacity =
+        new("a write transaction holds at most 1024 changes and 2 MiB of encoded documents and their states", "capacity");
 
     public async ValueTask<CollectionResult> CreateCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken)
     {
@@ -486,12 +487,32 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                 DocumentRejected rejected => rejected,
             };
         }
+        catch (ChangeGroupCapacityException error) when (error.CapacityKey is { } key)
+        {
+            return CapacityRefusal(operations, indexErrors, key);
+        }
         catch (Exception error) when (error is not StorageBusyException && !cancellationToken.IsCancellationRequested)
         {
             logger.ZLogError(error, $"A write to database {database.DatabaseId:@Database} failed at or after its commit; it is answered as outcome unknown");
             return Unknown("the write may or may not have committed; its outcome is unknown");
         }
     }
+
+    private static DocumentRejected CapacityRefusal(IReadOnlyList<DocumentOperation> operations, bool indexErrors, (string Collection, string Id) key)
+    {
+        var op = operations.FindIndex(operation => operation is PutOperation or PatchOperation or DeleteOperation
+            && operation.Collection == key.Collection
+            && IdOf(operation) == key.Id);
+        return new DocumentRejected(ChangeGroupCapacity, indexErrors && op >= 0 ? op : null);
+    }
+
+    private static string? IdOf(DocumentOperation operation) => operation switch
+    {
+        PutOperation put => put.Id,
+        PatchOperation patch => patch.Id,
+        DeleteOperation delete => delete.Id,
+        _ => null,
+    };
 
     private DocumentRejected Unknown(string message) => new(new OutcomeUnknown(message, options.Region, options.MachineId));
     private async ValueTask<(WriteOutcome Outcome, CommitMarker? Marker)> CommitAsync(

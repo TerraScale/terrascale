@@ -253,7 +253,7 @@ internal sealed partial class TursoStorageTransaction
         {
             LimitsReached = true;
             throw new ChangeGroupCapacityException(
-                $"a transaction changes at most {changes} documents and {limit} bytes of documents and their states");
+                $"a transaction changes at most {changes} documents and {limit} bytes of documents and their states", collection, id);
         }
 
         _captured++;
