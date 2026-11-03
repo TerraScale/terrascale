@@ -114,7 +114,6 @@ namespace TerraScale.Dashboard.E2E.Features.Home
             });
 
             using var client = scenario.CreateClient();
-            using var producer = scenario.CreateProviderClient();
             using var login = await HttpJourney.LoginAsync(client);
             await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
 
@@ -129,16 +128,21 @@ namespace TerraScale.Dashboard.E2E.Features.Home
                 using var advanced = await HttpJourney.PostFormAsync(client, "/onboarding/step", step);
                 await Assert.That(advanced.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             }
-            using (var seeded = await producer.PostAsJsonAsync("/__test/control", new { command = "internal-add-database" }))
-            {
-                await Assert.That(seeded.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-            }
 
             using var identity = JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me"));
+            var projectId = identity.RootElement.GetProperty("projectId").GetString()!;
+            string databaseId;
+            using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
+            { ["_csrf"] = await HttpJourney.CsrfAsync(client, "/databases"), ["name"] = "starting", ["region"] = "GRU" }))
+            {
+                await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+                using var database = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+                databaseId = database.RootElement.GetProperty("id").GetString()!;
+            }
+
             using var listed = JsonDocument.Parse(await client.GetStringAsync("/api/v1/dashboard/databases"));
-            var database = listed.RootElement.GetProperty("items").EnumerateArray().Single();
-            databases.Add((identity.RootElement.GetProperty("projectId").GetString()!,
-                database.GetProperty("id").GetString()!, database.GetProperty("name").GetString()!));
+            var record = listed.RootElement.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("id").GetString() == databaseId);
+            databases.Add((projectId, databaseId, record.GetProperty("name").GetString()!));
 
             using var home = await client.GetAsync("/");
             await Assert.That(home.StatusCode).IsEqualTo(HttpStatusCode.OK);
