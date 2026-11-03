@@ -81,6 +81,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var initial = await PageAsync(client, "/replication");
             await Assert.That(initial).Contains("<dt>Home region</dt><dd>sfo · San Francisco</dd>");
             await Assert.That(initial.Contains("No provider latency measurements are available.", StringComparison.Ordinal)).IsFalse();
+            await Assert.That(initial).Contains("id=\"replication-title\"");
             await Assert.That(initial).Contains("/analytics?database=" + databaseId + "&project=" + projectId + "&range=24h");
             await Assert.That(initial.Contains("0 ms", StringComparison.Ordinal)).IsFalse();
             var home = Regex.Match(initial, "<input[^>]+type=\"checkbox\"[^>]+value=\"SFO\"[^>]*>").Value;
@@ -120,14 +121,14 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
 
             Volatile.Write(ref report, "measured");
             var overview = await PageAsync(replica, "?range=1h");
-            await Assert.That(overview.Contains("Per database and region", StringComparison.Ordinal)).IsFalse()
+            await Assert.That(overview.Contains("id=\"replication-title\"", StringComparison.Ordinal)).IsFalse()
                 .Because("replication measurements render only on the replication tab");
             var identityRow = Regex.Match(overview, "<div class=\"ts-db-identity\">.*?</header>", RegexOptions.Singleline).Value;
             await Assert.That(identityRow).Contains("flags/br.svg");
             await Assert.That(identityRow.IndexOf("data-region=\"gru\"", StringComparison.Ordinal)).IsLessThan(identityRow.IndexOf("data-region=\"sfo\"", StringComparison.Ordinal));
             var measured = await PageAsync(replica, "/replication?range=1h");
             await Assert.That(Regex.IsMatch(measured, "aria-current=\"page\"[^>]*><span>Replication</span>")).IsTrue();
-            await Assert.That(measured).Contains("&range=1h");
+            await Assert.That(measured).Contains("&range=1h\">View analytics");
             await Assert.That(measured).Contains("aria-label=\"Replication totals\"");
             await Assert.That(measured).Contains("<dd class=\"ts-stat-value\" title=\"20\">20</dd>");
             await Assert.That(measured).Contains("111 B");

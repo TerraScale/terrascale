@@ -20,9 +20,18 @@ namespace TerraScale.Dashboard.Features.Analytics
             static_configs:
               - targets: [api.terrascale.tech]
             oauth2:
+              # API key with databases:read
               client_id: <API key up to its first _>
               client_secret: <API key>
               token_url: https://auth.terrascale.tech/terrascale/oauth/token
+        """;
+
+        public const string PrometheusMetrics = """
+        terrascale_database_requests_per_second{database,database_id,region}
+        terrascale_database_errors_per_second{database,database_id,region}
+        terrascale_database_operations_per_second{database,database_id,region,kind}
+        terrascale_database_latency_milliseconds{database,database_id,region,quantile}
+        terrascale_database_storage_bytes{database,database_id,region}
         """;
     }
 
@@ -36,7 +45,7 @@ namespace TerraScale.Dashboard.Features.Analytics
                 if (batch.State == AnalyticsSourceState.Unavailable) { ServiceSloTelemetry.MarkBad(); return new(shell, selection, null, [], Empty: "Analytics measurements are unavailable."); }
                 if (batch.State == AnalyticsSourceState.NotMetered)
                 {
-                    return new(shell, selection, null, [], Empty: "TerraBase has no analytics for this project or database yet. They start with its first database.");
+                    return new(shell, selection, null, [], Empty: "No analytics yet.");
                 }
 
                 if (batch.Points.Count == 0)

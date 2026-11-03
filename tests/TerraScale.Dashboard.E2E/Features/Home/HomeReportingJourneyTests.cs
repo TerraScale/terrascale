@@ -32,10 +32,10 @@ namespace TerraScale.Dashboard.E2E.Features.Home
 
             // A new project with no databases and no keys: nothing is done yet and nothing is an error.
             var overview = await client.GetStringAsync("/");
-            await Assert.That(overview).Contains("No activity yet. Create a database to start metering reads and writes.");
+            await Assert.That(overview).Contains("<p class=\"ts-empty-title\">No activity yet.</p>");
             await Assert.That(overview).Contains("No activity yet. Replication starts once this project has a database.");
             await Assert.That(overview).DoesNotContain("Replication unavailable");
-            await Assert.That(overview).DoesNotContain(">Done</span>");
+            await Assert.That(overview).DoesNotContain("ts-home-step-done");
 
             using var connect = await client.GetAsync("/?tab=connect");
             await Assert.That(connect.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -70,12 +70,11 @@ namespace TerraScale.Dashboard.E2E.Features.Home
             await Assert.That(html).Contains($"/v1/projects/{projectId}/databases/");
             await Assert.That(html).Contains("href=\"/api-keys\"");
             await Assert.That(html).Contains("https://docs.terrascale.tech/getting-started/");
-            await Assert.That(html).Contains("https://docs.terrascale.tech/getting-started/csharp");
             await Assert.That(html).DoesNotContain("id=\"connect-csharp\"");
             await Assert.That(html).Contains("https://mcp.terrascale.tech/");
-            await Assert.That(html).Contains("JavaScript, Go, Python or Rust");
+            await Assert.That(html).Contains("<summary class=\"ts-strong\">Rust</summary>");
             await Assert.That(html).Contains("sslmode=verify-full&sslrootcert=system");
-            await Assert.That(html).Contains("libpq 16+");
+            await Assert.That(html).Contains("https://docs.terrascale.tech/guides/postgres-clients");
         }
 
         [Test]

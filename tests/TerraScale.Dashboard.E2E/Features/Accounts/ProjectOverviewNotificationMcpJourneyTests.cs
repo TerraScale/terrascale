@@ -66,7 +66,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             using (var page = await browser.GetAsync("/" + query))
             {
                 await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
-                await Assert.That(await page.Content.ReadAsStringAsync()).Contains("Requires organization membership");
+                await Assert.That(await page.Content.ReadAsStringAsync()).Contains("Organization members</dt><dd class=\"ts-stat-value\">Unavailable</dd>");
             }
             using (var regions = await browser.GetAsync("/overview/regions" + query))
             {

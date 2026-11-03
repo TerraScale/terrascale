@@ -23,7 +23,7 @@ namespace TerraScale.Dashboard.Features.Usage
     }
     public sealed record UsagePage(ShellModel Shell, UsageSelection Selection, string Tab, string Saved, SpendingSnapshot Spending,
         IReadOnlyList<UsageProjectRow> Projects, IReadOnlyList<UsageDatabaseRow> Databases, IReadOnlyList<UsageAllowance> Allowances,
-        string PlanName, UsageReading? Scope, AnalyticsLinePlot? History, string UsageSource, string UsageError, string AllowanceError, string PlanUsageNote, bool OrganizationStorageMeasured, UsageReplication Replication)
+        string PlanName, UsageReading? Scope, AnalyticsLinePlot? History, string UsageSource, string UsageError, string AllowanceError, bool OrganizationStorageMeasured, UsageReplication Replication)
     {
         public UsageStorageFact? StoredScope { get; init; }
         // Set when a plan without overage billing has used its monthly operation units: TerraBase refuses new writes.
@@ -34,7 +34,6 @@ namespace TerraScale.Dashboard.Features.Usage
         public int ActiveDatabases => Selection.Context.Project?.Databases.Count ?? 0;
         public int? RegionCount => UsagePlacement.For(Selection.Context.Project).RegionCount;
         public string RegionCountLabel => UsagePlacement.For(Selection.Context.Project).Label;
-        public string HistoryDescription => "The selected " + (Selection.DatabaseId.Length > 0 ? "database" : "project") + ", " + char.ToLowerInvariant(Selection.RangeLabel[0]) + Selection.RangeLabel[1..];
         public string ProjectHref(string projectId, string tab = "overview")
         {
             return "/usage?tab=" + tab + "&project=" + Uri.EscapeDataString(projectId) +
@@ -142,8 +141,7 @@ namespace TerraScale.Dashboard.Features.Usage
             var history = scope is { Series.Count: > 0 } ? AnalyticsLinePlot.For("Reads and writes, " + selection.RangeLabel, selection.Range, [.. scope.Series.Select(point => point.Start)],
                 [new("Reads", [.. scope.Series.Select(point => (decimal)point.Reads)]), new("Writes", [.. scope.Series.Select(point => (decimal)point.Writes)])]) : null;
             return new(shell, selection, tab, saved, controls, projects, databaseRows, allowances, name, scope, history, source,
-                result.Scope.State == UsageSourceState.Unavailable ? "Metered reads and writes could not be loaded. Try again shortly." : "", monthError,
-                "Published allowances count 4 KiB operation units and storage across selected regions, and client egress. These document counters do not measure allowance utilization.", organizationStorage is not null, await replicationRead)
+                result.Scope.State == UsageSourceState.Unavailable ? "Metered reads and writes could not be loaded. Try again shortly." : "", monthError, organizationStorage is not null, await replicationRead)
             {
                 StoredScope = selection.DatabaseId.Length > 0 ? stored?.Scope(selection) : null,
                 WritesPaused = writesPaused,

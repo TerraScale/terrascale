@@ -80,7 +80,7 @@ namespace TerraScale.Dashboard.E2E.Features.Usage
             await Assert.That(egress.GetProperty("used").ValueKind).IsEqualTo(JsonValueKind.Null);
             await Assert.That(egress.GetProperty("limit").GetInt64()).IsEqualTo(1_000_000_000);
             var emptyBody = WebUtility.HtmlDecode(await replica.GetStringAsync("/usage"));
-            await Assert.That(emptyBody).Contains("Published allowances count 4 KiB operation units and storage across selected regions, and client egress. These document counters do not measure allowance utilization.");
+            await Assert.That(emptyBody).Contains("<span class=\"ts-stat-label\">Operation units this month</span>");
             await Assert.That(emptyBody).Contains("Storage isn't measured here.");
             await Assert.That(emptyBody).Contains("Replication measurements are unavailable.");
             await Assert.That(emptyBody.Contains("Reads and writes could not be loaded", StringComparison.Ordinal)).IsFalse();

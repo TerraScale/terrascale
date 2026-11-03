@@ -42,7 +42,7 @@ namespace TerraScale.Dashboard.E2E.Features.Home
 
                 await flow.GotoAsync(ownerPage, "/analytics?database=" + orders + "&region=GRU&range=24h");
                 await Assert.That(await Stat("#analytics-summary", "Requests").InnerTextAsync()).IsEqualTo("10");
-                await Assert.That(await Stat("#analytics-summary", "Storage").InnerTextAsync()).IsEqualTo("4.1 kB");
+                await Assert.That(await Stat("#analytics-summary", "Storage on disk").InnerTextAsync()).IsEqualTo("4.1 kB");
                 await Assert.That(await Stat("#analytics-summary", "Worst p95 latency").InnerTextAsync()).IsEqualTo("1.75 ms");
                 await Assert.That(await ownerPage.Locator("main .ts-grid-2 > .ts-card").CountAsync()).IsEqualTo(7);
                 await flow.ShotAsync(ownerPage, "analytics-desktop");
@@ -90,7 +90,7 @@ namespace TerraScale.Dashboard.E2E.Features.Home
                 await Assert.That(await Stat("#analytics-summary", "Replication received").InnerTextAsync()).IsEqualTo("9 B");
                 await ScenarioAsync("not-metered");
                 await flow.GotoAsync(ownerPage, "/analytics");
-                await ownerPage.GetByText("TerraBase has no analytics for this project or database yet. They start with its first database.", new() { Exact = true }).WaitForAsync();
+                await ownerPage.GetByText("No analytics yet.", new() { Exact = true }).WaitForAsync();
                 await ownerPage.Locator("#analytics-range").SelectOptionAsync("7d");
                 await ApplyAnalyticsAsync();
                 await Assert.That(QueryHelpers.ParseQuery(new Uri(ownerPage.Url).Query)["range"].ToString()).IsEqualTo("7d");
@@ -279,7 +279,7 @@ namespace TerraScale.Dashboard.E2E.Features.Home
                 flow.Checks.Add("profile/name/phone/language persistence, actual sessions, ts-auth password reset link and bounded visible errors");
 
                 await flow.GotoAsync(ownerPage, "/notifications?status=unread&page=999");
-                await ownerPage.GetByText("You're all caught up", new() { Exact = true }).WaitForAsync();
+                await ownerPage.GetByText("No unread notifications in this scope.", new() { Exact = true }).WaitForAsync();
                 await Assert.That(await ownerPage.GetByRole(AriaRole.Button, new() { Name = "Mark all read", Exact = true }).IsDisabledAsync()).IsTrue();
                 await Assert.That(await ownerPage.Locator("form[data-on\\:submit]").CountAsync()).IsEqualTo(0).Because("native notifications omit dialog-only event expressions");
                 await flow.ShotAsync(ownerPage, "notifications-desktop");
@@ -288,7 +288,7 @@ namespace TerraScale.Dashboard.E2E.Features.Home
                 await ownerPage.Locator("details.ts-account summary").ClickAsync();
                 await ownerPage.Locator("#ts-notifications-menu").ClickAsync();
                 await ownerPage.Locator("#ts-notifications-dialog[open]").WaitForAsync();
-                await ownerPage.Locator("#ts-notifications-body").GetByText("You're all caught up", new() { Exact = true }).WaitForAsync();
+                await ownerPage.Locator("#ts-notifications-body").GetByText(new System.Text.RegularExpressions.Regex("^No (unread )?notifications in this scope\\.$")).WaitForAsync();
                 await Assert.That(await ownerPage.Locator("#ts-notifications-body form").GetAttributeAsync("data-on:submit")).StartsWith("@post('/api/v1/notifications/read-all?organizationId=").And.EndsWith("', {contentType:'form'})");
                 await flow.ShotAsync(ownerPage, "notifications-dialog-desktop", accessibility: false);
                 await ownerPage.Locator("#ts-notifications-dialog").GetByRole(AriaRole.Button, new() { Name = "Close", Exact = true }).ClickAsync();

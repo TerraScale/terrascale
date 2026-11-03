@@ -94,7 +94,7 @@ namespace TerraScale.Dashboard.Features.Home
             if (context.Project.Databases.Count == 0)
             {
                 result.ActivityMeasured = true;
-                result.ActivityNote = "No activity yet. Create a database to start metering reads and writes.";
+                result.ActivityNote = "No activity yet.";
                 return;
             }
             try
@@ -112,7 +112,7 @@ namespace TerraScale.Dashboard.Features.Home
                 }
                 catch (TerraBaseNotFoundException)
                 {
-                    result.ActivityNote = "Activity for this project isn't available yet. It appears once TerraBase reports its reads and writes.";
+                    result.ActivityNote = "No activity reported yet.";
                     return;
                 }
                 using var data = JsonSerializer.SerializeToDocument(usage, UsageJson.Default.TerraBaseProjectUsage);

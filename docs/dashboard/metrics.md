@@ -102,3 +102,70 @@ The topology map labels each region with its current lag reported by TerraBase.
 
 In the dry-run preview, **Tables** counts included tables out of all source tables, **Rows** counts rows in included
 tables, and **Blocking issues** and **Warnings** count the preview's issues by severity.
+
+## Insights: overview, analytics, usage, billing, logs, notifications and API keys
+
+### Analytics and overview
+
+TerraBase measures every analytics value. Time buckets follow the selected range automatically.
+Counters flush every 10 seconds, so the newest requests can take that long to appear.
+
+| Label | Definition |
+| --- | --- |
+| Requests | Requests in the selected period. Includes the dashboard's own reads while you browse a database (for example document counts); these are not read operations and are not billed. |
+| Errors | Failed requests in the selected period. |
+| Worst p95 latency | Maximum p95 of any database-region time bucket in the selected period. Percentiles are approximate histogram estimates in milliseconds. |
+| Storage on disk | Latest sampled on-disk size per database region, summed across regions. Includes engine files; Usage shows logical document bytes. Shown only when sampled. |
+| Operations | Operations in the selected period. Read operations match Usage's read counts; committed put, patch and delete operations are writes. Billing uses separate 4 KiB operation units, so one operation can consume several units. |
+| Client bandwidth | Server egress plus client ingress. |
+| Replication sent | Replication bytes observed at sending regions (TerraBase `replication_bytes` meter, separate from client bandwidth). |
+| Replication received | Replication bytes observed at receiving regions. |
+| Replication bandwidth | Wire bytes, counted once per directed region pair. |
+| By region | Requests and worst database p95 per region in the selected period. Selecting a region filters the charts. |
+
+The overview's region table uses ts-status measurements for the regions used by the project or organization.
+Replication health counts database regions in each state; worst lag is the current maximum across regions.
+
+### Prometheus export
+
+`GET /v1/projects/{projectId}/metrics` on `api.terrascale.tech`, scraped with OAuth2 client credentials:
+an API key with `databases:read`, whose client ID is the key up to its first underscore and whose secret is the whole key.
+Every metric carries the `database`, `database_id` and `region` labels; operations add `kind` and latency adds `quantile`.
+
+### Usage
+
+| Label | Definition |
+| --- | --- |
+| Plan allowance | Published allowances count 4 KiB operation units, storage across selected regions and client egress. Document counters do not measure allowance use. |
+| Reads, Writes | Best-effort metering from TerraBase for the selected period; not billing data. Counts since the last save can be lost on a crash. |
+| Logical storage | Live document bytes. |
+| Report-only spending cap | Internal organizations only. A monthly estimate alert threshold; empty or 0 means no alert. It never charges Stripe, restricts writes or suspends services. |
+
+### Billing
+
+| Label | Definition |
+| --- | --- |
+| Next invoice | The catalog base fee at renewal, or the recorded open invoice when one is dated later. Usage, credits, discounts and taxes can change the final invoice. Stripe confirms the final charge and billing date. |
+| Billing period | Current subscription period, else a recorded invoice period, else one interval before renewal. |
+| Outstanding balance | Remaining amount of open invoices in recorded history. |
+| Stripe charges | None for Free and internal organizations. |
+| Internal bill estimate | Report-only estimate from every project's UTC month-to-date usage. Reads are free; storage uses the current logical size for a full month, not historical byte-seconds. |
+
+### Request logs and log drains
+
+- Request logs show the latest 100 recorded requests within 24 hours, newest first. Restarts and capacity limits can omit requests, and recent requests from other regions may arrive later. Stored records older than 24 hours are pruned on the next database log flush.
+- Operations count committed document operations, not billing units.
+- Slow queries list query shapes last seen in the last 24 hours, slowest p95 first (maximum latency when p95 is unavailable). Counts are best-effort cumulative and may include earlier queries; the HTTP status filter does not apply. Run a query with `"explain": true` to see its plan and a suggested index.
+- The project log drain sends every database's request logs to an OTLP/HTTP JSON logs endpoint (public HTTPS) about every 15 seconds from the moment it is saved. Each check reads the latest 100 requests per database, so heavy traffic or a failing endpoint leaves gaps. The optional header value is stored encrypted and never shown again.
+
+### Alerts
+
+- Rules are checked every minute over the last five complete minutes. A rule fires when the value is above its threshold and resolves when it is at or below it. Up to 20 rules per project.
+- Operation units are measured for the whole organization, whatever database a rule names.
+- Email goes to organization owners. Webhooks must be public HTTPS; failed deliveries retry each minute, up to 3 attempts.
+- The webhook signing secret is base64url bytes. Verify `X-TerraScale-Signature`: `v1=` HMAC-SHA256 of `timestamp.body`.
+
+### API keys
+
+- Allowed IPs accept up to 32 CIDRs, one per line or comma separated; empty allows any IP. A request must match the key's list and the project's list when it has one. Changes apply within 60 seconds.
+- Revoking stops a key everywhere within 2 seconds and closes its open connections (including Postgres) within 3 seconds. Rotation issues a new secret shown once; the old secret follows the same bounds when its grace period ends.
