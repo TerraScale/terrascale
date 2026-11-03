@@ -44,6 +44,14 @@ internal interface IObjectStore
     Task<bool> DeleteAsync(string key, CancellationToken cancellationToken);
 }
 
+/// <summary>The bucket an operation addressed does not exist: the configured bucket was deleted or never created.</summary>
+/// <param name="Bucket">Its configured name.</param>
+internal sealed class ObjectStoreBucketMissingException(string bucket) : IOException($"the backup bucket does not exist: {bucket}")
+{
+    /// <summary>The bucket an operation addressed.</summary>
+    public string Bucket { get; } = bucket;
+}
+
 /// <summary>
 /// An S3-compatible bucket through the AWS SDK, configured for S3-compatible stores such as Tigris: path-style
 /// addressing, its own signing region, and checksums only where S3 requires them (not every store accepts the newer defaults).
@@ -81,22 +89,25 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
     private readonly bool _customer;
     private readonly TimeProvider _time;
     private readonly ILogger _logger;
+    private readonly Counter<long>? _bucketMissing;
 
     public S3ObjectStore(BackupSettings settings, IHttpClientFactory http, TimeProvider time, ILogger<S3ObjectStore> logger, IMeterFactory meters)
         : this(settings.Endpoint, settings.Region, settings.Bucket, settings.AccessKeyId, settings.SecretKey, http, HttpClientName, time, logger,
             meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.backup.unproven_uploads_deleted",
-                description: "Snapshots whose multipart upload completed without proof, deleted from the bucket."))
+                description: "Snapshots whose multipart upload completed without proof, deleted from the bucket."),
+            BucketMissingCounter(meters))
     {
     }
 
     public S3ObjectStore(Uri endpoint, string region, string bucket, string accessKeyId, string secretKey, IHttpClientFactory http, string clientName, TimeProvider time,
-        ILogger? logger = null, Counter<long>? unprovenDeleted = null)
+        ILogger? logger = null, Counter<long>? unprovenDeleted = null, Counter<long>? bucketMissing = null)
     {
         _bucket = bucket;
         _customer = clientName == CustomerHttpClientName;
         _time = time;
         _logger = logger ?? NullLogger.Instance;
         UnprovenDeleted = unprovenDeleted;
+        _bucketMissing = bucketMissing;
         _s3 = new(new BasicAWSCredentials(accessKeyId, secretKey), new AmazonS3Config
         {
             ServiceURL = endpoint.ToString(),
@@ -118,6 +129,10 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
 
     /// <summary>The platform bucket's count of deleted unproven snapshots, shared with the customer buckets' stores.</summary>
     internal Counter<long>? UnprovenDeleted { get; }
+
+    internal static Counter<long> BucketMissingCounter(IMeterFactory meters) =>
+        meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.object_store.bucket_missing",
+            description: "Backup bucket operations answered NoSuchBucket; the configured bucket does not exist.");
 
     public async Task PutAsync(string key, Stream content, CancellationToken cancellationToken)
     {
@@ -349,9 +364,15 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
 
             response = await SafeAsync(_s3.GetObjectAsync(request, cancellationToken)).ConfigureAwait(false);
         }
-        catch (AmazonS3Exception error) when (error.StatusCode == HttpStatusCode.NotFound)
+        catch (AmazonS3Exception error) when (error.StatusCode == HttpStatusCode.NotFound && error.ErrorCode != "NoSuchBucket")
         {
             return false;
+        }
+        catch (AmazonS3Exception error) when (error.StatusCode == HttpStatusCode.NotFound)
+        {
+            // The gate must never read a missing bucket as a missing anchor (2026-11-03, docs/qa/P0-TIGRIS.md).
+            _bucketMissing?.Add(1);
+            throw new ObjectStoreBucketMissingException(_bucket);
         }
 
         using (response)
@@ -377,7 +398,17 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         var previous = startAfter;
         while (true)
         {
-            var page = await SafeAsync(_s3.ListObjectsV2Async(request, cancellationToken)).ConfigureAwait(false);
+            ListObjectsV2Response page;
+            try
+            {
+                page = await SafeAsync(_s3.ListObjectsV2Async(request, cancellationToken)).ConfigureAwait(false);
+            }
+            catch (AmazonS3Exception error) when (error.StatusCode == HttpStatusCode.NotFound && error.ErrorCode == "NoSuchBucket")
+            {
+                _bucketMissing?.Add(1);
+                throw new ObjectStoreBucketMissingException(_bucket);
+            }
+
             foreach (var item in page.S3Objects ?? [])
             {
                 if (item.Key is not { } key || !key.StartsWith(prefix, StringComparison.Ordinal))
@@ -476,6 +507,11 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         try
         {
             await _s3.HeadBucketAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        catch (AmazonS3Exception error) when (error.StatusCode == HttpStatusCode.NotFound)
+        {
+            _bucketMissing?.Add(1);
+            throw new ObjectStoreBucketMissingException(_bucket);
         }
         finally
         {

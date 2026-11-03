@@ -14,6 +14,27 @@ public interface ICatalogGate
     bool IsOpen { get; }
     Task Opened { get; }
     Task<bool> TryAnchorAsync(CancellationToken cancellationToken);
+    CatalogGateStatus Status { get; }
+}
+
+/// <summary>Why <c>/healthz</c> degrades and <c>/readyz</c> fails while the gate is closed.</summary>
+public enum CatalogGateState
+{
+    /// <summary>The gate has not run a verification yet, or its last run failed without naming the bucket.</summary>
+    Unverified = 0,
+
+    /// <summary>The restore anchor was verified and the gate is open.</summary>
+    Open = 1,
+
+    /// <summary>The backup bucket that holds the restore anchor does not exist.</summary>
+    BucketMissing = 2,
+}
+
+/// <summary>The catalog gate's state for <c>/healthz</c> and <c>/readyz</c>.</summary>
+public sealed record CatalogGateStatus(CatalogGateState State, string? Bucket = null)
+{
+    /// <summary>Whether the gate is open and serving is possible.</summary>
+    public bool IsOpen => State == CatalogGateState.Open;
 }
 
 public sealed class AnchoredRevocation
@@ -35,7 +56,10 @@ internal sealed class CatalogGate(
     private static readonly TimeSpan AnchorTimeout = TimeSpan.FromSeconds(10);
     private readonly SemaphoreSlim _anchoring = new(1, 1);
     private readonly TaskCompletionSource _opened = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly Counter<long> _bucketMissing;
     private volatile bool _open;
+    // 0 unverified, 1 bucket missing; an int for volatile access.
+    private int _bucketMissingState;
     private bool _started;
     private bool _fresh;
     private Ulid _startIncarnation;
@@ -43,13 +67,20 @@ internal sealed class CatalogGate(
 
     public bool IsOpen => _open;
     public Task Opened => _opened.Task;
+    public CatalogGateStatus Status => _open
+        ? new(CatalogGateState.Open)
+        : new((CatalogGateState)(Volatile.Read(ref _bucketMissingState) * (int)CatalogGateState.BucketMissing), options.Backup?.Bucket);
     private string AnchorKey => $"catalog-anchor/{options.MachineId}";
     private static string KeyScope => BackupLayout.KeyScope(null);
 
     public override async Task StartAsync(CancellationToken cancellationToken)
     {
-        meters.Create(Telemetry.MeterName).CreateObservableGauge("terrabase.catalog.verified", () => IsOpen ? 1 : 0,
+        var meter = meters.Create(Telemetry.MeterName);
+        meter.CreateObservableGauge("terrabase.catalog.verified", () => IsOpen ? 1 : 0,
             description: "One after the local catalog restore anchor has been verified.");
+        meter.CreateObservableGauge("terrabase.catalog.bucket_missing", () => Status.State == CatalogGateState.BucketMissing ? 1 : 0,
+            description: "One while the backup bucket holding the restore anchor does not exist.");
+        _bucketMissing = S3ObjectStore.BucketMissingCounter(meters);
         _fresh = !engine.SystemDatabaseExists;
         (_startIncarnation, _startOffset) = await PositionAsync(cancellationToken).ConfigureAwait(false);
 
@@ -113,7 +144,14 @@ internal sealed class CatalogGate(
             }
 
             _open = true;
+            Interlocked.Exchange(ref _bucketMissingState, 0);
             _opened.TrySetResult();
+        }
+        catch (ObjectStoreBucketMissingException)
+        {
+            Interlocked.Exchange(ref _bucketMissingState, 1);
+            _bucketMissing.Add(1);
+            logger.ZLogError($"The backup bucket does not exist; the catalog restore anchor cannot be read or written (bucket {options.Backup?.Bucket:@Bucket})");
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {

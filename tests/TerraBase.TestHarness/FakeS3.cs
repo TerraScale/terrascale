@@ -62,6 +62,9 @@ public sealed partial class FakeS3
     /// <summary>Object PUTs refused with <c>AccessDenied</c>, without storing their content.</summary>
     public Func<string, bool> FailPut { get; set; } = _ => false;
 
+    /// <summary>While set, every request to the platform bucket is answered 404 <c>NoSuchBucket</c>.</summary>
+    public bool PlatformBucketMissing { get; set; }
+
     /// <summary>Platform anchor GETs missing Tigris's consistent-read header.</summary>
     public int InconsistentAnchorReads => Volatile.Read(ref _inconsistentAnchorReads);
 
@@ -373,6 +376,11 @@ public sealed partial class FakeS3
         var (bucket, key) = slash < 0 ? (path, "") : (path[..slash], path[(slash + 1)..]);
         var customer = uri.GetLeftPart(UriPartial.Authority) == CustomerEndpoint;
         var objects = customer ? _customerObjects : _objects;
+        if (!customer && PlatformBucketMissing)
+        {
+            return S3Error(HttpStatusCode.NotFound, "NoSuchBucket");
+        }
+
         if (bucket != (customer ? CustomerBucket : Bucket) && !IsPurgeBucket(customer, bucket))
         {
             return S3Error(HttpStatusCode.NotFound, "NoSuchBucket");

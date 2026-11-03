@@ -1,7 +1,9 @@
 using System.Net;
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Catalog;
@@ -162,7 +164,73 @@ public sealed class LocalCatalogAnchorTests
         await Assert.That(await host.Api.Server.Services.GetRequiredService<ICatalogGate>().TryAnchorAsync(cancellationToken)).IsTrue();
     }
 
+    [Test]
+    public async Task A_missing_backup_bucket_fails_loudly_while_a_missing_anchor_still_waits(CancellationToken cancellationToken)
+    {
+        var directory = Directory.CreateTempSubdirectory("terrabase-local-bucket-missing-").FullName;
+        var s3 = new FakeS3();
+        var time = new FakeTimeProvider();
+        var logs = new CapturedLogs();
+        var user = EntityIds.New().ToString();
+        try
+        {
+            string organization;
+            await using (var api = await StartAsync(directory, s3, time, user, logs))
+            {
+                organization = await api.CreateOrganizationAsync(new Faker().Company.CompanyName());
+                using var ready = await api.Server.Client.GetAsync(ManagementApi.Uri("/readyz"), cancellationToken);
+                await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                using var healthy = await api.Server.Client.GetAsync(ManagementApi.Uri("/healthz"), cancellationToken);
+                await Assert.That(healthy.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(api.Server.Services.GetRequiredService<ICatalogGate>().Status.State).IsEqualTo(CatalogGateState.Open);
+            }
+
+            s3.PlatformBucketMissing = true;
+            await using (var restarted = await StartAsync(directory, s3, time, EntityIds.New().ToString(), logs))
+            {
+                var gate = restarted.Server.Services.GetRequiredService<ICatalogGate>();
+                await TerraBaseTestServer.EventuallyAsync(async token =>
+                {
+                    using var health = await restarted.Server.Client.GetAsync(ManagementApi.Uri("/healthz"), token);
+                    return health.StatusCode == HttpStatusCode.ServiceUnavailable
+                        && (await health.Content.ReadAsStringAsync(token)).Contains("\"bucket\":\"backup-test\"", StringComparison.Ordinal);
+                }, cancellationToken: cancellationToken);
+                using var degraded = await restarted.Server.Client.GetAsync(ManagementApi.Uri("/healthz"), cancellationToken);
+                await Assert.That(degraded.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+                await Assert.That((await degraded.Content.ReadAsStringAsync(cancellationToken)).Contains("\"status\":\"degraded\"", StringComparison.Ordinal)).IsTrue();
+                await Assert.That(gate.Status.State).IsEqualTo(CatalogGateState.BucketMissing);
+                await Assert.That(gate.Status.Bucket).IsEqualTo(FakeS3.Bucket);
+                await Assert.That(gate.IsOpen).IsFalse();
+                using var ready = await restarted.Server.Client.GetAsync(ManagementApi.Uri("/readyz"), cancellationToken);
+                await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+                using var refused = await restarted.Client.GetAsync(ManagementApi.Uri("/v1/management/organizations"), cancellationToken);
+                await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+                await Assert.That(await CodeAsync(refused, cancellationToken)).IsEqualTo("catalog_unverified");
+                await Assert.That(await restarted.Server.MetricAsync("terrabase_object_store_bucket_missing_total", cancellationToken: cancellationToken)).IsGreaterThanOrEqualTo(1);
+                var missing = logs.Messages.Where(message => message.Contains("The backup bucket does not exist", StringComparison.Ordinal)).ToList();
+                await Assert.That(missing.Count).IsGreaterThanOrEqualTo(1);
+                await Assert.That(missing[0].Contains(FakeS3.Bucket, StringComparison.Ordinal)).IsTrue();
+
+                s3.PlatformBucketMissing = false;
+                time.Advance(TimeSpan.FromSeconds(20));
+                await restarted.Server.Services.GetRequiredService<ICatalogGate>().Opened.WaitAsync(cancellationToken);
+                using var recovered = await restarted.Server.Client.GetAsync(ManagementApi.Uri("/healthz"), cancellationToken);
+                await Assert.That(recovered.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                using var served = await restarted.Client.GetAsync(ManagementApi.Uri("/v1/management/organizations"), cancellationToken);
+                await Assert.That(served.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That((await served.Content.ReadAsStringAsync(cancellationToken)).Contains(organization, StringComparison.Ordinal)).IsTrue();
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static Task<ManagementApi> StartAsync(string directory, FakeS3 s3, FakeTimeProvider time, string user) =>
+        StartAsync(directory, s3, time, user, new CapturedLogs());
+
+    private static Task<ManagementApi> StartAsync(string directory, FakeS3 s3, FakeTimeProvider time, string user, CapturedLogs logs) =>
         ManagementApi.StartAsync(settings =>
         {
             s3.Configure(settings);
@@ -170,10 +238,36 @@ public sealed class LocalCatalogAnchorTests
         }, services =>
         {
             s3.Route(services);
+            services.AddSingleton<ILoggerProvider>(logs);
             ManualBackupHosting.Configure(services);
         }, time, userId: user);
 
     private static bool IsAnchor(string key) => key.StartsWith("catalog-anchor/", StringComparison.Ordinal);
+
+    /// <summary>Every log message of one server, formatted.</summary>
+    private sealed class CapturedLogs : ILoggerProvider
+    {
+        private readonly ConcurrentQueue<string> _messages = new();
+
+        public IEnumerable<string> Messages => _messages;
+
+        public ILogger CreateLogger(string categoryName) => new Logger(_messages);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class Logger(ConcurrentQueue<string> messages) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state)
+                where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+                messages.Enqueue(formatter(state, exception));
+        }
+    }
 
     private static async Task<string?> CodeAsync(HttpResponseMessage response, CancellationToken cancellationToken) =>
         (await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("error").GetProperty("code").GetString();
