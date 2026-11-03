@@ -13,23 +13,39 @@ namespace TerraScale.Dashboard.Features.Backups
     // Backup calls retain current-user scopes and route to the database home region.
     public sealed class BackupBackend(TerraBaseRpcClient rpc, IProjectAccessTokens tokens, IDatabaseBackend databases) : IBackupBackend
     {
+        // One producer page: 100 items is its fixed page size; callers asking for a whole list page through it.
+        public const int ProducerPageSize = 100;
+
         public async Task<IReadOnlyList<ProducerBackup>> ListAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
-            var database = await NameAsync(scope, home, databaseId, cancellationToken);
             var result = new List<ProducerBackup>();
-            var cursors = new HashSet<string>(StringComparer.Ordinal);
+            var seen = new HashSet<string>(StringComparer.Ordinal);
             string? after = null;
-            do
+            var pages = 0;
+            while (true)
             {
-                var page = await CallAsync(scope, home, "databases:read", client => client.ListAsync(scope.ProjectId, database, after).ResponseAsync, BackupBackendJson.Default.BackupResponse, cancellationToken);
-                result.AddRange(page.Items);
-                after = page.Next;
-                if (!string.IsNullOrEmpty(after) && !cursors.Add(after))
+                var page = await ListPageAsync(scope, home, databaseId, after, ProducerPageSize, cancellationToken);
+                foreach (var backup in page.Items)
                 {
-                    throw new HttpRequestException("Backup pagination did not advance.");
+                    if (seen.Add(backup.Id))
+                    {
+                        result.Add(backup);
+                    }
                 }
-            } while (!string.IsNullOrEmpty(after));
-            return result;
+
+                after = page.NextCursor;
+                if (after is null || seen.Count < ProducerPageSize * ++pages)
+                {
+                    return result;
+                }
+            }
+        }
+
+        public async Task<BackupBackendPage> ListPageAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? after, int limit, CancellationToken cancellationToken)
+        {
+            var database = await NameAsync(scope, home, databaseId, cancellationToken);
+            var page = await CallAsync(scope, home, "databases:read", client => client.ListAsync(scope.ProjectId, database, after, limit).ResponseAsync, BackupBackendJson.Default.BackupResponse, cancellationToken);
+            return new(page.Items, string.IsNullOrEmpty(page.Next) || page.Next == after ? null : page.Next);
         }
 
         public async Task<ProducerBackup> CreateAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
