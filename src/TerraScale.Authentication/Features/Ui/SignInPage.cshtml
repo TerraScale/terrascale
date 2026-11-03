@@ -260,7 +260,13 @@ case SignInStep.SignUpCode:
 </div>
 <button type="submit">Verify email</button>
 </form>
-<div class="row"><a href="@Model.Link("sign-up")">Start over for a new code</a><a href="@Model.Link("sign-up")">Change email</a></div>
+<form method="post" action="/ui/@Model.Slug/sign-up/resend">
+<input type="hidden" name="next" value="@Model.Next">
+<input type="hidden" name="email" value="@Model.Email">
+<input type="hidden" name="pending_token" value="@Model.PendingToken">
+<button type="submit" class="secondary"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg>Resend code</button>
+</form>
+<div class="row"><a href="@Model.Link("sign-up")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Change email</a></div>
 break;
 case SignInStep.Reset:
 <form method="post" action="/ui/@Model.Slug/reset">

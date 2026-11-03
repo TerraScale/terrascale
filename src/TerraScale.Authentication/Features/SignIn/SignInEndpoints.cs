@@ -344,6 +344,57 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
 }
 
 /// <summary>
+/// <c>POST /ui/{slug}/sign-up/resend</c>: emails a fresh code for the pending sign-up, replacing the previous one. The
+/// page is the same whether or not the address still has a pending sign-up; an address with an account is mailed a
+/// sign-in code instead.
+/// </summary>
+public sealed class ResendSignUpEndpoint(SignInMail mail, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Post("/ui/{slug}/sign-up/resend");
+        Name("ui_sign_up_resend");
+        Summary("Resend the sign-up code");
+        Description("Same-origin form post with the email and pending token of the pending sign-up. A fresh code is mailed to the same pending sign-up, replacing the previous code; an address that got an account meanwhile is mailed a sign-in code instead. The page is the same either way. Shares the mail-start limits (IP call and mail budgets, the 60-second mail cooldown per normalized email, 5 codes per normalized email per UTC clock hour); exhaustion answers 429 with Retry-After. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
+        Tags("Sign-in");
+        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
+        Produces<string>(StatusCodes.Status200OK, "text/html");
+        Produces<string>(StatusCodes.Status403Forbidden, "text/html");
+        Produces<string>(StatusCodes.Status429TooManyRequests, "text/html");
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        AllowAnonymous();
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
+        {
+            return SignInFlow.Refused(this.HttpContext);
+        }
+
+        var address = form.Email?.Trim() ?? string.Empty;
+        var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
+        // Reserved first: a full delivery queue answers 503 without spending the caller's mail budgets.
+        using var reservation = mail.Reserve();
+        if (await hosted.LimitMailAsync(address, SignInFlow.Ip(this.HttpContext), cancellationToken) is { } wait)
+        {
+            return SignInFlow.Limited(this.HttpContext, SignInStep.SignUpCode, wait, address, next, form.PendingToken);
+        }
+
+        await reservation.EnqueueSignUpResendAsync(SignInFlow.Tenant(this.HttpContext), address,
+            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage));
+        return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUpCode, SignInFlow.Tenant(this.HttpContext), address, next)
+        {
+            PendingToken = form.PendingToken,
+            Notice = $"We sent a new code to {address}.",
+        });
+    }
+}
+
+/// <summary>
 /// <c>POST /ui/{slug}/sign-up/verify</c>: redeems the emailed code. A sign-up code with its pending token creates the
 /// account; a sign-in code (the address already had one) signs that account in. Either way a session opens.
 /// </summary>
@@ -649,7 +700,7 @@ internal static class SignInFlow
             "sign-in" => theme.Passcode || HttpMethods.IsGet(context.Request.Method),
             "sign-in/verify" => theme.Passcode,
             "sign-in/password" or "reset" or "reset/complete" => theme.Password,
-            "sign-up" or "sign-up/verify" => theme.SignUp,
+            "sign-up" or "sign-up/verify" or "sign-up/resend" => theme.SignUp,
             _ => true,
         };
     }

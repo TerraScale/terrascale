@@ -137,6 +137,32 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
     }
 
     /// <summary>
+    /// Re-issues the code of the pending sign-up for <paramref name="email"/> under its stored password and pending
+    /// token, so a lost code never restarts the sign-up; an address that got an account meanwhile is issued a sign-in
+    /// code instead. Returns <see langword="null"/> for an invalid address, a missing, consumed or pruned pending
+    /// sign-up, a reached issue limit or a lost race.
+    /// </summary>
+    public async Task<IssuedPasscode?> ResendSignUpAsync(string instanceId, string email, CancellationToken cancellationToken = default)
+    {
+        if (Users.NormalizeEmail(email) is not { } normalized)
+        {
+            return null;
+        }
+
+        if (await users.FindByEmailAsync(instanceId, normalized, cancellationToken).ConfigureAwait(false) is { } user)
+        {
+            return await this.IssueAsync(instanceId, user.Id, user.Id, user.Email, user.AuthEpoch, user.AuthStamp, PasscodePurpose.SignIn, null, null, cancellationToken).ConfigureAwait(false);
+        }
+
+        var previous = await store.GetAsync(AuthStore.PasscodeCollection, instanceId, SignUpKey + normalized, cancellationToken).ConfigureAwait(false)
+            is { } document ? document.Document.Deserialize(IdentityJson.Default.PasscodeRecord) : null;
+        return previous is { Consumed: false, Pruned: false, PasswordHash: { } hash, PendingTokenHash: { } tokenHash }
+            && previous.Purpose == StoredPurpose(PasscodePurpose.SignUp)
+            ? await this.IssueAsync(instanceId, SignUpKey + normalized, previous.UserId, normalized, 0, null, PasscodePurpose.SignUp, hash, tokenHash, cancellationToken).ConfigureAwait(false)
+            : null;
+    }
+
+    /// <summary>
     /// Redeems a sign-in code and opens a session. Returns <see langword="null"/> for an unknown email and for a wrong,
     /// expired, used, exhausted or superseded code alike. The code is consumed before the session is written, so a
     /// failed session write costs the user a new code. Concurrent regions can issue provisional sessions; only the winning

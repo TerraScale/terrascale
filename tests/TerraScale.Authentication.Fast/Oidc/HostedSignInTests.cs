@@ -81,7 +81,7 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         {
             await Assert.That(wrong.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
             await Assert.That(OidcHarness.SessionCookie(wrong)).IsNull();
-            await Assert.That(await wrong.Content.ReadAsStringAsync()).Contains(">Start over for a new code</a>");
+            await Assert.That(await wrong.Content.ReadAsStringAsync()).Contains(">Resend code</button>");
         }
 
         using (var created = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up/verify", new(verify) { ["code"] = code }))
@@ -118,6 +118,60 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
 
         await Assert.That(await PasswordSignInAsync(oidc, Address, Password)).IsNull();
         await Assert.That(await PasswordSignInAsync(oidc, Address, "a brand new passphrase")).IsNotNull();
+    }
+
+    [Test]
+    public async Task A_sign_up_resend_replaces_the_pending_code_without_restarting_the_sign_up()
+    {
+        var clock = new ManualClock(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600 * 3600));
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        const string Address = "resend@example.test";
+        const string Password = "correct horse battery";
+
+        using var started = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up", new() { ["email"] = Address, ["password"] = Password, ["next"] = string.Empty });
+        var verifyPage = await started.Content.ReadAsStringAsync();
+        await Assert.That(started.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var pending = PendingToken().Match(verifyPage).Groups[1].Value;
+        await Assert.That(pending).IsNotEmpty();
+        await Assert.That(verifyPage).Contains(">Resend code</button>");
+        await Assert.That(verifyPage).DoesNotContain("Start over for a new code");
+        var first = await oidc.Email.NextCodeAsync(Address);
+
+        // The resend is the same pending sign-up: the same pending token still verifies, with a fresh code.
+        clock.Advance(HostedAuth.MailCooldown);
+        using var resent = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up/resend",
+            new() { ["email"] = Address, ["pending_token"] = pending, ["next"] = string.Empty });
+        var resentPage = await resent.Content.ReadAsStringAsync();
+        await Assert.That(resent.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(resentPage).Contains("We sent a new code to resend@example.test.");
+        await Assert.That(resentPage).Contains("Verify your email");
+        var second = await oidc.Email.NextCodeAsync(Address);
+        await Assert.That(second).IsNotEqualTo(first);
+
+        // The replaced code never redeems; the fresh one creates the account with the original password.
+        using var wrong = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up/verify",
+            new() { ["email"] = Address, ["code"] = first, ["pending_token"] = pending, ["next"] = string.Empty });
+        await Assert.That(wrong.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+
+        using var created = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up/verify",
+            new() { ["email"] = Address, ["code"] = second, ["pending_token"] = pending, ["next"] = string.Empty });
+        await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await created.Content.ReadAsStringAsync()).Contains("You are signed in.");
+        await Assert.That(OidcHarness.SessionCookie(created)).IsNotNull();
+        await Assert.That(await PasswordSignInAsync(oidc, Address, Password)).IsNotNull();
+
+        // A second resend a second before the mail cooldown ends is limited with the seconds remaining.
+        clock.Advance(HostedAuth.MailCooldown - TimeSpan.FromSeconds(1));
+        using var again = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up/resend",
+            new() { ["email"] = Address, ["pending_token"] = pending, ["next"] = string.Empty });
+        var limited = await again.Content.ReadAsStringAsync();
+        await Assert.That(again.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
+        await Assert.That(again.Headers.TryGetValues("Retry-After", out var retryAfter)).IsTrue();
+        var seconds = int.Parse(retryAfter!.Single());
+        await Assert.That(seconds).IsGreaterThanOrEqualTo(1);
+        await Assert.That(seconds).IsLessThanOrEqualTo(2);
+        await Assert.That(limited).Contains("Try again in ").And.Contains(" seconds.");
+        await Assert.That(limited).Contains("Verify your email");
     }
 
     [Test]

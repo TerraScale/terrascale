@@ -349,6 +349,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
 
     private async Task<IssuedPasscode?> IssueAsync(MailWork work) => work.Purpose switch
     {
+        PasscodePurpose.SignUp when work.Resend => await passcodes.ResendSignUpAsync(work.Tenant, work.Email, CancellationToken.None).ConfigureAwait(false),
         PasscodePurpose.SignUp => await passcodes.RequestSignUpAsync(work.Tenant, work.Email, work.PasswordHash!, work.PendingToken!, CancellationToken.None).ConfigureAwait(false),
         PasscodePurpose.StepUp => await users.GetAsync(work.Tenant, work.UserId!, CancellationToken.None).ConfigureAwait(false) is { } user
             ? await passcodes.RequestStepUpAsync(user, work.RequestId!, CancellationToken.None).ConfigureAwait(false)
@@ -524,6 +525,10 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         public Task EnqueueSignUpAsync(string tenant, string email, string passwordHash, string pendingToken, string locale = AuthEmails.English) =>
             this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = PasscodePurpose.SignUp, PasswordHash = passwordHash, PendingToken = pendingToken }, locale, null);
 
+        /// <summary>Queues a resend of the pending sign-up's code, or a sign-in code when the address got an account.</summary>
+        public Task EnqueueSignUpResendAsync(string tenant, string email, string locale = AuthEmails.English) =>
+            this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = PasscodePurpose.SignUp, Resend = true }, locale, null);
+
         /// <summary>Queues the step-up code of hosted request <paramref name="requestId"/>.</summary>
         public Task EnqueueStepUpAsync(UserRecord user, string requestId)
         {
@@ -576,6 +581,9 @@ internal sealed record MailWork(string Tenant, string Email)
     public string? PasswordHash { get; init; }
 
     public string? PendingToken { get; init; }
+
+    /// <summary>A sign-up resend re-issues the pending sign-up's code from its stored password and token.</summary>
+    public bool Resend { get; init; }
 
     public string? UserId { get; init; }
 

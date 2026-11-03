@@ -58,6 +58,15 @@ internal static class HostedPageBehavior
     }
     if (value.autofocus) digits[0].focus();
   });
+  document.addEventListener('submit', function (event) {
+    var form = event.target;
+    if (form instanceof HTMLFormElement && !form.hasAttribute('data-busy')) {
+      form.setAttribute('data-busy', '');
+      form.querySelectorAll('button[type="submit"]').forEach(function (button) {
+        button.setAttribute('aria-busy', 'true'); button.disabled = true;
+      });
+    }
+  });
 })();
 """;
 }

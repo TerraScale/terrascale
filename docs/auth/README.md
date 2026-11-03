@@ -451,8 +451,10 @@ OpenID Connect routes for the slug `terrascale` (other slugs answer 404):
 - Hosted pages (v3 design, light/dark/system, no JavaScript needed): `GET` and
   `POST /ui/terrascale/sign-in`, `POST /ui/terrascale/sign-in/verify` (email
   code), `POST /ui/terrascale/sign-in/password`, `GET` and `POST
-  /ui/terrascale/sign-up`, `POST /ui/terrascale/sign-up/verify`, `GET` and
-  `POST /ui/terrascale/reset`, `POST /ui/terrascale/reset/complete`, and `GET`
+  /ui/terrascale/sign-up`, `POST /ui/terrascale/sign-up/verify`, `POST
+  /ui/terrascale/sign-up/resend` (a fresh code for the pending sign-up, same
+  pending token; the previous code stops working), `GET` and `POST
+  /ui/terrascale/reset`, `POST /ui/terrascale/reset/complete`, and `GET`
   and `POST /ui/terrascale/device` (sign in first, then explicit Approve or
   Deny; opening the link never approves)
 
