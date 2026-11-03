@@ -260,7 +260,7 @@ namespace TerraScale.Dashboard.E2E.Platform
                 // Sign-in UI lives on ts-auth's hosted pages; the dashboard only renders a failed callback.
                 var response = await page.GotoAsync(origin + "/login/callback?state=forged&code=forged");
                 await Assert.That(response!.Status).IsEqualTo(400);
-                await page.GetByRole(AriaRole.Heading, new() { Name = "Sign in", Exact = true }).WaitForAsync();
+                await page.GetByRole(AriaRole.Heading, new() { Name = "Sign-in failed", Exact = true }).WaitForAsync();
                 await Assert.That(await page.GetByRole(AriaRole.Link, new() { Name = "Try again", Exact = true }).GetAttributeAsync("href")).IsEqualTo("/login");
                 await page.EvaluateAsync("() => document.fonts.ready");
                 await page.ScreenshotAsync(new() { Path = Path.Combine(output, $"signin-failure-{name}.png"), FullPage = true });
