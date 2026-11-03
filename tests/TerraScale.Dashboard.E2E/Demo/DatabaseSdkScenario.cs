@@ -927,7 +927,13 @@ namespace TerraScale.Dashboard.E2E
                         {
                             var items = snapshots.Values.Select(snapshot => snapshot.Backup).Where(backup => backup.DatabaseId == source.Id)
                                 .OrderBy(backup => backup.CreatedAt).ThenBy(backup => backup.Id, StringComparer.Ordinal).ToArray();
-                            var start = after.Length == 0 ? 0 : int.Parse(after["backup-cursor:".Length..], CultureInfo.InvariantCulture);
+                            var start = 0;
+                            if (after.Length > 0 && (after.Length <= "backup-cursor:".Length || after[.."backup-cursor:".Length] != "backup-cursor:" ||
+                                !int.TryParse(after["backup-cursor:".Length..], NumberStyles.None, CultureInfo.InvariantCulture, out start)))
+                            {
+                                return Error(400, "invalid_cursor");
+                            }
+
                             var page = items.Skip(start).Take(limit).ToArray();
                             var next = start + page.Length < items.Length ? "backup-cursor:" + (start + page.Length).ToString(CultureInfo.InvariantCulture) : null;
                             return Results.Json(new { items = page, next = backupFailure == "repeat-cursor" && after.Length > 0 ? after : next });
