@@ -142,7 +142,7 @@ internal static class ApiExamples
         "completeFileUpload" => StoredFile,
         "createFileUpload" => FileCapability,
         "createFileDownload" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAD","url":"https://files.example/signed-capability","expiresAt":"2026-10-24T12:01:00Z","headers":{}}""",
-        "healthz" => $$"""{"status":"ok","version":"{{ServiceVersion.Value}}","region":"gru-1"}""",
+        "healthz" => $$"""{"status":"{{(status == "503" ? "degraded" : "ok")}}","version":"{{ServiceVersion.Value}}","region":"gru-1"}""",
         "readyz" => $$"""{"status":"{{(status == "503" ? "unavailable" : "ready")}}","version":"{{ServiceVersion.Value}}","region":"gru-1"}""",
         "createDatabase" or "getDatabase" or "updateDatabase" => Database,
         "branchDatabase" or "branchDatabaseIfId" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA6","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main_branch","branchedFrom":"01ARZ3NDEKTSV4RRFFQ69G5FA1","createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false}""",
@@ -260,6 +260,7 @@ internal static class ApiExamples
         "503" when id is "createImport" or "getImport" or "uploadImportSource" or "updateImport" or "startImport" or "cancelImport" or "resumeImport" =>
             "capacity, unavailable, destination_modified",
         "503" when id is "previewSelectiveRecovery" or "recoverHistoricalRecords" => "capacity, disk_capacity, backup_inventory_limit, recovery_unavailable, storage_busy, unavailable",
+        "503" when id == "healthz" => "bucket_missing",
         "503" => "storage_busy, capacity, unavailable",
         _ => "internal_error",
     };
