@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text;
 using System.Text.Json;
 using TerraScale.Dashboard.E2E.Features.Databases;
 
@@ -97,8 +96,9 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             } while (after is not null);
             await Assert.That(traversed).IsEquivalentTo(expected);
             await Assert.That(traversed.All(id => traversed.Count(other => other == id) == 1)).IsTrue();
-            using var foreign = await McpCallAsync(client, secret, "list_databases", new Dictionary<string, object?> { ["limit"] = 2, ["after"] = "1.broken.wrong" });
+            var foreign = await McpCallAsync(client, secret, "list_databases", new Dictionary<string, object?> { ["limit"] = 2, ["after"] = "1.broken.wrong" });
             await Assert.That(foreign.GetProperty("result").GetProperty("isError").GetBoolean()).IsTrue();
+            await Assert.That(foreign.GetRawText()).Contains("cursor");
             foreach (var id in expected)
             {
                 await CleanupAsync(client, csrf, id);
