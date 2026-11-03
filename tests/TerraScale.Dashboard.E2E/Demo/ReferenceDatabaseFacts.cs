@@ -172,6 +172,8 @@ namespace TerraScale.Dashboard.E2E
 
         public Task<IReadOnlyList<ProducerBackup>> ListAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken ct)
         { ct.ThrowIfCancellationRequested(); _ = Database(scope, home, databaseId); return Task.FromResult<IReadOnlyList<ProducerBackup>>([]); }
+        public Task<BackupBackendPage> ListPageAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? after, int limit, CancellationToken ct)
+        { ct.ThrowIfCancellationRequested(); _ = Database(scope, home, databaseId); return Task.FromResult(new BackupBackendPage([], null)); }
         public Task<ProducerBackupPolicy> PolicyAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
