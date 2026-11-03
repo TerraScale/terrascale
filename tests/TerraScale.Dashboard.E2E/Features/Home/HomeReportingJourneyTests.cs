@@ -204,7 +204,7 @@ namespace TerraScale.Dashboard.E2E.Features.Home
             await Assert.That(home.StatusCode).IsEqualTo(HttpStatusCode.OK);
             var html = await home.Content.ReadAsStringAsync();
             await Assert.That(html).Contains("No analytics measurements for this period.");
-            await Assert.That(html).Contains("Replication unavailable");
+            await Assert.That(html).Contains("TerraBase has not reported replication for this project yet");
             await Assert.That(html).DoesNotContain("Analytics unavailable");
 
             await Assert.That(reports.Count).IsEqualTo(1);
