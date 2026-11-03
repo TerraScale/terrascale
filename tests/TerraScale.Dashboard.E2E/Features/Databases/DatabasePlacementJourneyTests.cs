@@ -81,7 +81,6 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var initial = await PageAsync(client, "/replication");
             await Assert.That(initial).Contains("<dt>Home region</dt><dd>sfo · San Francisco</dd>");
             await Assert.That(initial.Contains("No provider latency measurements are available.", StringComparison.Ordinal)).IsFalse();
-            await Assert.That(initial).Contains("Per database and region · 24h · TerraBase replication_bytes meter");
             await Assert.That(initial).Contains("/analytics?database=" + databaseId + "&project=" + projectId + "&range=24h");
             await Assert.That(initial.Contains("0 ms", StringComparison.Ordinal)).IsFalse();
             var home = Regex.Match(initial, "<input[^>]+type=\"checkbox\"[^>]+value=\"SFO\"[^>]*>").Value;
@@ -128,7 +127,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await Assert.That(identityRow.IndexOf("data-region=\"gru\"", StringComparison.Ordinal)).IsLessThan(identityRow.IndexOf("data-region=\"sfo\"", StringComparison.Ordinal));
             var measured = await PageAsync(replica, "/replication?range=1h");
             await Assert.That(Regex.IsMatch(measured, "aria-current=\"page\"[^>]*><span>Replication</span>")).IsTrue();
-            await Assert.That(measured).Contains("Per database and region · 1h · TerraBase replication_bytes meter");
+            await Assert.That(measured).Contains("&range=1h");
             await Assert.That(measured).Contains("aria-label=\"Replication totals\"");
             await Assert.That(measured).Contains("<dd class=\"ts-stat-value\" title=\"20\">20</dd>");
             await Assert.That(measured).Contains("111 B");

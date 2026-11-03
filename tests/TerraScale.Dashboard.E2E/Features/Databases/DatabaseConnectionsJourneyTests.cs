@@ -56,9 +56,6 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var card = page.Locator("#connect");
             await Assert.That(await page.Locator("a[href='https://docs.terrascale.tech/guides/authentication']").CountAsync()).IsEqualTo(1);
             await Assert.That(await card.InnerTextAsync()).Contains("Project ID");
-            await Assert.That(await card.InnerTextAsync()).Contains("expires_in");
-            await Assert.That(await card.InnerTextAsync()).Contains("no token exchange");
-            await Assert.That(await card.InnerTextAsync()).Contains("verifies the TLS certificate and hostname");
             await Assert.That(await card.Locator("a[href^='/api-keys']").CountAsync()).IsEqualTo(1);
             foreach (var protocol in protocols)
             {

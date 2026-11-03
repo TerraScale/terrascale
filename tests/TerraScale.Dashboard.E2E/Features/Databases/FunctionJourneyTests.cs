@@ -94,7 +94,6 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await Assert.That(requests.Any(item => item.EndsWith("anonymous", StringComparison.Ordinal))).IsFalse();
             var http = await PageAsync(path + "?function=hello", HttpStatusCode.OK);
             await Assert.That(http).DoesNotContain("Trigger deliveries");
-            await Assert.That(http).Contains("Exchange your project API key for a short-lived access token with <code>documents:read</code>, then send that access token as a Bearer token.");
             var guide = Regex.Match(http, "<a\\b[^>]*href=\"https://docs.terrascale.tech/guides/authentication\"[^>]*>.*?</a>", RegexOptions.Singleline).Value;
             await Assert.That(guide).Contains("Authentication guide");
             await Assert.That(guide).Contains("target=\"_blank\"");

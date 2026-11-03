@@ -73,13 +73,13 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             using (var page = await client.GetAsync(path + "?destination=customer"))
             {
                 var html = WebUtility.HtmlDecode(await page.Content.ReadAsStringAsync());
-                await Assert.That(html).Contains("value=\"" + RecoveryWindow.Input(latest) + "\"").And.Contains("min=\"" + RecoveryWindow.Input(earliest) + "\"").And.Contains("one additional database slot");
+                await Assert.That(html).Contains("value=\"" + RecoveryWindow.Input(latest) + "\"").And.Contains("min=\"" + RecoveryWindow.Input(earliest) + "\"").And.Contains("max=\"" + RecoveryWindow.Input(latest) + "\"").And.Contains("Databases used");
                 await Assert.That(html).Contains("pattern=\"" + DatabaseService.NameInputPattern + "\"").And.Contains(DatabaseService.NameHint);
             }
             var form = new Dictionary<string, string> { ["_csrf"] = csrf, ["destination"] = "customer", ["point"] = RecoveryWindow.Input(latest), ["name"] = "pitr-copy", ["operation"] = "plan" };
             using (var plan = await HttpJourney.PostFormAsync(client, path, form))
             {
-                await Assert.That(await plan.Content.ReadAsStringAsync()).Contains("metadata only").And.Contains("does not verify replay bytes").And.Contains("Type pitr-copy");
+                await Assert.That(await plan.Content.ReadAsStringAsync()).Contains("Advisory plan").And.Contains("Type pitr-copy");
             }
 
             foreach (var code in new[] { "backup_history_incomplete", "restore_point_unproven", "backup_unreadable", "database_limit", "invalid_request", "unavailable" })

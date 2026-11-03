@@ -84,9 +84,6 @@ namespace TerraScale.Dashboard.Features.Data
         public string EmptyTitle => Error.Length > 0 ? "Documents could not be loaded." : Search.Length > 0
             ? Browse.More ? "No matches in this scan." : Browse.Cursor.Length > 0 ? "No more matches." : "No documents match your search."
             : Browse.Cursor.Length > 0 ? "No more documents." : "This collection has no documents yet.";
-        public string EmptyDetail => Error.Length > 0 ? "Reload this page to try again." : Search.Length > 0
-            ? Browse.More ? "Continue searching to check the next documents in this collection." : "Change or clear your search to browse documents."
-            : "Add a document or open another collection.";
     }
 
     public sealed record DataGridColumn(string Name, bool Numeric, bool Root)

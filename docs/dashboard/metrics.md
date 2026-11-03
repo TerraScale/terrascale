@@ -51,3 +51,54 @@ behavior that page copy no longer spells out.
   capped at one hour.
 - Support response targets are first-response targets, Monday to Friday 09:00–18:00 CET, not an SLA.
   A request ID (`X-Request-ID`) grants no access to diagnostics.
+
+## Databases, backups and imports
+
+### Databases list (`/databases`)
+
+| Stat | Definition |
+| --- | --- |
+| Databases | Customer databases in the current project. |
+| Ready | Databases whose status is `ready`. |
+| Provisioning | Databases still being created (`accepted`, `pending` or `provisioning`). |
+| Failed | Databases whose provisioning did not finish. Shown only when non-zero. |
+| Regions | Distinct serving regions across the project's databases. |
+| Documents | Live documents across every collection of every database in the project. `Unknown` when TerraBase did not report counts; no zero is inferred. |
+| Storage | Bytes of live documents across every collection of every database in the project, as reported by TerraBase. `Unknown` when counts were not reported. |
+
+### Database overview (`/databases/{id}`)
+
+| Stat | Definition |
+| --- | --- |
+| Collections | Collections in this database. `—` when TerraBase did not report contents. |
+| Documents | Live documents across all collections of this database. |
+| Storage | Bytes of live documents across all collections of this database. |
+| Restore points | Available backup snapshots of this database. `—` when the backup provider did not answer. |
+| Created | Database creation day; the tooltip shows the full UTC date and time. |
+
+### Replication (`/databases/{id}/replication`)
+
+All values cover the selected range and come from TerraBase's `replication_bytes` meter, per database and region.
+
+| Stat | Definition |
+| --- | --- |
+| Replicated ops | Operations replicated across the database's regions. |
+| Replication bandwidth | Wire bytes, counted once per directed region pair. |
+| Replication sent | Bytes sent by source regions. Metered separately from client bandwidth. |
+| Replication received | Bytes received at destination regions. |
+| Worst lag | Current maximum replication lag across regions. |
+
+The topology map labels each region with its current lag reported by TerraBase.
+
+### Import job (`/imports/{database}`)
+
+| Stat | Definition |
+| --- | --- |
+| Status | Current import state. |
+| Source | Export format of the uploaded file. |
+| Size | Size of the uploaded export file. |
+| Destination | The new database the import writes to. |
+| Created | When the import was created, in UTC. |
+
+In the dry-run preview, **Tables** counts included tables out of all source tables, **Rows** counts rows in included
+tables, and **Blocking issues** and **Warnings** count the preview's issues by severity.

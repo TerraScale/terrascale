@@ -40,7 +40,6 @@ namespace TerraScale.Dashboard.E2E.Features.Home
             await Assert.That(connection.Url).IsEqualTo(expected);
             await Assert.That(HomeConnectSnippets.Postgres(database)).Contains($"psql \"{expected}\"");
             await Assert.That(connection.Url).DoesNotContain("different-project");
-            await Assert.That(connection.Hint).Contains("libpq 16+");
         }
     }
 }

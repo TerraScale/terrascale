@@ -11,7 +11,7 @@
     var defaults = new TerraBaseFileRules("/userId", new(true, false, []), new(true, false, []));
 }
 <main class="ts-page" data-project-id="@Model.Shell.Context.Project?.Id" data-organization-id="@Model.Shell.Context.Organization?.Id">
-    <header class="ts-stack-sm"><h1>Files</h1><p class="ts-meta">Project buckets with owner and role permissions. Files share your plan's storage allowance with database data.</p></header>
+    <header><h1>Files</h1></header>
     @if (Model.Error is { } error)
     {
         <div class="ts-alert ts-alert-danger" role="alert"><p>@error</p><a class="ts-link" href="/storage">Reload files</a></div>
@@ -21,7 +21,7 @@
         <section class="ts-card" aria-label="File buckets"><div class="ts-card-head"><h2 class="ts-card-title">Buckets</h2></div>
             @if (listing.Buckets.Items.Count == 0)
             {
-                <div class="ts-empty"><p class="ts-empty-title">No buckets yet</p><p class="ts-meta">Create a bucket to store project files and choose who can read or write them.</p></div>
+                <div class="ts-empty"><p class="ts-empty-title">No buckets yet</p></div>
             }
             else
             {
@@ -50,10 +50,10 @@
         }
         @if (listing.BucketId is { } bucketId && listing.Files is { } files)
         {
-            <section class="ts-card" aria-label="Stored files"><div class="ts-card-head"><h2 class="ts-card-title">@(selected?.Name ?? "Selected bucket")</h2><p class="ts-meta">Completed files. Deleted and expired upload reservations remain in usage until cleanup succeeds.</p></div>
+            <section class="ts-card" aria-label="Stored files"><div class="ts-card-head"><h2 class="ts-card-title">@(selected?.Name ?? "Selected bucket")</h2></div>
                 @if (files.Items.Count == 0)
                 {
-                    <div class="ts-empty"><p class="ts-empty-title">No completed files</p><p class="ts-meta">Upload a file to this bucket to get started.</p></div>
+                    <div class="ts-empty"><p class="ts-empty-title">No completed files</p></div>
                 }
                 else
                 {
@@ -64,7 +64,7 @@
                             <form method="post" action="/api/v1/dashboard/storage/download" target="_blank" rel="noopener"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="bucket" value="@bucketId" /><input type="hidden" name="fileId" value="@file.Id" /><button class="ts-btn ts-btn-ghost" type="submit" aria-label="@("Download " + file.Name + " (opens in a new tab)")">Download</button></form>
                             @if (canWrite)
                             {
-                                @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.ConfirmDialog, ConfirmDialogModel>(new("delete-file-" + file.Id, "/api/v1/dashboard/storage/delete", "Delete file", file.Name, "This permanently deletes the file. This cannot be undone.", Model.Shell.CsrfToken, new Dictionary<string, string> { ["bucket"] = bucketId, ["fileId"] = file.Id })))
+                                @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.ConfirmDialog, ConfirmDialogModel>(new("delete-file-" + file.Id, "/api/v1/dashboard/storage/delete", "Delete file", file.Name, Model.Shell.CsrfToken, new Dictionary<string, string> { ["bucket"] = bucketId, ["fileId"] = file.Id }, Description: "This permanently deletes the file.")))
                             }
                         </td></tr>
                     }
@@ -80,8 +80,8 @@
                 <section class="ts-card ts-card-boxed" aria-label="Upload file"><div class="ts-card-head"><h2 class="ts-card-title">Upload file</h2></div><div class="ts-card-body">
                     <form class="ts-form" method="post" action="/api/v1/dashboard/storage/upload" data-file-upload>
                         <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="bucket" value="@bucketId" />
-                        <div class="ts-field"><label class="ts-label" for="storage-file">File</label><input class="ts-input" type="file" id="storage-file" name="file" required /><p class="ts-hint">1 byte–100 MiB. Your browser hashes the file before upload. Contents and metadata cannot be changed afterward.</p></div>
-                        <div class="ts-field"><label class="ts-label" for="file-metadata">Metadata</label><textarea class="ts-input" id="file-metadata" name="metadata" rows="4" maxlength="16384" required>{}</textarea><p class="ts-hint">JSON object. Set the owner field to the intended end user's signed subject.</p></div>
+                        <div class="ts-field"><label class="ts-label" for="storage-file">File</label><input class="ts-input" type="file" id="storage-file" name="file" required /></div>
+                        <div class="ts-field"><label class="ts-label" for="file-metadata">Metadata</label><textarea class="ts-input" id="file-metadata" name="metadata" rows="4" maxlength="16384" required>{}</textarea></div>
                         <p class="ts-meta" role="status" aria-live="polite" data-file-status></p>
                         <noscript><p class="ts-meta">Uploading requires JavaScript to compute the file checksum.</p></noscript>
                         <div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Upload file</button></div>
@@ -92,19 +92,18 @@
                     <details class="ts-card ts-card-boxed"><summary class="ts-card-head">Bucket access rules</summary><div class="ts-card-body"><form class="ts-form" method="post" action="/api/v1/dashboard/storage/rules">
                         <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="bucket" value="@bucketId" />
                         @(await RenderPartialAsync<FileRulesForm, FileRulesFormModel>(new("existing-bucket", selected.Rules, true)))
-                        <p class="ts-hint">Changes stop new capabilities. Download URLs already issued remain valid for up to 60 seconds.</p>
                         <div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save rules</button></div>
                     </form></div></details>
                 }
                 @if (selected is not null)
                 {
-                    @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.ConfirmDialog, ConfirmDialogModel>(new("delete-bucket-" + bucketId, "/api/v1/dashboard/storage/delete-bucket", "Delete empty bucket", selected.Name, "Delete every file and wait for storage cleanup first. Only empty buckets can be deleted. This cannot be undone.", Model.Shell.CsrfToken, new Dictionary<string, string> { ["bucket"] = bucketId, ["bucketAfter"] = listing.BucketAfter ?? "" }, selected.Name)))
+                    @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.ConfirmDialog, ConfirmDialogModel>(new("delete-bucket-" + bucketId, "/api/v1/dashboard/storage/delete-bucket", "Delete empty bucket", selected.Name, Model.Shell.CsrfToken, new Dictionary<string, string> { ["bucket"] = bucketId, ["bucketAfter"] = listing.BucketAfter ?? "" }, selected.Name, "This permanently deletes the bucket.")))
                 }
             }
         }
         @if (!canWrite)
         {
-            <p class="ts-meta">Your organization role permits viewing and downloading files. Uploading, deletion and bucket changes require write access.</p>
+            <p class="ts-meta">Uploading and bucket changes require write access.</p>
         }
     }
 </main>

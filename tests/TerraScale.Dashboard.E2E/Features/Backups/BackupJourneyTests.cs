@@ -188,7 +188,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             {
                 Check(overview.StatusCode == HttpStatusCode.OK, "The actual Overview reads backup measurements across replicas");
                 var html = await overview.Content.ReadAsStringAsync();
-                Check(html.Contains("Available snapshots", StringComparison.Ordinal), "Overview reports a measured snapshot count instead of an invented zero");
+                Check(System.Text.RegularExpressions.Regex.IsMatch(html, "Restore points</dt><dd class=\"ts-stat-value\">[0-9]+</dd>"), "Overview reports a measured snapshot count instead of an invented zero");
             }
             var before = await ReadAsync(producer, "/__test/observations");
             using (var quota = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/backups/restore", new()
@@ -345,9 +345,8 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
                 "Unavailable backup measurements omit the unknown boolean rather than claim scheduling is disabled");
             using (var overview = await client.GetAsync("/databases/" + id))
             {
-                var html = await overview.Content.ReadAsStringAsync();
-                Check(overview.StatusCode == HttpStatusCode.OK && html.Contains("Not reported by provider", StringComparison.Ordinal) &&
-                    !html.Contains("Available snapshots", StringComparison.Ordinal), "An unavailable snapshot count renders unknown rather than zero");
+                var html = WebUtility.HtmlDecode(await overview.Content.ReadAsStringAsync());
+                Check(overview.StatusCode == HttpStatusCode.OK && html.Contains("Restore points</dt><dd class=\"ts-stat-value\">—</dd>", StringComparison.Ordinal), "An unavailable snapshot count renders unknown rather than zero");
             }
             await ControlAsync(producer, new { command = "backup-failure", value = "foreign-backup" });
             using (var invalid = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/backups", new() { ["_csrf"] = csrf, ["databaseId"] = id }))

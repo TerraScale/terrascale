@@ -67,29 +67,30 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
                 { ["_csrf"] = csrf, ["name"] = name, ["region"] = "GRU" });
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
             }
-            var known = await TotalsAsync(replica);
+            var knownPage = await PageAsync(replica);
+            var known = await TotalsAsync(knownPage);
             await Assert.That(known).Contains(">12</dd>");
-            await Assert.That(known).Contains("Across 2 collections, 120 B");
-            await Assert.That(known.Contains("Try again", StringComparison.Ordinal)).IsFalse();
+            await Assert.That(await TotalsAsync(knownPage, "database-storage-totals")).Contains(">120 B</dd>");
+            await Assert.That(knownPage.Contains("Try again", StringComparison.Ordinal)).IsFalse();
             Volatile.Write(ref measurement, failure);
-            var unknown = await TotalsAsync(replica);
-            await Assert.That(unknown).Contains(">Unknown</dd>");
-            await Assert.That(unknown).Contains("No zero count is inferred.");
-            await Assert.That(unknown.Contains("Across ", StringComparison.Ordinal)).IsFalse();
-            await Assert.That(unknown).Contains("href=\"/databases?range=24h\">Try again</a>");
+            var unknownPage = await PageAsync(replica);
+            await Assert.That(await TotalsAsync(unknownPage)).Contains(">Unknown</dd>");
+            await Assert.That(await TotalsAsync(unknownPage, "database-storage-totals")).Contains(">Unknown</dd>");
+            await Assert.That(unknownPage).Contains("Database counts could not be loaded.");
+            await Assert.That(unknownPage).Contains("href=\"/databases?range=24h\">Try again</a>");
             Volatile.Write(ref measurement, "");
-            await Assert.That(await TotalsAsync(replica)).Contains(">12</dd>");
+            await Assert.That(await TotalsAsync(await PageAsync(replica))).Contains(">12</dd>");
             // A real zero stays a factual 0, not the outage state.
             Volatile.Write(ref measurement, "zero");
-            var zero = await TotalsAsync(replica);
+            var zeroPage = await PageAsync(replica);
+            var zero = await TotalsAsync(zeroPage);
             await Assert.That(zero).Contains(">0</dd>");
-            await Assert.That(zero).Contains("Across 2 collections, 0 B");
+            await Assert.That(await TotalsAsync(zeroPage, "database-storage-totals")).Contains(">0 B</dd>");
             await Assert.That(zero.Contains("Unknown", StringComparison.Ordinal)).IsFalse();
 
-            static async Task<string> TotalsAsync(HttpClient instance)
+            static async Task<string> TotalsAsync(string html, string id = "database-document-totals")
             {
-                var html = await PageAsync(instance);
-                var panel = Regex.Match(html, "<div[^>]*id=\"database-document-totals\"[^>]*>(.*?)</div>", RegexOptions.Singleline | RegexOptions.CultureInvariant);
+                var panel = Regex.Match(html, "<div[^>]*id=\"" + id + "\"[^>]*>(.*?)</div>", RegexOptions.Singleline | RegexOptions.CultureInvariant);
                 await Assert.That(panel.Success).IsTrue();
                 return panel.Groups[1].Value;
             }

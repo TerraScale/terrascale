@@ -88,7 +88,7 @@ namespace TerraScale.Dashboard.E2E.Platform
             var backups = dialog.GetByRole(AriaRole.Link, new() { Name = "Backups", Exact = true });
             await backups.WaitForAsync();
             await Assert.That(await backups.GetAttributeAsync("href")).Contains("/databases/" + ReferenceFixtures.PrimaryId + "/backups");
-            await Assert.That(await backups.Locator("small").InnerTextAsync()).Contains("Database ·");
+            await Assert.That(await backups.Locator("small").CountAsync()).IsEqualTo(0);
             await Assert.That(errors.ToArray()).IsEmpty();
         }
     }

@@ -21,8 +21,7 @@ namespace TerraScale.Dashboard.E2E.Features.Importing
             using var client = scenario.CreateClient();
             using var login = await HttpJourney.LoginAsync(client);
             var page = await HtmlAsync(client, "/imports");
-            await Assert.That(page).Contains("Target collection (optional)");
-            await Assert.That(page).Contains("JSON arrays and CSV are not accepted");
+            await Assert.That(page).Contains("<label class=\"ts-label\" for=\"import-collection\">Target collection</label>");
             var name = Minted(page);
             var csrf = await HttpJourney.CsrfAsync(client, "/imports");
             var source = Encoding.UTF8.GetBytes("{\"name\":\"Ada\"}\n{\"name\":\"Grace\"}\n");
@@ -129,12 +128,10 @@ namespace TerraScale.Dashboard.E2E.Features.Importing
             await HttpJourney.LoginAsync(client);
             await HttpJourney.LoginAsync(replica);
             var page = await HtmlAsync(client, "/imports");
-            await Assert.That(page).Contains("Import from PostgreSQL, Turso or NDJSON");
-            await Assert.That(page).Contains("A partial upload is discarded after 1 day without progress (the upload then starts over); an unconfirmed preview is kept 7 days, and a failed or cancelled import's file 7 days.");
+            await Assert.That(page).Contains("id=\"import-pg-command\"").And.Contains("id=\"import-turso-command\"");
             await Assert.That(page.Contains("type=\"password\"", StringComparison.Ordinal)).IsFalse().Because("The dashboard never collects source credentials.");
             await Assert.That((await JsonAsync(await client.GetAsync("/api/v1/dashboard/imports"))).GetArrayLength()).IsEqualTo(0);
             await Assert.That(page.Contains("missingPrimaryKey", StringComparison.Ordinal)).IsFalse();
-            await Assert.That(page).Contains("Source primary keys stay document fields");
             var name = Minted(page);
             var csrf = await HttpJourney.CsrfAsync(client, "/imports");
             var replicaCsrf = await HttpJourney.CsrfAsync(replica, "/imports");

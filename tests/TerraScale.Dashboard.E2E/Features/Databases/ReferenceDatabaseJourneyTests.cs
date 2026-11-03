@@ -76,8 +76,8 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
                     using var page = await replica.GetAsync("/databases/" + primary);
                     await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
                     var html = await page.Content.ReadAsStringAsync();
-                    await Assert.That(html).Contains("270 B across all collections");
-                    await Assert.That(html).Contains("Available snapshots");
+                    await Assert.That(html).Contains("Storage</dt><dd class=\"ts-stat-value\">270 B</dd>");
+                    await Assert.That(html).Contains("Restore points</dt><dd class=\"ts-stat-value\">0</dd>");
                     using var listing = await replica.GetAsync("/api/v1/dashboard/backups?databaseId=" + primary);
                     await Assert.That(listing.StatusCode).IsEqualTo(HttpStatusCode.OK);
                     using var body = JsonDocument.Parse(await listing.Content.ReadAsStringAsync());

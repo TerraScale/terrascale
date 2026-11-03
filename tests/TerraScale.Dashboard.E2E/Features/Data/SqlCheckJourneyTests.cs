@@ -50,7 +50,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             var submitted = Regex.Match(html, "<textarea[^>]*id=\"sql\"[^>]*>(.*?)</textarea>", RegexOptions.Singleline | RegexOptions.CultureInvariant).Groups[1].Value;
             await Assert.That(WebUtility.HtmlDecode(submitted)).IsEqualTo(sql);
             await Assert.That(html.Contains("Input checks passed. SQL validity has not been checked.", StringComparison.Ordinal)).IsEqualTo(!invalid);
-            await Assert.That(html.Contains("It does not validate SQL syntax", StringComparison.Ordinal)).IsEqualTo(!invalid);
+            await Assert.That(html.Contains("id=\"sql-analysis\"", StringComparison.Ordinal)).IsEqualTo(!invalid);
             await Assert.That(html).DoesNotContain("Server check passed.");
             await Assert.That(html).DoesNotContain("Read-only statement accepted.");
             if (sql.Contains("$1", StringComparison.Ordinal))

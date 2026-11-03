@@ -100,12 +100,12 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
                 var html = await page.Content.ReadAsStringAsync();
                 await Assert.That(html).Contains("restore-" + backupId);
                 await Assert.That(html).Contains("Provider backup scheduling is unavailable.");
-                await Assert.That(html.Contains("Restore points unavailable.", StringComparison.Ordinal)).IsFalse();
+                await Assert.That(html.Contains("Restore points unavailable", StringComparison.Ordinal)).IsFalse();
             }
             using (var page = await replica.GetAsync("/databases/" + databaseId))
             {
                 await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
-                await Assert.That(await page.Content.ReadAsStringAsync()).Contains("Available snapshots");
+                await Assert.That(System.Text.RegularExpressions.Regex.IsMatch(await page.Content.ReadAsStringAsync(), "Restore points</dt><dd class=\"ts-stat-value\">[0-9]+</dd>")).IsTrue();
             }
             var writes = (await ReadAsync(producer, "/__test/observations")).GetProperty("policyWrites").GetInt32();
             using (var invalid = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/backups/policy", new()

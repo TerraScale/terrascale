@@ -25,13 +25,11 @@ namespace TerraScale.Dashboard.Features.Databases
         public bool AllRegions { get; init; }
         public string HomeRegion => HomeSelection ?? Choices.FirstOrDefault(region => region.Code.Equals(Context.Project?.Region, StringComparison.OrdinalIgnoreCase))?.Code ?? (Choices is [var firstRegion, ..] ? firstRegion?.Code ?? "" : "");
         public bool CanProvision => Context.Organization?.CanProvision(Context.UserId) ?? false;
-        public string Description => Search.Length == 0 ? $"{ValueFormat.Plural(Databases.Count, "database")} in this project" : $"{ValueFormat.Plural(Databases.Count, "database")} matching \"{Search}\"";
         public static string Tone(string status)
         {
             return status switch { "ready" => "success", "failed" => "danger", "provisioning" or "accepted" or "pending" => "warning", _ => "neutral" };
         }
 
-        public const string CreatePlacementHint = "All currently serving regions are selected by default. Keep at least two regions, including the chosen home. Selecting every current region does not include future regions. Select All regions to follow future regions automatically.";
         public static string RegionDisplay(string code)
         {
             return code switch { "" => "Not configured", _ => TerraScale.Dashboard.Common.UI.Regions.Name(code) is { Length: > 0 } name ? $"{code.ToLowerInvariant()} · {name}" : code.ToLowerInvariant() };

@@ -89,8 +89,8 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             var id = await SetupAsync(client);
             var html = WebUtility.HtmlDecode(await client.GetStringAsync($"/databases/{id}/documents/items?sort=name&order=desc&view=grid"));
             await Assert.That(html).Contains("role=\"region\" tabindex=\"0\" aria-label=\"Documents table\"")
-                .And.Contains("This table shows the last page load.").And.Contains("Refresh documents</a>")
-                .And.DoesNotContain("<span>History</span>").And.Contains("aria-describedby=\"new-collection-name-hint\"");
+                .And.Contains("Refresh documents</a>")
+                .And.DoesNotContain("<span>History</span>").And.Contains("id=\"new-collection-name\"").And.DoesNotContain("aria-describedby=\"new-collection-name-hint\"");
             var sorts = Regex.Matches(html, "href=\"([^\"]+)\"").Select(match => match.Groups[1].Value)
                 .Where(path => path.Contains("sort=", StringComparison.Ordinal)).ToArray();
             await Assert.That(sorts.Any(path => path.Contains("sort=a%2Fb~c", StringComparison.Ordinal))).IsTrue();
@@ -140,8 +140,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 .And.Contains("data-rejected-draft=\"true\"").And.Contains("field.value !== field.defaultValue")
                 .And.Contains("option.selected !== option.defaultSelected").And.Contains($"value=\"{operation}\" selected")
                 .And.Contains("Close without saving?").And.Contains("evt.preventDefault()")
-                .And.Contains("patch applies JSON Merge Patch; null removes fields.")
-                .And.Contains("aria-describedby=\"document-operation-hint\"").And.Contains("id=\"document-operation-hint\"");
+                .And.Contains(">Merge patch</option>");
             await Assert.That(Regex.Matches(editor, "command=\"request-close\"").Count).IsEqualTo(2);
             await Assert.That(editor).DoesNotContain("command=\"close\"");
         }

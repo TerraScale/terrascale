@@ -48,7 +48,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var known = await PageAsync(client);
             await Assert.That(Counts(known)).IsEquivalentTo(new[] { "0", "0" });
             var placement = await PageAsync(client, "/replication");
-            await Assert.That(placement).Contains("gru · São Paulo is the home region and stays selected. With All regions cleared, keep at least two regions.");
+            await Assert.That(placement).Contains("<span class=\"ts-badge ts-badge-neutral\">Home</span>");
             await Assert.That(placement).Contains("<dt>Configured regions</dt><dd>gru · São Paulo, sfo · San Francisco</dd>");
             var home = Regex.Match(placement, "<input[^>]+type=\"checkbox\"[^>]+value=\"GRU\"[^>]*>").Value;
             await Assert.That(home).Contains("required");
@@ -63,8 +63,8 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var unknown = await PageAsync(replica);
             await Assert.That(Counts(unknown)).IsEquivalentTo(new[] { "—", "—" });
             await Assert.That(unknown).Contains("Database counts are unavailable.");
-            await Assert.That(Summary(unknown)).Contains("Not reported by provider");
-            await Assert.That(Summary(unknown).Contains("0 B across all collections", StringComparison.Ordinal)).IsFalse();
+            await Assert.That(Summary(unknown)).Contains("Storage</dt><dd class=\"ts-stat-value\">—</dd>");
+            await Assert.That(Summary(unknown).Contains("0 B", StringComparison.Ordinal)).IsFalse();
             var unknownTool = await DetailAsync();
             foreach (var field in new[] { "collections", "documents", "bytes" })
             {

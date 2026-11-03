@@ -53,7 +53,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 await Assert.That(applied.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             }
 
-            await Assert.That(await client.GetStringAsync(path)).Contains("Active JSON Schema").And.Contains("required").And.Contains("historical documents");
+            await Assert.That(await client.GetStringAsync(path)).Contains("Active JSON Schema").And.Contains("required");
             form["schema"] = "{ \"unsupported\": true }";
             using (var rejected = await HttpJourney.PostFormAsync(client, path, form))
             {
@@ -253,7 +253,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             }
 
             var html = await client.GetStringAsync($"/databases/{id}/indexes?collection=items");
-            await Assert.That(html).Contains("items_name").And.Contains("active").And.Contains("commandfor=\"drop-index-0\"").And.Contains("may become slower or fail").And.DoesNotContain("Index templates");
+            await Assert.That(html).Contains("items_name").And.Contains("active").And.Contains("commandfor=\"drop-index-0\"").And.Contains("may slow down or fail").And.DoesNotContain("Index templates");
             await Assert.That(await client.GetStringAsync($"/databases/{id}/indexes?collection=other")).Contains("No indexes on other.").And.DoesNotContain("items_name");
             client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("text/html"));
             form["field"] = "a,b,c,d,e";
@@ -555,7 +555,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             var (id, csrf) = await SetupAsync(client);
             var path = $"/databases/{id}/schema?collection=items";
             var html = await client.GetStringAsync(path);
-            await Assert.That(html).Contains("maxlength=\"196608\"").And.Contains("64 KiB of compact UTF-8 JSON");
+            await Assert.That(html).Contains("maxlength=\"196608\"");
             var draft = await DraftAsync(html, "declared-schema");
             await Assert.That(System.Text.Encoding.UTF8.GetByteCount(draft)).IsEqualTo(192018);
             var form = new Dictionary<string, string> { ["_csrf"] = csrf, ["collection"] = "items", ["operation"] = "apply", ["schema"] = draft };

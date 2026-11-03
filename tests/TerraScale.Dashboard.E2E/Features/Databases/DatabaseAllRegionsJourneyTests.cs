@@ -22,7 +22,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await Control(new { command = "catalog", value = new[] { "fra", "gru", "sfo" } });
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             var list = WebUtility.HtmlDecode(await (await client.GetAsync("/databases")).Content.ReadAsStringAsync());
-            await Assert.That(list).Contains("All regions: copies follow new regions automatically");
+            await Assert.That(Regex.IsMatch(list, "<input type=\"checkbox\" name=\"allRegions\" value=\"true\"[^>]*/>All regions</label>")).IsTrue();
             await Assert.That(list).Contains("data-attr:disabled=\"$_allRegions\"");
             foreach (var code in new[] { "FRA", "GRU", "SFO" })
             {
@@ -116,7 +116,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             }
 
             var allThree = await PageAsync("/replication");
-            await Assert.That(allThree).Contains("Add a region to replicate the database there; remove one to stop serving it there.");
+            await Assert.That(allThree).Contains("<span class=\"ts-badge ts-badge-neutral\">Home</span>");
             await Assert.That(allThree.Contains("Additional regions are unavailable here.", StringComparison.Ordinal)).IsFalse();
             await Assert.That(allThree.Contains("Placement lock", StringComparison.Ordinal)).IsFalse();
             await Assert.That(allThree.Contains("Placement status", StringComparison.Ordinal)).IsFalse();

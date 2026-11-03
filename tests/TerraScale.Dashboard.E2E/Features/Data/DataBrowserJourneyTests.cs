@@ -111,7 +111,6 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             await Assert.That(await page.Locator("#sql").InputValueAsync()).IsEqualTo("SELECT *\nFROM orders\nWHERE total > 500\nORDER BY createdAt");
             await CheckAsync();
             var analysis = await page.Locator("#sql-analysis").InnerTextAsync();
-            await Assert.That(analysis).Contains("It does not validate SQL syntax");
             await Assert.That(analysis).Contains("Input checks passed. SQL validity has not been checked.");
             await Assert.That(analysis).DoesNotContain("EXPLAIN statement preview");
             await Assert.That(analysis).DoesNotContain("consider an index");

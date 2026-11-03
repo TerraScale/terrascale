@@ -43,7 +43,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
                 var dialog = Regex.Match(html, "<dialog id=\"name-branch\".*?</dialog>", RegexOptions.Singleline).Value;
                 await Assert.That(dialog).Contains("data-init=\"el.showModal()\"");
                 await Assert.That(dialog).Contains("id=\"branch-error\" role=\"alert\"");
-                await Assert.That(dialog).Contains("aria-describedby=\"branch-name-hint branch-error\"");
+                await Assert.That(dialog).Contains("aria-describedby=\"branch-error\"");
                 await Assert.That(dialog).Contains("autofocus");
                 var retained = Regex.Match(dialog, "id=\"branch-name\"[^>]*value=\"([^\"]*)\"").Groups[1].Value;
                 await Assert.That(WebUtility.HtmlDecode(retained)).IsEqualTo(submittedName);

@@ -1,8 +1,8 @@
 @inherits RazorSlice<ConfirmDialogModel>
 <button class="ts-btn ts-btn-danger ts-btn-sm" type="button" command="show-modal" commandfor="@Model.Id" aria-label="@(Model.Button + ": " + Model.Target)">@Model.Button</button>
-<dialog id="@Model.Id" class="ts-dialog" closedby="any" aria-labelledby="@(Model.Id + "-title")" aria-describedby="@(Model.Id + "-description")">
+<dialog id="@Model.Id" class="ts-dialog" closedby="any" aria-labelledby="@(Model.Id + "-title")" aria-describedby="@(Model.Description is null ? null : Model.Id + "-description")">
     <div class="ts-dialog-content">
-        <header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="@(Model.Id + "-title")">@Model.Button: @Model.Target</h2><p class="ts-dialog-description" id="@(Model.Id + "-description")">@Model.Description</p></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="@Model.Id">@Icons.Render("X",18)</button></header>
+        <header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="@(Model.Id + "-title")">@Model.Button: @Model.Target</h2>@if (Model.Description is { } description) { <p class="ts-dialog-description" id="@(Model.Id + "-description")">@description</p> }</div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="@Model.Id">@Icons.Render("X",18)</button></header>
         <form method="post" action="@Model.Action" class="ts-form" data-submit-once>
             <input type="hidden" name="_csrf" value="@Model.CsrfToken" />
             @foreach (var field in Model.Fields) { <input type="hidden" name="@field.Key" value="@field.Value" /> }

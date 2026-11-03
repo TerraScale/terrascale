@@ -63,7 +63,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
                 var nameInput = System.Text.RegularExpressions.Regex.Match(backupHtml, "<input[^>]+name=\"name\"[^>]*>").Value;
                 await Assert.That(nameInput).Contains("pattern=\"" + DatabaseService.NameInputPattern + "\"");
                 await Assert.That(nameInput.Contains("required", StringComparison.Ordinal)).IsFalse();
-                await Assert.That(backupHtml).Contains(DatabaseService.NameHint).And.Contains("Leave blank to automatically choose");
+                await Assert.That(nameInput).Contains("title=\"" + DatabaseService.NameHint + "\"").And.Contains("placeholder=\"paused-source-restore\"");
                 await WriteAsync(client, csrf, sourceId, "replace", 2);
                 using (var paused = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/settings/backup-policy", new()
                 {

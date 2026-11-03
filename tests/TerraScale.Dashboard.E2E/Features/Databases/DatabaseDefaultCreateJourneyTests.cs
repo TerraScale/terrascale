@@ -45,8 +45,6 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var html = WebUtility.HtmlDecode(await client.GetStringAsync("/databases"));
             await Assert.That(html).Contains("pattern=\"" + DatabaseService.NameInputPattern + "\"");
             await Assert.That(html).Contains(DatabaseService.NameHint);
-            await Assert.That(html).Contains("All currently serving regions are selected by default.");
-            await Assert.That(html).Contains("Selecting every current region does not include future regions.");
             var selected = Regex.Matches(html, "<input[^>]+type=\"checkbox\"[^>]+name=\"region\"[^>]+value=\"([^\"]+)\"[^>]*checked[^>]*>")
                 .Select(match => match.Groups[1].Value).ToArray();
             await Assert.That(selected).IsEquivalentTo(new[] { "GRU", "FRA", "SFO" });
@@ -80,8 +78,8 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             }
 
             var replication = WebUtility.HtmlDecode(await client.GetStringAsync("/databases/" + databaseId + "/replication"));
-            await Assert.That(replication).Contains("is the home region and stays selected.");
-            await Assert.That(replication).Contains("With All regions cleared, keep at least two regions.");
+            await Assert.That(replication).Contains("<span class=\"ts-badge ts-badge-neutral\">Home</span>");
+            await Assert.That(replication).Contains(DatabaseService.MinimumRegionsMessage);
             await Assert.That(replication.Contains("adding replica regions is unavailable here", StringComparison.Ordinal)).IsFalse();
 
             using (var deleted = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/delete", new() { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["confirmName"] = "orders" }))

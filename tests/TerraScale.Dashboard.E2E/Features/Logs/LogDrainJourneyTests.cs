@@ -17,7 +17,7 @@ namespace TerraScale.Dashboard.E2E.Features.Logs
             var page = await LogsPageAsync(scenario);
             await Assert.That(page).Contains("DD-API-KEY: set");
             var removal = System.Text.RegularExpressions.Regex.Match(page, "<dialog id=\"remove-log-drain\"[\\s\\S]*?</dialog>").Value;
-            await Assert.That(removal).Contains("Remove log drain: https://otlp.example.com/v1/logs").And.Contains("data-submit-once").And.Contains("deletes the saved endpoint and credentials");
+            await Assert.That(removal).Contains("Remove log drain: https://otlp.example.com/v1/logs").And.Contains("data-submit-once").And.Contains("Saved credentials are deleted.");
             await Assert.That(page.Contains("dd-secret-value", StringComparison.Ordinal)).IsFalse();
             await scenario.RunDrainsAsync();
             await Assert.That(scenario.Delivery.Requests.Count).IsEqualTo(0);
