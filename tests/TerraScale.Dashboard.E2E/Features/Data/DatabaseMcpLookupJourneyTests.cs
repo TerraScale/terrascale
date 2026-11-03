@@ -88,7 +88,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 var probe = new Probe();
                 probe.Scenario = await DatabaseSdkScenario.StartAsync(root, builder =>
                 {
-                    probe.inner = (IDashboardState)builder.Services.Last(item => item.ServiceType == typeof(IDashboardState)).ImplementationInstance!;
+                    probe.inner = builder.Services.Last(item => item.ServiceType == typeof(IDashboardState)).ImplementationInstance is IDashboardState state ? state : throw new InvalidOperationException("The scenario must register a singleton IDashboardState instance.");
                     builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardState>(probe));
                 }, probe.InterceptAsync);
                 probe.Client = probe.Scenario.CreateClient();
