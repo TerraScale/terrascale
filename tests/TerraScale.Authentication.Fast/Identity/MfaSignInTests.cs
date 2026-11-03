@@ -231,7 +231,7 @@ public sealed partial class MfaSignInTests(TerraBaseFixture fixture)
     // A code from an hour away is outside the one-step verification window.
     private static string WrongCode(string secret, StoreTestClock clock) => new Totp(Base32Encoding.ToBytes(secret)).ComputeTotp(clock.UtcNow.UtcDateTime.AddHours(1));
 
-    [GeneratedRegex("Enter this key: <code>([A-Z2-7]+)</code>")]
+    [GeneratedRegex("<dt>Setup key</dt><dd><code>([A-Z2-7]+)</code>")]
     private static partial Regex SecretPattern();
 
     [GeneratedRegex("<li><code>([A-Za-z0-9]{24})</code></li>")]

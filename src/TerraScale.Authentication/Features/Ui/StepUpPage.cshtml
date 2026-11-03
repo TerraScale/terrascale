@@ -1,6 +1,7 @@
 @inherits RazorSlice<StepUpPageModel>
 @implements IUsesLayout<HostedLayout, HostedLayoutModel>
-<div class="head"><h1>@Model.Operation</h1><p class="sub">Verify fresh credentials for <strong>@Model.Email</strong>. This approval expires in five minutes and works once.</p></div>
+<div class="head"><h1>@Model.Operation</h1></div>
+<div class="chip"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg><span>@Model.Email</span></div>
 @if (Model.Notice is { } notice)
 {
 <p role="status">@notice</p>
@@ -23,7 +24,7 @@ else if (Model.MailRequested)
 }
 else
 {
-<button type="submit" name="action" value="send">Email one verification code</button>
+<button type="submit" name="action" value="send">Email me a code</button>
 }
 </form>
 @functions {

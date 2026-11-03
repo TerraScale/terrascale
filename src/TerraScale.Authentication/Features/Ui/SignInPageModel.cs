@@ -175,9 +175,6 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The brand name the page shows.</summary>
     public string Brand => this.Theme.Name ?? HostedLayoutModel.DefaultName;
 
-    /// <summary>The step's heading.</summary>
-    public string Heading => this.Step == SignInStep.Email ? $"Sign in to {this.Brand}" : this.Title;
-
     /// <summary><paramref name="path"/> under this issuer's hosted pages, carrying <see cref="Next"/>.</summary>
     public string Link(string path) => $"/ui/{this.Slug}/{path}" + (this.Next is null ? string.Empty : "?next=" + Uri.EscapeDataString(this.Next));
 

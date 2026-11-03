@@ -32,7 +32,7 @@ public sealed partial class MfaSignInTests
         await Assert.That(await page.Locator(".otp input").CountAsync()).IsEqualTo(6);
         await page.GetByRole(AriaRole.Button, new() { Name = "Verify and sign in" }).ClickAsync();
 
-        var recovery = page.GetByLabel("Authentication code", new() { Exact = true });
+        var recovery = page.GetByLabel("Authenticator or recovery code", new() { Exact = true });
         await recovery.FillAsync(codes[0]);
         await Assert.That(await recovery.InputValueAsync()).IsEqualTo(codes[0]);
         await Assert.That(await page.Locator(".otp input").CountAsync()).IsEqualTo(0);
@@ -40,7 +40,7 @@ public sealed partial class MfaSignInTests
         await Microsoft.Playwright.Assertions.Expect(page.Locator("h1")).ToHaveTextAsync("Signed in");
         await page.GotoAsync($"{OidcHarness.PublicOrigin}/ui/terrascale/security");
         await Microsoft.Playwright.Assertions.Expect(page.Locator(".facts dd").Last).ToHaveTextAsync("7");
-        var disable = page.GetByLabel("Code to turn off two-factor", new() { Exact = true });
+        var disable = page.GetByLabel("Authenticator or recovery code", new() { Exact = true });
         await disable.FillAsync(codes[1]);
         await Assert.That(await disable.InputValueAsync()).IsEqualTo(codes[1]);
         await Assert.That(await page.Locator(".otp input").CountAsync()).IsEqualTo(0);

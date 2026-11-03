@@ -44,9 +44,9 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         await Assert.That(unknown.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var page = await unknown.Content.ReadAsStringAsync();
         await Assert.That(page).Contains("If an account exists for <strong>nobody@example.test</strong>");
-        // No mail goes to an unknown address (no enumeration), so the page says what to check and where to sign up.
-        await Assert.That(page).Contains("that the address is spelled right");
+        // No mail goes to an unknown address (no enumeration), so the page links to sign-up and to a different email.
         await Assert.That(page).Contains("/ui/terrascale/sign-up");
+        await Assert.That(page).Contains("Different email");
 
         // Exactly one mail went out: the one for the known address from the same-origin post.
         var (recipient, _) = await oidc.Email.NextAsync();

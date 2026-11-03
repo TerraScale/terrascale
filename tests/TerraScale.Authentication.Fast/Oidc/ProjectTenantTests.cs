@@ -137,7 +137,7 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         // Until the project changes anything, its pages carry its name and every method.
         using var initial = await oidc.Client.GetAsync($"/ui/{project}/sign-in");
         var initialPage = await initial.Content.ReadAsStringAsync();
-        await Assert.That(initialPage).Contains($"Sign in to {HtmlEncoder.Default.Encode(projectName)}");
+        await Assert.That(initialPage).Contains($"<title>Sign in · {HtmlEncoder.Default.Encode(projectName)}</title>").And.Contains($"<span>{HtmlEncoder.Default.Encode(projectName)}</span></div>");
         await Assert.That(initialPage).Contains("Create account");
 
         // Razor uses HtmlEncoder, whose apostrophe entity differs from WebUtility.HtmlEncode.
@@ -168,7 +168,7 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         // The platform's pages keep the TerraScale brand and every method.
         using var platform = await oidc.Client.GetAsync($"/ui/{OidcIssuer.Slug}/sign-in");
         var platformPage = await platform.Content.ReadAsStringAsync();
-        await Assert.That(platformPage).Contains("Sign in to TerraScale");
+        await Assert.That(platformPage).Contains("<title>Sign in · TerraScale</title>").And.Contains("<span>TerraScale</span></div>");
         await Assert.That(platformPage).Contains("Create account");
         await Assert.That(platformPage).DoesNotContain(HtmlEncoder.Default.Encode(brand));
     }

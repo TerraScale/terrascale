@@ -1,90 +1,38 @@
 @inherits RazorSlice<SignInPageModel>
 @implements IUsesLayout<HostedLayout, HostedLayoutModel>
 <div class="head">
-<h1>@Model.Heading</h1>
+<h1>@Model.Title</h1>
 @switch (Model.Step)
 {
-case SignInStep.Email:
-<p class="sub">Welcome back. Use the email you signed up with.</p>
-break;
-case SignInStep.Password:
-<p class="sub">@(Model.Theme.Passcode ? "Or get a one-time code by email." : "Use the password for your account.")</p>
-break;
 case SignInStep.Code:
 @if (Model.Limited)
 {
-<p class="sub">This request sent no new code. If you already received a sign-in code for <strong>@Model.Email</strong>, enter it below.</p>
+<p class="sub">This request sent no new code. If you already have a code for <strong>@Model.Email</strong>, enter it.</p>
 }
 else
 {
-<p class="sub">If an account exists for <strong>@Model.Email</strong>, we emailed it a six-digit code. It expires in 30 minutes. Only the newest code works: asking for another code replaces this one.</p>
-<p class="sub">No email within a few minutes? Check your spam folder and that the address is spelled right. If you have no account yet, create one instead.</p>
+<p class="sub">If an account exists for <strong>@Model.Email</strong>, we emailed it a code.</p>
 }
 <p class="sub">If this code recovers access after repeated requests, using it signs out your older sessions.</p>
 break;
-case SignInStep.Continue:
-<p class="sub">Returning to the application…</p>
-break;
-case SignInStep.SignedIn:
-<p class="sub">You can close this page.</p>
-break;
-case SignInStep.SignedOut:
-<p class="sub">@(Model.ReturnTo is null ? "You can close this page." : "Returning to the application…")</p>
-break;
 case SignInStep.SignOutConfirm:
-<p class="sub">An application asked to sign you out of @Model.Brand. To stay signed in, close this page.</p>
-break;
-case SignInStep.Rejected:
-<p class="sub">Start again from the application you were signing in to.</p>
-break;
-case SignInStep.SignUp:
-<p class="sub">Get started with @Model.Brand in under a minute.</p>
+<p class="sub">An application asked to sign you out of @Model.Brand.</p>
 break;
 case SignInStep.SignUpCode:
-<p class="sub">We emailed a six-digit code to <strong>@Model.Email</strong>. It expires in 30 minutes. Only the newest code works: asking for another code replaces this one.</p>
+<p class="sub">We emailed a code to <strong>@Model.Email</strong>.</p>
 <p class="sub">For an existing account, recovery after repeated code requests signs out your older sessions.</p>
 break;
-case SignInStep.Reset:
-<p class="sub">Enter your account email and we will send you a reset code.</p>
-break;
 case SignInStep.ResetCode:
-<p class="sub">If an account exists for <strong>@Model.Email</strong>, we emailed it a six-digit code. It expires in 30 minutes. Only the newest code works: asking for another code replaces this one.</p>
+<p class="sub">If an account exists for <strong>@Model.Email</strong>, we emailed it a code.</p>
 break;
 case SignInStep.ResetDone:
-<p class="sub">You were signed out everywhere. Sign in with your new password.</p>
-break;
-case SignInStep.DeviceEnter:
-<p class="sub">Enter the code shown in your terminal.</p>
+<p class="sub">You were signed out everywhere.</p>
 break;
 case SignInStep.DeviceConfirm:
-<p class="sub">Approve only if you started this sign-in from the TerraScale CLI and the code matches your terminal.</p>
-break;
-case SignInStep.DeviceApproved:
-<p class="sub">The TerraScale CLI is signed in. You can close this page and return to your terminal.</p>
-break;
-case SignInStep.DeviceDenied:
-<p class="sub">The device was not signed in. You can close this page.</p>
-break;
-case SignInStep.NotFound:
-<p class="sub">The page you opened doesn't exist. Check the link, or sign in again.</p>
-break;
-case SignInStep.Sso:
-<p class="sub">Your organization signs in <strong>@Model.Email</strong> through its identity provider.</p>
-break;
-case SignInStep.Mfa:
-<p class="sub">Enter the code from your authenticator app for <strong>@Model.Email</strong>.</p>
-break;
-case SignInStep.Security:
-<p class="sub">Protect <strong>@Model.Account</strong> with an authenticator app. Sign-ins then ask for its code after your email code or password.</p>
-break;
-case SignInStep.TotpSetup:
-<p class="sub">Scan this QR code with an authenticator app such as 1Password, Google Authenticator or Authy, then enter the six-digit code it shows.</p>
+<p class="sub">Approve only if you started this sign-in and the code matches your terminal.</p>
 break;
 case SignInStep.RecoveryCodes:
-<p class="sub">Two-factor authentication is on. Each recovery code signs you in once if you lose your authenticator. They are shown only now.</p>
-break;
-case SignInStep.Reauthenticate:
-<p class="sub">Changing two-factor authentication needs a sign-in from the last 15 minutes.</p>
+<p class="sub">Each code signs you in once if you lose your authenticator. They are shown only now.</p>
 break;
 }
 </div>
@@ -150,7 +98,7 @@ case SignInStep.Email:
 }
 @if (Model.Theme.SignUp)
 {
-<span class="alt">New here? <a href="@Model.Link("sign-up")">Create account</a></span>
+<a href="@Model.Link("sign-up")">Create account</a>
 }
 </div>
 break;
@@ -198,8 +146,8 @@ case SignInStep.SignedIn:
 <div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>You are signed in.</p></div>
 break;
 case SignInStep.Sso:
-<a class="btn" href="@Model.SsoUrl">Continue with single sign-on<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
-<div class="row"><a href="@Model.Link("sign-in")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Different email</a></div>
+<div class="chip"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg><span>@Model.Email</span><a href="@Model.Link("sign-in")">Change</a></div>
+<a class="btn" href="@Model.SsoUrl">Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.SignedOut:
 <div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-log-out"></use></svg><p>You are signed out.</p></div>
@@ -233,8 +181,7 @@ case SignInStep.SignUp:
 </div>
 <div class="field">
 <label for="sign-up-password">Password</label>
-<input id="sign-up-password" name="password" type="password" autocomplete="new-password" minlength="15" required>
-<span class="hint">At least 15 characters. A passphrase of a few words works well.</span>
+<input id="sign-up-password" name="password" type="password" autocomplete="new-password" minlength="15" placeholder="15+ characters" required>
 </div>
 <button type="submit">Create account</button>
 </form>
@@ -247,7 +194,7 @@ case SignInStep.SignUp:
 }
 </div>
 }
-<p class="alt">Already have an account? <a href="@Model.Link("sign-in")">Sign in</a></p>
+<p class="alt"><a href="@Model.Link("sign-in")">Sign in</a></p>
 break;
 case SignInStep.SignUpCode:
 <form method="post" action="/ui/@Model.Slug/sign-up/verify">
@@ -277,7 +224,7 @@ case SignInStep.Reset:
 </div>
 <button type="submit">Email me a reset code</button>
 </form>
-<p class="alt">Remembered it? <a href="@Model.Link("sign-in")">Sign in</a></p>
+<p class="alt"><a href="@Model.Link("sign-in")">Sign in</a></p>
 break;
 case SignInStep.ResetCode:
 <form method="post" action="/ui/@Model.Slug/reset/complete">
@@ -289,9 +236,9 @@ case SignInStep.ResetCode:
 </div>
 <div class="field">
 <label for="reset-password">New password</label>
-<input id="reset-password" name="password" type="password" autocomplete="new-password" minlength="15" required>
-<span class="hint">At least 15 characters. Every session ends when it changes.</span>
+<input id="reset-password" name="password" type="password" autocomplete="new-password" minlength="15" placeholder="15+ characters" required>
 </div>
+<p class="hint">Setting it signs out every session.</p>
 <button type="submit">Set new password</button>
 </form>
 <form method="post" action="/ui/@Model.Slug/reset">
@@ -307,7 +254,7 @@ break;
 case SignInStep.DeviceEnter:
 <form method="get" action="/ui/@Model.Slug/device">
 <div class="field">
-<label for="device-code">Device code</label>
+<label for="device-code">Code from your terminal</label>
 <input id="device-code" class="code" name="user_code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="32" placeholder="0000-0000-0000" required autofocus value="@Model.UserCode">
 </div>
 <button type="submit">Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></button>
@@ -332,7 +279,7 @@ case SignInStep.DeviceConfirm:
 </form>
 break;
 case SignInStep.DeviceApproved:
-<div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>Device approved.</p></div>
+<div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>Device approved. Return to your terminal.</p></div>
 break;
 case SignInStep.Mfa:
 <form method="post" action="/ui/@Model.Slug/sign-in/mfa">
@@ -340,9 +287,8 @@ case SignInStep.Mfa:
 <input type="hidden" name="email" value="@Model.Email">
 <input type="hidden" name="challenge" value="@Model.Challenge">
 <div class="field">
-<label for="mfa-code">Authentication code</label>
+<label for="mfa-code">Authenticator or recovery code</label>
 <input id="mfa-code" class="code" name="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="······" required autofocus>
-<span class="hint">Lost your authenticator? Enter one of your recovery codes instead.</span>
 </div>
 <button type="submit">Verify and sign in</button>
 </form>
@@ -361,10 +307,10 @@ case SignInStep.Security:
 {
 <form method="post" action="/ui/@Model.Slug/security/totp/disable">
 <div class="field">
-<label for="disable-code">Code to turn off two-factor</label>
+<label for="disable-code">Authenticator or recovery code</label>
 <input id="disable-code" class="code" name="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="······" required>
-<span class="hint">Your authenticator's current code or an unused recovery code. Every session signs out.</span>
 </div>
+<p class="hint">Turning it off signs out every session.</p>
 <button type="submit" class="secondary">Turn off two-factor authentication</button>
 </form>
 }
@@ -377,13 +323,13 @@ else
 break;
 case SignInStep.TotpSetup:
 <img src="@Model.QrCode" alt="QR code to add TerraScale to your authenticator app" width="240" height="240">
-<p class="hint">Can't scan it? Enter this key: <code>@Model.Secret</code></p>
+<dl class="facts"><div><dt>Setup key</dt><dd><code>@Model.Secret</code></dd></div></dl>
 <form method="post" action="/ui/@Model.Slug/security/totp/confirm">
 <div class="field">
 <label for="totp-code">Code from the app</label>
 <input id="totp-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus>
-<span class="hint">Turning it on signs you out everywhere else.</span>
 </div>
+<p class="hint">Turning it on signs you out everywhere else.</p>
 <button type="submit">Turn on two-factor authentication</button>
 </form>
 <div class="row"><a href="/ui/@Model.Slug/security"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Cancel</a></div>
