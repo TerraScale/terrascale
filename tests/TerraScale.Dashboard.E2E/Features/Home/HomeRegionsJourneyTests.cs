@@ -52,7 +52,7 @@ namespace TerraScale.Dashboard.E2E.Features.Home
                 await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 var html = await client.GetStringAsync("/" + scope).WaitAsync(TimeSpan.FromSeconds(5));
                 await Assert.That(html).Contains("id=\"home-activity\"");
-                await Assert.That(WebUtility.HtmlDecode(html)).Contains("@get('/overview/regions" + scope + "')");
+                await Assert.That(WebUtility.HtmlDecode(html)).Contains("@get('/overview/regions" + scope + "', {retry: 'never', retryMaxCount: 0})");
                 await Assert.That(html).Contains("Loading region health and latency");
                 await Assert.That(fragment.IsCompleted).IsFalse();
             }
