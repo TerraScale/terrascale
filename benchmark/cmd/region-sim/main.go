@@ -1,0 +1,615 @@
+// Command region-sim runs a two-region TerraBase cluster on one host (gru-1 home, sjc-1 replica) and drives it with
+// the real ts CLI through an HTTPS_PROXY that maps the CLI's fixed origins to the selected region and a test-only
+// ts-auth stand-in. It reports pass/fail and replica lag per scenario as a Markdown table. See
+// benchmark/region-sim/README.md.
+package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"net/http"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"slices"
+	"strings"
+	"syscall"
+	"time"
+)
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, "region-sim:", err)
+		os.Exit(1)
+	}
+}
+
+type outcome struct {
+	name string
+	ok   bool
+	lag  string
+	note string
+}
+
+type sim struct {
+	ctx     context.Context
+	dir     string
+	logDir  string
+	tsBin   string
+	ca      string
+	home    string
+	auth    *authStandIn
+	proxies map[string]*regionProxy
+	c       *cluster
+	api     *sqlAPI
+	org     string
+	project string
+	db      string
+	results []outcome
+}
+
+const (
+	visibleTimeout = 30 * time.Second
+	visiblePoll    = 5 * time.Millisecond
+)
+
+func run() error {
+	terrabase := flag.String("terrabase", "", "built TerraBase binary or dll (make terrabase-build: src/TerraBase/bin/Debug/net11.0/terrabase)")
+	tsBin := flag.String("ts", "", "ts CLI binary (go build ./cmd/ts in sdk/go)")
+	out := flag.String("out", "", "also write the Markdown report to this file")
+	logs := flag.String("logs", "", "directory to keep node, NATS and CLI logs in (default: removed with the run directory)")
+	flag.Parse()
+	if *terrabase == "" || *tsBin == "" {
+		flag.Usage()
+		return errors.New("-terrabase and -ts are required")
+	}
+	for _, p := range []*string{terrabase, tsBin} {
+		abs, err := filepath.Abs(*p)
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stat(abs); err != nil {
+			return err
+		}
+		*p = abs
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	dir, err := os.MkdirTemp("", "region-sim-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	logDir := dir
+	if *logs != "" {
+		if logDir, err = filepath.Abs(*logs); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(logDir, 0o700); err != nil {
+			return err
+		}
+	}
+
+	s := &sim{ctx: ctx, dir: dir, tsBin: *tsBin, home: filepath.Join(dir, "home"), proxies: map[string]*regionProxy{}, db: "simdb"}
+	started := time.Now()
+	report, failed := s.execute(*terrabase, logDir)
+	header := fmt.Sprintf("# region-sim %s\n\nTerraBase `%s`, ts `%s`; auth: region-sim ts-auth stand-in (test-only); run %s.\n\n",
+		time.Now().UTC().Format(time.RFC3339), *terrabase, *tsBin, time.Since(started).Round(time.Second))
+	fmt.Print(header + report)
+	if *out != "" {
+		if err := os.MkdirAll(filepath.Dir(*out), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(*out, []byte(header+report), 0o644); err != nil {
+			return err
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d scenario(s) failed", failed)
+	}
+	return nil
+}
+
+// execute sets up the run, runs every scenario and always tears down what it started.
+func (s *sim) execute(terrabase, logDir string) (string, int) {
+	defer func() {
+		for _, p := range s.proxies {
+			p.close()
+		}
+		if s.auth != nil {
+			s.auth.close()
+		}
+		s.c.close()
+	}()
+	if err := s.setup(terrabase, logDir); err != nil {
+		s.record("setup", false, "", err.Error())
+		if s.c != nil {
+			for _, n := range []*node{s.c.a, s.c.b} {
+				if n != nil {
+					fmt.Fprintf(os.Stderr, "--- %s log tail ---\n%s\n", n.name, tail(n.logPath, 60))
+				}
+			}
+		}
+		return s.table(), 1
+	}
+	steps := []struct {
+		name string
+		fn   func() (string, string, error)
+	}{
+		{"cli-login", s.login},
+		{"create-project-db-replica-sjc", s.create},
+		{"dml-in-A-visible-in-B", s.dml},
+		{"write-on-B-refused-421", s.writeOnB},
+		{"checkpoint-A-then-read-B", s.checkpoint},
+		{"restart-B-catches-up", s.restartB},
+		{"restart-A", s.restartA},
+		{"network-cut-10s-and-NATS-down", s.networkCut},
+		{"bulk-10k-count-checksum-B", s.bulk},
+		{"lag-500-writes-p99<200ms", s.lag},
+	}
+	prerequisite := map[string]bool{"cli-login": true, "create-project-db-replica-sjc": true}
+	var blocked string
+	for _, step := range steps {
+		if blocked != "" {
+			s.record(step.name, false, "", "not run: "+blocked+" failed")
+			continue
+		}
+		if s.ctx.Err() != nil {
+			s.record(step.name, false, "", "interrupted")
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "region-sim: %s\n", step.name)
+		lag, note, err := step.fn()
+		if err != nil {
+			s.record(step.name, false, lag, strings.TrimSpace(note+" "+err.Error()))
+			if prerequisite[step.name] {
+				blocked = step.name
+			}
+			continue
+		}
+		s.record(step.name, true, lag, note)
+	}
+	failed := 0
+	for _, r := range s.results {
+		if !r.ok {
+			failed++
+		}
+	}
+	if failed > 0 {
+		for _, n := range []*node{s.c.a, s.c.b} {
+			fmt.Fprintf(os.Stderr, "--- %s log tail ---\n%s\n", n.name, tail(n.logPath, 40))
+		}
+	}
+	return s.table(), failed
+}
+
+func (s *sim) setup(terrabase, logDir string) error {
+	ca, err := newAuthority()
+	if err != nil {
+		return err
+	}
+	s.ca = filepath.Join(s.dir, "ca.pem")
+	if err := os.WriteFile(s.ca, ca.pem, 0o644); err != nil {
+		return err
+	}
+	if s.auth, err = startAuth(ca); err != nil {
+		return err
+	}
+	clusterDir := filepath.Join(s.dir, "cluster")
+	if err := os.MkdirAll(clusterDir, 0o700); err != nil {
+		return err
+	}
+	s.logDir = logDir
+	s.c, err = newCluster(s.ctx, clusterConfig{dir: clusterDir, logDir: logDir, terrabase: terrabase, issuer: s.auth.issuer, caFile: s.ca})
+	if err != nil {
+		return err
+	}
+	for region, n := range map[string]*node{"gru": s.c.a, "sjc": s.c.b} {
+		if s.proxies[region], err = startRegionProxy(ca, n.clientPort, s.auth); err != nil {
+			return err
+		}
+	}
+	return os.MkdirAll(s.home, 0o700)
+}
+
+func (s *sim) record(name string, ok bool, lag, note string) {
+	s.results = append(s.results, outcome{name: name, ok: ok, lag: lag, note: note})
+	state := "PASS"
+	if !ok {
+		state = "FAIL"
+	}
+	fmt.Fprintf(os.Stderr, "region-sim: %s %s %s %s\n", state, name, lag, note)
+}
+
+func (s *sim) table() string {
+	var b strings.Builder
+	b.WriteString("| scenario | pass/fail | lag | notes |\n| --- | --- | --- | --- |\n")
+	for _, r := range s.results {
+		state := "pass"
+		if !r.ok {
+			state = "**fail**"
+		}
+		b.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n", r.name, state, cmpOr(r.lag, "—"), strings.ReplaceAll(cell(r.note), "|", "\\|")))
+	}
+	return b.String()
+}
+
+func cmpOr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+func cell(s string) string {
+	return truncate(strings.Join(strings.Fields(s), " "), 400)
+}
+
+// ts runs the CLI against region with an isolated HOME/XDG configuration.
+func (s *sim) ts(region string, args ...string) (string, string, error) {
+	ctx, cancel := context.WithTimeout(s.ctx, 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, s.tsBin, args...)
+	cmd.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + s.home,
+		"XDG_CONFIG_HOME=" + filepath.Join(s.home, ".config"),
+		"XDG_CACHE_HOME=" + filepath.Join(s.home, ".cache"),
+		"XDG_DATA_HOME=" + filepath.Join(s.home, ".local", "share"),
+		"XDG_STATE_HOME=" + filepath.Join(s.home, ".local", "state"),
+		"HTTPS_PROXY=" + s.proxies[region].url(),
+		"SSL_CERT_FILE=" + s.ca,
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr, cmd.Stdin = &stdout, &stderr, strings.NewReader("")
+	err := cmd.Run()
+	{
+		if f, ferr := os.OpenFile(filepath.Join(s.logDir, "cli.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); ferr == nil {
+			fmt.Fprintf(f, "$ [%s] ts %s\n%s%s(exit %v)\n", region, strings.Join(args, " "), stdout.String(), stderr.String(), err)
+			f.Close()
+		}
+	}
+	if err != nil {
+		return stdout.String(), stderr.String(), fmt.Errorf("ts %s on %s: %v: %s", strings.Join(args, " "), region, err, truncate(strings.TrimSpace(stderr.String()), 300))
+	}
+	return stdout.String(), stderr.String(), nil
+}
+
+// exec runs relational SQL through `ts exec` in region and returns the CLI's printed rows.
+func (s *sim) exec(region, sql string) (string, error) {
+	out, _, err := s.ts(region, "exec", "-project", s.project, s.db, sql)
+	return out, err
+}
+
+func ms(d time.Duration) string { return fmt.Sprintf("%.1f ms", float64(d.Microseconds())/1000) }
+
+// --- scenarios: each returns (lag, note, error) ---
+
+func (s *sim) login() (string, string, error) {
+	out, _, err := s.ts("gru", "auth", "login")
+	if err != nil {
+		return "", "", err
+	}
+	if !strings.Contains(out, "Signed in.") {
+		return "", "", fmt.Errorf("unexpected login output: %s", truncate(out, 200))
+	}
+	who, _, err := s.ts("gru", "whoami")
+	if err != nil {
+		return "", "", err
+	}
+	return "", "device flow auto-approved by stand-in; whoami " + strings.TrimSpace(who), nil
+}
+
+func (s *sim) create() (string, string, error) {
+	out, _, err := s.ts("gru", "projects", "create", "region-sim", "-json")
+	if err != nil {
+		return "", "", err
+	}
+	var p project
+	if err := json.Unmarshal([]byte(out), &p); err != nil || p.ID == "" {
+		return "", "", fmt.Errorf("projects create printed no project: %s", truncate(out, 200))
+	}
+	s.org, s.project = p.OrganizationID, p.ID
+	s.api = newSQLAPI(s.auth, s.org, s.project, s.db)
+	out, _, err = s.ts("gru", "db", "create", s.db, "-replica-regions", "sjc", "-project", s.project, "-json")
+	if err != nil {
+		return "", "", err
+	}
+	var db struct {
+		ID             string   `json:"id"`
+		HomeRegion     string   `json:"homeRegion"`
+		ReplicaRegions []string `json:"replicaRegions"`
+	}
+	json.Unmarshal([]byte(out), &db)
+	note := fmt.Sprintf("project %s, db %s home %s replicas %v", s.project, db.ID, db.HomeRegion, db.ReplicaRegions)
+	if db.HomeRegion != "" && db.HomeRegion != "gru" || db.ReplicaRegions != nil && !slices.Contains(db.ReplicaRegions, "sjc") {
+		return "", note, errors.New("placement is not home gru with replica sjc")
+	}
+	return "", note, nil
+}
+
+func (s *sim) dml() (string, string, error) {
+	statements := []string{
+		"CREATE TABLE kv (id INTEGER PRIMARY KEY, v TEXT NOT NULL)",
+		"INSERT INTO kv (id, v) VALUES (1, 'one'), (2, 'two'), (3, 'three'), (4, 'four')",
+		"UPDATE kv SET v = 'TWO' WHERE id = 2",
+		"DELETE FROM kv WHERE id = 3",
+		"INSERT INTO kv (id, v) VALUES (5, 'five')",
+	}
+	for _, q := range statements {
+		if _, err := s.exec("gru", q); err != nil {
+			return "", "", err
+		}
+	}
+	acked := time.Now()
+	want := `[[1,"one"],[2,"TWO"],[4,"four"],[5,"five"]]`
+	at, err := s.api.waitFor(s.ctx, s.c.b, visibleTimeout, visiblePoll, want, "SELECT id, v FROM kv ORDER BY id")
+	if err != nil {
+		return "", "", err
+	}
+	lag := at.Sub(acked)
+	out, err := s.exec("sjc", "SELECT id, v FROM kv ORDER BY id")
+	if err != nil {
+		return ms(lag), "visible over HTTP but CLI read on sjc failed", err
+	}
+	if lines := strings.Count(strings.TrimSpace(out), "\n") + 1; lines != 4 || !strings.Contains(out, "TWO") || strings.Contains(out, "three") {
+		return ms(lag), "", fmt.Errorf("CLI read on sjc printed %q", truncate(out, 200))
+	}
+	return ms(lag), "DDL+insert/update/delete via ts exec on gru; lag = last write ack to visible on sjc", nil
+}
+
+func (s *sim) writeOnB() (string, string, error) {
+	r, err := s.api.exec(s.ctx, s.c.b, stmt{SQL: "INSERT INTO kv (id, v) VALUES (100, 'from-b')"})
+	if err != nil {
+		return "", "", err
+	}
+	note := fmt.Sprintf("HTTP %d %s", r.status, r.code)
+	_, cliErr, cliRunErr := s.ts("sjc", "exec", "-project", s.project, s.db, "INSERT INTO kv (id, v) VALUES (101, 'from-b-cli')")
+	if cliRunErr == nil {
+		return "", note, errors.New("ts exec write on sjc succeeded")
+	}
+	note += "; CLI: " + truncate(strings.TrimSpace(cliErr), 120)
+	if r.status != http.StatusMisdirectedRequest {
+		return "", note, fmt.Errorf("want 421 wrong_region, got %d %s: %s", r.status, r.code, r.body)
+	}
+	if r.code != "wrong_region" {
+		return "", note, fmt.Errorf("421 code %q, want wrong_region", r.code)
+	}
+	// The refused writes must not exist anywhere.
+	got, _, err := s.api.query(s.ctx, s.c.a, "SELECT count(*) FROM kv WHERE id >= 100")
+	if err != nil || got != "[[0]]" {
+		return "", note, fmt.Errorf("refused write is visible on gru: %s %v", got, err)
+	}
+	return "", note, nil
+}
+
+// checkpoint writes well over the 1024-frame WAL policy (TursoRevisionLedger.CheckpointFrames): 1,536 rows of 3 KiB
+// are at least one page each.
+func (s *sim) checkpoint() (string, string, error) {
+	if _, err := s.exec("gru", "CREATE TABLE wal (id INTEGER PRIMARY KEY, v TEXT NOT NULL)"); err != nil {
+		return "", "", err
+	}
+	const rows, batch = 1536, 256
+	pad := strings.Repeat("w", 3000)
+	for start := 0; start < rows; start += batch {
+		var batchStmts []stmt
+		for id := start; id < start+batch; id++ {
+			batchStmts = append(batchStmts, stmt{SQL: "INSERT INTO wal (id, v) VALUES (?, ?)", Args: []any{id, fmt.Sprintf("%d-%s", id, pad)}})
+		}
+		if err := s.api.mustExec(s.ctx, s.c.a, batchStmts...); err != nil {
+			return "", "", err
+		}
+	}
+	if _, err := s.exec("gru", "UPDATE wal SET v = 'after-checkpoint' WHERE id = 0"); err != nil {
+		return "", "", err
+	}
+	acked := time.Now()
+	want := fmt.Sprintf(`[[%d,%d,"after-checkpoint"]]`, rows, int64(rows)*(rows-1)/2)
+	at, err := s.api.waitFor(s.ctx, s.c.b, visibleTimeout, visiblePoll, want,
+		"SELECT count(*), sum(id), (SELECT v FROM wal WHERE id = 0) FROM wal")
+	if err != nil {
+		return "", "", err
+	}
+	return ms(at.Sub(acked)), "~1.5k pages written (>1024-frame checkpoint policy; checkpoint not observable via API)", nil
+}
+
+func (s *sim) restartB() (string, string, error) {
+	if _, err := s.exec("gru", "CREATE TABLE down (id INTEGER PRIMARY KEY)"); err != nil {
+		return "", "", err
+	}
+	s.c.b.stop()
+	for i := range 50 {
+		if err := s.api.mustExec(s.ctx, s.c.a, stmt{SQL: "INSERT INTO down (id) VALUES (?)", Args: []any{i}}); err != nil {
+			return "", "", err
+		}
+	}
+	if _, err := s.exec("gru", "INSERT INTO down (id) VALUES (1000)"); err != nil {
+		return "", "", err
+	}
+	began := time.Now()
+	if err := s.c.b.start(s.ctx); err != nil {
+		return "", "", err
+	}
+	ready := time.Now()
+	at, err := s.api.waitFor(s.ctx, s.c.b, visibleTimeout, visiblePoll, "[[51,2225]]", "SELECT count(*), sum(id) FROM down")
+	if err != nil {
+		return "", fmt.Sprintf("sjc-1 ready in %s", ready.Sub(began).Round(time.Millisecond)), err
+	}
+	return ms(at.Sub(ready)), fmt.Sprintf("51 writes while sjc-1 down; lag = ready to caught up; restart %s", ready.Sub(began).Round(time.Millisecond)), nil
+}
+
+func (s *sim) restartA() (string, string, error) {
+	before, _, err := s.api.query(s.ctx, s.c.a, "SELECT count(*), sum(id) FROM down")
+	if err != nil {
+		return "", "", err
+	}
+	began := time.Now()
+	if err := s.c.a.restart(s.ctx); err != nil {
+		return "", "", err
+	}
+	restarted := time.Since(began)
+	after, r, err := s.api.query(s.ctx, s.c.a, "SELECT count(*), sum(id) FROM down")
+	if err != nil || after != before {
+		return "", "", fmt.Errorf("gru-1 lost data across restart: before %s after %s (%d %s)", before, after, r.status, r.code)
+	}
+	if _, err := s.exec("gru", "INSERT INTO down (id) VALUES (2000)"); err != nil {
+		return "", "", err
+	}
+	acked := time.Now()
+	at, err := s.api.waitFor(s.ctx, s.c.b, visibleTimeout, visiblePoll, "[[52,4225]]", "SELECT count(*), sum(id) FROM down")
+	if err != nil {
+		return "", "", err
+	}
+	return ms(at.Sub(acked)), fmt.Sprintf("gru-1 restart %s; lag = first post-restart write to visible on sjc", restarted.Round(time.Millisecond)), nil
+}
+
+func (s *sim) networkCut() (string, string, error) {
+	if _, err := s.exec("gru", "CREATE TABLE cut (id INTEGER PRIMARY KEY, at INTEGER NOT NULL)"); err != nil {
+		return "", "", err
+	}
+	if _, err := s.api.waitFor(s.ctx, s.c.b, visibleTimeout, visiblePoll, "[[0]]", "SELECT count(*) FROM cut"); err != nil {
+		return "", "table not replicated before the cut", err
+	}
+	s.c.cut()
+	healed := false
+	defer func() {
+		if !healed {
+			s.c.heal(s.ctx)
+		}
+	}()
+	cutEnd := time.Now().Add(10 * time.Second)
+	writes := 0
+	for time.Now().Before(cutEnd) {
+		if err := s.api.mustExec(s.ctx, s.c.a, stmt{SQL: "INSERT INTO cut (id, at) VALUES (?, ?)", Args: []any{writes, time.Now().UnixMilli()}}); err != nil {
+			return "", fmt.Sprintf("write %d on gru during cut", writes), err
+		}
+		writes++
+		time.Sleep(50 * time.Millisecond)
+	}
+	during, _, _ := s.api.query(s.ctx, s.c.b, "SELECT count(*) FROM cut")
+	healed = true
+	if err := s.c.heal(s.ctx); err != nil {
+		return "", "", err
+	}
+	resumed := time.Now()
+	want := fmt.Sprintf("[[%d,%d]]", writes, int64(writes)*int64(writes-1)/2)
+	at, err := s.api.waitFor(s.ctx, s.c.b, 60*time.Second, visiblePoll, want, "SELECT count(*), sum(id) FROM cut")
+	note := fmt.Sprintf("%d writes on gru during 10 s cut (peer path both ways + NATS down); sjc served %s during cut", writes, during)
+	if err != nil {
+		return "", note, err
+	}
+	return ms(at.Sub(resumed)), note + "; lag = heal to converged", nil
+}
+
+func (s *sim) bulk() (string, string, error) {
+	if _, err := s.exec("gru", "CREATE TABLE bulk (id INTEGER PRIMARY KEY, v TEXT NOT NULL)"); err != nil {
+		return "", "", err
+	}
+	const rows, batch = 10000, 256
+	expected := sha256.New()
+	started := time.Now()
+	for start := 0; start < rows; start += batch {
+		var batchStmts []stmt
+		for id := start; id < min(start+batch, rows); id++ {
+			v := value(id)
+			fmt.Fprintf(expected, "%d:%s\n", id, v)
+			batchStmts = append(batchStmts, stmt{SQL: "INSERT INTO bulk (id, v) VALUES (?, ?)", Args: []any{id, v}})
+		}
+		if err := s.api.mustExec(s.ctx, s.c.a, batchStmts...); err != nil {
+			return "", fmt.Sprintf("batch at %d", start), err
+		}
+	}
+	acked := time.Now()
+	load := acked.Sub(started)
+	want := fmt.Sprintf("[[%d,%d]]", rows, int64(rows)*(rows-1)/2)
+	at, err := s.api.waitFor(s.ctx, s.c.b, 60*time.Second, visiblePoll, want, "SELECT count(*), sum(id) FROM bulk")
+	if err != nil {
+		return "", "", err
+	}
+	sum := hex.EncodeToString(expected.Sum(nil))
+	for _, n := range []*node{s.c.a, s.c.b} {
+		got, err := s.checksum(n)
+		if err != nil {
+			return ms(at.Sub(acked)), "", err
+		}
+		if got != sum {
+			return ms(at.Sub(acked)), "", fmt.Errorf("%s checksum %s, want %s", n.name, got[:12], sum[:12])
+		}
+	}
+	out, err := s.exec("sjc", "SELECT count(*) AS n FROM bulk")
+	if err != nil || !strings.Contains(out, "10000") {
+		return ms(at.Sub(acked)), "", fmt.Errorf("CLI count on sjc: %q %v", strings.TrimSpace(out), err)
+	}
+	return ms(at.Sub(acked)), fmt.Sprintf("40 batches ≤256 stmts loaded in %s; sha256 of all rows equal on gru and sjc (%s…)", load.Round(time.Millisecond), sum[:12]), nil
+}
+
+func value(id int) string {
+	h := sha256.Sum256(fmt.Appendf(nil, "region-sim-%d", id))
+	return hex.EncodeToString(h[:12])
+}
+
+func (s *sim) checksum(n *node) (string, error) {
+	h := sha256.New()
+	last := -1
+	for {
+		r, err := s.api.exec(s.ctx, n, stmt{SQL: "SELECT id, v FROM bulk WHERE id > ? ORDER BY id LIMIT 2000", Args: []any{last}})
+		if err != nil {
+			return "", err
+		}
+		if r.status != http.StatusOK || len(r.results) != 1 {
+			return "", fmt.Errorf("%s read: %d %s %s", n.name, r.status, r.code, r.body)
+		}
+		rows := r.results[0].Rows
+		if len(rows) == 0 {
+			return hex.EncodeToString(h.Sum(nil)), nil
+		}
+		for _, row := range rows {
+			id, _ := row[0].(json.Number).Int64()
+			fmt.Fprintf(h, "%d:%v\n", id, row[1])
+			last = int(id)
+		}
+	}
+}
+
+// lag measures write-ack-on-A to visible-on-B for sequential single-row writes, polling B every millisecond.
+func (s *sim) lag() (string, string, error) {
+	if _, err := s.exec("gru", "CREATE TABLE lag (id INTEGER PRIMARY KEY, at INTEGER NOT NULL)"); err != nil {
+		return "", "", err
+	}
+	if _, err := s.api.waitFor(s.ctx, s.c.b, visibleTimeout, visiblePoll, "[[0]]", "SELECT count(*) FROM lag"); err != nil {
+		return "", "table not visible on sjc", err
+	}
+	const writes = 500
+	var lags []time.Duration
+	for i := range writes {
+		if err := s.api.mustExec(s.ctx, s.c.a, stmt{SQL: "INSERT INTO lag (id, at) VALUES (?, ?)", Args: []any{i, time.Now().UnixMilli()}}); err != nil {
+			return "", fmt.Sprintf("write %d", i), err
+		}
+		acked := time.Now()
+		timeout := 5 * time.Second
+		if i == 0 {
+			timeout = visibleTimeout
+		}
+		at, err := s.api.waitFor(s.ctx, s.c.b, timeout, time.Millisecond, fmt.Sprintf("[[%d]]", i), "SELECT id FROM lag WHERE id = ?", i)
+		if err != nil {
+			return "", fmt.Sprintf("after %d measured writes", len(lags)), err
+		}
+		lags = append(lags, at.Sub(acked))
+	}
+	slices.Sort(lags)
+	p := func(q float64) time.Duration { return lags[min(len(lags)-1, int(q*float64(len(lags))))] }
+	summary := fmt.Sprintf("p50 %s / p99 %s", ms(p(0.50)), ms(p(0.99)))
+	note := fmt.Sprintf("%d sequential writes over HTTP; max %s; 1 ms poll", writes, ms(lags[len(lags)-1]))
+	if p(0.99) >= 200*time.Millisecond {
+		return summary, note, errors.New("p99 is not below 200 ms")
+	}
+	return summary, note, nil
+}
