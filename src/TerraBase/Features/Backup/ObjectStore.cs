@@ -45,11 +45,10 @@ internal interface IObjectStore
 }
 
 /// <summary>The bucket an operation addressed does not exist: the configured bucket was deleted or never created.</summary>
-/// <param name="Bucket">Its configured name.</param>
 internal sealed class ObjectStoreBucketMissingException(string bucket) : IOException($"the backup bucket does not exist: {bucket}")
 {
     /// <summary>The bucket an operation addressed.</summary>
-    public string Bucket { get; } = bucket;
+    public string Bucket => bucket;
 }
 
 /// <summary>
