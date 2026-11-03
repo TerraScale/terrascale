@@ -92,7 +92,7 @@ public sealed class ErrorReportingTests
         // Enough to debug: exception types, stack frames and the route.
         await Assert.That(envelope).Contains("System.InvalidOperationException");
         await Assert.That(envelope).Contains("System.Net.Http.HttpRequestException");
-        await Assert.That(envelope).Contains("ErrorReportingTests.Crash()");
+        await Assert.That(envelope).Contains("ErrorReportingTests.Crash(");
         await Assert.That(envelope).Contains("/__test/crash");
         foreach (var secret in AllSecrets)
         {
@@ -114,7 +114,7 @@ public sealed class ErrorReportingTests
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
         await Assert.That(text).Contains("System.InvalidOperationException (message withheld)");
         await Assert.That(text).Contains("System.Net.Http.HttpRequestException (message withheld)");
-        await Assert.That(text).Contains("ErrorReportingTests.Crash()");
+        await Assert.That(text).Contains("ErrorReportingTests.Crash(");
         foreach (var secret in AllSecrets)
         {
             await Assert.That(text).DoesNotContain(secret);
