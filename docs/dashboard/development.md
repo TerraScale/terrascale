@@ -64,10 +64,12 @@ its dashboard Fast command runs on a dev host and must finish within five minute
 GitHub Actions verifies that exact revision's Fast proof. Heavy validation runs through
 `ts-heavy-any`. A green dashboard Fast also runs `scripts/dashboard/prepare-deployment.sh`
 on the dev host, publishing the `dashboard/qualified-<sha>` release and the
-`dashboard-release/dashboard` status; the Images (GHCR) workflow then publishes the
-image and releases it to every region automatically, with no manual step and no
-deploy switch. Slow failures remain visible and create or update a
-matching GitHub issue.
+`dashboard-release/dashboard` status; the Images (GHCR) push run then waits for that
+commit's CI, publishes the image and releases it to every region automatically, with
+no manual step and no deploy switch. The regions' release verifier accepts a run's
+GitHub OIDC token only from push and dispatch events, so the workflow_run-triggered
+run never deploys; the push run is the deployer. Slow failures remain visible and
+create or update a matching GitHub issue.
 CI does not run the explicit hot-reload journey. For changes to `scripts/dashboard/demo.sh`, `scripts/dashboard/dev.sh`, the asset scripts or the demo host,
 use `nice -n 19 make -f scripts/dashboard/Makefile test-hot-reload` on a tailnet machine when investigating hot reload locally.
 `check-e2e-shards` lists the discovered tests. The solution contains one
