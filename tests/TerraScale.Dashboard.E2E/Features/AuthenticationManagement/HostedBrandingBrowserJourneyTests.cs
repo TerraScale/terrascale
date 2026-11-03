@@ -40,7 +40,7 @@ namespace TerraScale.Dashboard.E2E.Features.AuthenticationManagement
             await page.Locator("#auth-brand-background_color").FillAsync("#ffffff");
             await page.Locator("#auth-brand-text_color").FillAsync("#0a0a0a");
             await page.Locator("#auth-brand-footer").FillAsync("Privacy | https://example.com/privacy");
-            await page.WaitForFunctionAsync("() => document.querySelector('[data-brand-heading]').textContent === 'Sign in to Preview application' && document.getElementById('auth-brand-preview').dataset.theme === 'light'");
+            await page.WaitForFunctionAsync("() => document.querySelector('[data-brand-heading]').textContent === 'Sign in' && document.querySelector('[data-brand-name]').textContent === 'Preview application' && document.getElementById('auth-brand-preview').dataset.theme === 'light'");
             await Assert.That(await preview.Locator("h3").EvaluateAsync<string>("el => getComputedStyle(el).fontSize")).IsEqualTo("32px");
             await Assert.That(await page.Locator("[data-brand-dirty]").IsVisibleAsync()).IsTrue();
             await Assert.That(await preview.GetByRole(AriaRole.Button, new() { Name = "Email me a sign-in code" }).IsVisibleAsync()).IsTrue();

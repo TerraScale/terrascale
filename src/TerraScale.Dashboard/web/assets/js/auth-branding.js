@@ -48,7 +48,7 @@ if (form) {
     logo.hidden = !src;
     root.querySelector('[data-brand-initial]').hidden = !!src;
     if (src) { if (logo.getAttribute('src') !== src) logo.src = src; } else logo.removeAttribute('src');
-    root.querySelector('[data-brand-heading]').textContent = page === 'reset' ? 'Reset your password' : `${page === 'sign-up' ? 'Create your account on' : 'Sign in to'} ${name}`;
+    root.querySelector('[data-brand-heading]').textContent = { 'sign-up': 'Create your account', reset: 'Reset your password' }[page] ?? 'Sign in';
     root.querySelectorAll('[data-brand-form]').forEach(element => { element.hidden = element.dataset.brandForm !== page; });
     const footer = root.querySelector('[data-brand-footer]');
     footer.replaceChildren();
