@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using TUnit.Core.Interfaces;
 
 namespace TerraScale.Authentication.Slow;
 
@@ -7,10 +8,38 @@ namespace TerraScale.Authentication.Slow;
 /// throwaway projects, so its fail-closed behaviour is proven end to end, not only when the
 /// current dependency graph happens to be clean.
 /// </summary>
-// Every case runs `dotnet run` on the same file-based script; each builds it into its own
-// artifacts directory, so concurrent cases never share the default runfile cache.
-public sealed class DependencyAuditTests
+// `dotnet run` on a file-based script shares one runfile cache per script across processes, so
+// the gate is built once for the class and every case executes that build concurrently.
+[ClassDataSource<DependencyAuditTests.AuditGate>(Shared = SharedType.PerClass)]
+public sealed class DependencyAuditTests(DependencyAuditTests.AuditGate gate)
 {
+    /// <summary>The vulnerability gate script, built once into a directory this fixture owns.</summary>
+    public sealed class AuditGate : IAsyncInitializer, IAsyncDisposable
+    {
+        private readonly DirectoryInfo directory = Directory.CreateTempSubdirectory("ts-auth-audit-gate-");
+
+        /// <summary>The built gate assembly.</summary>
+        public string Assembly { get; private set; } = string.Empty;
+
+        public async Task InitializeAsync()
+        {
+            var repo = FindRepository();
+            var (exitCode, output) = await RunAsync(
+                "dotnet",
+                ["build", Path.Combine(repo, "scripts", "auth", "check-nuget-vulnerabilities.cs"), "--artifacts-path", this.directory.FullName],
+                repo);
+            this.Assembly = exitCode == 0
+                ? Directory.GetFiles(Path.Combine(this.directory.FullName, "bin"), "check-nuget-vulnerabilities.dll", SearchOption.AllDirectories).Single()
+                : throw new InvalidOperationException($"The gate script did not build: {output}");
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            this.directory.Delete(recursive: true);
+            return ValueTask.CompletedTask;
+        }
+    }
+
     [Test]
     public async Task A_project_with_a_known_vulnerable_package_fails_the_gate()
     {
@@ -69,7 +98,7 @@ public sealed class DependencyAuditTests
         await Assert.That(output).Contains("0 vulnerable packages");
     }
 
-    private static async Task<(int ExitCode, string Output)> AuditWithReportAsync(string report)
+    private async Task<(int ExitCode, string Output)> AuditWithReportAsync(string report)
     {
         var repo = FindRepository();
         var directory = Directory.CreateTempSubdirectory("ts-auth-audit-fake-");
@@ -97,7 +126,7 @@ public sealed class DependencyAuditTests
             }
             return await RunAsync(
                 realDotnet,
-                ["run", "--artifacts-path", Path.Combine(directory.FullName, "artifacts"), Path.Combine(repo, "scripts", "auth", "check-nuget-vulnerabilities.cs"), project],
+                ["exec", gate.Assembly, project],
                 repo,
                 new Dictionary<string, string> { ["PATH"] = $"{bin}:{Environment.GetEnvironmentVariable("PATH")}" });
         }
@@ -139,7 +168,7 @@ public sealed class DependencyAuditTests
 
     private static ReadOnlySpan<byte> ElfMagic => [0x7f, (byte)'E', (byte)'L', (byte)'F'];
 
-    private static async Task<(int ExitCode, string Output)> AuditAsync(string references)
+    private async Task<(int ExitCode, string Output)> AuditAsync(string references)
     {
         var repo = FindRepository();
         var directory = Directory.CreateTempSubdirectory("ts-auth-audit-");
@@ -159,7 +188,7 @@ public sealed class DependencyAuditTests
             await RunAsync("dotnet", ["restore", directory.FullName], directory.FullName);
             return await RunAsync(
                 "dotnet",
-                ["run", "--artifacts-path", Path.Combine(directory.FullName, "artifacts"), Path.Combine(repo, "scripts", "auth", "check-nuget-vulnerabilities.cs"), Path.Combine(directory.FullName, "Probe.csproj")],
+                ["exec", gate.Assembly, Path.Combine(directory.FullName, "Probe.csproj")],
                 repo);
         }
         finally
