@@ -71,120 +71,50 @@ export function tokenize(code: string, lang: Lang): Token[] {
 }
 
 export const CODE_SAMPLES: Record<Lang, string> = {
-  typescript: `// Server-side: TERRASCALE_ACCESS_TOKEN is a 60-second token exchanged from
-// your dashboard API key. Keep both out of browser bundles.
-// Supply a resolver and trusted origins from server configuration.
-// The override skips discovery.
-async function createAndQueryCustomers(
-  resolveRegion: (signal: AbortSignal) => Promise<string>, trustedOrigins: readonly string[],
-  project: string, database: string, collection: string,
-  staticOrigin?: string, callerSignal?: AbortSignal,
-) {
-  const signal = AbortSignal.any([AbortSignal.timeout(30_000), ...(callerSignal ? [callerSignal] : [])]);
-  signal.throwIfAborted();
-  let abort!: () => void;
-  const cancelled = new Promise<never>((_, reject) => {
-    abort = () => reject(signal.reason);
-    signal.addEventListener('abort', abort, { once: true });
-  });
-  let resolved: string;
-  try { resolved = staticOrigin ?? await Promise.race([resolveRegion(signal), cancelled]); }
-  finally { signal.removeEventListener('abort', abort); }
-  const origin = new URL(resolved);
-  if (origin.protocol !== 'https:' || origin.username || origin.password ||
-      origin.pathname !== '/' || origin.search || origin.hash ||
-      !trustedOrigins.includes(origin.origin)) {
-    throw new Error('Expected a trusted HTTPS origin');
-  }
-  if ([project, database, collection].some(name => !name || name === '.' || name === '..')) {
-    throw new Error('Resource names are required');
-  }
-  const accessToken = process.env.TERRASCALE_ACCESS_TOKEN;
-  if (!accessToken?.trim()) throw new Error('TERRASCALE_ACCESS_TOKEN is required');
-
-  const path = '/v1/projects/' + encodeURIComponent(project) +
-    '/databases/' + encodeURIComponent(database) +
-    '/collections/' + encodeURIComponent(collection);
-  const headers = {
-    Authorization: 'Bearer ' + accessToken,
-    'Content-Type': 'application/json',
-  };
-  const created = await fetch(new URL(path + '/documents', origin), {
-    method: 'POST', redirect: 'error', headers, signal,
-    body: JSON.stringify({ email: 'team@example.com', plan: 'pro' }),
-  });
-  await created.body?.cancel();
-  if (!created.ok) throw new Error('Create failed: ' + created.status);
-  const response = await fetch(new URL(path + '/query', origin), {
-    method: 'POST',
-    redirect: 'error',
-    headers, signal,
-    body: JSON.stringify({
-      filter: { eq: ['/plan', 'pro'] },
-      limit: 25,
-    }),
-  });
-  if (!response.ok) {
-    await response.body?.cancel();
-    throw new Error('Query failed: ' + response.status);
-  }
-  return response.json();
-}`,
-  csharp: `using System.Net.Http.Headers;
-using System.Net.Http.Json;
+  typescript: `import { createTerraBaseV1Client } from "@terrascale/sdk";
 
 // Server-side: TERRASCALE_ACCESS_TOKEN is a 60-second token exchanged from
-// your dashboard API key; the key itself as Bearer answers 401.
-// Supply a resolver and trusted origins from server configuration.
-// The override skips discovery.
-static class DocumentsExample
+// your dashboard API key. Keep both out of browser bundles.
+const client = createTerraBaseV1Client({
+  baseUrl: "https://api.terrascale.tech",
+  project: process.env.TERRASCALE_PROJECT,
+  token: process.env.TERRASCALE_ACCESS_TOKEN,
+});
+const db = client.database("app");
+
+// One transaction: both statements commit or neither does.
+await db.batch([
+  "CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, seats INTEGER NOT NULL)",
+  { sql: "INSERT INTO customers (email, seats) VALUES (?, ?)", args: ["team@example.com", 12] },
+]);
+
+const customers = await db.query(
+  "SELECT email, seats FROM customers WHERE seats >= ? ORDER BY seats DESC LIMIT 25",
+  [10],
+);`,
+  csharp: `using TerraScale.DotNet.TerraBase;
+
+// Server-side: accessToken is a 60-second token exchanged from your
+// dashboard API key; the key itself as Bearer answers 401.
+using var http = new HttpClient(TerraBaseHttp.CreateHandler());
+var client = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
 {
-    private static readonly HttpClient Http = new(new SocketsHttpHandler {
-        AllowAutoRedirect = false,
-        PooledConnectionLifetime = TimeSpan.FromMinutes(5)
-    });
+    BaseAddress = new Uri("https://api.terrascale.tech"),
+    ApiKey = accessToken
+});
+TerraBaseDatabase db = client.Database(projectId, "app");
 
-    public static async Task<string> CreateAndQueryCustomers(
-        Func<CancellationToken, Task<Uri>> resolveRegion, IReadOnlyCollection<Uri> trustedOrigins,
-        string project, string database, string collection, Uri? staticOrigin = null,
-        CancellationToken cancellationToken = default)
-    {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(TimeSpan.FromSeconds(30));
-        var token = deadline.Token;
-        token.ThrowIfCancellationRequested();
-        var origin = staticOrigin ?? await resolveRegion(token).WaitAsync(token);
-        if (!origin.IsAbsoluteUri || origin.Scheme != Uri.UriSchemeHttps ||
-            origin.UserInfo.Length != 0 || origin.AbsolutePath != "/" ||
-            origin.Query.Length != 0 || origin.Fragment.Length != 0 ||
-            !trustedOrigins.Contains(origin))
-            throw new ArgumentException("Expected a trusted HTTPS origin");
-        if (new[] { project, database, collection }.Any(name =>
-            string.IsNullOrEmpty(name) || name == "." || name == ".."))
-            throw new ArgumentException("Resource names are required");
-        var accessToken = Environment.GetEnvironmentVariable("TERRASCALE_ACCESS_TOKEN");
-        if (string.IsNullOrWhiteSpace(accessToken))
-            throw new InvalidOperationException("TERRASCALE_ACCESS_TOKEN is required");
+// One transaction: both statements commit or neither does.
+await db.ExecuteSqlBatchAsync([
+    new("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, seats INTEGER NOT NULL)"),
+    new("INSERT INTO customers (email, seats) VALUES (?, ?)", ["team@example.com", 12])
+], cancellationToken);
 
-        var path = "/v1/projects/" + Uri.EscapeDataString(project) +
-            "/databases/" + Uri.EscapeDataString(database) +
-            "/collections/" + Uri.EscapeDataString(collection);
-        using var create = new HttpRequestMessage(HttpMethod.Post, new Uri(origin, path + "/documents"));
-        create.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        create.Content = JsonContent.Create(new { email = "team@example.com", plan = "pro" });
-        using (var created = await Http.SendAsync(create, HttpCompletionOption.ResponseHeadersRead, token))
-            created.EnsureSuccessStatusCode();
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(origin, path + "/query"));
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        request.Content = JsonContent.Create(new {
-            filter = new { eq = new[] { "/plan", "pro" } },
-            limit = 25
-        });
-        using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsStringAsync(token);
-    }
-}`,
+var customers = await db.QuerySqlAsync(
+    "SELECT email, seats FROM customers WHERE seats >= ? ORDER BY seats DESC LIMIT 25",
+    [10], cancellationToken);
+foreach (var row in customers)
+    Console.WriteLine($"{row.GetString("email")}: {row.GetInt64("seats")}");`,
   // Server config from ts-dashboard docs/mcp.md; tokens come from Profile → Access tokens.
   json: `{
   "mcpServers": {
@@ -195,20 +125,18 @@ static class DocumentsExample
     }
   }
 }`,
-  shell: `# Add the TerraScale MCP server to Claude Code
+  shell: `# Run SQL from the CLI
+ts auth login
+ts exec app "SELECT email, seats FROM customers WHERE seats >= 10 LIMIT 25"
+
+# Or connect psql with an API key as the password
+read -rs PGPASSWORD && export PGPASSWORD
+psql "postgresql://app@pg.terrascale.tech:5432/app?sslmode=verify-full&sslrootcert=system"
+
+# Add the TerraScale MCP server to Claude Code
 claude mcp add --transport http terrascale https://mcp.terrascale.tech/ \\
   --header "Authorization: Bearer $TERRASCALE_PAT"
-
-# Then ask in plain language
-claude -p "Which of my TerraScale databases replicate to fra?"
-
-# Or let the agent call the HTTP API from its shell.
-# Exchange the dashboard API key (<key ID>_<secret>) for an access token first.
-TOKEN=$(curl -sS -u "\${TERRASCALE_API_KEY%%_*}:$TERRASCALE_API_KEY" \\
-  -d grant_type=client_credentials https://auth.terrascale.tech/terrascale/oauth/token | jq -r .access_token)
-curl https://api.terrascale.tech/v1/projects/$PROJECT/databases/app/sql \\
-  -H "Authorization: Bearer $TOKEN" \\
-  --json '{"sql": "SELECT email, seats FROM customers WHERE seats >= 10 LIMIT 25"}'`,
+claude -p "Which customers in the app database have 10 or more seats?"`,
 }
 
 export const LANG_META: Array<{ id: Lang; label: string; file: string; icon?: string }> = [

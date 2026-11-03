@@ -5,7 +5,6 @@
   import {
     REGIONS,
     WORLD_MAP_VIEWBOX,
-    type Region,
   } from '@/lib/world-map.generated'
   import { dict } from '@/lib/i18n'
   import { registrationUrl } from '@/lib/site'
@@ -21,35 +20,6 @@
   const flagCodes = ['gru', 'sjc', 'fra'] as const
   type FlagCode = (typeof flagCodes)[number]
   const flagCode = (id: string) => flagCodes.find((code) => code === id) as FlagCode | undefined
-
-  const arcPath = (a: Region, b: Region) => {
-    const mx = (a.x + b.x) / 2
-    const len = Math.hypot(b.x - a.x, b.y - a.y)
-    const lift = Math.max(2.5, len * 0.18)
-    const cy = Math.min(a.y, b.y) - lift - Math.abs(b.x - a.x) * 0.04
-    return `M ${a.x} ${a.y} Q ${mx} ${cy} ${b.x} ${b.y}`
-  }
-
-  // Full replication mesh: gru draws out to sjc and fra, then sjc links to fra
-  // once both have landed. Pulses are staggered so they never fire together.
-  const byId = (id: string) => REGIONS.find((r) => r.id === id)
-  const arcs = [
-    ['gru', 'sjc', 0.4],
-    ['gru', 'fra', 0.4],
-    ['sjc', 'fra', 1.9],
-  ].flatMap(([from, to, delay], i) => {
-    const a = byId(from as string)
-    const b = byId(to as string)
-    return a && b
-      ? [{
-          id: `${from}-${to}`,
-          d: arcPath(a, b),
-          // Same curve traced back, so replication pulses run both ways.
-          backD: arcPath(b, a),
-          style: `--draw-delay: ${delay}s; --pulse-delay: ${2 + i * 1.2}s`,
-        }]
-      : []
-  })
 
   // The map plane turns around the middle of the region triangle, which sits on the hero's centre line.
   const pivotX = REGIONS.reduce((sum, r) => sum + r.x, 0) / REGIONS.length / vbW
@@ -93,28 +63,12 @@
         <div class="hero__map-fade">
           <div class="hero__map"></div>
 
-          <svg
-            class="hero__lines"
-            viewBox="0 0 {vbW} {vbH}"
-            preserveAspectRatio="none"
-            aria-hidden="true"
-          >
-            {#each arcs as arc (arc.id)}
-              <g style={arc.style}>
-                <path pathLength="1" d={arc.d} class="hero__line hero__line--halo" />
-                <path pathLength="1" d={arc.d} class="hero__line" />
-                <path pathLength="1" d={arc.d} class="hero__pulse" />
-                <path pathLength="1" d={arc.backD} class="hero__pulse hero__pulse--back" />
-              </g>
-            {/each}
-          </svg>
         </div>
 
         {#each REGIONS as r (r.id)}
           {@const code = flagCode(r.id)}
           <span
             class="hero__pin"
-            class:hero__pin--arrival={r.id !== 'gru'}
             style="left: {(r.x / vbW) * 100}%; top: {(r.y / vbH) * 100}%; --depth: {(pivotY - r.y / vbH).toFixed(3)};"
             title={regionLabel[r.id] ?? r.city}
           >
@@ -302,8 +256,7 @@
     mask: radial-gradient(70% 95% at var(--pivot-x) 78%, #000 42%, transparent 100%);
   }
 
-  .hero__map,
-  .hero__lines {
+  .hero__map {
     position: absolute;
     inset: 0;
     width: 100%;
@@ -317,65 +270,13 @@
     mask: url(/world-map.svg) center / 100% 100% no-repeat;
   }
 
-  .hero__lines {
-    overflow: visible;
-  }
-
-  .hero__line {
-    fill: none;
-    stroke: var(--ts-primary-light);
-    stroke-width: 0.24;
-    stroke-linecap: round;
-    stroke-dasharray: 1;
-    stroke-dashoffset: 1;
-    animation: ts-line-draw 1.6s cubic-bezier(0.65, 0, 0.35, 1) var(--draw-delay) forwards;
-  }
-
-  .hero__line--halo {
-    stroke: var(--ts-primary);
-    stroke-width: 1;
-    opacity: 0.22;
-  }
-
-  @keyframes ts-line-draw {
-    to { stroke-dashoffset: 0; }
-  }
-
-  /* A short bright dash that travels the arc; the gap (2) is longer than the
-     path (1), so only one dash is ever on screen. */
-  .hero__pulse {
-    fill: none;
-    stroke: #fff;
-    stroke-width: 0.45;
-    stroke-linecap: round;
-    stroke-dasharray: 0.07 2;
-    stroke-dashoffset: 0.07;
-    opacity: 0;
-    animation: ts-pulse 3.6s cubic-bezier(0.45, 0, 0.55, 1) var(--pulse-delay) infinite;
-  }
-
-  .hero__pulse--back {
-    animation-delay: calc(var(--pulse-delay) + 1.8s);
-  }
-
-  @keyframes ts-pulse {
-    0% { stroke-dashoffset: 0.07; opacity: 0; }
-    8%, 44% { opacity: 1; }
-    50%, 100% { stroke-dashoffset: -1; opacity: 0; }
-  }
-
   /* A zero-size anchor on the map; the dot and ring lie flat on it, the flag stands up. */
   .hero__pin {
     position: absolute;
     width: 0;
     height: 0;
     transform-style: preserve-3d;
-    /* gru pops in as the arcs start, sjc and fra as they land. */
     --pin-delay: 0.3s;
-  }
-
-  .hero__pin--arrival {
-    --pin-delay: 1.8s;
   }
 
   .hero__pin-core,
@@ -510,11 +411,6 @@
     .hero__flag-pole {
       animation: none;
     }
-    .hero__line {
-      animation: none;
-      stroke-dashoffset: 0;
-    }
-    .hero__pulse,
     .hero__pin-ring {
       display: none;
     }

@@ -394,27 +394,16 @@ collisions and `ErrForbidden` for insufficient permission. `SetPlan` requires
 the management service credential on the admin listener.
 A rejected token or credential is `ErrInvalidKey`.
 
-Writable databases require at least two regions, identified by region ids
-such as `gru-1` (not `RegionCode`). `ManagedDatabase` reports `Region` (the
-answering node), `HomeRegion` and `ReplicaRegions`.
-`CreateDatabaseIn(ctx, org, project, name, tb.Placement{HomeRegion: "gru-1",
-ReplicaRegions: []string{"sjc-1"}})` places a new database. An empty home uses
-the called region for management; it does not request single-region placement.
-Omitting `replicaRegions` uses every other current serving region. An explicit
-replica list must include at least one region other than the home; an empty
-list on create returns 400 `placement_needs_two_regions`. `SetDatabaseRegions`
-replaces the replica list (the home never changes).
-`tb.Placement{AllRegions: true}` and `SetDatabaseAllRegions` place a full copy
-in every serving region, including regions that join later
-(`ManagedDatabase.AllRegions`; `ReplicaRegions` is then empty). It cannot be
-combined with `ReplicaRegions`; `SetDatabaseRegions` turns it off.
-Delete directly in the database's home region without a preceding placement
-update. Permanent purge authority removes every replica, including all-regions
-placement; branches remain independent. A 204 response records logical deletion
-and local cleanup. Remote erasure is retried durably, so 204 does not guarantee
-synchronous remote erasure. An empty replica-list update can temporarily make
-document writes return 409 `placement_needs_two_regions`; it is not required
-for deletion and does not provide supported single-region placement.
+Each database is stored and served in one home region, identified by a region
+id such as `gru-1` (not `RegionCode`). `ManagedDatabase` reports `Region` (the
+answering node) and `HomeRegion`.
+`CreateDatabaseIn(ctx, org, project, name, tb.Placement{HomeRegion: "gru-1"})`
+places a new database; an empty home uses the called region. Region replicas
+are not available yet: non-empty `ReplicaRegions`, `AllRegions: true`,
+`SetDatabaseRegions` with replicas and `SetDatabaseAllRegions` return 400
+`replicas_unavailable`.
+Delete directly in the database's home region. A 204 response records logical
+deletion and local cleanup; branches remain independent.
 A region outside the placement answers 421
 `ErrWrongRegion`, on Management and Documents routes alike, and the
 `*tb.APIError` carries `HomeRegion` and `Regions`. The client never retries
@@ -439,11 +428,10 @@ JWT compatibility or complete live coverage. Collection subscriptions follow the
 [shape protocol](contracts/shapes.md), independently qualified from the .NET shape
 client. `Idempotency-Key` remains unsupported.
 
-### Replication and analytics (TS-762)
+### Analytics (TS-762)
 
-`Analytics` and `Replication` read TerraBase's `/v1/projects` routes using
-a ts-auth **project access token**. Project and database IDs are plain ULIDs.
-The wire shape is reconciled with the pinned server implementation; see
+`Analytics` reads TerraBase's `/v1/projects` routes using a ts-auth
+**project access token**. Project and database IDs are plain ULIDs. See
 [the contract](contracts/replication-analytics.md).
 
 ```go
@@ -451,20 +439,18 @@ m, err := tb.NewManagement(tb.Config{BaseURL: origin})
 u := m.WithToken(projectAccessToken)
 opts := tb.MetricsOptions{Range: tb.Range24Hours, DatabaseID: databaseID, Region: "gru"}
 analytics, err := u.Analytics(ctx, projectID, opts)
-replication, err := u.Replication(ctx, projectID, opts)
 ```
 
 Each call returns the server's bounded window; these routes have no pagination.
 TerraBase chooses time buckets for `1h`, `24h`, `7d`, or `30d`. Analytics groups
-series under database/region `Items` and includes
-requests and operations by type, errors, p50/p95/p99 latency, storage, client
-bandwidth and directed replication bandwidth. Replication reports period ops
-and bytes by region pair, lag, divergence, convergence time, last applied and
-status per database and region. Replication bandwidth carries its traffic
-`Kind`; nullable storage, latency and boolean divergence distinguish missing
-observations from zero or false. Counters are best-effort, not billable totals.
-The methods share the client's context cancellation, response bounds, API
-errors and safe-read retries.
+series under database/region `Items` and includes requests and operations by
+type, errors, p50/p95/p99 latency, storage and client bandwidth. Nullable storage
+and latency distinguish missing observations from zero. Counters are
+best-effort, not billable totals. The methods share the client's context
+cancellation, response bounds, API errors and safe-read retries.
+
+TerraBase no longer serves the replication route, so `Replication` fails until
+the method is removed.
 
 ### Tests
 
@@ -654,7 +640,7 @@ collecting user passwords. Shared token and error types remain available.
 
 `ts` signs in with `tsauth.Device` (the device grant of ts-auth's ts-cli
 client) and acts as that user: projects, databases, collections, documents,
-read-only SQL, replica regions, backups, functions and project API keys. It keeps the sign-in in
+SQL, backups, functions and project API keys. It keeps the sign-in in
 `terrascale/cli.json` under `os.UserConfigDir()` (mode 0600) and refreshes it.
 
 ```sh

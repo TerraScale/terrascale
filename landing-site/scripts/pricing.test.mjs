@@ -16,19 +16,19 @@ const usageCaveats = {
 };
 const overageRules = { en: /next (?:subscription )?invoice/i, es: /próxima factura/i, 'pt-BR': /próxima fatura/i };
 const staleClaims = /not yet collected|aún no se cobran|ainda não são coletadas|self-service purchase|compra directa|contratação direta|confirm (?:paid plan )?enrollment/i;
-const operationRules = {
-  en: [/writes count once/i, /replication (?:is free|between regions is not billed)/i],
-  es: [/escrituras cuentan una vez/i, /replicación (?:es gratis|entre regiones no se factura)/i],
-  'pt-BR': [/(?:escritas|gravações) contam uma vez/i, /replicação (?:é grátis|entre regiões não é cobrada)/i],
-};
+const operationRules = { en: /each started 4 KiB/i, es: /cada 4 KiB.*iniciados/i, 'pt-BR': /cada 4 KiB.*iniciados/i };
+// Each database lives in one home region, so no copy may describe or price replication.
+const replication = /replic/i;
 
 for (const [locale, messages] of locales) {
-  test(`${locale}: operation units bill each write once and exclude replication`, () => {
+  test(`${locale}: operation units count each started 4 KiB and never mention replication`, () => {
     for (const copy of [messages.pricing.triad[1].text, messages.pricing.detailed.rows[0].details,
       messages.pricing.faq.items[0].a]) {
-      for (const rule of operationRules[locale]) assert.match(copy, rule);
+      assert.match(copy, operationRules[locale]);
     }
-    assert.ok(catalog.metering.operationUnit.rules.includes('Writes count once regardless of the number of selected regions; reads count only in the serving region. Replication between regions is not billed.'));
+    assert.doesNotMatch(JSON.stringify(messages), replication);
+    assert.doesNotMatch(JSON.stringify(catalog), replication);
+    assert.ok(catalog.metering.operationUnit.rules.includes('Each database lives in one home region; reads and writes count there.'));
   });
   test(`${locale}: pricing states the overage rule and the storage and egress caveat`, () => {
     const pricingCopy = JSON.stringify(messages.pricing);
@@ -107,7 +107,7 @@ for (const [locale, messages] of locales) {
 test('catalog entitlements match the enforced engine tiers', () => {
   const byId = Object.fromEntries(catalog.plans.map((plan) => [plan.id, plan.entitlements]));
   assert.deepEqual(byId.free, { requestsPerSecond: 50, burstRequests: 100, concurrentRequests: 4, queryTimeoutSeconds: 1,
-    storageLimitGb: 0.1, pitrDays: 1, backupRetentionDays: 1, regionsPerDatabase: 3, support: 'Community' });
+    storageLimitGb: 0.1, pitrDays: 1, backupRetentionDays: 1, regionsPerDatabase: 1, support: 'Community' });
   assert.equal(byId.enterprise.requestsPerSecond, null);
   assert.equal(byId.team.pitrDays, 14);
   assert.equal(catalog.metering.allowances.paidOverages, true);

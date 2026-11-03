@@ -95,20 +95,14 @@ each `terrascale.Group` has `key` (one value per path), `count`, and `sum`/`avg`
 `min`/`max` dicts keyed by pointer. `limit` bounds the groups; aggregates take no
 `sort`, `project`, `cursor` or `count`.
 
-**Regions**: `create_database("eu", home_region="fra", replica_regions=["gru"])`,
-`db.update(all_regions=True)`. Writable databases require at least two distinct serving
-regions: the home region plus at least one replica region. On creation, omitting
-`replica_regions` uses all current serving regions, even if `home_region` is set.
-`all_regions=True` also follows future serving regions. Creating with an explicit
-`replica_regions=[]` returns HTTP 400.
+**Regions**: `create_database("eu", home_region="fra")` stores and serves the
+database in its home region; without `home_region` the called region is the home.
+Region replicas are not available yet: a non-empty `replica_regions` or
+`all_regions=True` on `create_database` or `db.update` returns HTTP 400
+`replicas_unavailable`.
 
 For deletion, call `db.delete()` directly in the database's home region (await
-for async clients), without a preceding placement update. Deletion covers every
-replica, including all-regions placement. HTTP 204 confirms logical deletion and
-local cleanup; remote erasure is retried durably and may complete later.
-Updating to `replica_regions=[]` can temporarily disable document writes with
-HTTP 409 `placement_needs_two_regions`; it does not provide supported
-single-region placement.
+for async clients). HTTP 204 confirms logical deletion and local cleanup.
 
 **TTL** deletes documents whose member holds a past RFC 3339 UTC time, in an
 hourly sweep; expired documents stay readable until then.

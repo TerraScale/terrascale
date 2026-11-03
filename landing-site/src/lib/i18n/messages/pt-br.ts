@@ -2,9 +2,9 @@ import type { Messages } from './en'
 
 export const ptBr: Messages = {
   meta: {
-    title: 'TerraScale Public Alpha | Banco de Documentos Regional',
+    title: 'TerraScale Public Alpha | Banco de dados SQL regional',
     description:
-      'O TerraScale Public Alpha oferece um banco de documentos tipado com replicação assíncrona em São Paulo, San Francisco Bay Area e Frankfurt.',
+      'TerraScale Public Alpha oferece bancos de dados SQL, cada um armazenado e servido em uma região principal: São Paulo, San Francisco Bay Area ou Frankfurt.',
   },
 
   chrome: {
@@ -70,8 +70,8 @@ export const ptBr: Messages = {
   },
 
   hero: {
-    headlineLead: 'Banco de dados de documentos tipado,',
-    headlineAccent: 'replicado entre regiões.',
+    headlineLead: 'Banco de dados SQL,',
+    headlineAccent: 'na região que você escolher.',
     cta: 'Comece grátis',
   },
 
@@ -80,43 +80,43 @@ export const ptBr: Messages = {
     titleAccent: 'e onde ele para.',
     items: [
       {
-        headline: 'Consulte documentos JSON com filtros ou SQL',
-        text: 'Bancos de dados guardam coleções de documentos JSON, cada uma com um esquema opcional. Consulte com filtros JSON ou SQL somente leitura: SELECT, WHERE, ORDER BY e até 1.000 linhas por instrução.',
+        headline: 'SQL com tabelas, índices e chaves estrangeiras',
+        text: 'Crie tabelas, índices, views e triggers no dialeto do SQLite. Chaves estrangeiras são sempre aplicadas, colunas JSON funcionam com json_extract e até 256 instruções são confirmadas como uma transação.',
       },
       {
-        headline: 'Mantenha cada banco nas regiões que você escolher',
-        text: 'São Paulo, San Francisco Bay Area e Frankfurt já atendem tráfego. Cada banco vive em uma região principal e é replicado por completo nas outras regiões que você selecionar.',
+        headline: 'Conecte com psql, HTTP ou a CLI',
+        text: 'Clientes Postgres conectam pelo protocolo de rede com uma chave de API como senha. A API HTTP, a CLI e os SDKs executam o mesmo SQL; clientes MCP executam consultas somente leitura.',
       },
       {
-        headline: 'Atenda leituras pela região saudável mais próxima',
-        text: 'O endpoint global responde da região saudável mais próxima que tem o seu banco. Endpoints regionais estritos nunca atendem de uma região que você não selecionou.',
+        headline: 'Uma região principal por banco de dados',
+        text: 'Escolha São Paulo, San Francisco Bay Area ou Frankfurt ao criar um banco de dados. Ele é armazenado e servido nessa região.',
       },
       {
-        headline: 'Veja a saúde da replicação como valores medidos',
-        text: 'A replicação é assíncrona. Atraso, convergência, conflitos e latência da API são publicados como valores medidos separados, com o horário da observação. Não há promessa de atraso limitado, porcentagem de disponibilidade nem SLA.',
+        headline: 'Status publicado, não prometido',
+        text: 'A disponibilidade atual e a latência da API são publicadas na página de status. Não há porcentagem de disponibilidade, promessa de latência nem SLA.',
       },
       {
         headline: 'Criptografia em trânsito e em repouso',
-        text: 'O tráfego do cliente exige TLS 1.2 ou superior, os dados em repouso usam criptografia qualificada e toda requisição exige autorização. O conteúdo do cliente permanece nas regiões que você selecionar.',
+        text: 'O tráfego do cliente exige TLS 1.2 ou superior, os dados em repouso usam criptografia qualificada e toda requisição exige autorização.',
       },
     ],
   },
 
   howItWorks: {
-    titleLead: 'Do cadastro a leituras globais',
+    titleLead: 'Do cadastro à primeira consulta',
     titleAccent: 'em três passos.',
     steps: [
       {
         title: 'Crie um banco de dados',
-        text: 'Cadastre-se sem cartão, crie um projeto e adicione um banco. Escolha a região principal: São Paulo, San Francisco Bay Area ou Frankfurt.',
+        text: 'Cadastre-se sem cartão, crie um projeto e adicione um banco de dados na região principal: São Paulo, San Francisco Bay Area ou Frankfurt.',
       },
       {
-        title: 'Selecione regiões de réplica',
-        text: 'Adicione as outras regiões que devem guardar uma cópia completa. Uma gravação confirma o aceite local e depois é replicada de forma assíncrona para cada região selecionada.',
+        title: 'Crie uma chave de API',
+        text: 'Limite a chave ao banco de dados. Use-a como senha do Postgres ou troque-a por um token de acesso para HTTP e os SDKs.',
       },
       {
-        title: 'Leia e grave',
-        text: 'Use o endpoint global para a região selecionada saudável mais próxima, ou um endpoint regional estrito que nunca atende de outra região. Chame pelo SDK de C# ou TypeScript, pela API HTTP ou por um cliente MCP.',
+        title: 'Execute SQL',
+        text: 'Crie tabelas e consulte-as pelo psql, pela CLI, pelo SDK de C# ou TypeScript ou pela API HTTP.',
       },
     ],
   },
@@ -128,31 +128,31 @@ export const ptBr: Messages = {
     items: [
       {
         q: 'O que é a TerraScale?',
-        a: 'Um banco de dados de documentos tipado. Bancos guardam coleções de documentos JSON, cada uma com um esquema opcional. Você consulta com filtros JSON ou com SQL somente leitura: SELECT, WHERE, ORDER BY e até 1.000 linhas por instrução.',
+        a: 'Um banco de dados SQL. Cada banco contém tabelas, índices, views e triggers no dialeto do SQLite, com chaves estrangeiras sempre aplicadas. O acesso é pelo protocolo de rede do Postgres, HTTP, a CLI, os SDKs ou MCP.',
       },
       {
         q: 'Quais regiões atendem hoje?',
-        a: 'São Paulo (gru), San Francisco Bay Area (sjc) e Frankfurt (fra). Cada banco vive em uma região principal e é replicado por completo nas outras regiões que você selecionar.',
+        a: 'São Paulo (gru), San Francisco Bay Area (sjc) e Frankfurt (fra). Cada banco de dados fica em uma região principal, escolhida ao criá-lo.',
       },
       {
-        q: 'Como funciona a replicação?',
-        a: 'A replicação é assíncrona. Uma gravação bem sucedida confirma o aceite local, e as outras regiões selecionadas a recebem depois. Atraso, convergência, conflitos e latência da API são publicados como valores medidos separados, com o horário da observação.',
+        q: 'Meu banco de dados é copiado para outras regiões?',
+        a: 'Hoje não. Um banco de dados é armazenado e servido apenas na região principal. Os backups o protegem contra perda de dados.',
       },
       {
-        q: 'Qual a diferença entre o endpoint global e os regionais?',
-        a: 'O endpoint global responde da região saudável mais próxima que tem o seu banco. Um endpoint regional estrito nunca atende de uma região que você não selecionou.',
+        q: 'Posso usar minhas ferramentas do Postgres?',
+        a: 'Sim, pelo protocolo de rede. psql e drivers Postgres conectam a pg.terrascale.tech com uma chave de API como senha. As instruções usam o dialeto do SQLite, então sintaxe exclusiva do Postgres é recusada.',
       },
       {
         q: 'Existe compromisso de disponibilidade?',
-        a: 'Ainda não. O Public Alpha não tem percentual de disponibilidade, promessa de atraso limitado nem SLA. A disponibilidade atual é publicada na página de status.',
+        a: 'Ainda não. A Public Alpha não tem porcentagem de disponibilidade, promessa de latência nem SLA. A disponibilidade atual é publicada na página de status.',
       },
       {
         q: 'Quais linguagens e ferramentas posso usar?',
-        a: 'SDKs tipados em C# e TypeScript chamam a mesma API HTTP pública usada pelo painel. Você também pode usar a CLI, ou conectar o Claude Code, o Cursor ou qualquer cliente MCP ao servidor MCP da TerraScale com um token de acesso pessoal.',
+        a: 'Use o psql ou qualquer driver Postgres, os SDKs tipados de C# e TypeScript, a API HTTP ou a CLI. Você também pode conectar Claude Code, Cursor ou qualquer cliente MCP ao servidor MCP da TerraScale com um token de acesso pessoal.',
       },
       {
         q: 'Como meus dados são protegidos?',
-        a: 'O tráfego do cliente exige TLS 1.2 ou superior, os dados em repouso usam criptografia qualificada e toda requisição exige autorização. O conteúdo do cliente permanece nas regiões que você selecionar.',
+        a: 'O tráfego do cliente exige TLS 1.2 ou superior, os dados em repouso usam criptografia qualificada e toda requisição exige autorização.',
       },
       {
         q: 'Quanto custa para começar?',
@@ -169,12 +169,12 @@ export const ptBr: Messages = {
   code: {
     headlineLead: 'Consulte seus dados',
     headlineAccent: 'na linguagem que você ama',
-    bullets: ['Clientes tipados em C# e TypeScript', 'Modelos OpenAPI gerados', 'Filtros JSON ou SQL somente leitura'],
+    bullets: ['Clientes tipados em C# e TypeScript', 'Protocolo de rede do Postgres para psql e drivers', 'Até 256 instruções em uma transação'],
     agent: {
       title: 'Ou peça ao seu agente de IA favorito para fazer isso por você',
       text: 'Suportamos CLI e MCP. Conecte o Claude Code, o Cursor ou qualquer cliente MCP ao servidor MCP da TerraScale com um token de acesso pessoal. O agente age com os seus papéis e cada chamada é verificada novamente. Agentes também podem chamar a API HTTP pelo terminal.',
       prompts: [
-        'Liste meus bancos de dados e as regiões que cada um atende.',
+        'Liste meus bancos de dados e suas regiões principais.',
         'Encontre os clientes com 10 ou mais assentos no banco app.',
         'Quanto da cota de unidades de operação deste mês já usamos?',
       ],
@@ -228,7 +228,7 @@ export const ptBr: Messages = {
       projects: ['{n} projeto', '{n} projetos'],
       databases: ['{n} banco de dados', '{n} bancos de dados'],
       members: ['{n} membro', '{n} membros'],
-      storage: '{n} entre regiões (média mensal)',
+      storage: '{n} de armazenamento (média mensal)',
       operationUnits: '{n} unidades de operação/mês',
       egress: '{n} de saída para clientes/mês',
     },
@@ -237,12 +237,12 @@ export const ptBr: Messages = {
     },
     triad: [
       {
-        title: 'Armazenamento entre regiões',
-        text: 'GB decimais em cada região selecionada, com média ao longo do mês',
+        title: 'Armazenamento',
+        text: 'GB decimais armazenados, em média ao longo do mês',
       },
       {
         title: 'Unidades de operação',
-        text: 'Cada 4 KiB iniciados lidos ou escritos; escritas contam uma vez e a replicação é grátis',
+        text: 'Cada 4 KiB iniciados lidos ou gravados',
       },
       {
         title: 'Franquias e uso adicional',
@@ -255,7 +255,7 @@ export const ptBr: Messages = {
       projects: 'Projetos',
       databases: 'Bancos de dados',
       members: 'Membros',
-      storage: 'Armazenamento entre regiões (média mensal)',
+      storage: 'Armazenamento (média mensal)',
       operationUnits: 'Unidades de operação / mês',
       egress: 'Saída para clientes / mês',
       billing: 'Ciclo de cobrança',
@@ -292,17 +292,17 @@ export const ptBr: Messages = {
         {
           item: 'Unidades de operação',
           unit: '/milhão de unidades',
-          details: 'Cada 4 KiB iniciados de cada leitura ou escrita bem-sucedida contam separadamente. Escritas contam uma vez, independentemente das regiões selecionadas; leituras contam na região que atende. A replicação é grátis.',
+          details: 'Cada 4 KiB iniciados de cada leitura ou gravação bem-sucedida contam separadamente.',
         },
         {
-          item: 'Armazenamento entre regiões',
-          unit: '/GB-região-mês',
-          details: 'GB decimais armazenados em cada região selecionada, com média ao longo do mês.',
+          item: 'Armazenamento',
+          unit: '/GB-mês',
+          details: 'GB decimais armazenados, em média ao longo do mês.',
         },
         {
           item: 'Saída para clientes',
           unit: '/GB',
-          details: 'Bytes decimais de respostas da aplicação enviados aos clientes; exclui tráfego de replicação.',
+          details: 'Bytes decimais de respostas da aplicação enviados aos clientes.',
         },
       ],
       docsLink: 'Documentação completa de preços',
@@ -313,7 +313,7 @@ export const ptBr: Messages = {
       items: [
         {
           q: 'O que é uma unidade de operação?',
-          a: 'Uma unidade de operação é cada 4 KiB (4.096 bytes) iniciados de um objeto lógico lido ou gravado com sucesso. Listas, consultas e lotes contam cada item separadamente. Gravações contam uma vez, independentemente do número de regiões selecionadas; leituras contam apenas na região que as atende. A replicação entre regiões não é cobrada. Solicitações com falha, negadas, inválidas, limitadas e não encontradas não são cobradas.',
+          a: 'Uma unidade de operação é cada 4 KiB (4.096 bytes) iniciados de um objeto lógico lido ou gravado com sucesso. Listas, consultas e lotes contam cada item separadamente. Solicitações com falha, negadas, inválidas, limitadas e não encontradas não são cobradas.',
         },
         {
           q: 'E se eu precisar de mais operações, armazenamento ou saída?',
@@ -355,19 +355,19 @@ export const ptBr: Messages = {
   },
 
   about: {
-    titleLead: 'Globalmente distribuída,',
-    titleAccent: 'infraestrutura de banco de dados.',
+    titleLead: 'Bancos de dados SQL',
+    titleAccent: 'em três regiões.',
     ctaPricing: 'Ver preços',
     regionsAria: 'Regiões em operação',
-    missionTitle: 'Uma única superfície de plataforma para equipes que entregam entre regiões.',
+    missionTitle: 'Uma plataforma para bancos de dados, chaves e cobrança.',
     pillars: [
       {
         title: 'Fundação TerraBase',
-        text: 'A TerraScale é construída sobre a TerraBase para que as equipes executem fluxos de dados duráveis de documentos, consultas e operações por trás de uma única superfície pública da plataforma.',
+        text: 'A TerraScale é construída sobre o TerraBase, que executa SQL sobre o Turso por trás de uma única superfície pública da plataforma.',
       },
       {
-        title: 'Replicação assíncrona',
-        text: 'Uma escrita bem-sucedida confirma aceitação local. A replicação para outras regiões selecionadas acontece depois.',
+        title: 'Uma região principal',
+        text: 'Cada banco de dados é armazenado e servido na região escolhida ao criá-lo.',
       },
       {
         title: 'Cobrança consciente do uso',
@@ -376,7 +376,7 @@ export const ptBr: Messages = {
     ],
     bandTitle: 'Preços regionais fixos, medidos pelo uso real.',
     bandText:
-      'O armazenamento soma os bytes em cada região selecionada. Distância de rede estimada, latência medida da API e saúde da replicação continuam separadas.',
+      'O armazenamento conta os bytes que cada banco de dados guarda na região principal. Distância de rede estimada e latência medida da API continuam separadas.',
   },
 
   notFound: {

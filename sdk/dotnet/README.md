@@ -120,18 +120,12 @@ TerraBaseWriteResult created = await database.PutDocumentAsync(
 TerraBaseDocument? current = await database.GetDocumentAsync("users", userId, cancellationToken);
 ```
 
-A writable database requires at least two regions. The home region is where a database is created and managed;
-it does not limit placement to that region. `Project(projectId).CreateDatabaseAsync` without `replicaRegions`
-uses every other current serving region. An explicit replica list must contain at least one region other
-than the home; an empty list on create returns 400 `placement_needs_two_regions`. `allRegions: true` instead
-follows every serving region, including regions that join later, and cannot be combined with a replica list.
-`SetDatabaseRegionsAsync` replaces the complete replica list and turns all-regions placement off.
+Each database is stored and served in one home region. `Project(projectId).CreateDatabaseAsync` without a
+home region uses the called region. Region replicas are not available yet: a non-empty `replicaRegions` or
+`allRegions: true` on create or `SetDatabaseRegionsAsync` returns 400 `replicas_unavailable`.
 
-Call `DeleteAsync` directly in the database's home region, without a preceding placement update.
-Permanent purge authority removes every replica, including all-regions placement; branches remain independent.
-A 204 response records logical deletion and local cleanup. Remote erasure is retried durably, so 204 does
-not guarantee synchronous remote erasure. An empty replica-list update can temporarily make document writes
-return 409 `placement_needs_two_regions`; it is not required for deletion and does not provide supported single-region placement.
+Call `DeleteAsync` directly in the database's home region. A 204 response records logical deletion and local
+cleanup; branches remain independent.
 
 Relational SQL runs on the same database handle and project access token
 ([contract](contracts/terrabase/sql-execute.md)). Each call is one transaction, all or nothing; reads need

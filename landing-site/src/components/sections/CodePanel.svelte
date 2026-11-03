@@ -15,7 +15,7 @@
   $: agent = $dict.code.agent
 
   // Tool names registered by the ts-dashboard MCP server.
-  const mcpTools = ['list_databases', 'run_sql', 'create_document', 'get_usage', 'set_database_regions']
+  const mcpTools = ['list_databases', 'execute_sql', 'get_usage', 'list_backups']
 
   async function handleCopy() {
     try {

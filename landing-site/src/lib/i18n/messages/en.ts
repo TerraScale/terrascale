@@ -1,8 +1,8 @@
 export const en = {
   meta: {
-    title: 'TerraScale Public Alpha | Regional Document Database',
+    title: 'TerraScale Public Alpha | Regional SQL Database',
     description:
-      'TerraScale Public Alpha provides a typed document database with asynchronous replication across São Paulo, the San Francisco Bay Area, and Frankfurt.',
+      'TerraScale Public Alpha provides SQL databases, each stored and served in one home region: São Paulo, the San Francisco Bay Area, or Frankfurt.',
   },
 
   chrome: {
@@ -68,8 +68,8 @@ export const en = {
   },
 
   hero: {
-    headlineLead: 'Typed document database,',
-    headlineAccent: 'replicated across regions.',
+    headlineLead: 'SQL database,',
+    headlineAccent: 'in the region you choose.',
     cta: 'Start free',
   },
 
@@ -78,43 +78,43 @@ export const en = {
     titleAccent: 'and where it stops.',
     items: [
       {
-        headline: 'Query JSON documents with filters or SQL',
-        text: 'Databases hold collections of JSON documents, each with an optional schema. Query with JSON filters or read-only SQL: SELECT, WHERE, ORDER BY, and up to 1,000 rows per statement.',
+        headline: 'SQL with tables, indexes, and foreign keys',
+        text: 'Create tables, indexes, views, and triggers in the SQLite dialect. Foreign keys are always enforced, JSON columns work with json_extract, and up to 256 statements commit as one transaction.',
       },
       {
-        headline: 'Keep each database in the regions you pick',
-        text: 'São Paulo, the San Francisco Bay Area, and Frankfurt serve today. Each database lives in a home region and replicates in full to the other regions you select.',
+        headline: 'Connect with psql, HTTP, or the CLI',
+        text: 'Postgres clients connect over the wire protocol with an API key as the password. The HTTP API, the CLI, and the SDKs run the same SQL; MCP clients run read-only queries.',
       },
       {
-        headline: 'Serve reads from the nearest healthy region',
-        text: 'The global endpoint answers from the nearest healthy region that holds your database. Strict regional endpoints never serve from a region you did not select.',
+        headline: 'One home region per database',
+        text: 'Pick São Paulo, the San Francisco Bay Area, or Frankfurt when you create a database. It is stored and served in that region.',
       },
       {
-        headline: 'See replication health as measured values',
-        text: 'Replication is asynchronous. Lag, convergence, conflicts, and API latency are published as separate measured values with their observation time. There is no bounded-lag promise, uptime percentage, or SLA.',
+        headline: 'Status published, not promised',
+        text: 'Current availability and API latency are published on the status page. There is no uptime percentage, latency promise, or SLA.',
       },
       {
         headline: 'Encrypted in transit and at rest',
-        text: 'Customer traffic requires TLS 1.2 or newer, data at rest uses qualified encryption, and every request requires authorization. Customer content stays in the regions you select.',
+        text: 'Customer traffic requires TLS 1.2 or newer, data at rest uses qualified encryption, and every request requires authorization.',
       },
     ],
   },
 
   howItWorks: {
-    titleLead: 'From sign up to global reads',
+    titleLead: 'From sign up to your first query',
     titleAccent: 'in three steps.',
     steps: [
       {
         title: 'Create a database',
-        text: 'Register without a card, create a project, and add a database. Choose its home region: São Paulo, the San Francisco Bay Area, or Frankfurt.',
+        text: 'Register without a card, create a project, and add a database in its home region: São Paulo, the San Francisco Bay Area, or Frankfurt.',
       },
       {
-        title: 'Select replica regions',
-        text: 'Add the other regions that should hold a full copy. A write confirms local acceptance, then replicates asynchronously to every region you selected.',
+        title: 'Create an API key',
+        text: 'Limit the key to the database. Use it as the Postgres password, or exchange it for an access token for HTTP and the SDKs.',
       },
       {
-        title: 'Read and write',
-        text: 'Use the global endpoint for the nearest healthy selected region, or a strict regional endpoint that never serves from another region. Call it from the C# or TypeScript SDK, the HTTP API, or an MCP client.',
+        title: 'Run SQL',
+        text: 'Create tables and query them from psql, the CLI, the C# or TypeScript SDK, or the HTTP API.',
       },
     ],
   },
@@ -126,31 +126,31 @@ export const en = {
     items: [
       {
         q: 'What is TerraScale?',
-        a: 'A typed document database. Databases hold collections of JSON documents, each with an optional schema. You query them with JSON filters or with SQL that only reads: SELECT, WHERE, ORDER BY, and up to 1,000 rows per statement.',
+        a: 'A SQL database. Each database holds tables, indexes, views, and triggers in the SQLite dialect, with foreign keys always enforced. You reach it over the Postgres wire protocol, HTTP, the CLI, the SDKs, or MCP.',
       },
       {
         q: 'Which regions serve today?',
-        a: 'São Paulo (gru), the San Francisco Bay Area (sjc), and Frankfurt (fra). Each database lives in a home region and replicates in full to the other regions you select.',
+        a: 'São Paulo (gru), the San Francisco Bay Area (sjc), and Frankfurt (fra). Each database lives in one home region, chosen when you create it.',
       },
       {
-        q: 'How does replication work?',
-        a: 'Replication is asynchronous. A successful write confirms local acceptance, and the other selected regions receive it later. Lag, convergence, conflicts, and API latency are published as separate measured values with their observation time.',
+        q: 'Is my database copied to other regions?',
+        a: 'Not today. A database is stored and served only in its home region. Backups protect it against data loss.',
       },
       {
-        q: 'What is the difference between the global and regional endpoints?',
-        a: 'The global endpoint answers from the nearest healthy region that holds your database. A strict regional endpoint never serves from a region you did not select.',
+        q: 'Can I use my Postgres tools?',
+        a: 'Yes, through the wire protocol. psql and Postgres drivers connect to pg.terrascale.tech with an API key as the password. Statements use the SQLite dialect, so Postgres-only syntax is refused.',
       },
       {
         q: 'Is there an uptime commitment?',
-        a: 'Not yet. Public Alpha has no uptime percentage, bounded lag promise, or SLA. Current availability is published on the status page.',
+        a: 'Not yet. Public Alpha has no uptime percentage, latency promise, or SLA. Current availability is published on the status page.',
       },
       {
         q: 'Which languages and tools can I use?',
-        a: 'Typed C# and TypeScript SDKs call the same public HTTP API the dashboard uses. You can also use the CLI, or connect Claude Code, Cursor, or any MCP client to the TerraScale MCP server with a personal access token.',
+        a: 'Use psql or any Postgres driver, the typed C# and TypeScript SDKs, the HTTP API, or the CLI. You can also connect Claude Code, Cursor, or any MCP client to the TerraScale MCP server with a personal access token.',
       },
       {
         q: 'How is my data protected?',
-        a: 'Customer traffic requires TLS 1.2 or newer, data at rest uses qualified encryption, and every request requires authorization. Customer content stays in the regions you select.',
+        a: 'Customer traffic requires TLS 1.2 or newer, data at rest uses qualified encryption, and every request requires authorization.',
       },
       {
         q: 'What does it cost to start?',
@@ -167,12 +167,12 @@ export const en = {
   code: {
     headlineLead: 'Query your data',
     headlineAccent: 'in the language you love',
-    bullets: ['Typed C# and TypeScript clients', 'Generated OpenAPI models', 'JSON filters or read-only SQL'],
+    bullets: ['Typed C# and TypeScript clients', 'Postgres wire protocol for psql and drivers', 'Up to 256 statements in one transaction'],
     agent: {
       title: 'Or ask your favorite AI agent to do it for you',
       text: 'We support CLI and MCP. Connect Claude Code, Cursor, or any MCP client to the TerraScale MCP server with a personal access token. The agent acts with your roles, and every call is checked again. Agents can also call the HTTP API from a shell.',
       prompts: [
-        'List my databases and the regions each one serves.',
+        'List my databases and their home regions.',
         'Find customers with 10 or more seats in the app database.',
         'How much of this month’s operation-unit allowance have we used?',
       ],
@@ -226,7 +226,7 @@ export const en = {
       projects: ['{n} project', '{n} projects'],
       databases: ['{n} database', '{n} databases'],
       members: ['{n} member', '{n} members'],
-      storage: '{n} across regions (monthly average)',
+      storage: '{n} storage (monthly average)',
       operationUnits: '{n} operation units/month',
       egress: '{n} client egress/month',
     },
@@ -235,12 +235,12 @@ export const en = {
     },
     triad: [
       {
-        title: 'Storage across regions',
-        text: 'Decimal GB in each selected region, averaged over the month',
+        title: 'Storage',
+        text: 'Decimal GB stored, averaged over the month',
       },
       {
         title: 'Operation units',
-        text: 'Each started 4 KiB read or written; writes count once and replication is free',
+        text: 'Each started 4 KiB read or written',
       },
       {
         title: 'Allowances then usage',
@@ -253,7 +253,7 @@ export const en = {
       projects: 'Projects',
       databases: 'Databases',
       members: 'Members',
-      storage: 'Storage across regions (monthly average)',
+      storage: 'Storage (monthly average)',
       operationUnits: 'Operation units / month',
       egress: 'Client egress / month',
       billing: 'Billing cadence',
@@ -290,17 +290,17 @@ export const en = {
         {
           item: 'Operation units',
           unit: '/million units',
-          details: 'Each started 4 KiB of each successful read or write counts separately. Writes count once regardless of selected regions; reads count in the serving region. Replication is free.',
+          details: 'Each started 4 KiB of each successful read or write counts separately.',
         },
         {
-          item: 'Storage across regions',
-          unit: '/GB-region-month',
-          details: 'Decimal stored GB in each selected region, averaged over time during the month.',
+          item: 'Storage',
+          unit: '/GB-month',
+          details: 'Decimal stored GB, averaged over time during the month.',
         },
         {
           item: 'Client egress',
           unit: '/GB',
-          details: 'Decimal outbound application response bytes to clients; replication traffic is excluded.',
+          details: 'Decimal outbound application response bytes to clients.',
         },
       ],
       docsLink: 'Full Pricing Docs',
@@ -311,7 +311,7 @@ export const en = {
       items: [
         {
           q: 'What is an operation unit?',
-          a: 'One operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written. Lists, queries, and batches count each item independently. Writes count once regardless of the number of selected regions; reads count only in the serving region. Replication between regions is not billed. Failed, denied, invalid, throttled, and not-found requests are not billed.',
+          a: 'One operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written. Lists, queries, and batches count each item independently. Failed, denied, invalid, throttled, and not-found requests are not billed.',
         },
         {
           q: 'What if I need more operations, storage, or egress?',
@@ -353,19 +353,19 @@ export const en = {
   },
 
   about: {
-    titleLead: 'Globally distributed',
-    titleAccent: 'database infrastructure.',
+    titleLead: 'SQL databases',
+    titleAccent: 'in three regions.',
     ctaPricing: 'View Pricing',
     regionsAria: 'Serving regions',
-    missionTitle: 'One platform surface for teams that ship across regions.',
+    missionTitle: 'One platform for databases, keys, and billing.',
     pillars: [
       {
         title: 'TerraBase foundation',
-        text: 'TerraScale is built on TerraBase so teams can run durable document, query, and operational data workflows behind one public platform surface.',
+        text: 'TerraScale is built on TerraBase, which runs SQL on Turso behind one public platform surface.',
       },
       {
-        title: 'Asynchronous replication',
-        text: 'A successful write confirms local acceptance. Replication to other selected regions happens later.',
+        title: 'One home region',
+        text: 'Each database is stored and served in the region you pick when you create it.',
       },
       {
         title: 'Usage-aware billing',
@@ -374,7 +374,7 @@ export const en = {
     ],
     bandTitle: 'Flat regional pricing, metered by real use.',
     bandText:
-      'Storage usage adds the bytes stored in every selected region. Estimated network distance, measured API latency, and replication health remain separate values.',
+      'Storage usage counts the bytes each database stores in its home region. Estimated network distance and measured API latency remain separate values.',
   },
 
   notFound: {

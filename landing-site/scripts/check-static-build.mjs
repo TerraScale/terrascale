@@ -5,7 +5,7 @@ import { secureHtml } from './security-headers.mjs'
 
 const read = (file) => readFileSync(new URL(`../build/${file}`, import.meta.url), 'utf8')
 const pages = [
-  ['index.html', '/', 'TerraScale Public Alpha | Regional Document Database'],
+  ['index.html', '/', 'TerraScale Public Alpha | Regional SQL Database'],
   ['about.html', '/about', 'About TerraScale'],
   ['pricing.html', '/pricing', 'TerraScale Public Alpha pricing'],
   ['contact.html', '/contact', 'Contact TerraScale'],

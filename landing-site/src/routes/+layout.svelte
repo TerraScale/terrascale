@@ -13,14 +13,14 @@
   const publicOrigin = 'https://terrascale.tech'
   const metadataByPath: Record<string, { title: string; description: string }> = {
     '/': {
-      title: 'TerraScale Public Alpha | Regional Document Database',
+      title: 'TerraScale Public Alpha | Regional SQL Database',
       description:
-        'TerraScale Public Alpha provides a typed document database with asynchronous replication across São Paulo, the San Francisco Bay Area, and Frankfurt.',
+        'TerraScale Public Alpha provides SQL databases, each stored and served in one home region: São Paulo, the San Francisco Bay Area, or Frankfurt.',
     },
     '/about': {
       title: 'About TerraScale',
       description:
-        'Learn how TerraScale Public Alpha provides a regional document database with asynchronous replication across selected launch regions.',
+        'Learn how TerraScale Public Alpha provides SQL databases, each served from one home region.',
     },
     '/contact': {
       title: 'Contact TerraScale',
