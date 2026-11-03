@@ -46,14 +46,14 @@ namespace TerraScale.Dashboard.E2E
                 await Assert.That(await malformed.Content.ReadAsStringAsync()).Contains("Pass the database ID (a ULID), not its name.");
             }
 
-            // A browser opening a database it cannot see gets the HTML not-found page, not raw problem JSON; a malformed id still names the rule.
+            // A browser opening a database it cannot see gets the HTML not-found page, not raw problem JSON; a malformed id names the rule in problem JSON.
             foreach (var path in new[] { "/databases/__missing", "/databases/__missing/documents/orders" })
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get, path);
                 request.Headers.Accept.ParseAdd("text/html");
                 using var response = await client.SendAsync(request);
                 await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
-                await Assert.That(response.Content.Headers.ContentType?.MediaType).IsEqualTo("text/html");
+                await Assert.That(response.Content.Headers.ContentType?.MediaType).IsEqualTo("application/problem+json");
                 await Assert.That(await response.Content.ReadAsStringAsync()).Contains("Pass the database ID (a ULID), not its name.");
             }
         }
