@@ -18,10 +18,7 @@ public sealed record StatusBody(
     /// <param name="context">The request, whose listener picks the fields to answer.</param>
     /// <param name="status">The process status: ok, degraded, ready or unavailable.</param>
     /// <param name="options">This node's settings.</param>
-    /// <param name="storageFormat">On-disk storage format id, internal listener only.</param>
-    /// <param name="revision">Source revision, internal listener only.</param>
-    /// <param name="machine">Node name, internal listener only.</param>
-    /// <param name="bucket">The missing backup bucket, while its catalog anchor cannot be read or written.</param>
+    /// <param name="bucket">The missing backup bucket, while its catalog anchor cannot be read or written; internal listener only.</param>
     public static StatusBody For(HttpContext context, string status, TerraBaseOptions options, string? bucket = null) =>
         Listeners.ArrivedOn(context) == TerraBaseListener.Internal
             ? new(status, ServiceVersion.Value, options.Region, Engine.Turso.StorageFormat.Id, ServiceVersion.Revision, options.MachineId, bucket)
