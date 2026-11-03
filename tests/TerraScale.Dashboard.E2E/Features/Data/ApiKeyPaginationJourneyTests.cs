@@ -33,7 +33,10 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             while (true)
             {
                 using var response = await client.GetAsync("/api/v1/dashboard/credentials?limit=2" + (after is null ? "" : "&after=" + Uri.EscapeDataString(after)));
-                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                if (response.StatusCode != HttpStatusCode.OK)
+                {
+                    throw new InvalidOperationException("Page " + pages + " failed: " + await response.Content.ReadAsStringAsync());
+                }
                 using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
                 foreach (var item in body.RootElement.GetProperty("items").EnumerateArray())
                 {
