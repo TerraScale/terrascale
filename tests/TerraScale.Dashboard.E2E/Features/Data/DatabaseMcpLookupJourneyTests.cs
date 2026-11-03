@@ -73,7 +73,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         }
 
         // Only external TerraBase HTTP and state storage are fixture-owned; service, backend and MCP transport are production.
-        private sealed class Probe : IAsyncDisposable
+        private sealed class Probe : IDashboardState, IAsyncDisposable
         {
             public DatabaseSdkScenario Scenario = null!;
             public HttpClient Client = null!, Producer = null!;
