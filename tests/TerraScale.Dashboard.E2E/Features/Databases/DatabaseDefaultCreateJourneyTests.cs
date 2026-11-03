@@ -58,13 +58,11 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("text/html"));
 
-            string databaseId;
             using (var created = await client.PostAsync("/api/v1/dashboard/databases", new FormUrlEncodedContent(
-                new Dictionary<string, string> { ["_csrf"] = csrf, ["name"] = "orders", ["homeRegion"] = "GRU", ["region"] = "GRU", ["region"] = "SJC" })))
+                new[] { new KeyValuePair<string, string>("_csrf", csrf), new("name", "orders"), new("homeRegion", "GRU"), new("region", "GRU"), new("region", "SJC") })))
             {
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.SeeOther).Because(await created.Content.ReadAsStringAsync());
                 await Assert.That(created.Headers.Location?.ToString()).EndsWith("?created=1");
-                databaseId = created.Headers.Location!.AbsolutePath.Split('/')[^1];
             }
 
             // A plan-limit refusal re-renders the same page with the dialog open and the server message inline.
