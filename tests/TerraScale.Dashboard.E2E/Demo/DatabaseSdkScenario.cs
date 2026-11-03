@@ -73,7 +73,7 @@ namespace TerraScale.Dashboard.E2E
             http.Request.Body.Position = 0;
             var statements = body.RootElement.GetProperty("statements");
             return statements.GetArrayLength() == 1 && statements[0].GetProperty("sql").GetString() ==
-                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name LIMIT 101"
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name LIMIT 10000"
                 ? Results.Json(new { results = new[] { new { columns = new[] { new { name = "name", decltype = (string?)null } }, rows = Array.Empty<object>(), rows_affected = 0 } } })
                 : null;
         }
@@ -1244,7 +1244,7 @@ namespace TerraScale.Dashboard.E2E
                         var statements = (await JsonAsync(http)).GetProperty("statements");
                         Require(statements.GetArrayLength() == 1, "The dashboard runs one statement per request");
                         var sql = statements[0].GetProperty("sql").GetString()!;
-                        if (sql == "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name LIMIT 101")
+                        if (sql == "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name LIMIT 10000")
                         {
                             return Results.Json(new { results = new[] { new { columns = new[] { new { name = "name", decltype = (string?)null } }, rows = Array.Empty<object>(), rows_affected = 0 } } });
                         }

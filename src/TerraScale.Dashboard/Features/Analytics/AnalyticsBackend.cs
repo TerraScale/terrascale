@@ -83,7 +83,6 @@ namespace TerraScale.Dashboard.Features.Analytics
                     previousStart = start;
                     var latency = series.GetProperty("latency");
                     var clientBandwidth = series.GetProperty("clientBandwidth");
-                    var replicationBandwidth = series.GetProperty("replicationBandwidth");
                     var requests = Counters(series.GetProperty("requests"));
                     var p50 = Observation(latency, "p50Ms"); var p95 = Observation(latency, "p95Ms"); var p99 = Observation(latency, "p99Ms");
                     if (p50 is { } median && p95 is { } percentile95 && median > percentile95 ||
@@ -95,8 +94,7 @@ namespace TerraScale.Dashboard.Features.Analytics
 
                     points.Add(new(databaseId, displayRegion, start, requests,
                         Counters(series.GetProperty("operations")), Count(series.GetProperty("errors")), p50, p95, p99,
-                        OptionalCount(series.GetProperty("storageBytes")), Count(clientBandwidth.GetProperty("bytesSent")), Count(clientBandwidth.GetProperty("bytesReceived")),
-                        Count(replicationBandwidth.GetProperty("bytesSent")), Count(replicationBandwidth.GetProperty("bytesReceived"))));
+                        OptionalCount(series.GetProperty("storageBytes")), Count(clientBandwidth.GetProperty("bytesSent")), Count(clientBandwidth.GetProperty("bytesReceived"))));
                 }
             }
             return new(AnalyticsSourceState.Available, points);

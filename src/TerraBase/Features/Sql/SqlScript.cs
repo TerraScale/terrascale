@@ -1,4 +1,5 @@
 using TerraBase.Engine;
+using TerraScale.TerraBase.Contracts;
 
 namespace TerraBase.Features.Sql;
 
@@ -39,10 +40,6 @@ internal static class SqlScript
 {
     public const int MaxSqlLength = 16 * 1024;
 
-    private static readonly string[] ReservedPrefixes = ["_tb_", "turso_", "__turso_", "tb_index_", "fts_dir_", "pragma_", "sqlite_stat"];
-
-    private static readonly HashSet<string> ReservedTables = [with(StringComparer.OrdinalIgnoreCase), "collections", "commit_offset", "_collections", "_indexes", "_unique"];
-
     private static readonly HashSet<string> ReadPragmas =
     [
         with(StringComparer.OrdinalIgnoreCase), "table_info", "table_xinfo", "table_list", "index_list", "index_info", "index_xinfo", "foreign_key_list",
@@ -51,7 +48,7 @@ internal static class SqlScript
 
     private static readonly SqlError Reserved = SqlErrors.Error("names starting with _tb_ or turso_, and the engine's own tables, are reserved");
 
-    public static bool IsReservedName(string name) => IsReservedTable(name) || name.StartsWith("sqlite_", StringComparison.OrdinalIgnoreCase);
+    public static bool IsReservedName(string name) => TerraBaseSqlNames.IsInternalTable(name);
 
     public static int CountAtMost(string script)
     {
@@ -153,7 +150,7 @@ internal static class SqlScript
         };
     }
 
-    private static bool IsReservedTable(string name) => ReservedTables.Contains(name) || HasReservedPrefix(name);
+    private static bool IsReservedTable(string name) => TerraBaseSqlNames.IsReserved(name);
 
     private static SqlWriteVerb Verb(string verb) => verb switch
     {
@@ -176,8 +173,6 @@ internal static class SqlScript
 
         return null;
     }
-
-    private static bool HasReservedPrefix(string name) => ReservedPrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
 
     private static bool Only(List<SqlToken> tokens, int from, params string[] words) =>
         tokens.Skip(from).All(token => words.Any(token.Is));

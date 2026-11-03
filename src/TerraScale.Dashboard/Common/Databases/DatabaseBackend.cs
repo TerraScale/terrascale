@@ -299,14 +299,15 @@ namespace TerraScale.Dashboard.Common.Databases
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(10));
+            // sqlite_master also lists the engine's own tables, whose metadata TerraBase refuses to read; leave them out like its table listing does.
             var listed = (await SqlBatchAsync(scope, home, databaseId,
-                [new("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name LIMIT 101")], false, timeout.Token))[0];
-            if (listed.Rows.Count > 101)
+                [new("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name LIMIT 10000")], false, timeout.Token))[0];
+            if (listed.Rows.Count > 10000)
             {
                 throw new HttpRequestException("TerraBase returned an invalid SQL catalog.");
             }
 
-            var names = listed.Rows.Select(row => CatalogText(listed, row, "name")).ToArray();
+            var names = listed.Rows.Select(row => CatalogText(listed, row, "name")).Where(name => !TerraBaseSqlNames.IsInternalTable(name)).Take(101).ToArray();
             if (names.Any(string.IsNullOrWhiteSpace) || names.Distinct(StringComparer.OrdinalIgnoreCase).Count() != names.Length)
             {
                 throw new HttpRequestException("TerraBase returned an invalid SQL catalog.");
