@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Http;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases
 {
@@ -10,7 +11,10 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
         [Test]
         public async Task DatabasePagesOfferNoWebhooksTabAndEveryListedTabAnswersItself()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
+                http.Request.Path.Value!.IndexOf("/functions", StringComparison.Ordinal) >= 0
+                    ? Task.FromResult<IResult?>(Results.Json(Array.Empty<object>()))
+                    : Task.FromResult<IResult?>(null));
             using var client = scenario.CreateClient();
             await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
