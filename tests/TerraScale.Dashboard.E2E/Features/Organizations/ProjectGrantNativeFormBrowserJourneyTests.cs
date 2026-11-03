@@ -32,7 +32,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             var submit = page.GetByRole(AriaRole.Button, new() { Name = "Grant or change explicit role", Exact = true });
             var row = page.Locator("tr[data-project-grant-user='" + target.Subject + "']");
             await WaitForProjectNativeFormAsync(page);
-            await page.GetByLabel("Existing organization member user ID", new() { Exact = true }).FillAsync(new string('!', 26));
+            await page.GetByLabel("Member user ID", new() { Exact = true }).FillAsync(new string('!', 26));
             await SubmitProjectNativeFormAsync(page, submit, "/api/v1/dashboard/project/grants", 422);
             await Assert.That(await page.GetByRole(AriaRole.Alert).InnerTextAsync()).Contains("canonical user ULID");
             await ShotAsync("grant-invalid-user");
@@ -41,7 +41,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 await WaitForProjectNativeFormAsync(page);
                 if (role == "member")
                 {
-                    await page.GetByLabel("Existing organization member user ID", new() { Exact = true }).FillAsync(target.Subject);
+                    await page.GetByLabel("Member user ID", new() { Exact = true }).FillAsync(target.Subject);
                     await page.GetByLabel("Explicit project role", new() { Exact = true }).SelectOptionAsync(role);
                     await SubmitProjectNativeFormAsync(page, submit, "/api/v1/dashboard/project/grants", 303);
                 }

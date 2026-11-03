@@ -51,7 +51,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 await Assert.That(preview.Headers.CacheControl?.NoStore).IsTrue();
                 await Assert.That(preview.Headers.GetValues("Referrer-Policy").Single()).IsEqualTo("strict-origin");
                 var html = await preview.Content.ReadAsStringAsync();
-                foreach (var copy in new[] { "Project invitation", "Join Granted", "This invitation grants " + role + " access to Granted in Shared projects.", "Your organization role is unchanged." })
+                foreach (var copy in new[] { "Join Granted in Shared projects", user.Email + " · " + role + " · Expires" })
                 {
                     await Assert.That(html).Contains(copy);
                 }

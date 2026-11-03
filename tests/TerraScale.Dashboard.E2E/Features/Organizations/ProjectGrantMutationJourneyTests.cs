@@ -69,7 +69,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             else
             {
                 var html = await client.GetStringAsync("/project/members" + scope);
-                await Assert.That(html).Contains("Existing organization member user ID").And.Contains("independent service keys").And.Contains("Remove only this grant");
+                await Assert.That(html).Contains("for=\"grant-user-id\">Member user ID").And.Contains("independent service keys").And.Contains("Remove only this grant");
                 foreach (var invalid in new[] { (Id: "not-a-ulid", Role: "viewer"), (Id: target.Subject, Role: "owner") })
                 {
                     using (var denied = await Change("set", invalid.Id, invalid.Role))

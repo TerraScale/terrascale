@@ -9,8 +9,7 @@
     {
         <form class="ts-form" method="post" action="@Model.PostUrl" data-submit-once data-attr:aria-busy="$_grantPending ? 'true' : 'false'">
             <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
-            <label class="ts-label" for="grant-user-id">Existing organization member user ID</label><input class="ts-input" id="grant-user-id" name="userId" value="@Model.DraftUserId" required minlength="26" maxlength="26" aria-describedby="grant-target-help" />
-            <p class="ts-hint" id="grant-target-help">Enter the canonical user ULID, not an email. New grants require an existing organization member; existing collaborator grants can be changed. Project invitations are not available here.</p>
+            <label class="ts-label" for="grant-user-id">Member user ID</label><input class="ts-input" id="grant-user-id" name="userId" value="@Model.DraftUserId" required minlength="26" maxlength="26" placeholder="01JBX8Y3Z4N5P6Q7R8S9T0V1W2" autocomplete="off" spellcheck="false" />
             <label class="ts-label" for="grant-role">Explicit project role</label><select class="ts-select" id="grant-role" name="role">
                 @if (Model.DraftRole is not ("viewer" or "member" or "admin")) { <option value="@Model.DraftRole" selected>Choose a valid role (@Model.DraftRole)</option> }
                 @foreach (var role in new[] { "viewer", "member", "admin" }) { <option value="@role" selected="@(role == Model.DraftRole ? "selected" : null)">@role</option> }

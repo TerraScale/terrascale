@@ -13,7 +13,7 @@
         {
             <form class="ts-form" method="post" action="@(WorkspaceUrl.For(Model.Shell.Context, "/api/v1/dashboard/project/rename", replace: true))" data-submit-once data-attr:aria-busy="$_renamingProject ? 'true' : 'false'">
                 <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
-                <div class="ts-field"><label class="ts-label" for="project-name">Project name</label><input class="ts-input" id="project-name" name="name" value="@Model.Name" required maxlength="128" aria-describedby="project-name-help@(Model.Error.Length > 0 ? " project-settings-error" : "")" /><p class="ts-hint" id="project-name-help">Use 1–128 characters including a letter or digit. The project ID stays the same.</p></div>
+                <div class="ts-field"><label class="ts-label" for="project-name">Project name</label><input class="ts-input" id="project-name" name="name" value="@Model.Name" required maxlength="128" aria-describedby="@(Model.Error.Length > 0 ? "project-settings-error" : null)" /></div>
                 <button class="ts-btn ts-btn-primary" type="submit">Rename project</button>
                 <p role="status" aria-live="polite" data-text="$_renamingProject ? 'Renaming project…' : ''"></p>
             </form>

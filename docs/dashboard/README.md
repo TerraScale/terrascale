@@ -40,4 +40,4 @@ listens on `ASPNETCORE_URLS` (`http://127.0.0.1:8085` in the ts-orch service spe
 Each secret may instead arrive as a file named by `<NAME>_FILE` (ts-orch delivers OCI Vault secrets that way).
 
 More: [development](development.md), [migration status](csharp-migration.md),
-[zero-configuration contract](zero-configuration.md).
+[zero-configuration contract](zero-configuration.md), [metric definitions](metrics.md).
