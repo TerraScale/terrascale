@@ -8,7 +8,7 @@ namespace TerraScale.Dashboard.Features.Databases
     {
         public static string ApiUrl => TerraBaseDiscovery.Origin.ToString().TrimEnd('/');
 
-        // Public protocol contracts: docs.terrascale.tech/guides/{sql-http,libsql-clients,postgres-clients}.
+        // Public protocol contracts: docs.terrascale.tech/guides/{sql-http,postgres-clients}.
         public static IReadOnlyList<DatabaseConnection> For(string projectId, string database)
         {
             var project = Uri.EscapeDataString(projectId);
@@ -18,7 +18,6 @@ namespace TerraScale.Dashboard.Features.Databases
             [
                 new("document", "Document HTTP", endpoint + "/collections", "getting-started/"),
                 new("sql", "HTTP SQL", endpoint + "/sql/execute", "guides/sql-http.html"),
-                new("libsql", "libSQL / Hrana", endpoint + "/libsql/", "guides/libsql-clients.html"),
                 new("postgres", "Postgres", $"postgresql://app@pg.terrascale.tech:5432/{name}?sslmode=verify-full&sslrootcert=system", "guides/postgres-clients.html")
             ];
         }
