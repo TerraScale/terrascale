@@ -242,7 +242,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             var context = Context();
             var second = await service.ListPageAsync(context, "page-2", 2, CancellationToken.None);
             await Assert.That(wire.Requests).IsEqualTo(1);
-            await Assert.That(wire.Query).IsEqualTo("?limit=2&after=page-2");            // Page two repeats the first page's key beside a new one: the duplicate is dropped.
+            await Assert.That(wire.Query).IsEqualTo("?limit=2&after=page-2");            // Page two repeats one row twice: the duplicate is dropped, the distinct key stays.
             await Assert.That(second.Items.Select(key => key.Id).ToArray()).IsEqualTo(new[] { "01JA0000000000000000000A00" });
             await Assert.That(second.NextCursor).IsEqualTo("page-3");
         }
@@ -423,7 +423,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 var page = after switch
                 {
                     "" => (Ids: new[] { KeyId, "01JA00000000000000000000A0" }, Next: "page-2" as string),
-                    "page-2" => (Ids: new[] { KeyId, "01JA0000000000000000000A00" }, Next: "page-3"),
+                    "page-2" => (Ids: new[] { "01JA0000000000000000000A00", "01JA0000000000000000000A00" }, Next: "page-3"),
                     _ => (Ids: new[] { "01JA000000000000000000A000", "01JA00000000000000000A0000" }, Next: null),
                 };
                 return JsonSerializer.Serialize(new { items = page.Ids.Select(Key), next = page.Next });
