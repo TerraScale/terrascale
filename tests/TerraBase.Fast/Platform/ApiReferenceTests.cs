@@ -329,7 +329,8 @@ public sealed class ApiReferenceTests
                 await Assert.That(error.Value.GetProperty("content").GetProperty("application/json").TryGetProperty("example", out _)).IsTrue().Because($"{line} {error.Name}");
                 var schema = error.Value.GetProperty("content").GetProperty("application/json").GetProperty("schema").GetRawText();
                 await Assert.That(schema.Contains("ErrorBody", StringComparison.Ordinal) || schema.Contains("\"error\"", StringComparison.Ordinal)
-                    || ((line.StartsWith("GET /readyz", StringComparison.Ordinal) || line.StartsWith("GET /backupz", StringComparison.Ordinal)) && error.Name == "503" && schema.Contains("StatusBody", StringComparison.Ordinal))).IsTrue().Because($"{line} {error.Name}");
+                    || ((line.StartsWith("GET /readyz", StringComparison.Ordinal) || line.StartsWith("GET /backupz", StringComparison.Ordinal)
+                        || line.StartsWith("GET /healthz", StringComparison.Ordinal)) && error.Name == "503" && schema.Contains("StatusBody", StringComparison.Ordinal))).IsTrue().Because($"{line} {error.Name}");
             }
 
             if (!line.Contains(" anonymous ", StringComparison.Ordinal))
