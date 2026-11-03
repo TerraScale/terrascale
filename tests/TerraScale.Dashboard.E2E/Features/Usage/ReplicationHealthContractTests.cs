@@ -31,9 +31,9 @@ namespace TerraScale.Dashboard.E2E.Features.Usage
             {
                 Rows =
                 [
-                    ("gru", "healthy", 0d, true, null),
-                    ("fra", "lagging", 2500d, false, null),
-                    ("sjc", "stopped", null, null, null)
+                    ("gru", "healthy", 0d, true),
+                    ("fra", "lagging", 2500d, false),
+                    ("sjc", "stopped", null, null)
                 ]
             };
             await using var wireRpc = await TestRestRpcHost.StartAsync(wire);
@@ -98,7 +98,7 @@ namespace TerraScale.Dashboard.E2E.Features.Usage
         private sealed class Wire : HttpMessageHandler, IHttpClientFactory
         {
             public int Failure { get; init; }
-            public (string Region, string Status, double? Lag, bool? Divergence, long Ops)[] Rows { get; init; } = [];
+            public (string Region, string Status, double? Lag, bool? Divergence)[] Rows { get; init; } = [];
             public HttpClient CreateClient(string name)
             {
                 return new(this, false);
@@ -126,7 +126,7 @@ namespace TerraScale.Dashboard.E2E.Features.Usage
                     databaseName = "app",
                     region = row.Region,
                     status = row.Status,
-                    replicatedOps = row.Ops,
+                    replicatedOps = 12L,
                     lagMs = row.Lag,
                     divergence = row.Divergence,
                     convergenceMs = (double?)null,
