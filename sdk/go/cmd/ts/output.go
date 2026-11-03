@@ -93,6 +93,12 @@ func (e *cliError) Error() string {
 
 func (e *cliError) Unwrap() error { return e.err }
 
+// Is keeps a wrapped SDK error's code matchable when the CLI words the failure.
+func (e *cliError) Is(target error) bool {
+	code, ok := target.(tsauth.ErrorCode)
+	return ok && code == tsauth.ErrorCode(e.code)
+}
+
 func consentRequired(message string) error {
 	return &cliError{code: "consent_required", message: message}
 }

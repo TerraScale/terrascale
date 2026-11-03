@@ -21,7 +21,7 @@ func listKeyMetadata(ctx context.Context, s *session, out io.Writer) error {
 	for {
 		page, err := s.user.APIKeys(ctx, s.org, s.project, tsauth.PageOptions{Limit: 100, After: after})
 		if err != nil {
-			return keyOperationError(err)
+			return keyOperationError(err, "Listing API keys", s)
 		}
 		if page == nil || page.Items == nil {
 			return errors.New("API key listing did not include an items array.")

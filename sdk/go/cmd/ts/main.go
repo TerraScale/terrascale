@@ -693,7 +693,7 @@ func newKeyRequest(operands []string, expires, allowCIDR string) (tsauth.APIKeyR
 func createKey(ctx context.Context, s *session, req tsauth.APIKeyRequest, out io.Writer) error {
 	k, err := s.user.CreateAPIKey(ctx, s.org, s.project, req)
 	if err != nil {
-		return keyOperationError(err)
+		return keyOperationError(err, "Creating API keys", s)
 	}
 	if jsonMode(out) {
 		return keyOutputError(emitJSON(out, k)) // This explicit create command reveals the secret once.
@@ -1383,7 +1383,7 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		return listKeyMetadata(ctx, s, out)
 	case "keys revoke":
 		if err := s.user.RevokeAPIKey(ctx, s.org, s.project, args[0]); err != nil {
-			return keyOperationError(err)
+			return keyOperationError(err, "Revoking API keys", s)
 		}
 		if jsonMode(out) {
 			return emitJSON(out, struct {

@@ -7,6 +7,7 @@ title: CLI access and execution context
 Use `ts auth login`, approve the displayed URL/code, then check `ts whoami`, `ts orgs` and `ts projects`. Login progress goes to stderr in JSON mode; tokens are never printed. `ts auth logout` revokes the saved session and removes its credential file.
 
 `ts -expires 30d keys create reports example` requests a database-restricted key. Server permissions still apply; `-allow-cidr` restricts client networks and `-expires` accepts `30d`, `90d`, `365d` or `never` (default).
+`keys create` and `keys rotate` need a fresh sign-in confirmation the CLI cannot host; they answer `403 step_up_required` with the dashboard API-keys link where the password or email-code confirmation runs and the secret is shown once. `keys list` and `keys revoke` need no confirmation.
 Capture a newly created key once in a private file or secret store; exclude secrets from logs and shell history. `keys list` returns safe metadata, expiry, allowed networks, creator, creation time and nullable last-use time (a successful token exchange, up to five minutes stale); `keys revoke <id>` revokes access. `TERRASCALE_API_KEY` selects API-key authentication for database commands; organization keys also need `-project <id>`.
 
 `ts context set my-org my-project example` resolves organization/project IDs and verifies the optional database before saving. `ts context show` and `ts context clear` work offline; saved selectors live beside credentials in `context.json`, without tokens.

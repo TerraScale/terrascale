@@ -32,7 +32,7 @@ func parseKeyRotation(args []string) (string, time.Duration, error) {
 func rotateKey(ctx context.Context, s *session, id string, grace time.Duration, out, diagnostics io.Writer) error {
 	key, err := s.user.RotateAPIKey(ctx, s.org, s.project, id, grace)
 	if err != nil {
-		return keyOperationError(err)
+		return keyOperationError(err, "Rotating API keys", s)
 	}
 	// A mismatched or malformed success can contain sensitive remote content.
 	if key == nil || key.APIKey.ID != id || key.APIKey.OrganizationID != s.org || key.APIKey.ProjectID != s.project ||
@@ -54,8 +54,19 @@ func rotateKey(ctx context.Context, s *session, id string, grace time.Duration, 
 	return keyOutputError(err)
 }
 
+// keyConfirmationURL is the dashboard's API-keys page for one project; the
+// hosted sign-in confirmation runs there. The session's IDs are canonical
+// ULIDs resolved by open, not free text.
+func keyConfirmationURL(s *session) string {
+	address := "https://dash.terrascale.tech/api-keys?organizationId=" + s.org
+	if s.project != "" {
+		address += "&projectId=" + s.project
+	}
+	return address
+}
+
 // Preserve only source-confirmed codes/status, never remote messages or causes.
-func keyOperationError(err error) error {
+func keyOperationError(err error, action string, s *session) error {
 	if err == nil {
 		return nil
 	}
@@ -72,6 +83,12 @@ func keyOperationError(err error) error {
 	code := tsauth.ErrorCode("http_" + strconv.Itoa(api.Status))
 	message := "API key operation failed; verify the selected project and permissions."
 	switch string(api.Code) {
+	case "step_up_required":
+		// The hosted confirmation needs a browser session on the dashboard;
+		// the CLI words this failure itself, so JSON errors keep the address.
+		return &cliError{code: string(api.Code), status: api.Status,
+			message: action + " needs a fresh sign-in confirmation. Open " + keyConfirmationURL(s) +
+				" and confirm with your password or an email code; the dashboard reveals the secret once."}
 	case "rotation_pending":
 		code, message = api.Code, "Previous rotation grace is active; wait until previous_secret_expires_at before rotating again."
 	case "authentication_conflict":

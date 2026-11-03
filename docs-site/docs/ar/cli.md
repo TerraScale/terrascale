@@ -199,6 +199,13 @@ once on standard output; store it immediately in your secret manager. Use the
 key with an SDK's API key token exchange, as [getting started](/ar/getting-started/)
 shows.
 
+Creating or rotating a key needs a fresh sign-in confirmation with your password
+or an email code, which the CLI cannot host: the command answers
+`403 step_up_required` and prints the dashboard link
+(`https://dash.terrascale.tech/api-keys?organizationId=…&projectId=…`) where the
+confirmation and the one-time secret are shown. `keys list` and `keys revoke`
+work from the CLI without confirmation.
+
 ### Key lifetime and allowed networks
 
 Keys default to no expiry and read/write scopes. Prefer an expiry and a database

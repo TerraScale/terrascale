@@ -159,3 +159,39 @@ func TestKeyRotationScopedHelp(t *testing.T) {
 		t.Fatal("offline scoped help must describe required grace and its bounds")
 	}
 }
+
+// The server answers a proof-less create or rotate with 403 step_up_required;
+// the CLI must name the dashboard confirmation instead of a bare permission hint.
+func TestKeyStepUpRequiredNamesDashboardConfirmation(t *testing.T) {
+	t.Parallel()
+	for _, command := range []string{"keys create", "keys rotate"} {
+		t.Run(command, func(t *testing.T) {
+			t.Parallel()
+			u := jsonAuthUser(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusForbidden)
+				json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "step_up_required", "message": "do-not-log-fixture"}})
+			})
+			s := &session{user: u, org: jsonAuthID, project: jsonAuthID}
+			var err error
+			if command == "keys create" {
+				err = createKey(t.Context(), s, tsauth.APIKeyRequest{Name: "ci"}, io.Discard)
+			} else {
+				err = rotateKey(t.Context(), s, jsonAuthID, 0, io.Discard, io.Discard)
+			}
+			var local *cliError
+			if !errors.As(err, &local) || local.status != http.StatusForbidden || !errors.Is(err, tsauth.ErrStepUpRequired) {
+				t.Fatalf("step_up_required identity lost: %v", err)
+			}
+			if !strings.Contains(err.Error(), "https://dash.terrascale.tech/api-keys?organizationId="+jsonAuthID+"&projectId="+jsonAuthID) ||
+				strings.Contains(err.Error(), "do-not-log-fixture") {
+				t.Fatalf("confirmation address missing or remote content kept: %v", err)
+			}
+			var envelope bytes.Buffer
+			if e := emitJSONError(&envelope, err); e != nil || !json.Valid(envelope.Bytes()) ||
+				!strings.Contains(envelope.String(), "dash.terrascale.tech/api-keys?organizationId=") ||
+				strings.Contains(envelope.String(), "do-not-log-fixture") {
+				t.Fatalf("JSON errors must keep the address without remote content: %q, %v", envelope.String(), e)
+			}
+		})
+	}
+}

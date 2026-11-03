@@ -546,6 +546,7 @@ const (
 	ErrInvalidRequest         ErrorCode = "invalid_request"
 	ErrUnauthorized           ErrorCode = "unauthorized"
 	ErrForbiddenRole          ErrorCode = "forbidden_role"
+	ErrStepUpRequired         ErrorCode = "step_up_required"
 	ErrEmailMismatch          ErrorCode = "email_mismatch"
 	ErrNotFound               ErrorCode = "not_found" // also an organization the user cannot reach
 	ErrNameTaken              ErrorCode = "name_taken"
