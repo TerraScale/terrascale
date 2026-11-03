@@ -262,13 +262,13 @@ func newCluster(ctx context.Context, cfg clusterConfig) (*cluster, error) {
 			return c, err
 		}
 	}
+	root, err := dotnetRoot()
+	if err != nil {
+		return c, err
+	}
 	argv := []string{cfg.terrabase}
 	if strings.HasSuffix(cfg.terrabase, ".dll") {
-		dotnet, err := exec.LookPath("dotnet")
-		if err != nil {
-			return c, errors.New("-terrabase names a dll but dotnet is not on PATH")
-		}
-		argv = []string{dotnet, cfg.terrabase}
+		argv = []string{filepath.Join(root, "dotnet"), cfg.terrabase}
 	}
 	mk := func(name, region, self, peerName, peerRegion, peerIP string) (*node, error) {
 		dir := filepath.Join(cfg.dir, name)
@@ -308,9 +308,7 @@ func newCluster(ctx context.Context, cfg clusterConfig) (*cluster, error) {
 			"TERRABASE_AUTH_ISSUER=" + cfg.issuer,
 			"TERRABASE_AUTH_AUDIENCE=" + platformAud,
 		}
-		if root := os.Getenv("DOTNET_ROOT"); root != "" {
-			n.env = append(n.env, "DOTNET_ROOT="+root)
-		}
+		n.env = append(n.env, "DOTNET_ROOT="+root)
 		return n, nil
 	}
 	if c.a, err = mk("gru-1", "gru", ipA, "sjc-1", "sjc", ipBviaA); err != nil {
@@ -326,6 +324,27 @@ func newCluster(ctx context.Context, cfg clusterConfig) (*cluster, error) {
 		return c, err
 	}
 	return c, c.b.start(ctx)
+}
+
+// dotnetRoot is the install root of the newest Microsoft.NETCore.App that `dotnet` lists. Dev hosts wrap dotnet
+// (nix, mise), so an inherited DOTNET_ROOT can name a root without the runtime TerraBase targets.
+func dotnetRoot() (string, error) {
+	out, err := exec.Command("dotnet", "--list-runtimes").Output()
+	if err != nil {
+		return "", fmt.Errorf("dotnet --list-runtimes: %w", err)
+	}
+	var root string
+	for line := range strings.Lines(string(out)) {
+		if rest, ok := strings.CutPrefix(line, "Microsoft.NETCore.App "); ok {
+			if _, path, ok := strings.Cut(rest, "["); ok {
+				root = filepath.Dir(filepath.Dir(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(path), "]"))))
+			}
+		}
+	}
+	if root == "" {
+		return "", errors.New("dotnet lists no Microsoft.NETCore.App runtime")
+	}
+	return root, nil
 }
 
 // cut partitions the peer path both ways and stops NATS; heal reverses it.
