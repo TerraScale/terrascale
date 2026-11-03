@@ -35,21 +35,22 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             await ErrorAsync(probe, foreign, "Database " + foreign + " was not found in this project.");
             await Assert.That(probe.Lists.Count).IsGreaterThan(0).Because("Absence must be proven by listings, not the cache");
 
-            // Listings failing everywhere is an outage of the lookup, never a statement about the id.
-            probe.Reset(); probe.Fault = "all";
-            await ErrorAsync(probe, foreign, "Database " + foreign + " is temporarily unavailable; retry in a few seconds.");
-            await ErrorAsync(probe, kept, "Database " + kept + " is temporarily unavailable; retry in a few seconds.");
-
             // A valid database whose stored record a degraded sync dropped: the write refreshes once and succeeds first try.
-            probe.Reset(); probe.Fault = "";
+            probe.Reset();
             await probe.DropRecordAsync(dropped);
             await WriteAsync(probe, dropped, "01K78CVSTMER0000000000DROP");
 
-            // The retry after an outage succeeds, proving the refusal was about availability, not the id.
+            // With listings down, a dropped record cannot be proven absent: the refusal is retryable and never blames the id.
             probe.Reset(); probe.Fault = "all";
-            await ErrorAsync(probe, kept, "Database " + kept + " is temporarily unavailable; retry in a few seconds.");
-            probe.Fault = "";
+            await probe.DropRecordAsync(dropped);
+            await ErrorAsync(probe, dropped, "Database " + dropped + " is temporarily unavailable; retry in a few seconds.");
+            await ErrorAsync(probe, foreign, "Database " + foreign + " is temporarily unavailable; retry in a few seconds.");
+            // A database the project still holds needs no listing; its write keeps working through the outage.
             await WriteAsync(probe, kept, "01K78CVSTMER0000000000KEEP");
+
+            // The retry after the outage succeeds, proving the refusal was about availability, not the id.
+            probe.Reset(); probe.Fault = "";
+            await WriteAsync(probe, dropped, "01K78CVSTMER0000000000LATE");
             await probe.NoProtocolFailuresAsync();
         }
 
@@ -81,7 +82,6 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             public string Organization = "", Project = "", Secret = "", Fault = "";
             public ConcurrentQueue<string> Lists = new();
             private IDashboardState inner = null!;
-            private bool dropped;
 
             public static async Task<Probe> StartAsync(string root)
             {
@@ -100,22 +100,16 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 await probe.ControlAsync(new { command = "catalog", value = new[] { "gru", "sjc", "fra" } });
                 // Test admission permits one database per workspace; the plan control admits the journey's second one.
                 await probe.ControlAsync(new { command = "plan", organizationId = probe.Organization, value = OrganizationRecord.StarterPlanId });
-                probe.Secret = await CreatePatAsync(probe.Client, "TS-1385 lookup journey", probe.Account.Email, probe.Account.Password);
-                return probe;
-            }
-
-            private static async Task<string> CreatePatAsync(HttpClient client, string name, string email, string password)
-            {
-                var token = await HttpJourney.CsrfAsync(client, "/profile?tab=access-tokens");
-                var authorize = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/profile/access-tokens", new()
-                { ["_csrf"] = token, ["name"] = name, ["expiresInDays"] = "7" });
+                var token = await HttpJourney.CsrfAsync(probe.Client, "/profile?tab=access-tokens");
+                var authorize = await HttpJourney.PostConfirmedFormAsync(probe.Client, "/api/v1/dashboard/profile/access-tokens", new()
+                { ["_csrf"] = token, ["name"] = "Lookup journey", ["expiresInDays"] = "7" });
                 await Assert.That(authorize.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
-                using var response = await HttpJourney.HostedSignInAsync(client, authorize, email, password);
-                var body = await response.Content.ReadAsStringAsync();
-                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(body[..Math.Min(body.Length, 2000)]);
-                var secret = System.Text.RegularExpressions.Regex.Match(body, "id=\"access-token-secret\" value=\"([^\"]+)\"").Groups[1].Value;
-                await Assert.That(secret.StartsWith("tspat_", StringComparison.Ordinal)).IsTrue();
-                return secret;
+                using var granted = await HttpJourney.HostedSignInAsync(probe.Client, authorize, probe.Account.Email, probe.Account.Password);
+                await Assert.That(granted.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                var revealed = await granted.Content.ReadAsStringAsync();
+                probe.Secret = System.Text.RegularExpressions.Regex.Match(revealed, "id=\"access-token-secret\" value=\"([^\"]+)\"").Groups[1].Value;
+                await Assert.That(probe.Secret.StartsWith("tspat_", StringComparison.Ordinal)).IsTrue();
+                return probe;
             }
 
             public void Reset()
@@ -151,7 +145,6 @@ namespace TerraScale.Dashboard.E2E.Features.Data
 
             public async Task DropRecordAsync(string id)
             {
-                dropped = true;
                 var stored = (await inner.GetAsync(AccountService.OrganizationsCollection, Organization, default))!;
                 var org = stored.Document.Deserialize<OrganizationRecord>()!;
                 if (!org.Projects[Project].Databases.Remove(id))
@@ -215,25 +208,19 @@ namespace TerraScale.Dashboard.E2E.Features.Data
 
             public async ValueTask DisposeAsync()
             {
-                if (dropped)
+                try
                 {
-                    try { await CleanupAsync(); } catch (Exception error) { Console.Error.WriteLine("TS-1385 probe cleanup: " + error.Message); }
+                    foreach (var record in (await RecordsAsync()).Values.ToArray())
+                    {
+                        var removed = await HttpJourney.McpAsync(Client, Secret, "tools/call", new
+                        { name = "delete_database", arguments = new { databaseId = record.Id, confirmName = record.Name } });
+                        _ = removed;
+                    }
                 }
-
+                catch (Exception error) { Console.Error.WriteLine("Lookup journey cleanup: " + error.Message); }
                 Client.Dispose();
                 Producer.Dispose();
                 await Scenario.DisposeAsync();
-            }
-
-            private async Task CleanupAsync()
-            {
-                var databases = (await RecordsAsync()).Values.Select(database => database.Id).ToArray();
-                foreach (var id in databases)
-                {
-                    var listed = await HttpJourney.McpAsync(Client, Secret, "tools/call", new
-                    { name = "delete_database", arguments = new { databaseId = id, confirmName = (await RecordsAsync())[id].Name } });
-                    _ = listed;
-                }
             }
         }
     }
