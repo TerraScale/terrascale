@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using MagicOnion;
 using MagicOnion.Server;
@@ -9,9 +10,9 @@ namespace TerraScale.TerraBase.Rpc.Backups
     public sealed class BackupsService(RestApi api) : ServiceBase<IBackupsService>, IBackupsService
     {
         /// <inheritdoc />
-        public async UnaryResult<JsonElement> ListAsync(string projectId, string database, string? after)
+        public async UnaryResult<JsonElement> ListAsync(string projectId, string database, string? after, int limit)
         {
-            var answer = await api.SendAsync(Context, "GET", RestPaths.Database(projectId, database) + "/backups" + RestPaths.Query(("limit", "100"), ("after", after)));
+            var answer = await api.SendAsync(Context, "GET", RestPaths.Database(projectId, database) + "/backups" + RestPaths.Query(("limit", limit.ToString(CultureInfo.InvariantCulture)), ("after", after)));
             return RestApi.Read(answer, BackupsJson.Default.JsonElement);
         }
 

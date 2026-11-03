@@ -9,14 +9,13 @@ namespace TerraScale.Dashboard.Features.Backups
     [McpServerToolType]
     public sealed class BackupMcpTools(IHttpContextAccessor http, BackupService backups, WholeDatabaseRecovery recovery)
     {
-        [McpServerTool(Name = "list_backups", Title = "List backups", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a database's backups and its backup policy.")]
+        [McpServerTool(Name = "list_backups", Title = "List backups", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a database's backups and its backup policy, one bounded producer page per call.")]
         public async Task<McpBackupList> ListBackups(string databaseId, string? organizationId = null, string? projectId = null,
-            [Description(CursorPaging.Description)] int limit = 100, string after = "")
+            [Description(CursorPaging.IssuerDescription)] int limit = 100, string after = "")
         {
             var context = Scope(organizationId, projectId);
-            var listing = await backups.ListAsync(context, databaseId, Cancellation);
-            var page = CursorPaging.Page(listing.Backups, backup => backup.Id, CursorPaging.Scope(context, "backups", databaseId), limit, after);
-            return new(listing.Policy, page.Items, page.NextCursor, page.HasMore, page.Limit);
+            var slice = await backups.ListPageAsync(context, databaseId, after.Length == 0 ? null : after, limit, Cancellation);
+            return new(slice.Policy, slice.Items, slice.NextCursor, slice.HasMore, limit);
         }
 
         [McpServerTool(Name = "create_backup", Title = "Create backup", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Take an on-demand backup of a database's documents, schemas, and indexes. Requires an owner or admin role.")]
