@@ -30,7 +30,7 @@ namespace TerraScale.Dashboard.E2E
             await Assert.That(html).Contains("Back to dashboard");
             await Assert.That(html).Contains(signedIn.Headers.GetValues("X-Request-ID").Single());
 
-            foreach (var path in new[] { "/api/__missing-page", "/__missing-page", "/databases/__missing/documents/orders" })
+            foreach (var path in new[] { "/api/__missing-page", "/__missing-page" })
             {
                 using var response = await Json(client, HttpMethod.Get, path);
                 await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
@@ -38,15 +38,23 @@ namespace TerraScale.Dashboard.E2E
                 await Assert.That(await response.Content.ReadAsStringAsync()).DoesNotContain("<html");
             }
 
-            // A browser opening a database it cannot see gets the HTML not-found page, not raw problem JSON.
+            // A database id that is not a ULID is the caller's mistake, not a missing page.
+            using (var malformed = await Json(client, HttpMethod.Get, "/databases/__missing/documents/orders"))
+            {
+                await Assert.That(malformed.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+                await Assert.That(malformed.Content.Headers.ContentType?.MediaType).IsEqualTo("application/problem+json");
+                await Assert.That(await malformed.Content.ReadAsStringAsync()).Contains("Pass the database ID (a ULID), not its name.");
+            }
+
+            // A browser opening a database it cannot see gets the HTML not-found page, not raw problem JSON; a malformed id still names the rule.
             foreach (var path in new[] { "/databases/__missing", "/databases/__missing/documents/orders" })
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get, path);
                 request.Headers.Accept.ParseAdd("text/html");
                 using var response = await client.SendAsync(request);
-                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
                 await Assert.That(response.Content.Headers.ContentType?.MediaType).IsEqualTo("text/html");
-                await Assert.That(await response.Content.ReadAsStringAsync()).Contains("Back to dashboard");
+                await Assert.That(await response.Content.ReadAsStringAsync()).Contains("Pass the database ID (a ULID), not its name.");
             }
         }
 
