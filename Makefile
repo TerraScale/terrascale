@@ -41,7 +41,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 	libs-build libs-test libs-check libs-nativeaot-check \
 	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-mail-delivery-check auth-check auth-publish auth-dev \
 	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-e2e-local terrabase-e2e terrabase-check terrabase-run terrabase-publish \
-	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke
+	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke region-sim
 
 # Global: the whole solution.
 restore:
@@ -210,6 +210,13 @@ benchmark-check:
 
 benchmark-smoke:
 	$(MAKE) -C benchmark smoke
+
+# Two-region replica simulation: gru-1 and sjc-1 TerraBase nodes driven by the ts CLI (benchmark/region-sim/README.md).
+REGION_SIM_OUT ?= $(CURDIR)/benchmark/bench/region-sim/$(shell date -u +%Y-%m-%d-%H%M).md
+region-sim: terrabase-build
+	cd sdk/go && go build -trimpath -o $(CURDIR)/benchmark/bin/ts ./cmd/ts
+	cd benchmark && go build -trimpath -o bin/region-sim ./cmd/region-sim
+	benchmark/bin/region-sim -terrabase $(TERRABASE_BINARY) -ts benchmark/bin/ts -out $(REGION_SIM_OUT) $(REGION_SIM_ARGS)
 
 .PHONY: terrabase-test-shard
 terrabase-test-shard:
