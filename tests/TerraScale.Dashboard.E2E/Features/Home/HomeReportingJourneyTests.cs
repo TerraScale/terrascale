@@ -108,8 +108,15 @@ namespace TerraScale.Dashboard.E2E.Features.Home
                     lastApplied = (DateTimeOffset?)null,
                     bandwidth = Array.Empty<object>()
                 };
-                var response = new { projectId, range = "24h", from, to, bucketSeconds = 3600,
-                    items = new[] { Row("gru", "healthy", 120d), Row("fra", "stopped", null), Row("sjc", "stopped", null) } };
+                var response = new
+                {
+                    projectId,
+                    range = "24h",
+                    from,
+                    to,
+                    bucketSeconds = 3600,
+                    items = new[] { Row("gru", "healthy", 120d), Row("fra", "stopped", null), Row("sjc", "stopped", null) }
+                };
                 return Task.FromResult<IResult?>(Results.Json(response));
             });
 
