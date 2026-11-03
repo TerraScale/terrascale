@@ -134,3 +134,8 @@ Production is moving to OCI under `ts-orch`, starting with host `ts-gru-1`. Regi
 Production secrets belong in OCI Vault; authorized hosts read narrowly granted secrets with instance principals. Do not copy production credentials into benchmark reports or target files. See the orchestrator's [secrets contract](https://github.com/TerraScale/ts-orchestrator/blob/main/docs/secrets.md).
 
 The local replication, PITR and shape harnesses remain local evidence. A future cloud run must supply verified per-region endpoints and measured host limits; no retired cloud measurement is evidence for OCI capacity. The shape load command currently starts only the local two-node host.
+
+## Two-region replica simulation
+
+[region-sim](region-sim/README.md) starts a gru home node and an sjc replica node locally and drives them with the
+real `ts` CLI. It reports pass/fail and replica lag for each scenario (`make region-sim`).
