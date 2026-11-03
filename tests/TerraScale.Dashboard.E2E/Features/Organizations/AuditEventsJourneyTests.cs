@@ -65,7 +65,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             await Assert.That(lines.Length).IsEqualTo(listed.RootElement.GetProperty("total").GetInt32());
             await Assert.That(actions.All(action => lines.Any(line => line.GetProperty("action").GetString() == action && line.GetProperty("ip").GetString() == "203.0.113.9"))).IsTrue();
             var page = WebUtility.HtmlDecode(await client.GetStringAsync("/organization?tab=audit&range=24h"));
-            await Assert.That(page).Contains("Events older than 7 days are not shown or exported on your plan.");
+            await Assert.That(page).Contains("value=\"7d\"").Because("the plan window is the widest range offered");
             await Assert.That(page).DoesNotContain("value=\"30d\"").Because("the range choices stop at the plan window");
         }
     }
