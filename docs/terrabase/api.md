@@ -285,6 +285,17 @@ rejects invalid SQL with `400 invalid_request`. It does not execute or meter the
 | --- | --- | --- | --- |
 | POST | `D/transactions` | `runTransaction` (was `transaction`) | `documents:write` |
 
+The captured changes of one transaction—the UTF-8 bytes of collection names, document ids, stored JSON bodies and
+their encoded lattice states—hold at most 2 MiB (1024 changes; `IStorageTransaction.MaxChangeGroupBytes`). A
+transaction that exceeds the budget is refused before its commit with `503 capacity` and rolls back entirely:
+nothing it wrote is visible and a read of any of its ids answers `404`. When a single operation's captured change
+alone exceeds what remains of the budget, `error.op` names that operation; when the operations only exceed the
+budget together, the refusal carries no `op` and its message says the transaction as a whole exceeds the budget.
+Split the writes into smaller transactions. The engine defers encoding lattice states until the write's captured
+changes flush before commit, so the refusal is deterministic either way: the flush happens strictly before the
+group commit, which is why an over-budget transaction is provably not committed rather than answered
+`write_outcome_unknown`.
+
 ### Live
 
 | Method | Route | operationId | Scope |

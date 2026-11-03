@@ -170,6 +170,36 @@ public sealed class TransactionApiTests
         await Assert.That(write.Json.GetProperty("offset").ValueKind).IsEqualTo(JsonValueKind.String);
     }
 
+    [Test]
+    public async Task A_transaction_over_the_captured_change_budget_is_refused_without_committing()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var first = DocumentApi.NewId();
+        var second = DocumentApi.NewId();
+        var third = DocumentApi.NewId();
+        var small = DocumentApi.NewId();
+        var filler = new string('x', 710_000);
+        var refused = await api.TransactAsync(
+            new { op = "create", collection = "items", id = first, document = new { filler } },
+            new { op = "create", collection = "items", id = second, document = new { filler } },
+            new { op = "create", collection = "items", id = third, document = new { filler } });
+        var readFirst = await api.GetAsync(first);
+        var readSecond = await api.GetAsync(second);
+        var readThird = await api.GetAsync(third);
+        var within = await api.TransactAsync(
+            new { op = "create", collection = "items", id = small, document = new { filler } });
+        var readSmall = await api.GetAsync(small);
+
+        await Assert.That((refused.Status, refused.Code)).IsEqualTo((HttpStatusCode.ServiceUnavailable, "capacity"));
+        await Assert.That(refused.Json.GetProperty("error").TryGetProperty("op", out _)).IsFalse();
+        await Assert.That(refused.Message).IsEqualTo("the transaction as a whole exceeds the 2 MiB captured-change budget");
+        await Assert.That(readFirst.Status).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(readSecond.Status).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(readThird.Status).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(within.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(readSmall.Status).IsEqualTo(HttpStatusCode.OK);
+    }
+
     private static long Offset(ApiResponse response) =>
         long.Parse(response.Json.GetProperty("offset").GetString()!, System.Globalization.CultureInfo.InvariantCulture);
 }

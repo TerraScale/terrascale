@@ -494,6 +494,25 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
     }
 
     private DocumentRejected Unknown(string message) => new(new OutcomeUnknown(message, options.Region, options.MachineId));
+
+    private static DocumentRejected CapacityRefusal(bool indexErrors, IReadOnlyList<DocumentOperation> operations)
+    {
+        int? sole = null;
+        var writes = 0;
+        for (var i = 0; i < operations.Count; i++)
+        {
+            if (operations[i] is PutOperation or PatchOperation or DeleteOperation)
+            {
+                writes++;
+                sole = i;
+            }
+        }
+
+        return writes == 1
+            ? new DocumentRejected(ChangeGroupCapacity, indexErrors ? sole : null)
+            : new DocumentRejected(new Unavailable("the transaction as a whole exceeds the 2 MiB captured-change budget", "capacity"));
+    }
+
     private async ValueTask<(WriteOutcome Outcome, CommitMarker? Marker)> CommitAsync(
         TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken)
     {
@@ -526,25 +545,35 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         var delta = 0L;
         var units = 0L;
         var access = ProjectAccess.Current;
-        var (outcome, commit) = await store.WriteAsync(
-            async (transaction, token) =>
-            {
-                var (result, change, growthOp, written) = await ApplyAllAsync(store, transaction, operations, indexErrors, admission.RequiresAccounting, access, token).ConfigureAwait(false);
-                (delta, units) = (change, written);
-                if (result is not WriteResult)
+        CommitResult commit;
+        WriteOutcome outcome;
+        try
+        {
+            (outcome, commit) = await store.WriteAsync(
+                async (transaction, token) =>
                 {
-                    return result;
-                }
+                    var (result, change, growthOp, written) = await ApplyAllAsync(store, transaction, operations, indexErrors, admission.RequiresAccounting, access, token).ConfigureAwait(false);
+                    (delta, units) = (change, written);
+                    if (result is not WriteResult)
+                    {
+                        return result;
+                    }
 
-                return await admission.CheckAsync(delta, token).ConfigureAwait(false) switch
-                {
-                    Done => result,
-                    QuotaExceeded error => new DocumentRejected(error, indexErrors ? growthOp : null),
-                    Unavailable error => new DocumentRejected(error, indexErrors ? growthOp : null),
-                    null => throw new UnreachableException(),
-                };
-            }, outcome => outcome is WriteResult, cancellationToken)
-            .ConfigureAwait(false);
+                    return await admission.CheckAsync(delta, token).ConfigureAwait(false) switch
+                    {
+                        Done => result,
+                        QuotaExceeded error => new DocumentRejected(error, indexErrors ? growthOp : null),
+                        Unavailable error => new DocumentRejected(error, indexErrors ? growthOp : null),
+                        null => throw new UnreachableException(),
+                    };
+                }, outcome => outcome is WriteResult, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (ChangeGroupCapacityException)
+        {
+            return (CapacityRefusal(indexErrors, operations), null);
+        }
+
         if (outcome is not WriteResult written)
         {
             return (outcome, null);
