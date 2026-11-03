@@ -313,6 +313,14 @@ internal sealed partial class EngineManagementService(
                 : ManagementErrors.NotFound,
             static error => error, cancellationToken);
 
+    /// <summary>The local page behind the internal peer listener: the project's databases without membership checks.</summary>
+    public ValueTask<ListProjectDatabasesResult> ListProjectDatabasesAsync(
+        string projectId, string? after, int limit, CancellationToken cancellationToken) =>
+        ReadAsync<ListProjectDatabasesResult>(async transaction =>
+            await ListAsync(transaction, Databases(projectId), after, limit, TerraBaseJsonContext.Default.ManagedDatabase, item => item.Id, cancellationToken)
+                .ConfigureAwait(false),
+            static error => error, cancellationToken);
+
     public ValueTask<DatabaseTenantResult> GetDatabaseTenantAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken) =>
         ReadAsync<DatabaseTenantResult>(async transaction =>

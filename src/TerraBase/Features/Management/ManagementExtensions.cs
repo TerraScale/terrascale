@@ -27,6 +27,9 @@ internal static class ManagementExtensions
         services.AddSingleton<ICatalogGuard>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<IDatabaseFileCatalog>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<SystemCatalog>();
+        services.AddSingleton<IRemoteRegions, PeersFileRemoteRegions>();
+        services.AddSingleton<RemoteDatabases>();
+        services.AddHttpClient(RemoteDatabases.HttpClientName);
         services.AddSingleton<ClosureCancellation>();
         services.AddSingleton<IClosureCancellation>(provider => provider.GetRequiredService<ClosureCancellation>());
         services.AddSingleton<HistoryErasures>();

@@ -27,6 +27,8 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(DeployFunctionRequest))]
 [JsonSerializable(typeof(FunctionBody))]
 [JsonSerializable(typeof(FunctionBody[]))]
+[JsonSerializable(typeof(ManagedDatabaseBody))]
+[JsonSerializable(typeof(ManagedDatabaseBody[]))]
 [JsonSerializable(typeof(FunctionLogBody))]
 [JsonSerializable(typeof(FunctionLogBody[]))]
 [JsonSerializable(typeof(FunctionRecord))]

@@ -54,6 +54,8 @@ public readonly union FindDatabaseRecordResult(ManagedDatabase, NotFound, Unavai
 
 public readonly union ListDatabasesResult(ManagementPage<ManagedDatabase>, NotFound, Unavailable);
 
+/// <summary>The project's local database page, for the internal peer listener's fan-out.</summary>
+public readonly union ListProjectDatabasesResult(ManagementPage<ManagedDatabase>, Unavailable);
 public readonly union GetDatabaseResult(ManagedDatabase, NotFound, Unavailable);
 
 public readonly union DatabaseTenantResult(TenantContext, NotFound, Unavailable);
@@ -108,6 +110,10 @@ internal interface IManagementService
         string userId, string organizationId, string projectId, string databaseId, string name, CancellationToken cancellationToken);
 
     ValueTask<FindDatabaseRecordResult> FindDatabaseRecordAsync(string organizationId, string projectId, string name, CancellationToken cancellationToken);
+
+    /// <summary>The project's local database page without user membership checks, for the internal peer listener.</summary>
+    ValueTask<ListProjectDatabasesResult> ListProjectDatabasesAsync(
+        string projectId, string? after, int limit, CancellationToken cancellationToken);
 
     ValueTask<ListDatabasesResult> ListDatabasesAsync(
         string userId, string organizationId, string projectId, string? after, int limit, CancellationToken cancellationToken);
