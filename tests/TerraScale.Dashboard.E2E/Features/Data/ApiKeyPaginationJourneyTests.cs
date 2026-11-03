@@ -105,18 +105,22 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                         return await HttpForwarding.SendAsync(inner, request, cancellationToken);
                     }
                     var match = System.Text.RegularExpressions.Regex.Match(uri.AbsolutePath, "/organizations/([^/]+)/projects/([^/]+)/api-keys$");
+                    if (!match.Success)
+                    {
+                        return await HttpForwarding.SendAsync(inner, request, cancellationToken);
+                    }
+
                     var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
                     var after = query.GetValueOrDefault("after").ToString();
-                    var limit = int.Parse(query.GetValueOrDefault("limit").ToString(), System.Globalization.CultureInfo.InvariantCulture);
                     (string[] Ids, string? Next) page = after switch
                     {
                         "" => (TraversedIds[..2], "cursor-2"),
-                        "cursor-2" => (new[] { TraversedIds[2], TraversedIds[2], TraversedIds[3] }, "cursor-3"),
+                        "cursor-2" => (new[] { TraversedIds[2], TraversedIds[2] }, "cursor-3"),
                         "cursor-3" => (TraversedIds[3..5], null),
                         _ => ([], "stuck"),
                     };
-                    var items = page.Ids.Take(limit).ToArray();
-                    var next = items.Length < page.Ids.Length ? after : page.Next;
+                    var items = page.Ids;
+                    var next = page.Next;
                     return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new
                     {
                         items = items.Select(id => new
