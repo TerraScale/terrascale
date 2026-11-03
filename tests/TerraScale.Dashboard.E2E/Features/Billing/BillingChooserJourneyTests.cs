@@ -32,7 +32,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await Assert.That(chooser).Contains("operation units/month (4 KiB)");
             await Assert.That(chooser.Contains("writes/month", StringComparison.Ordinal)).IsFalse();
             await Assert.That(chooser.Contains("reads/month", StringComparison.Ordinal)).IsFalse();
-            await Assert.That(html).Contains("Free plan. No subscription or payment method is required; no Stripe charges.");
+            await Assert.That(html).Contains("<dt>Stripe charges</dt><dd>None</dd>");
             await Assert.That(Regex.Matches(html, "class=\"ts-plan ts-plan-current\"").Count).IsEqualTo(1);
             await Assert.That(PlanCard(html, "free")).Contains("aria-current=\"true\"");
             await Assert.That(PlanCard(html, "free").Contains("<form", StringComparison.Ordinal)).IsFalse();
@@ -72,7 +72,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             async Task AssertFreeAsync()
             {
                 var html = WebUtility.HtmlDecode(await client.GetStringAsync("/organization?tab=billing"));
-                await Assert.That(html).Contains("Free plan. No subscription or payment method is required; no Stripe charges.");
+                await Assert.That(html).Contains("<dt>Stripe charges</dt><dd>None</dd>");
                 await Assert.That(html).Contains("<dt>Billing interval</dt><dd>Not applicable</dd>");
                 await Assert.That(html).Contains("<dt>Renewal</dt><dd>Not scheduled</dd>");
                 await Assert.That(PlanCard(html, "free")).Contains("aria-current=\"true\"");

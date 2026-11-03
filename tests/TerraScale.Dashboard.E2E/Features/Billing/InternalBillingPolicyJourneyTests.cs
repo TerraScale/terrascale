@@ -408,7 +408,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await CheckAsync(Alerts(await ObserveAsync(producer), setup.Organization).Length == 0, "A measured estimate below the current cap creates no cap notification");
             using var billing = await browser.GetAsync("/organization?tab=billing");
             var body = await billing.Content.ReadAsStringAsync();
-            await CheckAsync(billing.StatusCode == HttpStatusCode.OK && body.Contains("Internal computed bill", StringComparison.Ordinal) && body.Contains("No Stripe charges", StringComparison.Ordinal),
+            await CheckAsync(billing.StatusCode == HttpStatusCode.OK && body.Contains("Internal bill estimate", StringComparison.Ordinal) && body.Contains("<dt>Stripe charges</dt><dd>None</dd>", StringComparison.Ordinal),
                 "Native billing renders the persisted report-only policy and truthful absence of Stripe charges");
             await NoStripeAsync(await ObserveAsync(producer));
         }

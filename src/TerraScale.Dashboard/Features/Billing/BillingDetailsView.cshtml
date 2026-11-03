@@ -2,7 +2,7 @@
 @if (Model.CanManage && Model.InternalBill is null)
 {
     <section class="ts-card" aria-labelledby="billing-details-title">
-        <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="billing-details-title">Billing details and tax IDs</h2><p class="ts-card-description">Use your legal business name, billing address and VAT or tax ID for future invoices.</p></div></header>
+        <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="billing-details-title">Billing details and tax IDs</h2></div></header>
         <div class="ts-card-body ts-stack">
         @if (Model.DetailsUnavailable) { <p class="ts-alert ts-alert-warning" role="status">Billing details could not be loaded. Reload billing to retry.</p> }
         else if (Model.Details is { } details)

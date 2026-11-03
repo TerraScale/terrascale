@@ -45,7 +45,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await Assert.That(await page.Locator(".ts-plan-current").GetByRole(AriaRole.Button, new() { Name = "Current plan", Exact = true }).IsDisabledAsync()).IsTrue();
             await Assert.That(await page.Locator("#recent-invoices tbody tr").CountAsync()).IsEqualTo(10);
             await Assert.That(await page.Locator("#recent-invoices tbody tr").First.Locator("a").CountAsync()).IsEqualTo(0);
-            await Assert.That(await page.Locator("#billing-invoice-summary").InnerTextAsync()).Contains("24 recorded invoices");
+            await Assert.That(await page.Locator("#recent-invoices .ts-pager").InnerTextAsync()).Contains("of 24");
             await Assert.That(await page.Locator("#billing-invoice-summary").InnerTextAsync()).Contains("Multiple currencies");
             await Assert.That((await page.Locator(".ts-plan-features").AllInnerTextsAsync()).All(text => !text.Contains("free trial", StringComparison.Ordinal))).IsTrue();
             await page.Locator("#invoice-status").SelectOptionAsync("paid");

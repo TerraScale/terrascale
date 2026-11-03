@@ -80,7 +80,7 @@ namespace TerraScale.Dashboard.E2E.Platform
             using var billing = await client.GetAsync("/organization?tab=billing");
             await Assert.That(billing.StatusCode).IsEqualTo(HttpStatusCode.OK);
             var body = await billing.Content.ReadAsStringAsync();
-            await Assert.That(body).Contains("14 recorded invoices");
+            await Assert.That(body).Contains(" of 14</span>");
             await Assert.That(WebUtility.HtmlDecode(body)).Contains("Visa •••• 4242, expires 08/28");
             await Assert.That(body).Contains("$20.00 / monthly");
             await Assert.That(body).Contains(">Choose plan</button>");

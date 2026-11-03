@@ -41,8 +41,7 @@ namespace TerraScale.Dashboard.Features.Billing.Invoices
     }
     // Catalog base subscription fee at renewal; usage and invoice adjustments are not included.
     public sealed record InvoiceRenewal(DateTimeOffset At, long AmountCents, string Currency, string Interval, bool Ends = false, DateTimeOffset? PeriodStart = null);
-    public sealed record InvoiceSummary(string NextInvoice, string NextDetail, string Period, string PeriodDetail,
-        string Outstanding, string OutstandingDetail, bool HasPeriod = false, int PeriodPercent = 0);
+    public sealed record InvoiceSummary(string NextInvoice, string Period, string PeriodProgress, string Outstanding, bool HasPeriod = false, int PeriodPercent = 0);
 
     public static class InvoiceHistory
     {
@@ -111,26 +110,21 @@ namespace TerraScale.Dashboard.Features.Billing.Invoices
 
         public static InvoiceSummary Summarize(IReadOnlyList<BillingInvoice> invoices, DateTimeOffset now, InvoiceRenewal? renewal = null)
         {
-            var summary = new InvoiceSummary("None scheduled", "No upcoming invoice is scheduled.", "Unavailable",
-                "No current billing period is recorded.", "Not recorded", "No invoices are recorded.");
+            var summary = new InvoiceSummary("None scheduled", "Unavailable", "", "Not recorded");
             if (renewal is { } next && next.At > now)
             {
                 summary = summary with
                 {
-                    NextInvoice = next.Ends ? "None scheduled" : MoneyFormat.Money(next.AmountCents, next.Currency) + " base fee",
-                    NextDetail = next.Ends ? "The subscription ends on " + next.At.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture)
-                    : "Base subscription at renewal on " + next.At.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture) + ". Usage, credits, discounts and taxes may change the final invoice."
+                    NextInvoice = (next.Ends ? "None, subscription ends " : MoneyFormat.Money(next.AmountCents, next.Currency) + " base fee on ") + next.At.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture)
                 };
             }
 
             var current = invoices.Where(invoice => invoice.PeriodStart is { } start && invoice.PeriodEnd is { } end &&
                 start <= now && now < end).OrderByDescending(invoice => invoice.PeriodStart).FirstOrDefault();
             (DateTimeOffset Start, DateTimeOffset End)? period = current is null ? null : (current.PeriodStart!.Value, current.PeriodEnd!.Value);
-            var periodSource = current is null ? "the subscription renewal date" : "a recorded invoice period";
             if (renewal is { PeriodStart: { } starts, At: var ends } && starts > DateTimeOffset.UnixEpoch && starts <= now && now < ends)
             {
                 period = (starts, ends);
-                periodSource = "the current subscription period";
             }
             if (period is null && renewal is { At: var renews } && renews > now && renewal.Interval is "annual" or "monthly")
             {
@@ -148,7 +142,7 @@ namespace TerraScale.Dashboard.Features.Billing.Invoices
                 summary = summary with
                 {
                     Period = start.UtcDateTime.ToString(start.UtcDateTime.Year == end.UtcDateTime.Year ? "MMM d" : "MMM d, yyyy", CultureInfo.InvariantCulture) + " – " + end.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture),
-                    PeriodDetail = $"Day {elapsed} of {days} · based on " + periodSource,
+                    PeriodProgress = $"Day {elapsed} of {days}",
                     HasPeriod = true,
                     PeriodPercent = Math.Clamp(Math.Max(elapsed > 0 ? 1 : 0, (int)Math.Round(elapsed * 100d / days, MidpointRounding.AwayFromZero)), 0, 100)
                 };
@@ -159,8 +153,7 @@ namespace TerraScale.Dashboard.Features.Billing.Invoices
             {
                 summary = summary with
                 {
-                    NextInvoice = MoneyFormat.Money(upcoming.AmountCents, upcoming.Currency),
-                    NextDetail = "Recorded open invoice dated " + upcoming.CreatedAt.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture)
+                    NextInvoice = MoneyFormat.Money(upcoming.AmountCents, upcoming.Currency) + " on " + upcoming.CreatedAt.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture)
                 };
             }
 
@@ -175,7 +168,6 @@ namespace TerraScale.Dashboard.Features.Billing.Invoices
 
                 summary = summary with
                 {
-                    OutstandingDetail = ValueFormat.Plural(open.Length, "open invoice") + " in recorded history",
                     Outstanding = open.Length == 0 ? "0 open invoices" : currencies.Length > 1 ? "Multiple currencies" : MoneyFormat.Money(amount, currencies[0])
                 };
             }

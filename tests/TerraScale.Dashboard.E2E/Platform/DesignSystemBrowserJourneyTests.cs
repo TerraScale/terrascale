@@ -111,7 +111,7 @@ namespace TerraScale.Dashboard.E2E.Platform
                 await route.FulfillAsync(new()
                 {
                     Response = response,
-                    Body = await response.TextAsync() + "\n.ts-account-trigger,.ts-account-card,.ts-context-text,.ts-mobile-context,#billing-summary .ts-card-description,.ts-billing-facts > div:last-child,.ts-audit-table td:nth-child(2),.ts-audit-table td:nth-child(4),.ts-audit-table td:nth-child(6){visibility:hidden!important}"
+                    Body = await response.TextAsync() + "\n.ts-account-trigger,.ts-account-card,.ts-context-text,.ts-mobile-context,#billing-summary .ts-card-description,.ts-billing-facts > div:nth-child(3),.ts-audit-table td:nth-child(2),.ts-audit-table td:nth-child(4),.ts-audit-table td:nth-child(6){visibility:hidden!important}"
                 });
             });
             return recording;

@@ -14,11 +14,10 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
         {
             var paid = new BillingInvoice("in_1", "7LHJXQY7-0001", "paid", 3000, "usd", Now.AddHours(-1), Now.AddHours(-1), Now.AddYears(1).AddHours(-1));
             var summary = InvoiceHistory.Summarize([paid], Now, new(Now.AddYears(1).AddHours(-1), 3000, "usd", "annual"));
-            await Assert.That(summary.NextInvoice).IsEqualTo("$30.00 base fee");
-            await Assert.That(summary.NextDetail).IsEqualTo("Base subscription at renewal on Oct 23, 2027. Usage, credits, discounts and taxes may change the final invoice.");
+            await Assert.That(summary.NextInvoice).IsEqualTo("$30.00 base fee on Oct 23, 2027");
             await Assert.That(summary.Period).IsEqualTo("Oct 23, 2026 – Oct 23, 2027");
             await Assert.That(summary.HasPeriod).IsTrue();
-            await Assert.That(summary.OutstandingDetail).IsEqualTo("0 open invoices in recorded history");
+            await Assert.That(summary.Outstanding).IsEqualTo("0 open invoices");
         }
 
         [Test]
@@ -27,14 +26,12 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             var renewal = new InvoiceRenewal(Now.AddDays(20), 2000, "usd", "monthly");
             var outstanding = new BillingInvoice("in_old", "OLD-1", "open", 500, "usd", Now.AddDays(-1), null, null) { RemainingCents = 250 };
             var estimate = InvoiceHistory.Summarize([outstanding], Now, renewal);
-            await Assert.That(estimate.NextInvoice).IsEqualTo("$20.00 base fee");
+            await Assert.That(estimate.NextInvoice).IsEqualTo("$20.00 base fee on Nov 12, 2026");
             await Assert.That(estimate.Outstanding).IsEqualTo("$2.50");
             var adjusted = new BillingInvoice("in_next", "NEXT-1", "open", 2750, "usd", Now.AddDays(2), null, null) { RemainingCents = 1000 };
             var recorded = InvoiceHistory.Summarize([outstanding, adjusted], Now, renewal);
-            await Assert.That(recorded.NextInvoice).IsEqualTo("$27.50");
-            await Assert.That(recorded.NextDetail).IsEqualTo("Recorded open invoice dated Oct 25, 2026");
+            await Assert.That(recorded.NextInvoice).IsEqualTo("$27.50 on Oct 25, 2026");
             await Assert.That(recorded.Outstanding).IsEqualTo("$12.50");
-            await Assert.That(recorded.OutstandingDetail).IsEqualTo("2 open invoices in recorded history");
             await Assert.That(recorded.Period).IsEqualTo(estimate.Period);
         }
 
@@ -48,9 +45,9 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             var proration = new BillingInvoice("in_proration", "PRORATION-1", "paid", 0, "usd", start, start.AddDays(-1), start.AddYears(1));
             var summary = InvoiceHistory.Summarize([proration], start.AddDays(elapsedDays), new(start.AddMonths(1), 2000, "usd", "monthly", PeriodStart: start));
             await Assert.That(summary.Period).IsEqualTo("Oct 26 – Nov 26, 2026");
-            await Assert.That(summary.PeriodDetail).IsEqualTo($"Day {elapsedDays} of 31 · based on the current subscription period");
+            await Assert.That(summary.PeriodProgress).IsEqualTo($"Day {elapsedDays} of 31");
             await Assert.That(summary.PeriodPercent).IsEqualTo(progress);
-            await Assert.That(summary.NextInvoice).IsEqualTo("$20.00 base fee");
+            await Assert.That(summary.NextInvoice).IsEqualTo("$20.00 base fee on Nov 26, 2026");
             await Assert.That(InvoiceHistory.Page([proration], "", "", 1, start.AddDays(5)).Invoices.Single().PeriodEnd).IsEqualTo(start.AddYears(1));
         }
 
@@ -60,7 +57,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             var start = new DateTimeOffset(2026, 1, 31, 3, 16, 0, TimeSpan.Zero);
             var summary = InvoiceHistory.Summarize([], start.AddDays(10), new(start.AddMonths(1), 2000, "usd", "monthly", PeriodStart: start));
             await Assert.That(summary.Period).IsEqualTo("Jan 31 – Feb 28, 2026");
-            await Assert.That(summary.PeriodDetail).IsEqualTo("Day 10 of 28 · based on the current subscription period");
+            await Assert.That(summary.PeriodProgress).IsEqualTo("Day 10 of 28");
             await Assert.That(summary.PeriodPercent).IsEqualTo(36);
         }
 
@@ -76,7 +73,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             var summary = InvoiceHistory.Summarize([paid], Now, new(Now.AddDays(endDays), 2000, "usd", "monthly", PeriodStart: startDays is { } days ? Now.AddDays(days) : null));
             var recorded = InvoiceHistory.Summarize([paid], Now);
             await Assert.That(summary.Period).IsEqualTo(recorded.Period);
-            await Assert.That(summary.PeriodDetail).IsEqualTo(recorded.PeriodDetail);
+            await Assert.That(summary.PeriodProgress).IsEqualTo(recorded.PeriodProgress);
             await Assert.That(summary.PeriodPercent).IsEqualTo(recorded.PeriodPercent);
         }
 
@@ -92,15 +89,14 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
         {
             var summary = InvoiceHistory.Summarize([], Now, new(new(2026, 11, 10, 0, 0, 0, TimeSpan.Zero), 1500, "usd", "monthly"));
             await Assert.That(summary.Period).IsEqualTo("Oct 10 – Nov 10, 2026");
-            await Assert.That(summary.PeriodDetail).Contains("subscription renewal date");
+            await Assert.That(summary.PeriodProgress).IsEqualTo("Day 13 of 31");
         }
 
         [Test]
         public async Task EndingSubscriptionSchedulesNoInvoice()
         {
             var summary = InvoiceHistory.Summarize([], Now, new(Now.AddDays(5), 1500, "usd", "monthly", Ends: true));
-            await Assert.That(summary.NextInvoice).IsEqualTo("None scheduled");
-            await Assert.That(summary.NextDetail).IsEqualTo("The subscription ends on Oct 28, 2026");
+            await Assert.That(summary.NextInvoice).IsEqualTo("None, subscription ends Oct 28, 2026");
         }
 
         [Test]
