@@ -44,11 +44,6 @@ behavior that page copy no longer spells out.
   database; writable databases need at least two regions; changing project regions does not move
   existing databases. Hosted authentication runs only in GRU (São Paulo).
 - Project grants take a canonical user ULID of an existing organization member.
-- Webhooks deliver document change identities from registration onward, at least once: verify signatures
-  (the signing secret is base64url bytes) and deduplicate delivery IDs. Endpoints must be public HTTPS on
-  port 443 without credentials or fragments; existing documents are not backfilled. The delivery log
-  shows the latest 100 retained records, oldest first; failed deliveries retry indefinitely with backoff
-  capped at one hour.
 - Support response targets are first-response targets, Monday to Friday 09:00–18:00 CET, not an SLA.
   A request ID (`X-Request-ID`) grants no access to diagnostics.
 

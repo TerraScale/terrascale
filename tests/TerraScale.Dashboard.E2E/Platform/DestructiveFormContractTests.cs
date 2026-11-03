@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.E2E.Platform
             var root = Path.Combine(DashboardE2EFixture.FindRoot(), "src/TerraScale.Dashboard");
             var files = new[] { "Common/UI/Slices/ConfirmDialog.cshtml", "Features/FileStorage/FileStorageView.cshtml",
                 "Features/Backups/BackupSection.cshtml", "Features/Backups/WholeDatabaseRecoveryView.cshtml",
-                "Features/Databases/DatabaseDetailView.cshtml", "Features/Logs/DatabaseLogView.cshtml", "Features/Webhooks/WebhooksView.cshtml" };
+                "Features/Databases/DatabaseDetailView.cshtml", "Features/Logs/DatabaseLogView.cshtml" };
             var checkedForms = 0;
             foreach (var file in files)
             {
@@ -34,7 +34,7 @@ namespace TerraScale.Dashboard.E2E.Platform
                         await Assert.That(tag).Contains("data-submit-once").Because(file + ": destructive POST must suppress repeated submission.");
                         checkedForms++;
                     }
-                    if (Regex.IsMatch(tag, "action=\"/api/v1/dashboard/(?:webhooks|backups(?:/restore)?|databases/branch)\""))
+                    if (Regex.IsMatch(tag, "action=\"/api/v1/dashboard/(?:backups(?:/restore)?|databases/branch)\""))
                     {
                         await Assert.That(tag).Contains("data-submit-once").Because(file + ": create and restore POST must suppress repeated submission.");
                     }

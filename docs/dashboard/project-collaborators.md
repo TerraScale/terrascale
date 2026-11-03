@@ -12,7 +12,7 @@ OAuth grants on the next call.
 |---|---|---|---|
 | Discover and select the granted project (pages, `get_context`, `select_organization`, `select_project`) | yes | yes | yes |
 | Databases, collections and documents of that project (read) | yes | yes | yes |
-| Document and SQL writes, files, functions, webhooks, imports | no | yes | yes |
+| Document and SQL writes, files, functions, imports | no | yes | yes |
 | Project settings and rename | no | no | yes |
 | Explicit project grants (list) | yes | yes | yes |
 | Explicit project grants (set or remove) | no | no | yes |
