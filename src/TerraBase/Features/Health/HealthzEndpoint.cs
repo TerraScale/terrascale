@@ -15,6 +15,9 @@ public sealed record StatusBody(
     [property: JsonPropertyName("machine"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Machine = null,
     [property: JsonPropertyName("bucket"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Bucket = null)
 {
+    /// <param name="context">The request, whose listener picks the fields to answer.</param>
+    /// <param name="status">The process status: ok, degraded, ready or unavailable.</param>
+    /// <param name="options">This node's settings.</param>
     /// <param name="storageFormat">On-disk storage format id, internal listener only.</param>
     /// <param name="revision">Source revision, internal listener only.</param>
     /// <param name="machine">Node name, internal listener only.</param>
