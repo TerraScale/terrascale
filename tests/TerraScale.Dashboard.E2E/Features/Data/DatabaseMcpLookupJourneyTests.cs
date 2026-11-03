@@ -65,10 +65,12 @@ namespace TerraScale.Dashboard.E2E.Features.Data
 
         private static async Task ErrorAsync(Probe probe, string databaseId, string message)
         {
+            var before = probe.Lists.Count;
             var response = await probe.CallAsync("create_document", new()
             { ["databaseId"] = databaseId, ["collection"] = "records", ["document"] = new { value = 1 } });
             var result = response.GetProperty("result");
-            await Assert.That(result.TryGetProperty("isError", out var error) && error.GetBoolean()).IsTrue().Because("expected a refusal for " + databaseId);
+            await Assert.That(result.TryGetProperty("isError", out var error) && error.GetBoolean()).IsTrue()
+                .Because("expected a refusal for " + databaseId + "; listings before: " + before + ", after: " + probe.Lists.Count + "; response: " + response.GetRawText());
             await Assert.That(response.GetRawText()).Contains(message);
             await Assert.That(response.GetRawText()).DoesNotContain("An error occurred invoking");
         }
