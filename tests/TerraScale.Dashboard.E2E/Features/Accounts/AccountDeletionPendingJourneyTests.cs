@@ -27,7 +27,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             var csrf = await CsrfAsync(client, "/account-deletion?retry=19");
             using var last = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/profile/delete/status", new() { ["_csrf"] = csrf, ["_retry"] = "19" });
             await Assert.That(last.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
-            await Assert.That(await last.Content.ReadAsStringAsync()).Contains("Automatic checks have paused").And.DoesNotContain("setTimeout");
+            await Assert.That(await last.Content.ReadAsStringAsync()).Contains("Check deletion status").And.DoesNotContain("setTimeout");
             await Assert.That(calls.All(method => method == "GET")).IsTrue();
             await Assert.That((await scenario.State.ListAsync("account_deletions", default)).Count).IsEqualTo(1);
         }

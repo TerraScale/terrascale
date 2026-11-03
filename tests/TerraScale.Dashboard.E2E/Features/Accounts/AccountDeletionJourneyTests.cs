@@ -93,7 +93,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             await Assert.That(session.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
             using var completion = await scenario.Client.GetAsync("/account-deleted");
             await Assert.That(completion.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(await completion.Content.ReadAsStringAsync()).Contains("Account deleted").And.Contains("you have been signed out");
+            await Assert.That(await completion.Content.ReadAsStringAsync()).Contains("Account deleted").And.Contains("Return to TerraScale");
         }
 
         [Test]

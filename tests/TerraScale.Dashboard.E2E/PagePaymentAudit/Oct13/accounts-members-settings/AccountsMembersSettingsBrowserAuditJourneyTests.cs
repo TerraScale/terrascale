@@ -16,7 +16,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.AccountsMembersSetting
             var page = await browser.NewPageAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = 900 } });
             await LoginAsync(page, "/profile");
             var name = page.GetByLabel("Display name");
-            var phone = page.GetByLabel("Phone number (optional)");
+            var phone = page.GetByLabel("Phone number", new() { Exact = true });
             await name.FillAsync("Browser draft name");
             await phone.FillAsync(new string('9', 65));
             await ShotAsync(page, "profile-draft-" + width);

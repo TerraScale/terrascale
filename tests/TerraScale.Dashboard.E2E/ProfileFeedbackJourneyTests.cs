@@ -49,7 +49,7 @@ namespace TerraScale.Dashboard.E2E
             await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
             var html = await rejected.Content.ReadAsStringAsync();
             await Assert.That(html).Contains("Choose an available language.");
-            await Assert.That(html).Contains("aria-invalid=\"true\" aria-describedby=\"profile-language-help interfaceLanguage-error\"");
+            await Assert.That(html).Contains("aria-invalid=\"true\" aria-describedby=\"interfaceLanguage-error\"");
             await Assert.That(html).Contains("id=\"interfaceLanguage-error\">Choose an available language.");
             await Assert.That(html).Contains("href=\"#interfaceLanguage\"");
             await Assert.That(html.Contains("ts-alert-success", StringComparison.Ordinal)).IsFalse();
@@ -71,7 +71,7 @@ namespace TerraScale.Dashboard.E2E
             });
             await Assert.That(saved.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             var html = await client.GetStringAsync(saved.Headers.Location);
-            await Assert.That(html).Contains("The dashboard currently displays in English; saving this preference does not translate the interface.");
+            await Assert.That(html).Contains("id=\"profile-language-title\">Language</h2>");
             await Assert.That(html).Contains("for=\"interfaceLanguage\">Preferred language");
             await Assert.That(html).Contains("value=\"" + locale + "\" selected=\"selected\"");
             await Assert.That(html).DoesNotContain("Choose the language used by onboarding and the Dashboard.");

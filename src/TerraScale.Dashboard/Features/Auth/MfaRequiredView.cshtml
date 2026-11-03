@@ -10,7 +10,7 @@
             <div class="ts-login-stack" id="mfa-required">
                 <div class="ts-login-heading">
                     <span class="ts-login-brand"><img src="@Assets.Url("brand/logo-icon-blue.svg")" alt="" width="25" height="28" decoding="async" /><span class="ts-login-brand-word">TerraScale</span></span>
-                    <div class="ts-auth-heading"><h1 class="ts-auth-title">@Model.OrganizationName requires two-factor authentication</h1><p class="ts-auth-subtitle">Set up two-factor authentication for your account, then come back to continue.</p></div>
+                    <div class="ts-auth-heading"><h1 class="ts-auth-title">@Model.OrganizationName requires two-factor authentication</h1></div>
                 </div>
                 <div class="ts-form"><a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href="@Model.ManageUrl">Set up two-factor</a><a class="ts-btn ts-btn-secondary ts-btn-block" href="/">I've set it up, continue</a></div>
                 @if (Model.Others.Count > 0)
