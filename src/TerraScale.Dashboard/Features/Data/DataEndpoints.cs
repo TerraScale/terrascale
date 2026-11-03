@@ -17,7 +17,6 @@ namespace TerraScale.Dashboard.Features.Data
             endpoints.MapDocumentChanges();
             endpoints.MapSchemaPreview();
             endpoints.MapDeclaredSchema();
-            Features.Webhooks.WebhookEndpoints.MapChangeWebhooks(endpoints);
             foreach (var section in new[] { "documents", "sql", "indexes", "history" })
             {
                 var tab = section;

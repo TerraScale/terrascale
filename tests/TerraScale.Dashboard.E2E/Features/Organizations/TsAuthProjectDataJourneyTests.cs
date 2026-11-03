@@ -12,7 +12,6 @@ using TerraScale.Dashboard.Features.Functions;
 using TerraScale.Dashboard.Features.Importing;
 using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.Dashboard.Features.Webhooks;
 using TerraScale.TerraBase.Contracts;
 using TerraScale.TerraBase.Contracts.Documents;
 using TerraScale.TerraBase.Contracts.FileStorage;
@@ -47,7 +46,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 builder.Services.Replace(ServiceDescriptor.Singleton<IProjectAccessTokens>(tokens));
             }, app => app.MapGet("/__test/data/{operation}", async Task<IResult> (string operation, HttpContext http, DashboardSessions sessions,
                 AccountService accounts, DatabaseService databases, IDocumentBackend documents, IDatabaseBackend original, SavedQueryService saved,
-                FileStorageService files, FunctionBackend functions, WebhookService hooks, ImportService imports) =>
+                FileStorageService files, FunctionBackend functions, ImportService imports) =>
             {
                 try
                 {
@@ -94,8 +93,6 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                         case "file": await files.DeleteBucketAsync(context, wire.BucketId, "avatars", ct); break;
                         case "function": await functions.DeleteAsync(context, new() { Id = id, Name = "forged-name" }, "worker", ct); break;
                         case "function-read": await functions.ListAsync(context, DatabaseService.Database(context, id), ct); break;
-                        case "webhook": await hooks.DeleteAsync(context, id, "items", AccountService.NewId(), ct); break;
-                        case "webhook-read": await hooks.ListAsync(context, id, "items", ct); break;
                         case "list": return Results.Json(await saved.ListAsync(context, id, ct));
                         case "delete": await saved.DeleteAsync(context, id, http.Request.Query["query"].ToString(), ct); break;
                         default: return Results.Json(await saved.SaveAsync(context, id, "Shared " + Guid.NewGuid().ToString("N"), "SELECT 1", ct));
@@ -144,7 +141,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             await Check("capture", HttpStatusCode.NoContent);
             // Member reads publish the plan normally; that system write confers no organization mutation authority.
             await Assert.That(platform.Producer.PlanPublications(org) > 0).IsEqualTo(organizationViewer);
-            var writes = new[] { "collection", "document", "sql", "drop", "import", "import-upload", "import-options", "import-cancel", "import-resume", "import-start", "file", "function", "webhook", "save", "delete" };
+            var writes = new[] { "collection", "document", "sql", "drop", "import", "import-upload", "import-options", "import-cancel", "import-resume", "import-start", "file", "function", "save", "delete" };
             var allowed = role is "member" or "admin";
             foreach (var operation in writes.Where(item => item != "delete"))
             {
@@ -165,10 +162,6 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                     $"POST {importPath}/cancel databases:write", $"POST {importPath}/resume databases:write documents:write",
                     $"GET {importPath} databases:read", $"POST {importPath}/start databases:write documents:write", $"GET {importPath} databases:read" }
                 : new[] { $"GET {importPath} databases:read" });
-            await Check("webhook-read", HttpStatusCode.NoContent);
-            await Assert.That(tokens.Scopes.Any(scopes => scopes == "documents:read")).IsTrue();
-            await Assert.That(tokens.Scopes.Last()).IsEqualTo("documents:read");
-            await Assert.That(tokens.Scopes.Contains("documents:read documents:write")).IsTrue(); // Function reads need both.
             await Assert.That(wire.Paths.Any(path => path.Contains("forged-name", StringComparison.Ordinal))).IsFalse();
             var captured = stale ?? throw new InvalidOperationException();
             await Assert.That(captured.CanManage || captured.CanWrite || captured.Organization!.CanProvision(user.Subject)).IsFalse();
@@ -219,9 +212,9 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
 
             var goodScope = scope;
             scope = goodScope.Replace(id, otherId, StringComparison.Ordinal);
-            foreach (var operation in new[] { "collection", "document", "sql", "drop", "function", "webhook", "save", "list", "delete" })
+            foreach (var operation in new[] { "collection", "document", "sql", "drop", "function", "save", "list", "delete" })
             {
-                await Check(operation, role == "viewer" && (operation is "collection" or "document" or "drop" or "webhook") ? HttpStatusCode.Forbidden : HttpStatusCode.NotFound);
+                await Check(operation, role == "viewer" && (operation is "collection" or "document" or "drop") ? HttpStatusCode.Forbidden : HttpStatusCode.NotFound);
             }
 
             scope = goodScope;

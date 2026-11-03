@@ -105,7 +105,7 @@
         var queryAt = Model.ReturnUrl.IndexOf('?');
         var collection = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(queryAt < 0 ? "" : Model.ReturnUrl[queryAt..]).GetValueOrDefault("collection").ToString();
         foreach (var tab in DatabaseFrameModel.Tabs)
-            yield return new(tab.Key is "overview" or "danger" ? "Database " + tab.Label.ToLowerInvariant() : tab.Label, DatabaseService.Path(database.Id, tab.Key, tab.Key is "documents" or "sql" or "schema" or "indexes" or "webhooks" ? collection : ""), "database", "Database · " + database.Name + " · " + project);
+            yield return new(tab.Key is "overview" or "danger" ? "Database " + tab.Label.ToLowerInvariant() : tab.Label, DatabaseService.Path(database.Id, tab.Key, tab.Key is "documents" or "sql" or "schema" or "indexes" ? collection : ""), "database", "Database · " + database.Name + " · " + project);
     }
     private static readonly (string Key, string Label)[] OrganizationPages = [("members", "Members"), ("invitations", "Invitations"), ("projects", "Projects"), ("billing", "Billing"), ("audit", "Audit"), ("sso", "Single sign-on"), ("danger", "Danger zone")];
 }

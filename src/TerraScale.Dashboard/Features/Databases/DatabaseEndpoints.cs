@@ -20,7 +20,6 @@ namespace TerraScale.Dashboard.Features.Databases
             .AddSingleton<IDatabaseBackend, DatabaseBackend>().AddSingleton<DatabaseService>()
             .AddSingleton<DocumentBackend>().AddSingleton<IDocumentBackend>(services => services.GetRequiredService<DocumentBackend>())
             .AddSingleton<DataService>().AddSingleton<SchemaPreview>().AddSingleton<SavedQueryService>().AddSingleton<SqlRuns>().AddSingleton<DocumentChangesService>()
-            .AddSingleton<TerraScale.Dashboard.Features.Webhooks.WebhookService>()
             .AddSingleton<ApiKeyService>().AddSingleton<IWorkspacePlacement, WorkspacePlacement>()
             .AddSingleton<IOnboardingProjectProvisioner, OnboardingProjectProvisioner>()
             .AddSingleton<IBackupBackend, BackupBackend>().AddSingleton<BackupService>().AddSingleton<SelectiveRecovery>().AddSingleton<WholeDatabaseRecovery>().AddDatabaseLogs().AddDatabaseFunctions();
