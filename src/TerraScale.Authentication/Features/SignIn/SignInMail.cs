@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -63,8 +64,11 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
     private const int Batch = 64;
     private static readonly JsonElement OpenRows = JsonDocument.Parse("""{"or":[{"eq":["/state","queued"]},{"eq":["/state","ready"]},{"eq":["/state","sending"]}]}""").RootElement.Clone();
 
-    // Shared by both workers. ponytail: per replica, each worker can pay one timeout per backoff.
+    // Shared by both workers: after a failed read, every email on this replica skips the read until this instant.
     private long configRetryAt;
+
+    // One in-flight configuration read per tenant and copy scope; concurrent deliveries share it instead of each paying a timeout.
+    private readonly ConcurrentDictionary<(string Tenant, bool Project), Lazy<Task<EmailConfig?>>> configReads = new();
 
     private readonly Lock admission = new();
     private readonly HashSet<string> local = new(StringComparer.Ordinal);
@@ -415,7 +419,8 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
     /// The instance's email configuration, read for every code so a change applies to the next email on every replica.
     /// When it cannot be read the code still goes out, with the default branding and copy: delivering it matters more.
     /// Each read waits at most <see cref="ConfigTimeout"/>, and after a failure the next
-    /// <see cref="ConfigBackoff"/> of emails skip the read. Delivery concurrency bounds simultaneous reads.
+    /// <see cref="ConfigBackoff"/> of emails skip the read. Deliveries that need the same configuration while a read is in
+    /// flight share that read, so a stalled store sees one request and a backlog pays one timeout.
     /// </summary>
     private async Task<EmailConfig?> ConfigAsync(string tenant, AuthEmailKind kind)
     {
@@ -427,6 +432,27 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
             }
             : null;
 
+        if (clock.GetUtcNow().UtcTicks < Volatile.Read(ref this.configRetryAt))
+        {
+            return defaults;
+        }
+
+        var key = (tenant, defaults is not null);
+        var read = this.configReads.GetOrAdd(key, _ => new Lazy<Task<EmailConfig?>>(() => this.ReadConfigAsync(tenant, defaults)));
+        try
+        {
+            return await read.Value.ConfigureAwait(false);
+        }
+        finally
+        {
+            // The next email after this read finishes reads again, so a change still applies to it.
+            this.configReads.TryRemove(new KeyValuePair<(string, bool), Lazy<Task<EmailConfig?>>>(key, read));
+        }
+    }
+
+    private async Task<EmailConfig?> ReadConfigAsync(string tenant, EmailConfig? defaults)
+    {
+        // A read that failed and left the map just before this one started has already set the backoff.
         if (clock.GetUtcNow().UtcTicks < Volatile.Read(ref this.configRetryAt))
         {
             return defaults;
