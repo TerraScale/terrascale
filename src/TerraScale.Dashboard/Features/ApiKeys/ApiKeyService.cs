@@ -9,6 +9,48 @@ namespace TerraScale.Dashboard.Features.ApiKeys
     // ts-auth owns key metadata and issuance. Secrets are returned once and never stored by the dashboard.
     public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time, TsAuthClient authClient)
     {
+        // One issuer page: 100 keys is its fixed page size; the dashboard asks for nothing more per page.
+        public const int IssuerPageSize = 100;
+
+        public async Task<ApiKeyListPage> ListPageAsync(AccountContext context, string? cursor, int limit, CancellationToken cancellationToken)
+        {
+            if (context.Project is null)
+            {
+                return new([], null);
+            }
+
+            CursorPaging.ValidateLimit(limit);
+            var scope = DatabaseService.Scope(context);
+            var page = await Client().ListProjectApiKeysAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, limit, cursor, cancellationToken);
+            if (page.Items is null)
+            {
+                throw new HttpRequestException("Credential listing returned an invalid page.");
+            }
+
+            var items = new List<ProjectCredential>(page.Items.Count);
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var item in page.Items)
+            {
+                var key = Map(context, item);
+                if (!seen.Add(key.Id))
+                {
+                    throw new HttpRequestException("Credential listing returned a repeated key.");
+                }
+
+                items.Add(key);
+            }
+
+            // A cursor the issuer already answered cannot advance: stop the traversal instead of looping.
+            var next = page.Next;
+            if (!string.IsNullOrEmpty(next) && (ReferenceEquals(next, cursor) || next == cursor))
+            {
+                next = null;
+            }
+
+            return new([.. items.OrderBy(key => key.Name, StringComparer.Ordinal)], string.IsNullOrEmpty(next) ? null : next);
+        }
+
+        // Used only where the whole set is genuinely needed (expiry notifications); otherwise one page at a time.
         public async Task<IReadOnlyList<ProjectCredential>> ListAsync(AccountContext context, CancellationToken cancellationToken)
         {
             if (context.Project is null)
@@ -16,35 +58,24 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 return [];
             }
 
-            var scope = DatabaseService.Scope(context);
             var result = new List<ProjectCredential>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
             string? next = null;
             var pages = 0;
             do
             {
-                var page = await Client().ListProjectApiKeysAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, 100, next, cancellationToken);
-                if (page.Items is null)
+                var page = await ListPageAsync(context, next, IssuerPageSize, cancellationToken);
+                foreach (var key in page.Items)
                 {
-                    throw new HttpRequestException("Credential listing returned an invalid page.");
-                }
-
-                foreach (var item in page.Items)
-                {
-                    var key = Map(context, item);
-                    if (result.Any(listed => listed.Id == key.Id))
+                    if (!seen.Add(key.Id))
                     {
                         throw new HttpRequestException("Credential listing returned a repeated key.");
                     }
 
                     result.Add(key);
                 }
-                next = page.Next;
-                if (!string.IsNullOrEmpty(next) && (!seen.Add(next) || ++pages >= 100))
-                {
-                    throw new HttpRequestException("Credential pagination did not advance within its bounds.");
-                }
-            } while (!string.IsNullOrEmpty(next));
+                next = page.NextCursor;
+            } while (next is not null && seen.Count < 100 * ++pages);
             return [.. result.OrderBy(key => key.Name, StringComparer.Ordinal)];
         }
 
@@ -435,7 +466,12 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         }
     }
 
-    public sealed record ApiKeysPage(TerraScale.Dashboard.Common.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "", string DraftExpiresInDays = "", string DraftAllowedCidrs = "", IReadOnlyList<string>? ProjectCidrs = null, DateTimeOffset Now = default)
+    public sealed record ApiKeyListPage(IReadOnlyList<ProjectCredential> Items, string? NextCursor)
+    {
+        public bool HasMore => NextCursor is not null;
+    }
+
+    public sealed record ApiKeysPage(TerraScale.Dashboard.Common.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "", string DraftExpiresInDays = "", string DraftAllowedCidrs = "", IReadOnlyList<string>? ProjectCidrs = null, DateTimeOffset Now = default, string Cursor = "", bool HasMore = false)
     {
         private static readonly string[] FullAccessScopes = ["documents:read", "documents:write", "databases:read", "databases:write"];
         public string Warning { get; init; } = "";
@@ -450,7 +486,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         public string With(string path, bool clear = false, string? create = null)
         {
             var values = new SortedDictionary<string, string?>();
-            if (!clear) { values["databaseId"] = DatabaseId; values["q"] = Search; values["status"] = Status; }
+            if (!clear) { values["databaseId"] = DatabaseId; values["q"] = Search; values["status"] = Status; if (HasMore || Cursor.Length > 0) { values["cursor"] = Cursor; } }
             if (create is not null)
             {
                 values["create"] = create;

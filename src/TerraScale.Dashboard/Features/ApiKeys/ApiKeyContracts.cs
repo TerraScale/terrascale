@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using TerraScale.Dashboard.Platform.Http;
 using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.ApiKeys
@@ -29,6 +30,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
     [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
     [JsonSerializable(typeof(ProjectCredentialMetadata[]))]
     [JsonSerializable(typeof(ProjectCredentialMetadata))]
+    [JsonSerializable(typeof(CursorPage<ProjectCredentialMetadata>))]
     [JsonSerializable(typeof(ProjectApiKeySecret))]
     [JsonSerializable(typeof(CreateProjectCredentialRequest))]
     [JsonSerializable(typeof(RevokeProjectCredentialRequest))]

@@ -24,13 +24,15 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 try
                 {
                     var (limit, after) = CursorPaging.Read(http.Request);
-                    return Results.Json(CursorPaging.Page((await keys.ListAsync(context, http.RequestAborted)).Select(ApiKeyService.CredentialMetadata),
-                        key => key.KeyId, CursorPaging.Scope(context, "credentials", "", "", "", ""), limit, after));
+                    // The dashboard forwards its own cursor position: the issuer owns the traversal, one page per request.
+                    var page = await keys.ListPageAsync(context, after.Length == 0 ? null : after, limit, http.RequestAborted);
+                    return Results.Json(new CursorPage<ProjectCredentialMetadata>([.. page.Items.Select(ApiKeyService.CredentialMetadata)], page.NextCursor, limit),
+                        ApiKeyContractJson.Default.CursorPageProjectCredentialMetadata);
                 }
                 catch (Exception error) when (DatabaseEndpoints.KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException) { return DatabaseEndpoints.Failure(error); }
             }).WithGroupName("integration").WithName("listDashboardCredentials").WithTags("Credentials")
                 .WithSummary("List ts-auth project keys without secrets")
-                .WithDescription(CursorPaging.Description + " Upstream uses 100 keys/page; traversal fails at 100 pages instead of truncating. DatabaseId (a ULID) is the restriction; DatabaseName is its display name (Deleted database once the ID is gone). A key with DatabaseName but no DatabaseId was narrowed by name and mints no token. LastUsedAt is the last token exchange (up to five minutes stale).")
+                .WithDescription(CursorPaging.Description + " Keys arrive in the issuer's creation order, one bounded issuer page per request (no total is available). DatabaseId (a ULID) is the restriction; DatabaseName is its display name (Deleted database once the ID is gone). A key with DatabaseName but no DatabaseId was narrowed by name and mints no token. LastUsedAt is the last token exchange (up to five minutes stale).")
                 .WithCursorContract().Produces<CursorPage<ProjectCredentialMetadata>>().Produces(401).ProducesProblem(403).ProducesProblem(422).ProducesProblem(503);
             endpoints.MapPost("/api/v1/dashboard/credentials/{kind}", CreateAsync).WithGroupName("integration").WithName("createDashboardCredential").WithTags("Credentials")
                 .WithSummary("Create a project key and reveal its secret once")
@@ -223,9 +225,11 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         {
             var warning = "";
             IReadOnlyList<ProjectCredential> keys = [];
+            var hasMore = false;
+            var cursor = http.Request.Query["cursor"].ToString();
             IReadOnlyList<string>? projectCidrs = null;
             var network = context.Project is null ? Task.FromResult<IReadOnlyList<string>>([]) : service.ProjectAllowedCidrsAsync(context, http.RequestAborted);
-            try { keys = await service.ListAsync(context, http.RequestAborted); }
+            try { (keys, var next) = await service.ListPageAsync(context, cursor.Length == 0 ? null : cursor, ApiKeyService.IssuerPageSize, http.RequestAborted); hasMore = next is not null; cursor = next ?? ""; }
             catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested && (failure is HttpRequestException || revealed is not null && ApiKeyService.FollowUpFailure(failure)))
             {
                 if (revealed is null)
@@ -249,7 +253,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             try { await ApiKeyExpiryNotifications.AddAsync(http.RequestServices.GetRequiredService<AccountService>(), context, keys, now, http.RequestAborted); }
             catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested && revealed is not null && ApiKeyService.FollowUpFailure(failure))
             { warning = (warning + " Expiry reminders could not be updated; the key change succeeded.").Trim(); }
-            var result = ApiKeysView.Create(new(ShellModel.For(http, context, "API keys"), keys, http.Request.Query["q"].ToString(), http.Request.Query["databaseId"].ToString(), error, create.Length > 0 ? create : http.Request.Query["create"].ToString(), name, revealed, http.Request.Query["status"].ToString(), draftScopes, draftDatabaseId, DraftExpiresInDays: draftExpiresInDays, DraftAllowedCidrs: draftAllowedCidrs, ProjectCidrs: projectCidrs, Now: now) { Warning = warning });
+            var result = ApiKeysView.Create(new(ShellModel.For(http, context, "API keys"), keys, http.Request.Query["q"].ToString(), http.Request.Query["databaseId"].ToString(), error, create.Length > 0 ? create : http.Request.Query["create"].ToString(), name, revealed, http.Request.Query["status"].ToString(), draftScopes, draftDatabaseId, DraftExpiresInDays: draftExpiresInDays, DraftAllowedCidrs: draftAllowedCidrs, ProjectCidrs: projectCidrs, Now: now, Cursor: cursor, HasMore: hasMore) { Warning = warning });
             result.StatusCode = status;
             return result;
         }
