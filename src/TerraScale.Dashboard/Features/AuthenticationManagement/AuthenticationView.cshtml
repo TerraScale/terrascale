@@ -4,7 +4,7 @@
 @{
     var current = Model.Section; var settings = Model.Settings; var manage = Model.Context.CanManageProject;
     string Date(DateTimeOffset value) => value.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture);
-    void Card(string title, string description) { <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="@("auth-" + current.Key + "-title")">@title</h2><p class="ts-card-description">@description</p></div></header> }
+    void Card(string title) { <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="@("auth-" + current.Key + "-title")">@title</h2></div></header> }
     // Confirm the button click so acceptance keeps native validation, submit and shared pending feedback.
     void Action(string path, string label, string confirm = "") {
         <form method="post" action="@("/api/v1/auth-management/" + path)"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
@@ -18,7 +18,7 @@
         @if (link) { <a class="ts-break" href="@value" id="@id" @(ExternalLink.Attributes)>@value@(ExternalLink.Hint)</a> }
         else { <code class="@(secret ? "ts-apikeys-secret-value" : "ts-break")" tabindex="0" id="@id">@value</code> }
         <button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" aria-label="@("Copy " + label)" aria-describedby="@(id + "-copy-status")" data-on:click="@CopyExpression">@Icons.Render("Copy", 14)<span>Copy</span></button>
-        </div><p class="ts-hint" id="@(id + "-copy-status")" role="status" aria-live="polite" aria-atomic="true"></p></div>
+        </div><p class="ts-meta" id="@(id + "-copy-status")" role="status" aria-live="polite" aria-atomic="true"></p></div>
     }
     void Pager(string path) { if (Model.Next is null && Model.After.Length == 0) { return; } <nav class="ts-pager" aria-label="@(current.Title + " pages")"><div class="ts-row">@if (Model.After.Length > 0) { <a class="ts-btn ts-btn-secondary ts-btn-sm" href="@path">First page</a> }@if (Model.Next is not null) { <a class="ts-btn ts-btn-secondary ts-btn-sm" href="@(path + (path.Contains('?') ? "&" : "?") + "after=" + Uri.EscapeDataString(Model.Next))">Next page</a> }</div></nav> }
 }
@@ -34,13 +34,13 @@
 }
 <section class="@(current.Key == "branding" ? null : "ts-card")" id="@("auth-" + current.Key)" aria-labelledby="@("auth-" + current.Key + "-title")">
 @if (current.Key == "overview") {
-Card("Project authentication", "Point your OpenID Connect library at this issuer; users sign in on the hosted pages.");
+Card("Project authentication");
 <div class="ts-card-body">@if (settings is null) { Empty("Authentication details unavailable"); } else {
 <dl class="ts-stats ts-idp-stats" aria-label="Identity totals"><div class="ts-stat"><dt class="ts-stat-label">Users</dt><dd class="ts-stat-value" id="auth-count-users">@settings.Counts.Users</dd></div><div class="ts-stat"><dt class="ts-stat-label">OAuth applications</dt><dd class="ts-stat-value" id="auth-count-clients">@settings.Counts.Clients</dd></div></dl>
 <dl class="ts-kv ts-idp-endpoints"><dt>Project</dt><dd class="ts-strong">@Model.Context.Project?.Name</dd><dt>Issuer</dt><dd>@{ CopyValue("auth-issuer", settings.Issuer, "issuer"); }</dd><dt>Discovery</dt><dd>@{ CopyValue("auth-discovery", settings.DiscoveryUrl, "discovery URL"); }</dd><dt>Hosted sign-in</dt><dd>@{ CopyValue("auth-sign-in-url", settings.SignInUrl, "hosted sign-in URL", link: true); }</dd></dl> }</div>
 }
 else if (current.Key == "users") {
-Card("Users", current.Description);
+Card("Users");
 <div class="ts-card-body"><form class="ts-filters" method="get" action="/auth/users" role="search" aria-label="Search users"><input class="ts-input ts-input-sm" type="search" name="q" value="@Model.Search" placeholder="Search by email" aria-label="Search by email" /><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Search</button></form>
 @if (manage) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.AuthenticationManagement.DirectoryExportControls, AuthenticationPage>(Model)) }
 @if (Model.Users is not { Count: > 0 } users) { Empty(Model.Search.Length > 0 ? "No users match this search" : "No users yet"); } else {
@@ -48,74 +48,72 @@ Card("Users", current.Description);
 @{ Pager(Model.Search.Length > 0 ? "/auth/users?q=" + Uri.EscapeDataString(Model.Search) : "/auth/users"); }</div>
 }
 else if (current.Key == "sessions") {
-Card(Model.User.Length > 0 ? "Sessions of one user" : "Live sessions", current.Description);
+Card(Model.User.Length > 0 ? "Sessions of one user" : "Live sessions");
 <div class="ts-card-body">@if (Model.User.Length > 0) { <p><a href="/auth/sessions">Show every session</a></p> }
 @if (Model.Sessions is not { Count: > 0 } live) { Empty("No live sessions"); } else {
 <div class="ts-table-wrap" tabindex="0" role="region" aria-label="Sessions"><table class="ts-table"><thead><tr><th>User</th><th>Signed in</th><th>Expires</th><th><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>@foreach (var item in live) { <tr><td class="ts-table-strong">@item.Email</td><td class="ts-idp-nowrap">@Date(item.CreatedAt)</td><td class="ts-idp-nowrap">@Date(item.ExpiresAt)</td><td>@if (manage) { Action("sessions/" + item.Id + "/revoke", "Revoke", "Revoke this session?"); }</td></tr> }</tbody></table></div> }
 @{ Pager(Model.User.Length > 0 ? "/auth/sessions?user=" + Uri.EscapeDataString(Model.User) : "/auth/sessions"); }</div>
 }
 else if (current.Key == "clients") {
-Card("OAuth applications", current.Description);
+Card("OAuth applications");
 <div class="ts-card-body">@if (Model.Clients is not { Count: > 0 } clients) { Empty("No OAuth applications yet"); } else {
 <div class="ts-table-wrap" tabindex="0" role="region" aria-label="OAuth applications"><table class="ts-table"><thead><tr><th>Application</th><th>Client ID</th><th>Type</th><th>Redirect URIs</th><th><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>@foreach (var client in clients) { <tr><td class="ts-table-strong">@client.Name</td><td>@{ CopyValue("auth-client-" + client.ClientId, client.ClientId, "client ID for " + client.Name); }</td><td><span class="ts-badge">@client.Type</span></td><td class="ts-mono">@string.Join(", ", client.RedirectUris)</td><td>@if (manage) { Action("clients/" + client.ClientId + "/delete", "Delete", "Delete this application? Its users can no longer sign in through it."); }</td></tr> }</tbody></table></div> }
 @if (manage) {
 <form class="ts-form" method="post" action="/api/v1/auth-management/clients" id="auth-create-client"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><h3 class="ts-strong">Add an application</h3>
 <div class="ts-field"><label class="ts-label" for="auth-client-name">Application name</label><input class="ts-input" id="auth-client-name" name="name" required maxlength="64" placeholder="Web app" autocomplete="off" /></div>
-<div class="ts-field"><label class="ts-label" for="auth-client-type">Client type</label><select class="ts-select" id="auth-client-type" name="type"><option value="public">Public (browser, mobile, CLI; PKCE without a secret)</option><option value="confidential">Confidential (server; gets a client secret)</option></select></div>
-<div class="ts-field"><label class="ts-label" for="auth-client-uris">Redirect URIs</label><textarea class="ts-input ts-mono" id="auth-client-uris" name="redirect_uris" rows="3" required placeholder="https://app.example.com/callback"></textarea><p class="ts-hint">One per line, up to 10. HTTPS, or HTTP on localhost and loopback addresses.</p></div>
+<div class="ts-field"><label class="ts-label" for="auth-client-type">Client type</label><select class="ts-select" id="auth-client-type" name="type"><option value="public">Public (PKCE, no secret)</option><option value="confidential">Confidential (client secret)</option></select></div>
+<div class="ts-field"><label class="ts-label" for="auth-client-uris">Redirect URIs</label><textarea class="ts-input ts-mono" id="auth-client-uris" name="redirect_uris" rows="3" required spellcheck="false" placeholder="https://app.example.com/callback (one per line, up to 10)"></textarea></div>
 <div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Add application</button></div></form> }</div>
 }
 else if (current.Key == "sign-in") {
-Card("Sign-in methods", current.Description);
+Card("Sign-in methods");
 <div class="ts-card-body">@if (settings is null) { Empty("Sign-in methods unavailable"); } else {
-<form class="ts-form" method="post" action="/api/v1/auth-management/settings"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><ul class="ts-idp-settings">@foreach (var (name, label, detail, on) in new[] { ("passcode", "Email passcode", "Sign in with a one-time code sent to the user's email address.", settings.Methods.Passcode), ("password", "Password", "Users set a password at sign-up and can reset it by email.", settings.Methods.Password), ("sign_up", "Self sign-up", "Anyone can create an account on the hosted pages. Off hides sign-up.", settings.Methods.SignUp) }) { <li class="ts-idp-setting"><div class="ts-idp-setting-text"><label class="ts-strong" for="@("auth-method-" + name)">@label</label><p class="ts-meta">@detail</p></div><input class="ts-switch" type="checkbox" role="switch" id="@("auth-method-" + name)" name="@name" checked="@on" disabled="@(!manage)" /></li> }</ul><p class="ts-hint">Keep email passcode or password on: users need one way to sign in.</p>@if (manage) { <div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save sign-in methods</button></div> }</form> }</div>
+<form class="ts-form" method="post" action="/api/v1/auth-management/settings"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><ul class="ts-idp-settings">@foreach (var (name, label, on) in new[] { ("passcode", "Email passcode", settings.Methods.Passcode), ("password", "Password", settings.Methods.Password), ("sign_up", "Self sign-up", settings.Methods.SignUp) }) { <li class="ts-idp-setting"><div class="ts-idp-setting-text"><label class="ts-strong" for="@("auth-method-" + name)">@label</label></div><input class="ts-switch" type="checkbox" role="switch" id="@("auth-method-" + name)" name="@name" checked="@on" disabled="@(!manage)" /></li> }</ul>@if (manage) { <div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save sign-in methods</button></div> }</form> }</div>
 }
 else if (current.Key == "social") {
-Card("Social sign-in", current.Description);
+Card("Social sign-in");
 <div class="ts-card-body">@if (settings is null) { Empty("Social sign-in unavailable"); } else {
-<p class="ts-hint">Create an OAuth client at the provider and register its callback URL there; configured providers show as Continue with buttons on the hosted pages.</p>
 <ul class="ts-idp-settings">@foreach (var provider in settings.Providers) { if (AuthenticationProvider.Find(provider.Provider) is not { } info) { continue; } var id = "auth-provider-" + info.Key; var apple = info.Key == "apple";
 <li class="ts-idp-setting" id="@id"><div class="ts-idp-setting-text ts-stack-sm"><div class="ts-row"><span class="ts-strong">@info.Name</span><span class="@(provider.Configured ? "ts-badge ts-badge-success" : "ts-badge ts-badge-neutral")">@(provider.Configured ? "Configured" : "Not configured")</span></div>
 @if (provider.Configured) { <p class="ts-meta">@info.ClientIdLabel <code>@provider.ClientId</code>@if (provider.Issuer is not null) { <text> · Issuer <code>@provider.Issuer</code></text> }@if (provider.TeamId is not null) { <text> · Team ID <code>@provider.TeamId</code> · Key ID <code>@provider.KeyId</code></text> }</p> }
-<p class="ts-meta">@info.Help@if (info.ConsoleUrl.Length > 0) { <text> </text><a class="ts-link" href="@info.ConsoleUrl" @(ExternalLink.Attributes)>@info.ConsoleName@(ExternalLink.Hint)</a> }</p>
+@if (info.ConsoleUrl.Length > 0) { <a class="ts-link" href="@info.ConsoleUrl" @(ExternalLink.Attributes)>@info.ConsoleName@(ExternalLink.Hint)</a> }
 @{ CopyValue(id + "-callback", provider.CallbackUrl, info.Name + " callback URL"); }</div>
 @if (manage) { <div class="ts-row"><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" command="show-modal" commandfor="@(id + "-dialog")">@(provider.Configured ? "Update" : "Configure")</button>@if (provider.Configured) { Action("providers/" + info.Key + "/delete", "Remove", "Remove " + info.Name + " sign-in? Its users can no longer continue with it."); }</div>
-<dialog id="@(id + "-dialog")" class="ts-dialog" closedby="any" aria-labelledby="@(id + "-dialog-title")"><div class="ts-dialog-content"><header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="@(id + "-dialog-title")">@(provider.Configured ? "Update" : "Configure") @info.Name sign-in</h2><p class="ts-dialog-description ts-break">Callback URL <code>@provider.CallbackUrl</code></p></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="@(id + "-dialog")">@Icons.Render("X", 18)</button></header>
+<dialog id="@(id + "-dialog")" class="ts-dialog" closedby="any" aria-labelledby="@(id + "-dialog-title")"><div class="ts-dialog-content"><header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="@(id + "-dialog-title")">@(provider.Configured ? "Update" : "Configure") @info.Name sign-in</h2></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="@(id + "-dialog")">@Icons.Render("X", 18)</button></header>
 <form class="ts-form" method="post" action="@("/api/v1/auth-management/providers/" + info.Key)"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
-@if (info.Key == "oidc") { <div class="ts-field"><label class="ts-label" for="@(id + "-issuer")">Issuer</label><input class="ts-input" id="@(id + "-issuer")" type="url" name="issuer" value="@provider.Issuer" required placeholder="https://example.us.auth0.com/" autocomplete="off" /><p class="ts-hint">ts-auth reads the issuer's /.well-known/openid-configuration.</p></div> }
+@if (info.Key == "oidc") { <div class="ts-field"><label class="ts-label" for="@(id + "-issuer")">Issuer</label><input class="ts-input" id="@(id + "-issuer")" type="url" name="issuer" value="@provider.Issuer" required placeholder="https://example.us.auth0.com/" autocomplete="off" /></div> }
 <div class="ts-field"><label class="ts-label" for="@(id + "-client-id")">@info.ClientIdLabel</label><input class="ts-input ts-mono" id="@(id + "-client-id")" name="client_id" value="@provider.ClientId" required maxlength="256" autocomplete="off" /></div>
 @if (apple) { <div class="ts-form-grid"><div class="ts-field"><label class="ts-label" for="auth-provider-apple-team">Team ID</label><input class="ts-input ts-mono" id="auth-provider-apple-team" name="team_id" value="@provider.TeamId" required pattern="[A-Za-z0-9]{10}" maxlength="10" autocomplete="off" /></div><div class="ts-field"><label class="ts-label" for="auth-provider-apple-key">Key ID</label><input class="ts-input ts-mono" id="auth-provider-apple-key" name="key_id" value="@provider.KeyId" required pattern="[A-Za-z0-9]{10}" maxlength="10" autocomplete="off" /></div></div> }
-<div class="ts-field"><label class="ts-label" for="@(id + "-secret")">@(apple ? "Private key (.p8)" : "Client secret")</label>@if (apple) { <textarea class="ts-input ts-mono" id="@(id + "-secret")" name="client_secret" rows="5" required="@(!provider.Configured)" placeholder="@(provider.Configured ? "unchanged" : "-----BEGIN PRIVATE KEY-----")" autocomplete="off" spellcheck="false"></textarea><input class="ts-input" type="file" accept=".p8" aria-label="Read the private key from a .p8 file" data-on:change="el.files[0]?.text().then(text => el.form.client_secret.value = text)" /> } else { <input class="ts-input ts-mono" id="@(id + "-secret")" type="password" name="client_secret" required="@(!provider.Configured)" placeholder="@(provider.Configured ? "unchanged" : null)" autocomplete="new-password" /> }<p class="ts-hint">@(provider.Configured ? "Leave blank to keep the stored secret. " : "")Write-only: ts-auth never shows it again.</p></div>
+<div class="ts-field"><label class="ts-label" for="@(id + "-secret")">@(apple ? "Private key (.p8)" : "Client secret")</label>@if (apple) { <textarea class="ts-input ts-mono" id="@(id + "-secret")" name="client_secret" rows="5" required="@(!provider.Configured)" placeholder="@(provider.Configured ? "unchanged" : "-----BEGIN PRIVATE KEY-----")" autocomplete="off" spellcheck="false"></textarea><input class="ts-input" type="file" accept=".p8" aria-label="Read the private key from a .p8 file" data-on:change="el.files[0]?.text().then(text => el.form.client_secret.value = text)" /> } else { <input class="ts-input ts-mono" id="@(id + "-secret")" type="password" name="client_secret" required="@(!provider.Configured)" placeholder="@(provider.Configured ? "unchanged" : null)" autocomplete="new-password" /> }</div>
 <div class="ts-dialog-footer"><button class="ts-btn ts-btn-ghost" type="button" command="close" commandfor="@(id + "-dialog")">Cancel</button><button class="ts-btn ts-btn-primary" type="submit">Save @info.Name</button></div></form></div></dialog> }
 </li> }</ul> }</div>
 }
 else if (current.Key == "configuration") {
-Card("Configuration", current.Description);
+Card("Configuration");
 <div class="ts-card-body">@if (settings is null) { Empty("Configuration unavailable"); } else {
 var config = settings.Configuration;
 string Field(string name, string saved) => Model.Draft is { } draft ? draft[name].ToString() : saved;
 <form class="ts-form" method="post" action="/api/v1/auth-management/configuration"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><fieldset class="ts-stack" disabled="@(!manage)">
-<div class="ts-field"><label class="ts-label" for="auth-redirects">Allowed redirect URLs</label><textarea class="ts-input ts-mono" id="auth-redirects" name="redirect_urls" rows="5" spellcheck="false" placeholder="https://app.example.com/callback">@Field("redirect_urls", string.Join("\n", config?.RedirectUrls ?? []))</textarea><p class="ts-hint">Up to 100 exact URLs, one per line. HTTPS, or HTTP on localhost and loopback. No wildcards, fragments or credentials. Empty adds no restriction to each OAuth application's exact registered redirect URIs.</p></div>
-<div class="ts-field"><label class="ts-label" for="auth-lifetime">Session lifetime (seconds)</label><input class="ts-input" id="auth-lifetime" name="session_lifetime_seconds" type="number" required min="300" max="2592000" value="@Field("session_lifetime_seconds", (config?.SessionLifetimeSeconds ?? 1209600).ToString(System.Globalization.CultureInfo.InvariantCulture))" /><p class="ts-hint">300 to 2592000 seconds (5 minutes to 30 days). Reductions apply at the next session or grant check. Expired sessions stay expired after later increases.</p></div>
+<div class="ts-field"><label class="ts-label" for="auth-redirects">Allowed redirect URLs</label><textarea class="ts-input ts-mono" id="auth-redirects" name="redirect_urls" rows="5" spellcheck="false" placeholder="https://app.example.com/callback (one per line, up to 100)">@Field("redirect_urls", string.Join("\n", config?.RedirectUrls ?? []))</textarea></div>
+<div class="ts-field"><label class="ts-label" for="auth-lifetime">Session lifetime (seconds)</label><input class="ts-input" id="auth-lifetime" name="session_lifetime_seconds" type="number" required min="300" max="2592000" value="@Field("session_lifetime_seconds", (config?.SessionLifetimeSeconds ?? 1209600).ToString(System.Globalization.CultureInfo.InvariantCulture))" /></div>
 @if(manage){<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save configuration</button></div>}
 </fieldset></form> }</div>
 }
 else if (current.Key == "danger") {
-Card("Danger zone", "These actions affect this project's end users. They cannot be undone.");
+Card("Danger zone");
 <div class="ts-card-body ts-stack-lg">
 @foreach(var (family,title,description,items) in new[]{
 ("sessions", "Revoke a session", "The selected session ends. The user must sign in again.", (Model.Sessions ?? []).Select(item => (item.Id, item.Email + " · " + Date(item.CreatedAt)))),
 ("users", "Delete an end user", "Permanently removes the selected user and their sessions.", (Model.Users ?? []).Select(item => (item.Id, item.Email))),
 ("clients", "Delete an OAuth application", "The selected application can no longer sign users in.", (Model.Clients ?? []).Select(item => (item.ClientId, item.Name)))}){
 <section class="ts-idp-danger-action"><h3>@title</h3><p class="ts-meta">@description</p>
-@if(!items.Any()){<p class="ts-hint">No records available.</p>}else if(manage){
+@if(!items.Any()){<p class="ts-meta">No records.</p>}else if(manage){
 <form class="ts-form" method="post" action="@("/api/v1/auth-management/danger/" + family)"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><div class="ts-field"><label class="ts-label" for="@("danger-" + family)">Record</label><select class="ts-select" id="@("danger-" + family)" name="record_id" required><option value="">Choose a record</option>@foreach(var (id,label) in items){<option value="@id">@label</option>}</select></div><div class="ts-field"><label class="ts-label" for="@("confirm-" + family)">Type @Model.Context.Project?.Name to confirm</label><input class="ts-input" id="@("confirm-" + family)" name="confirmation" required autocomplete="off" /></div><div><button class="ts-btn ts-btn-danger" type="submit">@title</button></div></form>}
 </section>}
-<p class="ts-hint">Showing the first page of users and sessions. Use <a href="/auth/users">Users</a> and <a href="/auth/sessions">Sessions</a> to find other records.</p>
 </div>
 }
 else {
-@if (settings is null) { Card("Branding", current.Description); Empty("Branding unavailable"); } else {
+@if (settings is null) { Card("Branding"); Empty("Branding unavailable"); } else {
 @(await RenderPartialAsync<TerraScale.Dashboard.Features.AuthenticationManagement.BrandingEditor, AuthenticationPage>(Model))
 }
 }

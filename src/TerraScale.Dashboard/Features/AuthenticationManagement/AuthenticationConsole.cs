@@ -320,7 +320,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         public string Heading => Section.Key == "overview" ? "Authentication" : "Authentication: " + Section.Title;
     }
 
-    public sealed record AuthenticationSection(string Key, string Title, string Description, string Icon, string Group)
+    public sealed record AuthenticationSection(string Key, string Title, string Icon, string Group)
     {
         public static AuthenticationSection? Find(string key)
         {
@@ -329,20 +329,20 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
 
         public static readonly AuthenticationSection[] All =
         [
-            new("overview", "Overview", "Issuer, hosted sign-in and totals for this project's end users.", "LayoutDashboard", ""),
-            new("users", "Users", "People who signed up to your application. Disabling a user ends every session.", "Users", "Users"),
-            new("sessions", "Sessions", "Live end-user sessions. Revoking one signs that sign-in out.", "Monitor", "Users"),
-            new("sign-in", "Sign-in methods", "How end users sign in on the hosted pages, and whether they can sign up.", "LockKeyhole", "Sign-in"),
-            new("social", "Social sign-in", "Continue with Google, GitHub, Apple or another OpenID Connect provider on the hosted pages.", "Fingerprint", "Sign-in"),
-            new("configuration", "Configuration", "Exact redirect policy and lifetime of end-user sessions.", "Settings", "Sign-in"),
-            new("clients", "OAuth applications", "Applications that sign users in through the authorization code flow with PKCE.", "Boxes", "Developers"),
-            new("branding", "Branding", "Brand your hosted pages and verification, sign-in and password reset emails.", "Wand2", "Customize"),
-            new("danger", "Danger zone", "Revoke sessions and permanently remove end users or OAuth applications.", "TriangleAlert", "Danger")
+            new("overview", "Overview", "LayoutDashboard", ""),
+            new("users", "Users", "Users", "Users"),
+            new("sessions", "Sessions", "Monitor", "Users"),
+            new("sign-in", "Sign-in methods", "LockKeyhole", "Sign-in"),
+            new("social", "Social sign-in", "Fingerprint", "Sign-in"),
+            new("configuration", "Configuration", "Settings", "Sign-in"),
+            new("clients", "OAuth applications", "Boxes", "Developers"),
+            new("branding", "Branding", "Wand2", "Customize"),
+            new("danger", "Danger zone", "TriangleAlert", "Danger")
         ];
     }
 
     // The social sign-in providers ts-auth supports, in its order, with where the customer creates the OAuth client.
-    public sealed record AuthenticationProvider(string Key, string Name, string ClientIdLabel, string ConsoleName, string ConsoleUrl, string Help)
+    public sealed record AuthenticationProvider(string Key, string Name, string ClientIdLabel, string ConsoleName, string ConsoleUrl)
     {
         public static AuthenticationProvider? Find(string key)
         {
@@ -351,14 +351,10 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
 
         public static readonly AuthenticationProvider[] All =
         [
-            new("google", "Google", "Client ID", "Google Cloud console credentials", "https://console.cloud.google.com/apis/credentials",
-                "Create an OAuth client ID of type Web application and add the callback URL as an authorized redirect URI."),
-            new("github", "GitHub", "Client ID", "GitHub Developer settings, OAuth Apps", "https://github.com/settings/developers",
-                "Register a new OAuth App and set the callback URL as its authorization callback URL."),
-            new("apple", "Apple", "Services ID", "Apple Developer Certificates, IDs & Profiles", "https://developer.apple.com/account/resources/identifiers/list/serviceId",
-                "Create a Services ID with Sign in with Apple and the callback URL as a return URL, then a Sign in with Apple key. Paste the .p8 key below."),
-            new("oidc", "OpenID Connect", "Client ID", "", "",
-                "Any OpenID Connect provider, such as Auth0, Keycloak or another TerraScale project. Register the callback URL as a redirect URI.")
+            new("google", "Google", "Client ID", "Google Cloud console credentials", "https://console.cloud.google.com/apis/credentials"),
+            new("github", "GitHub", "Client ID", "GitHub Developer settings, OAuth Apps", "https://github.com/settings/developers"),
+            new("apple", "Apple", "Services ID", "Apple Developer Certificates, IDs & Profiles", "https://developer.apple.com/account/resources/identifiers/list/serviceId"),
+            new("oidc", "OpenID Connect", "Client ID", "", "")
         ];
     }
 }

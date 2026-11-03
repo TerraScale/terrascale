@@ -53,7 +53,6 @@ namespace TerraScale.Dashboard.E2E.Features.AuthenticationManagement
             await Shot("03-sign-up-draft");
             await page.Locator("[data-brand-page=reset]").ClickAsync();
             await Assert.That(await preview.Locator("h3").InnerTextAsync()).IsEqualTo("Reset your password");
-            await Assert.That(await preview.Locator("[data-brand-subtitle]").InnerTextAsync()).IsEqualTo("Enter your account email and we will send you a reset code.");
             await Assert.That(await preview.GetByRole(AriaRole.Button, new() { Name = "Email me a reset code" }).IsVisibleAsync()).IsTrue();
             await Assert.That(await preview.Locator("#auth-preview-password").IsVisibleAsync()).IsFalse();
             await Assert.That(await preview.Locator(":scope > :last-child").InnerTextAsync()).IsEqualTo("Powered by TerraScale");

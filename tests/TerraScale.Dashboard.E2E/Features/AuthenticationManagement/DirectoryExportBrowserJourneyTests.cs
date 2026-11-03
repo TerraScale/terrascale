@@ -67,16 +67,18 @@ namespace TerraScale.Dashboard.E2E.Features.AuthenticationManagement
             var status = page.Locator("#auth-export-status");
             var projectId = await page.Locator("#auth-export-form input[name=project_id]").InputValueAsync();
             await Shot("01-ready");
-            await Assert.That(await submit.InnerTextAsync()).IsEqualTo("Download page");
+            await Assert.That(await submit.InnerTextAsync()).IsEqualTo("Download");
             await Assert.That(await cursor.InputValueAsync()).IsEqualTo("");
+            await Assert.That(await reset.IsVisibleAsync()).IsFalse();
 
-            // One click, one SDK page, one download; the cursor it returns is shown for resuming.
+            // One click, one SDK page, one download; the next page button carries the returned cursor.
             var first = await page.RunAndWaitForDownloadAsync(() => submit.ClickAsync());
             await Assert.That(first.SuggestedFilename).IsEqualTo($"users-{projectId}.json");
             await Assert.That(await DownloadedNext(first)).IsEqualTo(Cursor);
             await page.WaitForFunctionAsync("() => document.activeElement === document.querySelector('#auth-export-form [type=submit]')");
             await Assert.That(await cursor.InputValueAsync()).IsEqualTo(Cursor);
-            await Assert.That(await submit.InnerTextAsync()).IsEqualTo("Download next page");
+            await Assert.That(await submit.InnerTextAsync()).IsEqualTo("Next page");
+            await Assert.That(await reset.IsVisibleAsync()).IsTrue();
             await Shot("02-first-page");
 
             // Authorization is checked again on resume; a refused page keeps the cursor and downloads nothing.
@@ -102,11 +104,11 @@ namespace TerraScale.Dashboard.E2E.Features.AuthenticationManagement
 
             // Start over clears the export state; the next click begins again from the first page.
             await reset.ClickAsync();
-            await page.WaitForFunctionAsync("() => document.getElementById('auth-export-status').textContent === 'Ready to download one page.'");
+            await page.WaitForFunctionAsync("() => document.getElementById('auth-export-status').textContent === ''");
             await Assert.That(await submit.IsEnabledAsync()).IsTrue();
-            await Assert.That(await submit.InnerTextAsync()).IsEqualTo("Download page");
+            await Assert.That(await submit.InnerTextAsync()).IsEqualTo("Download");
             await Assert.That(await cursor.InputValueAsync()).IsEqualTo("");
-            await Assert.That(await page.Locator("#auth-export-cutoff").InnerTextAsync()).IsEqualTo("");
+            await Assert.That(await reset.IsVisibleAsync()).IsFalse();
             await Shot("05-start-over");
             var restarted = await page.RunAndWaitForDownloadAsync(() => submit.ClickAsync());
             await Assert.That(await DownloadedNext(restarted)).IsEqualTo(Cursor);

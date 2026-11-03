@@ -49,7 +49,6 @@ if (form) {
     root.querySelector('[data-brand-initial]').hidden = !!src;
     if (src) { if (logo.getAttribute('src') !== src) logo.src = src; } else logo.removeAttribute('src');
     root.querySelector('[data-brand-heading]').textContent = page === 'reset' ? 'Reset your password' : `${page === 'sign-up' ? 'Create your account on' : 'Sign in to'} ${name}`;
-    root.querySelector('[data-brand-subtitle]').textContent = page === 'reset' ? 'Enter your account email and we will send you a reset code.' : page === 'sign-up' ? `Get started with ${name} in under a minute.` : 'Welcome back. Use the email you signed up with.';
     root.querySelectorAll('[data-brand-form]').forEach(element => { element.hidden = element.dataset.brandForm !== page; });
     const footer = root.querySelector('[data-brand-footer]');
     footer.replaceChildren();

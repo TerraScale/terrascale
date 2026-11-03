@@ -927,7 +927,6 @@ button.ts-idp-provider:focus-visible {
 .ts-idp-brand-logo [data-brand-initial] { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; background: var(--brand-accent); color: var(--brand-on-accent); }
 .ts-idp-brand-card h3 { text-align: center; font-size: var(--brand-title-size, 24px); line-height: 1.2; overflow-wrap: anywhere; }
 .ts-idp-brand-card .ts-label { color: var(--brand-text); }
-.ts-idp-brand-subtitle, .ts-idp-brand-card .ts-hint { text-align: center; color: var(--brand-muted); font-size: 13px; }
 .ts-idp-brand-card .ts-input { background: var(--brand-canvas); color: var(--brand-text); border-color: var(--brand-line); opacity: 1; }
 .ts-idp-brand-card .ts-input::placeholder { color: var(--brand-muted); }
 .ts-idp-brand-card .ts-btn-primary { background: var(--brand-accent); color: var(--brand-on-accent); opacity: 1; }
