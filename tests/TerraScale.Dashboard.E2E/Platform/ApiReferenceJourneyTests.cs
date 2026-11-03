@@ -165,9 +165,10 @@ namespace TerraScale.Dashboard.E2E.Platform
             await Expect(page.GetByRole(AriaRole.Option)).ToHaveCountAsync(0);
             await page.Keyboard.PressAsync("Escape");
             await Expect(search).ToBeFocusedAsync();
-            await page.GetByRole(AriaRole.Button, new() { NameRegex = new("^Test Request") }).ClickAsync();
-            await Expect(page.GetByRole(AriaRole.Button, new()
-            { Name = "Send get request to https://dash.terrascale.tech/api/v1/auth/me" })).ToBeVisibleAsync();
+            // The first operation opens the client; its send button targets the absolute production server.
+            await page.GetByRole(AriaRole.Button, new() { NameRegex = new("^Test Request") }).First.ClickAsync();
+            await Expect(page.GetByRole(AriaRole.Dialog, new() { Name = "API Client" }).GetByRole(AriaRole.Button, new()
+            { NameRegex = new("^Send [a-z]+ request to https://dash\\.terrascale\\.tech/") })).ToBeVisibleAsync();
             await Assert.That(await page.EvaluateAsync<bool>("""
             () => [...document.querySelectorAll('style')].every(s => s.sheet &&
               s.nonce === document.querySelector('meta[property="csp-nonce"]').content)

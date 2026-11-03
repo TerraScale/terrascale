@@ -114,7 +114,8 @@ namespace TerraScale.Dashboard.E2E.Features.AuthenticationManagement
             await Shot("11-configuration-before");
             await page.Locator("#auth-redirects").FillAsync("https://example.com/callback#fragment");
             await page.GetByRole(AriaRole.Button, new() { Name = "Save configuration" }).ClickAsync();
-            await Assert.That(await page.Locator("#auth-error").IsVisibleAsync()).IsTrue();
+            // The save is a request; wait for its rejection instead of reading visibility the instant the click returns.
+            await Assertions.Expect(page.Locator("#auth-error")).ToBeVisibleAsync();
             await Shot("12-configuration-error");
             await page.Locator("#auth-redirects").FillAsync("https://example.com/callback");
             await page.Locator("#auth-lifetime").FillAsync("3600");
