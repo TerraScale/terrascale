@@ -1,0 +1,396 @@
+diff --git a/bindings/javascript/sync/src/lib.rs b/bindings/javascript/sync/src/lib.rs
+index a0a78f3..e8d623a 100644
+--- a/bindings/javascript/sync/src/lib.rs
++++ b/bindings/javascript/sync/src/lib.rs
+@@ -378,6 +378,7 @@ impl SyncEngine {
+             push_operations_threshold: self.opts.push_operations_threshold,
+             pull_bytes_threshold: self.opts.pull_bytes_threshold,
+             logical_mvcc_pull: self.opts.logical_mvcc_pull,
++            local_encryption: None,
+         };
+ 
+         let io = self.io()?;
+diff --git a/sync/engine/src/database_sync_engine.rs b/sync/engine/src/database_sync_engine.rs
+index 51522c4..5b46b61 100644
+--- a/sync/engine/src/database_sync_engine.rs
++++ b/sync/engine/src/database_sync_engine.rs
+@@ -88,6 +88,40 @@ pub struct DatabaseSyncEngineOpts {
+     /// Explicit values exist for tests and as an escape hatch — users should
+     /// not need to set this.
+     pub logical_mvcc_pull: Option<bool>,
++    pub local_encryption: Option<LocalEncryption>,
++}
++
++#[derive(Clone)]
++pub struct LocalEncryption(pub turso_core::EncryptionOpts);
++
++impl std::fmt::Debug for LocalEncryption {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_struct("LocalEncryption")
++            .field("cipher", &self.0.cipher)
++            .finish_non_exhaustive()
++    }
++}
++
++impl LocalEncryption {
++    pub fn key(&self) -> Result<turso_core::EncryptionKey> {
++        Ok(turso_core::EncryptionKey::from_hex_string(&self.0.hexkey)?)
++    }
++    pub fn codec(&self) -> Result<turso_core::EncryptionContext> {
++        let cipher = turso_core::CipherMode::try_from(self.0.cipher.as_str())?;
++        Ok(turso_core::EncryptionContext::new(
++            cipher,
++            &self.key()?,
++            PAGE_SIZE,
++        )?)
++    }
++}
++
++fn local_encryption_key(opts: &DatabaseSyncEngineOpts) -> Result<Option<turso_core::EncryptionKey>> {
++    opts.local_encryption.as_ref().map(LocalEncryption::key).transpose()
++}
++
++fn local_codec(opts: &DatabaseSyncEngineOpts) -> Result<Option<turso_core::EncryptionContext>> {
++    opts.local_encryption.as_ref().map(LocalEncryption::codec).transpose()
+ }
+ 
+ pub struct DataStats {
+@@ -1011,7 +1045,8 @@ impl<IO: SyncEngineIo> DatabaseSyncEngine<IO> {
+                         &sync_engine_io,
+                         opts.remote_url.clone(),
+                         opts.remote_encryption_key.as_deref(),
+-                    ),
++                    )
++                    .with_local_codec(local_codec(opts)?),
+                     &io,
+                     main_db_path,
+                     opts.protocol_version_hint,
+@@ -1213,7 +1248,7 @@ impl<IO: SyncEngineIo> DatabaseSyncEngine<IO> {
+ 
+         // DB wasn't synced with remote but will be encrypted on remote - so we must properly set reserved bytes field in advance
+         if meta.synced_revision.is_none() && opts.reserved_bytes != 0 {
+-            let conn = main_db.connect()?;
++            let conn = main_db.connect_with_encryption(local_encryption_key(&opts)?)?;
+             conn.wal_auto_actions_disable();
+             conn.set_reserved_bytes(opts.reserved_bytes as u8)?;
+ 
+@@ -1230,7 +1265,8 @@ impl<IO: SyncEngineIo> DatabaseSyncEngine<IO> {
+         tracing::info!("initialize database tape connection: path={}", main_db_path);
+         let main_db_io = main_db.io.clone();
+         let main_db_file = main_db.db_file.clone();
+-        let main_tape = DatabaseTape::new_with_opts(main_db, tape_opts);
++        let main_tape = DatabaseTape::new_with_opts(main_db, tape_opts)
++            .with_encryption_key(local_encryption_key(&opts)?);
+         // Initialize CDC pragma and cache CDC version so iterate_changes() can work
+         main_tape.connect(coro).await?;
+ 
+@@ -1305,7 +1341,8 @@ impl<IO: SyncEngineIo> DatabaseSyncEngine<IO> {
+         let main_db_options = turso_core::OpenOptions::new(Arc::new(SqliteDialect))
+             .storage(main_db_storage)
+             .flags(OpenFlags::Create)
+-            .db_opts(opts.db_opts);
++            .db_opts(opts.db_opts)
++            .encryption(opts.local_encryption.as_ref().map(|e| e.0.clone()));
+         let mut open_state = turso_core::OpenDbAsyncState::new();
+         let main_db = loop {
+             match turso_core::Database::open_async(
+@@ -1344,7 +1381,8 @@ impl<IO: SyncEngineIo> DatabaseSyncEngine<IO> {
+                 .storage(self.db_file.clone())
+                 .wal_path(self.revert_db_wal_path.clone())
+                 .flags(OpenFlags::Create)
+-                .db_opts(self.opts.db_opts);
++                .db_opts(self.opts.db_opts)
++                .encryption(self.opts.local_encryption.as_ref().map(|e| e.0.clone()));
+             let mut state = OpenDbAsyncState::new();
+             loop {
+                 match turso_core::Database::do_open_async(
+@@ -1363,7 +1401,7 @@ impl<IO: SyncEngineIo> DatabaseSyncEngine<IO> {
+                 }
+             }
+         };
+-        let conn = db.connect()?;
++        let conn = db.connect_with_encryption(local_encryption_key(&self.opts)?)?;
+         conn.wal_auto_actions_disable();
+         Ok(conn)
+     }
+@@ -1707,7 +1745,8 @@ impl<IO: SyncEngineIo> DatabaseSyncEngine<IO> {
+             &self.sync_engine_io,
+             self.meta().remote_url(),
+             self.opts.remote_encryption_key.as_deref(),
+-        );
++        )
++        .with_local_codec(local_codec(&self.opts)?);
+         let mut stream_kind =
+             if self.opts.protocol_version_hint == DatabaseSyncEngineProtocolVersion::Legacy {
+                 DbChangesStreamKind::LegacyPages
+@@ -2384,6 +2423,7 @@ impl<IO: SyncEngineIo> DatabaseSyncEngine<IO> {
+                     let db_size = wal_apply_from_file(
+                         coro,
+                         changes_file,
++                        local_codec(&self.opts)?.as_ref(),
+                         main_session
+                             .as_mut()
+                             .expect("main WAL session must be active"),
+@@ -2529,7 +2569,8 @@ impl<IO: SyncEngineIo> DatabaseSyncEngine<IO> {
+                                 &self.sync_engine_io,
+                                 self.meta().remote_url(),
+                                 self.opts.remote_encryption_key.as_deref(),
+-                            );
++                            )
++                            .with_local_codec(local_codec(&self.opts)?);
+                             match pull_updates_v1(ctx, changes_file, revision, None, true).await? {
+                                 (next_revision, PullUpdatesV1Result::Logical { txns, ops }, _) => {
+                                     tracing::info!(
+@@ -3775,6 +3816,7 @@ mod tests {
+             push_operations_threshold: None,
+             pull_bytes_threshold: None,
+             logical_mvcc_pull: Some(true),
++            local_encryption: None,
+         }
+     }
+ 
+diff --git a/sync/engine/src/database_sync_operations.rs b/sync/engine/src/database_sync_operations.rs
+index 0a92540..17aaa13 100644
+--- a/sync/engine/src/database_sync_operations.rs
++++ b/sync/engine/src/database_sync_operations.rs
+@@ -807,6 +807,62 @@ pub struct SyncOperationCtx<'a, IO: SyncEngineIo, Ctx> {
+     pub remote_url: Option<String>,
+     // optional remote encryption key for the encrypted Turso Cloud databases, base64 encoded
+     pub remote_encryption_key: Option<String>,
++    pub local_codec: Option<turso_core::EncryptionContext>,
++}
++
++const LOCAL_CODEC_PROTOCOL_ERROR: &str =
++    "local encryption supports only V1 page streams without partial sync";
++
++fn ensure_no_local_codec(local_codec: Option<&turso_core::EncryptionContext>) -> Result<()> {
++    if local_codec.is_some() {
++        return Err(Error::DatabaseSyncEngineError(
++            LOCAL_CODEC_PROTOCOL_ERROR.to_string(),
++        ));
++    }
++    Ok(())
++}
++
++pub fn seal_page(
++    local_codec: Option<&turso_core::EncryptionContext>,
++    page_no: u32,
++    page: &mut [u8],
++) -> Result<()> {
++    let Some(codec) = local_codec else {
++        return Ok(());
++    };
++    let reserved = codec.required_reserved_bytes() as usize;
++    if page.len() != PAGE_SIZE || page[PAGE_SIZE - reserved..].iter().any(|&b| b != 0) {
++        return Err(Error::DatabaseSyncEngineError(format!(
++            "page {page_no} has no free reserved space for local encryption"
++        )));
++    }
++    if page_no == 1 && !page.starts_with(b"SQLite format 3\0") {
++        return Err(Error::DatabaseSyncEngineError(
++            "page 1 has no SQLite header for local encryption".to_string(),
++        ));
++    }
++    let sealed = codec.encrypt_page(page, page_no as usize)?;
++    page.copy_from_slice(&sealed);
++    Ok(())
++}
++
++pub fn open_page(
++    local_codec: Option<&turso_core::EncryptionContext>,
++    page_no: u32,
++    page: &mut [u8],
++) -> Result<()> {
++    let Some(codec) = local_codec else {
++        return Ok(());
++    };
++    if page.len() != PAGE_SIZE {
++        return Err(Error::DatabaseSyncEngineError(format!(
++            "page {page_no} has unexpected size: {} != {PAGE_SIZE}",
++            page.len()
++        )));
++    }
++    let opened = codec.decrypt_page(page, page_no as usize)?;
++    page.copy_from_slice(&opened);
++    Ok(())
+ }
+ 
+ impl<'a, IO: SyncEngineIo, Ctx> SyncOperationCtx<'a, IO, Ctx> {
+@@ -823,8 +879,13 @@ impl<'a, IO: SyncEngineIo, Ctx> SyncOperationCtx<'a, IO, Ctx> {
+             io,
+             remote_url: remote_url.map(|x| x.to_string()),
+             remote_encryption_key: remote_encryption_key.map(|k| k.to_string()),
++            local_codec: None,
+         }
+     }
++    pub fn with_local_codec(mut self, local_codec: Option<turso_core::EncryptionContext>) -> Self {
++        self.local_codec = local_codec;
++        self
++    }
+     pub fn http(
+         &self,
+         method: &str,
+@@ -1793,6 +1854,7 @@ pub async fn db_bootstrap<IO: SyncEngineIo, Ctx>(
+ pub async fn wal_apply_from_file<Ctx>(
+     coro: &Coro<Ctx>,
+     frames_file: &Arc<dyn turso_core::File>,
++    local_codec: Option<&turso_core::EncryptionContext>,
+     session: &mut DatabaseWalSession,
+ ) -> Result<u32> {
+     let size = frames_file.size()?;
+@@ -1817,6 +1879,11 @@ pub async fn wal_apply_from_file<Ctx>(
+         let info = WalFrameInfo::from_frame_header(buffer.as_slice());
+         tracing::debug!("got frame: {:?}", info);
+         db_size = info.db_size;
++        open_page(
++            local_codec,
++            info.page_no,
++            &mut buffer.as_mut_slice()[WAL_FRAME_HEADER..],
++        )?;
+         session.append_page(info.page_no, &buffer.as_slice()[WAL_FRAME_HEADER..])?;
+     }
+     assert!(db_size > 0);
+@@ -1987,6 +2054,11 @@ pub async fn pull_updates_v1<IO: SyncEngineIo, Ctx>(
+                 }
+                 tracing::debug!("page_data_opt: {}", page_data_opt.is_some());
+                 frame_info.put_to_frame_header(buffer.as_mut_slice());
++                seal_page(
++                    ctx.local_codec.as_ref(),
++                    frame_info.page_no,
++                    &mut buffer.as_mut_slice()[WAL_FRAME_HEADER..],
++                )?;
+ 
+                 let c = Completion::new_write(move |result| {
+                     let Ok(size) = result else {
+@@ -2029,6 +2101,7 @@ pub async fn pull_updates_v1<IO: SyncEngineIo, Ctx>(
+                         .to_string(),
+                 ));
+             }
++            ensure_no_local_codec(ctx.local_codec.as_ref())?;
+             let mut body = bytes.split().to_vec();
+             body.extend_from_slice(
+                 &wait_all_results(ctx.coro, &completion, Some(&ctx.io.network_stats)).await?,
+@@ -2131,6 +2204,11 @@ pub async fn wal_pull_to_file_v1<IO: SyncEngineIo, Ctx>(
+         }
+         tracing::debug!("page_data_opt: {}", page_data_opt.is_some());
+         frame_info.put_to_frame_header(buffer.as_mut_slice());
++        seal_page(
++            ctx.local_codec.as_ref(),
++            frame_info.page_no,
++            &mut buffer.as_mut_slice()[WAL_FRAME_HEADER..],
++        )?;
+ 
+         let c = Completion::new_write(move |result| {
+             // todo(sivukhin): we need to error out in case of partial read
+@@ -2265,6 +2343,7 @@ pub async fn wal_pull_to_file_legacy<IO: SyncEngineIo, Ctx>(
+     tracing::info!(
+         "wal_pull: generation={generation}, start_frame={start_frame}, wal_pull_batch_size={wal_pull_batch_size}"
+     );
++    ensure_no_local_codec(ctx.local_codec.as_ref())?;
+ 
+     // todo(sivukhin): optimize allocation by using buffer pool in the DatabaseSyncOperations
+     #[allow(clippy::arc_with_non_send_sync)]
+@@ -3338,11 +3417,15 @@ pub async fn bootstrap_db_file<IO: SyncEngineIo, Ctx>(
+                     "can't bootstrap prefix of database with legacy protocol".to_string(),
+                 ));
+             }
++            ensure_no_local_codec(ctx.local_codec.as_ref())?;
+             // The legacy wire protocol has no MVCC variant; it is pages by definition.
+             let revision = bootstrap_db_file_legacy(ctx, io, main_db_path).await?;
+             Ok((revision, RemotePullProtocol::Pages))
+         }
+         DatabaseSyncEngineProtocolVersion::V1 => {
++            if partial_sync.is_some() {
++                ensure_no_local_codec(ctx.local_codec.as_ref())?;
++            }
+             bootstrap_db_file_v1(ctx, io, main_db_path, partial_sync, pull_bytes_threshold).await
+         }
+     }
+@@ -3439,6 +3522,7 @@ async fn pull_chunk_into_file<IO: SyncEngineIo, Ctx>(
+             page_data.page_id
+         );
+         let offset = page_data.page_id * PAGE_SIZE as u64;
++        let page_no = page_data.page_id as u32 + 1;
+         let page = decode_page(&header, page_data)?;
+         if page.len() != PAGE_SIZE {
+             return Err(Error::DatabaseSyncEngineError(format!(
+@@ -3448,6 +3532,7 @@ async fn pull_chunk_into_file<IO: SyncEngineIo, Ctx>(
+             )));
+         }
+         buffer.as_mut_slice().copy_from_slice(&page);
++        seal_page(ctx.local_codec.as_ref(), page_no, buffer.as_mut_slice())?;
+         let c = Completion::new_write(move |result| {
+             // todo(sivukhin): we need to error out in case of partial read
+             let Ok(size) = result else {
+@@ -5816,6 +5901,7 @@ mod tests {
+             push_operations_threshold: None,
+             pull_bytes_threshold: None,
+             logical_mvcc_pull: Some(true),
++            local_encryption: None,
+         }
+     }
+ 
+diff --git a/sync/engine/src/database_tape.rs b/sync/engine/src/database_tape.rs
+index df4dfbb..aa9e54c 100644
+--- a/sync/engine/src/database_tape.rs
++++ b/sync/engine/src/database_tape.rs
+@@ -25,6 +25,7 @@ pub struct DatabaseTape {
+     pragma_query: String,
+     cdc_version: std::sync::RwLock<Option<turso_core::CdcVersion>>,
+     disable_auto_checkpoint: bool,
++    encryption_key: Option<turso_core::EncryptionKey>,
+ }
+ 
+ pub(crate) const DEFAULT_CDC_TABLE_NAME: &str = "turso_sync_cdc";
+@@ -160,17 +161,25 @@ impl DatabaseTape {
+             pragma_query,
+             cdc_version: std::sync::RwLock::new(None),
+             disable_auto_checkpoint: opts.disable_auto_checkpoint,
++            encryption_key: None,
+         }
+     }
++    pub fn with_encryption_key(mut self, encryption_key: Option<turso_core::EncryptionKey>) -> Self {
++        self.encryption_key = encryption_key;
++        self
++    }
++    fn connect_inner(&self) -> Result<Arc<turso_core::Connection>> {
++        Ok(self.inner.connect_with_encryption(self.encryption_key.clone())?)
++    }
+     pub(crate) fn connect_untracked(&self) -> Result<Arc<turso_core::Connection>> {
+-        let connection = self.inner.connect()?;
++        let connection = self.connect_inner()?;
+         if self.disable_auto_checkpoint {
+             connection.wal_auto_actions_disable();
+         }
+         Ok(connection)
+     }
+     pub async fn connect<Ctx>(&self, coro: &Coro<Ctx>) -> Result<Arc<turso_core::Connection>> {
+-        let connection = self.inner.connect()?;
++        let connection = self.connect_inner()?;
+         if self.disable_auto_checkpoint {
+             connection.wal_auto_actions_disable();
+         }
+@@ -226,7 +235,7 @@ impl DatabaseTape {
+         opts: DatabaseChangesIteratorOpts,
+     ) -> Result<DatabaseChangesIterator> {
+         tracing::debug!("opening changes iterator with options {:?}", opts);
+-        let conn = self.inner.connect()?;
++        let conn = self.connect_inner()?;
+         if self.disable_auto_checkpoint {
+             conn.wal_auto_actions_disable();
+         }
+diff --git a/sync/sdk-kit/src/rsapi.rs b/sync/sdk-kit/src/rsapi.rs
+index d16f6c3..b24462a 100644
+--- a/sync/sdk-kit/src/rsapi.rs
++++ b/sync/sdk-kit/src/rsapi.rs
+@@ -266,6 +266,10 @@ impl<TBytes: AsRef<[u8]> + Send + Sync + 'static> TursoDatabaseSync<TBytes> {
+             push_operations_threshold: sync_config.push_operations_threshold,
+             pull_bytes_threshold: sync_config.pull_bytes_threshold,
+             logical_mvcc_pull: sync_config.logical_mvcc_pull,
++            local_encryption: db_config
++                .encryption
++                .clone()
++                .map(turso_sync_engine::database_sync_engine::LocalEncryption),
+         };
+         let is_memory = db_config.path == ":memory:";
+         let db_io: Option<Arc<dyn IO>> = if is_memory {
