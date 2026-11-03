@@ -51,11 +51,6 @@ summary.ts-card-head {
   font-weight: 600;
 }
 
-.ts-card-description {
-  color: var(--ts-ink-2);
-  font-size: var(--ts-fs-sm);
-}
-
 .ts-card-actions {
   display: flex;
   flex-wrap: wrap;
@@ -79,10 +74,6 @@ summary.ts-card-head {
 
 .ts-card-head-title-actions > .ts-card-actions {
   margin-left: auto;
-}
-
-.ts-card-head-title-actions > .ts-card-description {
-  flex: 0 0 100%;
 }
 
 .ts-card-body {
@@ -416,11 +407,6 @@ summary.ts-card-head {
   font-size: var(--ts-fs-xl);
 }
 
-.ts-stat-detail {
-  color: var(--ts-ink-3);
-  font-size: var(--ts-fs-sm);
-}
-
 @media (max-width: 47.99rem) {
   .ts-stats {
     --ts-stat-pad: var(--ts-s4);
@@ -479,12 +465,6 @@ summary.ts-card-head {
   color: var(--ts-ink);
   font-size: var(--ts-fs-md);
   font-weight: 500;
-}
-
-.ts-empty-detail {
-  max-width: 52ch;
-  color: var(--ts-ink-2);
-  font-size: var(--ts-fs-sm);
 }
 
 .ts-empty > .ts-btn,

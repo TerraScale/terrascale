@@ -45,7 +45,6 @@
   --ts-on-primary: var(--ts-on-accent);
   --ts-link: #6b93ff;
   --ts-focus: #6b93ff;
-  --ts-eyebrow: var(--ts-link);
   --ts-hover: rgb(255 255 255 / 0.05);
   /* Status colors at full strength. */
   --ts-success: #6bca92;

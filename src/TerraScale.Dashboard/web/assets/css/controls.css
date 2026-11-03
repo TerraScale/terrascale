@@ -190,11 +190,6 @@ body.ts-nav-pending form[data-submit-once] .ts-btn[type="submit"] {
   font-weight: 500;
 }
 
-.ts-hint {
-  color: var(--ts-ink-3);
-  font-size: var(--ts-fs-xs);
-}
-
 .ts-field-error {
   color: var(--ts-danger);
   font-size: var(--ts-fs-xs);

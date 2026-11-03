@@ -1,5 +1,8 @@
 # TerraScale Dashboard Design System
 
+Copy follows the [simple-ui standard](../../.agents/skills/simple-ui/SKILL.md): titles, labels and
+values only; no subtitles, hints, captions or eyebrows. `make dashboard-lint` rejects their classes.
+
 Pages are server-rendered [RazorSlices](https://github.com/DamianEdwards/RazorSlices)
 `.cshtml` slices enhanced with Datastar. Paths below are relative to
 `src/TerraScale.Dashboard` unless they start with `scripts/`. Readable CSS
@@ -43,10 +46,10 @@ Abridged from `Features/Databases/DatabasesView.cshtml`:
 <main class="ts-page">
 <h1 class="ts-sr-only">Databases</h1><div class="ts-page-actions"></div>
 <dl class="ts-stats" aria-label="Database totals">
-  <div class="ts-stat" data-tone="blue"><dt class="ts-stat-label"><span class="ts-dot" aria-hidden="true"></span>Databases</dt><dd class="ts-stat-value">@Model.All.Count</dd><dd class="ts-stat-detail">In this project</dd></div>
+  <div class="ts-stat" data-tone="blue"><dt class="ts-stat-label"><span class="ts-dot" aria-hidden="true"></span>Databases</dt><dd class="ts-stat-value">@Model.All.Count</dd></div>
 </dl>
 <section class="ts-card ts-card-flush" id="project-databases" aria-labelledby="project-databases-title">
-  <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="project-databases-title">Project databases</h2><p class="ts-card-description">@Model.Description</p></div></header>
+  <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="project-databases-title">Project databases</h2></div></header>
   <div class="ts-card-body"><div class="ts-table-wrap"><table class="ts-table">…</table></div></div>
 </section>
 </main>
@@ -60,10 +63,10 @@ Abridged from `Features/Databases/DatabasesView.cshtml`:
 | Card | Markup only: `section.ts-card` with `ts-card-head` and `ts-card-body`; `ts-card-flush` for tables |
 | Stats | Markup only: `dl.ts-stats` with `div.ts-stat` and `data-tone` (`ts-stats-compact` for word values) |
 | Disclosure | No C# equivalent; create and destructive forms use `dialog.ts-dialog` |
-| Empty state | Markup only: `div.ts-empty` with `ts-empty-title` and `ts-empty-detail`; a call to action may follow |
+| Empty state | Markup only: `div.ts-empty` with one `ts-empty-title` sentence and at most one action |
 | Alert | Markup only: `ts-alert ts-alert-info/-success/-warning/-danger` with `ts-alert-title` and `ts-alert-body` |
 | Badge | Markup only: `ts-badge-neutral/-info/-success/-warning/-danger/-violet`, or `ts-badge-tone` with `data-tone` |
-| Field | Markup only: `div.ts-field` with `ts-label`, the control and a hint or error |
+| Field | Markup only: `div.ts-field` with `ts-label`, the control and, only on failure, an error |
 | Region map | `Shared/UI/Slices/RegionMap.cshtml` (decorative) and `Shared/UI/Slices/RegionPicker.cshtml` with `Shared/UI/RegionMapField.cs` (highlights hubs chosen in a select or checkbox group) |
 | Icons | `Shared/UI/Icons.cs` (`Icons.Render`) and `Shared/UI/Slices/ShellIcons.cs` |
 
@@ -73,7 +76,7 @@ Abridged from `Features/Databases/DatabasesView.cshtml`:
 |---|---|
 | Layout | `ts-page` `ts-split` `ts-grid` `ts-grid-2` `ts-grid-3` `ts-stack(-sm/-lg)` `ts-row` `ts-row-between` `ts-toolbar` |
 | Text | `ts-meta` `ts-muted` `ts-strong` `ts-mono` `ts-num` `ts-link` `ts-truncate` `ts-break` `ts-sr-only` |
-| Controls | `ts-btn` + `-primary/-secondary/-ghost/-danger`, `-sm/-lg/-block`; `ts-icon-btn`; `ts-input` `ts-select` `ts-label` `ts-hint` `ts-check` `ts-input-group` |
+| Controls | `ts-btn` + `-primary/-secondary/-ghost/-danger`, `-sm/-lg/-block`; `ts-icon-btn`; `ts-input` `ts-select` `ts-label` `ts-check` `ts-input-group` |
 | Forms | `ts-form` `ts-form-grid` `ts-form-actions` `ts-filters` `ts-filter-field` |
 | Data | `ts-table-wrap` `ts-table` `ts-list` `ts-list-item` `ts-kv` `ts-pager` `ts-progress` `ts-code` `ts-snippet` `ts-dot` `ts-avatar` |
 | Overlays | `ts-menu` (`<details class="ts-menu" data-on:click__outside="el.open = false">` + `ts-menu-panel`, `ts-menu-item`), `dialog.ts-dialog`, `ts-tip` |

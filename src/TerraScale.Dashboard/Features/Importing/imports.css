@@ -24,48 +24,12 @@
   border-radius: var(--ts-radius-pill);
   background: var(--ts-accent);
 }
-
-.ts-import-outline,
 .ts-import-issues {
   display: grid;
   gap: var(--ts-s2);
   margin: 0;
   color: var(--ts-ink-2);
 }
-
-.ts-import-outline {
-  padding: 0;
-  list-style: none;
-  counter-reset: import-step;
-}
-
-.ts-import-outline > li {
-  display: flex;
-  align-items: start;
-  gap: var(--ts-s3);
-  padding: var(--ts-s4);
-  border: 1px solid var(--ts-line);
-  border-radius: var(--ts-radius-lg);
-  background: var(--ts-surface);
-  counter-increment: import-step;
-}
-
-.ts-import-outline > li::before {
-  content: counter(import-step, decimal-leading-zero);
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--ts-radius);
-  background: color-mix(in oklab, var(--hue) 16%, transparent);
-  color: color-mix(in oklab, var(--hue) 60%, var(--ts-ink));
-  font: 500 var(--ts-fs-xs) / 1 var(--ts-font-mono);
-}
-
-.ts-import-outline > li:nth-child(1) { --hue: var(--ts-chart-1); }
-.ts-import-outline > li:nth-child(2) { --hue: var(--ts-chart-2); }
-.ts-import-outline > li:nth-child(3) { --hue: var(--ts-chart-3); }
 
 .ts-import-issues {
   padding: 0;
@@ -120,6 +84,5 @@
 .ts-import-format:has(input:focus-visible) { outline: 2px solid var(--ts-focus); outline-offset: 2px; }
 .ts-import-format input { margin: 0; accent-color: var(--ts-accent); }
 .ts-import-format strong { display: block; color: var(--ts-ink); font-weight: 500; }
-.ts-import-format small { color: var(--ts-ink-3); font-size: var(--ts-fs-xs); }
 .ts-imports [data-import-issues="blocking"] { color: var(--ts-danger); }
 .ts-imports [data-import-issues="warning"] { color: var(--ts-warning); }

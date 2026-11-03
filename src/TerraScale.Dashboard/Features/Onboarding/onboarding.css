@@ -30,10 +30,6 @@
   margin-inline: calc(var(--ts-s6) + 1px);
 }
 
-.ts-onboarding-progress .ts-eyebrow {
-  color: var(--ts-link);
-}
-
 .ts-onboarding-steps {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

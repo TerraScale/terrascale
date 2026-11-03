@@ -540,15 +540,6 @@ details[open] > .ts-account-trigger {
   padding-left: 34px;
 }
 
-.ts-search-context {
-  display: block;
-  color: var(--ts-ink-3);
-  font-size: var(--ts-fs-xs);
-  font-weight: 400;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
 .ts-context-search-empty {
   display: grid;
   justify-items: start;

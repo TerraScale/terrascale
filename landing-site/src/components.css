@@ -139,7 +139,6 @@
   .ts-card + .ts-card { padding-top: var(--ts-s8); border-top: 1px solid var(--ts-line); }
   .ts-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ts-s4); flex-wrap: wrap; }
   .ts-card-title { font-size: var(--ts-fs-xl); }
-  .ts-card-description { margin-top: var(--ts-s1); color: var(--ts-ink-2); }
   .ts-panel { border: 1px solid var(--ts-line); border-radius: var(--ts-radius-lg); background: var(--ts-surface); }
 
   /* ---------- Stats ---------- */
@@ -149,7 +148,6 @@
   .ts-stat dt { display: flex; align-items: center; gap: var(--ts-s2); }
   .ts-stat dd { margin: 0; font: var(--ts-display-weight) var(--ts-fs-3xl) / 1 var(--ts-font-num); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--ts-ink); }
   .ts-stat dd small { font: 400 var(--ts-fs-md) / 1 var(--ts-font-sans); color: var(--ts-ink-3); letter-spacing: 0; margin-left: 4px; }
-  .ts-stat-detail { font-size: var(--ts-fs-sm); color: var(--ts-ink-3); }
   .ts-delta-up { color: var(--ts-success); }
 
   /* ---------- Badges / pills / dots ---------- */
