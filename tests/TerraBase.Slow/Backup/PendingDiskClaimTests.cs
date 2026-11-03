@@ -2,6 +2,7 @@ using System.Diagnostics.Metrics;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 using TerraBase.Testing;
 
