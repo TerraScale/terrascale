@@ -116,5 +116,9 @@ public sealed class StoreCreationTests
             using var health = await server.Client.GetAsync(new Uri("/healthz", UriKind.Relative), deadline.Token);
             health.EnsureSuccessStatusCode();
         }
+        finally
+        {
+            await engine!.DisposeAsync();
+        }
     }
 }
