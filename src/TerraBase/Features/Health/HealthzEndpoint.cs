@@ -22,7 +22,7 @@ public sealed record StatusBody(
     public static StatusBody For(HttpContext context, string status, TerraBaseOptions options, string? bucket = null) =>
         Listeners.ArrivedOn(context) == TerraBaseListener.Internal
             ? new(status, ServiceVersion.Value, options.Region, Engine.Turso.StorageFormat.Id, ServiceVersion.Revision, options.MachineId, bucket)
-            : new(status, ServiceVersion.Value, options.Region, bucket: null);
+            : new(status, ServiceVersion.Value, options.Region);
 }
 public sealed class HealthzEndpoint(TerraBaseOptions options, ICatalogGate catalog) : EndpointWithoutRequest<IResult>
 {
@@ -44,8 +44,9 @@ public sealed class HealthzEndpoint(TerraBaseOptions options, ICatalogGate catal
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var status = catalog.Status;
-        return ValueTask.FromResult(status.State == CatalogGateState.BucketMissing
+        IResult result = status.State == CatalogGateState.BucketMissing
             ? TypedResults.Json(StatusBody.For(HttpContext, "degraded", options, status.Bucket), statusCode: StatusCodes.Status503ServiceUnavailable)
-            : TypedResults.Ok(StatusBody.For(HttpContext, "ok", options)));
+            : TypedResults.Ok(StatusBody.For(HttpContext, "ok", options));
+        return ValueTask.FromResult(result);
     }
 }

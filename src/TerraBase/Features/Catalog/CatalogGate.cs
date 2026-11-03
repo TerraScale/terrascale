@@ -56,7 +56,7 @@ internal sealed class CatalogGate(
     private static readonly TimeSpan AnchorTimeout = TimeSpan.FromSeconds(10);
     private readonly SemaphoreSlim _anchoring = new(1, 1);
     private readonly TaskCompletionSource _opened = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly Counter<long> _bucketMissing;
+    private Counter<long> _bucketMissing = null!;
     private volatile bool _open;
     // 0 unverified, 1 bucket missing; an int for volatile access.
     private int _bucketMissingState;
