@@ -30,6 +30,7 @@ def main(language):
     runs = json.loads(run("gh", "run", "list", "--repo", "TerraScale/terrascale", "--branch", "main",
                           "--commit", revision, "--event", "push", "--limit", "100", "--json",
                           "status,conclusion,workflowName", capture=True))
+    runs = [item for item in runs if item["workflowName"] != "SDK Go Release"]
     if not runs or any(item["status"] != "completed" or item["conclusion"] not in {"success", "skipped"} for item in runs):
         raise SystemExit("Main must be green before release qualification")
     area = ROOT / "sdk" / language

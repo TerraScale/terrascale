@@ -8,7 +8,6 @@ on:
       - 'scripts/sdk/**'
       - '.github/workflows/sdk-go-release.yml'
     tags: ['sdk/go/v0.0.*']
-
 permissions:
   contents: read
   statuses: read
@@ -20,36 +19,34 @@ concurrency:
 jobs:
   tests:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/sdk-fast.yml
-    with:
-      area: sdk-go
-
-  autorelease:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: write
+      contents: read
       statuses: read
       actions: read
+    outputs:
+      eligible: ${{ steps.gate.outputs.eligible }}
     steps:
-      - name: Tag the qualified revision
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - id: gate
+        name: Select qualified current green main
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           REVISION: ${{ github.sha }}
-          QUALIFIED_DIR: ${{ runner.temp }}/qualified
         run: |
           python3 - <<'PYTHON'
-          import json, os, pathlib, subprocess, time
+          import json, os, subprocess, time
           def gh(*args):
               return json.loads(subprocess.check_output(['gh', *args], text=True))
           repo, revision = os.environ['REPOSITORY'], os.environ['REVISION']
           def main_green():
-              runs = gh('run', 'list', '--repo', repo, '--workflow', 'ci.yml', '--branch', 'main',
-                        '--commit', revision, '--event', 'push', '--limit', '100',
-                        '--json', 'status,conclusion')
+              runs = gh('run', 'list', '--repo', repo, '--branch', 'main', '--commit', revision,
+                        '--event', 'push', '--limit', '100', '--json', 'status,conclusion,workflowName')
+              runs = [item for item in runs if item['workflowName'] != 'SDK Go Release']
               return bool(runs) and all(item['status'] == 'completed'
                                         and item['conclusion'] in {'success', 'skipped'} for item in runs)
           def qualified():
@@ -63,11 +60,39 @@ jobs:
           deadline = time.monotonic() + 25 * 60
           while time.monotonic() < deadline and not (main_green() and qualified()):
               time.sleep(30)
-          if not (main_green() and qualified()):
-              raise SystemExit('This revision never became qualified green main')
-          if current_main() != revision:
-              print('A newer main revision superseded this release.')
-              raise SystemExit(0)
+          eligible = (main_green() and qualified() and current_main() == revision)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f"eligible={'true' if eligible else 'false'}\n")
+          if not eligible:
+              print('This revision never became qualified green main.')
+          PYTHON
+      - name: Require this commit's dev-host Fast result
+        if: steps.gate.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVISION: ${{ github.sha }}
+        run: python3 scripts/sdk/check-proof.py sdk-go "$REVISION"
+
+  autorelease:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.tests.outputs.eligible == 'true'
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      statuses: read
+      actions: read
+    steps:
+      - name: Tag the qualified revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REVISION: ${{ github.sha }}
+          QUALIFIED_DIR: ${{ runner.temp }}/qualified
+        run: |
+          python3 - <<'PYTHON'
+          import json, os, pathlib, subprocess
+          repo, revision = os.environ['REPOSITORY'], os.environ['REVISION']
           qualified_dir = pathlib.Path(os.environ['QUALIFIED_DIR'])
           qualified_dir.mkdir(parents=True, exist_ok=True)
           subprocess.check_call(['gh', 'release', 'download', f'sdk/go/qualified-{revision}',
