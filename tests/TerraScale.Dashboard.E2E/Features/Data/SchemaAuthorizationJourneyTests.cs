@@ -57,7 +57,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             await Assert.That(requests).IsEqualTo(1);
             using (var foreign = await replica.GetAsync("/api/v1/dashboard/schema?databaseId=foreign&collection=users"))
             {
-                await Assert.That(foreign.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+                await Assert.That(foreign.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
             }
 
             await Assert.That(requests).IsEqualTo(1);
