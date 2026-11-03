@@ -7,10 +7,11 @@ Hosting: [OCI and ts-orch](../oci.md); node discovery: [TerraBase on ts-orch](ts
 Local processes: [TerraBase local host](local-host.md).
 Recovery: [Copy placement and snapshot routing](recovery-copy-placement.md).
 
-TerraBase is a leaderless, multi-region document database focused on fast and
-efficient synchronization and replication. This repository is the C#/.NET 11
-implementation; product goals and contracts are in `../terrabase-rust`
-(`GOAL.md`, `docs/`).
+TerraBase is TerraScale's database, moving to SQL only on Turso. The leaderless
+replication engine is removed; each database serves from one region until region
+replicas ship ([decision](decisions/2026-10-29-single-region-until-sync.md)).
+The document API is still served until its deletion lands. This is the C#/.NET 11
+implementation.
 
 ## Requirements
 
