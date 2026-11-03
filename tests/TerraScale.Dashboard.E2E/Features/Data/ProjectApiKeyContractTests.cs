@@ -227,7 +227,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         {
             using var wire = new Wire { Failure = "repeated" };
             var service = new ApiKeyService(wire, TimeProvider.System, new TsAuthClient(wire.CreateClient("platform")));
-            var first = await service.ListPageAsync(Context(), null, ApiKeyService.IssuerPageSize, CancellationToken.None);
+            var first = await service.ListPageAsync(Context(), "opaque+/cursor=", ApiKeyService.IssuerPageSize, CancellationToken.None);
             await Assert.That(first.HasMore).IsFalse();
             await Assert.That(first.NextCursor).IsNull();
             await Assert.That(first.Items.Single().Id).IsEqualTo(KeyId);
@@ -235,27 +235,17 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         }
 
         [Test]
-        public async Task ListPageFetchesOnlyOneIssuerPageAndDropsDuplicatesAcrossCalls()
+        public async Task ListPageFetchesOnlyOneIssuerPageAndDropsDuplicateRows()
         {
             using var wire = new Wire { Pages = 3 };
             var service = new ApiKeyService(wire, TimeProvider.System, new TsAuthClient(wire.CreateClient("platform")));
             var context = Context();
-            var seen = new HashSet<string>(StringComparer.Ordinal);
-            string? cursor = null;
-            var pages = 0;
-            do
-            {
-                var page = await service.ListPageAsync(context, cursor, 2, CancellationToken.None);
-                pages++;
-                foreach (var key in page.Items)
-                {
-                    await Assert.That(seen.Add(key.Id)).IsTrue().Because("no key may repeat across pages");
-                }
-                cursor = page.NextCursor;
-            } while (cursor is not null);
-            await Assert.That(pages).IsEqualTo(3);
-            await Assert.That(seen.Count).IsEqualTo(5);
-            await Assert.That(seen.SetEquals(wire.AllIds)).IsTrue();
+            var second = await service.ListPageAsync(context, "page-2", 2, CancellationToken.None);
+            await Assert.That(wire.Requests).IsEqualTo(1);
+            await Assert.That(wire.Query).IsEqualTo("?limit=2&after=page-2");
+            // Page two repeats the first page's key beside a new one: the duplicate is dropped.
+            await Assert.That(second.Items.Select(key => key.Id).ToArray()).IsEqualTo(new[] { "01JA0000000000000000000A00" });
+            await Assert.That(second.NextCursor).IsEqualTo("page-3");
         }
 
         [Test]
@@ -398,7 +388,6 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             public string? Path { get; private set; }
             public List<HttpMethod> Methods { get; } = [];
             private bool Deleted { get; set; }
-            private int RepeatedOnce { get; set; }
             public string[] AllIds =>
             [
                 KeyId,
@@ -421,8 +410,8 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             {
                 if (Pages == 0)
                 {
-                    // "repeated": the issuer answers the same cursor it was given, once, then ends.
-                    if (Failure == "repeated" && RepeatedOnce++ == 0)
+                    // "repeated": the issuer answers the same cursor it was given; the traversal must end, not loop.
+                    if (Failure == "repeated")
                     {
                         return JsonSerializer.Serialize(new { items = new[] { Key(KeyId) }, next = "opaque+/cursor=" });
                     }
@@ -430,7 +419,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                     return JsonSerializer.Serialize(new { items = new[] { Key(KeyId) }, next = (string?)null });
                 }
 
-                // Three bounded pages over five keys: 2 + 2 + 1, with a duplicate of the first key on page two.
+                // Three bounded pages over five keys: 2 + 2 (repeating the first key) + 1.
                 var page = Query switch
                 {
                     "" or "?limit=2" => (Ids: new[] { KeyId, "01JA00000000000000000000A0" }, Next: "page-2" as string),

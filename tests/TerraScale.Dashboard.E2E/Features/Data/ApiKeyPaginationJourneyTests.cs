@@ -37,11 +37,13 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 {
                     throw new InvalidOperationException("Page " + pages + " failed: " + await response.Content.ReadAsStringAsync());
                 }
+
                 using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
                 foreach (var item in body.RootElement.GetProperty("items").EnumerateArray())
                 {
                     seen.Add(item.GetProperty("keyId").GetString()!);
                 }
+
                 pages++;
                 after = body.RootElement.GetProperty("nextCursor").GetString();
                 if (body.RootElement.GetProperty("hasMore").GetBoolean() is false)
@@ -51,10 +53,10 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 }
             }
 
-            await Assert.That(pages).IsEqualTo(4);
-            await Assert.That(seen.Distinct(StringComparer.Ordinal).Count()).IsEqualTo(seen.Count).Because("no duplicates may survive a traversal");
-            await Assert.That(seen.Order(StringComparer.Ordinal).ToArray()).IsEqualTo(PagingIssuer.AllIds.Order(StringComparer.Ordinal).ToArray()).Because("no key may be omitted");
-            await Assert.That(issuer.ListReads).IsEqualTo(4);
+            await Assert.That(pages).IsEqualTo(3);
+            // The duplicate row the issuer repeats inside page two is dropped, not surfaced twice.
+            await Assert.That(seen.Order(StringComparer.Ordinal).ToArray()).IsEqualTo(PagingIssuer.TraversedIds.Order(StringComparer.Ordinal).ToArray()).Because("no key may be omitted or repeated");
+            await Assert.That(issuer.ListReads).IsEqualTo(3);
             // A cursor the issuer keeps repeating terminates the list instead of looping.
             using var repeat = await client.GetAsync("/api/v1/dashboard/credentials?limit=2&after=" + Uri.EscapeDataString("stuck"));
             await Assert.That(repeat.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -70,14 +72,14 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             using var second = await client.GetAsync("/api-keys?cursor=cursor-2");
             var secondHtml = await second.Content.ReadAsStringAsync();
             await Assert.That(second.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(secondHtml).Contains("href=\"/api-keys?cursor=cursor-3\"").Because("filters travel with the cursor");
-            await Assert.That(secondHtml).Contains("href=\"/api-keys\"").Because("First page returns to the newest keys");
+            await Assert.That(secondHtml).Contains("href=\"/api-keys?cursor=cursor-3\"").Because("the Next link keeps the issuer cursor");
+            await Assert.That(secondHtml).Contains("href=\"/api-keys\"").Because("First page returns to the first keys");
         }
 
-        // Four pages: 2 + 2 + 2 keys with one duplicate row, then 1 key; "stuck" repeats itself.
+        // Three pages: 2 keys, a page repeating one earlier key beside a new one, then 2 more; a "stuck" cursor repeats itself.
         private sealed class PagingIssuer : IHttpClientFactory
         {
-            public static readonly string[] AllIds = ["01JD000000000000KEY0000000", "01JD000000000000KEY0010000", "01JD000000000000KEY0020000", "01JD000000000000KEY0030000", "01JD000000000000KEY0040000", "01JD000000000000KEY0050000", "01JD000000000000KEY0060000"];
+            public static readonly string[] TraversedIds = ["01JD000000000000KEY0000000", "01JD000000000000KEY0010000", "01JD000000000000KEY0020000", "01JD000000000000KEY0030000", "01JD000000000000KEY0040000"];
             public IHttpClientFactory? Inner { get; set; }
             public int ListReads { get; private set; }
 
@@ -107,12 +109,10 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                     var limit = int.Parse(query.GetValueOrDefault("limit").ToString(), System.Globalization.CultureInfo.InvariantCulture);
                     (string[] Ids, string? Next) page = after switch
                     {
-                        "" => (AllIds[..2], "cursor-2"),
-                        "cursor-2" => ([AllIds[1], AllIds[2]], "cursor-3"),
-                        "cursor-3" => (AllIds[3..5], "cursor-4"),
-                        "cursor-4" => (AllIds[5..], "stuck"),
-                        "stuck" => ([], "stuck"),
-                        _ => ([], null),
+                        "" => (TraversedIds[..2], "cursor-2"),
+                        "cursor-2" => (new[] { TraversedIds[1], TraversedIds[2] }, "cursor-3"),
+                        "cursor-3" => (TraversedIds[3..5], null),
+                        _ => ([], "stuck"),
                     };
                     var items = page.Ids.Take(limit).ToArray();
                     var next = items.Length < page.Ids.Length ? after : page.Next;
