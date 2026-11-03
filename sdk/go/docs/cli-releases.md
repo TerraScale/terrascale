@@ -53,10 +53,11 @@ deploy switch. The path is:
    `python3 scripts/test-release.py`, and publishes the immutable
    `sdk/go/qualified-<sha>` release plus the `sdk-release/sdk-go` success status.
 2. The `SDK Go Release` workflow's `autorelease` job fires on every main push
-   that touches the Go SDK paths. It waits until its commit is green current
-   main carrying that `sdk-release/sdk-go` status, reuses the qualified
-   version, and creates the `sdk/go/v0.0.X` tag on that exact revision. A newer
-   main revision supersedes the release; an already-released version is skipped.
+   that touches the Go SDK paths. It waits for a qualified green main revision —
+   the pushed commit, or the newest unreleased ancestor since the last
+   `sdk/go/v0.0.X` tag — reuses the qualified version, and creates the
+   `sdk/go/v0.0.X` tag on that exact revision. Queue delays and busy main
+   sections heal on the next trigger; an already-released version is skipped.
 3. The tag push runs the `publish` job: it verifies the tag points into main,
    downloads the exact qualified bytes (hash-checked against
    `qualification.json`) and publishes them as the release assets with the

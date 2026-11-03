@@ -27,12 +27,13 @@ jobs:
       actions: read
     outputs:
       eligible: ${{ steps.gate.outputs.eligible }}
+      revision: ${{ steps.gate.outputs.revision }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
       - id: gate
-        name: Select qualified current green main
+        name: Select qualified green main
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -42,35 +43,70 @@ jobs:
           import json, os, subprocess, time
           def gh(*args):
               return json.loads(subprocess.check_output(['gh', *args], text=True))
-          repo, revision = os.environ['REPOSITORY'], os.environ['REVISION']
-          def main_green():
-              runs = gh('run', 'list', '--repo', repo, '--branch', 'main', '--commit', revision,
+          repo, pushed = os.environ['REPOSITORY'], os.environ['REVISION']
+          def green(sha):
+              runs = gh('run', 'list', '--repo', repo, '--branch', 'main', '--commit', sha,
                         '--event', 'push', '--limit', '100', '--json', 'status,conclusion,workflowName')
               runs = [item for item in runs if item['workflowName'] != 'SDK Go Release']
               return bool(runs) and all(item['status'] == 'completed'
                                         and item['conclusion'] in {'success', 'skipped'} for item in runs)
-          def qualified():
+          def qualified(sha):
               pages = gh('api', '--paginate', '--slurp',
-                         f'repos/{repo}/commits/{revision}/statuses?per_page=100')
+                         f'repos/{repo}/commits/{sha}/statuses?per_page=100')
               rows = [row for page in pages for row in page if row.get('context') == 'sdk-release/sdk-go']
               proof = max(rows, key=lambda row: row['id']) if rows else None
               return bool(proof) and proof['state'] == 'success' and proof['creator']['login'] == 'MarioGK'
-          def current_main():
-              return gh('api', f'repos/{repo}/git/ref/heads/main')['object']['sha']
+          def released_commit():
+              pages = gh('api', '--paginate', '--slurp', f'repos/{repo}/tags?per_page=100')
+              names = [tag['name'] for page in pages for tag in page
+                       if tag['name'].startswith('sdk/go/v0.0.')]
+              if not names:
+                  return None
+              newest = max(names, key=lambda name: tuple(int(part) for part in name.rsplit('v', 1)[1].split('.')))
+              ref = gh('api', f'repos/{repo}/git/ref/tags/{newest.replace("/", "%2F")}')
+              sha = ref['object']['sha']
+              if ref['object']['type'] == 'tag':
+                  sha = gh('api', f'repos/{repo}/git/tags/{sha}')['object']['sha']
+              return sha
+          def unreleased():
+              # Newest first, stopping at the commit already carrying the newest tag.
+              bound = released_commit()
+              found = []
+              for page in range(1, 4):
+                  commits = gh('api', f'repos/{repo}/commits?sha=main&per_page=40&page={page}')
+                  if not commits:
+                      break
+                  for commit in commits:
+                      if commit['sha'] == bound:
+                          return found[:20]
+                      found.append(commit['sha'])
+                  if len(commits) < 40:
+                      break
+              return found[:20]
+          def releasable():
+              if qualified(pushed) and green(pushed):
+                  return pushed
+              for sha in unreleased():
+                  if sha != pushed and qualified(sha) and green(sha):
+                      return sha
+              return None
           deadline = time.monotonic() + 25 * 60
-          while time.monotonic() < deadline and not (main_green() and qualified()):
+          revision = releasable()
+          while time.monotonic() < deadline and revision is None:
               time.sleep(30)
-          eligible = (main_green() and qualified() and current_main() == revision)
+              revision = releasable()
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write(f"eligible={'true' if eligible else 'false'}\n")
-          if not eligible:
-              print('This revision never became qualified green main.')
+              output.write(f"eligible={'true' if revision else 'false'}\n")
+              if revision:
+                  output.write(f'revision={revision}\n')
+          if not revision:
+              print('No qualified green main revision became releasable.')
           PYTHON
-      - name: Require this commit's dev-host Fast result
+      - name: Require the released revision's dev-host Fast result
         if: steps.gate.outputs.eligible == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          REVISION: ${{ github.sha }}
+          REVISION: ${{ steps.gate.outputs.revision }}
         run: python3 scripts/sdk/check-proof.py sdk-go "$REVISION"
 
   autorelease:
@@ -87,7 +123,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          REVISION: ${{ github.sha }}
+          REVISION: ${{ needs.tests.outputs.revision }}
           QUALIFIED_DIR: ${{ runner.temp }}/qualified
         run: |
           python3 - <<'PYTHON'
