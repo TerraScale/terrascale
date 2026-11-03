@@ -174,16 +174,16 @@ public sealed class TransactionApiTests
     public async Task An_over_budget_transaction_is_refused_as_capacity_and_rolls_back()
     {
         await using var api = await DocumentApi.StartAsync();
-        var ids = (first: DocumentApi.NewId(), second: DocumentApi.NewId());
+        var (first, second) = (DocumentApi.NewId(), DocumentApi.NewId());
         var pad = new string('a', 710_000);
         var over = await api.SendRawAsync(HttpMethod.Post, api.Transactions,
             "{\"ops\":[" +
             string.Join(",", (string[])[
-                Op(ids.first, pad), Op(ids.second, pad), Op(DocumentApi.NewId(), pad),
+                Op(first, pad), Op(second, pad), Op(DocumentApi.NewId(), pad),
             ]) +
             "]}", "application/json");
-        var readFirst = await api.GetAsync(ids.first);
-        var readSecond = await api.GetAsync(ids.second);
+        var readFirst = await api.GetAsync(first);
+        var readSecond = await api.GetAsync(second);
         var underBudget = await api.TransactAsync(
             new { op = "create", collection = "items", id = DocumentApi.NewId(), document = new { pad = "small" } });
 
