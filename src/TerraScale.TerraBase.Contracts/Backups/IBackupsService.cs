@@ -7,7 +7,7 @@ namespace TerraScale.TerraBase.Contracts.Backups
     public interface IBackupsService : IService<IBackupsService>
     {
         /// <summary><c>GET /v1/projects/{project}/databases/{database}/backups</c>.</summary>
-        UnaryResult<JsonElement> ListAsync(string projectId, string database, string? after);
+        UnaryResult<JsonElement> ListAsync(string projectId, string database, string? after, int limit);
 
         /// <summary><c>POST /v1/projects/{project}/databases/{database}/backups</c>.</summary>
         UnaryResult<JsonElement> CreateAsync(string projectId, string database);
