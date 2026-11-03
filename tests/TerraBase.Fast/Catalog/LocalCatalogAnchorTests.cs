@@ -186,7 +186,7 @@ public sealed class LocalCatalogAnchorTests
             }
 
             s3.PlatformBucketMissing = true;
-            await using (var restarted = await StartAsync(directory, s3, time, EntityIds.New().ToString(), logs))
+            await using (var restarted = await StartAsync(directory, s3, time, user, logs))
             {
                 var gate = restarted.Server.Services.GetRequiredService<ICatalogGate>();
                 await TerraBaseTestServer.EventuallyAsync(async token =>
