@@ -150,7 +150,7 @@ namespace TerraScale.Dashboard.Features.Data
                 throw new AccountAccessException("Write access is required.");
             }
 
-            var database = DatabaseService.Database(context, databaseId);
+            var database = await databases.RequireAsync(context, databaseId, cancellationToken);
             collection = ValidCollection(collection);
             if (operation is not ("create" or "replace" or "patch" or "delete") || operation != "create" && id.Length == 0)
             {

@@ -7,12 +7,27 @@ namespace TerraScale.Dashboard.Common.Databases
 {
     public sealed partial class DatabaseService
     {
+        // A write addressed by id must survive a listing gap: refresh once from TerraBase before refusing it.
+        public async Task<DatabaseRecord> RequireAsync(AccountContext context, string id, CancellationToken ct)
+        {
+            try
+            {
+                return Database(context, id);
+            }
+            catch (AccountAccessException error) when (error.StatusCode == 404 && context is { Project: not null, Organization: not null } &&
+                !PlatformDatabases.IsPlatform(context.Organization.Id) && !PlatformDatabases.Databases.ContainsKey(id))
+            {
+                var (_, database) = await LookupAsync(context, id, ct);
+                return database;
+            }
+        }
+
         // Discover one missing ID, never reconcile inventory. No name or caller-chosen project reaches the producer.
         public async Task<(AccountContext Context, DatabaseRecord Database)> LookupAsync(AccountContext context, string id, CancellationToken ct)
         {
             if (!TerraScaleIds.IsValid(id))
             {
-                throw new AccountAccessException("Pass the database ID (a ULID), not its name.", 404);
+                throw new AccountAccessException(DatabaseIdRule, 422, DatabaseIdCode);
             }
 
             context = await CurrentAsync(context, ct);
@@ -21,7 +36,7 @@ namespace TerraScale.Dashboard.Common.Databases
             {
                 if (!PlatformDatabases.Databases.TryGetValue(id, out var platform) || platform.ProjectId != project.Id)
                 {
-                    throw new AccountAccessException("Database is unavailable.", 404);
+                    throw NotFound(id);
                 }
 
                 return (context, Checked(Database(context, id)));
@@ -54,7 +69,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 var matches = listings.SelectMany(listing => listing.Items ?? []).Where(item => item.Id == id).ToArray();
                 if (matches.Length == 0 && listings.Any(listing => listing.Items is null))
                 {
-                    throw Unavailable();
+                    throw Unavailable(id);
                 }
 
                 if (matches.Length > 0)
@@ -65,7 +80,7 @@ namespace TerraScale.Dashboard.Common.Databases
                         ReservedProducerName().IsMatch(remote.Name) || remote.BranchedFrom is { } source && (!TerraScaleIds.IsValid(source) || source == id) ||
                         remote.AllRegions && remote.ReplicaRegions is not { Count: 0 })
                     {
-                        throw Unavailable();
+                        throw Unavailable(id);
                     }
 
                     var placement = await RemotePlacementAsync(remote, ct);
@@ -74,7 +89,7 @@ namespace TerraScale.Dashboard.Common.Databases
                             item.BranchedFrom != remote.BranchedFrom || item.HomeRegion != remote.HomeRegion || item.AllRegions != remote.AllRegions ||
                             item.ReplicaRegions is null || !item.ReplicaRegions.Order(StringComparer.Ordinal).SequenceEqual(remote.ReplicaRegions!.Order(StringComparer.Ordinal))))
                     {
-                        throw Unavailable();
+                        throw Unavailable(id);
                     }
 
                     imported = Record(remote, placement, "ready");
@@ -82,11 +97,11 @@ namespace TerraScale.Dashboard.Common.Databases
             }
             catch (Exception error) when (!ct.IsCancellationRequested &&
                 (DatabaseResults.KnownFailure(error) || error is TerraBaseException or HttpRequestException or IOException or InvalidDataException or JsonException or OperationCanceledException))
-            { throw Unavailable(); }
+            { throw Unavailable(id); }
             // Only complete, successful regional pagination can establish absence.
             if (imported is null)
             {
-                throw new AccountAccessException("Database is unavailable.", 404);
+                throw NotFound(id);
             }
 
             var resolved = imported;
@@ -95,13 +110,13 @@ namespace TerraScale.Dashboard.Common.Databases
                 var target = org.Projects.GetValueOrDefault(project.Id) ?? throw new AccountAccessException("Project is unavailable.", 404);
                 if (target.Id != scope.ProjectId || target.OrganizationId != scope.OrganizationId)
                 {
-                    throw Unavailable();
+                    throw Unavailable(id);
                 }
 
                 if (target.Databases.TryGetValue(id, out var winner)) { resolved = Checked(winner); return; }
                 if (target.Databases.Values.Any(item => item.Name == imported.Name))
                 {
-                    throw Unavailable();
+                    throw Unavailable(id);
                 }
 
                 target.Databases[id] = imported;
@@ -113,13 +128,20 @@ namespace TerraScale.Dashboard.Common.Databases
 
             DatabaseRecord Checked(DatabaseRecord record)
             {
-                return record.Id == id && record.ProjectId == project.Id ? record : throw Unavailable();
+                return record.Id == id && record.ProjectId == project.Id ? record : throw Unavailable(id);
             }
         }
 
-        private static DatabaseProviderException Unavailable()
+        // Definitive absence, proven only by complete pagination: the database is not this project's.
+        private static AccountAccessException NotFound(string id)
         {
-            return new(HttpStatusCode.ServiceUnavailable, "Database discovery is unavailable. Try again shortly.");
+            return new("Database " + id + " was not found in this project.", 404);
+        }
+
+        // Transient upstream states stay retryable and say so; the id was never the problem.
+        private static AccountAccessException Unavailable(string id)
+        {
+            return new("Database " + id + " is temporarily unavailable; retry in a few seconds.", 503);
         }
 
         [GeneratedRegex(@"\A[a-z][a-z0-9_-]{0,62}\z", RegexOptions.CultureInvariant)]

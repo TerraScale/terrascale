@@ -140,6 +140,15 @@ optional `organizationId` and `projectId`:
   organizations.
 - Explicit scopes never change the saved selection.
 
+`databaseId` must be the database's ULID. A name or malformed id is rejected
+with `Pass the database ID (a ULID), not its name.` A well-formed ULID no
+project listing contains answers `Database <id> was not found in this
+project.` Document writes additionally re-discover the id from TerraBase once
+before refusing it, so a listing gap cannot masquerade as absence; a discovery
+that cannot complete answers `Database <id> is temporarily unavailable; retry
+in a few seconds.` Retry that call after a few seconds instead of changing the
+id.
+
 Membership or an exact project grant is checked on every call. `get_context`
 lists the organizations and projects the caller can use. Project collaborators
 are covered in [Project collaborators](project-collaborators.md).
