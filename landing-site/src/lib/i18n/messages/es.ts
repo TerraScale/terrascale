@@ -57,7 +57,6 @@ export const es: Messages = {
           docs: 'Docs',
           apiReference: 'Referencia de la API',
           status: 'Estado',
-          community: 'Comunidad',
           support: 'Soporte',
           supportEmail: 'Contacto: support@terrascale.tech',
         },
@@ -65,8 +64,6 @@ export const es: Messages = {
     },
     social: {
       github: 'GitHub',
-      discord: 'Discord',
-      x: 'X',
       linkedin: 'LinkedIn',
       email: 'Correo',
     },

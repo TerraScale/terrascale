@@ -8,6 +8,7 @@ title: Support
 
 - **Dashboard (recommended):** sign in and choose **Contact support** in the sidebar, or open [dash.terrascale.tech/support](https://dash.terrascale.tech/support). Pick the organization, project and database the request is about, then choose a severity. Requests from the dashboard are linked to your account.
 - **Email:** [support@terrascale.tech](mailto:support@terrascale.tech). Every email is acknowledged automatically.
+- **GitHub:** [github.com/TerraScale](https://github.com/TerraScale). Report bugs and request features in the issue trackers of our public repositories.
 - **Status:** [status.terrascale.tech](https://status.terrascale.tech) shows current service health. Check it before you report an outage.
 
 ## What to include

@@ -57,7 +57,6 @@ export const ptBr: Messages = {
           docs: 'Docs',
           apiReference: 'Referência da API',
           status: 'Status',
-          community: 'Comunidade',
           support: 'Suporte',
           supportEmail: 'Contato: support@terrascale.tech',
         },
@@ -65,8 +64,6 @@ export const ptBr: Messages = {
     },
     social: {
       github: 'GitHub',
-      discord: 'Discord',
-      x: 'X',
       linkedin: 'LinkedIn',
       email: 'E-mail',
     },
