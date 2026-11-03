@@ -211,16 +211,59 @@ namespace TerraScale.Dashboard.E2E.Features.Data
 
         [Test]
         [Arguments("foreign")]
-        [Arguments("repeated")]
-        public async Task ListingRefusesForeignIdentityOrRepeatedPagination(string failure)
+        public async Task ListingRefusesForeignIdentity(string failure)
         {
             using var wire = new Wire { Failure = failure };
             HttpRequestException? rejected = null;
             try { await new ApiKeyService(wire, TimeProvider.System, new TsAuthClient(wire.CreateClient("platform"))).ListAsync(Context(), CancellationToken.None); }
             catch (HttpRequestException error) { rejected = error; }
             await Assert.That(rejected).IsNotNull();
-            await Assert.That(wire.Requests).IsEqualTo(failure == "foreign" ? 1 : 2);
+            await Assert.That(wire.Requests).IsEqualTo(1);
             await Assert.That(wire.Methods.All(method => method == HttpMethod.Get)).IsTrue();
+        }
+
+        [Test]
+        public async Task ListingStopsWhenTheIssuerRepeatsItsOwnCursor()
+        {
+            using var wire = new Wire { Failure = "repeated" };
+            var service = new ApiKeyService(wire, TimeProvider.System, new TsAuthClient(wire.CreateClient("platform")));
+            var first = await service.ListPageAsync(Context(), null, ApiKeyService.IssuerPageSize, CancellationToken.None);
+            await Assert.That(first.HasMore).IsFalse();
+            await Assert.That(first.NextCursor).IsNull();
+            await Assert.That(first.Items.Single().Id).IsEqualTo(KeyId);
+            await Assert.That(wire.Requests).IsEqualTo(1);
+        }
+
+        [Test]
+        public async Task ListPageFetchesOnlyOneIssuerPageAndDropsDuplicatesAcrossCalls()
+        {
+            using var wire = new Wire { Pages = 3 };
+            var service = new ApiKeyService(wire, TimeProvider.System, new TsAuthClient(wire.CreateClient("platform")));
+            var context = Context();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            string? cursor = null;
+            var pages = 0;
+            do
+            {
+                var page = await service.ListPageAsync(context, cursor, 2, CancellationToken.None);
+                pages++;
+                foreach (var key in page.Items)
+                {
+                    await Assert.That(seen.Add(key.Id)).IsTrue().Because("no key may repeat across pages");
+                }
+                cursor = page.NextCursor;
+            } while (cursor is not null);
+            await Assert.That(pages).IsEqualTo(3);
+            await Assert.That(seen.Count).IsEqualTo(5);
+            await Assert.That(seen.SetEquals(wire.AllIds)).IsTrue();
+        }
+
+        [Test]
+        public async Task FullTraversalKeepsEveryDistinctKeyWithoutLooping()
+        {
+            using var wire = new Wire { Pages = 3 };
+            var keys = await new ApiKeyService(wire, TimeProvider.System, new TsAuthClient(wire.CreateClient("platform"))).ListAsync(Context(), CancellationToken.None);
+            await Assert.That(keys.Select(key => key.Id).Order(StringComparer.Ordinal).ToArray()).IsEqualTo(wire.AllIds.Order(StringComparer.Ordinal).ToArray());
         }
 
         [Test]
@@ -347,12 +390,23 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             // Replaces the allowlist echoed by writes, as a provider that answers a different restriction would.
             public string[]? EchoCidrs { get; init; }
             public string Database { get; init; } = DatabaseId;
+            // Multi-page listings: Pages issuer pages of 2 keys each, the last one repeating a key and its cursor once.
+            public int Pages { get; init; }
             public int Requests { get; private set; }
             public string? Body { get; private set; }
             public string? Query { get; private set; }
             public string? Path { get; private set; }
             public List<HttpMethod> Methods { get; } = [];
             private bool Deleted { get; set; }
+            private int RepeatedOnce { get; set; }
+            public string[] AllIds =>
+            [
+                KeyId,
+                "01JA000000000000000000000A",
+                "01JA000000000000000000000B",
+                "01JA000000000000000000000C",
+                "01JA000000000000000000000D",
+            ];
             private static HttpResponseMessage Error(HttpStatusCode status, string code)
             {
                 return new(status) { Content = new StringContent(JsonSerializer.Serialize(new { error = new { code, message = "Synthetic failure" } }), Encoding.UTF8, "application/json") };
@@ -361,6 +415,48 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             public HttpClient CreateClient(string name)
             {
                 return new(this, false);
+            }
+
+            private string ListResponse()
+            {
+                if (Pages == 0)
+                {
+                    // "repeated": the issuer answers the same cursor it was given, once, then ends.
+                    if (Failure == "repeated" && RepeatedOnce++ == 0)
+                    {
+                        return JsonSerializer.Serialize(new { items = new[] { Key(KeyId) }, next = "opaque+/cursor=" });
+                    }
+
+                    return JsonSerializer.Serialize(new { items = new[] { Key(KeyId) }, next = (string?)null });
+                }
+
+                // Three bounded pages over five keys: 2 + 2 + 1, with a duplicate of the first key on page two.
+                var page = Query switch
+                {
+                    "" or "?limit=2" => (Ids: new[] { KeyId, "01JA000000000000000000000A" }, Next: "page-2" as string?),
+                    "?limit=2&after=page-2" => (Ids: new[] { KeyId, "01JA000000000000000000000B" }, Next: "page-3"),
+                    _ => (Ids: new[] { "01JA000000000000000000000C", "01JA000000000000000000000D" }, Next: null),
+                };
+                return JsonSerializer.Serialize(new { items = page.Ids.Select(Key), next = page.Next });
+            }
+
+            private object Key(string id)
+            {
+                return new
+                {
+                    id,
+                    name = "Synthetic " + id[^1],
+                    organization_id = OrganizationId,
+                    project_id = Failure == "foreign" ? "01JA0000000000000000000005" : ProjectId,
+                    database = Database,
+                    scopes = new[] { "documents:read", "documents:write" },
+                    created_by = CreatedBy,
+                    created_at = "2026-01-01T00:00:00+00:00",
+                    expires_at = (string?)null,
+                    previous_secret_expires_at = (string?)null,
+                    last_used_at = LastUsedAt,
+                    allowed_cidrs = Array.Empty<string>()
+                };
             }
 
             protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -445,7 +541,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 };
                 var response = request.Method == HttpMethod.Post && !Path.EndsWith("/allowed-cidrs", StringComparison.Ordinal)
                     ? JsonSerializer.Serialize(new { api_key = key, key = KeyId + "_synthetic-secret" })
-                    : request.RequestUri.AbsolutePath == root ? JsonSerializer.Serialize(new { items = new[] { key }, next = Failure == "repeated" ? "opaque+/cursor=" : null })
+                    : request.RequestUri.AbsolutePath == root ? ListResponse()
                     : JsonSerializer.Serialize(key);
                 return new(request.Method == HttpMethod.Post && !rotate ? HttpStatusCode.Created : HttpStatusCode.OK)
                 { Content = new StringContent(response, Encoding.UTF8, "application/json") };
