@@ -22,3 +22,6 @@ branch so the conflict can be resolved deliberately.
 Run `ts-main` for a single CI snapshot: one line per active repository with
 main's result, result age and any failing job. Main CI must be green before a
 production deploy. Slow suites remain independent of the Fast shipping gate.
+
+Fast batches and `ts-heavy-any` jobs wait for dev host capacity instead of
+overloading a host; see [Dev host capacity](dev-host-capacity.md).
