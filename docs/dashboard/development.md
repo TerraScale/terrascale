@@ -62,8 +62,11 @@ browser journeys and the internal-billing policy suites (`[Category("Slow")]`);
 `test-e2e` runs both for local investigation. Ship with `ts-ship` from the monorepo root;
 its dashboard Fast command runs on a dev host and must finish within five minutes.
 GitHub Actions verifies that exact revision's Fast proof. Heavy validation runs through
-`ts-heavy-any`; qualification uses `scripts/dashboard/prepare-deployment.sh` before
-image publication from green main. Slow failures remain visible and create or update a
+`ts-heavy-any`. A green dashboard Fast also runs `scripts/dashboard/prepare-deployment.sh`
+on the dev host, publishing the `dashboard/qualified-<sha>` release and the
+`dashboard-release/dashboard` status; the Images (GHCR) workflow then publishes the
+image and releases it to every region automatically, with no manual step and no
+deploy switch. Slow failures remain visible and create or update a
 matching GitHub issue.
 CI does not run the explicit hot-reload journey. For changes to `scripts/dashboard/demo.sh`, `scripts/dashboard/dev.sh`, the asset scripts or the demo host,
 use `nice -n 19 make -f scripts/dashboard/Makefile test-hot-reload` on a tailnet machine when investigating hot reload locally.
