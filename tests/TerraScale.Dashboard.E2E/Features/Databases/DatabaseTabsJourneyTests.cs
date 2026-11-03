@@ -11,14 +11,21 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
         [Test]
         public async Task DatabasePagesOfferNoWebhooksTabAndEveryListedTabAnswersItself()
         {
+            var databaseId = "";
             await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
-                http.Request.Path.Value!.IndexOf("/functions", StringComparison.Ordinal) >= 0
-                    ? Task.FromResult<IResult?>(Results.Json(Array.Empty<object>()))
-                    : Task.FromResult<IResult?>(null));
+            {
+                var path = http.Request.Path.Value!;
+                return Task.FromResult<IResult?>(path.IndexOf("/functions", StringComparison.Ordinal) >= 0
+                    ? Results.Json(Array.Empty<object>())
+                    : path.EndsWith("/logs", StringComparison.Ordinal)
+                        ? Results.Json(new { databaseId, items = Array.Empty<object>(), truncated = false, recordingLimited = false })
+                        : path.EndsWith("/query-shapes", StringComparison.Ordinal)
+                            ? Results.Json(new { items = Array.Empty<object>() })
+                            : null);
+            });
             using var client = scenario.CreateClient();
             await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
-            string databaseId;
             using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
             { ["_csrf"] = csrf, ["name"] = "tab-journey", ["region"] = "GRU" }))
             {
