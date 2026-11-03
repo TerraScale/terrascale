@@ -195,15 +195,6 @@ main > .ts-section:first-child {
   color: var(--ts-primary-light);
 }
 
-.ts-eyebrow {
-  font-family: var(--ts-font-mono);
-  font-size: 11.5px;
-  font-weight: 400;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--ts-primary-light);
-}
-
 .ts-btn {
   display: inline-flex;
   align-items: center;
@@ -345,11 +336,6 @@ main > .ts-section:first-child {
   .pulse-dot {
     animation: none !important;
   }
-}
-
-/* Page ledes wrap without leaving a single word on the last line. */
-.ts-lede {
-  text-wrap: pretty;
 }
 
 /* Two-tone headings: the second phrase takes the direction's heading-muted colour. */

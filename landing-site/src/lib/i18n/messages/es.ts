@@ -29,8 +29,6 @@ export const es: Messages = {
   },
 
   footer: {
-    tagline:
-      'TerraScale Public Alpha ofrece una base de documentos regional sin porcentaje de disponibilidad ni SLA. La disponibilidad actual se publica en la página de estado.',
     rightsReserved: 'Todos los derechos reservados.',
     columns: {
       product: {
@@ -75,62 +73,41 @@ export const es: Messages = {
   },
 
   hero: {
-    eyebrow: 'Public Alpha',
     headlineLead: 'Base de datos de documentos tipada,',
     headlineAccent: 'replicada entre regiones.',
-    subtitle:
-      'Elige las regiones donde viven tus datos. El endpoint global atiende cada solicitud desde la más cercana y saludable, y las escrituras se replican de forma asíncrona al resto.',
     cta: 'Empieza gratis',
-    ctaNote: 'Plan Free sin tarjeta. Public Alpha no tiene porcentaje de disponibilidad ni SLA.',
-    highlightsAria: 'Capacidades principales',
-    highlights: ['Enrutamiento por región seleccionada', 'Replicación asíncrona', 'SDK tipados', 'Listo para agentes de IA'],
   },
 
   features: {
-    eyebrow: 'Plataforma',
     titleLead: 'Lo que cubre Public Alpha,',
     titleAccent: 'y dónde termina.',
-    subtitle:
-      'El contrato de lanzamiento cubre documentos, tres regiones activas, clientes tipados y salud visible sin compromiso de disponibilidad.',
     items: [
       {
-        title: 'Datos',
         headline: 'Consulta documentos JSON con filtros o SQL',
         text: 'Las bases de datos contienen colecciones de documentos JSON, cada una con un esquema opcional. Consulta con filtros JSON o SQL de solo lectura: SELECT, WHERE, ORDER BY y hasta 1.000 filas por sentencia.',
-        bullets: ['Colecciones', 'Filtros JSON', 'SQL de solo lectura'],
       },
       {
-        title: 'Regiones',
         headline: 'Mantén cada base en las regiones que elijas',
         text: 'São Paulo, San Francisco Bay Area y Fráncfort ya sirven tráfico. Cada base de datos vive en una región principal y se replica completa en las demás regiones que selecciones.',
-        bullets: ['gru', 'sjc', 'fra'],
       },
       {
-        title: 'Enrutamiento',
         headline: 'Sirve lecturas desde la región saludable más cercana',
         text: 'El endpoint global responde desde la región saludable más cercana que tenga tu base de datos. Los endpoints regionales estrictos nunca sirven desde una región que no seleccionaste.',
-        bullets: ['Endpoint global', 'Endpoints regionales estrictos'],
       },
       {
-        title: 'Salud',
         headline: 'Mira la salud de la replicación como valores medidos',
         text: 'La replicación es asíncrona. Retraso, convergencia, conflictos y latencia de API se publican como valores medidos separados, con su hora de observación. No hay promesa de retraso limitado, porcentaje de disponibilidad ni SLA.',
-        bullets: ['Replicación asíncrona', 'Hora de observación', 'Sin SLA'],
       },
       {
-        title: 'Seguridad',
         headline: 'Cifrado en tránsito y en reposo',
         text: 'El tráfico del cliente requiere TLS 1.2 o posterior, los datos en reposo usan cifrado calificado y cada solicitud requiere autorización. El contenido del cliente permanece en las regiones que selecciones.',
-        bullets: ['TLS 1.2+', 'Cifrado en reposo', 'Autorización por solicitud'],
       },
     ],
   },
 
   howItWorks: {
-    eyebrow: 'Cómo funciona',
     titleLead: 'Del registro a lecturas globales',
     titleAccent: 'en tres pasos.',
-    subtitle: 'Cada base de datos tiene una región principal más las regiones de réplica que selecciones. El contenido del cliente permanece en esas regiones.',
     steps: [
       {
         title: 'Crea una base de datos',
@@ -143,20 +120,14 @@ export const es: Messages = {
       {
         title: 'Lee y escribe',
         text: 'Usa el endpoint global para la región seleccionada saludable más cercana, o un endpoint regional estricto que nunca sirve desde otra región. Llámalo desde el SDK de C# o TypeScript, la API HTTP o un cliente MCP.',
-        tags: ['Endpoint global', 'Endpoint regional estricto'],
       },
     ],
   },
 
-  tagline: {
-    lines: ['Tus datos permanecen en las regiones que eliges.', 'Las lecturas llegan desde la más cercana y saludable.'],
-  },
 
   homeFaq: {
-    eyebrow: 'FAQ',
     titleLead: 'Preguntas antes',
     titleAccent: 'de empezar.',
-    subtitle: 'Respuestas breves sobre regiones, replicación y lo que cubre Public Alpha.',
     items: [
       {
         q: '¿Qué es TerraScale?',
@@ -195,28 +166,21 @@ export const es: Messages = {
         a: 'Sí. Exporta desde el panel o la API en cualquier momento. No hay tarifa de salida por dejar TerraScale.',
       },
     ],
-    footerTitle: '¿Más preguntas?',
-    footerText: 'Contáctanos sobre regiones, planes o condiciones Enterprise.',
     contactSales: 'Contáctanos',
-    readDocs: 'Leer la documentación',
   },
 
   code: {
-    eyebrow: 'SDK para desarrolladores',
     headlineLead: 'Consulta tus datos',
     headlineAccent: 'en el lenguaje que amas',
-    text: 'Los SDKs tipados de C# y TypeScript usan la misma API HTTP pública que el panel, con modelos generados a partir de su contrato OpenAPI.',
     bullets: ['Clientes tipados en C# y TypeScript', 'Modelos OpenAPI generados', 'Filtros JSON o SQL de solo lectura'],
     agent: {
       title: 'O pide a tu agente de IA favorito que lo haga por ti',
       text: 'Soportamos CLI y MCP. Conecta Claude Code, Cursor o cualquier cliente MCP al servidor MCP de TerraScale con un token de acceso personal. El agente actúa con tus roles y cada llamada se vuelve a verificar. Los agentes también pueden llamar a la API HTTP desde una terminal.',
-      promptsLabel: 'Prueba a pedir',
       prompts: [
         'Lista mis bases de datos y las regiones que sirve cada una.',
         'Encuentra los clientes con 10 o más asientos en la base de datos app.',
         '¿Cuánto de la cuota de unidades de operación de este mes hemos usado?',
       ],
-      toolsLabel: 'Algunas herramientas MCP',
     },
     copy: 'Copiar',
     copied: 'Copiado',
@@ -227,52 +191,38 @@ export const es: Messages = {
   cta: {
     headlineLead: 'Regístrate en',
     headlineAccent: 'TerraScale Public Alpha.',
-    text: 'Free no requiere tarjeta. Los planes pagados facturan en la próxima factura las unidades de operación por encima de la asignación; los excedentes de almacenamiento y salida a clientes aún no se facturan.',
     ctaPrimary: 'Registrarse en Public Alpha',
-    ctaSecondary: 'Hablar con ventas',
-    perksAria: 'Detalles de planes',
-    perks: ['Free sin tarjeta', 'Planes pagados mensuales o anuales', 'Exporta tus datos cuando quieras'],
   },
 
   pricingTeaser: {
-    eyebrow: 'Precios',
     title: 'Empieza con Free. Compara las suscripciones.',
     cta: 'Comparar planes',
   },
 
   pricing: {
-    eyebrow: 'Precios',
     titleLead: 'Precios simples',
     titleAccent: 'que escalan contigo',
-    subtitle: 'Empieza con Free o compra Starter, Pro o Team en el checkout. Enterprise se contrata con ventas.',
-    badge: 'Más popular',
     suffixMonthly: '/mes',
     suffixAnnual: '/año',
     intervals: {
       label: 'Intervalo de facturación',
       month: 'Mensual',
       year: 'Anual',
-      saving: '{months} meses gratis',
     },
     plans: {
       free: {
-        description: 'Crea y evalúa sin tarjeta de pago',
         cta: 'Empezar con Free',
       },
       starter: {
-        description: 'Suscripción para proyectos pequeños',
         cta: 'Elegir Starter',
       },
       pro: {
-        description: 'Suscripción para proyectos en crecimiento',
         cta: 'Elegir Pro',
       },
       team: {
-        description: 'Suscripción para equipos',
         cta: 'Elegir Team',
       },
       enterprise: {
-        description: 'Soporte más uso, mediante ventas',
         features: ['Consultar condiciones con ventas', 'Límites y objetivo de respuesta de soporte a medida'],
         cta: 'Contactar ventas',
       },
@@ -286,7 +236,6 @@ export const es: Messages = {
       egress: '{n} de salida a clientes/mes',
     },
     usage: {
-      eyebrow: 'Cómo se mide el uso',
       title: 'Almacenamiento, operaciones y salida a clientes.',
     },
     triad: [
@@ -304,7 +253,6 @@ export const es: Messages = {
       },
     ],
     compare: {
-      eyebrow: 'Comparar',
       title: 'Asignaciones por plan.',
       head: 'Asignación',
       projects: 'Proyectos',
@@ -337,7 +285,6 @@ export const es: Messages = {
       entitlementsNote: 'Las tasas de solicitudes y la concurrencia se aplican por organización; las solicitudes que las superan reciben HTTP 429 con un encabezado Retry-After. El límite de almacenamiento es un tope estricto, distinto de la asignación incluida. Los objetivos de respuesta de soporte no son un SLA.',
     },
     detailed: {
-      eyebrow: 'Reglas de facturación',
       titleLead: 'Tarifas de uso',
       titleAccent: 'aprobadas',
       text: 'Los planes pagados incluyen las asignaciones. Las unidades de operación por encima de la asignación se suman a la próxima factura de la suscripción a esta tarifa; los excedentes de almacenamiento y salida a clientes aún no se facturan. Free detiene las nuevas escrituras al llegar a su asignación de operaciones y no tiene cargos por excedentes.',
@@ -364,10 +311,8 @@ export const es: Messages = {
       docsLink: 'Documentación completa de precios',
     },
     faq: {
-      eyebrow: 'Preguntas frecuentes',
       titleLead: 'Preguntas',
       titleAccent: 'frecuentes',
-      subtitle: 'Respuestas directas sobre los planes de Public Alpha.',
       items: [
         {
           q: '¿Qué es una unidad de operación?',
@@ -390,18 +335,13 @@ export const es: Messages = {
           a: 'Enterprise tiene una base mensual de soporte de ${enterprisePriceUsd} más uso. Consulta las condiciones con ventas; Enterprise no se vende en el checkout.',
         },
       ],
-      footerTitle: '¿Todavía tienes dudas?',
-      footerText: 'Contáctanos sobre planes, límites o condiciones de Enterprise.',
       contactSales: 'Contactar ventas',
-      readDocs: 'Leer documentación',
     },
     finalCta: {
       titleLead: '¿Listo para',
       titleAccent: 'empezar?',
-      text: 'Empieza con Free o elige un plan pagado en el checkout.',
       cta: 'Registrarse en Public Alpha',
     },
-    status: 'Los planes pagados están disponibles en el checkout. Las unidades de operación por encima de la asignación se suman a la próxima factura; los excedentes de almacenamiento y salida a clientes aún no se facturan.',
     cadence: {
       free: 'Sin tarjeta de pago',
       year: 'Facturación anual · equivalente a {monthly}/mes · {months} meses gratis',
@@ -413,54 +353,16 @@ export const es: Messages = {
   },
 
   contact: {
-    eyebrow: 'Ponte en contacto',
     titleLead: 'Construyamos',
     titleAccent: 'algo juntos.',
-    subtitle:
-      '¿Tienes preguntas? ¿Necesitas un plan personalizado? ¿Quieres integrarte con TerraScale? Nos encantaría saber de ti.',
-    labels: {
-      name: 'Nombre',
-      email: 'Correo',
-      company: 'Empresa',
-      message: 'Mensaje',
-    },
-    placeholders: {
-      name: 'Mario Belchior',
-      email: 'mario@acme.com',
-      company: 'Acme Inc.',
-      message: 'Cuéntanos sobre tu proyecto, tamaño del equipo y lo que esperas lograr...',
-    },
-    submit: {
-      idle: 'Enviar mensaje',
-      submitting: 'Enviando…',
-      success: '¡Mensaje enviado!',
-      error: 'Intentar de nuevo',
-      badge: 'Mensaje enviado correctamente',
-    },
-    success: '¡Gracias! Tu mensaje se ha enviado de forma segura a nuestro equipo.',
-    errorNoForm: 'No se pudo enviar el formulario. Escríbenos directamente por correo.',
-    errorSend: 'Algo salió mal al enviar tu mensaje. Inténtalo de nuevo o escríbenos directamente por correo.',
-    note: 'El tráfico del cliente requiere TLS 1.2 o posterior. Los datos en reposo usan cifrado calificado por el servicio.',
-    channelsTitle: 'Contáctanos',
-    channels: [
-      { value: 'support@terrascale.tech' },
-      { value: 'Únete a nuestra comunidad' },
-      { value: 'Abrir issues y PRs' },
-    ],
   },
 
   about: {
-    eyebrow: 'Acerca de TerraScale',
     titleLead: 'Infraestructura de base de datos',
     titleAccent: 'distribuida globalmente.',
-    subtitle:
-      'TerraScale Public Alpha ofrece una base de documentos en São Paulo, San Francisco Bay Area y Frankfurt con replicación asíncrona.',
     ctaPricing: 'Ver precios',
-    ctaContact: 'Habla con nosotros',
-    missionEyebrow: 'Misión',
+    regionsAria: 'Regiones en servicio',
     missionTitle: 'Una única superficie de plataforma para equipos que entregan entre regiones.',
-    missionText:
-      'Los proyectos eligen sus regiones. El endpoint global usa la región seleccionada saludable más cercana. Los endpoints regionales estrictos no sirven desde otra región.',
     pillars: [
       {
         title: 'Fundación TerraBase',
@@ -475,17 +377,13 @@ export const es: Messages = {
         text: 'Free no requiere tarjeta. Los planes pagados facturan en la próxima factura las unidades de operación por encima de la asignación; los excedentes de almacenamiento y salida a clientes aún no se facturan.',
       },
     ],
-    pricingPrincipleEyebrow: 'Principio de precios',
     bandTitle: 'Precios regionales planos, medidos por el uso real.',
     bandText:
       'El almacenamiento suma los bytes en cada región seleccionada. Distancia de red estimada, latencia medida de API y salud de replicación siguen separadas.',
   },
 
   notFound: {
-    eyebrow: 'Página no encontrada',
     title: 'No podemos encontrar esa página.',
-    text: 'La página que buscas se ha movido o nunca existió. Vamos a ponerte de vuelta en camino.',
     backHome: 'Volver al inicio',
-    contactSupport: 'Contactar con soporte',
   },
 }

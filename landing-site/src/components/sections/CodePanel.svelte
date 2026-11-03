@@ -35,17 +35,10 @@
   <div class="code__inner">
     <div class="code__grid">
       <div class="code__copy">
-        <span class="ts-eyebrow code__eyebrow">
-          <Icon name="code2" className="code__eyebrow-icon" />
-          {$dict.code.eyebrow}
-        </span>
         <h2 class="code__headline">
           {$dict.code.headlineLead}<br />
           <span class="code__accent">{$dict.code.headlineAccent}</span>
         </h2>
-        <p class="code__text">
-          {$dict.code.text}
-        </p>
         <ul class="code__bullets">
           {#each bullets as bullet (bullet)}
             <li class="code__bullet">
@@ -63,13 +56,11 @@
             {agent.title}
           </h3>
           <p class="code__agent-text">{agent.text}</p>
-          <p class="code__agent-label">{agent.promptsLabel}</p>
           <ul class="code__prompts">
             {#each agent.prompts as prompt (prompt)}
               <li class="code__prompt">{prompt}</li>
             {/each}
           </ul>
-          <p class="code__agent-label">{agent.toolsLabel}</p>
           <ul class="code__tools">
             {#each mcpTools as tool (tool)}
               <li><code class="code__tool">{tool}</code></li>
@@ -139,11 +130,6 @@
     align-content: start;
   }
 
-  :global(.code__eyebrow-icon) {
-    width: 14px;
-    height: 14px;
-  }
-
   .code__headline {
     font-size: clamp(30px, 3.2vw, 48px);
     font-weight: 600;
@@ -155,14 +141,6 @@
 
   .code__accent {
     color: var(--ts-primary);
-  }
-
-  .code__text {
-    font-size: 16px;
-    color: var(--ts-text-muted);
-    line-height: 1.7;
-    max-width: 56ch;
-    margin: 0;
   }
 
   .code__bullets {
@@ -231,15 +209,6 @@
     color: var(--ts-text-muted);
     line-height: 1.7;
     max-width: 60ch;
-  }
-
-  .code__agent-label {
-    margin: 8px 0 0;
-    font-family: var(--ts-font-mono);
-    font-size: 12px;
-    color: var(--ts-text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
   }
 
   .code__prompts,

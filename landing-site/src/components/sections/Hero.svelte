@@ -10,12 +10,6 @@
   import { dict } from '@/lib/i18n'
   import { registrationUrl } from '@/lib/site'
 
-  const highlightIcons = ['globe', 'activity', 'code2', 'bot'] as const
-  $: highlights = $dict.hero.highlights.map((label, i) => ({
-    icon: highlightIcons[i] ?? 'globe',
-    label,
-  }))
-
   const vbW = WORLD_MAP_VIEWBOX.width
   const vbH = WORLD_MAP_VIEWBOX.height
 
@@ -83,19 +77,11 @@
       {$dict.hero.headlineAccent}
     </h1>
 
-    <p class="hero__subtitle">
-      {$dict.hero.subtitle}
-    </p>
-
     <div class="hero__cta">
       <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary hero__cta-btn">
         {$dict.hero.cta}
         <Icon name="arrowRight" className="hero__cta-icon" />
       </ExternalLink>
-      <p class="hero__cta-note">
-        <Icon name="checkCircle" className="hero__cta-note-icon" />
-        {$dict.hero.ctaNote}
-      </p>
     </div>
   </div>
 
@@ -146,14 +132,6 @@
     </div>
   </div>
 
-  <ul class="hero__highlights" aria-label={$dict.hero.highlightsAria}>
-    {#each highlights as h (h.label)}
-      <li class="hero__highlight">
-        <Icon name={h.icon} className="hero__highlight-icon" />
-        <span>{h.label}</span>
-      </li>
-    {/each}
-  </ul>
 </section>
 
 <style>
@@ -167,7 +145,7 @@
     --plane-max: clamp(640px, 132vw, 2300px);
     --tilt: 58deg;
     --perspective: 0.9;
-    /* Fixed headroom above the farthest pin for its flag, so it never reaches the subtitle. */
+    /* Fixed headroom above the farthest pin for its flag, so it never reaches the call to action. */
     --flag-room: 56px;
     --hero-gap: clamp(14px, 2.5svh, 24px);
     position: relative;
@@ -232,23 +210,6 @@
     box-decoration-break: clone;
   }
 
-  /* The far edge of the map runs under this copy: brighter text plus a soft scrim halo keeps it
-     above WCAG AA over the dots. */
-  .hero__subtitle {
-    font-family: var(--ts-font-accent);
-    font-size: 18px;
-    color: color-mix(in srgb, var(--ts-text) 88%, transparent);
-    line-height: 1.65;
-    max-width: 680px;
-    margin: 0;
-    font-weight: 450;
-    text-wrap: pretty;
-    text-shadow:
-      0 0 2px var(--ts-bg-base),
-      0 0 8px var(--ts-bg-base),
-      0 0 18px var(--ts-bg-base);
-  }
-
   .hero__cta {
     display: grid;
     justify-items: center;
@@ -283,28 +244,9 @@
     transform: translateX(2px);
   }
 
-  .hero__cta-note {
-    margin: 0;
-    font-size: 14px;
-    line-height: 20px;
-    color: var(--ts-text-muted);
-    text-wrap: pretty;
-    text-shadow: 0 0 8px var(--ts-bg-base);
-  }
-
-  /* Inline, so the icon stays beside the first word when the note wraps on phones. */
-  :global(.hero__cta-note-icon) {
-    display: inline-block;
-    vertical-align: -3px;
-    margin-right: 8px;
-    width: 16px;
-    height: 16px;
-    color: var(--ts-success);
-  }
-
   /* ---------- 3D map ---------- */
 
-  /* The band the map is seen in. The plane's faded far edge reaches up behind the subtitle; the
+  /* The band the map is seen in. The plane's faded far edge reaches up behind the copy; the
      pins and flags stay inside the band. It grows into the height the copy leaves, up to what
      the widest plane needs. */
   .hero__world {
@@ -527,44 +469,6 @@
     from { scale: 1 0; }
   }
 
-  /* ---------- Highlights ---------- */
-
-  .hero__highlights {
-    position: relative;
-    z-index: 1;
-    list-style: none;
-    margin: 0;
-    padding: 0 16px;
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 8px;
-  }
-
-  .hero__highlight {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    height: 32px;
-    padding: 0 12px;
-    border-radius: 100px;
-    background: var(--ts-bg-card);
-    border: 1px solid var(--ts-glass-border);
-    font-family: var(--ts-font-accent);
-    font-size: 13px;
-    font-weight: 400;
-    color: var(--ts-text-muted);
-    white-space: nowrap;
-  }
-
-  :global(.hero__highlight-icon) {
-    width: 15px;
-    height: 15px;
-    color: var(--ts-primary-light);
-    display: inline-block;
-  }
-
   /* Portrait screens are taller than the widest plane needs, so the hero keeps its natural height
      and the band the height of the widest plane instead of filling the screen. */
   @media (orientation: portrait), (max-width: 640px) {
@@ -587,9 +491,6 @@
     }
     .hero__headline {
       margin-top: 4px;
-    }
-    .hero__subtitle {
-      font-size: 15px;
     }
   }
 

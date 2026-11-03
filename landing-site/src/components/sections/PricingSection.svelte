@@ -4,7 +4,7 @@
   import RouteLink from '@/components/RouteLink.svelte'
   import { dict, locale } from '@/lib/i18n'
   import { localeMeta } from '@/lib/i18n/locales'
-  import { annualSavingMonths, formatPlanBilling, formatPlanLimits, type BillingInterval } from '@/lib/pricing'
+  import { formatPlanBilling, formatPlanLimits, type BillingInterval } from '@/lib/pricing'
   import { publicAlphaCatalog, registrationUrl } from '@/lib/site'
 
   export let headingLevel: 1 | 2 = 2
@@ -12,7 +12,6 @@
   // Monthly is the default; yearly costs ten monthly payments and carries over to checkout.
   let interval: BillingInterval = 'month'
   const intervals: BillingInterval[] = ['month', 'year']
-  const savingMonths = annualSavingMonths(publicAlphaCatalog)
 
   $: headingTag = headingLevel === 1 ? 'h1' : 'h2'
   $: planTag = headingLevel === 1 ? 'h2' : 'h3'
@@ -23,7 +22,6 @@
     return {
       ...meta,
       billing: formatPlanBilling(meta, interval, $dict.pricing, localeMeta($locale).bcp47),
-      description: copy.description,
       features: 'features' in copy ? [...limitLines, ...copy.features] : limitLines,
       cta: copy.cta,
       href: meta.slug === 'enterprise' ? '/contact'
@@ -35,20 +33,14 @@
 <section class="pricing-section" id="pricing">
   <div class="pricing-section__head">
     <div class="pricing-section__intro">
-      <span class="ts-eyebrow">{$dict.pricing.eyebrow}</span>
       <svelte:element this={headingTag} class="pricing-section__title">
         {$dict.pricing.titleLead} {$dict.pricing.titleAccent}
       </svelte:element>
-      <p class="pricing-section__subtitle">{$dict.pricing.subtitle}</p>
-      <p class="pricing-section__subtitle">{$dict.pricing.status}</p>
     </div>
     <div class="ts-segmented pricing-section__interval" role="group" aria-label={$dict.pricing.intervals.label}>
       {#each intervals as option (option)}
         <button type="button" aria-pressed={interval === option} on:click={() => (interval = option)}>
           {$dict.pricing.intervals[option]}
-          {#if option === 'year' && savingMonths}
-            <span class="pricing-section__saving">{$dict.pricing.intervals.saving.replace('{months}', String(savingMonths))}</span>
-          {/if}
         </button>
       {/each}
     </div>
@@ -69,14 +61,7 @@
         <svelte:element this={planTag} class="pricing-card__name">
           <span class="pricing-card__icon"><Icon name={plan.icon} className="pricing-card__icon-glyph" /></span>
           {plan.name}
-          {#if plan.popular}
-            <span class="pricing-card__badge">{$dict.pricing.badge}</span>
-          {:else if !plan.available}
-            <span class="pricing-card__badge pricing-card__badge--neutral">{$dict.pricing.plans.enterprise.cta}</span>
-          {/if}
         </svelte:element>
-        <p class="pricing-card__desc">{plan.description}</p>
-
         <p class="pricing-card__price">
           <strong>{plan.billing.price}</strong>
           <span>{plan.billing.suffix}</span>
@@ -145,18 +130,6 @@
 
   .pricing-section__interval {
     height: 36px;
-  }
-
-  .pricing-section__saving {
-    color: var(--ts-success);
-    font-size: 12px;
-  }
-
-  .pricing-section__subtitle {
-    margin: 0;
-    font-size: 16px;
-    line-height: 1.7;
-    color: var(--ts-text-muted);
   }
 
   .pricing-grid {
@@ -229,19 +202,6 @@
     color: var(--ts-text);
   }
 
-  .pricing-card__badge {
-    display: inline-flex;
-    align-items: center;
-    height: 22px;
-    padding: 0 var(--ts-space-2);
-    border-radius: var(--ts-radius-sm);
-    background: linear-gradient(90deg, var(--ts-primary), color-mix(in oklab, var(--ts-primary) 55%, var(--ts-secondary)));
-    color: #fff;
-    font-size: 12px;
-    font-weight: 500;
-    line-height: 1.5;
-  }
-
   .pricing-card__desc {
     margin: calc(-1 * var(--ts-space-2)) 0 0;
     font-size: 13px;
@@ -269,11 +229,6 @@
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
-  }
-
-  .pricing-card__badge--neutral {
-    color: var(--ts-text-muted);
-    background: rgba(255, 255, 255, 0.04);
   }
 
   .pricing-card__price span {

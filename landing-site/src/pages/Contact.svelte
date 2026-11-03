@@ -5,36 +5,20 @@
   import { dict } from '@/lib/i18n'
 
   type ChannelHrefKind = 'external' | 'mailto' | 'internal'
-  const channelMeta: Array<{ icon: AppIconName; label: string; href: string; kind: ChannelHrefKind }> = [
-    { icon: 'mail', label: 'Email', href: 'mailto:support@terrascale.tech', kind: 'mailto' },
+  // Email shows its address because visitors copy it; the community channels need only their name.
+  const channels: Array<{ icon: AppIconName; label: string; value?: string; href: string; kind: ChannelHrefKind }> = [
+    { icon: 'mail', label: 'Email', value: 'support@terrascale.tech', href: 'mailto:support@terrascale.tech', kind: 'mailto' },
     { icon: 'brandDiscord', label: 'Discord', href: 'https://discord.gg/8Zr2Nw9g', kind: 'external' },
     { icon: 'brandGithub', label: 'GitHub', href: 'https://github.com/TerraScale', kind: 'external' },
   ]
-  $: channels = channelMeta.map((meta, i) => ({
-    ...meta,
-    value: $dict.contact.channels[i].value,
-  }))
-
 </script>
 
 <section class="ts-section contact-hero">
   <div class="ts-container contact-hero__inner">
-    <span class="ts-eyebrow"><span class="ts-dot" aria-hidden="true"></span>{$dict.contact.eyebrow}</span>
     <h1 class="contact-hero__title">
       {$dict.contact.titleLead}
       <span class="ts-h-muted">{$dict.contact.titleAccent}</span>
     </h1>
-    <p class="ts-lede contact-hero__lede">{$dict.contact.subtitle}</p>
-    <ExternalLink href={channelMeta[0].href} class="ts-btn ts-btn-primary ts-btn-lg">
-      <Icon name="mail" className="contact__icon" />
-      {$dict.contact.channels[0].value}
-    </ExternalLink>
-  </div>
-</section>
-
-<section class="ts-section contact-body">
-  <div class="ts-container contact-body__inner">
-    <h2 class="contact-body__title">{$dict.contact.channelsTitle}</h2>
     <ul class="contact-channels">
       {#each channels as c (c.label)}
         <li>
@@ -42,7 +26,7 @@
             <span class="ts-icon-tile"><Icon name={c.icon} /></span>
             <span class="contact-channel__body">
               <span class="contact-channel__label">{c.label}</span>
-              <span class="contact-channel__value">{c.value}</span>
+              {#if c.value}<span class="contact-channel__value">{c.value}</span>{/if}
             </span>
             <Icon name="chevronRight" className="contact-channel__chev" />
           </ExternalLink>
@@ -55,8 +39,7 @@
 <style>
   .contact-hero__inner {
     display: grid;
-    gap: var(--ts-s5);
-    justify-items: start;
+    gap: var(--ts-s10);
   }
 
   .contact-hero__title {
@@ -67,27 +50,8 @@
     line-height: 1.04;
   }
 
-  .contact-hero__lede {
-    margin-top: 0;
-  }
-
-  .contact-hero :global(.contact__icon) {
-    width: var(--ts-icon);
-    height: var(--ts-icon);
-  }
-
-  .contact-body__inner {
-    display: grid;
-    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-    gap: var(--ts-s12);
-    align-items: start;
-  }
-
-  .contact-body__title {
-    font-size: var(--ts-fs-3xl);
-  }
-
   .contact-channels {
+    max-width: 560px;
     list-style: none;
     margin: 0;
     padding: 0;
@@ -149,10 +113,6 @@
   @media (max-width: 860px) {
     .contact-hero__title {
       font-size: var(--ts-fs-4xl);
-    }
-    .contact-body__inner {
-      grid-template-columns: minmax(0, 1fr);
-      gap: var(--ts-s6);
     }
   }
 

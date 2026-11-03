@@ -34,13 +34,14 @@ for (const [locale, messages] of locales) {
     const pricingCopy = JSON.stringify(messages.pricing);
     assert.doesNotMatch(pricingCopy, /propos|pending review|pendientes de revisión|pendentes de revisão|propõem|proponen/i);
     assert.doesNotMatch(JSON.stringify([messages.pricing, messages.cta, messages.about]), staleClaims);
-    for (const copy of [messages.pricing.status, messages.pricing.detailed.text, messages.pricing.faq.items[1].a]) {
+    for (const copy of [messages.pricing.detailed.text, messages.pricing.faq.items[1].a]) {
       assert.match(copy, overageRules[locale]);
     }
-    assert.match(messages.pricing.status, /checkout/);
-    for (const copy of [messages.pricing.status, messages.pricing.triad[2].text,
-      messages.pricing.detailed.text, messages.pricing.faq.items[1].a, messages.cta.text,
-      messages.about.pillars[2].text]) {
+    // Free, Starter, Pro and Team each have their own checkout action; Enterprise goes to sales.
+    for (const plan of Object.values(messages.pricing.plans)) assert.ok(plan.cta.trim());
+    assert.equal(new Set(Object.values(messages.pricing.plans).map((plan) => plan.cta)).size, 5);
+    for (const copy of [messages.pricing.triad[2].text, messages.pricing.detailed.text,
+      messages.pricing.faq.items[1].a, messages.about.pillars[2].text]) {
       assert.match(copy, usageCaveats[locale]);
     }
   });

@@ -7,17 +7,11 @@
 
 <section class="pricing-cta">
   <div class="pricing-cta__card">
-    <div>
-      <h2 class="pricing-cta__title">{$dict.pricing.finalCta.titleLead} {$dict.pricing.finalCta.titleAccent}</h2>
-      <p class="pricing-cta__text">{$dict.pricing.finalCta.text}</p>
-    </div>
+    <h2 class="pricing-cta__title">{$dict.pricing.finalCta.titleLead} {$dict.pricing.finalCta.titleAccent}</h2>
     <div class="pricing-cta__actions">
       <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary pricing-cta__btn">
         {$dict.pricing.finalCta.cta}
         <Icon name="arrowRight" className="pricing-cta__icon" />
-      </ExternalLink>
-      <ExternalLink href="https://docs.terrascale.tech" class="ts-btn ts-btn-glass pricing-cta__btn">
-        {$dict.pricing.faq.readDocs}
       </ExternalLink>
     </div>
   </div>
@@ -47,12 +41,6 @@
     font-weight: 600;
     letter-spacing: -0.035em;
     color: var(--ts-text);
-  }
-
-  .pricing-cta__text {
-    margin: var(--ts-space-2) 0 0;
-    font-size: 16px;
-    color: var(--ts-text-muted);
   }
 
   .pricing-cta__actions {

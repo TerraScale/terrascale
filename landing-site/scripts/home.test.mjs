@@ -7,21 +7,30 @@ import { ptBr } from '../src/lib/i18n/messages/pt-br.ts';
 const locales = [['en', en], ['es', es], ['pt-BR', ptBr]];
 // Public Alpha makes no availability or latency promise, so the home page must not imply one.
 const unverifiedClaims = /\b\d{2}(?:\.\d+)?\s*%|sub[- ]?\d+\s*ms|SOC 2|\d+\+ regions/i;
-const noSla = { en: /no uptime percentage or SLA/i, es: /ni SLA/i, 'pt-BR': /nem SLA/i };
+const noSla = { en: /no uptime percentage\b.*\bSLA/i, es: /ni SLA/i, 'pt-BR': /nem SLA/i };
 
 for (const [locale, messages] of locales) {
-  test(`${locale}: hero has one primary call to action with its risk reversal`, () => {
+  test(`${locale}: hero has one primary call to action and the FAQ states there is no SLA`, () => {
     assert.ok(messages.hero.cta.trim());
-    assert.match(messages.hero.ctaNote, noSla[locale]);
+    assert.ok(messages.homeFaq.items.some((item) => noSla[locale].test(item.a)));
+  });
+
+  // Simple UI: headings and real content only, no eyebrows, subtitles or taglines.
+  test(`${locale}: copy has no eyebrow, subtitle or tagline strings`, () => {
+    const keys = [];
+    const walk = (value, path) => {
+      if (Array.isArray(value)) value.forEach((item, i) => walk(item, `${path}[${i}]`));
+      else if (value && typeof value === 'object') {
+        for (const [key, child] of Object.entries(value)) { keys.push(`${path}.${key}`); walk(child, `${path}.${key}`); }
+      }
+    };
+    walk(messages, locale);
+    assert.deepEqual(keys.filter((key) => /\.(?:\w*eyebrow|subtitle|tagline|ctaNote|perks|highlights)$/i.test(key)), []);
   });
 
   test(`${locale}: how it works has three steps`, () => {
     assert.equal(messages.howItWorks.steps.length, 3);
     for (const step of messages.howItWorks.steps) assert.ok(step.title && step.text);
-  });
-
-  test(`${locale}: tagline reveal has at least two lines`, () => {
-    assert.ok(messages.tagline.lines.length >= 2);
   });
 
   test(`${locale}: home FAQ answers six to twelve questions`, () => {
@@ -35,13 +44,13 @@ for (const [locale, messages] of locales) {
   });
 
   test(`${locale}: home copy makes no unverified availability claims`, () => {
-    const copy = JSON.stringify([messages.hero, messages.howItWorks, messages.tagline, messages.homeFaq, messages.features]);
+    const copy = JSON.stringify([messages.hero, messages.howItWorks, messages.homeFaq, messages.features]);
     assert.doesNotMatch(copy, unverifiedClaims);
   });
 }
 
 test('every locale has the same home page shape', () => {
-  const shape = (messages) => [messages.howItWorks.steps.length, messages.tagline.lines.length,
-    messages.homeFaq.items.length, messages.features.items.length, messages.cta.perks.length];
+  const shape = (messages) => [messages.howItWorks.steps.length, messages.homeFaq.items.length,
+    messages.features.items.length, messages.code.agent.prompts.length];
   for (const [, messages] of locales) assert.deepEqual(shape(messages), shape(en));
 });

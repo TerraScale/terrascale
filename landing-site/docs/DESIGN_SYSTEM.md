@@ -5,6 +5,10 @@ site. This is written so an AI agent or designer can read it once and produce
 consistent output on a separate codebase. Copy the token block wholesale; copy
 component patterns as needed.
 
+The repository's simple-ui standard (`.agents/skills/simple-ui/SKILL.md`)
+overrides this file: no eyebrows, taglines, subtitles or secondary labels. Each
+section is a heading, its real content and at most one primary action.
+
 ---
 
 ## 0. Design principles
@@ -246,7 +250,7 @@ lines.
   reads as "confident / engineered". Every paragraph and headline uses this
   unless noted.
 - **Accent - Roboto** (Google Fonts, 300/400/500/700). Used for buttons,
-  navigation links, eyebrows, footer text, badges, subtitles, pill labels,
+  navigation links, footer text, pill labels,
   form labels - anywhere the
   tone needs to be "calm UI" rather than "engineered".
 - **Mono - Roboto Mono** with JetBrains Mono as fallback. Used for prices,
@@ -262,10 +266,8 @@ Token names map as: `--ts-font-body`, `--ts-font-accent`, `--ts-font-mono`.
 | Section title (H2) | `clamp(1.8rem, 2.5vw + 0.5rem, 3rem)` | 700 | body |
 | CTA headline | `clamp(2rem, 3vw + 0.5rem, 3.2rem)` | 700 | body |
 | Card title (H3) | 19px | 700 | body |
-| Inline subtitle | `clamp(1rem, 0.7vw + 0.75rem, 1.15rem)` | 400 | accent |
 | Body copy in card | 14.5px | 400 | body |
 | Muted paragraph | 15–18px | 400 | accent |
-| Eyebrow / kicker | 11px | 700 | accent, UPPERCASE, 0.14em ls |
 | Pill / chip label | 11–13px | 600–700 | accent |
 | Monospace digit/filename | 11–22px | 400–700 | mono, tabular-nums |
 | Pricing $ value | `clamp(0.8125rem, 2.4vw + 0.25rem, 2.125rem)` | 700 | mono |
@@ -275,8 +277,8 @@ Token names map as: `--ts-font-body`, `--ts-font-accent`, `--ts-font-mono`.
 
 - Headlines: `letter-spacing: -0.035em` down to `-0.02em`. Tighten as size
   grows.
-- UPPERCASE labels (badges, eyebrows, status, button text): `0.08em` for
-  button labels, `0.10em`–`0.14em` for eyebrows and chips.
+- UPPERCASE labels (column headings, status, button text): `0.08em` for
+  button labels, `0.10em`–`0.14em` for chips.
 - Lowercase body copy: `0` (default).
 
 ### Line-height rhythm
@@ -311,7 +313,7 @@ depending on density.
 
 | Scale | Use |
 |---|---|
-| `4px` | Eyebrows, small chips, code-block bullets |
+| `4px` | Small chips, code-block bullets |
 | `6px` (`--ts-radius-sm`) | Buttons, small cards, input fields |
 | `7–8px` | Social icon squares, FAQ item |
 | `10–12px` (`--ts-radius-md`) | Cards, terminal, CTA glass panel |
@@ -520,7 +522,7 @@ on hover, active state = brand pill (10% blue bg + 25% blue border).
 - `background: var(--ts-bg-surface)` + top hairline (`border-top: 1px solid
   var(--ts-divider)`).
 - Grid: `1.6fr repeat(4, 1fr)` - brand column wider than the 4 link columns.
-- Brand column: logo-white (26px tall) + muted tagline + social row.
+- Brand column: logo-white (26px tall) + social row.
 - Column headings: 11px, 700, uppercase, 0.14em letter-spacing.
 - Each link has a chevron glyph that translates +2px on hover.
 - Meta row at the bottom is divided by another hairline; left = copyright,
@@ -614,46 +616,15 @@ across on hover:
 }
 ```
 
-### 11.5 Eyebrows (kickers)
+### 11.5 Eyebrows (removed)
 
-Small pill above a section title. Two variants - with leading dot (default),
-or plain.
-
-```css
-.ts-eyebrow {
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 5px 12px; border-radius: 4px;
-  background: rgba(var(--ts-primary-rgb), 0.10);
-  border: 1px solid rgba(var(--ts-primary-rgb), 0.25);
-  color: var(--ts-primary-light);
-  font-family: var(--ts-font-accent);
-  font-size: 11px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.14em;
-  line-height: 1;
-}
-.ts-eyebrow::before {
-  content: ''; display: inline-block;
-  width: 5px; height: 5px; border-radius: 3px;
-  background: var(--ts-primary);
-}
-.ts-eyebrow--plain::before { display: none; }
-```
+Sections have no eyebrow, kicker or badge above the title.
 
 ### 11.6 Section header
 
-Used at the top of every feature / pricing / content section. Centred,
-max-width 720 px.
-
-Structure:
-
-```
-[eyebrow pill]
-# H2 Title (gradient-text on 1–3 words optional)
-muted subtitle (1 line ideal, max 2)
-```
-
-Size: H2 `clamp(1.8rem, 2.5vw + 0.5rem, 3rem)`, subtitle 18px Roboto muted.
-Margin-bottom under the section header ≈ `48–64 px` before content.
+Used at the top of every feature / pricing / content section: one H2, no
+subtitle. Size: H2 `clamp(1.8rem, 2.5vw + 0.5rem, 3rem)`. Margin-bottom under
+the section header ≈ `48–64 px` before content.
 
 ### 11.7 Status pill / animated dot
 
@@ -872,11 +843,8 @@ Composition top-to-bottom, all centred:
    glow behind it (via the absolute `.hero__brand-glow` div animated with
    `ts-breathe`).
 3. Headline (H1). Use gradient text on the trailing phrase only.
-4. Muted subtitle (max 560–620 px wide, single concrete sentence).
-5. Two CTAs: primary + glass secondary.
-6. Highlight pills: 3 glass pills `padding: 9px 16px`, `gap: 10px`, `font-size
-   13px`, each with a 15 × 15 icon (tinted primary-light) + label.
-7. Section min-height: `clamp(580px, calc(78vh - 72px), 760px)`. Inner
+4. One primary CTA. No subtitle, note or highlight pills.
+5. Section min-height: `clamp(580px, calc(78vh - 72px), 760px)`. Inner
    padding `40px`. No per-section background colour - the body glow handles
    the backdrop.
 
@@ -886,7 +854,7 @@ all of those were added and later removed because they fragmented the page.
 ### 12.2 Content section (Features, Pricing, Code panel, etc.)
 
 ```
-[SectionHeader - eyebrow + H2 + muted subtitle, centred, max 720]
+[H2 section title]
   48–64 px gutter
 [Grid / panel of cards, same visual language]
 ```
@@ -1012,7 +980,7 @@ Section `*__inner` containers shrink their gutter from `0 40px` to
   uptime", "sub-20 ms latency", "20+ regions", "Fortune 500 companies" etc
   unless it is literally true and verifiable.
 - **Casing rhythm.** Sentence case for headlines and body. UPPERCASE for
-  eyebrows, pill labels, button text, status chips, column headings. Never
+  pill labels, button text, status chips, column headings. Never
   Title Case for a whole paragraph.
 - **Keep Free separate from paid billing.** Free requires no payment card.
   Starter is billed $30 yearly only ($2.50/month equivalent); Pro and Team
@@ -1023,8 +991,8 @@ Section `*__inner` containers shrink their gutter from `0 40px` to
 - **Export + no-lock-in is a first-class story.** FAQ addresses this
   directly: rate-limit on exports is for platform health, never charges,
   never locks users in.
-- **Two-sentence descriptions.** Subtitles and card body text fit into 1–2
-  short sentences. If it needs a third sentence, trim.
+- **Two-sentence descriptions.** Card body text fits into 1–2 short
+  sentences. If it needs a third sentence, trim.
 - **Gradient phrase trick.** H1/H2 headlines often wrap onto 2 lines; the
   trailing short phrase gets `.ts-text-gradient` applied to it. Keep the
   gradient phrase to 2–3 words.
@@ -1045,7 +1013,7 @@ If you're applying this design to a new page, work in this order:
    and uses section `padding: 80–88px 0`.
 6. For any new card or panel, reach for `.ts-glass` + one of the card
    patterns in §11.9 before inventing new styles.
-7. Buttons, inputs, eyebrows, gradient text, pulse-dot - compose from
+7. Buttons, inputs, gradient text, pulse-dot - compose from
    §11.3–11.7, do not write new variants.
 8. Respect `prefers-reduced-motion` from day one.
 9. Copy passes the grounded-voice test (§16) - strip any uptime / latency /

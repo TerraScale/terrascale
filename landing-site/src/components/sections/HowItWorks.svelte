@@ -13,19 +13,16 @@
     ...step,
     icon: stepIcons[i] ?? 'zap',
     regions: stepRegions[i] ?? [],
-    tags: step.tags ?? [],
   }))
 </script>
 
 <section class="how" id="how-it-works" use:reveal>
   <div class="how__inner">
     <div class="how__head">
-      <span class="ts-eyebrow">{$dict.howItWorks.eyebrow}</span>
       <h2 class="how__title">
         {$dict.howItWorks.titleLead}<br />
         <span class="how__accent">{$dict.howItWorks.titleAccent}</span>
       </h2>
-      <p class="how__subtitle">{$dict.howItWorks.subtitle}</p>
     </div>
 
     <ol class="how__steps">
@@ -37,13 +34,10 @@
           </div>
           <h3 class="how__step-title">{step.title}</h3>
           <p class="how__step-text">{step.text}</p>
-          {#if step.regions.length || step.tags.length}
+          {#if step.regions.length}
             <div class="how__step-tags">
               {#each step.regions as code (code)}
                 <span class="how__tag"><RegionFlag {code} /></span>
-              {/each}
-              {#each step.tags as tag (tag)}
-                <span class="how__tag">{tag}</span>
               {/each}
             </div>
           {/if}
@@ -84,14 +78,6 @@
 
   .how__accent {
     color: var(--ts-primary-light);
-  }
-
-  .how__subtitle {
-    margin: 0;
-    font-size: 16px;
-    line-height: 24px;
-    color: var(--ts-text-muted);
-    text-wrap: pretty;
   }
 
   .how__steps {

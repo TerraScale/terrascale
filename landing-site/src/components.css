@@ -55,8 +55,8 @@
     .ts-glass, .ts-glass-strong { background: var(--ts-surface); backdrop-filter: none; }
   }
 
-  /* ---------- Labels / eyebrow ---------- */
-  .ts-label, .ts-eyebrow, .ts-nav-group-label, .ts-table th, .ts-stat dt {
+  /* ---------- Labels ---------- */
+  .ts-label, .ts-nav-group-label, .ts-table th, .ts-stat dt {
     font-family: var(--ts-label-font);
     font-size: var(--ts-label-size);
     font-weight: var(--ts-label-weight);
@@ -65,8 +65,6 @@
     line-height: 16px;
     color: var(--ts-ink-3);
   }
-  .ts-eyebrow { display: inline-flex; align-items: center; gap: var(--ts-s2); color: var(--ts-eyebrow); }
-  .ts-eyebrow .ts-dot { --state: var(--ts-accent); }
 
   /* ---------- Top nav (frosted, sticky; floating variant) ---------- */
   .ts-topnav {
@@ -95,7 +93,6 @@
   .ts-page { padding: var(--ts-s8) var(--ts-s10) var(--ts-s12); display: flex; flex-direction: column; gap: var(--ts-s10); min-width: 0; }
   .ts-page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--ts-s6); flex-wrap: wrap; }
   .ts-page-header h1 { font-size: var(--ts-fs-3xl); margin-top: var(--ts-s2); }
-  .ts-lede { margin-top: var(--ts-s2); color: var(--ts-ink-2); font-size: var(--ts-fs-lg); max-width: var(--ts-prose-max); }
   .ts-actions { display: flex; gap: var(--ts-s2); flex-wrap: wrap; align-items: center; }
 
   /* ---------- Buttons: one height scale 32/36/40 ---------- */

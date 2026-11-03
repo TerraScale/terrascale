@@ -8,17 +8,11 @@
   <div class="ts-container">
     <div class="ts-empty notfound__box">
       <span class="ts-icon-tile"><Icon name="search" /></span>
-      <span class="ts-eyebrow">404 · {$dict.notFound.eyebrow}</span>
       <h1 id="notfound-title" class="ts-empty-title">{$dict.notFound.title}</h1>
-      <p>{$dict.notFound.text}</p>
       <div class="ts-actions notfound__actions">
         <RouteLink href="/" class="ts-btn ts-btn-primary">
           <Icon name="home" className="notfound__icon" />
           {$dict.notFound.backHome}
-        </RouteLink>
-        <RouteLink href="/contact" class="ts-btn ts-btn-secondary">
-          <Icon name="messageSquare" className="notfound__icon" />
-          {$dict.notFound.contactSupport}
         </RouteLink>
       </div>
     </div>

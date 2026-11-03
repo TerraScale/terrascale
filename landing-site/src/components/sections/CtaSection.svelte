@@ -1,12 +1,9 @@
 <script lang="ts">
   import Icon from '@/components/Icon.svelte'
   import ExternalLink from '@/components/ExternalLink.svelte'
-  import RouteLink from '@/components/RouteLink.svelte'
   import { dict } from '@/lib/i18n'
   import { reveal } from '@/lib/reveal'
   import { registrationUrl } from '@/lib/site'
-
-  $: perks = $dict.cta.perks
 </script>
 
 <section class="cta" use:reveal>
@@ -15,29 +12,13 @@
       <h2 class="cta__headline">
         {$dict.cta.headlineLead} <span class="cta__accent">{$dict.cta.headlineAccent}</span>
       </h2>
-      <p class="ts-lede cta__text">
-        {$dict.cta.text}
-      </p>
 
       <div class="cta__actions">
         <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary cta__primary">
           {$dict.cta.ctaPrimary}
           <Icon name="arrowRight" className="cta__icon" />
         </ExternalLink>
-        <RouteLink href="/contact" class="ts-btn ts-btn-secondary ts-btn-lg">
-          <Icon name="messageSquare" className="cta__icon" />
-          {$dict.cta.ctaSecondary}
-        </RouteLink>
       </div>
-
-      <ul class="cta__perks" aria-label={$dict.cta.perksAria}>
-        {#each perks as p (p)}
-          <li>
-            <Icon name="check" className="cta__perk-icon" />
-            {p}
-          </li>
-        {/each}
-      </ul>
     </div>
   </div>
 </section>
@@ -78,14 +59,6 @@
     margin: 0;
   }
 
-  .cta__text {
-    font-size: 16px;
-    color: var(--ts-text-muted);
-    line-height: 1.7;
-    max-width: 52ch;
-    margin: 0;
-  }
-
   .cta__actions {
     display: flex;
     justify-content: center;
@@ -103,30 +76,6 @@
   :global(.cta__icon) {
     width: 14px;
     height: 14px;
-  }
-
-  .cta__perks {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 20px;
-    color: var(--ts-text-muted);
-    font-size: 13px;
-  }
-
-  .cta__perks li {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  :global(.cta__perk-icon) {
-    width: 14px;
-    height: 14px;
-    color: #6bca92;
   }
 
   @media (max-width: 640px) {

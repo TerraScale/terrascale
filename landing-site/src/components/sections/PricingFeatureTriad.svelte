@@ -12,7 +12,6 @@
 
 <section class="triad" id="usage">
   <div class="triad__head">
-    <span class="ts-eyebrow">{$dict.pricing.usage.eyebrow}</span>
     <h2 class="triad__heading">{$dict.pricing.usage.title}</h2>
   </div>
   <div class="triad__grid">

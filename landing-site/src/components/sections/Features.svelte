@@ -6,11 +6,11 @@
   import { reveal } from '@/lib/reveal'
 
   const featureIcons: AppIconName[] = ['database', 'globe', 'target', 'activity', 'shieldCheck']
-  const regionCodes = ['gru', 'sjc', 'fra'] as const
-  const isRegion = (bullet: string): bullet is (typeof regionCodes)[number] =>
-    (regionCodes as readonly string[]).includes(bullet)
+  // The regions card shows the serving regions it describes.
+  const featureRegions = [[], ['gru', 'sjc', 'fra']] as const
   $: features = $dict.features.items.map((item, i) => ({
     icon: featureIcons[i] ?? 'zap',
+    regions: featureRegions[i] ?? [],
     ...item,
   }))
 </script>
@@ -18,34 +18,27 @@
 <section class="features" id="features" use:reveal>
   <div class="features__inner">
     <div class="features__head">
-      <span class="ts-eyebrow">{$dict.features.eyebrow}</span>
       <h2 class="features__title">
         {$dict.features.titleLead}<br />
         <span class="features__accent">{$dict.features.titleAccent}</span>
       </h2>
-      <p class="features__subtitle">{$dict.features.subtitle}</p>
     </div>
 
     <ul class="features__grid">
-      {#each features as feature (feature.title)}
+      {#each features as feature (feature.headline)}
         <li class="feature">
-          <div class="feature__label">
-            <span class="feature__icon">
-              <Icon name={feature.icon} className="feature__icon-svg" />
-            </span>
-            {feature.title}
-          </div>
+          <span class="feature__icon">
+            <Icon name={feature.icon} className="feature__icon-svg" />
+          </span>
           <h3 class="feature__headline">{feature.headline}</h3>
           <p class="feature__text">{feature.text}</p>
-          <div class="feature__tags">
-            {#each feature.bullets as bullet (bullet)}
-              {#if isRegion(bullet)}
-                <span class="feature__tag"><RegionFlag code={bullet} /></span>
-              {:else}
-                <span class="feature__tag">{bullet}</span>
-              {/if}
-            {/each}
-          </div>
+          {#if feature.regions.length}
+            <div class="feature__tags">
+              {#each feature.regions as code (code)}
+                <span class="feature__tag"><RegionFlag {code} /></span>
+              {/each}
+            </div>
+          {/if}
         </li>
       {/each}
     </ul>
@@ -85,14 +78,6 @@
     color: var(--ts-primary-light);
   }
 
-  .features__subtitle {
-    font-size: 16px;
-    color: var(--ts-text-muted);
-    line-height: 24px;
-    margin: 0;
-    text-wrap: pretty;
-  }
-
   /* Two wide cards over three narrow ones. */
   .features__grid {
     list-style: none;
@@ -121,18 +106,6 @@
 
   .feature:hover {
     border-color: var(--ts-glass-border);
-  }
-
-  .feature__label {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    font-family: var(--ts-font-mono);
-    font-size: 12px;
-    line-height: 16px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--ts-text-muted);
   }
 
   .feature__icon {

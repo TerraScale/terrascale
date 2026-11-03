@@ -21,20 +21,14 @@
 
 <section class="ts-section about-hero">
   <div class="ts-container about-hero__inner">
-    <span class="ts-eyebrow"><span class="ts-dot" aria-hidden="true"></span>{$dict.about.eyebrow}</span>
     <h1 class="about-hero__title">
       {$dict.about.titleLead}
       <span class="ts-h-muted">{$dict.about.titleAccent}</span>
     </h1>
-    <p class="ts-lede about-hero__lede">{$dict.about.subtitle}</p>
     <div class="ts-actions">
       <RouteLink href="/pricing" class="ts-btn ts-btn-primary ts-btn-lg">
         {$dict.about.ctaPricing}
         <Icon name="arrowRight" className="about__icon" />
-      </RouteLink>
-      <RouteLink href="/contact" class="ts-btn ts-btn-secondary ts-btn-lg">
-        <Icon name="messageSquare" className="about__icon" />
-        {$dict.about.ctaContact}
       </RouteLink>
     </div>
   </div>
@@ -43,9 +37,7 @@
 <section class="ts-section about-section">
   <div class="ts-container about-section__inner">
     <div class="about-section__intro">
-      <span class="ts-eyebrow"><span class="ts-dot" aria-hidden="true"></span>{$dict.about.missionEyebrow}</span>
       <h2 class="about-section__title">{$dict.about.missionTitle}</h2>
-      <p class="about-section__text">{$dict.about.missionText}</p>
     </div>
 
     <div class="about-pillars">
@@ -65,11 +57,10 @@
 <section class="ts-section about-band">
   <div class="ts-container about-section__inner">
     <div class="about-section__intro">
-      <span class="ts-eyebrow"><span class="ts-dot" aria-hidden="true"></span>{$dict.about.pricingPrincipleEyebrow}</span>
       <h2 class="about-section__title">{$dict.about.bandTitle}</h2>
       <p class="about-section__text">{$dict.about.bandText}</p>
     </div>
-    <ul class="about-regions" aria-label={$dict.about.eyebrow}>
+    <ul class="about-regions" aria-label={$dict.about.regionsAria}>
       {#each regions as region (region.id)}
         <li class="about-region">
           <span class="ts-badge ts-badge-outline about-region__code">{region.id}</span>
@@ -93,10 +84,6 @@
     font-weight: var(--ts-display-weight);
     letter-spacing: var(--ts-display-tracking);
     line-height: 1.04;
-  }
-
-  .about-hero__lede {
-    margin-top: 0;
   }
 
   .about-hero :global(.about__icon) {

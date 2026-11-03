@@ -27,8 +27,6 @@ export const en = {
   },
 
   footer: {
-    tagline:
-      'TerraScale Public Alpha offers a regional document database without an uptime percentage or SLA. Current availability is published on the status page.',
     rightsReserved: 'All rights reserved.',
     columns: {
       product: {
@@ -73,62 +71,41 @@ export const en = {
   },
 
   hero: {
-    eyebrow: 'Public Alpha',
     headlineLead: 'Typed document database,',
     headlineAccent: 'replicated across regions.',
-    subtitle:
-      'Pick the regions your data lives in. The global endpoint serves each request from the nearest healthy one, and writes replicate asynchronously to the rest.',
     cta: 'Start free',
-    ctaNote: 'Free plan without a card. Public Alpha has no uptime percentage or SLA.',
-    highlightsAria: 'Key capabilities',
-    highlights: ['Selected-region routing', 'Asynchronous replication', 'Typed SDKs', 'AI agents ready'],
   },
 
   features: {
-    eyebrow: 'Platform',
     titleLead: 'What Public Alpha covers,',
     titleAccent: 'and where it stops.',
-    subtitle:
-      'The launch contract covers document data, three serving regions, typed clients, and customer-visible health without an uptime commitment.',
     items: [
       {
-        title: 'Data',
         headline: 'Query JSON documents with filters or SQL',
         text: 'Databases hold collections of JSON documents, each with an optional schema. Query with JSON filters or read-only SQL: SELECT, WHERE, ORDER BY, and up to 1,000 rows per statement.',
-        bullets: ['Collections', 'JSON filters', 'Read-only SQL'],
       },
       {
-        title: 'Regions',
         headline: 'Keep each database in the regions you pick',
         text: 'São Paulo, the San Francisco Bay Area, and Frankfurt serve today. Each database lives in a home region and replicates in full to the other regions you select.',
-        bullets: ['gru', 'sjc', 'fra'],
       },
       {
-        title: 'Routing',
         headline: 'Serve reads from the nearest healthy region',
         text: 'The global endpoint answers from the nearest healthy region that holds your database. Strict regional endpoints never serve from a region you did not select.',
-        bullets: ['Global endpoint', 'Strict regional endpoints'],
       },
       {
-        title: 'Health',
         headline: 'See replication health as measured values',
         text: 'Replication is asynchronous. Lag, convergence, conflicts, and API latency are published as separate measured values with their observation time. There is no bounded-lag promise, uptime percentage, or SLA.',
-        bullets: ['Asynchronous replication', 'Observation time', 'No SLA'],
       },
       {
-        title: 'Security',
         headline: 'Encrypted in transit and at rest',
         text: 'Customer traffic requires TLS 1.2 or newer, data at rest uses qualified encryption, and every request requires authorization. Customer content stays in the regions you select.',
-        bullets: ['TLS 1.2+', 'Encryption at rest', 'Per-request authorization'],
       },
     ],
   },
 
   howItWorks: {
-    eyebrow: 'How it works',
     titleLead: 'From sign up to global reads',
     titleAccent: 'in three steps.',
-    subtitle: 'Each database has one home region plus the replica regions you select. Customer content stays in those regions.',
     steps: [
       {
         title: 'Create a database',
@@ -141,20 +118,14 @@ export const en = {
       {
         title: 'Read and write',
         text: 'Use the global endpoint for the nearest healthy selected region, or a strict regional endpoint that never serves from another region. Call it from the C# or TypeScript SDK, the HTTP API, or an MCP client.',
-        tags: ['Global endpoint', 'Strict regional endpoint'],
       },
     ],
   },
 
-  tagline: {
-    lines: ['Your data stays in the regions you choose.', 'Reads come from the nearest healthy one.'],
-  },
 
   homeFaq: {
-    eyebrow: 'FAQ',
     titleLead: 'Questions before',
     titleAccent: 'you start.',
-    subtitle: 'Short answers about regions, replication, and what Public Alpha covers.',
     items: [
       {
         q: 'What is TerraScale?',
@@ -193,28 +164,21 @@ export const en = {
         a: 'Yes. Export through the dashboard or API at any time. There is no exit fee for leaving TerraScale.',
       },
     ],
-    footerTitle: 'Still have questions?',
-    footerText: 'Contact us about regions, plans, or Enterprise terms.',
     contactSales: 'Contact us',
-    readDocs: 'Read documentation',
   },
 
   code: {
-    eyebrow: 'Developer SDK',
     headlineLead: 'Query your data',
     headlineAccent: 'in the language you love',
-    text: 'Typed C# and TypeScript SDKs call the same public HTTP API the dashboard uses, with models generated from its OpenAPI contract.',
     bullets: ['Typed C# and TypeScript clients', 'Generated OpenAPI models', 'JSON filters or read-only SQL'],
     agent: {
       title: 'Or ask your favorite AI agent to do it for you',
       text: 'We support CLI and MCP. Connect Claude Code, Cursor, or any MCP client to the TerraScale MCP server with a personal access token. The agent acts with your roles, and every call is checked again. Agents can also call the HTTP API from a shell.',
-      promptsLabel: 'Try asking',
       prompts: [
         'List my databases and the regions each one serves.',
         'Find customers with 10 or more seats in the app database.',
         'How much of this month’s operation-unit allowance have we used?',
       ],
-      toolsLabel: 'Some MCP tools',
     },
     copy: 'Copy',
     copied: 'Copied',
@@ -225,52 +189,38 @@ export const en = {
   cta: {
     headlineLead: 'Register for the',
     headlineAccent: 'TerraScale Public Alpha.',
-    text: 'Free requires no card. Paid plans bill operation units over the allowance on the next invoice; storage and client egress overages are not billed yet.',
     ctaPrimary: 'Register for Public Alpha',
-    ctaSecondary: 'Talk to Sales',
-    perksAria: 'Plan details',
-    perks: ['Free without a card', 'Paid plans monthly or yearly', 'Export your data anytime'],
   },
 
   pricingTeaser: {
-    eyebrow: 'Pricing',
     title: 'Start Free. Compare subscription plans.',
     cta: 'Compare plans',
   },
 
   pricing: {
-    eyebrow: 'Pricing',
     titleLead: 'Simple pricing',
     titleAccent: 'That scales with YOU',
-    subtitle: 'Start Free, or buy Starter, Pro, or Team through checkout. Enterprise is arranged through sales.',
-    badge: 'Most Popular',
     suffixMonthly: '/month',
     suffixAnnual: '/year',
     intervals: {
       label: 'Billing interval',
       month: 'Monthly',
       year: 'Yearly',
-      saving: '{months} months free',
     },
     plans: {
       free: {
-        description: 'Build and evaluate without a payment card',
         cta: 'Start Free',
       },
       starter: {
-        description: 'Subscription for small projects',
         cta: 'Choose Starter',
       },
       pro: {
-        description: 'Subscription for growing projects',
         cta: 'Choose Pro',
       },
       team: {
-        description: 'Subscription for teams',
         cta: 'Choose Team',
       },
       enterprise: {
-        description: 'Support plus usage, arranged through sales',
         features: ['Contact sales for terms', 'Custom limits and support response target'],
         cta: 'Contact sales',
       },
@@ -284,7 +234,6 @@ export const en = {
       egress: '{n} client egress/month',
     },
     usage: {
-      eyebrow: 'How usage is measured',
       title: 'Storage, operations, and client egress.',
     },
     triad: [
@@ -302,7 +251,6 @@ export const en = {
       },
     ],
     compare: {
-      eyebrow: 'Compare',
       title: 'Plan allowances.',
       head: 'Allowance',
       projects: 'Projects',
@@ -335,7 +283,6 @@ export const en = {
       entitlementsNote: 'Request rates and concurrency apply per organization; requests beyond them receive HTTP 429 with a Retry-After header. The storage limit is a hard ceiling, separate from the included allowance. Support response targets are not an SLA.',
     },
     detailed: {
-      eyebrow: 'Detailed Pricing',
       titleLead: 'Approved',
       titleAccent: 'usage rates',
       text: 'Paid plans include the allowances. Operation units over the allowance are added to the next subscription invoice at the rate below; storage and client egress overages are not billed yet. Free stops new writes at its operation allowance and has no overage charges.',
@@ -362,10 +309,8 @@ export const en = {
       docsLink: 'Full Pricing Docs',
     },
     faq: {
-      eyebrow: 'FAQ',
       titleLead: 'Frequently Asked',
       titleAccent: 'Questions',
-      subtitle: 'Get answers to common questions about our pricing and plans.',
       items: [
         {
           q: 'What is an operation unit?',
@@ -388,18 +333,13 @@ export const en = {
           a: 'Enterprise has a ${enterprisePriceUsd} monthly support base plus usage. Contact sales for terms; Enterprise is not sold through checkout.',
         },
       ],
-      footerTitle: 'Still have questions?',
-      footerText: 'Contact us about plans, limits, or Enterprise terms.',
       contactSales: 'Contact Sales',
-      readDocs: 'Read Documentation',
     },
     finalCta: {
       titleLead: 'Ready to',
       titleAccent: 'get started?',
-      text: 'Start with Free, or choose a paid plan at checkout.',
       cta: 'Register for Public Alpha',
     },
-    status: 'Paid plans are available through checkout. Operation units over the allowance are added to the next invoice; storage and client egress overages are not billed yet.',
     cadence: {
       free: 'No card required',
       year: 'Billed yearly · {monthly}/month equivalent · {months} months free',
@@ -411,54 +351,16 @@ export const en = {
   },
 
   contact: {
-    eyebrow: 'Get in Touch',
     titleLead: 'Let’s build',
     titleAccent: 'something together.',
-    subtitle:
-      'Have questions? Need a custom plan? Want to integrate with TerraScale? We’d love to hear from you.',
-    labels: {
-      name: 'Name',
-      email: 'Email',
-      company: 'Company',
-      message: 'Message',
-    },
-    placeholders: {
-      name: 'Mario Belchior',
-      email: 'mario@acme.com',
-      company: 'Acme Inc.',
-      message: 'Tell us about your project, team size, and what you’re hoping to achieve...',
-    },
-    submit: {
-      idle: 'Send Message',
-      submitting: 'Sending…',
-      success: 'Message Sent!',
-      error: 'Try Again',
-      badge: 'Message sent successfully',
-    },
-    success: 'Thanks! Your message has been sent securely to our team.',
-    errorNoForm: 'The form could not be submitted. Please email us directly.',
-    errorSend: 'Something went wrong sending your message. Please try again, or email us directly.',
-    note: 'Customer traffic requires TLS 1.2 or newer. Data at rest uses service-qualified encryption.',
-    channelsTitle: 'Reach us',
-    channels: [
-      { value: 'support@terrascale.tech' },
-      { value: 'Join our community' },
-      { value: 'Open issues & PRs' },
-    ],
   },
 
   about: {
-    eyebrow: 'About TerraScale',
     titleLead: 'Globally distributed',
     titleAccent: 'database infrastructure.',
-    subtitle:
-      'TerraScale Public Alpha provides a document database across São Paulo, the San Francisco Bay Area, and Frankfurt with asynchronous replication.',
     ctaPricing: 'View Pricing',
-    ctaContact: 'Talk to Us',
-    missionEyebrow: 'Mission',
+    regionsAria: 'Serving regions',
     missionTitle: 'One platform surface for teams that ship across regions.',
-    missionText:
-      'Projects select their regions. The global endpoint uses the nearest healthy selected region, while strict regional endpoints never serve from another region.',
     pillars: [
       {
         title: 'TerraBase foundation',
@@ -473,18 +375,14 @@ export const en = {
         text: 'Free requires no card. Paid plans bill operation units over the allowance on the next invoice; storage and client egress overages are not billed yet.',
       },
     ],
-    pricingPrincipleEyebrow: 'Pricing principle',
     bandTitle: 'Flat regional pricing, metered by real use.',
     bandText:
       'Storage usage adds the bytes stored in every selected region. Estimated network distance, measured API latency, and replication health remain separate values.',
   },
 
   notFound: {
-    eyebrow: 'Page Not Found',
     title: 'We can’t find that page.',
-    text: 'The page you’re looking for has moved, or never existed. Let’s get you back on track.',
     backHome: 'Back to Home',
-    contactSupport: 'Contact Support',
   },
 }
 

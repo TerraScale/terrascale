@@ -20,12 +20,7 @@
 <section class="pricing-teaser" id="pricing" use:reveal>
   <div class="pricing-teaser__head">
     <div class="pricing-teaser__intro">
-      <span class="ts-eyebrow pricing-teaser__eyebrow">
-        <Icon name="dollarSign" className="pricing-teaser__eyebrow-icon" />
-        {$dict.pricingTeaser.eyebrow}
-      </span>
       <h2 class="pricing-teaser__title">{$dict.pricingTeaser.title}</h2>
-      <p class="pricing-teaser__status">{$dict.pricing.status}</p>
     </div>
     <RouteLink href="/pricing" class="ts-btn ts-btn-glass">
       {$dict.pricingTeaser.cta}
@@ -43,9 +38,6 @@
         <h3 class="pricing-teaser__name">
           <span class="pricing-teaser__icon"><Icon name={plan.icon} className="pricing-teaser__icon-glyph" /></span>
           {plan.name}
-          {#if plan.popular}
-            <span class="pricing-teaser__badge">{$dict.pricing.badge}</span>
-          {/if}
         </h3>
         <p class="pricing-teaser__price">
           <strong>{plan.billing.price}</strong>
@@ -79,20 +71,6 @@
     max-width: 760px;
   }
 
-  .pricing-teaser__status {
-    margin: 0;
-    font-size: 16px;
-    line-height: 1.7;
-    color: var(--ts-text-muted);
-  }
-
-  .pricing-teaser__eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--ts-space-2);
-  }
-
-  :global(.pricing-teaser__eyebrow-icon),
   :global(.pricing-teaser__cta-icon) {
     width: 14px;
     height: 14px;
@@ -173,18 +151,6 @@
     font-weight: 600;
   }
 
-  .pricing-teaser__badge {
-    display: inline-flex;
-    align-items: center;
-    height: 20px;
-    padding: 0 8px;
-    border-radius: var(--ts-radius-sm);
-    background: linear-gradient(90deg, var(--ts-primary), color-mix(in oklab, var(--ts-primary) 55%, var(--ts-secondary)));
-    color: #fff;
-    font-size: 11px;
-    font-weight: 500;
-  }
-
   .pricing-teaser__price {
     display: flex;
     align-items: baseline;
@@ -249,10 +215,6 @@
 
     .pricing-teaser__title {
       font-size: 24px;
-    }
-
-    .pricing-teaser__status {
-      font-size: 15px;
     }
   }
 </style>

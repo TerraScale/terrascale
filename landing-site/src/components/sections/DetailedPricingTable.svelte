@@ -35,9 +35,7 @@
 
 <section id="detailed-pricing" class="detailed">
   <div class="detailed__intro">
-    <span class="ts-eyebrow">{compare.eyebrow}</span>
     <h2 class="detailed__title">{compare.title}</h2>
-    <p class="detailed__text">{$dict.pricing.status}</p>
   </div>
 
   <div class="detailed__wrap">
@@ -80,7 +78,6 @@
   <p class="detailed__text detailed__note">{compare.entitlementsNote}</p>
 
   <div class="detailed__notes">
-    <span class="ts-eyebrow">{$dict.pricing.detailed.eyebrow}</span>
     <h3 class="detailed__notes-title">
       {$dict.pricing.detailed.titleLead} {$dict.pricing.detailed.titleAccent}
     </h3>
