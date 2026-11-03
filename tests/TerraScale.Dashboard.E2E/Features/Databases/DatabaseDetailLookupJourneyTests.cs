@@ -54,7 +54,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
         }
 
         [Test]
-        [Arguments("invalid", 404)]
+        [Arguments("invalid", 422)]
         [Arguments("missing", 404)]
         [Arguments("missing-regional", 503)]
         [Arguments("foreign", 404)]
