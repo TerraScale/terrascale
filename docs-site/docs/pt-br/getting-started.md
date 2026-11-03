@@ -9,6 +9,6 @@ title: Getting started overview
 
 # Getting started
 
-Start with the [getting started guide](/pt-br/getting-started/) to create an account, a database and an API key. The SQL interface is described in [SQL](/pt-br/concepts/sql).
+Start with the [getting started guide](/pt-br/getting-started/) to create an account, a database and an API key. Then run your first query with the [SQL quickstart](/pt-br/concepts/sql#quickstart).
 
 </div>
