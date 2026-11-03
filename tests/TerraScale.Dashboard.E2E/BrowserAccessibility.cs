@@ -7,9 +7,16 @@ namespace TerraScale.Dashboard.E2E
     // Run the official pinned browser engine directly; no alternate JSON serializer is needed.
     internal static class BrowserAccessibility
     {
+        private static readonly Lazy<string> Engine = new(() => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Support", "axe-core", "axe.min.js")));
+
         public static async Task<AccessibilityResult> RunAsync(IPage page, string[]? tags = null, string? selector = null)
         {
-            await page.AddScriptTagAsync(new() { Path = Path.Combine(AppContext.BaseDirectory, "Support", "axe-core", "axe.min.js") });
+            // A <script> tag would be inline script that the dashboard's nonce CSP correctly blocks. Evaluating the
+            // engine through the DevTools protocol is outside page CSP, so the audit runs against the real policy.
+            if (!await page.EvaluateAsync<bool>("() => typeof window.axe === 'object'"))
+            {
+                await page.EvaluateAsync(Engine.Value);
+            }
             var result = await page.EvaluateAsync<JsonElement>("""
                 async ({ tags, selector }) => {
                     const options = tags ? { runOnly: { type: 'tag', values: tags } } : {};
