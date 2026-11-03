@@ -55,8 +55,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
 
             await Assert.That(pages).IsEqualTo(3);
             // The duplicate row the issuer repeats inside page two is dropped, not surfaced twice.
-            await Assert.That(seen.Order(StringComparer.Ordinal).ToArray()).IsEqualTo(PagingIssuer.TraversedIds.Order(StringComparer.Ordinal).ToArray()).Because("no key may be omitted or repeated");
-            await Assert.That(seen.Count).IsEqualTo(PagingIssuer.TraversedIds.Length);
+            await Assert.That(seen).IsEquivalentTo(PagingIssuer.TraversedIds).Because("no key may be omitted or repeated");
             await Assert.That(issuer.ListReads).IsEqualTo(3);
             // A cursor the issuer keeps repeating terminates the list instead of looping.
             using var repeat = await client.GetAsync("/api/v1/dashboard/credentials?limit=2&after=" + Uri.EscapeDataString("stuck"));
