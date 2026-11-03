@@ -334,12 +334,21 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             await CallAsync(client, secret, "create_backup", new { databaseId = id });
             await CallAsync(client, secret, "create_backup", new { databaseId = id });
             await ControlAsync(producer, new { command = "backup-failure", value = "repeat-cursor" });
-            using (var unavailable = await client.GetAsync("/api/v1/dashboard/backups?databaseId=" + id))
+            using (var stuck = await client.GetAsync("/api/v1/dashboard/backups?databaseId=" + id + "&limit=1"))
             {
-                Check(unavailable.StatusCode == HttpStatusCode.ServiceUnavailable, "A repeated opaque producer cursor cannot produce a truncated successful inventory");
+                Check(stuck.StatusCode == HttpStatusCode.OK, "A bounded page stays servable while the producer cursor is stuck");
+                using var body = JsonDocument.Parse(await stuck.Content.ReadAsStringAsync());
+                Check(body.RootElement.GetProperty("nextCursor").GetString() == "backup-cursor:1", "The first bounded page still carries the producer cursor");
+                using var repeated = await client.GetAsync("/api/v1/dashboard/backups?databaseId=" + id + "&limit=1&after=backup-cursor:1");
+                Check(repeated.StatusCode == HttpStatusCode.OK, "The page the producer repeats terminates the traversal without looping");
+                using var terminal = JsonDocument.Parse(await repeated.Content.ReadAsStringAsync());
+                Check(terminal.RootElement.GetProperty("nextCursor").ValueKind == JsonValueKind.Null && !terminal.RootElement.GetProperty("hasMore").GetBoolean(),
+                    "A repeated opaque producer cursor ends the bounded traversal instead of truncating a whole-list inventory");
             }
 
-            await ErrorAsync(client, secret, "list_backups", new { databaseId = id });
+            var listed = await CallAsync(client, secret, "list_backups", new { databaseId = id, limit = 1 });
+            Check(listed.GetProperty("backups").GetArrayLength() == 1 && listed.GetProperty("nextCursor").GetString() == "backup-cursor:1",
+                "The bounded MCP page serves while the producer cursor is stuck");
             var metadata = await CallAsync(client, secret, "get_database", new { databaseId = id });
             Check(!metadata.TryGetProperty("backupsEnabled", out _) && metadata.GetProperty("unavailable").GetString()!.Contains("Backup", StringComparison.Ordinal),
                 "Unavailable backup measurements omit the unknown boolean rather than claim scheduling is disabled");
