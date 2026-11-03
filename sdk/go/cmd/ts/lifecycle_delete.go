@@ -56,9 +56,7 @@ func deleteOrganizationLifecycle(ctx context.Context, u *tsauth.User, selector s
 // This preflight cannot serialize concurrent database creation with ts-auth's
 // deletion; it does not promise TerraBase tenant or billing cleanup.
 func deleteProjectLifecycle(ctx context.Context, u *tsauth.User, tb *v1.Client, p *tsauth.Project, consent managementConsent, out io.Writer) error {
-	for _, err := range pages(func(after string) (*v1.Page[v1.ManagedDatabase], error) {
-		return tb.Databases(ctx, p.ID, v1.PageOptions{Limit: 1, After: after})
-	}) {
+	for _, err := range projectDatabases(ctx, tb, p.ID, 1) {
 		if err != nil {
 			return err
 		}

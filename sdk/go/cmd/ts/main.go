@@ -967,6 +967,32 @@ func pages[T any](list func(after string) (*v1.Page[T], error)) iter.Seq2[T, err
 	}
 }
 
+// projectDatabases yields a project's databases page by page. TerraBase learns
+// a project at its first database, so an unknown database means none exist yet.
+func projectDatabases(ctx context.Context, tb *v1.Client, project string, limit int) iter.Seq2[v1.ManagedDatabase, error] {
+	return func(yield func(v1.ManagedDatabase, error) bool) {
+		var empty bool
+		for db, err := range pages(func(after string) (*v1.Page[v1.ManagedDatabase], error) {
+			page, err := tb.Databases(ctx, project, v1.PageOptions{Limit: limit, After: after})
+			if errors.Is(err, v1.ErrUnknownDatabase) {
+				empty = true
+			}
+			return page, err
+		}) {
+			if empty {
+				return
+			}
+			if err != nil {
+				yield(db, err)
+				return
+			}
+			if !yield(db, nil) {
+				return
+			}
+		}
+	}
+}
+
 func (s *session) run(ctx context.Context, name string, args []string, out io.Writer) error {
 	var db *v1.Database
 	if len(args) > 0 {
@@ -983,13 +1009,7 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		if !jsonMode(out) {
 			fmt.Fprintln(w, "NAME\tID\tHOME REGION\tREPLICAS")
 		}
-		for db, err := range pages(func(after string) (*v1.Page[v1.ManagedDatabase], error) {
-			return s.tb.Databases(ctx, s.project, v1.PageOptions{Limit: 100, After: after})
-		}) {
-			// TerraBase learns a project at its first database; until then it has none.
-			if errors.Is(err, v1.ErrUnknownDatabase) {
-				break
-			}
+		for db, err := range projectDatabases(ctx, s.tb, s.project, 100) {
 			if err != nil {
 				return err
 			}

@@ -126,3 +126,34 @@ func TestJSONDatabaseResults(t *testing.T) {
 		})
 	}
 }
+
+// TerraBase only knows a project after its first database; listing the
+// databases of an empty project returns unknown_database, not an empty page.
+func TestJSONDatabaseListUnknownDatabaseProject(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/projects/01M5N8CG630T6P449ES15GNZ8N/databases" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, `{"error":{"code":"unknown_database","message":"the database does not exist"}}`)
+	}))
+	defer srv.Close()
+	c, err := v1.New(v1.Config{BaseURL: srv.URL, Token: "tb_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	s := session{tb: c, project: "01M5N8CG630T6P449ES15GNZ8N"}
+	if err := s.run(t.Context(), "db list", nil, &jsonOutput{Writer: &out}); err != nil || out.String() != "[]\n" {
+		t.Fatalf("list = %q, %v", out.String(), err)
+	}
+	var table bytes.Buffer
+	s2 := session{tb: c, project: "01M5N8CG630T6P449ES15GNZ8N"}
+	if err := s2.run(t.Context(), "db list", nil, &table); err != nil || table.String() != "NAME  ID  HOME REGION  REPLICAS\n" {
+		t.Fatalf("table = %q, %v", table.String(), err)
+	}
+}

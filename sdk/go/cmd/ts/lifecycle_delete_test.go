@@ -34,7 +34,7 @@ func TestLifecycleConsentUsesCanonicalIDAndRefusesOffline(t *testing.T) {
 
 func TestProjectDeleteGuardsAndFailures(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"nonempty", "later-page-nonempty", "list-denied", "consent-denied", "delete-denied", "success", "pending", "writer-failed"} {
+	for _, mode := range []string{"nonempty", "later-page-nonempty", "list-denied", "unknown-database", "consent-denied", "delete-denied", "success", "pending", "writer-failed"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			var deletes, prompts atomic.Int32
@@ -62,6 +62,10 @@ func TestProjectDeleteGuardsAndFailures(t *testing.T) {
 				case mode == "list-denied":
 					w.WriteHeader(http.StatusForbidden)
 					io.WriteString(w, `{"error":{"code":"forbidden","message":"read required"}}`)
+				case mode == "unknown-database":
+					// TerraBase only learns a project at its first database.
+					w.WriteHeader(http.StatusNotFound)
+					io.WriteString(w, `{"error":{"code":"unknown_database","message":"the database does not exist"}}`)
 				case mode == "later-page-nonempty" && r.URL.Query().Get("after") == "":
 					io.WriteString(w, `{"items":[],"next":"second"}`)
 				case mode == "nonempty" || mode == "later-page-nonempty":
@@ -88,12 +92,12 @@ func TestProjectDeleteGuardsAndFailures(t *testing.T) {
 			}
 			err := deleteProjectLifecycle(t.Context(), u, c, &tsauth.Project{ID: managementProjectID, OrganizationID: managementOrgID, Name: "app"}, consent, writer)
 			switch mode {
-			case "success", "pending":
+			case "success", "pending", "unknown-database":
 				var result struct {
 					Deleted bool `json:"deleted"`
 					Pending bool `json:"pending"`
 				}
-				if decodeErr := json.Unmarshal(out.Bytes(), &result); decodeErr != nil || result.Deleted != (mode == "success") || result.Pending != (mode == "pending") {
+				if decodeErr := json.Unmarshal(out.Bytes(), &result); decodeErr != nil || result.Deleted != (mode != "pending") || result.Pending != (mode == "pending") {
 					t.Fatalf("closure outcome = %q, %v", out.String(), decodeErr)
 				}
 				if err != nil || deletes.Load() != 1 || !json.Valid(out.Bytes()) {
