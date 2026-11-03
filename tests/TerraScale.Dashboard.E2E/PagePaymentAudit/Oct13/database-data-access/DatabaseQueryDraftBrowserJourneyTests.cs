@@ -39,13 +39,13 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.DatabaseDataAccess
                 ("/api-keys?kind=key", 200, "No credentials match these filters."),
                 ("/databases/" + id + "/backups", 200, "No restore points yet."),
                 ("/subscriptions", 200, "No shared-result configurations yet."),
-                ("/auth/sessions", 200, "Live end-user sessions. Revoking one signs that sign-in out."),
-                ("/authentication/clients", 200, "Applications that sign users in through the authorization code flow with PKCE.")
+                ("/auth/sessions", 200, "Live sessions"),
+                ("/authentication/clients", 200, "OAuth applications")
             })
             {
                 var response = await page.GotoAsync(new Uri(scenario.Origin, path).ToString());
                 await Assert.That(response!.Status).IsEqualTo(status);
-                await Assert.That(await page.GetByText(message, new() { Exact = true }).IsVisibleAsync()).IsTrue();
+                await Assert.That(await page.Locator("main :is(h2, p)").Filter(new() { HasTextRegex = new System.Text.RegularExpressions.Regex("^" + System.Text.RegularExpressions.Regex.Escape(message) + "$") }).IsVisibleAsync()).IsTrue();
                 await Assert.That(await page.EvaluateAsync<bool>("document.documentElement.scrollWidth <= innerWidth")).IsTrue();
                 await BrowserAudit.AssertAccessibleAsync(page, path + " at " + width + " CSS pixels");
             }
@@ -53,7 +53,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.DatabaseDataAccess
             var open = page.GetByRole(AriaRole.Button, new() { Name = "Create key", Exact = true });
             await open.FocusAsync();
             await open.PressAsync("Enter");
-            var dialog = page.GetByRole(AriaRole.Dialog, new() { Name = "New project key", Exact = true });
+            var dialog = page.GetByRole(AriaRole.Dialog, new() { Name = "New API key", Exact = true });
             await dialog.WaitForAsync();
             // Reopening a native dialog can cancel an earlier animation's finished promise.
             await dialog.EvaluateAsync("async el => { await Promise.allSettled(el.getAnimations({subtree:true}).map(animation => animation.finished)); }");

@@ -476,35 +476,8 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             var value = string.Join(',', scopes);
             return value is "documents:read" or "documents:write" or "documents:read,documents:write" or Full ? value : "";
         }
-        public string DraftDatabaseFor(string kind)
-        {
-            return Create == kind ? Context.Project?.Databases.GetValueOrDefault(DraftDatabaseId)?.Name ?? "All project databases (current and future)" : "All project databases (current and future)";
-        }
-
-        public string PermissionSignals(string kind)
-        {
-            return System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string> { ["_" + kind + "Access"] = AccessFor(kind), ["_" + kind + "Database"] = DraftDatabaseFor(kind) });
-        }
-
         // Documents plus database management: create and delete databases, indexes and saved queries (a seed or migration script).
         public const string Full = "documents:read,documents:write,databases:read,databases:write";
-        public static string Summary(string access)
-        {
-            return access switch
-            {
-                Full => "Can read and change records, and create and delete databases and indexes.",
-                "documents:read,documents:write" => "Can read, create, update, and delete records.",
-                "documents:read" => "Can read records. Cannot create, update, or delete them.",
-                "documents:write" => "Can create, update, and delete records. Cannot read or query them.",
-                _ => "Choose an access level before creating this credential.",
-            };
-        }
-
-        public static string PermissionSummary(string kind)
-        {
-            return "$_" + kind + "Access === '" + Full + "' ? '" + Summary(Full) + "' : $_" + kind + "Access === 'documents:read,documents:write' ? 'Can read, create, update, and delete records.' : $_" + kind + "Access === 'documents:read' ? 'Can read records. Cannot create, update, or delete them.' : $_" + kind + "Access === 'documents:write' ? 'Can create, update, and delete records. Cannot read or query them.' : 'Choose an access level before creating this credential.'";
-        }
-
         public static (string Label, string Tone, string Icon) CredentialType(ProjectCredential key)
         {
             if (FullAccessScopes.All(key.Scopes.Contains))

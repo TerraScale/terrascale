@@ -100,10 +100,10 @@ namespace TerraScale.Dashboard.E2E.Platform
                     await page.Locator("#create-key[open]").WaitForAsync();
                     await page.Locator("#key-name").FillAsync(name);
                     await page.Locator("#key-database").SelectOptionAsync(databaseId!);
-                    await page.Locator("#key-access-write").CheckAsync();
+                    await page.Locator("#key-access").SelectOptionAsync("documents:read,documents:write");
                     await Assert.That(await page.Locator("#key-name").InputValueAsync()).IsEqualTo(name);
                     await Assert.That(await page.Locator("#key-database").InputValueAsync()).IsEqualTo(databaseId);
-                    await Assert.That(await page.Locator("#key-access-write").IsCheckedAsync()).IsTrue();
+                    await Assert.That(await page.Locator("#key-access").InputValueAsync()).IsEqualTo("documents:read,documents:write");
                     await BrowserAudit.SubmitConfirmedAsync(page, fixture.Origin, () => page.Locator("#create-key form").GetByRole(AriaRole.Button, new() { Name = "Create key", Exact = true }).ClickAsync());
                     var keySecret = page.Locator(".ts-apikeys-secret-value");
                     await keySecret.WaitForAsync();

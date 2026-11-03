@@ -98,7 +98,7 @@ dialog.ts-credential-dialog {
   gap: var(--ts-s6);
 }
 
-/* Keep creation reachable while a short viewport scrolls the permissions. */
+/* Keep creation reachable while a short viewport scrolls the form. */
 .ts-credential-form > .ts-dialog-footer {
   position: sticky;
   bottom: 0;
@@ -109,91 +109,7 @@ dialog.ts-credential-dialog {
   background: var(--ts-surface);
 }
 
-.ts-permissions > legend {
-  margin-bottom: var(--ts-s1);
-}
-
-.ts-permissions > .ts-hint {
-  margin-bottom: var(--ts-s3);
-}
-
-.ts-permission-options {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--ts-s3);
-}
-
-.ts-permission-advanced,
-.ts-permission-advanced > .ts-permission-option {
-  margin-top: var(--ts-s3);
-}
-
-.ts-permission-advanced > summary {
-  cursor: pointer;
-}
-
-.ts-permission-option,
-.ts-permission-review {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--ts-s3);
-  padding: var(--ts-s4);
-  border: 1px solid var(--ts-line-strong);
-  border-radius: var(--ts-radius-lg);
-  background: var(--ts-surface-2);
-}
-
-.ts-permission-option {
-  border-color: var(--ts-control-line);
-  cursor: pointer;
-}
-
-.ts-permission-option:hover {
-  border-color: var(--ts-control-line-hover);
-}
-
-.ts-permission-option:has(input:checked) {
-  border-color: var(--ts-link);
-  background: var(--ts-accent-soft);
-}
-
-.ts-permission-option:has(input:focus-visible) {
-  outline: 2px solid var(--ts-link);
-  outline-offset: 3px;
-}
-
-.ts-permission-option > input {
-  flex: none;
-  width: 16px;
-  height: 16px;
-  margin-top: 2px;
-  accent-color: var(--ts-accent-fill);
-}
-
-.ts-permission-body {
-  gap: var(--ts-s2);
-}
-
-.ts-permission-option svg,
-.ts-permission-review > svg {
-  flex: none;
-  color: var(--ts-link);
-}
-
-.ts-permission-body code {
-  font-size: var(--ts-fs-xs);
-}
-
-.ts-permission-review > div {
-  gap: var(--ts-s1);
-  overflow-wrap: anywhere;
-}
-
 @media (max-width: 540px) {
-  .ts-permission-options {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   /* Filters stack full width, one control per row. */
   .ts-apikeys-filters > .ts-input,
   .ts-apikeys-filters > .ts-select {
