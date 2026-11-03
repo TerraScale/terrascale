@@ -50,7 +50,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
 
             // The retry after the outage succeeds, proving the refusal was about availability, not the id.
             probe.Reset(); probe.Fault = "";
-            await WriteAsync(probe, dropped, "01K78CVSTMER0000000000R3TRY");
+            await WriteAsync(probe, dropped, "01K78CVSTMER0000000000LAT3");
             await probe.NoProtocolFailuresAsync();
         }
 
