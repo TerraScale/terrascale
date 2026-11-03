@@ -113,9 +113,6 @@ Counters flush every 10 seconds, so the newest requests can take that long to ap
 | Storage on disk | Latest sampled on-disk size per database region, summed across regions. Includes engine files; Usage shows logical document bytes. Shown only when sampled. |
 | Operations | Operations in the selected period. Read operations match Usage's read counts; committed put, patch and delete operations are writes. Billing uses separate 4 KiB operation units, so one operation can consume several units. |
 | Client bandwidth | Server egress plus client ingress. |
-| Replication sent | Replication bytes observed at sending regions (TerraBase `replication_bytes` meter, separate from client bandwidth). |
-| Replication received | Replication bytes observed at receiving regions. |
-| Replication bandwidth | Wire bytes, counted once per directed region pair. |
 | By region | Requests and worst database p95 per region in the selected period. Selecting a region filters the charts. |
 
 The overview's region table uses ts-status measurements for the regions used by the project or organization.

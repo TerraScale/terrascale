@@ -43,7 +43,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                     return Results.StatusCode(403);
                 }
 
-                if (scenario is not ("valid" or "missing-latency" or "zero" or "foreign-project" or "foreign-database" or "foreign-region" or "negative" or "overflow" or "meter" or "repeat" or "oversized" or "offline" or "not-metered" or "no-period" or "unauthorized" or "empty" or "received-only"))
+                if (scenario is not ("valid" or "missing-latency" or "zero" or "foreign-project" or "foreign-database" or "foreign-region" or "negative" or "overflow" or "meter" or "repeat" or "oversized" or "offline" or "not-metered" or "no-period" or "unauthorized" or "empty"))
                 {
                     return Results.BadRequest();
                 }
@@ -304,8 +304,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                                 errors = scenario == "zero" ? 0 : 1,
                                 latency = new { p50Ms = scenario is "zero" or "missing-latency" ? (double?)null : 0.5, p95Ms = scenario is "zero" or "missing-latency" ? (double?)null : 1.75, p99Ms = scenario is "zero" or "missing-latency" ? (double?)null : 9d },
                                 storageBytes = scenario == "missing-latency" ? (long?)null : 4096,
-                                clientBandwidth = new { bytesSent = 6L, bytesReceived = 7L },
-                                replicationBandwidth = new { bytesSent = scenario == "received-only" ? 0L : 8L, bytesReceived = 9L }
+                                clientBandwidth = new { bytesSent = 6L, bytesReceived = 7L }
                             }
                         }
                     });

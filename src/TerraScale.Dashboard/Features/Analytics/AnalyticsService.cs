@@ -6,7 +6,7 @@ using TerraScale.Dashboard.Common.UI;
 namespace TerraScale.Dashboard.Features.Analytics
 {
     public sealed record AnalyticsTotals(long Requests, long Errors, long Operations, long? StorageBytes, long ClientBytes,
-        long ReplicationSentBytes, long ReplicationReceivedBytes, double? WorstP95Ms, IReadOnlyList<AnalyticsRegionRow> Regions);
+        double? WorstP95Ms, IReadOnlyList<AnalyticsRegionRow> Regions);
     public sealed record AnalyticsRegionRow(string Code, string Flag, long Requests, double? WorstP95Ms);
     public sealed record AnalyticsChart(string Title, AnalyticsLinePlot Plot, AnalyticsSelection Selection);
     public sealed record AnalyticsPage(ShellModel Shell, AnalyticsSelection Selection, AnalyticsTotals? Totals, IReadOnlyList<AnalyticsChart> Charts, string Error = "", string Empty = "No analytics measurements for these filters.")
@@ -88,8 +88,8 @@ namespace TerraScale.Dashboard.Features.Analytics
             var requests = new SortedDictionary<string, decimal[]>(StringComparer.Ordinal);
             var operations = new SortedDictionary<string, decimal[]>(StringComparer.Ordinal);
             var latencies = new SortedDictionary<string, AnalyticsSeries>(StringComparer.Ordinal);
-            var errors = new decimal[starts.Length]; var storage = new decimal[starts.Length]; var storageSamples = new int[starts.Length]; var storageMissing = Enumerable.Repeat(true, starts.Length).ToArray(); var sent = new decimal[starts.Length]; var received = new decimal[starts.Length]; var replicationSent = new decimal[starts.Length]; var replicationReceived = new decimal[starts.Length];
-            long requestTotal = 0, operationTotal = 0, errorTotal = 0, clientTotal = 0, replicationSentTotal = 0, replicationReceivedTotal = 0;
+            var errors = new decimal[starts.Length]; var storage = new decimal[starts.Length]; var storageSamples = new int[starts.Length]; var storageMissing = Enumerable.Repeat(true, starts.Length).ToArray(); var sent = new decimal[starts.Length]; var received = new decimal[starts.Length];
+            long requestTotal = 0, operationTotal = 0, errorTotal = 0, clientTotal = 0;
             double? worstP95 = null;
             var regions = new Dictionary<string, (long Requests, double? WorstP95Ms)>(StringComparer.Ordinal);
             var identities = points.GroupBy(point => (point.DatabaseId, point.Region)).ToArray();
@@ -105,11 +105,7 @@ namespace TerraScale.Dashboard.Features.Analytics
                     storageSamples[index] = checked(storageSamples[index] + 1);
                 }
                 sent[index] = checked(sent[index] + Nonnegative(point.ClientSentBytes)); received[index] = checked(received[index] + Nonnegative(point.ClientReceivedBytes));
-                replicationSent[index] = checked(replicationSent[index] + Nonnegative(point.ReplicationSentBytes));
-                replicationReceived[index] = checked(replicationReceived[index] + Nonnegative(point.ReplicationReceivedBytes));
                 clientTotal = checked(clientTotal + point.ClientSentBytes + point.ClientReceivedBytes);
-                replicationSentTotal = checked(replicationSentTotal + point.ReplicationSentBytes);
-                replicationReceivedTotal = checked(replicationReceivedTotal + point.ReplicationReceivedBytes);
                 var group = selection.Context.Project!.Databases.GetValueOrDefault(point.DatabaseId)?.Name ?? point.DatabaseId;
                 if (selection.Context.Project.Databases.Values.Count(database => database.Name == group) > 1)
                 {
@@ -162,7 +158,7 @@ namespace TerraScale.Dashboard.Features.Analytics
             // Replicas sample independently. Sum each identity's latest sample, never its samples over time.
             var latestStorage = identities.Select(group => group.OrderByDescending(point => point.Start).FirstOrDefault(point => point.StorageBytes is not null)?.StorageBytes).ToArray();
             return (new(requestTotal, errorTotal, operationTotal, latestStorage.Any(value => value is null) ? null : latestStorage.Aggregate(0L, (sum, value) => checked(sum + value!.Value)),
-                clientTotal, replicationSentTotal, replicationReceivedTotal, worstP95, regionRows), Charts);
+                clientTotal, worstP95, regionRows), Charts);
 
             // Home uses the same totals without generating unused chart geometry.
             IReadOnlyList<AnalyticsChart> Charts()
@@ -175,7 +171,6 @@ namespace TerraScale.Dashboard.Features.Analytics
                 charts.Add(new(latencyTitle, AnalyticsLinePlot.ForLatency(latencyTitle + ", " + selection.Range, selection.Range, starts, [.. latencies.Values]), selection));
                 Add("Storage (bytes)", new AnalyticsSeries("Storage", storage, storageMissing));
                 Add("Client bandwidth (bytes)", new AnalyticsSeries("Sent", sent), new AnalyticsSeries("Received", received));
-                Add("Replication bandwidth (bytes)", new AnalyticsSeries("Sent", replicationSent), new AnalyticsSeries("Received", replicationReceived));
                 return charts;
                 void Add(string title, params AnalyticsSeries[] series)
                 {
