@@ -1,9 +1,7 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.Projects.ProjectGrantPage>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page" aria-labelledby="project-grants-title" data-signals="{_grantPending: false}" data-on:submit="!evt.defaultPrevented &amp;&amp; ($_grantPending = true)" data-on:pageshow__window="$_grantPending = false" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; ($_grantPending = false)">
-    <header class="ts-page-header"><h1 id="project-grants-title">Explicit project grants</h1><p>@Model.Shell.Context.Project!.Name</p><a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project", replace: true))">Project settings</a></header>
-    <p>This list contains explicit grants for the selected project only. Organization-implied access is not listed. Your effective project role is @Model.Shell.Context.Project.Role.</p>
-    <p>Removing an explicit grant preserves organization-implied access and independent service keys. It does not promise total access revocation.</p>
+    <header class="ts-page-header"><h1 id="project-grants-title">Explicit project grants</h1><p>@Model.Shell.Context.Project!.Name · your role: @Model.Shell.Context.Project.Role</p><a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project", replace: true))">Project settings</a></header>
     @if (Model.Status.Length > 0) { <p class="ts-alert ts-alert-success" role="status">@Model.Status</p> }
     @if (Model.CanManageGrants)
     {
@@ -19,7 +17,7 @@
         </form>
     }
     @if (Model.Error.Length > 0) { <p class="ts-alert ts-alert-danger" role="alert">@Model.Error <a class="ts-link" href="@Model.Url">Open the first page</a></p> }
-    else if (Model.Grants.Count == 0) { <p class="ts-empty" role="status">No explicit project grants on this page. Organization-implied access may still apply.</p> }
+    else if (Model.Grants.Count == 0) { <p class="ts-empty" role="status">No explicit project grants on this page.</p> }
     else
     {
         <div class="ts-table-wrap" tabindex="0" role="region" aria-label="Explicit project grants"><table class="ts-table"><thead><tr><th>User ID</th><th>Email</th><th>Explicit role</th>@if (Model.CanManageGrants) { <th>Actions</th> }</tr></thead><tbody>
@@ -39,7 +37,7 @@
                     </div></dialog>
                     <dialog class="ts-dialog" id="remove-grant-@grant.UserId" aria-labelledby="remove-grant-title-@grant.UserId" closedby="any"><div class="ts-dialog-content">
                         <h2 id="remove-grant-title-@grant.UserId">Remove explicit grant?</h2><p>@grant.Email · @grant.UserId · @grant.Role</p>
-                        <p>Organization-implied access and independent service keys remain. Removing your last project grant may remove your access to this project.</p>
+                        <p>Organization-implied access and independent service keys remain; removing your own last grant may remove your access.</p>
                         <form method="post" action="@Model.PostUrl" data-submit-once data-attr:aria-busy="$_grantPending ? 'true' : 'false'"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="userId" value="@grant.UserId" /><button class="ts-btn ts-btn-danger" type="submit" name="operation" value="remove">Remove only this grant</button><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="remove-grant-@grant.UserId">Cancel</button></form>
                         <p role="status" aria-live="polite" data-text="$_grantPending ? 'Removing explicit project grant…' : ''"></p>
                     </div></dialog>

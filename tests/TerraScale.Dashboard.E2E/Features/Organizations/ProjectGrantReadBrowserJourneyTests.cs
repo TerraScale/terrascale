@@ -55,7 +55,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             }
 
             await page.GetByRole(AriaRole.Link, new() { Name = "First page", Exact = true }).ClickAsync();
-            await page.GetByText("No explicit project grants on this page. Organization-implied access may still apply.", new() { Exact = true }).WaitForAsync();
+            await page.GetByText("No explicit project grants on this page.", new() { Exact = true }).WaitForAsync();
             await Assert.That(await page.Locator("tr[data-project-grant-user]").CountAsync()).IsEqualTo(0);
             await ShotAsync("grant-empty");
             var rejected = await page.GotoAsync(destination + "&after=a&after=b");
@@ -63,7 +63,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             await Assert.That(await page.GetByRole(AriaRole.Alert).InnerTextAsync()).Contains("Choose one page cursor");
             await ShotAsync("grant-invalid-page");
             await page.GetByRole(AriaRole.Link, new() { Name = "Open the first page", Exact = true }).ClickAsync();
-            await page.GetByText("No explicit project grants on this page. Organization-implied access may still apply.", new() { Exact = true }).WaitForAsync();
+            await page.GetByText("No explicit project grants on this page.", new() { Exact = true }).WaitForAsync();
             await Assert.That(errors).IsEmpty();
             await Assert.That(platform.Producer.Failures).IsEmpty();
             await page.CloseAsync();

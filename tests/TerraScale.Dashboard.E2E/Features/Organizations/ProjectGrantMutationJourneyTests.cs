@@ -190,7 +190,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             }
 
             var html = await client.GetStringAsync("/project/members" + scope);
-            await Assert.That(html).Contains("Your effective project role is " + impliedRole);
+            await Assert.That(html).Contains("your role: " + impliedRole);
             await Assert.That(html.Contains("id=\"grant-user-id\"", StringComparison.Ordinal)).IsEqualTo(impliedRole == "admin");
             await Assert.That(platform.Producer.Role(org, user.Subject)).IsEqualTo(impliedRole);
             await Assert.That(await platform.VersionAsync(org)).IsEqualTo(version);

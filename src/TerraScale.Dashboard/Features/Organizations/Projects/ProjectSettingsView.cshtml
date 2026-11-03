@@ -1,7 +1,7 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.ProjectSettingsPage>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page" aria-labelledby="project-settings-title">
-    <header class="ts-page-header"><h1 id="project-settings-title">Project settings</h1><p>These permissions apply to the selected project only. Project admin access allows renaming this project; organization settings require a separate organization role.</p></header>
+    <header class="ts-page-header"><h1 id="project-settings-title">Project settings</h1></header>
     <a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project/members", replace: true))">Explicit project grants</a>
     @if (Model.CanRename) { <a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project/invitations", replace: true))">Project invitations</a> }
     @if (Model.Renamed) { <p class="ts-alert ts-alert-success" role="status">Project renamed.</p> }
@@ -18,7 +18,6 @@
                 <p role="status" aria-live="polite" data-text="$_renamingProject ? 'Renaming project…' : ''"></p>
             </form>
         }
-        else { <p>Read-only settings. A project admin can rename this project.</p> }
     </section>
 </main>
 @functions {

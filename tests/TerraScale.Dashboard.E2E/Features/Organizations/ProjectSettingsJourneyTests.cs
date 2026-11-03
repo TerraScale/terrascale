@@ -116,7 +116,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             }
             else
             {
-                await Assert.That(html).Contains("Read-only settings").And.DoesNotContain("id=\"project-name\"");
+                await Assert.That(html).DoesNotContain("id=\"project-name\"");
             }
 
             var mutations = platform.Producer.Mutations(org, user.Subject);

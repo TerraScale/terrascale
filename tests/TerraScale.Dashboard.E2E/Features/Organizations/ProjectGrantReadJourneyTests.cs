@@ -95,7 +95,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             var project = (await Me(client)).GetProperty("projectId").GetString()!;
             platform.Producer.RemoveGrant(org, user.Subject, project);
             var html = await client.GetStringAsync("/project/members?organizationId=" + org + "&projectId=" + project);
-            await Assert.That(html).Contains("No explicit project grants on this page").And.Contains("Organization-implied access may still apply");
+            await Assert.That(html).Contains("No explicit project grants on this page.");
             await Assert.That(html).DoesNotContain("data-project-grant-user=");
             await Assert.That(platform.Producer.Failures).IsEmpty();
         }
