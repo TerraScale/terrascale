@@ -20,7 +20,7 @@ namespace TerraScale.Dashboard.Features.Databases
         }
 
         public IReadOnlyList<string> Regions => [.. All.SelectMany(Serving).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(TerraScale.Dashboard.Common.UI.Regions.Rank).ThenBy(code => code, StringComparer.OrdinalIgnoreCase)];
-        public IReadOnlyList<string> Selected => Selection ?? [.. Choices.Select(region => region.Code)];
+        public IReadOnlyList<string> Selected => Selection ?? (Choices.Count > 1 ? [HomeRegion] : [.. Choices.Select(region => region.Code)]);
         public string? HomeSelection { get; init; }
         public bool AllRegions { get; init; }
         public string HomeRegion => HomeSelection ?? Choices.FirstOrDefault(region => region.Code.Equals(Context.Project?.Region, StringComparison.OrdinalIgnoreCase))?.Code ?? (Choices is [var firstRegion, ..] ? firstRegion?.Code ?? "" : "");

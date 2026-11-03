@@ -103,13 +103,17 @@ namespace TerraScale.Dashboard.Features.Databases
                             throw new AccountAccessException("Choose a home region.", 422);
                         }
 
-                        if (form["allRegions"] != "true")
+                        // Home alone is valid: TerraBase places the database in every serving region
+                        // when no replica regions are sent. Explicit replicas still need at least two
+                        // regions including home.
+                        var replicas = regions.Where(region => !region.Equals(home, StringComparison.OrdinalIgnoreCase)).ToArray();
+                        if (form["allRegions"] != "true" && replicas.Length > 0)
                         {
                             DatabaseService.RequireReplicas(regions);
                         }
 
                         var index = Array.FindIndex(regions, region => region.Equals(home, StringComparison.OrdinalIgnoreCase));
-                        if (index < 0 && form["allRegions"] != "true")
+                        if (index < 0 && form["allRegions"] != "true" && replicas.Length > 0)
                         {
                             throw new AccountAccessException(DatabaseService.HomePlacementMessage, 422);
                         }
