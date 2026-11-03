@@ -44,112 +44,115 @@ class RecoveryTests(unittest.TestCase):
             dict(id=ID[:-1] + '9', componentName='Data API', cluster='canary', regionCode='GRU'),
             dict(id=ID[:-1] + 'A', componentName='Document API', cluster='gru', regionCode='GRU'),
         ]}]}
-        payload = r.secret_payload({'gru': CONFIG}, catalog)['secrets']
-        self.assertEqual(list(json.loads(payload['DATA_API_CANARY']['text'])), [ID[:-1] + '9'])
-        self.assertEqual(list(json.loads(payload['TERRABASE_PROBES']['text'])), [ID[:-1] + 'A'])
+        payload = r.secret_payload({'gru': CONFIG}, catalog)
+        self.assertEqual(list(json.loads(json.dumps(payload['DATA_API_CANARY'])) and payload['DATA_API_CANARY']), [ID[:-1] + '9'])
+        self.assertEqual(list(payload['TERRABASE_PROBES']), [ID[:-1] + 'A'])
         with self.assertRaises(RuntimeError):
             r.secret_payload({'gru': CONFIG, 'fra': dict(CONFIG, region='fra')}, catalog)
 
-    def test_device_grant_prints_only_the_approval_and_polls_until_approved(self):
-        with tempfile.TemporaryDirectory() as directory, patch.object(r, 'STATE', Path(directory) / 'state.json'):
-            setup = r.Setup()
-            setup.call = Mock(side_effect=[
-                dict(verification_uri=r.AUTH + '/ui/terrascale/device', user_code='ABCD-EFGH',
-                     device_code='private-device', expires_in=600, interval=5),
-                dict(error='authorization_pending'), dict(error='slow_down'),
-                dict(access_token='private-grant', expires_in=900)])
-            with patch.object(r.time, 'sleep') as sleep, redirect_stdout(io.StringIO()) as output:
-                self.assertEqual(setup.admin_grant()['access_token'], 'private-grant')
-            self.assertEqual(json.loads(output.getvalue()), {
-                'approve': r.AUTH + '/ui/terrascale/device', 'user_code': 'ABCD-EFGH', 'expires_in': 600})
-            self.assertNotIn('private-device', output.getvalue())
-            self.assertEqual([c.args[0] for c in sleep.call_args_list], [5, 5, 10])
-            self.assertEqual(r.STATE.stat().st_mode & 0o777, 0o600)
-            r.os.close(setup.lock)
-
-    def test_device_poll_backs_off_while_auth_is_temporarily_unavailable(self):
+    def test_recreated_organization_and_missing_service_projects_are_created(self):
         setup = object.__new__(r.Setup)
-        setup.state = {}
-        setup.save = Mock()
-        busy = dict(error='temporarily_unavailable')
-        setup.call = Mock(side_effect=[
-            dict(verification_uri='u', user_code='c', device_code='d', expires_in=600, interval=5),
-            busy, busy, dict(error='authorization_pending'), busy,
-            dict(access_token='private-grant', expires_in=900)])
-        with patch.object(r.time, 'sleep') as sleep, redirect_stdout(io.StringIO()):
-            self.assertEqual(setup.admin_grant()['access_token'], 'private-grant')
-        self.assertEqual([c.args[0] for c in sleep.call_args_list], [5, 10, 15, 5, 10])
-        self.assertIn(503, setup.call.call_args_list[1].kwargs['statuses'])
+        created = []
+        def call(url, method='GET', data=None, **kwargs):
+            if url.endswith('/organizations') and method == 'POST':
+                created.append(('org', data))
+                return dict(id=ID)
+            if url.endswith('/projects') and method == 'POST':
+                created.append(('project', data['name']))
+                return dict(id=data['name'], name=data['name'])
+            if url.endswith('/organizations'):
+                return dict(items=[], next=None)
+            if url.endswith('/projects'):
+                return dict(items=[dict(id='0' * 25 + 'B', name='ts-dashboard')], next=None)
+            raise AssertionError(url)
+        setup.call = call
+        organization, project = setup.internal_project({'access_token': 'grant'})
+        self.assertEqual(organization, ID)
+        self.assertEqual(project, 'ts-status')
+        self.assertIn(('org', {'name': 'terrascale'}), created)
+        names = [name for kind, name in created if kind == 'project']
+        self.assertEqual(set(names), {'ts-auth', 'ts-router', 'ts-status', 'ts-orchestrator', 'ku'})
+        self.assertEqual(names[-1], 'ts-status')
 
-    def test_device_poll_aborts_on_other_unavailable_responses(self):
-        for answer in [dict(error='upstream_unavailable'), b'<html>bad gateway</html>']:
-            setup = object.__new__(r.Setup)
-            setup.state = {}
-            setup.call = Mock(side_effect=[
-                dict(verification_uri='u', user_code='c', device_code='d', expires_in=600), answer])
-            with patch.object(r.time, 'sleep'), redirect_stdout(io.StringIO()), self.assertRaises(RuntimeError):
-                setup.admin_grant()
-            self.assertEqual(setup.call.call_count, 2)
-
-    def test_denied_device_grant_fails_without_retrying(self):
-        setup = object.__new__(r.Setup)
-        setup.state = {}
-        setup.call = Mock(side_effect=[
-            dict(verification_uri='u', user_code='c', device_code='d', expires_in=600), dict(error='access_denied')])
-        with patch.object(r.time, 'sleep'), redirect_stdout(io.StringIO()), self.assertRaises(RuntimeError):
-            setup.admin_grant()
-        self.assertEqual(setup.call.call_count, 2)
-
-    def test_canaries_live_in_the_administered_internal_organization_project(self):
-        setup = object.__new__(r.Setup)
-        other = '00000000000000000000000009'
-        setup.call = Mock(side_effect=[
-            dict(items=[dict(id=other, name='terrascale', role=None), dict(id=ID, name='terrascale', role='owner'),
-                        dict(id='0' * 25 + 'A', name='Status Canary', role='owner')], next=None),
-            dict(items=[dict(id=other, name='ts-dashboard'), dict(id='0' * 25 + 'B', name='ts-status')], next=None)])
-        self.assertEqual(setup.internal_project({'access_token': 'grant'}), (ID, '0' * 25 + 'B'))
-        setup.call = Mock(return_value=dict(items=[dict(id=ID, name='terrascale', role='member')], next=None))
-        with self.assertRaises(RuntimeError):
-            setup.internal_project({'access_token': 'grant'})
-
-    def test_canary_key_is_narrowed_by_database_id_and_replaces_a_name_narrowed_key(self):
+    def test_per_region_home_region_databases_and_narrowed_keys(self):
         database = '0' * 25 + 'D'
         project = '0' * 25 + 'B'
         posted = []
         def call(url, method='GET', data=None, **kwargs):
+            if url.endswith('/databases') and method == 'POST':
+                posted.append(('database', data['name'], kwargs.get('region')))
+                return dict(id=database + posted[-1][1][-1], name=data['name'], homeRegion=data['homeRegion'])
             if url.endswith('/databases'):
-                return dict(items=[dict(id=database, name='status-canary')], next=None)
+                return dict(items=[], next=None)
             if url.endswith('/collections'):
                 return {}
+            if url.endswith('/step-up'):
+                return dict(proof='private-proof', step_up_url=r.AUTH + '/ui/terrascale/step-up/' + ID)
             if url.endswith('/api-keys') and method == 'GET':
-                return dict(items=[dict(id=ID, database='status-canary', project_id=project, scopes=r.SCOPES)])
+                return dict(items=[], next=None)
             if url.endswith('/api-keys'):
-                posted.append(data)
-                return dict(key=ID + '_' + 'b' * 52, api_key=dict(project_id=project, database=database, scopes=r.SCOPES))
+                posted.append(('key', data['database'], data['scopes']))
+                return dict(key=ID + '_' + 'b' * 52,
+                            api_key=dict(project_id=project, database=data['database'], scopes=r.SCOPES))
             raise AssertionError(url)
         with tempfile.TemporaryDirectory() as directory, patch.object(r, 'STATE', Path(directory) / 'state.json'):
             setup = r.Setup()
-            setup.state['canary'] = dict(CONFIG, project=project)
+            setup.state.update(email='owner@example.com', password='private-password')
             setup.call = call
-            setup.admin_grant = Mock(return_value={'access_token': 'grant'})
+            setup.form = Mock(return_value=(200, ''))
             setup.internal_project = Mock(return_value=(ID, project))
+            setup.owner_grant = Mock(return_value={'access_token': 'grant'})
             setup.project_token = Mock(return_value='token')
             setup.verify = Mock()
             configurations = setup.provision(['gru', 'sjc'])
             r.os.close(setup.lock)
-        self.assertEqual(posted, [{'name': 'status-canary', 'database': database, 'scopes': r.SCOPES}])
-        self.assertEqual(configurations['sjc']['database'], 'status-canary')
-        self.assertEqual(configurations['sjc']['key'][:26], ID)
+        databases = [entry for entry in posted if entry[0] == 'database']
+        self.assertEqual([(name, region) for _, name, region in databases],
+                         [('status-canary-gru', 'gru'), ('status-canary-sjc', 'sjc')])
+        self.assertEqual(configurations['gru']['database'], 'status-canary-gru')
+        self.assertEqual(configurations['sjc']['database'], 'status-canary-sjc')
+        keys = [entry for entry in posted if entry[0] == 'key']
+        self.assertEqual([scopes for _, _, scopes in keys], [r.SCOPES] * 2)
         self.assertEqual(setup.verify.call_count, 2)
 
-    def test_worker_secret_payload_is_stdin_only_and_subprocess_output_is_captured(self):
-        args = ['cf', 'workers', 'secrets', 'bulk', '--worker', 'ts-status', '--file', '/dev/stdin']
-        payload = json.dumps({'key': CONFIG['key']}).encode()
-        with patch.object(r.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=b'{}')) as run:
-            r.private(args, payload)
-        self.assertEqual(run.call_args.kwargs['input'], payload)
-        self.assertTrue(run.call_args.kwargs['capture_output'])
-        self.assertNotIn(CONFIG['key'], ' '.join(run.call_args.args[0]))
+    def test_step_up_proof_never_reaches_printed_output(self):
+        setup = object.__new__(r.Setup)
+        setup.state = {'password': 'private-password'}
+        pages = []
+        def call(url, method='GET', data=None, **kwargs):
+            if url.endswith('/step-up'):
+                return dict(proof='private-proof', step_up_url=r.AUTH + '/ui/terrascale/step-up/' + ID)
+            if url.endswith('/api-keys'):
+                return dict(key=ID + '_' + 'b' * 52,
+                            api_key=dict(project_id=ID, database='0' * 25 + 'D', scopes=r.SCOPES))
+            raise AssertionError(url)
+        setup.call = call
+        setup.form = Mock(return_value=(200, ''))
+        with redirect_stdout(io.StringIO()) as output:
+            issued = setup.create_api_key({'access_token': 'grant'}, ID, ID, '0' * 25 + 'D', 'status-canary-gru')
+        self.assertEqual(issued['key'][:26], ID)
+        self.assertNotIn('private-proof', output.getvalue())
+        self.assertNotIn('private-password', output.getvalue())
+        headers = setup.form.call_args_list[0]
+        self.assertNotIn('private-proof', json.dumps(list(headers.args)))
+
+    def test_worker_secret_install_reads_token_from_environment_or_dev_secret(self):
+        maps = {'DATA_API_CANARY': {'endpoint': CONFIG}}
+        bodies = []
+        def handler(request, **kwargs):
+            bodies.append(json.loads(request.data.decode()))
+            self.assertTrue(request.full_url.startswith(
+                'https://api.cloudflare.com/client/v4/accounts/' + r.CLOUDFLARE_ACCOUNT + '/workers/scripts/ts-status/secrets'))
+            return self.response(200, b'{"success": true}')
+        with patch.object(r.urllib.request, 'urlopen', handler), \
+                patch.dict(r.os.environ, {'CLOUDFLARE_API_TOKEN': 'private-token'}):
+            r.install(maps, r.cloudflare_token())
+        self.assertEqual([body['name'] for body in bodies], ['DATA_API_CANARY'])
+        self.assertEqual(json.loads(bodies[0]['text'])['endpoint']['key'], CONFIG['key'])
+        with patch.object(r, 'private', return_value=b'private-token\n') as private, \
+                patch.object(r.urllib.request, 'urlopen', handler):
+            self.assertEqual(r.cloudflare_token(), 'private-token')
+            self.assertEqual(private.call_args.args[0], ['ts-dev-secret', 'get', 'dev-cloudflare-api-token'])
 
     def test_failed_query_still_deletes_and_never_prints_key(self):
         setup = object.__new__(r.Setup)
