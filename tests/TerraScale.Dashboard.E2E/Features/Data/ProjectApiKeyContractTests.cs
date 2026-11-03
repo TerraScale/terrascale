@@ -433,7 +433,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 // Three bounded pages over five keys: 2 + 2 + 1, with a duplicate of the first key on page two.
                 var page = Query switch
                 {
-                    "" or "?limit=2" => (Ids: new[] { KeyId, "01JA000000000000000000000A" }, Next: "page-2" as string?),
+                    "" or "?limit=2" => (Ids: new[] { KeyId, "01JA000000000000000000000A" }, Next: "page-2" as string),
                     "?limit=2&after=page-2" => (Ids: new[] { KeyId, "01JA000000000000000000000B" }, Next: "page-3"),
                     _ => (Ids: new[] { "01JA000000000000000000000C", "01JA000000000000000000000D" }, Next: null),
                 };
