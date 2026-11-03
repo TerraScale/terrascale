@@ -231,7 +231,8 @@ internal static class UserAuthExtensions
                 return;
             }
 
-            if (context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == CreateManagedDatabaseEndpoint.OperationName)
+            if (context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName
+                is CreateManagedDatabaseEndpoint.OperationName or ListManagedDatabasesEndpoint.ListOperationName)
             {
                 await next(context).ConfigureAwait(false);
                 return;
