@@ -5,10 +5,9 @@
   import { dict } from '@/lib/i18n'
 
   type ChannelHrefKind = 'external' | 'mailto' | 'internal'
-  // Email shows its address because visitors copy it; the community channels need only their name.
+  // Email shows its address because visitors copy it; the web channels need only their name.
   const channels: Array<{ icon: AppIconName; label: string; value?: string; href: string; kind: ChannelHrefKind }> = [
     { icon: 'mail', label: 'Email', value: 'support@terrascale.tech', href: 'mailto:support@terrascale.tech', kind: 'mailto' },
-    { icon: 'brandDiscord', label: 'Discord', href: 'https://discord.gg/8Zr2Nw9g', kind: 'external' },
     { icon: 'brandGithub', label: 'GitHub', href: 'https://github.com/TerraScale', kind: 'external' },
   ]
 </script>

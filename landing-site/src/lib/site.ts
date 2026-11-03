@@ -125,12 +125,11 @@ export const footerColumns: FooterColumn[] = [
       { key: 'status', href: 'https://status.terrascale.tech' },
       { key: 'support', href: 'https://docs.terrascale.tech/legal/support' },
       { key: 'supportEmail', href: 'mailto:support@terrascale.tech' },
-      { key: 'community', href: 'https://discord.gg/8Zr2Nw9g' },
     ],
   },
 ]
 
-export type SocialKey = 'github' | 'discord' | 'x' | 'linkedin' | 'email'
+export type SocialKey = 'github' | 'linkedin' | 'email'
 
 export type SocialLink = {
   key: SocialKey
@@ -143,16 +142,6 @@ export const socialLinks: SocialLink[] = [
     key: 'github',
     href: 'https://github.com/TerraScale',
     icon: 'brandGithub',
-  },
-  {
-    key: 'discord',
-    href: 'https://discord.gg/8Zr2Nw9g',
-    icon: 'brandDiscord',
-  },
-  {
-    key: 'x',
-    href: 'https://twitter.com/terrascale',
-    icon: 'brandX',
   },
   {
     key: 'linkedin',
