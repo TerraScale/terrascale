@@ -20,7 +20,7 @@ namespace TerraScale.Dashboard.E2E.Features.QuerySubscriptions
             await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
             var html = await page.Content.ReadAsStringAsync();
             await Assert.That(html).Contains("Query subscriptions");
-            await Assert.That(html).Contains("TerraBase does not deliver them.");
+            await Assert.That(html).Contains("Live query subscriptions are not available yet.");
             await Assert.That(html).Contains("No shared-result configurations yet.");
             await Assert.That(html.Contains("action=\"/api/v1/dashboard/subscriptions/attach\"", StringComparison.Ordinal)).IsFalse();
             using var head = await client.SendAsync(new(HttpMethod.Head, "/subscriptions"));

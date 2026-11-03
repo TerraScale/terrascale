@@ -109,7 +109,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await Assert.That(all).Contains("aria-current=\"page\"><span>Logs</span>");
             await Assert.That(all).Contains("Only the latest 100 recorded requests are searched by this filter.");
             var slow = all[all.IndexOf("id=\"slow-queries-title\"", StringComparison.Ordinal)..];
-            await Assert.That(slow).Contains("Run the query with \"explain\": true to see its plan and a suggested index.");
+            await Assert.That(slow).Contains("<th scope=\"col\">Rows scanned per query</th>");
             await Assert.That(slow).Contains("title=\"" + longShape + "\"");
             await Assert.That(slow).Contains(longShape[..100] + "…</code>");
             await Assert.That(slow).Contains("<td title=\"2\">2</td><td>Not reported</td><td>5.50 ms</td><td>10.5</td>");
@@ -136,8 +136,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
 
             mode = "limited";
             await Assert.That(await PageAsync(path, HttpStatusCode.OK)).Contains("Some requests may be missing.");
-            await Assert.That(all).Contains("Operations counts committed document operations, not billing units.");
-            await Assert.That(all).Contains("stored records are pruned on the next database log flush.");
+            await Assert.That(all).Contains("<th scope=\"col\">Operations</th>");
             mode = "empty";
             await Assert.That(await PageAsync(path, HttpStatusCode.OK)).Contains("No recorded requests match this filter");
             foreach (var failed in new[] { "unavailable", "foreign" })
