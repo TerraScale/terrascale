@@ -666,21 +666,11 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
             return timer;
         }
 
-        private sealed class GateTimer : ITimer
+        private sealed class GateTimer(HeldTimeoutClock clock, TimerCallback callback, object? state) : ITimer
         {
-            private readonly HeldTimeoutClock clock;
-            private readonly TimerCallback callback;
-            private readonly object? state;
-            private readonly ITimer inner;
+            private readonly Lock gate = new();
+            private ITimer? inner;
             private int holding;
-
-            public GateTimer(HeldTimeoutClock clock, TimerCallback callback, object? state)
-            {
-                this.clock = clock;
-                this.callback = callback;
-                this.state = state;
-                this.inner = TimeProvider.System.CreateTimer(callback, state, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-            }
 
             public bool Fire()
             {
@@ -689,35 +679,40 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
                     return false;
                 }
 
-                this.callback(this.state);
+                callback(state);
                 return true;
             }
 
             public bool Change(TimeSpan dueTime, TimeSpan period)
             {
-                if (dueTime == this.clock.heldDue && period == Timeout.InfiniteTimeSpan)
+                if (dueTime == clock.heldDue && period == Timeout.InfiniteTimeSpan)
                 {
-                    _ = this.inner.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                    _ = this.inner?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
                     Volatile.Write(ref this.holding, 1);
-                    Interlocked.Increment(ref this.clock.arms);
-                    this.clock.armed.Enqueue(this);
+                    Interlocked.Increment(ref clock.arms);
+                    clock.armed.Enqueue(this);
                     return true;
                 }
 
                 Volatile.Write(ref this.holding, 0);
+                lock (this.gate)
+                {
+                    this.inner ??= TimeProvider.System.CreateTimer(_ => callback(state), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                }
+
                 return this.inner.Change(dueTime, period);
             }
 
             public void Dispose()
             {
                 Volatile.Write(ref this.holding, 0);
-                this.inner.Dispose();
+                this.inner?.Dispose();
             }
 
             public ValueTask DisposeAsync()
             {
                 Volatile.Write(ref this.holding, 0);
-                return this.inner.DisposeAsync();
+                return this.inner?.DisposeAsync() ?? ValueTask.CompletedTask;
             }
         }
     }
