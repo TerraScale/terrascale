@@ -20,6 +20,11 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             }
 
             CursorPaging.ValidateLimit(limit);
+            if (cursor is { Length: > 512 } || cursor is not null && cursor.Any(char.IsControl))
+            {
+                throw new AccountAccessException("Use a cursor this list returned.", 422);
+            }
+
             var scope = DatabaseService.Scope(context);
             var page = await Client().ListProjectApiKeysAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, limit, cursor, cancellationToken);
             if (page.Items is null)
@@ -32,17 +37,15 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             foreach (var item in page.Items)
             {
                 var key = Map(context, item);
-                if (!seen.Add(key.Id))
+                if (seen.Add(key.Id))
                 {
-                    throw new HttpRequestException("Credential listing returned a repeated key.");
+                    items.Add(key);
                 }
-
-                items.Add(key);
             }
 
             // A cursor the issuer already answered cannot advance: stop the traversal instead of looping.
             var next = page.Next;
-            if (!string.IsNullOrEmpty(next) && (ReferenceEquals(next, cursor) || next == cursor))
+            if (!string.IsNullOrEmpty(next) && next == cursor)
             {
                 next = null;
             }
@@ -67,15 +70,13 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 var page = await ListPageAsync(context, next, IssuerPageSize, cancellationToken);
                 foreach (var key in page.Items)
                 {
-                    if (!seen.Add(key.Id))
+                    if (seen.Add(key.Id))
                     {
-                        throw new HttpRequestException("Credential listing returned a repeated key.");
+                        result.Add(key);
                     }
-
-                    result.Add(key);
                 }
                 next = page.NextCursor;
-            } while (next is not null && seen.Count < 100 * ++pages);
+            } while (next is not null && seen.Count < IssuerPageSize * ++pages);
             return [.. result.OrderBy(key => key.Name, StringComparer.Ordinal)];
         }
 
