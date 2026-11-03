@@ -243,7 +243,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             var second = await service.ListPageAsync(context, "page-2", 2, CancellationToken.None);
             await Assert.That(wire.Requests).IsEqualTo(1);
             await Assert.That(wire.Query).IsEqualTo("?limit=2&after=page-2");            // Page two repeats one row twice: the duplicate is dropped, the distinct key stays.
-            await Assert.That(second.Items.Select(key => key.Id).ToArray()).IsEqualTo(new[] { "01JA0000000000000000000A00" });
+            await Assert.That(second.Items.Select(key => key.Id)).IsEquivalentTo(new[] { "01JA0000000000000000000A00" });
             await Assert.That(second.NextCursor).IsEqualTo("page-3");
         }
 
@@ -252,7 +252,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         {
             using var wire = new Wire { Pages = 3 };
             var keys = await new ApiKeyService(wire, TimeProvider.System, new TsAuthClient(wire.CreateClient("platform"))).ListAsync(Context(), CancellationToken.None);
-            await Assert.That(keys.Select(key => key.Id).Order(StringComparer.Ordinal).ToArray()).IsEqualTo(wire.AllIds.Order(StringComparer.Ordinal).ToArray());
+            await Assert.That(keys.Select(key => key.Id)).IsEquivalentTo(wire.AllIds);
         }
 
         [Test]
