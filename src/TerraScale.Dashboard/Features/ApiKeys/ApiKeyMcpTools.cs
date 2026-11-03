@@ -12,7 +12,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         public async Task<McpCredentialList> ListApiKeys(
             [Description("active, inactive, or empty for both.")] string status = "",
             string databaseId = "", string search = "", string? organizationId = null, string? projectId = null,
-            [Description(CursorPaging.Description)] int limit = 100, string after = "")
+            [Description(CursorPaging.IssuerDescription)] int limit = 100, string after = "")
         {
             if (status is not ("" or "active" or "inactive"))
             {
