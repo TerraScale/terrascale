@@ -9,7 +9,8 @@ case "$output/" in "$repository/"*) echo 'Release output must be outside the che
 mkdir -p "$output"
 [ -z "$(find "$output" -mindepth 1 -maxdepth 1 -print -quit)" ] || { echo 'Release output must be empty' >&2; exit 2; }
 
-rustup show
+. scripts/toolchain.sh
+toolchain_use
 test "$(uname -sm)" = 'Linux x86_64'
 workspace=$(mktemp -d)
 trap 'rm -rf "$workspace"' EXIT
