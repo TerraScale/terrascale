@@ -10,23 +10,30 @@ mkdir -p "$output"
 [ -z "$(find "$output" -mindepth 1 -maxdepth 1 -print -quit)" ] || { echo 'Release output must be empty' >&2; exit 2; }
 
 export GOTOOLCHAIN=local
-test "$(go env GOVERSION)" = "go$(tr -d '\n' < .go-version)"
+pin=$(tr -d '\n' < .go-version)
+# mise resolves ambient go in this directory from go.mod (the module minimum);
+# pin the build toolchain and the cached vulnerability scanner explicitly so
+# every step, including the goreleaser post-build hook, sees the same tools.
+scanner="$HOME/.cache/terrascale/govulncheck-v1.9.0-go$pin"
+export PATH="$(mise where go@"$pin")/bin:$scanner:$PATH"
+test "$(go env GOVERSION)" = "go$pin"
 latest=$(git tag --list 'sdk/go/v0.0.*' --merged HEAD --sort=-v:refname | head -n 1)
 case "$latest" in
   sdk/go/v0.0.*) version="0.0.$((${latest##*.} + 1))" ;;
   *) echo 'No sdk/go/v0.0.X tag found in this history' >&2; exit 1 ;;
 esac
 export TS_GO_VERSION="$version"
-test "$(go env GOVERSION)" = "go$(tr -d '\n' < .go-version)"
+test "$(go env GOVERSION)" = "go$pin"
 workspace=$(mktemp -d)
 trap 'rm -rf "$workspace"' EXIT
 export GITHUB_PATH="$workspace/github.path"
+: > "$GITHUB_PATH"
 bash scripts/audit-dependencies.sh
 test -z "$(gofmt -l .)"
 go vet ./...
 go test -race -count=1 ./...
 mise exec go@1.25.0 -- bash scripts/check-consumer.sh
-mise exec goreleaser@2.19.0 go@"$(tr -d '\n' < .go-version)" -- goreleaser release --snapshot --clean
+mise exec goreleaser@2.19.0 go@"$pin" -- goreleaser release --snapshot --clean
 python3 scripts/test-release.py
 cp dist/*.tar.gz dist/*.zip dist/checksums.txt dist/homebrew/Formula/ts.rb scripts/install.sh "$output/"
 printf '%s\n' "$version" > "$output/version.txt"
