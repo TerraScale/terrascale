@@ -809,9 +809,10 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private async Task<WalRead> ReadPendingAsync(ShippedFile file, CancellationToken cancellationToken)
     {
         var allowance = await WorkspaceAsync(file, cancellationToken).ConfigureAwait(false);
-        IDisposable? claim = _disk.Reserve(allowance);
+        var growth = allowance / 4;
+        IDisposable? claim = _disk.Reserve(SealedPendingBytes(growth));
         var before = file.Pending.Length;
-        file.Pending.Limit = checked(before + allowance / 4);
+        file.Pending.Limit = checked(before + growth);
         try
         {
             var read = await file.Tap.ReadAsync(file.Pending, cancellationToken).ConfigureAwait(false);
@@ -834,6 +835,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             claim?.Dispose();
         }
     }
+
+    // A pass appends at most a quarter of the workspace allowance; the buffer and its sealed copy are what stays on disk.
+    private static long SealedPendingBytes(long growth) => checked(2 * growth + (1L << 20));
     private async Task StartGenerationAsync(ShippedFile file, CancellationToken cancellationToken)
     {
         var claim = _disk.Reserve(await WorkspaceAsync(file, cancellationToken).ConfigureAwait(false));
@@ -881,7 +885,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             var allowance = await WorkspaceAsync(file, cancellationToken).ConfigureAwait(false);
             claim = _disk.Reserve(allowance);
             await file.StopSideAsync().ConfigureAwait(false);
-            file.PendingClaims.Add(_disk.Reserve(allowance));
+            file.PendingClaims.Add(_disk.Reserve(SealedPendingBytes(allowance / 4)));
             file.Pending.Limit = checked(file.Pending.Length + allowance / 4);
             WalSnapshot captured;
             try
