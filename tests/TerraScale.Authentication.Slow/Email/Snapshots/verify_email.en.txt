@@ -8,7 +8,7 @@ Enter this code in TerraScale to confirm that jane@example.com belongs to you.
 
 This code expires in 30 minutes and works only once.
 
-Didn't sign up for TerraScale? You can safely ignore this email.
+Didn't sign up for TerraScale? Ignore this email.
 
 -- 
 This email was sent to jane@example.com.

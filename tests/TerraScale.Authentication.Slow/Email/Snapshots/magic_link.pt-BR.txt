@@ -2,14 +2,14 @@ Subject: Seu link de acesso para TerraScale
 
 Entre em TerraScale
 
-Clique no botão abaixo para entrar como jane@example.com.
+Entre como jane@example.com.
 
 Entrar:
 https://auth.test.invalid/ui/terrascale/sign-in
 
 Este link expira em 30 minutos e só pode ser usado uma vez.
 
-Não tentou entrar? Pode ignorar este e-mail com segurança. Nunca encaminhe este link para ninguém.
+Não tentou entrar? Ignore este e-mail. Nunca encaminhe este link.
 
 -- 
 Este e-mail foi enviado para jane@example.com.

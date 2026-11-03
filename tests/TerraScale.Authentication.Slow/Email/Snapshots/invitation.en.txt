@@ -9,7 +9,7 @@ https://auth.test.invalid/ui/terrascale/sign-in
 
 This invitation expires in 7 days.
 
-Not expecting this invitation? You can safely ignore this email.
+Not expecting this invitation? Ignore this email.
 
 -- 
 This email was sent to jane@example.com.

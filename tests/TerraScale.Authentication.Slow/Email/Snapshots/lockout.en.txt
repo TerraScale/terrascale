@@ -4,9 +4,7 @@ An authentication method is temporarily paused
 
 Too many attempts temporarily paused an authentication method for jane@example.com on TerraScale until 2026-01-01 00:15:00 UTC.
 
-Other sign-in or recovery methods may still be available.
-
-If you didn't make these attempts, use an available method to review your account security or contact support. If password reset is paused, try it again after the pause ends.
+Didn't make these attempts? Review your account security or contact support.
 
 -- 
 This email was sent to jane@example.com.

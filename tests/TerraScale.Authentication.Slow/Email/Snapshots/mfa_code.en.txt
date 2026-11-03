@@ -8,7 +8,7 @@ Enter this code to finish signing in to TerraScale as jane@example.com.
 
 This code expires in 30 minutes and works only once.
 
-Didn't try to sign in? Someone may know your password: change it now. Never share this code with anyone.
+Didn't try to sign in? Someone may know your password: change it now. Never share this code.
 
 -- 
 This email was sent to jane@example.com.

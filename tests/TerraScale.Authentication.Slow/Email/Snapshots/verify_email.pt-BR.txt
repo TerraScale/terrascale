@@ -8,7 +8,7 @@ Digite este código em TerraScale para confirmar que jane@example.com pertence a
 
 Este código expira em 30 minutos e só pode ser usado uma vez.
 
-Não se cadastrou em TerraScale? Pode ignorar este e-mail com segurança.
+Não se cadastrou em TerraScale? Ignore este e-mail.
 
 -- 
 Este e-mail foi enviado para jane@example.com.

@@ -9,7 +9,7 @@ https://auth.test.invalid/ui/terrascale/sign-in
 
 Este convite expira em 7 dias.
 
-Não esperava este convite? Pode ignorar este e-mail com segurança.
+Não esperava este convite? Ignore este e-mail.
 
 -- 
 Este e-mail foi enviado para jane@example.com.
