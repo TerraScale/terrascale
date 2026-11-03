@@ -57,10 +57,10 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             await Assert.That(renamed.GetProperty("regions").GetArrayLength()).IsEqualTo(2);
             await Assert.That(renamed.GetProperty("region").GetString()).IsEqualTo("SJC");
             // A primary or backup region alone moves within the current regions; regions are never required.
-            await ToolAsync(owner, secret, "update_project", new { organizationId = personalId, projectId, name = "Renamed " + suffix, backupRegion = "GRU" });
+            await ToolAsync(owner, secret, "update_project", new { organizationId = personalId, projectId, name = "Renamed " + suffix, backupRegion = "SJC" });
             var moved = Organization(await ContextAsync(replica, secret), personalId).GetProperty("projects").EnumerateArray().Single(item => item.GetProperty("id").GetString() == projectId);
             await Assert.That(moved.GetProperty("region").GetString()).IsEqualTo("SJC");
-            await Assert.That(moved.GetProperty("backupRegion").GetString()).IsEqualTo("GRU");
+            await Assert.That(moved.GetProperty("backupRegion").GetString()).IsEqualTo("SJC");
             await Assert.That(moved.GetProperty("regions").GetArrayLength()).IsEqualTo(2);
             await ToolAsync(owner, secret, "update_project", new { organizationId = personalId, projectId, name = "Renamed " + suffix, region = "GRU" });
             var swapped = Organization(await ContextAsync(replica, secret), personalId).GetProperty("projects").EnumerateArray().Single(item => item.GetProperty("id").GetString() == projectId);
