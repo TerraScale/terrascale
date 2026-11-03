@@ -32,9 +32,9 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             }
 
             expected.Reverse();
-            var path = "/api/v1/dashboard/backups?databaseId=" + databaseId;
-            var seen = await TraverseRestAsync(replica, path + "&limit=1");
+            var seen = await TraverseRestAsync(replica, databaseId);
             await Assert.That(seen).IsEquivalentTo(expected).Because("every snapshot appears exactly once across pages");
+            var path = "/api/v1/dashboard/backups?databaseId=" + databaseId;
             using (var malformed = await replica.GetAsync(path + "&limit=1&after=not-a-cursor"))
             {
                 await Assert.That(malformed.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
@@ -49,7 +49,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             string? after = null;
             do
             {
-                var page = await McpAsync(replica, secret, "list_backups", new Dictionary<string, object?> { ["databaseId"] = databaseId, ["limit"] = 1, ["after"] = after ?? "" });
+                var page = await McpPageAsync(replica, secret, "list_backups", new Dictionary<string, object?> { ["databaseId"] = databaseId, ["limit"] = 1, ["after"] = after ?? "" });
                 traversed.AddRange(page.GetProperty("backups").EnumerateArray().Select(backup => backup.GetProperty("id").GetString()!));
                 after = page.GetProperty("nextCursor").GetString();
                 await Assert.That(page.GetProperty("hasMore").GetBoolean()).IsEqualTo(after is not null);
@@ -58,10 +58,11 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             await Assert.That(traversed).IsEquivalentTo(expected);
             using var repeated = await replica.GetAsync(path + "&limit=1&after=" + Uri.EscapeDataString("backup-cursor:0"));
             await Assert.That(repeated.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That((await JsonAsync(repeated)).GetRawText().Contains("backup-cursor:0", StringComparison.Ordinal)).IsTrue()
+            var resumed = await JsonAsync(repeated);
+            await Assert.That(resumed.GetProperty("nextCursor").GetString()).StartsWith("backup-cursor:")
                 .Because("the producer's own cursor keeps flowing through the dashboard response");
 
-            await CleanupAsync(client, csrf, databaseId);
+            await CleanupAsync(client, csrf, databaseId, "pagination-backups");
         }
 
         [Test]
@@ -69,9 +70,16 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
         {
             await using var host = await DatabaseSdkScenario.StartAsync(fixture.Root);
             using var client = host.CreateClient();
+            using var producer = host.CreateProviderClient();
             var account = await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
             using var login = await HttpJourney.LoginAsync(client, account.Email, account.Password);
             await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            // The free plan admits only one database; the traversal needs three concurrent ones.
+            using (var identity = await client.GetAsync("/api/v1/auth/me"))
+            {
+                await ControlAsync(producer, new { command = "plan", organizationId = (await JsonAsync(identity)).GetProperty("organizationId").GetString(), value = OrganizationRecord.StarterPlanId });
+            }
+
             var secret = await HttpJourney.CreatePatAsync(client, "Database pagination E2E", account.Password);
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             var expected = new List<string>();
@@ -87,7 +95,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             string? after = null;
             do
             {
-                var page = await McpAsync(client, secret, "list_databases", new Dictionary<string, object?> { ["limit"] = 2, ["after"] = after ?? "" });
+                var page = await McpPageAsync(client, secret, "list_databases", new Dictionary<string, object?> { ["limit"] = 2, ["after"] = after ?? "" });
                 var ids = page.GetProperty("databases").EnumerateArray().Select(database => database.GetProperty("id").GetString()!).ToArray();
                 await Assert.That(ids.Length).IsLessThanOrEqualTo(2);
                 traversed.AddRange(ids);
@@ -99,17 +107,20 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             var foreign = await McpCallAsync(client, secret, "list_databases", new Dictionary<string, object?> { ["limit"] = 2, ["after"] = "1.broken.wrong" });
             await Assert.That(foreign.GetProperty("result").GetProperty("isError").GetBoolean()).IsTrue();
             await Assert.That(foreign.GetRawText()).Contains("cursor");
-            foreach (var id in expected)
+            foreach (var (id, index) in expected.Select((id, index) => (id, index)))
             {
-                await CleanupAsync(client, csrf, id);
+                await CleanupAsync(client, csrf, id, "pagination-db-" + index);
             }
         }
 
-        private static async Task<List<string>> TraverseRestAsync(HttpClient client, string path)
+        private static async Task<List<string>> TraverseRestAsync(HttpClient client, string databaseId)
         {
             var seen = new List<string>();
+            string? after = null;
             while (true)
             {
+                var path = "/api/v1/dashboard/backups?databaseId=" + databaseId + "&limit=1" +
+                    (after is null ? "" : "&after=" + Uri.EscapeDataString(after));
                 using var response = await client.GetAsync(path);
                 await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
                 var page = await JsonAsync(response);
@@ -118,21 +129,21 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
                     seen.Add(backup.GetProperty("id").GetString()!);
                 }
 
-                var next = page.GetProperty("nextCursor").GetString();
-                await Assert.That(page.GetProperty("hasMore").GetBoolean()).IsEqualTo(next is not null);
-                if (next is null)
+                after = page.GetProperty("nextCursor").GetString();
+                await Assert.That(page.GetProperty("hasMore").GetBoolean()).IsEqualTo(after is not null);
+                if (after is null)
                 {
                     return seen;
                 }
-
-                path = "/api/v1/dashboard/backups?databaseId=" + path.Split("databaseId=")[1].Split('&')[0] + "&limit=1&after=" + Uri.EscapeDataString(next);
             }
         }
 
-        private static async Task<JsonElement> McpAsync(HttpClient client, string secret, string name, Dictionary<string, object?> arguments)
+        private static async Task<JsonElement> McpPageAsync(HttpClient client, string secret, string name, Dictionary<string, object?> arguments)
         {
             var response = await HttpJourney.McpAsync(client, secret, "tools/call", new { name, arguments });
-            return response.GetProperty("result").GetProperty("content")[0].GetProperty("structuredContent").Clone();
+            var result = response.GetProperty("result");
+            return (result.TryGetProperty("structuredContent", out var page) ? page :
+                throw new InvalidOperationException("MCP tool " + name + " failed: " + response.GetRawText())).Clone();
         }
 
         private static async Task<JsonElement> McpCallAsync(HttpClient client, string secret, string name, Dictionary<string, object?> arguments)
@@ -140,16 +151,17 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             return (await HttpJourney.McpAsync(client, secret, "tools/call", new { name, arguments })).Clone();
         }
 
+        private static async Task ControlAsync(HttpClient client, object command)
+        { using var response = await client.PostAsJsonAsync("/__test/control", command); await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await response.Content.ReadAsStringAsync()); }
+
         private static async Task<JsonElement> JsonAsync(HttpResponseMessage response)
         {
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             return document.RootElement.Clone();
         }
 
-        private static async Task CleanupAsync(HttpClient client, string csrf, string databaseId)
+        private static async Task CleanupAsync(HttpClient client, string csrf, string databaseId, string name)
         {
-            using var detail = await client.GetAsync("/api/v1/dashboard/databases/" + databaseId);
-            var name = (await JsonAsync(detail)).GetProperty("name").GetString()!;
             using var deleted = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/delete", new()
             { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["confirmName"] = name });
             await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because("cleanup removes the created database: " + deleted.StatusCode);
