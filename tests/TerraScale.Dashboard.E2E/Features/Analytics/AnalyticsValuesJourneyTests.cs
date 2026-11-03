@@ -92,7 +92,7 @@ namespace TerraScale.Dashboard.E2E.Features.Analytics
                     var html = await Page("/analytics?range=" + range + "&database=" + database + "&region=" + region);
                     var scale = (database == "" ? 11 : database == databases[0].Id ? 1 : 10) * (region switch { "gru" => 1, "sjc" => 2, "fra" => 3, _ => 6 });
                     foreach (var (label, value) in new[] { ("Requests", (3 * scale).ToString()), ("Errors", scale.ToString()), ("Operations", (22 * scale).ToString()),
-                        ("Storage", MetricFormat.Bytes(1024 * scale)), ("Client bandwidth", MetricFormat.Bytes(30 * scale)), ("Replication sent", MetricFormat.Bytes(8 * scale)), ("Replication received", MetricFormat.Bytes(9 * scale)) })
+                        ("Storage on disk", MetricFormat.Bytes(1024 * scale)), ("Client bandwidth", MetricFormat.Bytes(30 * scale)), ("Replication sent", MetricFormat.Bytes(8 * scale)), ("Replication received", MetricFormat.Bytes(9 * scale)) })
                     {
                         await Stat(html, label, value);
                     }
@@ -122,7 +122,7 @@ namespace TerraScale.Dashboard.E2E.Features.Analytics
 
             var fullHome = await Page("/?range=" + range);
             var home = Section(fullHome, "analytics-summary");
-            foreach (var (label, value) in new[] { ("Requests", "198"), ("Storage", MetricFormat.Bytes(66 * 1024)), ("Worst p95 latency", "33.8 ms"), ("Replication bandwidth", "Not reported") })
+            foreach (var (label, value) in new[] { ("Requests", "198"), ("Storage on disk", MetricFormat.Bytes(66 * 1024)), ("Worst p95 latency", "33.8 ms"), ("Replication bandwidth", "Not reported") })
             {
                 await Stat(home, label, value);
             }
@@ -134,10 +134,10 @@ namespace TerraScale.Dashboard.E2E.Features.Analytics
             }
 
             staggeredStorage = true;
-            await Stat(await Page("/analytics?range=" + range), "Storage", MetricFormat.Bytes(99 * 1024));
+            await Stat(await Page("/analytics?range=" + range), "Storage on disk", MetricFormat.Bytes(99 * 1024));
             staggeredStorage = false;
             omitOldStorage = true;
-            await Stat(await Page("/analytics?range=" + range), "Storage", "Not measured");
+            await Stat(await Page("/analytics?range=" + range), "Storage on disk", "Not measured");
 
             async Task<string> Page(string path)
             {

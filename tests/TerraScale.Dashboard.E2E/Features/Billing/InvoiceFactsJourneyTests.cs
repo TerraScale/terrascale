@@ -52,7 +52,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             var html = await response.Content.ReadAsStringAsync();
             await Assert.That(html).Contains(totalLabel);
             await Assert.That(html).Contains(balanceLabel);
-            await Assert.That(WebUtility.HtmlDecode(html)).Contains("Day 3 of 27 · based on the current subscription period");
+            await Assert.That(WebUtility.HtmlDecode(html)).Contains("Billing period: Day 3 of 27");
             await Assert.That(wire.Calls).IsGreaterThan(0);
             await app.StopAsync();
         }
