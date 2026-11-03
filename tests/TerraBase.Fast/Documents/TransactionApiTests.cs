@@ -189,7 +189,7 @@ public sealed class TransactionApiTests
 
         await Assert.That((over.Status, over.Code)).IsEqualTo((HttpStatusCode.ServiceUnavailable, "capacity"));
         await Assert.That(over.Message).Contains("2 MiB");
-        await Assert.That(over.Json.GetProperty("error").TryGetProperty("op", out _)).IsFalse();
+        await Assert.That(over.Op).IsEqualTo(2);
         await Assert.That(readFirst.Status).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(readSecond.Status).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(underBudget.Status).IsEqualTo(HttpStatusCode.OK);
