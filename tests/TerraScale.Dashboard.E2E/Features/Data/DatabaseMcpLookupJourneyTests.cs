@@ -38,7 +38,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             // A valid database whose stored record a degraded sync dropped: the write refreshes once and succeeds first try.
             probe.Reset();
             await probe.DropRecordAsync(dropped);
-            await WriteAsync(probe, dropped, "01K78CVSTMER0000000000DROP");
+            await WriteAsync(probe, dropped, "01K78CVSTMER0000000000DR0P");
 
             // With listings down, a dropped record cannot be proven absent: the refusal is retryable and never blames the id.
             probe.Reset(); probe.Fault = "all";
@@ -50,7 +50,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
 
             // The retry after the outage succeeds, proving the refusal was about availability, not the id.
             probe.Reset(); probe.Fault = "";
-            await WriteAsync(probe, dropped, "01K78CVSTMER0000000000LATE");
+            await WriteAsync(probe, dropped, "01K78CVSTMER0000000000R3TRY");
             await probe.NoProtocolFailuresAsync();
         }
 
