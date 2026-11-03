@@ -2,6 +2,11 @@ name: SDK Go Release
 
 on:
   push:
+    branches: [main]
+    paths:
+      - 'sdk/go/**'
+      - 'scripts/sdk/**'
+      - '.github/workflows/sdk-go-release.yml'
     tags: ['sdk/go/v0.0.*']
 
 permissions:
@@ -14,12 +19,77 @@ concurrency:
 
 jobs:
   tests:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     uses: ./.github/workflows/sdk-fast.yml
     with:
       area: sdk-go
 
-  publish:
+  autorelease:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      statuses: read
+      actions: read
+    steps:
+      - name: Tag the qualified revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REVISION: ${{ github.sha }}
+          QUALIFIED_DIR: ${{ runner.temp }}/qualified
+        run: |
+          python3 - <<'PYTHON'
+          import json, os, pathlib, subprocess, time
+          def gh(*args):
+              return json.loads(subprocess.check_output(['gh', *args], text=True))
+          repo, revision = os.environ['REPOSITORY'], os.environ['REVISION']
+          def main_green():
+              runs = gh('run', 'list', '--repo', repo, '--workflow', 'ci.yml', '--branch', 'main',
+                        '--commit', revision, '--event', 'push', '--limit', '100',
+                        '--json', 'status,conclusion')
+              return bool(runs) and all(item['status'] == 'completed'
+                                        and item['conclusion'] in {'success', 'skipped'} for item in runs)
+          def qualified():
+              pages = gh('api', '--paginate', '--slurp',
+                         f'repos/{repo}/commits/{revision}/statuses?per_page=100')
+              rows = [row for page in pages for row in page if row.get('context') == 'sdk-release/sdk-go']
+              proof = max(rows, key=lambda row: row['id']) if rows else None
+              return bool(proof) and proof['state'] == 'success' and proof['creator']['login'] == 'MarioGK'
+          def current_main():
+              return gh('api', f'repos/{repo}/git/ref/heads/main')['object']['sha']
+          deadline = time.monotonic() + 25 * 60
+          while time.monotonic() < deadline and not (main_green() and qualified()):
+              time.sleep(30)
+          if not (main_green() and qualified()):
+              raise SystemExit('This revision never became qualified green main')
+          if current_main() != revision:
+              print('A newer main revision superseded this release.')
+              raise SystemExit(0)
+          qualified_dir = pathlib.Path(os.environ['QUALIFIED_DIR'])
+          qualified_dir.mkdir(parents=True, exist_ok=True)
+          subprocess.check_call(['gh', 'release', 'download', f'sdk/go/qualified-{revision}',
+                                 '--repo', repo, '--dir', str(qualified_dir),
+                                 '--pattern', 'qualification.json'])
+          manifest = json.loads((qualified_dir / 'qualification.json').read_text())
+          if manifest['revision'] != revision or manifest['language'] != 'go':
+              raise SystemExit('Qualified artifact identity differs from this revision')
+          version = manifest['version']
+          tag = f'sdk/go/v{version}'
+          existing = subprocess.run(['gh', 'api', f'repos/{repo}/git/ref/tags/sdk%2Fgo%2Fv{version}'],
+                                    capture_output=True, text=True)
+          if existing.returncode == 0:
+              print(f'{tag} is already released; nothing to do.')
+              raise SystemExit(0)
+          subprocess.check_call(['gh', 'api', f'repos/{repo}/git/refs',
+                                 '-f', f'ref=refs/tags/{tag}', '-f', f'sha={revision}'])
+          print(f'Tagged {tag} at {revision}')
+          PYTHON
+
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

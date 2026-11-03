@@ -42,12 +42,18 @@ def main(language):
     elif language == "rust":
         version = tomllib.loads((area / "Cargo.toml").read_text())["package"]["version"]
     else:
-        version = "0.0.11"
-    if not re.fullmatch(r"0\.0\.[0-9]+", version):
+        version = None
+    if version is not None and not re.fullmatch(r"0\.0\.[0-9]+", version):
         raise SystemExit("SDK versions must be 0.0.X")
     with tempfile.TemporaryDirectory(prefix=f"sdk-{language}-qualified-") as temporary:
         output = Path(temporary)
         run("bash", str(area / "scripts/qualify-release.sh"), str(output))
+        if version is None:
+            version = (output / "version.txt").read_text().strip()
+            if not version:
+                raise SystemExit("Qualified artifacts carry no version")
+        if not re.fullmatch(r"0\.0\.[0-9]+", version):
+            raise SystemExit("SDK versions must be 0.0.X")
         files = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in output.iterdir() if path.is_file()}
         if not files:
             raise SystemExit("Qualification produced no package artifacts")

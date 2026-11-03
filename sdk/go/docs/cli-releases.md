@@ -42,9 +42,27 @@ The original `0.0.2`–`0.0.10` CLI downloads retain the `history/ts-go/v0.0.X` 
 
 ## Release
 
-1. Ship the release changes to main with `ts-ship`, then create and push the next unused **sdk/go/v0.0.X** tag on a green main commit.
-2. The tag workflow builds all six targets with GoReleaser's credential-free snapshot packaging, using the tagged package version, then publishes the assets under the original prefixed tag with `gh release`. This uses the workflow's `GITHUB_TOKEN` and requires no paid GoReleaser monorepo support.
-3. Confirm the release assets, checksums and installed `ts --version`.
+Every green main push that touches `sdk/go/**`, `scripts/sdk/**` or this release
+workflow releases the CLI automatically; there is no manual tag step and no
+deploy switch. The path is:
+
+1. `ts-ship` lands the change on main. On the dev host, run
+   `python3 scripts/sdk/qualify-release.py go` for the exact main revision: it
+   re-runs the Fast gates, packages all six targets with GoReleaser (version =
+   highest existing `sdk/go/v0.0.X` tag + 1), validates them with
+   `python3 scripts/test-release.py`, and publishes the immutable
+   `sdk/go/qualified-<sha>` release plus the `sdk-release/sdk-go` success status.
+2. The `SDK Go Release` workflow's `autorelease` job fires on every main push
+   that touches the Go SDK paths. It waits until its commit is green current
+   main carrying that `sdk-release/sdk-go` status, reuses the qualified
+   version, and creates the `sdk/go/v0.0.X` tag on that exact revision. A newer
+   main revision supersedes the release; an already-released version is skipped.
+3. The tag push runs the `publish` job: it verifies the tag points into main,
+   downloads the exact qualified bytes (hash-checked against
+   `qualification.json`) and publishes them as the release assets with the
+   workflow's `GITHUB_TOKEN`. This requires no paid GoReleaser monorepo support.
+4. Confirm the release assets, checksums and installed `ts --version`. The
+   homebrew-tap syncs the new `ts.rb` on its own 15-minute schedule.
 
 Credential-free package checks run `goreleaser release --snapshot --clean`, validate archives/install behavior with `python3 scripts/test-release.py`, and retain packages for three days. This does not run or download TerraBase. For release packaging set `TS_GO_VERSION` to the numeric `0.0.X` version; the default snapshot version stays `0.0.0-dev`.
 
