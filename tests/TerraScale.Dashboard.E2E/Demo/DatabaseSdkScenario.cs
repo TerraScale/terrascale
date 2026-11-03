@@ -916,9 +916,10 @@ namespace TerraScale.Dashboard.E2E
                                 return Error(400, "invalid_cursor");
                             }
 
-                            var page = items.Skip(start).Take(limit).ToArray();
+                            var repeating = backupFailure == "repeat-cursor";
+                            var page = items.Skip(start).Take(repeating ? 1 : limit).ToArray();
                             var next = start + page.Length < items.Length ? "backup-cursor:" + (start + page.Length).ToString(CultureInfo.InvariantCulture) : null;
-                            return Results.Json(new { items = page, next = backupFailure == "repeat-cursor" && after.Length > 0 ? after : next });
+                            return Results.Json(new { items = page, next = repeating && after.Length > 0 ? after : next });
                         }
                     }
                     Require(http.Request.Method == "POST" && http.Request.ContentLength is null or 0, "Manual backup has no invented body");
