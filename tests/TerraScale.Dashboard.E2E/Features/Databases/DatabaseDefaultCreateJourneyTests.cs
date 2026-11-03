@@ -102,7 +102,9 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await Assert.That(html).Contains(DatabaseService.NameHint);
             var selected = Regex.Matches(html, "<input[^>]+type=\"checkbox\"[^>]+name=\"region\"[^>]+value=\"([^\"]+)\"[^>]*checked[^>]*>")
                 .Select(match => match.Groups[1].Value).ToArray();
-            await Assert.That(selected).IsEquivalentTo(new[] { "GRU", "FRA", "SFO" });
+            // The dialog defaults to the workspace's home region alone: explicit replicas are a
+            // deliberate choice, and TerraBase places home-only databases in every serving region.
+            await Assert.That(selected).IsEquivalentTo(new[] { "GRU" });
             await Assert.That(Regex.Match(html, "<option value=\"GRU\"[^>]*>").Value).Contains("selected");
             var allRegionsInput = Regex.Match(html, "<input[^>]+name=\"allRegions\"[^>]*>").Value;
             await Assert.That(allRegionsInput.Length > 0).IsTrue();
@@ -152,6 +154,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
         [Arguments("GRU,FRA,SJC", false)]
         [Arguments("GRU,FRA", false)]
         [Arguments("SJC", false)]
+        [Arguments("", false)]
         [Arguments("", true)]
         public async Task ChosenHomeIsUsedWithoutAddingUnselectedRegions(string placement, bool allRegions)
         {
@@ -166,15 +169,8 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             using var response = await client.PostAsync("/api/v1/dashboard/databases", new FormUrlEncodedContent(
                 new[] { new KeyValuePair<string, string>("_csrf", csrf), new("name", "chosen-home"), new("homeRegion", "SJC"), new("allRegions", allRegions ? "true" : "false") }
                     .Concat(selected.Select(region => new KeyValuePair<string, string>("region", region)))));
-            if (!allRegions && selected.Length < 2)
-            {
-                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
-                await Assert.That(await response.Content.ReadAsStringAsync()).Contains(DatabaseService.MinimumRegionsMessage);
-                using var observations = JsonDocument.Parse(await producer.GetStringAsync("/__test/observations"));
-                await Assert.That(observations.RootElement.GetProperty("creates").GetInt32()).IsEqualTo(0);
-                return;
-            }
-            if (!allRegions && !selected.Contains("SJC"))
+            var explicitReplicas = selected.Where(region => !region.Equals("SJC", StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (!allRegions && explicitReplicas.Length > 0 && !selected.Contains("SJC", StringComparer.OrdinalIgnoreCase))
             {
                 await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
                 await Assert.That(await response.Content.ReadAsStringAsync()).Contains(DatabaseService.HomePlacementMessage);
@@ -188,7 +184,9 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await Assert.That(body.RootElement.GetProperty("allRegions").GetBoolean()).IsEqualTo(allRegions);
             if (!allRegions)
             {
-                await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(selected);
+                // Home alone sends no replicaRegions: the data plane places the database in every other serving region.
+                var expected = explicitReplicas.Length > 0 ? selected : new[] { "SJC", "GRU", "FRA" };
+                await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(expected);
             }
         }
     }
