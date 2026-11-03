@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases
 {
@@ -74,6 +75,69 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await Assert.That(deleted.GetProperty("deleted").GetBoolean()).IsTrue();
             await Assert.That((await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases")).EnumerateArray()
                 .Any(database => database.GetProperty("name").GetString() is "everywhere" or "stale")).IsFalse();
+            await Assert.That((await ReadAsync(producer, "/__test/observations")).GetProperty("failures").GetArrayLength()).IsEqualTo(0);
+        }
+
+        [Test]
+        public async Task ADatabaseCreatedFromTheCliInAProjectMadeOutsideTheDashboardIsListedEverywhere()
+        {
+            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            using var client = scenario.CreateClient();
+            using var producer = scenario.CreateProviderClient();
+            var account = await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+            var identity = await IdentityAsync(client);
+            var session = await ReadAsync(client, "/api/v1/auth/me");
+            var userId = session.GetProperty("userId").GetString()!;
+
+            // As `ts projects create`: ts-auth holds the project; the dashboard never recorded a placement preference.
+            TsAuthPlatformProject remote;
+            lock (scenario.Workspace.Gate)
+            {
+                remote = scenario.Workspace.CreateProjectAsync(scenario.Session(userId, account.Email), identity.OrganizationId, "cli-project", CancellationToken.None).GetAwaiter().GetResult();
+            }
+
+            // As `ts -project p db create main`: TerraBase alone holds the database, homed wherever its create landed.
+            await Control(producer, new { command = "external-create", projectId = remote.Id, value = "main" });
+            var observations = await ReadAsync(producer, "/__test/observations");
+            var created = observations.GetProperty("databases").EnumerateArray().Single(database => database.GetProperty("name").GetString() == "main");
+
+            // The dashboard session selects the CLI-made project, as the CLI passes -project p for every call.
+            var switchToken = await HttpJourney.CsrfAsync(client, "/databases");
+            using (var switched = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/switch-project",
+                new() { ["_csrf"] = switchToken, ["projectId"] = remote.Id, ["returnUrl"] = "/databases" }))
+            {
+                await Assert.That(switched.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            }
+
+            // The list API imports it from TerraBase's listing without any dashboard write having seen it.
+            var listed = await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases");
+            await Assert.That(listed.GetArrayLength()).IsEqualTo(1);
+            await Assert.That(listed[0].GetProperty("id").GetString()).IsEqualTo(created.GetProperty("id").GetString());
+            await Assert.That(listed[0].GetProperty("name").GetString()).IsEqualTo("main");
+            using (var page = await client.GetAsync("/databases"))
+            {
+                await Assert.That(await page.Content.ReadAsStringAsync()).Contains("main");
+            }
+
+            // The same catalog is the API-key database dropdown, which no prior /databases visit synced.
+            using (var keys = await client.GetAsync("/api-keys?create=key"))
+            {
+                var html = await keys.Content.ReadAsStringAsync();
+                await Assert.That(keys.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(html).Contains("<option value=\"" + created.GetProperty("id").GetString() + "\">main</option>");
+            }
+
+            // MCP with a PAT lists and reads it, and the delete works without a prior dashboard import.
+            var secret = await HttpJourney.CreatePatAsync(client, "CLI visibility", account.Password);
+            var mcp = await CallAsync(client, secret, identity.OrganizationId, remote.Id, "list_databases", new());
+            await Assert.That(mcp.GetProperty("databases").EnumerateArray().Single(database => database.GetProperty("name").GetString() == "main")
+                .GetProperty("id").GetString()).IsEqualTo(created.GetProperty("id").GetString());
+            var detail = await CallAsync(client, secret, identity.OrganizationId, remote.Id, "get_database", new() { ["databaseId"] = created.GetProperty("id").GetString() });
+            await Assert.That(detail.GetProperty("name").GetString()).IsEqualTo("main");
+            var deleted = await CallAsync(client, secret, identity.OrganizationId, remote.Id, "delete_database",
+                new() { ["databaseId"] = created.GetProperty("id").GetString(), ["confirmName"] = "main" });
+            await Assert.That(deleted.GetProperty("deleted").GetBoolean()).IsTrue();
+            await Assert.That((await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
             await Assert.That((await ReadAsync(producer, "/__test/observations")).GetProperty("failures").GetArrayLength()).IsEqualTo(0);
         }
 

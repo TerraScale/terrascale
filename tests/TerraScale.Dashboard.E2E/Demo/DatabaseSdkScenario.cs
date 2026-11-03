@@ -47,6 +47,15 @@ namespace TerraScale.Dashboard.E2E
         public Uri ReplicaOrigin { get; private set; } = null!;
         public Uri ProviderOrigin { get; private set; } = null!;
 
+        // ts-auth's registry, for callers that act outside the dashboard (the CLI's project and database creates).
+        public TestWorkspace Workspace => protocol.Workspace;
+
+        // A live session of a signed-in principal of the test auth registry.
+        public SessionRecord Session(string userId, string email)
+        {
+            return new(userId, email, email, "test-access-" + email, null, DateTimeOffset.UtcNow.AddHours(1));
+        }
+
         public static async Task<DatabaseSdkScenario> StartAsync(string root, Action<WebApplicationBuilder>? configureScenario = null,
             Func<HttpContext, Task<IResult?>>? producerExtension = null, Action<WebApplication>? configureApp = null)
         {

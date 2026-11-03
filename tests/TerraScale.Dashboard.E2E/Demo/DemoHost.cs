@@ -493,7 +493,7 @@ namespace TerraScale.Dashboard.E2E.Demo
     }
 
     // One provider registry per DemoEnvironment: its host pair shares it, other scenarios never do.
-    sealed class TestWorkspace : ITsAuthPlatform
+    public sealed class TestWorkspace : ITsAuthPlatform
     {
         public Func<Task>? BeforeListMembers { get; set; }
         public Action? BeforeDeleteAccount { get; set; }

@@ -8,10 +8,10 @@ namespace TerraScale.Dashboard.Features.ApiKeys
     {
         public static IEndpointRouteBuilder MapApiKeyFeatures(this IEndpointRouteBuilder endpoints)
         {
-            endpoints.MapGet("/api-keys", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
+            endpoints.MapGet("/api-keys", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys, DatabaseService databases) =>
             {
                 var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                return context is null ? AccountRequest.LoginRedirect(http) : await PageAsync(http, context, keys);
+                return context is null ? AccountRequest.LoginRedirect(http) : await PageAsync(http, context, keys, databases);
             });
             endpoints.MapGet("/api/v1/dashboard/credentials", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
             {
@@ -39,7 +39,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 .WithDescription("Uses the original user session at ts-auth. " + ApiKeyService.ScopeDescription + " expiresInDays is 0 (default, the key works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, comma or newline separated; empty allows any IP) limits where the key's requests may come from. Kind is key (api-key also accepted); services exchange the key with grant_type=client_credentials at ts-auth. Secrets are never persisted by the dashboard.")
                 .Accepts<CreateProjectCredentialRequest>("application/x-www-form-urlencoded")
                 .Produces<ProjectApiKeySecret>(201).Produces(200, contentType: "text/html").Produces<string>(400).Produces(401).ProducesProblem(403).ProducesProblem(422).ProducesProblem(503);
-            endpoints.MapPost("/api/v1/dashboard/credentials/{keyId}/revoke", async (HttpContext http, string keyId, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
+            endpoints.MapPost("/api/v1/dashboard/credentials/{keyId}/revoke", async (HttpContext http, string keyId, DashboardSessions sessions, AccountService accounts, ApiKeyService keys, DatabaseService databases) =>
             {
                 var context = await AccountRequest.RequireAsync(http, sessions, accounts);
                 if (context is null)
@@ -54,14 +54,14 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 }
 
                 try { await keys.RevokeAsync(context, keyId, http.RequestAborted); await keys.RecordAsync(accounts, context, keyId, false, http.RequestAborted); }
-                catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
+                catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, databases, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
                 return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys") : Results.NoContent();
             }).WithGroupName("integration").WithName("revokeDashboardCredentialById").WithTags("Credentials")
                 .WithSummary("Revoke a project key")
                 .WithDescription("Deletes the key at ts-auth: token requests then fail with invalid_client. Revoking stops this key everywhere within 2 seconds: new requests are refused and open connections (including Postgres) are closed within 3 seconds. A failed revoke call is re-checked, so 204/303 means the key is gone.")
                 .Accepts<RevokeProjectCredentialRequest>("application/x-www-form-urlencoded")
                 .Produces(204).Produces(303).Produces<string>(400).Produces(401).ProducesProblem(403).ProducesProblem(404).ProducesProblem(503);
-            endpoints.MapPost("/api/v1/dashboard/credentials/revoke", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
+            endpoints.MapPost("/api/v1/dashboard/credentials/revoke", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys, DatabaseService databases) =>
             {
                 var context = await AccountRequest.RequireAsync(http, sessions, accounts);
                 if (context is null)
@@ -76,7 +76,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 }
 
                 try { await keys.RevokeAsync(context, form["keyId"].ToString(), http.RequestAborted); await keys.RecordAsync(accounts, context, form["keyId"].ToString(), false, http.RequestAborted); }
-                catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
+                catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, databases, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
                 return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys" + http.Request.QueryString) : Results.NoContent();
             }).WithGroupName("integration").WithName("revokeDashboardCredential").WithTags("Credentials")
                 .WithSummary("Revoke a key selected by its form ID")
@@ -91,7 +91,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             foreach (var target in new[] { "credentials/allowed-cidrs", "credentials/project-allowed-cidrs" })
             {
                 var project = target.Contains("project", StringComparison.Ordinal);
-                endpoints.MapPost("/api/v1/dashboard/" + target, async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
+                endpoints.MapPost("/api/v1/dashboard/" + target, async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys, DatabaseService databases) =>
                 {
                     var context = await AccountRequest.RequireAsync(http, sessions, accounts);
                     if (context is null)
@@ -122,14 +122,14 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                         }
                     }
                     catch (Exception error) when (DatabaseEndpoints.KnownFailure(error) || error is HttpRequestException)
-                    { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
+                    { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, databases, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
                     return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys" + http.Request.QueryString) : Results.NoContent();
                 });
             }
             return endpoints;
         }
 
-        public static async Task<IResult> CreateAsync(HttpContext http, string kind, DashboardSessions sessions, AccountService accounts, ApiKeyService keys)
+        public static async Task<IResult> CreateAsync(HttpContext http, string kind, DashboardSessions sessions, AccountService accounts, ApiKeyService keys, DatabaseService databases)
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
@@ -173,15 +173,15 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
                 var credential = await keys.CreateAsync(context, kind, form["name"].ToString(), form["databaseId"].ToString(), form["scope"].Concat(form["scopes"]).SelectMany(value => (value ?? "").Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)), expiresInDays, ApiKeyService.ParseCidrs(form["allowedCidrs"].ToString()), http.RequestAborted, intent.Challenge.Proof);
                 await keys.RecordAsync(accounts, context, credential.Key.Id, true, http.RequestAborted);
-                return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, revealed: credential) : Results.Json(new ProjectApiKeySecret(ApiKeyService.Metadata(credential.Key), credential.Secret), ApiKeyContractJson.Default.ProjectApiKeySecret, statusCode: 201);
+                return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, databases, revealed: credential) : Results.Json(new ProjectApiKeySecret(ApiKeyService.Metadata(credential.Key), credential.Secret), ApiKeyContractJson.Default.ProjectApiKeySecret, statusCode: 201);
             }
             catch (Exception error) when (DatabaseResults.KnownFailure(error) || error is HttpRequestException)
             {
-                return DatabaseResults.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseResults.Message(error), kind, form["name"].ToString(), status: DatabaseResults.Status(error), draftScopes: form["scopes"].ToString(), draftDatabaseId: form["databaseId"].ToString(), draftExpiresInDays: form["expiresInDays"].ToString(), draftAllowedCidrs: form["allowedCidrs"].ToString()) : DatabaseResults.Failure(error);
+                return DatabaseResults.WantsHtml(http) ? await PageAsync(http, context, keys, databases, DatabaseResults.Message(error), kind, form["name"].ToString(), status: DatabaseResults.Status(error), draftScopes: form["scopes"].ToString(), draftDatabaseId: form["databaseId"].ToString(), draftExpiresInDays: form["expiresInDays"].ToString(), draftAllowedCidrs: form["allowedCidrs"].ToString()) : DatabaseResults.Failure(error);
             }
         }
 
-        public static async Task<IResult> RotateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys)
+        public static async Task<IResult> RotateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys, DatabaseService databases)
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
@@ -216,12 +216,12 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 }
 
                 var credential = await keys.RotateAsync(context, form["keyId"].ToString(), previousSecretTtl, http.RequestAborted, intent.Challenge.Proof);
-                return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, revealed: credential) : Results.Json(new ProjectApiKeySecret(ApiKeyService.Metadata(credential.Key), credential.Secret), ApiKeyContractJson.Default.ProjectApiKeySecret);
+                return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, databases, revealed: credential) : Results.Json(new ProjectApiKeySecret(ApiKeyService.Metadata(credential.Key), credential.Secret), ApiKeyContractJson.Default.ProjectApiKeySecret);
             }
-            catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
+            catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, databases, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
         }
 
-        private static async Task<IResult> PageAsync(HttpContext http, AccountContext context, ApiKeyService service, string error = "", string create = "", string name = "", CreatedProjectCredential? revealed = null, int status = 200, string draftScopes = "", string draftDatabaseId = "", string draftExpiresInDays = "", string draftAllowedCidrs = "")
+        private static async Task<IResult> PageAsync(HttpContext http, AccountContext context, ApiKeyService service, DatabaseService databases, string error = "", string create = "", string name = "", CreatedProjectCredential? revealed = null, int status = 200, string draftScopes = "", string draftDatabaseId = "", string draftExpiresInDays = "", string draftAllowedCidrs = "")
         {
             var warning = "";
             IReadOnlyList<ProjectCredential> keys = [];
@@ -250,6 +250,8 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 }
             }
             var now = http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow();
+            // The database dropdown follows TerraBase's catalog, including databases the dashboard never saw created.
+            await databases.SyncAsync(context, http.RequestAborted);
             try { await ApiKeyExpiryNotifications.AddAsync(http.RequestServices.GetRequiredService<AccountService>(), context, keys, now, http.RequestAborted); }
             catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested && revealed is not null && ApiKeyService.FollowUpFailure(failure))
             { warning = (warning + " Expiry reminders could not be updated; the key change succeeded.").Trim(); }

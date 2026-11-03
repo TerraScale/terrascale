@@ -412,12 +412,10 @@ namespace TerraScale.Dashboard.Common.Databases
                 // Copy placement before awaiting the provider; mutable record references are not a concurrency snapshot.
                 var observed = seen.ToDictionary(record => record.Id, record =>
                     (record.Name, record.ProjectId, record.PreviousName, record.ConflictOf, record.Region, Regions: Regions(record).ToArray(), record.AllRegions, record.PlacementRevision));
-                var homes = seen.Select(database => database.Region).Prepend(project.Region)
-                    .Select(code => DatabaseRegion.Resolve(catalog, code)).OfType<DatabaseRegion>().DistinctBy(region => region.Id).ToArray();
-                if (homes.Length == 0 && !context.Organization!.ContainsMember(context.UserId))
-                {
-                    homes = [.. catalog];
-                }
+                // TerraBase homes a database in whichever region accepted its creation, whatever created it: a project's
+                // preferred region is only a preference, and a project made outside the dashboard has none. Listing every
+                // serving region is the complete catalog; the regions answer in parallel and converge on the same list.
+                var homes = catalog;
 
                 var listings = await Task.WhenAll(homes.Select(async home =>
                 {
