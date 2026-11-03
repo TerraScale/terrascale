@@ -50,7 +50,6 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             {
                 (Id: "document", Label: "Document HTTP", Url: endpoint + "/collections"),
                 (Id: "sql", Label: "HTTP SQL", Url: endpoint + "/sql/execute"),
-                (Id: "libsql", Label: "libSQL / Hrana", Url: endpoint + "/libsql/"),
                 (Id: "postgres", Label: "Postgres", Url: $"postgresql://app@pg.terrascale.tech:5432/{name}?sslmode=verify-full&sslrootcert=system")
             };
             var card = page.Locator("#connect");
