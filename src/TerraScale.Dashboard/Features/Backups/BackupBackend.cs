@@ -21,10 +21,9 @@ namespace TerraScale.Dashboard.Features.Backups
             var result = new List<ProducerBackup>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
             string? after = null;
-            var pages = 0;
             while (true)
             {
-                var page = await ListPageAsync(scope, home, databaseId, after, ProducerPageSize, cancellationToken);
+                var page = await RawPageAsync(scope, home, databaseId, after, ProducerPageSize, cancellationToken);
                 foreach (var backup in page.Items)
                 {
                     if (seen.Add(backup.Id))
@@ -33,19 +32,33 @@ namespace TerraScale.Dashboard.Features.Backups
                     }
                 }
 
-                after = page.NextCursor;
-                if (after is null || seen.Count < ProducerPageSize * ++pages)
+                // A whole-list read must be complete: a producer cursor that stops advancing ends a
+                // paged traversal, but here it means the inventory is truncated, so fail instead of lying.
+                if (page.NextCursor is null)
                 {
                     return result;
                 }
+
+                if (page.NextCursor == after)
+                {
+                    throw new HttpRequestException("Backup pagination did not advance.");
+                }
+
+                after = page.NextCursor;
             }
         }
 
         public async Task<BackupBackendPage> ListPageAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? after, int limit, CancellationToken cancellationToken)
         {
+            var page = await RawPageAsync(scope, home, databaseId, after, limit, cancellationToken);
+            return new(page.Items, string.IsNullOrEmpty(page.NextCursor) || page.NextCursor == after ? null : page.NextCursor);
+        }
+
+        private async Task<BackupBackendPage> RawPageAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? after, int limit, CancellationToken cancellationToken)
+        {
             var database = await NameAsync(scope, home, databaseId, cancellationToken);
             var page = await CallAsync(scope, home, "databases:read", client => client.ListAsync(scope.ProjectId, database, after, limit).ResponseAsync, BackupBackendJson.Default.BackupResponse, cancellationToken);
-            return new(page.Items, string.IsNullOrEmpty(page.Next) || page.Next == after ? null : page.Next);
+            return new(page.Items, string.IsNullOrEmpty(page.Next) ? null : page.Next);
         }
 
         public async Task<ProducerBackup> CreateAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)

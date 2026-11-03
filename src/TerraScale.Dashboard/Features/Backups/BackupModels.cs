@@ -13,7 +13,7 @@ namespace TerraScale.Dashboard.Features.Backups
         [JsonIgnore] public string PolicyUnavailable { get; init; } = "";
     }
     public sealed record BackupRestList(
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BackupPolicyView? Policy,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BackupPolicyView? Policy,
         IReadOnlyList<BackupView> Backups,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor,
         bool HasMore,
