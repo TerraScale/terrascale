@@ -1,6 +1,6 @@
 # 0010: Write-wait, and a DurableAck synced to disk
 
-- Status: superseded (2026-10-11) by design C ([multi-region-replication.md](../multi-region-replication.md)): write-wait is deleted and a write answers after one local commit. Was: proposed (TS-575, 2026-10-06); write-wait chosen by COS under the user's grant of autonomy. Also decides the
+- Status: superseded (2026-10-11) by design C ([multi-region-replication.md](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/multi-region-replication.md)): write-wait is deleted and a write answers after one local commit. Was: proposed (TS-575, 2026-10-06); write-wait chosen by COS under the user's grant of autonomy. Also decides the
   TS-561 follow-up "DurableAck after a WAL fsync". Needs human acceptance.
 - Scope: `Features/Replication` (the sender's wait, the receiver's apply), `Features/Documents` (client writes),
   `Engine` (`IDatabaseStore.BeginDurableTransactionAsync`), `Configuration` (`write-wait-ms`)
@@ -20,7 +20,7 @@ The options in TS-575:
   ts-auth changes, and every other client has to adopt it.
 - **Write-wait**: a member answers a write only after its peers durably acknowledged it. This is TerraBase only.
 
-Write-wait relies on `DurableAck`. Under [0007](0007-lz4-application-envelope-replication.md), a receiver sends it after
+Write-wait relies on `DurableAck`. Under [0007](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/decisions/0007-lz4-application-envelope-replication.md), a receiver sends it after
 its SQLite commit. Under [0003](0003-sqlite-synchronous-normal.md) (`synchronous = NORMAL`), that commit survives a
 process crash but not a power loss or an OS crash. TS-561 left "DurableAck after a WAL fsync" open, pending a decision
 against 0003. Both questions decide what a peer's acknowledgment is worth, so this record covers both.
@@ -50,7 +50,7 @@ against 0003. Both questions decide what a peer's acknowledgment is worth, so th
   `terrabase_replication_sender_durable_lag` shows the remaining lag. A response's `durability` stays `local_durable`,
   because that is the only guarantee every answer carries.
 - **What does not wait:**
-  - Management and catalog writes: one primary writes them ([0009](0009-catalog-replication.md)).
+  - Management and catalog writes: one primary writes them ([0009](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/decisions/0009-catalog-replication.md)).
   - Index create and drop: they change query plans, not results.
   - Database creation.
   - Members without `peer-addresses`.

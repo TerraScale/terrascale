@@ -1,5 +1,7 @@
 # Authenticated tenant recovery retry
 
+> **Archived (2026-11-03).** Not current: this page describes a removed design. See [archive](README.md).
+
 Use `POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/recovery/retry`
 on the affected node's **internal HTTP/2 listener**. Every route component is the
 canonical catalog ULID, including the database ID rather than its name.

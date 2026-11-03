@@ -6,7 +6,7 @@
 - **Scope:** `Features/Management` (the allowance check where a database is registered), one new peer RPC on the
   internal listener.
 - **Amends:** [plan-database-allowance.md](../plan-database-allowance.md) ("concurrent creates cannot both pass on one
-  node") and [section 15](../replication/15-catalog-system-as-a-lattice-database.md) of the replication design ("limits
+  node") and [section 15](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/replication/15-catalog-system-as-a-lattice-database.md) of the replication design ("limits
   can briefly overshoot by one concurrent create per region"). The plan database allowance no longer overshoots.
 
 ## Problem

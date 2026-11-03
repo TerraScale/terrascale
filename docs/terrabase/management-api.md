@@ -248,33 +248,16 @@ placement. See [region identity](region-identity.md) for Atlas session pins and 
 
 ### Region placement
 
-A database's placement names its home region and its replica regions (TS-643, [cross-region replication](cross-region.md#placement)).
-Region ids are Atlas region ids (`gru-1`, `sfo-1`), the values of `X-TerraBase-Region`.
+A database is served only by its home region ([database regions](cross-region.md#placement)). Region ids are Atlas
+region ids (`gru-1`, `sfo-1`), the values of `X-TerraBase-Region`.
 
-- `homeRegion` is where the database is created and managed: create, change regions, delete and branch go to it.
-  `replicaRegions` are the other regions that hold a full copy; every listed region serves reads and writes, and
-  writes replicate between them.
-- On create, `homeRegion` defaults to the called region. A replica region must be one this deployment replicates with,
-  listed once, and not the home (`400 invalid_request`). Each replica region must register the organization and project
-  under the same ids to take the database.
-- **Two regions or more** (decision 0013a, option A) apply on a machine that belongs to a production cell:
-  - A create without `replicaRegions` places replicas in every other region the membership lists. With none listed, it
-    answers `503 remote_region_unavailable` and creates nothing.
-  - A create with an empty `replicaRegions` answers `400 placement_needs_two_regions`.
-  - A `PATCH` may still remove every replica region, which is the step before a delete. That database then takes no
-    writes until a region is added back: its writes are refused with `409 placement_needs_two_regions`, without
-    `Retry-After` ([0013c](decisions/0013c-single-region-write-conflict.md)).
-  - A machine without a member directory (development, single-machine tests) is a cell of one. It still
-    defaults to no replica regions.
-- `PATCH` sets the complete new `replicaRegions`; `homeRegion` may be repeated but cannot change. An added region takes
-  the database and fills its copy. A removed region stops serving it at once and keeps its copy unserved, so the writes it
-  accepted keep reaching the others; added back, it resumes from that copy.
+- On create, `homeRegion` defaults to the called region. Another serving region answers `421 wrong_region` with
+  `ts-replay` naming it; an unserved region or a value that is not a region answers `400 invalid_request`.
+- `replicaRegions` with any region, or `allRegions: true`, answers `400 replicas_unavailable` on create and `PATCH`.
+- `PATCH` renames the database or confirms its unchanged placement; `homeRegion` cannot change.
 - A region outside the placement answers the database's data requests, and its database-scoped Management requests other
   than reading, updating and deleting the database, with `421 wrong_region` and the headers
-  `X-TerraBase-Database-Home` and `X-TerraBase-Database-Regions` (comma-separated, home first). Clients resolve one of
-  those regions through Atlas and retry there.
-- A database recorded before placement existed has `homeRegion` = the region holding it and no replicas.
-- `allRegions: true` places a full copy in every serving region, including regions that join later: [all-regions placement](all-regions-placement.md).
+  `X-TerraBase-Database-Home` and `X-TerraBase-Database-Regions`.
 
 ## Members and roles
 

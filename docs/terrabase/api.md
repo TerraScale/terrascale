@@ -305,7 +305,7 @@ the retention floor require a `409 must_refetch` restart. Origin bytes stay plai
 strong ETags and `304` responses. `cursor_resume` carries the reached R8 vector; cross-machine resume proofs remain
 fail closed pending FR-23. Tigris mirror encryption and upload belong to the FR-22 background worker.
 
-The database's changes feed as Server-Sent Events (slice R8, [multi-region replication](multi-region-replication.md)
+The database's changes feed as Server-Sent Events (slice R8, [multi-region replication](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/multi-region-replication.md)
 section 14). `change` events carry `{collection, id, op, version, origin, document}`; `cursor` events (when the stream
 starts and every 15 s) carry `{cursor}`. Every event's `id` is the cursor after it, valid on any machine of any region.
 Query `cursor` (a cursor, or `now`; the start of retention when absent) and `collections` (comma-separated, at most
@@ -341,7 +341,7 @@ Unchanged: ts-orchestrator, ts-router, ts-atlas, ts-status and ts-deploy probe t
   any peer is. `maxLagSeconds` is the largest lag over every stream, or `null` when none reports.
 - The status code is always 200: the body carries the state. A lone node (no other region) answers `ok` with no peers.
 - Lag comes from the outbound replication status (`IReplicationStatus`). Between R2a and R4a of design C
-  (multi-region-replication.md) client databases do not replicate, so every seen region reports `degraded` with
+  ([multi-region-replication.md](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/multi-region-replication.md)) client databases do not replicate, so every seen region reports `degraded` with
   `lagSeconds: null` until R4a's peer streams implement that status.
 
 ### API reference

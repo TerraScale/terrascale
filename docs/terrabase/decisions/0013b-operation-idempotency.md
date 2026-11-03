@@ -29,7 +29,7 @@
   - Catalog writes need R10a's lattice catalog (section 15 of the design).
 - **Amends:**
   - [0003](0003-sqlite-synchronous-normal.md): every write transaction syncs.
-  - Design C ([multi-region-replication.md](../multi-region-replication.md) section 6, "ack after one node").
+  - Design C ([multi-region-replication.md](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/multi-region-replication.md) section 6, "ack after one node").
 - **Replaces** [0010](0010-write-wait-and-synced-durable-ack.md), which is already superseded.
 
 ## 1. Contract and definitions

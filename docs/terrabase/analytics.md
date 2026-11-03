@@ -197,7 +197,7 @@ every ten seconds and at clean shutdown. Minutes roll into the same lifetime,
 hourly and daily totals as existing usage. Minute buckets retain 120 minutes,
 hours 35 days, and days 400 days. Each machine saves its own observations in its
 local catalog. Catalogs are not replicated until R10a, so these totals are per machine
-([multi-region-replication.md](multi-region-replication.md) section 15).
+([multi-region-replication.md](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/multi-region-replication.md) section 15).
 
 These are best-effort dashboard observations. A crash can lose counts since the
 last successful flush; memory pressure can omit observations. Pending records

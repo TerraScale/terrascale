@@ -32,7 +32,7 @@ Listing and generated creation still use `GET/POST …/documents`; creation retu
 
 Fresh storage uses data-directory layout 1, SQL schema 1 and catalog version 1, and records its storage format (the
 bootstrap schema's digest) in the lock file; a build refuses a directory of any other format
-([schema compatibility](replication.md#schema-compatibility)). New files bootstrap the full schema atomically. Nonempty files of any other schema version are refused, on import as well as normal startup.
+([schema compatibility](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/replication.md#schema-compatibility)). New files bootstrap the full schema atomically. Nonempty files of any other schema version are refused, on import as well as normal startup.
 There are no migrations, backfills, dual reads/writes or legacy ID fallbacks. TS-755's native uniqueness is
 part of this schema. Version numbers never increase (user rule, 2026-10-09): a format change wipes storage at a
 rollout that stops every member before any new build starts, so peers of an old build never meet this one, and

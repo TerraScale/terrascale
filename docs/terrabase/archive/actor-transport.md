@@ -1,5 +1,7 @@
 # Preparatory actor transport (TS-648)
 
+> **Archived (2026-11-03).** Not current: this page describes an unused transport. See [archive](README.md).
+
 Full TS-648 execution still requires actor-owned state, lattice delivery and flush completion. This slice supplies only
 the transport behind `IActorRouter`. `Program` does not register it, and document requests still use today's engine.
 It does not change storage, public APIs, replication formats, replica identities or the existing TS-648 markers.

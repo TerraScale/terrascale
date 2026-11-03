@@ -146,40 +146,9 @@ rollout is performed by this repository change.
 
 ### Leases
 
-One member ships each file. `Engine/IShipperLeases` chooses it: `ShipperEpochAsync(database)` returns the epoch of this
-member's lease on that file while it ships it, or null. `Engine/Cluster` implements it with the cell's membership
-(`docs/terrabase/design/anna-core.md` §5): each file is shipped by its database's **primary** on the ring of live members, while
-that member holds its member lease.
-
-- **Without `nats-url`** the members are the static `peers` list (one member when unset), whose leases never end. This
-  is for one member and tests: backup with `peers` or `peer-addresses` but no `nats-url` stops the
-  process with exit code 2.
-- **With `nats-url`** the members share ts-orchestrator's NATS (JetStream KV), the store TerraBase uses for external
-  persistence. Each member keeps its key `member.<base64url node-name>` in the bucket
-  `terrabase_backup_leases`.
-
-| Setting | Meaning |
-| --- | --- |
-| `nats-url` | Comma-separated `tls://host:port` (or `nats://host:port`) servers of the cell's NATS |
-| `nats-credentials-file` | NATS user credentials (`.creds`: user JWT and nkey seed), required with `nats-url` |
-| `nats-certificate`, `nats-private-key`, `nats-ca` | PEM client certificate (followed by its intermediates, which are sent with it), its key and the servers' CA, for mutual TLS; all or none. With them the connection is TLS first, as ts-orchestrator's broker bridge expects; a plain nats-server needs `handshake_first: true` in its `tls` block |
-
-- Each member rewrites its key every 5 s and reads the others in the same refresh. The bucket's `max_age` of 15 s (with
-  subject delete markers) expires a member nobody rewrites; the bucket is created on first use with three replicas, one
-  on a single server.
-- A member holds its lease while its last successful renewal began less than 10 s ago by its own monotonic clock, so
-  it stops shipping 5 s before its key can expire for the others. Two members ship the same file only under clock
-  drift or a process pause beyond that margin. Even then nothing breaks: each ships its own generation, and a restore
-  uses one generation.
-- A member that becomes a file's shipper starts at once when the previous one left the membership; otherwise it waits
-  10 s, so the previous shipper has either seen the new ring or lost its lease. A new epoch starts a new generation
-  with a snapshot: the member taking the file over ships a different physical file than the previous holder.
-- At shutdown a member ships what is left, then deletes its key, so the others take its files over at their next
-  refresh (within 5 s). After a crash, takeover waits for the key to expire: about 15 to 20 s.
-- ts-orchestrator delivers the NATS files and renews them every 24 h (TS-651). Every connect and reconnect reads them
-  again, and a reconnect refused with an expired JWT keeps retrying, so no restart is needed. Backup settings come from
-  the environment and are read at start: changing them needs a restart.
-- Every member taps every file and trims its change log, whether or not it ships it.
+Each node ships the files it holds. `Engine/IShipperLeases` is `LocalShipperLeases`: `ShipperEpochAsync(database)` always
+returns epoch 1, so the local node ships every local file and a generation changes only with a new snapshot. There is no
+member ring, NATS membership or lease takeover. Every node taps every file and trims its change log as it ships it.
 
 ## How shipping works
 
@@ -370,8 +339,7 @@ is when its last change was read.
 
 ## Restore
 
-A restore always creates a new database, so a new incarnation that reaches the other members through replication (with
-TS-647, through anti-entropy). Backups taken before the TS-602 wipe use the old schema and do not need to restore after
+A restore always creates a new database, with a new incarnation, in the region that serves the source database. Backups taken before the TS-602 wipe use the old schema and do not need to restore after
 it (user decision, 2026-10-07). Production backup starts right after that cutover.
 
 `GET /v1/projects/{project}/databases/{database}/point-in-time` returns the restore window: from the oldest snapshot,
@@ -663,8 +631,7 @@ On Turso 0.8.2 that cannot work, measured with the engine itself:
   the writer copies an older view, and `wal_checkpoint(TRUNCATE)`, which would let the file be copied as is, waits for
   every reader, so a stalled reader would stop snapshots.
 
-Turso's change capture is the mechanism design C already relies on (`multi-region-replication.md`, section 7), so the
-backup reads the same table the change tailer will. What it keeps: sealed `TBK1` objects, the bucket layout and keys,
+The backup reads Turso's change capture table. What it keeps: sealed `TBK1` objects, the bucket layout and keys,
 generations, daily snapshots, positions that prove contiguity, PITR to the second a pass read, daily drills, retention,
 customer buckets and leases. What it changes: a snapshot is a logical copy (every rowid kept, the schema recreated from
 its SQL), a segment is a change log, and replay applies rows instead of pages.

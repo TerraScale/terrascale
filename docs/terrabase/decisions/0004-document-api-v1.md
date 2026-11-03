@@ -55,7 +55,7 @@ and aliases escaped slash spellings before route values are exposed. See [the ID
 4. Number comparisons in queries use SQLite's 64-bit integer and double arithmetic, not exact
    decimals: integers outside the signed 64-bit range and decimals with more than about 15
    significant digits may compare inexactly. Patch `inc` takes and keeps signed 64-bit integers
-   (it is a replicated counter, multi-region-replication.md section 13). Documents, patches and queries validate the decimal
+   (it is a replicated counter, [multi-region-replication.md](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/multi-region-replication.md) section 13). Documents, patches and queries validate the decimal
    text before arithmetic: nonzero magnitudes below `1e-307` or at least `1e308` are rejected,
    including underflow and subnormal values. This is narrower than the named JSON contract's
    normalized scale range of ±1024.

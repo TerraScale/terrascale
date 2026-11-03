@@ -65,7 +65,7 @@ Electric references: <https://electric.ax/docs/api/http> and <https://electric.a
 | #192: PITR answers 409 unless it can prove the history up to T | merged | The same proof style applies to resume cursors |
 | #119: R8 changes-feed E2E | merged | The feed this plan builds on |
 | #165: repairs stop appearing under origin 0 (C3) | merged | FR-02 is done. Failover resume no longer answers 400 for repairs |
-| #181: every write transaction syncs the WAL at commit | merged ([SqliteDatabaseStore.cs#L226](../../src/TerraBase/Engine/Sqlite/SqliteDatabaseStore.cs#L226)) | A committed row is locally durable on Turso, subject to FR-07 |
+| #181: every write transaction syncs the WAL at commit | merged ([SqliteDatabaseStore.cs#L226](https://github.com/TerraScale/terrascale/blob/ef386002fcc2604813d58141d7f1d49976cbeba2/src/TerraBase/Engine/Sqlite/SqliteDatabaseStore.cs#L226)) | A committed row is locally durable on Turso, subject to FR-07 |
 | #184: new databases placed in at least two regions | merged | Cross-region resume is the normal path, not an edge case (3.7) |
 | #191: own CDC commit marker, `CommitMarker(Incarnation, ChangeId)` ([CommitResult.cs#L6](../../src/TerraBase/Engine/CommitResult.cs#L6)) | merged | FR-25 maps it to a feed sequence (3.4) |
 | #221: persistent feed sequence and derived shape storage (B1) | merged | FR-03 is done; `_tb_feed.seq` and the shape tables are persisted ([shape-storage.md](shape-storage.md)) |
@@ -437,8 +437,8 @@ Metrics on `TerraScale.TerraBase`, without tenant labels:
 - Tenant connections set `PRAGMA synchronous = NORMAL`
   ([SqliteSession.cs#L87-L96](https://github.com/TerraScale/terrascale/blob/f7d5c3c45a45c58495068f1874e4a0c7e5465608/src/TerraBase/Engine/Sqlite/SqliteSession.cs#L87-L96)).
 - Since #181, `BeginAsync` sets `durable |= write`. Every write transaction syncs at commit
-  ([SqliteDatabaseStore.cs#L226](../../src/TerraBase/Engine/Sqlite/SqliteDatabaseStore.cs#L226)). Group commit still passes
-  `durable: false` ([SqliteDatabaseStore.cs#L687](../../src/TerraBase/Engine/Sqlite/SqliteDatabaseStore.cs#L687)), but
+  ([SqliteDatabaseStore.cs#L226](https://github.com/TerraScale/terrascale/blob/ef386002fcc2604813d58141d7f1d49976cbeba2/src/TerraBase/Engine/Sqlite/SqliteDatabaseStore.cs#L226)). Group commit still passes
+  `durable: false` ([SqliteDatabaseStore.cs#L687](https://github.com/TerraScale/terrascale/blob/ef386002fcc2604813d58141d7f1d49976cbeba2/src/TerraBase/Engine/Sqlite/SqliteDatabaseStore.cs#L687)), but
   that argument no longer decides writes. Read-only transactions are unaffected.
 - Decision 0003 states SQLite's WAL semantics: process crash loses nothing; OS crash or power loss loses commits since the
   last WAL sync; torn frames are discarded

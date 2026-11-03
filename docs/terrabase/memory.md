@@ -39,7 +39,7 @@ and the next read loads it from SQLite. Disposal releases every reservation sync
 This is the independent memory-tier groundwork for TS-649. Selective hot-key replication, SLO policy
 actions and SDK-based node autoscaling remain pending; replacing the cache does not implement them.
 The remaining work depends on TS-647's persisted lattice state, replica placement and per-origin streams
-([Anna design](design/anna-core.md)), which have not landed. At the inspected ts-orchestrator `origin/main`
+([Anna design](archive/anna-core.md)), which have not landed. At the inspected ts-orchestrator `origin/main`
 (`6643f0e0`), `docs/machines-api.md` still lists node-pool and scaling mutations as planned;
 `internal/hostpool/pool.go` explicitly excludes dedicated TerraBase members from generic host pools.
 The inspected ts-dotnet `origin/main` (`13f795b`) has no orchestrator client. Autoscaling needs the public

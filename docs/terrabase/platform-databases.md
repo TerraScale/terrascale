@@ -39,7 +39,7 @@ them as its own. A record seeded with a fixed region list takes this placement o
   node and independent nodes or regions all converge on identical records. An id or name that holds something else is
   never overwritten: the seed logs an error and stops.
 - Every machine seeds its local catalog. The system catalog and placed databases use the existing Anna replication
-  path ([multi-region-replication.md](multi-region-replication.md) section 15). A three-region placement is not proof
+  path ([multi-region-replication.md](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/multi-region-replication.md) section 15). A three-region placement is not proof
   of live convergence: the rebuild must verify data replication after deploying the new image.
 - Collections belong to the service that owns the data: ts-auth creates its collections at startup (idempotent), and
   the dashboard creates its own. TerraBase does not keep a copy of either list.

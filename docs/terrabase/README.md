@@ -58,7 +58,7 @@ Production identity, membership, region discovery and backup follow the
 CI uses GitHub Actions secrets. Limits and timeouts have one correct setting in code.
 
 **Current gap (TS-773):** the runtime still parses `TERRABASE_*`/`--name`
-options and guards listeners, authentication, backup and cross-region replication
+options and guards listeners, authentication and backup
 on their presence. The docs change does not remove those paths or establish
 an automatic production bootstrap. Preserve validation and secret-free errors
 while replacing them; missing authentication must never grant access.
@@ -83,16 +83,11 @@ and public listeners.
 
 Point load balancers and reverse proxies (Caddy) at the client listener's `/readyz`.
 
-Target replication design (Turso + CDC + lattices across gru and sjc, with its slice plan):
-[`multi-region-replication.md`](multi-region-replication.md). It replaces the replication described below.
+Each database is served by its home region only ([cross-region.md](cross-region.md),
+[decision](decisions/2026-10-29-single-region-until-sync.md)). The leaderless replication engine, its peer streams,
+anti-entropy and `GET /replication` status are removed. Superseded designs are kept in [archive/](archive/README.md).
 
-Two regions accepting one database name keep both databases: [database name conflicts](database-name-conflicts.md).
-Renaming a database, and what concurrent cross-region renames converge to: [database rename](database-rename.md).
-
-Replication setup, certificates, limits and metrics: [`docs/terrabase/replication.md`](replication.md).
-`GET /replication` on the internal listener reports outbound per-peer
-and per-database durable lag, detected journal conflicts and catch-up times; see
-[status and alert thresholds](replication.md#replication-status-and-alerts).
+Renaming a database: [database rename](database-rename.md).
 
 ## API reference
 

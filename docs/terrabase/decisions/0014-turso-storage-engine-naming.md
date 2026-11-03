@@ -36,7 +36,7 @@ current driver package reference.
 ## Historical notes and compatibility
 
 The SQLite/Microsoft.Data.Sqlite engine descriptions in
-[anna-core](../design/anna-core.md), [query-plan notes](../sqlite-query-plans.md),
+[anna-core](../archive/anna-core.md), [query-plan notes](../sqlite-query-plans.md),
 [CI notes](../ci.md), and `src/TerraBase/AGENTS.md` are historical where they
 conflict with this record. Read their `Engine/Sqlite` paths and TerraBase-owned
 `Sqlite*` engine identifiers as `Engine/Turso` and `Turso*`; the query-plan notes'

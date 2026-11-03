@@ -1,9 +1,11 @@
 # Anna core: coordination-free storage and replication (TS-634)
 
-- Superseded in part (2026-10-11): [multi-region replication on Turso](../multi-region-replication.md) replaces
+> **Archived (2026-11-03).** Not current: this page describes a removed design. See [archive](README.md).
+
+- Superseded in part (2026-10-11): [multi-region replication on Turso](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/multi-region-replication.md) replaces
   §3 to §9 (document model, storage, streams, catalog, queries) and decisions 0009 and 0010.
-- Deleted (R10a): the catalog primary, its followers and forwarding ([0009](../decisions/0009-catalog-replication.md)).
-  `_system` becomes a lattice database replicated to every region ([multi-region §15](../multi-region-replication.md)).
+- Deleted (R10a): the catalog primary, its followers and forwarding ([0009](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/decisions/0009-catalog-replication.md)).
+  `_system` becomes a lattice database replicated to every region ([multi-region §15](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/multi-region-replication.md)).
 - Status: design, revised 2026-10-07 for TS-647 and 2026-10-08 for the greenfield rule (decision 6). **Stage 1
   (TS-647) is being built now; stage 2 (TS-648, TS-649, TS-643) comes later.** Nothing below is implemented unless
   the [plan](#15-plan) marks its step as merged. Statements about the future system are targets, not guarantees; each
@@ -272,7 +274,7 @@ step 7, its floor vector. One file per database stays, so TS-633's WAL tap keeps
   states and the applied vector, then the streams after it.
 - Members of another format never meet: the cutover stops every member before any starts the new format (decision 9).
 - Wire format: the existing versioned envelope with LZ4 over the existing mutual-TLS peer listener
-  ([0007](../decisions/0007-lz4-application-envelope-replication.md)).
+  ([0007](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/decisions/0007-lz4-application-envelope-replication.md)).
 
 ### 6.2 Join on apply
 
@@ -325,7 +327,7 @@ after every active replica of its database acknowledged it, bounded by `write-wa
 ## 8. Catalog (`_system`)
 
 `_system` (database registry, backup policies, saved queries, usage counters) becomes a lattice database replicated
-to every member like any other. The catalog primary and followers ([0009](../decisions/0009-catalog-replication.md))
+to every member like any other. The catalog primary and followers ([0009](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/decisions/0009-catalog-replication.md))
 go: `CatalogFollower`, `CatalogFeed`, `CatalogPrimaryClient`, `catalog.proto` and `ISystemReplication`. A unique
 database name per project is an owner `If-None-Match: *`. Usage counts from every member become `GCounter`s.
 
@@ -373,7 +375,7 @@ database name per project is an owner `If-None-Match: *`. Usage counts from ever
 
 Routes as in [the route table](../api.md); `C` and `D` are its prefixes. Today's guarantees come from the current code
 and decisions ([0004](../decisions/0004-document-api-v1.md), [0010](../decisions/0010-write-wait-and-synced-durable-ack.md),
-[replication](../replication.md)).
+[replication](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/replication.md)).
 
 | Operation | Today | Stage 1 | Weaker or changed |
 | --- | --- | --- | --- |

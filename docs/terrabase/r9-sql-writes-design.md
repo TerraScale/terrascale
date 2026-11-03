@@ -1,7 +1,7 @@
 # R9: SQL writes as lattice operations (design)
 
 - Status: design only, by the R3/R6/R7 owner, 2026-10-12. No code yet. R9 starts after the phase-1 integration
-  candidate is frozen and accepted (COS). It refines section 12 of [multi-region-replication.md](multi-region-replication.md).
+  candidate is frozen and accepted (COS). It refines section 12 of [multi-region-replication.md](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/multi-region-replication.md).
 - Acceptance: E11 (`LatticeE2ETests.E11_sql_update_in_gru_and_patch_in_sjc_both_survive_and_increments_add`) as an
   actual pass, its row removed from `Gaps`, then 3 serialized repeats each by the R9 owner and the strict-test owner.
 
@@ -113,6 +113,6 @@ The storage format stays `StorageFormat.Id` of the base (no schema or encoding c
 ## 7. Decisions (COS, 2026-10-12; routine and reversible)
 
 1. v1: one atomic change group per statement (1024 documents / 2 MiB); a larger statement is 413 `sql_too_large`,
-   naming the limit. Chunking (R9c) is the planned follow-up. Section 12 of multi-region-replication.md says so.
+   naming the limit. Chunking (R9c) is the planned follow-up. Section 12 of [multi-region-replication.md](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/multi-region-replication.md) says so.
 2. v1 refuses a computed `SET f = <other field or arithmetic>` with a 400 that names the rule (it does not converge).
 3. The same `POST …/sql` route; a write also requires `documents:write`.

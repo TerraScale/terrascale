@@ -2,8 +2,8 @@
 
 The required TerraBase Fast job runs `RestoreDrillTests` automatically. Its local drill writes 24 known documents,
 ships an encrypted snapshot and a subsequent CDC segment, deletes the live database file through the real engine,
-restores through the management PITR endpoint, and compares all 4096 anti-entropy bucket digests. It also reads every
-one of the 25 recovered documents through the client listener. Each test owns its server, data directory and object store;
+restores through the management PITR endpoint, and compares a SHA-256 digest of every document's id, version and JSON.
+It also reads every one of the 25 recovered documents through the client listener. Each test owns its server, data directory and object store;
 TUnit's parallel execution remains unchanged.
 
 Run only the drill locally:
@@ -22,13 +22,11 @@ The runtime catalog restore gate is a separate change in
 [PR #213](https://github.com/TerraScale/terrascale/pull/213). Local drill coverage
 changes no serving behavior and does not establish production recovery.
 
-Production recovery needs a reviewed drill with explicit destructive targets and
-a passing replication matrix. Retain timestamped Tigris listings, exact images and
-all three node identities. Write known data, ship it, recreate the approved target's
-machine and volume, restore tenant data with a fresh catalog from healthy peers,
-compare all three digests and prove replication in both directions. Publish backup,
-replay, readiness and convergence timings in `benchmark/bench/`, with total recovery
-time separately. This is an acceptance requirement, not an instruction to run the drill.
+Production recovery needs a reviewed drill with an explicit destructive target. Retain timestamped Tigris listings,
+the exact image and the node identity. Write known data, ship it, recreate the approved target's machine and volume,
+restore tenant data and compare the digest. Each database has one serving region, so there is no peer to restore
+from or replicate to. Publish backup, replay and readiness timings in `benchmark/bench/`, with total recovery time
+separately. This is an acceptance requirement, not an instruction to run the drill.
 
 ## Backup qualification semantics
 

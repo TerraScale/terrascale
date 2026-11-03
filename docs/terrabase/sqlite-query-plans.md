@@ -15,7 +15,7 @@ and renames use `Put` and `Delete`, list endpoints and "has children" checks use
 The plan test runs the shared statements against both a client database and the `_system` database, and each
 kind's own statements against that kind (plans depend on the schema, not on the rows).
 
-Schema version 1 bootstraps two shapes (`SqliteDatabaseStore`). A client database ([anna-core](design/anna-core.md)
+Schema version 1 bootstraps two shapes (`SqliteDatabaseStore`). A client database ([anna-core](archive/anna-core.md)
 Stored state): `documents (collection, id, state, version, body)`, `PRIMARY KEY (collection, id)`, `WITHOUT ROWID`,
 where `state` is the document's encoded register, `version` the stamp of its last-writer-wins write and `body` that
 write's JSON (NULL for a tombstone or a hidden uniqueness loser); `collections (name PRIMARY KEY, created_at,
@@ -29,7 +29,7 @@ key `(sequence, ordinal)`) and `journal (sequence, dependencies)`; `applied (ori
 applied position, and the one-row `replication_state (id, replica, complete)` names the replica id the journal belongs
 to.
 
-`_system` is a lattice database too (R10a, docs/terrabase/multi-region-replication.md section 15): its live documents of
+`_system` is a lattice database too (R10a, [multi-region-replication.md](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/multi-region-replication.md) section 15): its live documents of
 every collection share one `documents (collection, id, body)` table (`UNIQUE (collection, id)`), beside the same
 `_tb_state`, `_tb_peers`, `collections` and `commit_offset`. Both shapes include the uniqueness tables `_tb_unique_keys`,
 `_tb_unique_invalid` and
@@ -104,7 +104,7 @@ keys. Every setting that differs, and why:
 
 | Setting | Value | Turso default | Why |
 | --- | --- | --- | --- |
-| `synchronous` | `NORMAL` | `FULL` | A local write is acknowledged after one machine's commit (decision 0003, `multi-region-replication.md` section 6): a commit does not wait for an fsync, so acknowledged writes can be lost on power loss or an OS crash, never on a process crash, and the file is not corrupted. Durable write transactions, replicated applies and every system database write (decision 0012) set `FULL` for their transaction. The connection that creates a file uses `OFF`: the file is private until it is published and synced once then. |
+| `synchronous` | `NORMAL` | `FULL` | A local write is acknowledged after one machine's commit (decision 0003, [multi-region-replication.md](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/multi-region-replication.md) section 6): a commit does not wait for an fsync, so acknowledged writes can be lost on power loss or an OS crash, never on a process crash, and the file is not corrupted. Durable write transactions, replicated applies and every system database write (decision 0012) set `FULL` for their transaction. The connection that creates a file uses `OFF`: the file is private until it is published and synced once then. |
 | `cache_size` | ¼ of `memory-budget` ÷ `storage-threads`, at least 2 MiB | 2000 pages | Turso has no process-wide heap limit, so per-connection caches sized from the budget are the memory bound (`memory.md`). |
 | `query_only` | `1` in read transactions | `0` | Read-only transactions cannot write; reset to `0` before the session is pooled. |
 | `capture_data_changes_conn` | `after` on the writer | off | Design C's change capture and continuous backup (`backup.md`); a transaction may turn it off (`SuspendCaptureAsync`). |
