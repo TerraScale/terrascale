@@ -197,7 +197,11 @@ button.danger { background: light-dark(#c81e1e, #d92626); }
 .otp input { height: 52px; padding: 0; font: 500 24px / 1 var(--mono); text-align: center; caret-color: var(--accent); }
 .otp input:nth-child(4) { grid-column: 5; }
 .otp input:not(:placeholder-shown) { background: var(--surface-2); }
+button.is-loading, .btn.is-loading { color: transparent; pointer-events: none; }
+button.is-loading > *, .btn.is-loading > * { visibility: hidden; }
+button.is-loading::after, .btn.is-loading::after { content: ""; width: 1em; height: 1em; border: 2px solid color-mix(in oklab, currentColor 35%, transparent); border-top-color: currentColor; border-radius: 50%; animation: ts-spin 0.7s linear infinite; }
+@keyframes ts-spin { to { transform: rotate(1turn); } }
 @media (max-width: 640px) { .auth-page { padding-left: 12px; padding-right: 12px; } .card { padding: 24px; } input.code { font-size: 20px; } .otp { gap: 6px; } .otp input { height: 48px; font-size: 20px; } }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } button.is-loading::after, .btn.is-loading::after { animation: none; opacity: 0.6; } }
 """;
 }

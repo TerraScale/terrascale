@@ -9,6 +9,7 @@ public static class EmbeddedAssets
     {
         ["admin.css"] = ("assets/admin/admin.css", "text/css; charset=utf-8"),
         ["datastar.js"] = ("assets/admin/datastar.js", "text/javascript; charset=utf-8"),
+        ["hosted.js"] = ("assets/admin/hosted.js", "text/javascript; charset=utf-8"),
         ["logo.svg"] = ("assets/admin/logo.svg", "image/svg+xml"),
         ["logo-icon-blue.svg"] = ("assets/admin/logo-icon-blue.svg", "image/svg+xml"),
         // The Lucide icons of the hosted pages, as one sprite: <svg><use href="/admin/icons.svg#i-mail"/></svg>.
