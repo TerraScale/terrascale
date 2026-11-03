@@ -40,7 +40,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             for (var page = 0; page < 3; page++)
             {
                 var html = await client.GetStringAsync(url);
-                await Assert.That(html).Contains("Organization-implied access is not listed").And.DoesNotContain(implied.Email).And.DoesNotContain(sibling);
+                await Assert.That(html).Contains("id=\"project-grants-title\"").And.DoesNotContain(implied.Email).And.DoesNotContain(sibling);
                 var rows = Regex.Matches(html, "data-project-grant-user=\"([^\"]+)\"").Select(match => match.Groups[1].Value).ToArray();
                 await Assert.That(rows.Length).IsEqualTo(2);
                 seen.AddRange(rows);
