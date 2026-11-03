@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -25,6 +26,61 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
                 await Assert.That(rejected?.StatusCode).IsEqualTo(422).Because("Invalid database name: " + name);
                 await Assert.That(rejected?.Message).Contains("must start with a lowercase letter");
                 await Assert.That(rejected?.Message).Contains("Reserved names:");
+            }
+        }
+
+        // A fresh workspace's empty Databases page carries the create control, and the Overview CTAs open its dialog directly.
+        [Test]
+        public async Task EmptyDatabasesPageCreatesThroughTheDialogAndTheOverviewLinksOpenIt()
+        {
+            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            using var client = scenario.CreateClient();
+            using var producer = scenario.CreateProviderClient();
+            await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+            using (var region = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = new[] { "gru", "sjc" } }))
+            {
+                await Assert.That(region.IsSuccessStatusCode).IsTrue();
+            }
+
+            var html = WebUtility.HtmlDecode(await client.GetStringAsync("/databases"));
+            await Assert.That(html).Contains("No databases yet.");
+            await Assert.That(html).Contains("command=\"show-modal\" commandfor=\"create-database\"");
+            await Assert.That(html).Contains("<form method=\"post\" action=\"/api/v1/dashboard/databases\"");
+
+            // The Overview header, Getting started step and Connect empty state deep-link the same dialog.
+            var overview = WebUtility.HtmlDecode(await client.GetStringAsync("/"));
+            await Assert.That(overview).Contains("href=\"/databases?create=1\"");
+            await Assert.That(overview).Contains("<span>New database</span>");
+            await Assert.That(overview).Contains("href=\"/databases?create=1\">Open databases");
+            var connect = WebUtility.HtmlDecode(await client.GetStringAsync("/?tab=connect"));
+            await Assert.That(connect).Contains("href=\"/databases?create=1\">Create a database");
+
+            var csrf = await HttpJourney.CsrfAsync(client, "/databases");
+            client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("text/html"));
+
+            string databaseId;
+            using (var created = await client.PostAsync("/api/v1/dashboard/databases", new FormUrlEncodedContent(
+                new Dictionary<string, string> { ["_csrf"] = csrf, ["name"] = "orders", ["homeRegion"] = "GRU", ["region"] = "GRU", ["region"] = "SJC" })))
+            {
+                await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.SeeOther).Because(await created.Content.ReadAsStringAsync());
+                await Assert.That(created.Headers.Location?.ToString()).EndsWith("?created=1");
+                databaseId = created.Headers.Location!.AbsolutePath.Split('/')[^1];
+            }
+
+            // A plan-limit refusal re-renders the same page with the dialog open and the server message inline.
+            using (var control = await producer.PostAsJsonAsync("/__test/control", new { command = "create-conflict", value = "database_limit" }))
+            {
+                await Assert.That(control.IsSuccessStatusCode).IsTrue();
+            }
+
+            using (var refused = await client.PostAsync("/api/v1/dashboard/databases", new FormUrlEncodedContent(
+                new Dictionary<string, string> { ["_csrf"] = csrf, ["name"] = "second", ["allRegions"] = "true" })))
+            {
+                await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+                var page = WebUtility.HtmlDecode(await refused.Content.ReadAsStringAsync());
+                await Assert.That(page).Contains("id=\"create-database\"");
+                await Assert.That(page).Contains("Database not created");
+                await Assert.That(page).Contains("The request conflicts with the current database state.");
             }
         }
 
