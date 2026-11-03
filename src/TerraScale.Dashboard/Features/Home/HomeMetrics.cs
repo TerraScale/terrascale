@@ -7,7 +7,7 @@ namespace TerraScale.Dashboard.Features.Home
 {
     public sealed record HomeAnalytics(long Requests, long Errors, double? WorstP95Ms, long? StorageBytes, long Operations, long ClientBytes);
     public sealed record HomeDirection(string FromRegion, string ToRegion, long WireBytes);
-    public sealed record HomeReplication(int Healthy, int Lagging, int Diverged, int Stopped, double? WorstLagMs, long SentBytes, long ReceivedBytes, IReadOnlyList<HomeDirection> Directions)
+    public sealed record HomeReplication(int Healthy, int Lagging, int Diverged, int Stopped, int Starting, double? WorstLagMs, long SentBytes, long ReceivedBytes, IReadOnlyList<HomeDirection> Directions)
     {
         public long WireBytes => Directions.Aggregate(0L, (sum, direction) => checked(sum + direction.WireBytes));
     }
@@ -71,11 +71,6 @@ namespace TerraScale.Dashboard.Features.Home
                     return;
                 }
 
-                static int CountStatus(IReadOnlyList<UsageReplica> regions, string status)
-                {
-                    return regions.Count(region => string.Equals(region.Status, status, StringComparison.OrdinalIgnoreCase));
-                }
-
                 var directions = report.Pairs.GroupBy(pair => (pair.FromRegion, pair.ToRegion))
                     .OrderBy(group => group.Key.FromRegion, StringComparer.Ordinal)
                     .ThenBy(group => group.Key.ToRegion, StringComparer.Ordinal)
@@ -83,10 +78,11 @@ namespace TerraScale.Dashboard.Features.Home
                         group.Aggregate(0L, (total, pair) => checked(total + pair.WireBytes))))
                     .ToArray();
                 result.Replication = new(
-                    CountStatus(report.Regions, "healthy"),
-                    CountStatus(report.Regions, "lagging"),
-                    CountStatus(report.Regions, "diverged"),
-                    CountStatus(report.Regions, "stopped"),
+                    report.Regions.Count(region => string.Equals(region.Status, "healthy", StringComparison.OrdinalIgnoreCase)),
+                    report.Regions.Count(region => string.Equals(region.Status, "lagging", StringComparison.OrdinalIgnoreCase)),
+                    report.Regions.Count(region => string.Equals(region.Status, "diverged", StringComparison.OrdinalIgnoreCase)),
+                    report.Regions.Count(region => string.Equals(region.Status, "stopped", StringComparison.OrdinalIgnoreCase) && !region.Starting),
+                    report.Regions.Count(region => region.Starting),
                     report.WorstLagMs,
                     report.SentBytes,
                     report.ReceivedBytes,

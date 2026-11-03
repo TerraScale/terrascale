@@ -254,7 +254,7 @@ namespace TerraScale.Dashboard.Features.Databases
         public IReadOnlyList<TerraScale.Dashboard.Features.Usage.UsageReplica> Replicas => [.. Reading.Regions.Where(row => row.DatabaseId == DatabaseId).OrderBy(row => Regions.Rank(row.Region))];
         public static string Tone(string status)
         {
-            return status switch { "healthy" or "operational" => "success", "lagging" or "degraded" => "warning", "diverged" or "stopped" or "down" => "danger", _ => "neutral" };
+            return status switch { "healthy" or "operational" => "success", "lagging" or "degraded" or "starting" or "pending" => "warning", "diverged" or "stopped" or "down" => "danger", _ => "neutral" };
         }
 
         public string Arc(string to)

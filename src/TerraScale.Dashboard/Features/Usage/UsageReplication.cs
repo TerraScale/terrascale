@@ -8,7 +8,10 @@ using TerraScale.Dashboard.Features.Auth;
 namespace TerraScale.Dashboard.Features.Usage
 {
     public sealed record UsageReplica(string DatabaseId, string DatabaseName, string Region, string Status,
-        long ReplicatedOps, double? LagMs, bool? Divergence, double? ConvergenceMs, DateTimeOffset? LastApplied);
+        long ReplicatedOps, double? LagMs, bool? Divergence, double? ConvergenceMs, DateTimeOffset? LastApplied)
+    {
+        public bool Starting => Status is "starting" or "pending" || LagMs is null && Divergence is null && LastApplied is null;
+    }
     public sealed record UsageReplicationPair(string DatabaseId, string DatabaseName, string FromRegion, string ToRegion,
         long SentBytes, long ReceivedBytes)
     {
@@ -58,7 +61,7 @@ namespace TerraScale.Dashboard.Features.Usage
                     root = await rpc.User<IUsageService>(token).WithCancellationToken(deadline.Token)
                         .GetReplicationAsync(project.Id, selection.Range, selection.DatabaseId.Length == 0 ? null : selection.DatabaseId);
                 }
-                catch (TerraBaseNotFoundException) { return new([], [], Error: "TerraBase couldn't find this project for replication reporting."); }
+                catch (TerraBaseNotFoundException) { return new([], [], Empty: "TerraBase has not reported replication for this project yet. Region health appears once its first observations arrive."); }
                 catch (TerraBaseException error) when (error.Status is 401 or 403)
                 { return new([], [], Error: "TerraBase didn't authorize replication data for this project."); }
                 var regionCatalog = await databases.RegionsAsync(deadline.Token);
