@@ -80,38 +80,41 @@ namespace TerraScale.Dashboard.E2E.Features.Home
         [Test]
         public async Task HomeClassifiesUnreportedReplicationRegionsAsStarting()
         {
-            var replication = new ConcurrentBag<JsonElement>();
+            var databases = new ConcurrentBag<(string ProjectId, string DatabaseId, string DatabaseName)>();
             await using var scenario = await AuthProviderScenario.StartReportingAsync(fixture.Root, http =>
             {
                 var path = http.Request.Path.Value ?? "";
-                if (http.Request.Method != "GET" || !path.EndsWith("/replication", StringComparison.Ordinal))
+                if (http.Request.Method != "GET" || !path.StartsWith("/v1/projects/", StringComparison.Ordinal) ||
+                    !path.EndsWith("/replication", StringComparison.Ordinal))
                 {
                     return Task.FromResult<IResult?>(null);
                 }
 
-                replication.Add(JsonDocument.Parse(JsonSerializer.Serialize(new { })).RootElement);
                 var projectId = path.Split('/', StringSplitOptions.RemoveEmptyEntries)[2];
                 var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 var to = DateTimeOffset.FromUnixTimeSeconds((now / 3600 + 1) * 3600);
                 var from = to.AddHours(-24);
-                var response = new
+                var known = databases.Single(item => item.ProjectId == projectId);
+                object Row(string region, string status, double? lag) => new
                 {
-                    projectId,
-                    range = "24h",
-                    from,
-                    to,
-                    bucketSeconds = 3600,
-                    items = new object[]
-                    {
-                        new { databaseId = "", databaseName = "", region = "gru", status = "healthy", replicatedOps = 5L, lagMs = (double?)120, divergence = (bool?)false, convergenceMs = (double?)null, lastApplied = (DateTimeOffset?)null, bandwidth = Array.Empty<object>() },
-                        new { databaseId = "", databaseName = "", region = "fra", status = "stopped", replicatedOps = 0L, lagMs = (double?)null, divergence = (bool?)null, convergenceMs = (double?)null, lastApplied = (DateTimeOffset?)null, bandwidth = Array.Empty<object>() },
-                        new { databaseId = "", databaseName = "", region = "sjc", status = "stopped", replicatedOps = 0L, lagMs = (double?)null, divergence = (bool?)null, convergenceMs = (double?)null, lastApplied = (DateTimeOffset?)null, bandwidth = Array.Empty<object>() }
-                    }
+                    databaseId = known.DatabaseId,
+                    databaseName = known.DatabaseName,
+                    region,
+                    status,
+                    replicatedOps = 5L,
+                    lagMs = lag,
+                    divergence = (bool?)false,
+                    convergenceMs = (double?)null,
+                    lastApplied = (DateTimeOffset?)null,
+                    bandwidth = Array.Empty<object>()
                 };
+                var response = new { projectId, range = "24h", from, to, bucketSeconds = 3600,
+                    items = new[] { Row("gru", "healthy", 120d), Row("fra", "stopped", null), Row("sjc", "stopped", null) } };
                 return Task.FromResult<IResult?>(Results.Json(response));
             });
 
             using var client = scenario.CreateClient();
+            using var producer = scenario.CreateProviderClient();
             using var login = await HttpJourney.LoginAsync(client);
             await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
 
@@ -126,16 +129,21 @@ namespace TerraScale.Dashboard.E2E.Features.Home
                 using var advanced = await HttpJourney.PostFormAsync(client, "/onboarding/step", step);
                 await Assert.That(advanced.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             }
-            using (var seeded = await scenario.CreateProviderClient().PostAsJsonAsync("/__test/control", new { command = "internal-add-database" }))
+            using (var seeded = await producer.PostAsJsonAsync("/__test/control", new { command = "internal-add-database" }))
             {
                 await Assert.That(seeded.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
             }
+
+            using var identity = JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me"));
+            using var listed = JsonDocument.Parse(await client.GetStringAsync("/api/v1/dashboard/databases"));
+            var database = listed.RootElement.GetProperty("items").EnumerateArray().Single();
+            databases.Add((identity.RootElement.GetProperty("projectId").GetString()!,
+                database.GetProperty("id").GetString()!, database.GetProperty("name").GetString()!));
 
             using var home = await client.GetAsync("/");
             await Assert.That(home.StatusCode).IsEqualTo(HttpStatusCode.OK);
             var html = await home.Content.ReadAsStringAsync();
             await Assert.That(html).Contains("Starting").Because("an unreported region is starting, not stopped");
-            await Assert.That(replication.Count).IsEqualTo(1);
             await Assert.That(html).DoesNotContain("Replication unavailable");
         }
 
