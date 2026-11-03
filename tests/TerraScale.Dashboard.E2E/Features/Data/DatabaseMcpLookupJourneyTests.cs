@@ -100,8 +100,22 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 await probe.ControlAsync(new { command = "catalog", value = new[] { "gru", "sjc", "fra" } });
                 // Test admission permits one database per workspace; the plan control admits the journey's second one.
                 await probe.ControlAsync(new { command = "plan", organizationId = probe.Organization, value = OrganizationRecord.StarterPlanId });
-                probe.Secret = await HttpJourney.CreatePatAsync(probe.Client, "TS-1385 lookup journey", probe.Account.Password);
+                probe.Secret = await CreatePatAsync(probe.Client, "TS-1385 lookup journey", probe.Account.Email, probe.Account.Password);
                 return probe;
+            }
+
+            private static async Task<string> CreatePatAsync(HttpClient client, string name, string email, string password)
+            {
+                var token = await HttpJourney.CsrfAsync(client, "/profile?tab=access-tokens");
+                var authorize = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/profile/access-tokens", new()
+                { ["_csrf"] = token, ["name"] = name, ["expiresInDays"] = "7" });
+                await Assert.That(authorize.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+                using var response = await HttpJourney.HostedSignInAsync(client, authorize, email, password);
+                var body = await response.Content.ReadAsStringAsync();
+                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(body[..Math.Min(body.Length, 2000)]);
+                var secret = System.Text.RegularExpressions.Regex.Match(body, "id=\"access-token-secret\" value=\"([^\"]+)\"").Groups[1].Value;
+                await Assert.That(secret.StartsWith("tspat_", StringComparison.Ordinal)).IsTrue();
+                return secret;
             }
 
             public void Reset()
