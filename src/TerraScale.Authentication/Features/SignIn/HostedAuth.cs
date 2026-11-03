@@ -273,7 +273,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
         public Task ExecuteAsync(HttpContext httpContext)
         {
             ArgumentNullException.ThrowIfNull(httpContext);
-            httpContext.Response.Headers.RetryAfter = ((long)wait.TotalSeconds).ToString(CultureInfo.InvariantCulture);
+            httpContext.Response.Headers.RetryAfter = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
             httpContext.Response.Headers.CacheControl = "no-store";
             return inner.ExecuteAsync(httpContext);
         }

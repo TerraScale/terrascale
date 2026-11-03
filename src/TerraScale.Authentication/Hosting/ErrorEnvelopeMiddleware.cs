@@ -1,6 +1,7 @@
 using System.Globalization;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.DotNet.TerraBase;
 using ZLogger;
 
@@ -119,6 +120,13 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorE
             if (error.RetryAfter is { } wait)
             {
                 context.Response.Headers.RetryAfter = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
+            }
+
+            // A browser on a hosted page keeps its step, address and forms instead of a JSON envelope it cannot act on.
+            if (error.Status >= 500 && SignInFlow.HostedPage(context))
+            {
+                await SignInFlow.Transient(context).ExecuteAsync(context);
+                return;
             }
 
             await context.Response.WriteAsJsonAsync(error.ToBody(), context.RequestAborted);

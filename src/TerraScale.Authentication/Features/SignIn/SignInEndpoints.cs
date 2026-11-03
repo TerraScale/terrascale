@@ -573,11 +573,10 @@ internal static class SignInFlow
     public static IResult Limited(HttpContext context, SignInStep step, TimeSpan wait, string email, string? next, string? pendingToken = null, string? challenge = null)
     {
         var seconds = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds));
-        var retryAfter = seconds.ToString(CultureInfo.InvariantCulture);
-        context.Response.Headers.RetryAfter = retryAfter;
+        context.Response.Headers.RetryAfter = seconds.ToString(CultureInfo.InvariantCulture);
         context.Response.Headers.CacheControl = "no-store";
         return SignInPageModel.Render(context,
-            new SignInPageModel(step, Tenant(context), email, next, $"Try again in {retryAfter} seconds.")
+            new SignInPageModel(step, Tenant(context), email, next, $"Try again in {RetryWait(seconds)}.")
             {
                 ErrorTitle = "Too many attempts",
                 Limited = true,
@@ -587,12 +586,60 @@ internal static class SignInFlow
             StatusCodes.Status429TooManyRequests);
     }
 
+    /// <summary>A whole-second wait for people: seconds below two minutes, whole minutes above.</summary>
+    public static string RetryWait(long seconds) => seconds > 120
+        ? $"{(long)Math.Ceiling(seconds / 60.0)} minutes"
+        : $"{seconds} seconds";
+
     public static IResult WrongCode(HttpContext context, SignInStep step, string email, string? next, string? pendingToken = null) =>
         SignInPageModel.Render(context, new SignInPageModel(step, Tenant(context), email, next, "This code is wrong, expired, or already used. Check the latest email, or request a new code.")
         {
             ErrorTitle = "That code is wrong or expired",
             PendingToken = pendingToken,
         }, StatusCodes.Status401Unauthorized);
+
+    /// <summary>
+    /// The hosted page for a transient failure: keeps the visitor on their step with the address they entered and the
+    /// same forms a fresh visit shows, so a stalled or busy backend never leaves a dead end that forces starting over.
+    /// </summary>
+    public static IResult Transient(HttpContext context)
+    {
+        var form = context.Request.HasFormContentType ? context.Request.Form : null;
+        var address = (form?["email"].ToString() ?? string.Empty).Trim();
+        var email = Users.NormalizeEmail(address) is { } normalized ? normalized : address;
+        var next = SafeNext(context, form?["next"].ToString());
+        var path = context.Request.Path.Value ?? string.Empty;
+        var pending = form?["pending_token"].ToString();
+        SignInStep step;
+        if (path.Contains("/reset", StringComparison.Ordinal))
+        {
+            step = email.Length == 0 ? SignInStep.Reset : SignInStep.ResetCode;
+        }
+        else if (path.Contains("sign-up", StringComparison.Ordinal))
+        {
+            step = string.IsNullOrEmpty(pending) ? SignInStep.SignUp : SignInStep.SignUpCode;
+        }
+        else if (path.Contains("password", StringComparison.Ordinal) && email.Length > 0)
+        {
+            step = SignInStep.Password;
+        }
+        else if (email.Length > 0)
+        {
+            step = SignInStep.Code;
+        }
+        else
+        {
+            step = SignInStep.Email;
+            email = string.Empty;
+        }
+
+        return SignInPageModel.Render(context, new SignInPageModel(step, Tenant(context), email, next,
+            "Something went wrong on our side. Nothing was sent yet. Try again in a moment.")
+        {
+            ErrorTitle = "Sign-in is unavailable right now",
+            PendingToken = string.IsNullOrEmpty(pending) ? null : pending,
+        }, StatusCodes.Status503ServiceUnavailable);
+    }
 
     /// <summary>The browser's rate-limit subject; a request without a peer address cannot be limited, so it is refused.</summary>
     public static string Ip(HttpContext context) =>
@@ -704,6 +751,12 @@ internal static class SignInFlow
             _ => true,
         };
     }
+
+    /// <summary>Whether <see cref="Tenant"/> can resolve: the slug was accepted, so the sign-in page can render.</summary>
+    public static bool HostedPage(HttpContext context) =>
+        context.Request.Path.StartsWithSegments("/ui")
+        && HttpMethods.IsPost(context.Request.Method)
+        && Tenancy.Resolved(context) is { Length: > 0 };
 
     /// <summary>The tenant of a hosted page whose slug <see cref="WrongSlug"/> accepted.</summary>
     public static string Tenant(HttpContext context) => Tenancy.Resolved(context) ?? throw new InvalidOperationException("The page has no tenant.");

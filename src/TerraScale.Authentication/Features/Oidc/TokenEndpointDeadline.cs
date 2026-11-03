@@ -1,5 +1,6 @@
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.RateLimiting;
+using TerraScale.Authentication.Features.SignIn;
 using ZLogger;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 
@@ -71,6 +72,10 @@ public sealed class TokenEndpointDeadline(RequestDelegate next, TimeProvider clo
         {
             await context.Response.WriteAsJsonAsync(new OAuthErrorBody(Errors.TemporarilyUnavailable, "The token request did not complete in time; retry it."),
                 OidcJson.Default.OAuthErrorBody, cancellationToken: aborted);
+        }
+        else if (SignInFlow.HostedPage(context))
+        {
+            await SignInFlow.Transient(context).ExecuteAsync(context);
         }
         else
         {

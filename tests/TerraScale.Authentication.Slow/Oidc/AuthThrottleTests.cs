@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
@@ -54,7 +55,7 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
             await Assert.That(page).DoesNotContain("id=\"sign-in-email\"");
             await Assert.That(page).Contains($"name=\"email\" value=\"{email.ToUpperInvariant()}\"");
             await Assert.That(page).Contains($"name=\"next\" value=\"{WebUtility.HtmlEncode(Next)}\"");
-            await Assert.That(page).Contains($"<strong>Too many attempts</strong><p>Try again in {limited.Headers.GetValues("Retry-After").Single()} seconds.</p>");
+            await Assert.That(page).Contains($"<strong>Too many attempts</strong><p>Try again in {SignInFlow.RetryWait(long.Parse(limited.Headers.GetValues("Retry-After").Single(), CultureInfo.InvariantCulture))}.</p>");
 
             // The reset budget is independent, even for the same normalized email.
             using var recovery = await oidc.PostFormAsync($"{Reset}/complete", new() { ["email"] = email, ["code"] = "not-a-code", ["password"] = "a new long passphrase" });
@@ -104,7 +105,7 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
             await Assert.That(page).DoesNotContain("we emailed it a six-digit code");
             await Assert.That(page).Contains($"value=\"{email.ToUpperInvariant()}\"");
             await Assert.That(page).Contains($"name=\"next\" value=\"{WebUtility.HtmlEncode(Next)}\"");
-            await Assert.That(page).Contains($"<strong>Too many attempts</strong><p>Try again in {hosted.Headers.GetValues("Retry-After").Single()} seconds.</p>");
+            await Assert.That(page).Contains($"<strong>Too many attempts</strong><p>Try again in {SignInFlow.RetryWait(long.Parse(hosted.Headers.GetValues("Retry-After").Single(), CultureInfo.InvariantCulture))}.</p>");
             clock.Advance(HostedAuth.MailCooldown);
             using var reset = await oidc.PostFormAsync(Reset, new() { ["email"] = email });
             await Assert.That(reset.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
@@ -208,7 +209,7 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
         await Assert.That(page).Contains("id=\"sign-in-code\"");
         await Assert.That(page).Contains("This request sent no new code.");
         await Assert.That(page).DoesNotContain("we emailed it a six-digit code");
-        await Assert.That(page).Contains($"<strong>Too many attempts</strong><p>Try again in {refused.Headers.GetValues("Retry-After").Single()} seconds.</p>");
+        await Assert.That(page).Contains($"<strong>Too many attempts</strong><p>Try again in {SignInFlow.RetryWait(long.Parse(refused.Headers.GetValues("Retry-After").Single(), CultureInfo.InvariantCulture))}.</p>");
         await Assert.That(oidc.Email.HasPending).IsFalse();
     }
 

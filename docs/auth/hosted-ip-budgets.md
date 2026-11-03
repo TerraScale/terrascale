@@ -31,7 +31,10 @@ The burst covers an office behind one NAT. Sustained rates match or exceed the o
 (calls) or thirty minutes (mail), never a fixed ten-minute lock.
 
 The per-email budgets stay fixed windows. They still send one lockout notice per stored deadline: 10 password attempts
-per 15 minutes, 5 code redemptions per 30 minutes, and 5 code issues and a 60-second cooldown per address.
+per 15 minutes, 5 code redemptions per 30 minutes, and 5 code issues and a 60-second cooldown per address. A refusal's
+`Retry-After` is the remaining part of that window in seconds, and the page speaks it in whole minutes above two
+minutes. A transient failure (a full delivery queue, storage that does not answer) keeps the visitor on their own
+sign-in step with the address they entered and the same forms, so a failed sign-in always has a next action on the page.
 
 ## Signed-in visitors
 

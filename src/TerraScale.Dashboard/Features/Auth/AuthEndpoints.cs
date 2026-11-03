@@ -129,7 +129,8 @@ namespace TerraScale.Dashboard.Features.Auth
             {
                 var seconds = Math.Clamp((int)Math.Ceiling(error.RetryAfter?.TotalSeconds ?? 60), 1, 3600);
                 context.Response.Headers.RetryAfter = seconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                return Failure(context, flow.ReturnTo, $"Too many sign-in attempts. Try again in {seconds} seconds.", 429, error);
+                var wait = seconds > 120 ? $"{(long)Math.Ceiling(seconds / 60.0)} minutes" : $"{seconds} seconds";
+                return Failure(context, flow.ReturnTo, $"Too many sign-in attempts. Try again in {wait}.", 429, error);
             }
             catch (Exception error) when (DependencyFailure(error, context))
             { return Failure(context, flow.ReturnTo, "Sign-in could not finish right now. Try again in a moment.", 503, error); }

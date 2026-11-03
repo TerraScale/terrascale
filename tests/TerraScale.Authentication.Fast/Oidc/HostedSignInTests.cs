@@ -1,7 +1,10 @@
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Bogus;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Net.Http.Headers;
 using Microsoft.Playwright;
@@ -11,6 +14,8 @@ using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
+using IResult = Microsoft.AspNetCore.Http.IResult;
+using SameSiteMode = Microsoft.Net.Http.Headers.SameSiteMode;
 
 namespace TerraScale.Authentication.Fast.Oidc;
 
@@ -240,6 +245,59 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
     // Starts a hosted sign-up and returns the pending token its verify page carries.
 
     // Every hosted email-code start shares the same mail cooldown.
+
+    [Test]
+    public async Task A_code_lockout_shows_the_real_remaining_wait_and_keeps_the_page_retryable()
+    {
+        var clock = new ManualClock(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600 * 3600));
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        const string Address = "retry@example.test";
+        await oidc.CreateUserAsync(Address);
+        for (var attempt = 0; attempt < HostedAuth.CodePerEmail; attempt++)
+        {
+            using var wrong = await oidc.PostFormAsync($"{SignIn}/verify", new() { ["email"] = Address, ["code"] = "000000" });
+            await Assert.That(wrong.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        }
+
+        using var limited = await oidc.PostFormAsync($"{SignIn}/verify", new() { ["email"] = Address, ["code"] = "000000" });
+        await Assert.That(limited.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
+        var retryAfter = long.Parse(limited.Headers.GetValues("Retry-After").Single(), CultureInfo.InvariantCulture);
+        await Assert.That(retryAfter).IsGreaterThanOrEqualTo(1);
+        await Assert.That(retryAfter).IsLessThanOrEqualTo((long)HostedAuth.CodeWindow.TotalSeconds);
+        var page = await limited.Content.ReadAsStringAsync();
+        await Assert.That(page).Contains("Try again in ");
+        await Assert.That(page).Contains(" minutes.");
+        await Assert.That(page).DoesNotContain("Try again in 0 minutes");
+        // The page keeps the email and both ways forward: re-enter a code or ask for a new one.
+        await Assert.That(page).Contains($"name=\"email\" value=\"{Address}\"");
+        await Assert.That(page).Contains("id=\"sign-in-code\"");
+        await Assert.That(page).Contains(">Send a new code</button>");
+        await Assert.That(page).Contains("This request sent no new code.");
+    }
+
+    [Test]
+    public async Task A_transient_failure_keeps_the_sign_in_step_and_the_entered_email()
+    {
+        var (tenant, _) = await fixture.CreateDatabaseAsync();
+        await using var server = await AuthTestServer.StartAsync(services: services => fixture.UseStorage(services, tenant),
+            routes: app => app.MapPost("/ui/{slug}/sign-in/stall",
+                (Func<IResult>)(() => throw new TimeoutException("Synthetic storage stall"))).ExcludeFromDescription());
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/ui/terrascale/sign-in/stall")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["email"] = "alice@example.test", ["code"] = "000000" }),
+        };
+        request.Headers.Add("Origin", OidcHarness.PublicOrigin);
+        using var refused = await server.Client.SendAsync(request);
+        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(refused.Headers.CacheControl!.NoStore).IsTrue();
+        var page = await refused.Content.ReadAsStringAsync();
+        await Assert.That(page).Contains("Sign-in is unavailable right now");
+        await Assert.That(page).Contains("Try again in a moment");
+        await Assert.That(page).Contains("name=\"email\" value=\"alice@example.test\"");
+        await Assert.That(page).Contains("id=\"sign-in-code\"");
+        await Assert.That(page).Contains(">Send a new code</button>");
+        await Assert.That(OidcHarness.SessionCookie(refused)).IsNull();
+    }
 
     private static async Task<string?> PasswordSignInAsync(OidcHarness oidc, string address, string password)
     {

@@ -87,10 +87,11 @@ namespace TerraScale.Dashboard.Features.Auth
                 {
                     var wait = response.Headers.RetryAfter?.Delta ?? (response.Headers.RetryAfter?.Date - time.GetUtcNow());
                     var seconds = Math.Clamp((int)Math.Ceiling(wait?.TotalSeconds ?? 60), 1, 3600);
+                    var spoken = seconds > 120 ? $"{(long)Math.Ceiling(seconds / 60.0)} minutes" : $"{seconds} seconds";
                     throw new AccountAccessException(response.StatusCode switch
                     {
                         HttpStatusCode.Unauthorized => "The code is wrong or expired, or your sign-in has expired. Use the latest email code or sign in again.",
-                        HttpStatusCode.TooManyRequests => $"Too many attempts. Try again in {seconds} seconds.",
+                        HttpStatusCode.TooManyRequests => $"Too many attempts. Try again in {spoken}.",
                         HttpStatusCode.NotFound => "This sign-in method is unavailable. Refresh the page before trying again.",
                         _ => "This sign-in method could not be unlinked. Refresh the page and try again."
                     }, status, response.StatusCode == HttpStatusCode.TooManyRequests ? seconds.ToString(System.Globalization.CultureInfo.InvariantCulture) : "");

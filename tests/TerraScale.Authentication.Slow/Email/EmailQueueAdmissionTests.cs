@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text.Json;
 using System.Threading.Channels;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
@@ -55,18 +54,16 @@ public sealed class EmailQueueAdmissionTests(TerraBaseFixture fixture)
             var before = (await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items
                 .OrderBy(item => item.Id).Select(item => (item.Id, item.Version, item.Document.GetRawText())).ToArray();
             var path = $"/ui/{tenant}/{action}";
-            string? failure = null;
             foreach (var address in addresses)
             {
                 using var response = await oidc.PostFormAsync(path, Form(address));
                 await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-                await Assert.That(response.Content.Headers.ContentType?.MediaType).IsEqualTo("application/json");
+                await Assert.That(response.Content.Headers.ContentType?.MediaType).IsEqualTo("text/html");
                 var body = await response.Content.ReadAsStringAsync();
-                using var json = JsonDocument.Parse(body);
-                await Assert.That(json.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("email_queue_unavailable");
-                await Assert.That(body).DoesNotContain(address);
-                failure ??= body;
-                await Assert.That(body).IsEqualTo(failure);
+                await Assert.That(body).Contains("Sign-in is unavailable right now");
+                await Assert.That(body).Contains("Try again in a moment");
+                // The address stays on the page, so the visitor retries without starting over; nothing reveals an account.
+                await Assert.That(body).Contains(address);
             }
 
             // A refused start spends no mail budget: retrying is refused by the queue again, never by a cooldown.
