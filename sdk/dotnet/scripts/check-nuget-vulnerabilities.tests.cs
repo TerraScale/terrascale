@@ -1,5 +1,6 @@
 #!/usr/bin/env dotnet run
 #:property NuGetLockFilePath=check-nuget-vulnerabilities.tests.packages.lock.json
+#:property PublishAot=false
 #:package TUnit@1.72.10
 #:include check-nuget-vulnerabilities.lib.cs
 
