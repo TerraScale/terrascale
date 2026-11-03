@@ -52,7 +52,7 @@ public sealed class PendingDiskClaimTests
             await Assert.That(host.Segments(generation).Count).IsEqualTo(prior);
             listener.RecordObservableInstruments();
             var retained = reserved;
-            await Assert.That(retained).IsGreaterThanOrEqualTo(DiskBudget.WorkspaceBytes(0));
+            await Assert.That(retained).IsGreaterThanOrEqualTo(ContinuousBackup.SealedPendingBytes(DiskBudget.WorkspaceBytes(0) / 4));
             var bytes = new DriveInfo(host.Api.Server.DataDirectory).AvailableFreeSpace - DiskBudget.Headroom - retained - (8L << 20);
             using var occupied = host.Api.Server.Services.GetRequiredService<IDiskBudget>().Reserve(bytes);
             host.S3.BeforePut = async (key, token) =>

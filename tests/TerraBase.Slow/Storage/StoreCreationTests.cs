@@ -81,4 +81,40 @@ public sealed class StoreCreationTests
             }
         }
     }
+
+    [Test]
+    public async Task A_failed_initialization_after_publication_clears_its_pending_publication()
+    {
+        var target = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby,
+            EntityIds.New().ToString(), EntityIds.New().ToString());
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        TursoStorageEngine? engine = null;
+        var failNext = 0;
+        await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton(provider =>
+        {
+            var options = provider.GetRequiredService<TerraBaseOptions>();
+            engine = new TursoStorageEngine(options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
+                provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
+                provider.GetRequiredService<ILogger<TursoStorageEngine>>(), provider.GetRequiredKeyedService<IMasterKey>(EngineExtensions.DatabaseMasterKey), options.ShutdownGrace, readinessCacheTtl: options.ReadinessCacheTtl,
+                afterBootstrap: store =>
+                {
+                    if (store.Tenant == target && Interlocked.Exchange(ref failNext, 0) == 1)
+                    {
+                        throw new IOException("bootstrap failed after publication");
+                    }
+                });
+            return engine;
+        }));
+        try
+        {
+            Interlocked.Exchange(ref failNext, 1);
+            await Assert.ThrowsAsync<IOException>(() => engine!.CreateDatabaseAsync(target, deadline.Token).AsTask());
+            var orphans = server.Services.GetRequiredService<IOrphanDatabaseFiles>();
+            await Assert.That(await orphans.IsBusyAsync(target, deadline.Token)).IsFalse();
+            await Assert.That(await engine!.CreateDatabaseAsync(target, deadline.Token)).IsFalse();
+            await Assert.That(await engine.OpenDatabaseAsync(target, deadline.Token)).IsNotNull();
+            using var health = await server.Client.GetAsync(new Uri("/healthz", UriKind.Relative), deadline.Token);
+            health.EnsureSuccessStatusCode();
+        }
+    }
 }

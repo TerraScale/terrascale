@@ -837,7 +837,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     }
 
     // A pass appends at most a quarter of the workspace allowance; the buffer and its sealed copy are what stays on disk.
-    private static long SealedPendingBytes(long growth) => checked(2 * growth + (1L << 20));
+    internal static long SealedPendingBytes(long growth) => checked(2 * growth + (1L << 20));
     private async Task StartGenerationAsync(ShippedFile file, CancellationToken cancellationToken)
     {
         var claim = _disk.Reserve(await WorkspaceAsync(file, cancellationToken).ConfigureAwait(false));
