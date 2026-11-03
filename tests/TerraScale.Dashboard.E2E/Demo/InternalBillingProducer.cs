@@ -239,7 +239,7 @@ namespace TerraScale.Dashboard.E2E
 
             var organization = AccountService.Read<OrganizationRecord>(organizationDocument);
             var project = organization.Projects[account.ActiveProjectId];
-            var database = new DatabaseRecord { Id = new TerraScaleIdGenerator().NewId(), ProjectId = project.Id, Name = name, Region = "GRU", Regions = ["GRU"], CreatedAt = now() };
+            var database = new DatabaseRecord { Id = new TerraScaleIdGenerator().NewId(), ProjectId = project.Id, Name = name, Region = "GRU", Regions = ["GRU", "FRA", "SJC"], CreatedAt = now() };
             project.Databases[database.Id] = database;
             await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization), TerraBasePrecondition.Matches(organizationDocument.Version), cancellationToken);
             return Results.NoContent();

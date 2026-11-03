@@ -62,6 +62,10 @@ namespace TerraScale.Dashboard.E2E.Features.Home
             await Assert.That(patch).Contains("id=\"home-regions\"");
             await Assert.That(patch).DoesNotContain("data-init");
             await Assert.That(patch).Contains(unavailable ? "Region measurements unavailable" : "12.5 ms");
+            if (unavailable)
+            {
+                await Assert.That(patch).Contains("Retry regions").Because("a failed regions fetch ends in a recoverable error state, never a permanent loading placeholder");
+            }
             using var emptyClient = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() }) { BaseAddress = client.BaseAddress };
             using var emptyLogin = await HttpJourney.LoginAsync(emptyClient);
             var empty = environment.Workspace.Organizations.Values.Single(org => org.OwnerUserId == "test-user");

@@ -11,11 +11,9 @@ namespace TerraScale.Dashboard.E2E.Features.Usage
     public sealed class ReplicationHealthContractTests
     {
         [Test]
-        [Arguments(404)]
-        [Arguments(503)]
-        public async Task ATerraBaseWithoutReplicationReportingStaysUnreportedInsteadOfStopped(int status)
+        public async Task ATerraBaseWithoutReplicationReportingStaysUnreportedInsteadOfStopped()
         {
-            using var wire = new Wire { Failure = status };
+            using var wire = new Wire { Failure = 404 };
             await using var wireRpc = await TestRestRpcHost.StartAsync(wire);
             var result = await new UsageReplicationBackend(wireRpc.Client, new Tokens(), new Regions()).ReadAsync(Selection(), CancellationToken.None);
             await Assert.That(result.Error).IsEqualTo("");

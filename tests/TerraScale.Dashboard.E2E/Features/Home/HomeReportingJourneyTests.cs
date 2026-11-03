@@ -78,6 +78,68 @@ namespace TerraScale.Dashboard.E2E.Features.Home
         }
 
         [Test]
+        public async Task HomeClassifiesUnreportedReplicationRegionsAsStarting()
+        {
+            var replication = new ConcurrentBag<JsonElement>();
+            await using var scenario = await AuthProviderScenario.StartReportingAsync(fixture.Root, http =>
+            {
+                var path = http.Request.Path.Value ?? "";
+                if (http.Request.Method != "GET" || !path.EndsWith("/replication", StringComparison.Ordinal))
+                {
+                    return Task.FromResult<IResult?>(null);
+                }
+
+                replication.Add(JsonDocument.Parse(JsonSerializer.Serialize(new { })).RootElement);
+                var projectId = path.Split('/', StringSplitOptions.RemoveEmptyEntries)[2];
+                var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                var to = DateTimeOffset.FromUnixTimeSeconds((now / 3600 + 1) * 3600);
+                var from = to.AddHours(-24);
+                var response = new
+                {
+                    projectId,
+                    range = "24h",
+                    from,
+                    to,
+                    bucketSeconds = 3600,
+                    items = new object[]
+                    {
+                        new { databaseId = "", databaseName = "", region = "gru", status = "healthy", replicatedOps = 5L, lagMs = (double?)120, divergence = (bool?)false, convergenceMs = (double?)null, lastApplied = (DateTimeOffset?)null, bandwidth = Array.Empty<object>() },
+                        new { databaseId = "", databaseName = "", region = "fra", status = "stopped", replicatedOps = 0L, lagMs = (double?)null, divergence = (bool?)null, convergenceMs = (double?)null, lastApplied = (DateTimeOffset?)null, bandwidth = Array.Empty<object>() },
+                        new { databaseId = "", databaseName = "", region = "sjc", status = "stopped", replicatedOps = 0L, lagMs = (double?)null, divergence = (bool?)null, convergenceMs = (double?)null, lastApplied = (DateTimeOffset?)null, bandwidth = Array.Empty<object>() }
+                    }
+                };
+                return Task.FromResult<IResult?>(Results.Json(response));
+            });
+
+            using var client = scenario.CreateClient();
+            using var login = await HttpJourney.LoginAsync(client);
+            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+
+            foreach (var step in new Dictionary<string, string>[]
+            {
+                new() { ["step"] = "account-information", ["displayName"] = "Replication User" },
+                new() { ["step"] = "payment-method", ["bypass"] = "1" },
+                new() { ["step"] = "project", ["name"] = "Replication project", ["region"] = "GRU" }
+            })
+            {
+                step["_csrf"] = await HttpJourney.CsrfAsync(client, "/onboarding");
+                using var advanced = await HttpJourney.PostFormAsync(client, "/onboarding/step", step);
+                await Assert.That(advanced.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            }
+            using (var seeded = await scenario.CreateProviderClient().PostAsJsonAsync("/__test/control", new { command = "internal-add-database" }))
+            {
+                await Assert.That(seeded.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+            }
+
+            using var home = await client.GetAsync("/");
+            await Assert.That(home.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            var html = await home.Content.ReadAsStringAsync();
+            await Assert.That(html).Contains("Starting").Because("an unreported region is starting, not stopped");
+            await Assert.That(replication.Count).IsEqualTo(1);
+            await Assert.That(html).DoesNotContain("Replication unavailable");
+        }
+
+        [Test]
         public async Task HomeReadsAnalyticsWithScopedProjectTokensAndKeepsUnavailableReplicationHonest()
         {
             var reports = new ConcurrentBag<(string Path, string Query)>();
