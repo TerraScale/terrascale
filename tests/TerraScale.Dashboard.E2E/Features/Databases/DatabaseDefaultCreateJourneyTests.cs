@@ -78,7 +78,8 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
                 var page = WebUtility.HtmlDecode(await refused.Content.ReadAsStringAsync());
                 await Assert.That(page).Contains("id=\"create-database\"");
                 await Assert.That(page).Contains("Database not created");
-                await Assert.That(page).Contains("Protocol producer rejected the request.");
+                await Assert.That(page).Contains("el.showModal()");
+                await Assert.That(page).Contains("value=\"second\"");
             }
         }
 
