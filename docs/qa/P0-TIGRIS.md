@@ -29,22 +29,56 @@ fra's 2026-10-30 log), so the call never ran.
 
 ## Who deleted the buckets
 
-Still unknown. Checked without finding a delete:
+Investigated to completion on 2026-11-03 (TS-1379). **No local actor deleted them.** Every automated
+system that held a Fly credential was examined transcript-by-transcript for the window 00:55Z–01:50Z
+(and, for bucket-destructive commands, every session ever recorded). Nothing deleted a bucket, and
+nothing could have: the deletions span two Fly organizations at once, which requires an
+account-scope credential, and no account-scope credential was ever used destructively from any host
+we control.
 
-- Shell history, plus Claude, Codex and opencode transcripts on delta, mariogk-dev and beta from
-  21:00Z on 2026-11-02 to 03:00Z: no `fly storage destroy`, `tigris rm`/`t3 rb`, `s3 rb` or S3
-  DeleteBucket call. Every match was this incident's own notes or unrelated UI code.
-- GitHub Actions in every TerraScale repository from 01:00Z to 02:00Z: only CI, image and release
-  runs. None deletes buckets.
-- Fly GraphQL has no organization audit log. The org's add-on list shows only the three buckets
-  recreated at 03:23Z, with no record of the deleted ones.
-- `ts-terrabase-dev` cannot be recreated yet ("bucket name is not available") even though its old
-  key gets `NoSuchBucket`. The name may still be reserved after a deletion, or held by another account.
+What was checked, beyond the hosts and GitHub Actions already cleared above:
 
-Next step for the owner: open the Tigris console audit log (`fly storage dashboard`, browser SSO as
-admin@terrascale.tech). Look for DeleteBucket events around 01:20Z–01:40Z and their access key.
-Ask Fly/Tigris support if the console has no log. Every bucket in both organizations vanished at
-once and no host shows a command, so treat a provider- or account-level action as likely.
+- **Hermes bot VM** (`ssh alpha` → `incus exec mariogk-hermes`), missed by the first pass: eight
+  profiles (`aide`, `chief`, `terrascale`, `ops`, `bryta`, `news`, `lab`, `plana`), every message of
+  every session in 00:55Z–01:50Z plus a full-history sweep of all `state.db` transcript stores for
+  `fly storage`, `s3 rb`, `DeleteBucket` and `mcp__fly__*` calls. All activity in the window is
+  read-only diagnostics, kanban routing, mail/DNS/TOTP work and a Facebook Marketplace session. The
+  only `mcp__fly__*` call ever recorded anywhere is one read-only `fly_apps_list` at 04:04Z, hours
+  after the incident. The `empty_and_delete_bucket*.sh` scripts in `files/cloud-cleanup/` are the
+  Linode closure of 2026-11-01/02, pointed at Linode Object Storage endpoints, not Tigris.
+- **Cron jobs** of every profile: mail, market and board watchdogs only; none touches Fly.
+- **The Fly MCP servers** (flyctl `mcp server`, registered for `aide` and `terrascale` profiles):
+  they expose destroy tools, but the sweep above shows no destructive call was ever made through
+  them.
+- **Claude Code / Codex / opencode transcripts on mariogk-dev** for the window: the last TerraScale
+  project session ended 18:41Z on 2026-11-02; none intersects the deletion window.
+- **Whole-VM text sweep** of `/srv/hermes/home`, `/root` and `/home` for bucket-destructive command
+  text: three hits, all documentation sentences about the destroyed `vw-mariogk` Fly app.
+
+The only credential on our hosts that can reach both organizations is the Fly **web-session token**
+(`FLY_ACCESS_TOKEN`, 1925 chars, `admin@terrascale.tech`, from Infisical `Personal/personal` /
+`Personal/hermes-personal`, exported into the Hermes profiles' shared env). The org-scoped tokens
+(`ts-terrabase-ci` CI key, backup keys, the `hermes-terrascale-fly-20261102` org token) are each
+bound to one organization and cannot explain both orgs losing buckets in the same minute. The same
+account's `flyctl` SSO state (Infisical `Personal/hermes-state` `/fly-cli` `FLY_CONFIG_YAML`) is a
+browser-session token from 2026-08-21, also account-scope, also never used destructively in any
+transcript.
+
+**Conclusion (proven for every host we control):** the deletion did not come from TerraBase, CI, or
+any bot or interactive session on delta, beta, mariogk-dev or the Hermes VM. It was performed with
+an account-scope identity of `admin@terrascale.tech` — the Fly web console/API with the account's
+own login, or the account's web-session token held by a system outside our audit trails. The
+provider-side audit log named below is the only remaining evidence source; short of it, treat the
+account's admin login itself as the deletion vector and rotate the web-session tokens
+(`Personal/personal`, `Personal/hermes-personal`, `Personal/hermes-state /fly-cli`) so no automation
+holds an account-scope Fly credential again.
+
+Provider-side evidence is thin: Fly GraphQL has no organization audit log, and the org's add-on
+list shows only the three buckets recreated at 03:23Z. `ts-terrabase-dev` cannot be recreated yet
+("bucket name is not available") even though its old key gets `NoSuchBucket`; the name may still be
+reserved after a deletion. Remaining step for the owner: the Tigris console audit log
+(`fly storage dashboard`, browser SSO as admin@terrascale.tech) — look for DeleteBucket events
+between ~01:27Z and 01:38Z and their access key — or Fly/Tigris support.
 
 ## Timeline (UTC, 2026-11-03)
 
@@ -108,10 +142,14 @@ once and no host shows a command, so treat a provider- or account-level action a
 2. **Sanctioned re-anchor** (TerraBase/COS decision): an operator command, with a recorded reason,
    that re-anchors an intact local catalog after a verified bucket loss. With it, local data survives
    the next bucket loss instead of needing a reset.
-3. **Bucket deletion guard**: production credentials should never be able to delete the bucket.
-   Prefer read/write-only keys if Tigris supports them, keep an independent copy (Tigris shadow
-   bucket or R2 mirror), and make the org's admin login the only identity with bucket-admin rights.
-   Check daily that the expected buckets exist (`fly storage list -o terrascale`).
+3. **Bucket deletion guard** (done in code, TS-1379): `S3ObjectStore.DeleteSnapshotAsync` — the
+   only DeleteBucket call — now refuses any snapshot version that is not a plain number with a typed
+   `BucketDeleteForbiddenException` and an error log, before a request leaves the process, so the
+   header can never be dropped and turn snapshot expiry into a bucket delete. Covered by
+   `tests/TerraBase.Fast/Backup/BucketDeleteGuardTests.cs`. Still open on the credential side:
+   prefer read/write-only keys if Tigris supports them, keep an independent copy (Tigris shadow
+   bucket or R2 mirror), make the org's admin login the only identity with bucket-admin rights, and
+   check daily that the expected buckets exist (`fly storage list -o terrascale`).
 4. **ts-status canaries** stay "Canary credential invalid". `scripts/recover-canaries.py` creates an
    `allRegions` database, which TerraBase now refuses (`replicas_unavailable`). It also needs the
    internal `terrascale` organization (business plan) and its internal billing. Owner: ts-status lane.

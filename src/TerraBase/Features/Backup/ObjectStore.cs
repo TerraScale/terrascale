@@ -525,11 +525,22 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         _s3.PutBucketAsync(Tigris(new PutBucketRequest { BucketName = _bucket }, "X-Tigris-Snapshot", "true"), cancellationToken);
 
     /// <summary>Deletes one Tigris snapshot (<c>X-Tigris-Snapshot-Version</c> on DeleteBucket).</summary>
-    public Task DeleteSnapshotAsync(string version, CancellationToken cancellationToken) =>
-        // Without the version header this is a bucket delete: refuse anything but a version number.
-        version.Length > 0 && version.All(char.IsAsciiDigit)
-            ? _s3.DeleteBucketAsync(Tigris(new DeleteBucketRequest { BucketName = _bucket }, "X-Tigris-Snapshot-Version", version), cancellationToken)
-            : throw new InvalidDataException("snapshot version is not a number");
+    public async Task DeleteSnapshotAsync(string version, CancellationToken cancellationToken)
+    {
+        // Without the version header this is a bucket delete, which no TerraBase code path may ever issue: a whole-bucket
+        // deletion is never sanctioned (P0 2026-11-03). Refuse before any request leaves the process.
+        if (version.Length == 0 || !version.All(char.IsAsciiDigit))
+        {
+            BucketDeleteRefusal(_logger, null);
+            throw new BucketDeleteForbiddenException("snapshot version is not a number");
+        }
+
+        await _s3.DeleteBucketAsync(Tigris(new DeleteBucketRequest { BucketName = _bucket }, "X-Tigris-Snapshot-Version", version), cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Logs that a bucket-deleting request was refused before it was sent.</summary>
+    private static readonly Action<ILogger, Exception?> BucketDeleteRefusal = LoggerMessage.Define(
+        LogLevel.Error, new EventId(2, "BucketDeleteRefused"), "A bucket delete was refused: TerraBase never deletes its backup bucket");
 
     private static T Tigris<T>(T request, string header, string value) where T : AmazonWebServiceRequest
     {
@@ -678,3 +689,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         }
     }
 }
+
+/// <summary>A bucket-deleting request was refused before it was sent: TerraBase never deletes its backup bucket (P0 2026-11-03).</summary>
+internal sealed class BucketDeleteForbiddenException(string message) : Exception(message);
