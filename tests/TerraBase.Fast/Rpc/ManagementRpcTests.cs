@@ -41,7 +41,7 @@ public sealed class ManagementRpcTests
         var measured = await usage.GetDatabaseUsageAsync(project, DocumentApi.Database, "hour", null, null);
         var analytics = await usage.GetAnalyticsAsync(project, "1h", null, null);
         var snapshot = await backups.CreateAsync(project, DocumentApi.Database);
-        var snapshots = await backups.ListAsync(project, DocumentApi.Database, null);
+        var snapshots = await backups.ListAsync(project, DocumentApi.Database, null, 100);
         var policy = await backups.GetPolicyAsync(project, DocumentApi.Database);
         using var settings = JsonDocument.Parse("""{"fullBackupCron":"0 3 * * *","retentionDays":3,"disabled":false}""");
         var savedPolicy = await backups.SetPolicyAsync(project, DocumentApi.Database, settings.RootElement);
