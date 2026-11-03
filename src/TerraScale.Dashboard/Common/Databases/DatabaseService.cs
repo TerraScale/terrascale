@@ -27,10 +27,14 @@ namespace TerraScale.Dashboard.Common.Databases
 
         public static DatabaseRecord Database(AccountContext context, string id)
         {
+            // Caller mistakes are 422; an unresolvable ID is a 404 naming it. Never blame the id format for a miss.
             return context.Project?.Databases.GetValueOrDefault(id) is { } database && database.ProjectId == context.Project.Id
                 ? database : PlatformDatabases.Databases.ContainsKey(id) ? throw new AccountAccessException("Platform admin access is required.")
-                : throw new AccountAccessException("Database is unavailable. Pass the database ID (a ULID), not its name.", 404);
+                : throw new AccountAccessException(TerraScaleIds.IsValid(id) ? "Database " + id + " was not found in this project." : DatabaseIdRule, TerraScaleIds.IsValid(id) ? 404 : 422, DatabaseIdCode);
         }
+
+        public const string DatabaseIdCode = "database_id";
+        public const string DatabaseIdRule = "Pass the database ID (a ULID), not its name.";
 
         public static void ValidateContents(IReadOnlyList<CollectionStats> contents)
         {
