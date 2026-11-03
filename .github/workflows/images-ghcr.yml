@@ -36,7 +36,7 @@ jobs:
   ready:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 20
     permissions:
       actions: read
       contents: read
@@ -52,20 +52,36 @@ jobs:
           REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           python3 - <<'PYTHON'
-          import json, os, subprocess
+          import json, os, subprocess, time
           def gh(*args):
               return json.loads(subprocess.check_output(['gh', *args], text=True))
           repo = os.environ['GITHUB_REPOSITORY']
           revision = os.environ['REVISION']
-          current = gh('api', f'repos/{repo}/git/ref/heads/main')['object']['sha']
-          runs = gh('run', 'list', '--repo', repo, '--workflow', 'ci.yml', '--branch', 'main',
-                    '--commit', revision, '--event', 'push', '--limit', '100', '--json', 'status,conclusion')
-          pages = gh('api', '--paginate', '--slurp', f'repos/{repo}/commits/{revision}/statuses?per_page=100')
-          proof = next((item for page in pages for item in page if item['context'] == 'dashboard-release/dashboard'), None)
-          eligible = current == revision and bool(runs) and all(item['status'] == 'completed' and item['conclusion'] == 'success' for item in runs)
-          eligible = eligible and bool(proof) and proof['state'] == 'success' and proof['creator']['login'] == 'MarioGK'
-          if os.environ['EVENT_NAME'] == 'workflow_dispatch' and not eligible:
-              raise SystemExit('Qualify current green main on a dev host before dispatching deployment')
+          event = os.environ['EVENT_NAME']
+          def ci_green():
+              runs = gh('run', 'list', '--repo', repo, '--workflow', 'ci.yml', '--branch', 'main',
+                        '--commit', revision, '--event', 'push', '--limit', '100', '--json', 'status,conclusion')
+              return bool(runs) and all(item['status'] == 'completed' and item['conclusion'] == 'success' for item in runs)
+          def qualified():
+              pages = gh('api', '--paginate', '--slurp', f'repos/{repo}/commits/{revision}/statuses?per_page=100')
+              proof = next((item for page in pages for item in page if item['context'] == 'dashboard-release/dashboard'), None)
+              return bool(proof) and proof['state'] == 'success' and proof['creator']['login'] == 'MarioGK'
+          def current_main():
+              return gh('api', f'repos/{repo}/git/ref/heads/main')['object']['sha']
+          # The release credential is the run's own GitHub OIDC token, and the
+          # regions' verifier accepts it only from push and dispatch runs. The
+          # workflow_run run can therefore never deploy; the push run waits
+          # for its commit's CI, then deploys if still current and qualified.
+          if event == 'workflow_run':
+              eligible = False
+          else:
+              if event == 'push':
+                  deadline = time.monotonic() + 15 * 60
+                  while time.monotonic() < deadline and not ci_green():
+                      time.sleep(15)
+              eligible = current_main() == revision and ci_green() and qualified()
+              if event == 'workflow_dispatch' and not eligible:
+                  raise SystemExit('Qualify current green main on a dev host before dispatching deployment')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write(f"deploy={'true' if eligible else 'false'}\n")
           PYTHON
