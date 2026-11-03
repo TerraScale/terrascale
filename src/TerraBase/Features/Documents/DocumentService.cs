@@ -500,9 +500,19 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
     private static DocumentRejected CapacityRefusal(IReadOnlyList<DocumentOperation> operations, bool indexErrors, (string Collection, string Id) key)
     {
-        var op = operations.FindIndex(operation => operation is PutOperation or PatchOperation or DeleteOperation
-            && operation.Collection == key.Collection
-            && IdOf(operation) == key.Id);
+        var op = -1;
+        for (var i = 0; i < operations.Count; i++)
+        {
+            var operation = operations[i];
+            if (operation is PutOperation or PatchOperation or DeleteOperation
+                && operation.Collection == key.Collection
+                && IdOf(operation) == key.Id)
+            {
+                op = i;
+                break;
+            }
+        }
+
         return new DocumentRejected(ChangeGroupCapacity, indexErrors && op >= 0 ? op : null);
     }
 
