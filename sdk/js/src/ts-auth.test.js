@@ -736,6 +736,81 @@ describe("ts-auth client", () => {
     );
   });
 
+  test("refreshes a public client without a client secret", async () => {
+    /** @type {Request[]} */
+    const requests = [];
+    const tsAuth = tsAuthClient((_request, index) => {
+      if (index === 0)
+        return json({
+          access_token: "at_2",
+          token_type: "Bearer",
+          expires_in: 300,
+          scope: "openid email offline_access",
+          refresh_token: "rt_2",
+        });
+      return json({
+        access_token: "at_3",
+        token_type: "Bearer",
+        expires_in: 300,
+        scope: "openid email offline_access",
+        refresh_token: "rt_3",
+      });
+    }, requests);
+
+    const first = await tsAuth.oidc.refreshPublic(
+      "01ARZ3NDEKTSV4RRFFQ6000002",
+      "rt_1",
+    );
+    assert.equal(first.ok, true);
+    if (first.ok) assert.equal(first.value.refresh_token, "rt_2");
+    assert.equal(
+      new URL(/** @type {Request} */ (requests[0]).url).pathname,
+      "/acme/oauth/token",
+    );
+    assert.equal(
+      /** @type {Request} */ (requests[0]).headers.get("content-type"),
+      "application/x-www-form-urlencoded",
+    );
+    assert.equal(
+      /** @type {Request} */ (requests[0]).headers.get("authorization"),
+      null,
+    );
+    const firstForm = new URLSearchParams(
+      await /** @type {Request} */ (requests[0]).text(),
+    );
+    assert.deepEqual([...firstForm], [
+      ["client_id", "01ARZ3NDEKTSV4RRFFQ6000002"],
+      ["grant_type", "refresh_token"],
+      ["refresh_token", "rt_1"],
+    ]);
+
+    const second = await tsAuth.oidc.refreshPublic(
+      "01ARZ3NDEKTSV4RRFFQ6000002",
+      "rt_2",
+    );
+    assert.equal(second.ok, true);
+    if (second.ok) assert.equal(second.value.refresh_token, "rt_3");
+    const secondForm = new URLSearchParams(
+      await /** @type {Request} */ (requests[1]).text(),
+    );
+    assert.equal(secondForm.get("client_secret"), null);
+    assert.equal(secondForm.get("refresh_token"), "rt_2");
+
+    assert.throws(
+      () => tsAuth.oidc.refreshPublic("", "rt_1"),
+      /clientId/u,
+    );
+    assert.throws(
+      () => tsAuth.oidc.refreshPublic("01ARZ3NDEKTSV4RRFFQ6000002", "  "),
+      /refreshToken/u,
+    );
+    assert.throws(
+      () => tsAuth.oidc.refreshPublic("01ARZ3NDEKTSV4RRFFQ6000002", "rt\u00001"),
+      /refreshToken/u,
+    );
+    assert.equal(requests.length, 2);
+  });
+
   test("sends plan family routes and instance patches on their published paths", async () => {
     /** @type {Request[]} */
     const requests = [];

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.19 — public-client refresh
+
+`oidc.refreshPublic(clientId, refreshToken)` refreshes a public-client session
+(the CLI device client) sending `grant_type=refresh_token` with `client_id` and
+no client secret, matching the Go SDK's `Device.Refresh`. ts-auth rotates the
+refresh token on every use; persist the returned `refresh_token`. Confidential
+clients keep `oidc.token` with `client_secret_post`.
+
 ## 0.0.17 — read deadline and transient retries
 
 Replay-safe v1 reads (GETs and read-only query/SQL POSTs) now have one fixed

@@ -2483,6 +2483,30 @@ export class TsAuthOidcClient {
   }
 
   /**
+   * Public-client refresh: grant_type=refresh_token with client_id only, no
+   * client secret. ts-auth rotates the refresh token on every use.
+   * @param {string} clientId
+   * @param {string} refreshToken
+   * @param {TsAuthRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthOidcTokenResponse>>}
+   */
+  refreshPublic(clientId, refreshToken, options = {}) {
+    const form = new URLSearchParams({
+      client_id: requireId(clientId, "clientId"),
+    });
+    form.set("grant_type", "refresh_token");
+    form.set(
+      "refresh_token",
+      requireText(refreshToken, "refreshToken"),
+    );
+    return oauthResponse(
+      this.#postForm(`${this.#slug}/oauth/token`, "tsauth.oidc.token", form, options),
+      /** @returns {value is TsAuthOidcTokenResponse} */
+      (value) => isTokenResponse(value, "refresh_token"),
+    );
+  }
+
+  /**
    * Originating-client client_secret_post introspection, including browser refresh tokens.
    * @param {string} clientId
    * @param {string} clientSecret
