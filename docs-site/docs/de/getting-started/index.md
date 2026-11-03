@@ -40,6 +40,6 @@ The token lasts 60 seconds (`expires_in: 60`) and carries the key's scopes. Run 
 
 ## Next steps
 
-Read [SQL](/de/concepts/sql) for the query interface, and [errors and safe retries](/de/guides/errors) before you build an application that depends on error handling. [Dashboard usage](/de/guides/dashboard) covers the rest of the customer workflow.
+Run your first query with the [SQL quickstart](/de/concepts/sql#quickstart) from the CLI, psql or HTTP. Read [errors and safe retries](/de/guides/errors) before you build an application that depends on error handling. [Dashboard usage](/de/guides/dashboard) covers the rest of the customer workflow.
 
 </div>
