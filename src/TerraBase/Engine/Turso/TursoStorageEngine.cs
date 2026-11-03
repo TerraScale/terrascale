@@ -1715,7 +1715,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                         try
                         {
                             _initializing.Remove(key);
-
+                            _ = _publishing.TryRemove(key, out _);
                         }
                         finally
                         {
