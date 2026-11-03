@@ -91,12 +91,16 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
                 {
                     var uri = request.RequestUri!;
-                    if (uri.Host != "auth.terrascale.tech" || request.Method != HttpMethod.Get || !uri.AbsolutePath.EndsWith("/api-keys", StringComparison.Ordinal))
+                    if (uri.Host != "auth.terrascale.tech" || !uri.AbsolutePath.EndsWith("/api-keys", StringComparison.Ordinal))
                     {
                         return await HttpForwarding.SendAsync(inner, request, cancellationToken);
                     }
 
                     owner.ListReads++;
+                    if (request.Method != HttpMethod.Get)
+                    {
+                        return await HttpForwarding.SendAsync(inner, request, cancellationToken);
+                    }
                     var match = System.Text.RegularExpressions.Regex.Match(uri.AbsolutePath, "/organizations/([^/]+)/projects/([^/]+)/api-keys$");
                     var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
                     var after = query.GetValueOrDefault("after").ToString();
@@ -125,6 +129,8 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                             created_by = "user",
                             created_at = "2026-01-01T00:00:00+00:00",
                             expires_at = (string?)null,
+                            previous_secret_expires_at = (string?)null,
+                            last_used_at = (DateTimeOffset?)null,
                             allowed_cidrs = Array.Empty<string>()
                         }),
                         next
