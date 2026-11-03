@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using TerraBase.Primitives;
@@ -177,14 +176,12 @@ public sealed class TransactionApiTests
         await using var api = await DocumentApi.StartAsync();
         var ids = (first: DocumentApi.NewId(), second: DocumentApi.NewId());
         var pad = new string('a', 710_000);
-        var over = await api.SendRawAsync(HttpMethod.Post, api.Transactions, string.Create(CultureInfo.InvariantCulture,
-            $$"""
-            {"ops":[
-              {"op":"create","collection":"items","id":"{{ids.first}}","document":{"pad":"{{pad}}"}},
-              {"op":"create","collection":"items","id":"{{ids.second}}","document":{"pad":"{{pad}}"}},
-              {"op":"create","collection":"items","id":"{{DocumentApi.NewId()}}","document":{"pad":"{{pad}}"}}
-            ]}
-            """), "application/json");
+        var over = await api.SendRawAsync(HttpMethod.Post, api.Transactions,
+            "{\"ops\":[" +
+            string.Join(",", (string[])[
+                Op(ids.first, pad), Op(ids.second, pad), Op(DocumentApi.NewId(), pad),
+            ]) +
+            "]}", "application/json");
         var readFirst = await api.GetAsync(ids.first);
         var readSecond = await api.GetAsync(ids.second);
         var underBudget = await api.TransactAsync(
@@ -197,6 +194,9 @@ public sealed class TransactionApiTests
         await Assert.That(readSecond.Status).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(underBudget.Status).IsEqualTo(HttpStatusCode.OK);
     }
+
+    private static string Op(string id, string pad) =>
+        $"{{\"op\":\"create\",\"collection\":\"items\",\"id\":\"{id}\",\"document\":{{\"pad\":\"{pad}\"}}}}";
 
     private static long Offset(ApiResponse response) =>
         long.Parse(response.Json.GetProperty("offset").GetString()!, System.Globalization.CultureInfo.InvariantCulture);
