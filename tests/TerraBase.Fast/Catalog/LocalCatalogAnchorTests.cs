@@ -194,7 +194,7 @@ public sealed class LocalCatalogAnchorTests
                     using var health = await restarted.Server.Client.GetAsync(ManagementApi.Uri("/healthz"), token);
                     return health.StatusCode == HttpStatusCode.ServiceUnavailable
                         && (await health.Content.ReadAsStringAsync(token)).Contains("\"bucket\":\"backup-test\"", StringComparison.Ordinal);
-                }, cancellationToken: cancellationToken);
+                });
                 using var degraded = await restarted.Server.Client.GetAsync(ManagementApi.Uri("/healthz"), cancellationToken);
                 await Assert.That(degraded.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
                 await Assert.That((await degraded.Content.ReadAsStringAsync(cancellationToken)).Contains("\"status\":\"degraded\"", StringComparison.Ordinal)).IsTrue();
