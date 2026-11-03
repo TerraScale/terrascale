@@ -100,7 +100,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 await probe.ControlAsync(new { command = "catalog", value = new[] { "gru", "sjc", "fra" } });
                 // Test admission permits one database per workspace; the plan control admits the journey's second one.
                 await probe.ControlAsync(new { command = "plan", organizationId = probe.Organization, value = OrganizationRecord.StarterPlanId });
-                probe.Secret = await HttpJourney.CreatePatAsync(probe.Client, "TS-1385 lookup journey");
+                probe.Secret = await HttpJourney.CreatePatAsync(probe.Client, "TS-1385 lookup journey", probe.Account.Password);
                 return probe;
             }
 
