@@ -58,7 +58,6 @@ interface LocaleStrings {
   prev: string
   next: string
   updated: string
-  footer: string
 }
 
 const EN_NAV = [
@@ -95,8 +94,6 @@ const EN_STRINGS: LocaleStrings = {
   prev: 'Previous page',
   next: 'Next page',
   updated: 'Last updated',
-  footer:
-    'TerraScale developer documentation. Preparing for public self-service launch.',
 }
 
 const flatNav = (
@@ -150,8 +147,6 @@ const STRINGS: Record<string, LocaleStrings> = {
     prev: 'Página anterior',
     next: 'Página siguiente',
     updated: 'Última actualización',
-    footer:
-      'Documentación de TerraScale para bases de datos, autenticación, facturación, SDK, CLI y panel. En preparación para el lanzamiento público.',
   },
   'pt-br': {
     nav: flatNav({
@@ -192,8 +187,6 @@ const STRINGS: Record<string, LocaleStrings> = {
     prev: 'Página anterior',
     next: 'Próxima página',
     updated: 'Última atualização',
-    footer:
-      'Documentação do TerraScale para banco de dados, autenticação, cobrança, SDK, CLI e painel. Em preparação para o lançamento público.',
   },
   fr: {
     nav: flatNav({
@@ -234,8 +227,6 @@ const STRINGS: Record<string, LocaleStrings> = {
     prev: 'Page précédente',
     next: 'Page suivante',
     updated: 'Dernière mise à jour',
-    footer:
-      'Infrastructure pour base de données, authentification, files, facturation, SDK, CLI et tableau de bord. Pré-lancement, bêta sur liste d\u2019attente.',
   },
   de: {
     nav: flatNav({
@@ -276,8 +267,6 @@ const STRINGS: Record<string, LocaleStrings> = {
     prev: 'Vorherige Seite',
     next: 'Nächste Seite',
     updated: 'Zuletzt aktualisiert',
-    footer:
-      'TerraScale-Entwicklerdokumentation. Pre-Launch, Wartelisten-Beta.',
   },
   'zh-cn': {
     nav: flatNav({
@@ -318,7 +307,6 @@ const STRINGS: Record<string, LocaleStrings> = {
     prev: '上一页',
     next: '下一页',
     updated: '最后更新',
-    footer: '面向数据库、认证、队列、计费、SDK、CLI 与控制台工作流的基础设施。预发布，等候名单内测。',
   },
   hi: {
     nav: flatNav({
@@ -359,8 +347,6 @@ const STRINGS: Record<string, LocaleStrings> = {
     prev: 'पिछला पृष्ठ',
     next: 'अगला पृष्ठ',
     updated: 'अंतिम अद्यतन',
-    footer:
-      'डेटाबेस, प्रमाणीकरण, कतार, बिलिंग, SDK, CLI और डैशबोर्ड वर्कफ़्लो हेतु बुनियादी ढांचा। प्री-लॉन्च, प्रतीक्षा-सूची बीटा।',
   },
   ar: {
     nav: flatNav({
@@ -401,8 +387,6 @@ const STRINGS: Record<string, LocaleStrings> = {
     prev: 'الصفحة السابقة',
     next: 'الصفحة التالية',
     updated: 'آخر تحديث',
-    footer:
-      'بنية تحتية لتدفقات قواعد البيانات والمصادقة والقوائم والفوترة وSDK وCLI ولوحة التحكم. ما قبل الإطلاق، نسخة تجريبية بقائمة انتظار.',
   },
   ru: {
     nav: flatNav({
@@ -443,8 +427,6 @@ const STRINGS: Record<string, LocaleStrings> = {
     prev: 'Назад',
     next: 'Далее',
     updated: 'Обновлено',
-    footer:
-      'Инфраструктура для рабочих процессов баз данных, аутентификации, очередей, биллинга, SDK, CLI и панели. Предзапуск, бета по списку ожидания.',
   },
   ja: {
     nav: flatNav({
@@ -485,8 +467,6 @@ const STRINGS: Record<string, LocaleStrings> = {
     prev: '前へ',
     next: '次へ',
     updated: '最終更新',
-    footer:
-      'データベース、認証、キュー、課金、SDK、CLI、ダッシュボードのワークフロー基盤。プレローンチ、ウェイティングリスト制ベータ。',
   },
 }
 
@@ -522,7 +502,6 @@ function themeFor(code: string) {
     langMenuLabel: s.langMenu,
     sidebarMenuLabel: s.sidebarMenu,
     returnToTopLabel: s.returnTop,
-    footer: { message: s.footer, copyright: 'TerraScale' },
   }
 }
 
@@ -612,6 +591,6 @@ export default defineConfig({
     siteTitle: 'Docs',
     logo: { light: '/brand/logo-terrascale-light.svg', dark: '/brand/logo-terrascale-dark.svg', alt: 'TerraScale' },
     search: { provider: 'local' },
-    notFound: { quote: 'This page does not exist or has moved.', linkText: 'Back to the docs home' },
+    notFound: { quote: '', linkText: 'Back to the docs home' },
   },
 })

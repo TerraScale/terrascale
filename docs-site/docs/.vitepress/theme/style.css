@@ -169,3 +169,6 @@ body { font-size: var(--ts-fs-md); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* 404: title and one action; the theme's divider and quote are not used. */
+.NotFound .divider, .NotFound .quote { display: none; }
