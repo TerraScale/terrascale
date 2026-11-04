@@ -14,7 +14,7 @@ POST /v1/terrascale/projects/{project}/end-user-tokens
 Authorization: Bearer <whole project API key>
 Content-Type: application/json
 
-{"user_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","claims":{"roles":["reader"]}}
+{"user_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","database":"01ARZ3NDEKTSV4RRFFQ69G5FAW","tables":["notes"],"claims":{"roles":["reader"]}}
 ```
 
 ```json
@@ -27,11 +27,13 @@ its caller and choosing their ID and roles; it must never relay browser-submitte
 identity or role fields without authorization. Send only the resulting short-lived
 JWT to the browser. Keep the project API key on the backend.
 
-`claims` and `claims.roles` are optional. Roles are case-sensitive ordinal strings:
+`database` (canonical ULID) and `tables` (at most 32 table names) are optional. They scope
+the token to the shapes it may read; TerraBase still requires a read grant on each table
+([shape read grants](../terrabase/shape-read-grants.md)). `claims` and `claims.roles` are optional. Roles are case-sensitive ordinal strings:
 at most 64 entries, each 1–128 characters, not all whitespace and without control
 characters. Duplicates are removed ordinally. **Only roles are supported.** Unknown
 members at either level are rejected, including JWT, project, organization,
-administrator, database and scope claims. Arbitrary claims have no rule consumer
+administrator and scope claims. Arbitrary claims have no rule consumer
 and would add an unnecessary trust boundary. Bodies must be UTF-8 JSON, at most
 16 KiB and four levels deep. The complete signed compact JWT, including its
 signature, must fit **8192 ASCII bytes**. Even within the per-role limits, a role
@@ -67,13 +69,14 @@ allowlist or hosted UI flow.
 | `token_kind` | `end_user` |
 | `instance_id`, `project_id` | The exact authenticated project ULID |
 | `roles` | Bounded array of backend-asserted roles, compared ordinally |
+| `database`, `tables` | Present when requested: the database ULID and the tables the token may read as shapes |
 | Lifetime | At most 15 minutes, capped at the API key's expiry |
 
-No `scope`, `database`, `org_id` or `platform_role` claim is issued. TerraBase
+No `scope`, `org_id` or `platform_role` claim is issued. TerraBase
 validates the platform signature, exact issuer and audience, access token type,
 lifetime, ULID subject and equality of `instance_id`/`project_id`. It rejects
 unknown token kinds, malformed roles, anonymous identities and end-user tokens
-carrying administrator or scope/database grant claims.
+carrying administrator or scope claims. A `database` claim narrows the token to that database.
 
 Authenticated end users enter only document, transaction, shape and database-change
 routes. SQL, management, collection metadata and export routes remain forbidden.

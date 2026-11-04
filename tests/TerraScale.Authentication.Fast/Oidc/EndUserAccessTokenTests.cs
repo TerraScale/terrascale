@@ -24,6 +24,7 @@ public sealed class EndUserAccessTokenTests(TerraBaseFixture fixture)
     private static readonly string[] ReadWrite = ["documents:read", "documents:write"];
     private static readonly string[] ExpectedRoles = ["reader", "Reader"];
     private static readonly string[] AssertedRoles = ["reader", "Reader", "reader"];
+    private static readonly string[] SharedTables = ["notes"];
 
     [Test]
     public async Task A_backend_asserts_an_unprovisioned_identity_and_roles_and_revocation_stops_future_minting()
@@ -32,7 +33,8 @@ public sealed class EndUserAccessTokenTests(TerraBaseFixture fixture)
         var (owner, organization, project) = await SetupAsync(oidc);
         var key = await KeyAsync(oidc, owner, organization, project);
         var user = AuthStore.NewId();
-        var body = new { user_id = user, claims = new { roles = AssertedRoles } };
+        var database = AuthStore.NewId();
+        var body = new { user_id = user, claims = new { roles = AssertedRoles }, database, tables = SharedTables };
         using var minted = await oidc.CallAsync(HttpMethod.Post, Path(project), key, body);
         await Assert.That(minted.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(minted.Headers.CacheControl!.NoStore).IsTrue();
@@ -50,7 +52,9 @@ public sealed class EndUserAccessTokenTests(TerraBaseFixture fixture)
         await Assert.That(jwt.GetPayloadValue<string>("instance_id")).IsEqualTo(project);
         await Assert.That(jwt.GetPayloadValue<string>("token_kind")).IsEqualTo("end_user");
         await Assert.That(jwt.GetPayloadValue<string[]>("roles")).IsEquivalentTo(ExpectedRoles);
-        foreach (var claim in new[] { "scope", "scopes", "database", "platform_role", "org_id" })
+        await Assert.That(jwt.GetPayloadValue<string>("database")).IsEqualTo(database);
+        await Assert.That(jwt.GetPayloadValue<string[]>("tables")).IsEquivalentTo(SharedTables);
+        foreach (var claim in new[] { "scope", "scopes", "platform_role", "org_id" })
         {
             await Assert.That(jwt.TryGetPayloadValue<object>(claim, out _)).IsFalse().Because(claim);
         }

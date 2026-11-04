@@ -15,7 +15,9 @@ namespace TerraScale.Authentication.Features.Oidc;
 /// <summary>An identity asserted by a trusted project backend; unknown claims are refused.</summary>
 public sealed record EndUserTokenRequest(
     [property: JsonPropertyName("user_id")] string? UserId,
-    [property: JsonPropertyName("claims")] EndUserTokenClaims? Claims = null);
+    [property: JsonPropertyName("claims")] EndUserTokenClaims? Claims = null,
+    [property: JsonPropertyName("database")] string? Database = null,
+    [property: JsonPropertyName("tables")] IReadOnlyList<string>? Tables = null);
 
 /// <summary>Only rule roles are accepted; no JWT or project authority can be overridden.</summary>
 public sealed record EndUserTokenClaims([property: JsonPropertyName("roles")] IReadOnlyList<string>? Roles = null);
@@ -51,7 +53,7 @@ public sealed class EndUserTokenEndpoint(EndUserAccessTokens tokens, AttemptLimi
         Post(Prefix + "{project}" + Suffix);
         Name("mintEndUserToken");
         Summary("Assert an end-user identity for one project");
-        Description("Backend only. Requires a live unrestricted project API key with documents:read and documents:write. Accepts a canonical ULID and optional roles (64 maximum, 128 characters each). Unknown members are rejected. The complete signed JWT must fit 8192 ASCII bytes; oversized tokens return 400 invalid_request. Tokens expire within 900 seconds, capped at key expiry. Revocation prevents future minting; issued tokens validate offline until expiry plus clock skew. Shares the token IP budget (default 1000/minute) and limits each key to 1000/minute. Never send the project key to a browser.");
+        Description("Backend only. Requires a live unrestricted project API key with documents:read and documents:write. Accepts a canonical ULID user_id, an optional database ULID and tables (32 maximum) the token may read as shapes under their read grants, and optional roles (64 maximum, 128 characters each). Unknown members are rejected. The complete signed JWT must fit 8192 ASCII bytes; oversized tokens return 400 invalid_request. Tokens expire within 900 seconds, capped at key expiry. Revocation prevents future minting; issued tokens validate offline until expiry plus clock skew. Shares the token IP budget (default 1000/minute) and limits each key to 1000/minute. Never send the project key to a browser.");
         Tags("API keys");
         Metadata(new RequiresSecurity(SecuritySchemes.ProjectApiKey), new AcceptsMetadata(["application/json"], typeof(EndUserTokenRequest)));
         Produces<EndUserTokenBody>();
@@ -85,12 +87,14 @@ public sealed class EndUserTokenEndpoint(EndUserAccessTokens tokens, AttemptLimi
 
             var body = await this.BodyAsync(cancellationToken);
             var roles = body.Claims?.Roles ?? [];
-            if (!TerraScaleIds.IsValid(body.UserId) || !EndUserAccessTokens.ValidRoles(roles))
+            if (!TerraScaleIds.IsValid(body.UserId) || !EndUserAccessTokens.ValidRoles(roles)
+                || body.Database is not null && !TerraScaleIds.IsValid(body.Database)
+                || body.Tables is { } tables && !EndUserAccessTokens.ValidTables(tables))
             {
                 throw Invalid();
             }
 
-            return await tokens.IssueAsync(project, secret!, body.UserId!, roles, cancellationToken) is { } token
+            return await tokens.IssueAsync(project, secret!, body.UserId!, roles, body.Database, body.Tables, cancellationToken) is { } token
                 ? Results.Json(token, EndUserTokenJson.Default.EndUserTokenBody)
                 : this.Unauthorized();
         }
@@ -138,7 +142,7 @@ public sealed class EndUserTokenEndpoint(EndUserAccessTokens tokens, AttemptLimi
     }
 
     private static ApiException Invalid() => new(StatusCodes.Status400BadRequest, "invalid_request",
-        "Supply a UTF-8 JSON object of at most 16384 bytes with user_id (canonical ULID) and optional claims.roles (at most 64 nonempty strings of 128 characters, without controls). No other members are accepted.");
+        "Supply a UTF-8 JSON object of at most 16384 bytes with user_id (canonical ULID), optional database (canonical ULID), optional tables (at most 32 table names) and optional claims.roles (at most 64 nonempty strings of 128 characters, without controls). No other members are accepted.");
 }
 
 [JsonSourceGenerationOptions(UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, MaxDepth = 4)]

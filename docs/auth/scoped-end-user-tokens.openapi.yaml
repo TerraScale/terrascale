@@ -111,6 +111,15 @@ components:
       properties:
         user_id:
           $ref: '#/components/schemas/Ulid'
+        database:
+          $ref: '#/components/schemas/Ulid'
+        tables:
+          type: [array, 'null']
+          maxItems: 32
+          description: Tables the token may read as shapes, each under its read grant.
+          items:
+            type: string
+            pattern: '^[A-Za-z_][A-Za-z0-9_]{0,62}$'
         claims:
           type: [object, 'null']
           additionalProperties: false
@@ -131,7 +140,7 @@ components:
         access_token:
           type: string
           maxLength: 8192
-          description: Signed compact ES256 JWT with typ at+jwt, end_user token_kind, asserted subject and roles, and project_id equal to instance_id. No scope, database, org_id or platform_role claim.
+          description: Signed compact ES256 JWT with typ at+jwt, end_user token_kind, asserted subject and roles, project_id equal to instance_id, and the requested database and tables. No scope, org_id or platform_role claim.
         token_type:
           type: string
           const: Bearer

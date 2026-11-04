@@ -40,9 +40,11 @@ public sealed class EndUserAccessTokens(ApiKeys apiKeys, PlatformDirectory proje
     }
 
     /// <summary>A project-scoped token, capped at the freshly authenticated key's expiry; no key authorization is cached.</summary>
-    internal async Task<EndUserTokenBody?> IssueAsync(string project, string secret, string userId, IReadOnlyList<string> roles, CancellationToken cancellationToken)
+    internal async Task<EndUserTokenBody?> IssueAsync(string project, string secret, string userId, IReadOnlyList<string> roles,
+        string? database, IReadOnlyList<string>? tables, CancellationToken cancellationToken)
     {
-        if (!TerraScaleIds.IsValid(userId) || !ValidRoles(roles) || options.AccessTokenAudiences.Count == 0)
+        if (!TerraScaleIds.IsValid(userId) || !ValidRoles(roles) || options.AccessTokenAudiences.Count == 0
+            || database is not null && !TerraScaleIds.IsValid(database) || tables is not null && !ValidTables(tables))
         {
             return null;
         }
@@ -82,6 +84,16 @@ public sealed class EndUserAccessTokens(ApiKeys apiKeys, PlatformDirectory proje
                     ["roles"] = roles.Distinct(StringComparer.Ordinal).ToArray(),
                 },
             };
+            if (database is not null)
+            {
+                descriptor.Claims["database"] = database;
+            }
+
+            if (tables is not null)
+            {
+                descriptor.Claims["tables"] = tables.Distinct(StringComparer.Ordinal).ToArray();
+            }
+
             foreach (var audience in options.AccessTokenAudiences)
             {
                 descriptor.Audiences.Add(audience);
@@ -104,6 +116,9 @@ public sealed class EndUserAccessTokens(ApiKeys apiKeys, PlatformDirectory proje
             }
         }
     }
+
+    internal static bool ValidTables(IReadOnlyList<string> tables) => tables.Count <= 32
+        && tables.All(table => table is { Length: > 0 and <= 63 } && !char.IsAsciiDigit(table[0]) && table.All(c => char.IsAsciiLetterOrDigit(c) || c == '_'));
 
     internal static bool ValidRoles(IReadOnlyList<string> roles) => roles.Count <= 64
         && roles.All(role => !string.IsNullOrWhiteSpace(role) && role.Length <= 128 && !role.Any(char.IsControl));
