@@ -54,17 +54,31 @@ text.
 - A deferred foreign key (`DEFERRABLE INITIALLY DEFERRED`) violated at `COMMIT` is a definite rejection: the
   transaction rolls back without faulting the copy, and the commit answers `foreign_key_violation` (23503).
 
-## Guard
+## Sandbox
 
-Until a real authorizer exists, every name in a statement (bare and quoted identifiers and string literals, anywhere,
-trigger and view bodies included) is checked by a tokenizer that respects SQLite quoting and comments
-(`src/TerraBase/Engine/SqlText.cs`, `src/TerraBase/Features/Sql/SqlScript.cs`). Refused: names starting with `_tb_`,
-`turso_`, `__turso_`, `tb_index_`, `fts_dir_`, `pragma_` or `sqlite_stat`; the engine tables `collections`,
-`commit_offset`, `_collections`, `_indexes` and `_unique`; and, in a write, any name equal to one of the database's
-document collections. A literal value equal to a reserved name is refused too: a rare false positive kept for safety.
-Also refused: `ATTACH`, `DETACH`, `VACUUM`, `ANALYZE`, temporary and virtual tables, and every `PRAGMA` except
-`table_info`, `table_xinfo`, `table_list`, `index_list`, `index_info`, `index_xinfo`, `foreign_key_list`,
-`foreign_key_check` and `foreign_keys` (read, or set to on; off is refused). `sqlite_schema` is readable.
+Every customer statement on every surface (`/v1` SQL execution, the PostgreSQL wire and SQL over WebSocket) is
+classified by one sandbox before the engine sees it (`src/TerraBase/Features/Sql/SqlSandbox.cs`, called from
+`SqlScript.Classify`). The pinned Turso core has no authorizer hook (its `sqlite3_set_authorizer` returns an error), so
+the sandbox works on the statement's tokens with SQLite quoting and comments respected
+(`src/TerraBase/Engine/SqlText.cs`), on every name anywhere, trigger and view bodies included.
+
+- Denied with `sql_sandbox` (SQLSTATE 42501, HTTP 403): `ATTACH`, `DETACH`, `VACUUM` (with or without `INTO`),
+  `ANALYZE`, the same behind `EXPLAIN`, temporary and virtual tables, `load_extension`, the file functions
+  (`readfile`, `writefile`, `edit`, `fsdir`, `lsdir`, `zipfile`, `sqlar_*`, `csv`, `completion`), the engine's page
+  tables (`sqlite_dbpage`, `btree_dump`, `dbstat`, `sqlite_stmt`), the temp schema, writes to `sqlite_schema` or
+  `sqlite_sequence`, triggers that read the schema, creating or renaming to an internal name, and every `PRAGMA` except
+  `table_info`, `table_xinfo`, `table_list`, `index_list`, `index_info`, `index_xinfo`, `foreign_key_list`,
+  `foreign_key_check` and `foreign_keys` (read, or set to on). PRAGMAs read only the main schema.
+- Internal tables do not exist for customer SQL: the names in `TerraBaseSqlNames`
+  (`src/TerraScale.TerraBase.Contracts/TerraBaseSqlNames.cs`): prefixes `_tb_`, `_ts_`, `turso_` (so `turso_cdc`,
+  `turso_cdc_version` and `turso_sync_cdc`), `__turso_`, `tb_index_`, `fts_dir_`, `pragma_` and `sqlite_stat`, and the
+  engine tables `collections`, `commit_offset`, `_collections`, `_indexes` and `_unique`. A statement naming one, even
+  as a string literal, answers `undefined_table` (42P01).
+- Schema listings show only customer objects: every read of `sqlite_schema`, `sqlite_master` or `sqlite_sequence` runs
+  on a filtered subquery under the same name, so aliases, qualified columns and views over it work; the engine's
+  `sqlite_sequence` is left out of the listings; `PRAGMA table_list` and `PRAGMA foreign_key_check` drop rows of
+  internal tables; the PostgreSQL catalog and the table listing use the same names.
+- In a write, a name equal to one of the database's document collections is refused (`sql_error`).
 
 ## Values, errors and metering
 
@@ -86,6 +100,7 @@ Also refused: `ATTACH`, `DETACH`, `VACUUM`, `ANALYZE`, temporary and virtual tab
   | `foreign_key_violation` | 23503 | 400 |
   | `constraint_violation` | 23000 | 400 |
   | `forbidden_scope` | 42501 | 403 |
+  | `sql_sandbox` (see Sandbox) | 42501 | 403 |
   | `serialization_conflict` (retry) | 40001 | 409 |
   | `too_large` | 54000 | 413 |
   | `query_canceled` | 57014 | 400 |

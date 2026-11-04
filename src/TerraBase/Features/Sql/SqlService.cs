@@ -160,7 +160,8 @@ internal sealed class SqlSession(
                     _consumed = 0;
                     last = await ExecuteLockedAsync(plan, new SqlCommand(plan.Sql, [], new Dictionary<string, SqlValue>()), admit: null, first: true, cancellationToken)
                         .ConfigureAwait(false);
-                    consumed = remaining.IndexOf(plan.Sql, StringComparison.Ordinal) + (_consumed > 0 ? _consumed : SqlScript.SimpleLength(plan.Sql));
+                    consumed = remaining.IndexOf(plan.Sql, StringComparison.Ordinal)
+                        + (!ReferenceEquals(plan.Run, plan.Sql) ? plan.Sql.Length : _consumed > 0 ? _consumed : SqlScript.SimpleLength(plan.Sql));
                 }
                 finally
                 {
@@ -569,7 +570,7 @@ internal sealed class SqlSession(
         try
         {
             raw = await transaction.ExecuteStatementAsync(
-                new SqlStatement(plan.Sql, [.. command.Args.Select(Bound)], command.Named.ToDictionary(pair => pair.Key, pair => Bound(pair.Value), StringComparer.Ordinal),
+                new SqlStatement(plan.Run, [.. command.Args.Select(Bound)], command.Named.ToDictionary(pair => pair.Key, pair => Bound(pair.Value), StringComparer.Ordinal),
                     MaxRows, MaxBytes, StatementTimeout(), first),
                 cancellationToken).ConfigureAwait(false);
         }
@@ -587,6 +588,11 @@ internal sealed class SqlSession(
         }
 
         _consumed = raw.Consumed;
+        if (plan.HiddenColumns.Count > 0)
+        {
+            raw = raw with { Rows = SqlSandbox.HideRows(raw.Rows, plan.HiddenColumns) };
+        }
+
         if (raw.Truncated)
         {
             return (TooManyRows, false);
@@ -620,7 +626,7 @@ internal sealed class SqlSession(
     {
         try
         {
-            var shape = await transaction.DescribeStatementAsync(plan.Sql, cancellationToken).ConfigureAwait(false);
+            var shape = await transaction.DescribeStatementAsync(plan.Run, cancellationToken).ConfigureAwait(false);
             return new SqlDescription(shape.Parameters, [.. shape.Columns.Select(column => new SqlColumn(column.Name, column.DeclType))],
                 plan.IsExplain, plan.Kind != SqlStatementKind.Write);
         }
