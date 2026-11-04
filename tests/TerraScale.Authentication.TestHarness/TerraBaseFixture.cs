@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using TerraScale.Authentication.Features.SigningKeys;
 using Microsoft.Extensions.Logging.Abstractions;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Store;
@@ -14,8 +16,13 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     private TerraBaseTestServer? server;
     private TerraBaseTestTenant? owner;
     private readonly Lazy<Task<OidcHarness>> management;
+    private readonly Lazy<Task> initialized;
 
-    public TerraBaseFixture() => this.management = new(this.StartManagementAsync);
+    public TerraBaseFixture()
+    {
+        this.management = new(this.StartManagementAsync);
+        this.initialized = new(this.InitializeCoreAsync);
+    }
 
     public TerraBaseTestServer Server => this.server ?? throw new InvalidOperationException("TerraBase fixture has not started.");
 
@@ -25,10 +32,12 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     {
         // The shared host belongs to the fixture, independently of the first borrowing test.
         using var flow = ExecutionContext.SuppressFlow();
-        return Task.Run(() => OidcHarness.StartAsync(this));
+        return Task.Run(() => OidcHarness.StartAsync(this, services: services => services.RemoveAll<KeyRingRefresh>()));
     }
 
-    public async Task InitializeAsync()
+    public Task InitializeAsync() => this.initialized.Value;
+
+    private async Task InitializeCoreAsync()
     {
         var (running, unavailable) = await TerraBaseTestServer.StartAsync();
         this.server = running ?? throw new InvalidOperationException($"Real TerraBase integration tests need TerraBase: {unavailable}");
