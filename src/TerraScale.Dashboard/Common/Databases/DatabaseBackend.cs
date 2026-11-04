@@ -51,6 +51,7 @@ namespace TerraScale.Dashboard.Common.Databases
     // One relational statement's result from TerraBase POST .../sql/execute: columns, rows (one value per column), and write counts.
     public sealed record DatabaseSqlResult(IReadOnlyList<DatabaseSqlColumn> Columns, IReadOnlyList<IReadOnlyList<JsonElement>> Rows, long RowsAffected, long? LastInsertRowId);
     public sealed record DatabaseIndex(string Name, string Collection, IReadOnlyList<string> Fields, string State);
+    public sealed record DatabaseReadGrant(string Table, string? Where, IReadOnlyList<string>? Columns, DateTimeOffset UpdatedAt);
     public sealed record ProjectCredential(string Id, string ProjectId, string Name, IReadOnlyList<string> Scopes, string? DatabaseId, string LastFour, DateTimeOffset CreatedAt)
     {
         public string CreatedByUserId { get; init; } = "";
@@ -86,7 +87,9 @@ namespace TerraScale.Dashboard.Common.Databases
         Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
         Task<DatabaseIndex> CreateIndexAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string collection, IReadOnlyList<string> fields, CancellationToken cancellationToken);
         Task DropIndexAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken);
-
+        Task<IReadOnlyList<DatabaseReadGrant>> ReadGrantsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
+        Task<DatabaseReadGrant> PutReadGrantAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string table, string? where, IReadOnlyList<string>? columns, CancellationToken cancellationToken);
+        Task DeleteReadGrantAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string table, CancellationToken cancellationToken);
     }
 
     // Canonical data operations use TerraBase RPC with current action-scoped authority.
@@ -360,6 +363,27 @@ namespace TerraScale.Dashboard.Common.Databases
             await RunAsync(() => database.DropIndexAsync(scope.ProjectId, databaseName, name).ResponseAsync);
         }
 
+        public async Task<IReadOnlyList<DatabaseReadGrant>> ReadGrantsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
+        {
+            var name = await NameAsync(scope, home, databaseId, cancellationToken);
+            var database = await ClientAsync(scope, home, "databases:read", cancellationToken);
+            return [.. (await RunAsync(() => database.ListReadGrantsAsync(scope.ProjectId, name).ResponseAsync)).Grants.Select(Map).OrderBy(grant => grant.Table, StringComparer.Ordinal)];
+        }
+
+        public async Task<DatabaseReadGrant> PutReadGrantAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string table, string? where, IReadOnlyList<string>? columns, CancellationToken cancellationToken)
+        {
+            var name = await NameAsync(scope, home, databaseId, cancellationToken);
+            var database = await ClientAsync(scope, home, "databases:write", cancellationToken);
+            return Map(await RunAsync(() => database.PutReadGrantAsync(scope.ProjectId, name, table, new(where, columns)).ResponseAsync));
+        }
+
+        public async Task DeleteReadGrantAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string table, CancellationToken cancellationToken)
+        {
+            var name = await NameAsync(scope, home, databaseId, cancellationToken);
+            var database = await ClientAsync(scope, home, "databases:write", cancellationToken);
+            await RunAsync(() => database.DeleteReadGrantAsync(scope.ProjectId, name, table).ResponseAsync);
+        }
+
         private async Task<IManagementService> ClientAsync(DatabaseScope scope, DatabaseRegion home, string permission, CancellationToken cancellationToken)
         {
             if (PlatformDatabases.IsPlatform(scope.OrganizationId))
@@ -389,6 +413,11 @@ namespace TerraScale.Dashboard.Common.Databases
         private static DatabaseIndex Map(TerraBaseIndex item)
         {
             return new(item.Name, item.Collection, item.Fields, item.State);
+        }
+
+        private static DatabaseReadGrant Map(TerraBaseReadGrant item)
+        {
+            return new(item.Table, item.Where, item.Columns, item.UpdatedAt);
         }
 
         private static async Task<T> RunAsync<T>(Func<Task<T>> operation)
