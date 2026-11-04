@@ -59,7 +59,7 @@
     // overage is null for Free and negative when Stripe could not be read.
     private static string UsageThisPeriod(BillingPlan plan, long? overage) => overage switch
     {
-        null => string.Create(CultureInfo.InvariantCulture, $"{plan.Name} stops new writes at its {plan.Allowances.MonthlyOperations:N0} operation units a month; reads and deletes keep working. No usage charges."),
+        null => string.Create(CultureInfo.InvariantCulture, $"{plan.Name} stops new writes at its {plan.Allowances.MonthlyOperations:N0} operation units a month; reads keep working. No usage charges."),
         < 0 => "Usage this period could not be loaded from Stripe. Reload billing to retry.",
         0 => string.Create(CultureInfo.InvariantCulture, $"Usage this period: {MoneyFormat.Money(0)} so far, within {plan.Name}'s {plan.Allowances.MonthlyOperations:N0} included operation units. Units above them cost {OperationUnitOverage.Rate}."),
         { } units => string.Create(CultureInfo.InvariantCulture, $"Usage this period: {MoneyFormat.Money(OperationUnitOverage.Cents(units))} so far, for {units:N0} operation units over {plan.Name}'s {plan.Allowances.MonthlyOperations:N0} included units, at {OperationUnitOverage.Rate}. Billed on your next invoice.")

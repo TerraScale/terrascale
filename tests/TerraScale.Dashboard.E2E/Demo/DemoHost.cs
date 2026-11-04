@@ -153,7 +153,8 @@ namespace TerraScale.Dashboard.E2E.Demo
                 var now = DateTimeOffset.UtcNow;
                 if (long.TryParse(form["units"], CultureInfo.InvariantCulture, out var units))
                 {
-                    await reporter.ReportAsync(organization.Id, units, new(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero), http.RequestAborted);
+                    long? byteHours = long.TryParse(form["storageByteHours"], CultureInfo.InvariantCulture, out var stored) ? stored : null;
+                    await reporter.ReportAsync(organization.Id, units, byteHours, new(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero), http.RequestAborted);
                 }
 
                 return Results.Json(stripe.OverageItems(organization.Id).Select(item => new
