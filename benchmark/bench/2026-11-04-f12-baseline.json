@@ -1,0 +1,21 @@
+{
+  "source": "idle-CPU owner baseline ok handoff",
+  "start_utc": "2026-11-04T23:15:54Z",
+  "end_utc": "2026-11-04T23:26:05Z",
+  "elapsed_seconds": 610.85,
+  "cgroup_cpus": 2,
+  "terrabase_cpu_mean_percent": 5.025,
+  "terrabase_cpu_max_interval_percent": 5.453,
+  "host_cpu_mean_percent_of_two_cpus": 9.772,
+  "host_cpu_max_interval_percent_of_two_cpus": 13.688,
+  "shape_read_delta": 0,
+  "shared_flight_delta": 0,
+  "pid": 3073744,
+  "deployed_source": "d8d25cc1722eddf7abcdfad684cc3ab00d9677c8",
+  "earlier_stop": {
+    "cpu_percent": 72.96,
+    "at_utc": "2026-11-04T23:06:02Z",
+    "process_age_seconds": 23
+  },
+  "conclusion": "Startup CPU spike; no runtime fix needed"
+}
