@@ -37,6 +37,10 @@ public sealed class CdcRetentionTests
         await Assert.That(kept.Ops.Any()).IsTrue();
         var backup = store.BackupAnchor!.Value;
         await host.PutAsync("people", "two", "not-backed-up", token);
+        host.S3.FailPut = key => key.StartsWith(host.File + "/wal/", StringComparison.Ordinal);
+        await host.ShipAsync(TimeSpan.FromSeconds(3), token);
+        await Assert.That(store.BackupAnchor).IsEqualTo(backup);
+        host.S3.FailPut = _ => false;
         host.Time.Advance(TimeSpan.FromDays(8));
         var retention = host.Api.Server.Services.GetRequiredService<IShapeRetention>();
         _ = await retention.RunPassAsync(store, slow.Handle!, token);
