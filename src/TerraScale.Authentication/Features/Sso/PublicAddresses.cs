@@ -10,10 +10,14 @@ namespace TerraScale.Authentication.Features.Sso;
 /// </summary>
 public static class PublicAddresses
 {
+    /// <summary>How long an outbound connection is reused before DNS is resolved again; handlers themselves never rotate.</summary>
+    public static readonly TimeSpan ConnectionLifetime = TimeSpan.FromMinutes(2);
+
     /// <summary>A handler that refuses every host without a public address.</summary>
     public static SocketsHttpHandler Handler() => new()
     {
         AllowAutoRedirect = false,
+        PooledConnectionLifetime = ConnectionLifetime,
         ConnectCallback = async (context, cancellationToken) =>
         {
             var addresses = await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, cancellationToken).ConfigureAwait(false);
