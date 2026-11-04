@@ -58,10 +58,13 @@ deploy switch. The path is:
    `sdk/go/v0.0.X` tag — reuses the qualified version, and creates the
    `sdk/go/v0.0.X` tag on that exact revision. Queue delays and busy main
    sections heal on the next trigger; an already-released version is skipped.
-3. The tag push runs the `publish` job: it verifies the tag points into main,
-   downloads the exact qualified bytes (hash-checked against
-   `qualification.json`) and publishes them as the release assets with the
-   workflow's `GITHUB_TOKEN`. This requires no paid GoReleaser monorepo support.
+   Its own workflow diffs and sdk/go documentation do not trigger it.
+3. The tag push runs the dedicated `SDK Go Publish` workflow (a tag trigger
+   without path filters, so tag pushes are never suppressed by path rules): it
+   verifies the tag points into main, downloads the exact qualified bytes
+   (hash-checked against `qualification.json`) and publishes them as the
+   release assets with the workflow's `GITHUB_TOKEN`. This requires no paid
+   GoReleaser monorepo support.
 4. Confirm the release assets, checksums and installed `ts --version`. The
    homebrew-tap syncs the new `ts.rb` on its own 15-minute schedule.
 

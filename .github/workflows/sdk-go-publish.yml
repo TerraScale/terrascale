@@ -1,0 +1,56 @@
+name: SDK Go Publish
+
+on:
+  push:
+    tags: ['sdk/go/v0.0.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'sdk/go/v0.0.X tag to publish'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  statuses: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validate the versioned main tag
+        id: rev
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          [[ "$TAG" =~ ^sdk/go/v0\.0\.(0|[1-9][0-9]*)$ ]]
+          sha=$(git rev-parse "$TAG^{commit}")
+          git merge-base --is-ancestor "$sha" origin/main
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Download exact qualified bytes
+        id: qualified
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/sdk/download-qualified.py go "${{ steps.rev.outputs.sha }}" "$RUNNER_TEMP/qualified"
+      - name: Require the qualified package version
+        env:
+          VERSION: ${{ steps.qualified.outputs.version }}
+        run: test "${{ steps.rev.outputs.tag }}" = "sdk/go/v$VERSION"
+      - name: Publish the qualified CLI assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd "$RUNNER_TEMP/qualified"
+          sha256sum --check checksums.txt
+          version="${{ steps.qualified.outputs.version }}"
+          gh release create "${{ steps.rev.outputs.tag }}" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --target "${{ steps.rev.outputs.sha }}" --title "TerraScale Go $version" \
+            --notes "CLI and module release qualified on a dev host at ${{ steps.rev.outputs.sha }}." \
+            ./*.tar.gz ./*.zip checksums.txt ts.rb install.sh

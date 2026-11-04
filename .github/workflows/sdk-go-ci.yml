@@ -5,16 +5,24 @@ on:
     branches: [main]
     paths:
       - 'sdk/go/**'
-      - '.github/workflows/sdk-go-*.yml'
+      - '!.github/workflows/sdk-go-release.yml'
+      - '!.github/workflows/sdk-go-publish.yml'
       - '.github/workflows/sdk-fast.yml'
       - 'scripts/sdk/**'
+      - '!sdk/go/docs/**'
+      - '!sdk/go/contracts/**'
+      - '!**/*.md'
   pull_request:
     branches: [main]
     paths:
       - 'sdk/go/**'
-      - '.github/workflows/sdk-go-*.yml'
+      - '!.github/workflows/sdk-go-release.yml'
+      - '!.github/workflows/sdk-go-publish.yml'
       - '.github/workflows/sdk-fast.yml'
       - 'scripts/sdk/**'
+      - '!sdk/go/docs/**'
+      - '!sdk/go/contracts/**'
+      - '!**/*.md'
   workflow_dispatch:
 
 permissions:
