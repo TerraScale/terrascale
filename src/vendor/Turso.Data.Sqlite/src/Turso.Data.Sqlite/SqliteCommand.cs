@@ -1041,7 +1041,7 @@ public class SqliteCommand : DbCommand
             if (c == '"' && !inSingleQuote)
                 inDoubleQuote = !inDoubleQuote;
 
-            if (c == ';' && !inSingleQuote && !inDoubleQuote)
+            if (c == ';' && !inSingleQuote && !inDoubleQuote && !InsideTriggerBody(current))
             {
                 AddStatement(statements, current);
                 current.Clear();
@@ -1054,6 +1054,21 @@ public class SqliteCommand : DbCommand
         AddStatement(statements, current);
         return statements;
     }
+
+    // TerraScale: like sqlite3_complete, a semicolon inside CREATE TRIGGER ends the statement only after its END.
+    private static bool InsideTriggerBody(StringBuilder current)
+    {
+        var text = current.ToString();
+        return TriggerStartPattern.IsMatch(text) && !TriggerEndPattern.IsMatch(text);
+    }
+
+    private static readonly Regex TriggerStartPattern = new(
+        @"^(?:\s|--[^\r\n]*(?:\r?\n|$))*CREATE\s+(?:TEMP\s+|TEMPORARY\s+)?TRIGGER\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex TriggerEndPattern = new(
+        @"\bEND(?:\s|--[^\r\n]*(?:\r?\n|$))*$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private static void AddStatement(List<string> statements, StringBuilder current)
     {

@@ -1,0 +1,52 @@
+From 76498e6a557961e1cd77ae55e9c759d67ae73411 Mon Sep 17 00:00:00 2001
+From: mariogk <mariogk@terrascale.tech>
+Date: Tue, 3 Nov 2026 20:06:53 -0300
+Subject: [PATCH] Keep a trigger body whole when the Turso driver splits
+ command text
+
+A CREATE TRIGGER body holds semicolons; the driver split it into fragments, so every
+continuous-backup snapshot of a database with a trigger failed and nothing shipped.
+
+DECISION: match sqlite3_complete (a semicolon in a trigger ends it only after END). Reason: same rule SQLite uses; one vendored patch.
+---
+ src/Turso.Data.Sqlite/SqliteCommand.cs | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/src/Turso.Data.Sqlite/SqliteCommand.cs b/src/Turso.Data.Sqlite/SqliteCommand.cs
+index 6d249bdfc..dc4552a4e 100644
+--- a/src/Turso.Data.Sqlite/SqliteCommand.cs
++++ b/src/Turso.Data.Sqlite/SqliteCommand.cs
+@@ -1041,7 +1041,7 @@ public class SqliteCommand : DbCommand
+             if (c == '"' && !inSingleQuote)
+                 inDoubleQuote = !inDoubleQuote;
+ 
+-            if (c == ';' && !inSingleQuote && !inDoubleQuote)
++            if (c == ';' && !inSingleQuote && !inDoubleQuote && !InsideTriggerBody(current))
+             {
+                 AddStatement(statements, current);
+                 current.Clear();
+@@ -1055,6 +1055,21 @@ public class SqliteCommand : DbCommand
+         return statements;
+     }
+ 
++    // TerraScale: like sqlite3_complete, a semicolon inside CREATE TRIGGER ends the statement only after its END.
++    private static bool InsideTriggerBody(StringBuilder current)
++    {
++        var text = current.ToString();
++        return TriggerStartPattern.IsMatch(text) && !TriggerEndPattern.IsMatch(text);
++    }
++
++    private static readonly Regex TriggerStartPattern = new(
++        @"^(?:\s|--[^\r\n]*(?:\r?\n|$))*CREATE\s+(?:TEMP\s+|TEMPORARY\s+)?TRIGGER\b",
++        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
++
++    private static readonly Regex TriggerEndPattern = new(
++        @"\bEND(?:\s|--[^\r\n]*(?:\r?\n|$))*$",
++        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
++
+     private static void AddStatement(List<string> statements, StringBuilder current)
+     {
+         var statement = current.ToString().Trim();
+-- 
+2.54.0
+
