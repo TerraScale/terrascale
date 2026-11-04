@@ -48,9 +48,9 @@ public sealed class WalRevisionContractTests
                 Execute(writer, "ROLLBACK;");
 
                 var stamp = Stamp(path);
-                for (var i = 0; i < 1200; i++)
+                for (var i = 0; i < 20; i++)
                 {
-                    Execute(writer, $"INSERT INTO t VALUES ({i + 2}, 'row-{i}');");
+                    Execute(writer, $"INSERT INTO t VALUES ({i + 2}, zeroblob(262144));");
                 }
 
                 var state = writer.GetWalState();
