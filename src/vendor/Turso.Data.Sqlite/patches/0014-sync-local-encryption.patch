@@ -1,0 +1,119 @@
+From: TerraScale
+Subject: [PATCH] Sync databases encrypt their local file and lend raw connections
+
+diff --git a/src/Turso.Data/TursoSyncDatabase.cs b/src/Turso.Data/TursoSyncDatabase.cs
+index dac07161c..c4562b694 100644
+--- a/src/Turso.Data/TursoSyncDatabase.cs
++++ b/src/Turso.Data/TursoSyncDatabase.cs
+@@ -282,7 +282,7 @@ public sealed class TursoSyncDatabase : IDisposable, IAsyncDisposable
+             throw new InvalidOperationException("Turso sync operations cannot be reentered from the sync HTTP handler.");
+     }
+ 
+-    internal async Task<TursoDatabaseHandle> ConnectHandleAsync(CancellationToken cancellationToken)
++    public async Task<TursoDatabaseHandle> ConnectHandleAsync(CancellationToken cancellationToken)
+     {
+         ThrowIfDisposed();
+         await _operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+@@ -308,7 +308,7 @@ public sealed class TursoSyncDatabase : IDisposable, IAsyncDisposable
+         }
+     }
+ 
+-    internal void ReleaseConnection()
++    public void ReleaseConnection()
+     {
+         var remaining = Interlocked.Decrement(ref _activeConnections);
+         if (remaining < 0)
+@@ -821,6 +821,8 @@ public sealed class TursoSyncDatabase : IDisposable, IAsyncDisposable
+             PartialBootstrapPrefetch = partial?.Prefetch ?? false,
+             RemoteEncryptionKey = encryption?.Key,
+             RemoteEncryptionCipher = encryption?.NativeName,
++            LocalEncryptionHexKey = options.LocalEncryption?.HexKey,
++            LocalEncryptionCipher = options.LocalEncryption?.NativeName,
+             PushOperationsThreshold = options.PushOperationsThreshold is null
+                 ? 0
+                 : (nuint)options.PushOperationsThreshold.Value,
+diff --git a/src/Turso.Data/TursoSyncDatabaseOptions.cs b/src/Turso.Data/TursoSyncDatabaseOptions.cs
+index 3a22ad6a3..3f62383f2 100644
+--- a/src/Turso.Data/TursoSyncDatabaseOptions.cs
++++ b/src/Turso.Data/TursoSyncDatabaseOptions.cs
+@@ -71,6 +71,22 @@ public sealed class TursoRemoteEncryptionOptions
+     }
+ }
+ 
++public sealed class TursoLocalEncryptionOptions
++{
++    public required string HexKey { get; init; }
++    public required TursoRemoteEncryptionCipher Cipher { get; init; }
++
++    internal string NativeName => new TursoRemoteEncryptionOptions { Key = HexKey, Cipher = Cipher }.NativeName;
++
++    internal void Validate()
++    {
++        ArgumentException.ThrowIfNullOrWhiteSpace(HexKey);
++        if (HexKey.Length % 2 != 0 || !HexKey.All(char.IsAsciiHexDigit))
++            throw new ArgumentException("The local encryption key must be hexadecimal.", nameof(HexKey));
++        _ = NativeName;
++    }
++}
++
+ public sealed class TursoPartialSyncOptions
+ {
+     public int? PrefixLength { get; init; }
+@@ -114,6 +130,7 @@ public sealed class TursoSyncDatabaseOptions
+     public bool BootstrapIfEmpty { get; init; } = true;
+     public TursoPartialSyncOptions? PartialSync { get; init; }
+     public TursoRemoteEncryptionOptions? RemoteEncryption { get; init; }
++    public TursoLocalEncryptionOptions? LocalEncryption { get; init; }
+     public long? PushOperationsThreshold { get; init; }
+     public long? PullBytesThreshold { get; init; }
+     public bool ForceLogicalMvccPull { get; init; }
+@@ -193,6 +210,9 @@ public sealed class TursoSyncDatabaseOptions
+         }
+ 
+         RemoteEncryption?.Validate();
++        LocalEncryption?.Validate();
++        if (LocalEncryption is not null && (RemoteEncryption is not null || PartialSync is not null))
++            throw new InvalidOperationException("Local encryption cannot be combined with remote encryption or partial sync.");
+     }
+ 
+     private static void ValidateNativeSize(long? value, string parameterName)
+diff --git a/src/Turso.Raw/Public/TursoSyncBindings.cs b/src/Turso.Raw/Public/TursoSyncBindings.cs
+index 441ba377b..5db4bdff9 100644
+--- a/src/Turso.Raw/Public/TursoSyncBindings.cs
++++ b/src/Turso.Raw/Public/TursoSyncBindings.cs
+@@ -41,6 +41,8 @@ public sealed class TursoSyncDatabaseConfiguration
+     public bool PartialBootstrapPrefetch { get; init; }
+     public string? RemoteEncryptionKey { get; init; }
+     public string? RemoteEncryptionCipher { get; init; }
++    public string? LocalEncryptionHexKey { get; init; }
++    public string? LocalEncryptionCipher { get; init; }
+     public nuint PushOperationsThreshold { get; init; }
+     public nuint PullBytesThreshold { get; init; }
+     public bool LogicalMvccPull { get; init; }
+@@ -85,7 +87,14 @@ public static class TursoSyncBindings
+         using var query = NativeUtf8String.From(configuration.PartialBootstrapStrategyQuery);
+         using var remoteEncryptionKey = NativeUtf8String.From(configuration.RemoteEncryptionKey);
+         using var remoteEncryptionCipher = NativeUtf8String.From(configuration.RemoteEncryptionCipher);
+-        using var experimentalFeatures = NativeUtf8String.From(configuration.ExperimentalFeatures);
++        if ((configuration.LocalEncryptionCipher is null) != (configuration.LocalEncryptionHexKey is null))
++            throw new ArgumentException("Local encryption needs both a cipher and a key.", nameof(configuration));
++        using var localEncryptionCipher = NativeUtf8String.From(configuration.LocalEncryptionCipher);
++        using var localEncryptionHexKey = NativeUtf8String.From(configuration.LocalEncryptionHexKey);
++        var features = configuration.LocalEncryptionCipher is null
++            ? configuration.ExperimentalFeatures
++            : string.IsNullOrEmpty(configuration.ExperimentalFeatures) ? "encryption" : configuration.ExperimentalFeatures + ",encryption";
++        using var experimentalFeatures = NativeUtf8String.From(features);
+ 
+         var databaseConfig = new TursoDatabaseConfig
+         {
+@@ -93,8 +102,8 @@ public static class TursoSyncBindings
+             Path = path.Pointer,
+             ExperimentalFeatures = experimentalFeatures.Pointer,
+             Vfs = IntPtr.Zero,
+-            EncryptionCipher = IntPtr.Zero,
+-            EncryptionHexKey = IntPtr.Zero,
++            EncryptionCipher = localEncryptionCipher.Pointer,
++            EncryptionHexKey = localEncryptionHexKey.Pointer,
+             PageCodec = IntPtr.Zero,
+             OpenFlags = 0,
+         };
