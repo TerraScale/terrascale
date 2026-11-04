@@ -84,6 +84,9 @@ Options go before or after the command and its operands; -- ends options.
   backup restore <db> <backup id> <new db> restore a backup into a new database
   backup restore-at <db> <time> <new db> [platform|customer]
                                           restore an RFC3339 instant (default platform)
+  backup rewind <db> <time> [platform|customer]
+                                          restore the database in place to an RFC3339
+                                          instant; later changes are lost; requires -yes
   shell <db>                              multiline SQL; .run submits; session history
   functions deploy <db> <file.js | dir>   deploy or replace a JavaScript function
                                           (a dir deploys its index.js); the file
@@ -191,6 +194,7 @@ var commands = map[string][]int{
 	"completion":         {1},
 	"shell":              {1},
 	"backup restore-at":  {3, 4},
+	"backup rewind":      {2, 3},
 	"backup policy":      {1},
 	"backup policy-set":  {3},
 	"backup window":      {1, 2},
@@ -396,8 +400,11 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			return consentRequired("backup destination changes require explicit consent: pass -yes; set reads its JSON only from stdin")
 		}
 	}
-	if yesSet && !slices.Contains([]string{"db delete", "db branch delete", "orgs delete", "projects delete", "backup destination", "functions delete", "keys revoke"}, name) {
+	if yesSet && !slices.Contains([]string{"db delete", "db branch delete", "orgs delete", "projects delete", "backup destination", "backup rewind", "functions delete", "keys revoke"}, name) {
 		return fmt.Errorf("-yes is only accepted for destructive commands: %w", errUsage)
+	}
+	if name == "backup rewind" && !*yes {
+		return consentRequired("backup rewind discards every change after its time: pass -yes to explicitly consent")
 	}
 	if (name == "orgs delete" || name == "projects delete") && !tty && !*yes {
 		return consentRequired("resource deletion requires a terminal: pass -yes to explicitly consent")
@@ -1099,7 +1106,7 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		}
 		fmt.Fprintf(out, "Restored %s into %s (%s)\n", args[1], m.Name, m.ID)
 		return nil
-	case "backup policy", "backup policy-set", "backup window", "backup plan", "backup restore-at":
+	case "backup policy", "backup policy-set", "backup window", "backup plan", "backup restore-at", "backup rewind":
 		return backupSettings(ctx, db, name, args[1:], out)
 	case "migrate up":
 		return migrateUp(ctx, db, out)
