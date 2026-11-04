@@ -82,7 +82,7 @@ except `rollback` returns `transaction_rolled_back` (40000) until `rollback()`, 
 `close()` the session stays closed.
 
 Gaps: the session is qualified against recorded exchanges
-(`sdk/dotnet/contracts/terrabase/sql/websocket-session.json`) on a local socket, not yet against a live TerraBase. It
+(`sdk/dotnet/contracts/terrabase/sql/websocket-session.json`) on a local socket, and on 2026-11-04 ran the same flow against live gru. It
 connects directly, without an HTTP proxy, and reads an upgrade refusal's body only as far as it arrived with the
 headers.
 

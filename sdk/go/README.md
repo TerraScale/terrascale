@@ -189,7 +189,7 @@ err = s.Transaction(ctx, func(s *v1.SQLSession) error {
   state. After `Close` calls return `ErrSQLSessionClosed`.
 - Tests replay the recorded session in
   [websocket-session.json](contracts/terrabase/sql/websocket-session.json)
-  against a local fake; the Go session has not yet run against a live TerraBase.
+  against a local fake; on 2026-11-04 a session ran the same flow against live gru.
 - Live sample: `go run ./examples/sql` with `TERRASCALE_API_KEY`,
   `TERRASCALE_PROJECT` and `TERRASCALE_DATABASE` creates a throwaway table,
   writes, reads and drops it.
