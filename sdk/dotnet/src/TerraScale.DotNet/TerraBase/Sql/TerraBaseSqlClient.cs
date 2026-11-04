@@ -29,7 +29,7 @@ public sealed record TerraBaseSqlClientOptions
     /// </summary>
     public string? ApiKey { get; init; }
 
-    /// <summary>Supplies the current bearer credential per request. Set this or ApiKey, exclusively.</summary>
+    /// <summary>Supplies the current bearer credential per request or connection. Set this or ApiKey, exclusively.</summary>
     public Func<CancellationToken, ValueTask<string>>? AccessTokenProvider { get; init; }
 
     /// <inheritdoc />
@@ -37,7 +37,7 @@ public sealed record TerraBaseSqlClientOptions
 }
 
 /// <summary>
-/// The TerraBase SQL client: SQL over REST (<c>…/sql/execute</c>). Built over
+/// The TerraBase SQL client: SQL over REST (<c>…/sql/execute</c>) and over the WebSocket (<c>…/sql/ws</c>). Built over
 /// a caller-owned <see cref="HttpClient"/> that it never disposes. Thread-safe.
 /// </summary>
 public sealed class TerraBaseSqlClient
@@ -147,4 +147,10 @@ public sealed class TerraBaseSqlDatabase
         return response.ToResults(statements.Count, status);
     }
 
+    /// <summary>
+    /// Opens a SQL WebSocket session for interactive transactions. The caller owns and disposes it. It connects with its
+    /// own connection, not the client's HttpClient.
+    /// </summary>
+    public Task<TerraBaseSqlSession> ConnectAsync(CancellationToken cancellationToken = default) =>
+        TerraBaseSqlSession.ConnectAsync(connection, path + "/sql/ws", cancellationToken);
 }

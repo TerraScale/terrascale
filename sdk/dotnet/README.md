@@ -19,8 +19,8 @@ carry their own pins; deployment, scope, plan and live-method qualification rema
 ## SQL
 
 `TerraBaseSqlClient` is the SQL surface: SQL over REST (`POST …/sql/execute`,
-[contract](contracts/terrabase/sql-execute.md)). The WebSocket session for interactive transactions follows once
-TerraBase serves `…/sql/ws`. Reads need `documents:read`; writes and
+[contract](contracts/terrabase/sql-execute.md)) and SQL over WebSocket (`GET …/sql/ws`, subprotocol
+`terrascale.sql.v1`, [contract](contracts/terrabase/sql-websocket.md)). Reads need `documents:read`; writes and
 schema changes need `documents:write`. The other SDKs copy this shape ([API shape](../SQL-API.md)).
 
 ```csharp
@@ -53,6 +53,26 @@ IReadOnlyList<Person> people = await db.QueryAsync("SELECT id, name FROM people"
   `unique_violation`), `Sqlstate` (such as `23505`) and `Statement` (zero-based index). The request rolled back.
   A REST request refused with `serialization_conflict` is resent at most twice; nothing else is resent.
 - Primary keys are ULIDs from `TerraScaleIdGenerator`; tables that take local writes avoid `AUTOINCREMENT`.
+
+Interactive transactions use the WebSocket session. The caller owns it; dispose closes it and rolls back an open
+transaction. A transaction lasts at most 5 seconds. Calls on one session may overlap; answers are matched by id.
+
+```csharp
+await using TerraBaseSqlSession session = await db.ConnectAsync(ct);
+long balance = await session.TransactionAsync(async (tx, token) =>
+{
+    await tx.ExecuteAsync("UPDATE accounts SET balance = balance - ? WHERE id = ?", [amount, from], token);
+    await tx.ExecuteAsync("UPDATE accounts SET balance = balance + ? WHERE id = ?", [amount, to], token);
+    return (await tx.QueryAsync("SELECT balance FROM accounts WHERE id = ?", [from], token))[0].GetInt64(0);
+}, ct);
+```
+
+`TransactionAsync` begins, runs the callback and commits; when the callback throws it rolls back and rethrows.
+`BeginAsync`, `CommitAsync` and `RollbackAsync` are the explicit form. After a failed statement inside a transaction
+every call throws `transaction_aborted` until rollback; commit then rolls back and throws `transaction_rolled_back`.
+Session errors have a null `StatusCode`. A refused upgrade throws the usual `TerraBaseException` subclass (401, 404,
+421 `TerraBaseWrongRegionException`). The session connects with its own `ClientWebSocket`, not the caller's
+`HttpClient`, and is never resent.
 
 [`samples/sql-quickstart.cs`](samples/sql-quickstart.cs) runs this flow against a live region with a ts CLI sign-in:
 `dotnet run samples/sql-quickstart.cs -- <refresh-token-file> <organization> <project> <database> <region>`.

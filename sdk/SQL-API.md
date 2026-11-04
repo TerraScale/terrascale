@@ -25,8 +25,6 @@ async conventions. The .NET SDK (`sdk/dotnet`, `TerraBaseSqlClient`) is the refe
 
 ## WebSocket: interactive transactions
 
-Ships once TerraBase serves the E3 protocol (`docs/terrabase/sql/websocket.md`); the .NET session is ready behind it.
-
 `GET /v1/projects/{project}/databases/{database}/sql/ws`, subprotocol `terrascale.sql.v1`.
 
 | Method | Notes |

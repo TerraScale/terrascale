@@ -82,8 +82,9 @@ public static class TerraBaseSqlErrorCodes
 }
 
 /// <summary>
-/// A refused SQL statement: <c>{"error":{"code","message","statement","sqlstate"}}</c>. The failing request rolled
-/// back. <see cref="Code"/> is one of <see cref="TerraBaseSqlErrorCodes"/>.
+/// A refused SQL statement: <c>{"code","message","statement","sqlstate"}</c> from REST or a WebSocket error frame. The
+/// failing request rolled back. <see cref="Code"/> is one of <see cref="TerraBaseSqlErrorCodes"/>. Over the WebSocket
+/// <see cref="HttpRequestException.StatusCode"/> is null.
 /// </summary>
 public sealed class TerraBaseSqlException : TerraBaseException
 {
