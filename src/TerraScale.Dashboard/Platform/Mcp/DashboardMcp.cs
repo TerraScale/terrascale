@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Schema;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol;
@@ -94,6 +95,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
         public static void AddDashboardMcp(this IServiceCollection services)
         {
             services.AddHttpContextAccessor();
+            services.AddSingleton<McpApiKeyTools>();
             services.AddHostedService<McpRegistrationReclaimer>();
             services.AddMcpServer(options =>
             {
@@ -106,11 +108,22 @@ namespace TerraScale.Dashboard.Platform.Mcp
                         request.Method == RequestMethods.ToolsCall && parameters["arguments"] is { } arguments && arguments is not JsonObject)
                         ? throw new McpProtocolException(parameters is JsonObject ? "Tool arguments must be a JSON object." : "Request params must be a JSON object.", McpErrorCode.InvalidParams)
                         : next(context, cancellationToken)))
-                .WithRequestFilters(filters => filters.AddListToolsFilter(next => (request, cancellationToken) =>
-                    // Every tool fits one page and no nextCursor is ever issued, so any cursor is foreign or forged.
-                    request.Params?.Cursor is not null
-                        ? throw new McpProtocolException("The cursor is invalid. tools/list returns every tool in one page; omit cursor.", McpErrorCode.InvalidParams)
-                        : next(request, cancellationToken))
+                .WithRequestFilters(filters => filters.AddListToolsFilter(next => async (request, cancellationToken) =>
+                {
+                    if (request.Params?.Cursor is not null)
+                        throw new McpProtocolException("The cursor is invalid. tools/list returns every tool in one page; omit cursor.", McpErrorCode.InvalidParams);
+                    var listing = await next(request, cancellationToken);
+                    var http = request.Services?.GetService<IHttpContextAccessor>()?.HttpContext;
+                    if (http?.Items[McpApiKeyTools.ContextKey] is not McpApiKeyTools.Credential) return listing;
+                    listing.Tools = [.. listing.Tools.Where(tool => McpApiKeyTools.Tools.Contains(tool.Name)).Select(tool => new Tool
+                    {
+                        Name = tool.Name, Title = tool.Title, Description = tool.Description, InputSchema = tool.InputSchema, Annotations = tool.Annotations,
+                        OutputSchema = tool.Name is "get_context" or "get_database"
+                            ? JsonSerializer.SerializeToElement(McpAgentJson.Default.Options.GetJsonSchemaAsNode(tool.Name == "get_context" ? typeof(McpKeyContext) : typeof(McpDatabase)))
+                            : tool.OutputSchema
+                    })];
+                    return listing;
+                })
                 .AddCallToolFilter(next => async (request, cancellationToken) =>
                 {
                     var http = request.Services?.GetService<IHttpContextAccessor>()?.HttpContext;
@@ -121,7 +134,9 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
                     try
                     {
-                        var result = await next(request, cancellationToken);
+                        var result = http?.Items[McpApiKeyTools.ContextKey] is McpApiKeyTools.Credential key
+                            ? await http.RequestServices.GetRequiredService<McpApiKeyTools>().InvokeAsync(key, request.Params!.Name, request.Params.Arguments, cancellationToken)
+                            : await next(request, cancellationToken);
                         if (result.IsError == true)
                         {
                             ServiceSloTelemetry.MarkBad(http);
@@ -253,8 +268,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 { context.Response.StatusCode = 403; return; }
                 if (context.Request.Headers["Sec-Fetch-Site"] == "cross-site") { context.Response.StatusCode = 403; return; }
                 if (!AuthenticationHeaderValue.TryParse(context.Request.Headers.Authorization, out var header) ||
-                    !header.Scheme.Equals("Bearer", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(header.Parameter) ||
-                    await context.RequestServices.GetRequiredService<AccessTokens>().ResolveAsync(header.Parameter, context.RequestAborted) is not { } principal)
+                    !header.Scheme.Equals("Bearer", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(header.Parameter))
                 {
                     // RFC 9728: the challenge points clients without a token at the OAuth sign-in metadata.
                     context.Response.Headers.WWWAuthenticate = $"Bearer realm=\"TerraScale MCP\", resource_metadata=\"{McpOAuth.ResourceMetadataUrl(context)}\"" +
@@ -268,7 +282,25 @@ namespace TerraScale.Dashboard.Platform.Mcp
                     bodyLimit.MaxRequestBodySize = 6 * 1024 * 1024 + 16 * 1024;
                 }
 
-                context.Items[ContextKey] = principal;
+                if (header.Parameter.StartsWith("tspat_", StringComparison.Ordinal))
+                {
+                    if (await context.RequestServices.GetRequiredService<AccessTokens>().ResolveAsync(header.Parameter, context.RequestAborted) is not { } principal)
+                    {
+                        context.Response.StatusCode = 401;
+                        return;
+                    }
+                    context.Items[ContextKey] = principal;
+                }
+                else
+                {
+                    var project = context.Request.Headers["X-TerraScale-Project"].ToString();
+                    if (await context.RequestServices.GetRequiredService<McpApiKeyTools>().AuthenticateAsync(header.Parameter, project, context.RequestAborted) is not { } key)
+                    {
+                        context.Response.StatusCode = 401;
+                        return;
+                    }
+                    context.Items[McpApiKeyTools.ContextKey] = key;
+                }
                 await next(context);
             });
             app.MapMcp("/mcp");

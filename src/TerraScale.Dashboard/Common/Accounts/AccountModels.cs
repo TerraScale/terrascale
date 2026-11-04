@@ -152,6 +152,7 @@ namespace TerraScale.Dashboard.Common.Accounts
         public int BackupRetentionDays { get; set; }
         public string? BranchedFrom { get; set; }
         public DateTimeOffset CreatedAt { get; set; }
+        public DateTimeOffset? ExpiresAt { get; set; }
     }
 
     public sealed class OperationLimits
