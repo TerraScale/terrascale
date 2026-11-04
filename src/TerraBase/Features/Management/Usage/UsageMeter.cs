@@ -21,6 +21,10 @@ internal sealed record ObservationFilter(Func<UsageDimension, bool> Keep, Action
 internal sealed record UsageTotals(long Reads, long Writes)
 {
     public OpCounts Counts => new(Reads, Writes);
+
+    public long StorageByteHours { get; init; }
+
+    public long SampledHour { get; init; } = -1;
 }
 
 internal sealed record OpCounts(long Reads, long Writes, IReadOnlyDictionary<string, UsageReading>? Meters = null, long ReadUnits = 0, long WriteUnits = 0)
@@ -101,7 +105,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     public void RecordRead(TenantContext database, long units)
     {
         Buffer(new(DatabaseOwner.Of(database), CurrentHour()), 1, 0, units, 0);
-        CountMonth(database, units);
+        CountMonth(database, units, 0);
         RecordOperation(database, "read", 1);
         stats.Read(database);
     }
@@ -109,7 +113,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     public void RecordWrites(TenantContext database, int writes, long units)
     {
         Buffer(new(DatabaseOwner.Of(database), CurrentHour()), 0, writes, 0, units);
-        CountMonth(database, units);
+        CountMonth(database, 0, units);
         stats.Wrote(database, writes);
     }
 
@@ -513,13 +517,48 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     private static async ValueTask AddUnitsAsync(IStorageTransaction transaction, string collection, string id, UsageTotals units, CancellationToken cancellationToken)
     {
         var saved = await SystemCatalog.GetAsync(transaction, collection, id, TerraBaseJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false);
-        await PutAsync(transaction, collection, id, new UsageTotals((saved?.Reads ?? 0) + units.Reads, (saved?.Writes ?? 0) + units.Writes),
+        await PutAsync(transaction, collection, id, (saved ?? new UsageTotals(0, 0)) with { Reads = (saved?.Reads ?? 0) + units.Reads, Writes = (saved?.Writes ?? 0) + units.Writes },
             TerraBaseJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false);
     }
 
-    internal async ValueTask<MonthUnitsResult> GetMonthAsync(string organizationId, string? projectId, CancellationToken cancellationToken)
+    internal async ValueTask<Unavailable?> AddStorageHoursAsync(IReadOnlyDictionary<string, long> bytes, CancellationToken cancellationToken)
     {
-        var month = MonthId(CurrentHour());
+        var hour = CurrentHour();
+        var month = MonthId(hour);
+        foreach (var batch in bytes.Where(entry => entry.Value > 0).Chunk(100))
+        {
+            var written = await catalog.WriteAsync<Unavailable?>(async transaction =>
+            {
+                foreach (var (organizationId, stored) in batch)
+                {
+                    var collection = OrganizationMonths(organizationId);
+                    var id = Own(month);
+                    var saved = await SystemCatalog.GetAsync(transaction, collection, id, TerraBaseJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false)
+                        ?? new UsageTotals(0, 0);
+                    if (saved.SampledHour >= hour)
+                    {
+                        continue;
+                    }
+
+                    var hours = saved.SampledHour >= 0 && MonthId(saved.SampledHour) == month ? hour - saved.SampledHour : 1;
+                    await PutAsync(transaction, collection, id, saved with { StorageByteHours = checked(saved.StorageByteHours + (stored * hours)), SampledHour = hour },
+                        TerraBaseJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false);
+                }
+
+                return null;
+            }, static error => error, cancellationToken).ConfigureAwait(false);
+            if (written is { } refused)
+            {
+                return refused;
+            }
+        }
+
+        return null;
+    }
+
+    internal async ValueTask<MonthUnitsResult> GetMonthAsync(string organizationId, string? projectId, CancellationToken cancellationToken, DateTimeOffset? of = null)
+    {
+        var month = of is { } start ? start.ToString("yyyy-MM", CultureInfo.InvariantCulture) : MonthId(CurrentHour());
         await _flush.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -546,7 +585,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                         }
 
                         var saved = JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.UsageTotals)!;
-                        units = new(units.Reads + saved.Reads, units.Writes + saved.Writes);
+                        units = new(units.Reads + saved.Reads, units.Writes + saved.Writes) { StorageByteHours = checked(units.StorageByteHours + saved.StorageByteHours) };
                     }
 
                     if (!page.HasMore)
@@ -571,7 +610,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                 if (key.Database.OrganizationId == organizationId && (projectId is null || key.Database.ProjectId == projectId)
                     && key.Scope != UsageScope.Lifetime && MonthId(key.Hour) == month)
                 {
-                    total = new(total.Reads + counts.ReadUnits, total.Writes + counts.WriteUnits);
+                    total = total with { Reads = total.Reads + counts.ReadUnits, Writes = total.Writes + counts.WriteUnits };
                 }
             }
 

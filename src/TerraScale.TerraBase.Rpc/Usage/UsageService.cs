@@ -44,9 +44,9 @@ namespace TerraScale.TerraBase.Rpc.Usage
         }
 
         /// <inheritdoc />
-        public async UnaryResult<JsonElement> ListAllowancesAsync(string? after)
+        public async UnaryResult<JsonElement> ListAllowancesAsync(string? after, string? month)
         {
-            var answer = await api.SendAsync(Context, "GET", "/v1/usage/allowances" + RestPaths.Query(("after", after)));
+            var answer = await api.SendAsync(Context, "GET", "/v1/usage/allowances" + RestPaths.Query(("after", after), ("month", month)));
             return RestApi.Read(answer, UsageJson.Default.JsonElement);
         }
 

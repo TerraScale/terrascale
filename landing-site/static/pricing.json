@@ -9,20 +9,21 @@
     "operationUnit": {
       "name": "Operation unit",
       "bytes": 4096,
-      "definition": "One operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written.",
+      "definition": "One operation unit is each started 4 KiB (4,096 bytes) of data successfully written; every changed row counts at least one unit. Only writes are billed.",
       "rules": [
-        "Lists, queries, and batches count each item independently.",
-        "Each database lives in one home region; reads and writes count there.",
-        "Failed, denied, invalid, throttled, and not-found requests are not billed."
+        "Statements, transactions, and batches count each changed row independently.",
+        "Each database lives in one home region; writes count there.",
+        "SQL reads are not billed; they count toward the plan's monthly SQL read fair use. Shape reads served from the edge are free and not counted.",
+        "Failed, denied, invalid, throttled, and refused statements are not billed."
       ]
     },
     "storage": {
       "name": "Storage",
-      "definition": "Stored bytes in the database's home region."
+      "definition": "Stored bytes in the database's home region, sampled hourly. One GB-month is 1 GB (10^9 bytes) stored for a whole month."
     },
     "allowances": {
       "paidOverages": true,
-      "definition": "Free includes small allowances without a card; new writes stop at its operation allowance and there are no overage charges. Paid plans include monthly allowances; operation units over the allowance are added to the next subscription invoice at the overage rate. Storage and client egress over the allowance are not billed yet."
+      "definition": "Free includes small allowances without a card; new writes stop at its operation allowance and there are no overage charges. Paid plans include monthly allowances; operation units over the allowance are added to the next subscription invoice at the overage rate, up to the plan's hard cap (operationUnitCapPerMonth), where new writes stop until the next UTC month or an upgrade. SQL reads stop at the plan's fair use (sqlReadUnitsPerMonth); shape reads stay available. Storage over the allowance is added to the next invoice at the storage overage rate per GB-month of average stored bytes above it. Client egress over the allowance is not billed yet."
     },
     "entitlements": {
       "name": "Plan entitlements",
@@ -54,6 +55,8 @@
         "members": 1,
         "storageGb": 0.1,
         "operationUnitsPerMonth": 50000,
+        "operationUnitCapPerMonth": 50000,
+        "sqlReadUnitsPerMonth": 500000,
         "egressGbPerMonth": 1
       },
       "entitlements": {
@@ -82,6 +85,8 @@
         "members": 5,
         "storageGb": 1,
         "operationUnitsPerMonth": 250000,
+        "operationUnitCapPerMonth": 2500000,
+        "sqlReadUnitsPerMonth": 2500000,
         "egressGbPerMonth": 5
       },
       "entitlements": {
@@ -110,6 +115,8 @@
         "members": 25,
         "storageGb": 10,
         "operationUnitsPerMonth": 2000000,
+        "operationUnitCapPerMonth": 20000000,
+        "sqlReadUnitsPerMonth": 20000000,
         "egressGbPerMonth": 50
       },
       "entitlements": {
@@ -138,6 +145,8 @@
         "members": 100,
         "storageGb": 25,
         "operationUnitsPerMonth": 5000000,
+        "operationUnitCapPerMonth": 50000000,
+        "sqlReadUnitsPerMonth": 50000000,
         "egressGbPerMonth": 100
       },
       "entitlements": {
@@ -166,6 +175,8 @@
         "members": null,
         "storageGb": 100,
         "operationUnitsPerMonth": 10000000,
+        "operationUnitCapPerMonth": null,
+        "sqlReadUnitsPerMonth": null,
         "egressGbPerMonth": 250
       },
       "entitlements": {

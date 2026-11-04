@@ -156,7 +156,7 @@ export const ptBr: Messages = {
       },
       {
         q: 'Quanto custa para começar?',
-        a: 'Free não exige cartão. Starter, Pro e Team são cobrados mensal ou anualmente. Unidades de operação acima de uma franquia paga vão para a próxima fatura; excedentes de armazenamento e saída para clientes ainda não são cobrados.',
+        a: 'Free não exige cartão. Starter, Pro e Team são cobrados mensal ou anualmente. Unidades de operação acima de uma franquia paga vão para a próxima fatura e o armazenamento acima dela é cobrado por GB-mês; o excedente de saída para clientes ainda não é cobrado.',
       },
       {
         q: 'Posso exportar meus dados e sair?',
@@ -246,7 +246,7 @@ export const ptBr: Messages = {
       },
       {
         title: 'Franquias e uso adicional',
-        text: 'Unidades de operação acima da franquia paga vão para a próxima fatura; excedentes de armazenamento e saída para clientes ainda não são cobrados',
+        text: 'Unidades de operação acima da franquia paga vão para a próxima fatura e o armazenamento acima dela é cobrado por GB-mês; o excedente de saída para clientes ainda não é cobrado',
       },
     ],
     compare: {
@@ -284,7 +284,7 @@ export const ptBr: Messages = {
     detailed: {
       titleLead: 'Tarifas de uso',
       titleAccent: 'aprovadas',
-      text: 'Planos pagos incluem as franquias. Unidades de operação acima da franquia são adicionadas à próxima fatura da assinatura pela tarifa abaixo; excedentes de armazenamento e saída para clientes ainda não são cobrados. O Free interrompe novas gravações ao atingir sua franquia de operações e não tem cobranças de excedentes.',
+      text: 'Planos pagos incluem as franquias. Unidades de operação acima da franquia são adicionadas à próxima fatura da assinatura pela tarifa abaixo e o armazenamento acima dela é cobrado por GB-mês; o excedente de saída para clientes ainda não é cobrado. O Free interrompe novas gravações ao atingir sua franquia de operações e não tem cobranças de excedentes.',
       headItem: 'Item',
       headPricing: 'Preço',
       headDetails: 'Detalhes',
@@ -317,7 +317,7 @@ export const ptBr: Messages = {
         },
         {
           q: 'E se eu precisar de mais operações, armazenamento ou saída?',
-          a: 'Planos pagos incluem franquias mensais. Unidades de operação acima da franquia são adicionadas à próxima fatura da assinatura pela tarifa de excedentes; excedentes de armazenamento e saída para clientes ainda não são cobrados. O Free interrompe novas gravações ao atingir sua franquia de operações e não tem cobranças de excedentes.',
+          a: 'Planos pagos incluem franquias mensais. Unidades de operação acima da franquia são adicionadas à próxima fatura da assinatura pela tarifa de excedentes e o armazenamento acima dela é cobrado por GB-mês; o excedente de saída para clientes ainda não é cobrado. O Free interrompe novas gravações ao atingir sua franquia de operações e não tem cobranças de excedentes.',
         },
         {
           q: 'Como as assinaturas são cobradas?',
@@ -371,7 +371,7 @@ export const ptBr: Messages = {
       },
       {
         title: 'Cobrança consciente do uso',
-        text: 'Free não exige cartão. Planos pagos cobram na próxima fatura as unidades de operação acima da franquia; excedentes de armazenamento e saída para clientes ainda não são cobrados.',
+        text: 'Free não exige cartão. Planos pagos cobram na próxima fatura as unidades de operação acima da franquia e o armazenamento acima dela é cobrado por GB-mês; o excedente de saída para clientes ainda não é cobrado.',
       },
     ],
     bandTitle: 'Preços regionais fixos, medidos pelo uso real.',

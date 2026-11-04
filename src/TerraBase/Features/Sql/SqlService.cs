@@ -8,7 +8,7 @@ using TerraBase.Tenancy;
 namespace TerraBase.Features.Sql;
 
 internal sealed class SqlService(
-    IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, TimeProvider time,
+    IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time,
     [FromKeyedServices(SqlLimits.TransactionClock)] TimeProvider transactionTime) : ISqlService
 {
     private const int MaxTables = 10_000;
@@ -16,7 +16,7 @@ internal sealed class SqlService(
     public ISqlSession Open(TenantContext database, bool canWrite)
     {
         ArgumentNullException.ThrowIfNull(database);
-        return new SqlSession(engine, quota, usage, time, transactionTime, database, canWrite);
+        return new SqlSession(engine, quota, usage, allowance, time, transactionTime, database, canWrite);
     }
 
     public async ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(TenantContext database, CancellationToken cancellationToken)
@@ -62,7 +62,8 @@ internal sealed class SqlService(
 
 
 internal sealed class SqlSession(
-    IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, TimeProvider time, TimeProvider transactionTime, TenantContext database, bool canWrite)
+    IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time, TimeProvider transactionTime,
+    TenantContext database, bool canWrite)
     : ISqlSession
 {
     private const int MaxStatements = 256;
@@ -365,11 +366,41 @@ internal sealed class SqlSession(
                 return Empty;
             case SqlStatementKind.Savepoint or SqlStatementKind.Release or SqlStatementKind.RollbackTo:
                 return await SavepointAsync(plan, admit, first, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (await AllowedAsync(plan, cancellationToken).ConfigureAwait(false) is { } capped)
+        {
+            return capped;
+        }
+
+        switch (plan.Kind)
+        {
             case var _ when _inTransaction:
                 return await InTransactionAsync(plan, command, admit, first, cancellationToken).ConfigureAwait(false);
             default:
                 return await AutocommitAsync(plan, command, admit, first, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private async ValueTask<SqlError?> AllowedAsync(SqlStatementPlan plan, CancellationToken cancellationToken)
+    {
+        MeteredOperation? metered = plan.Kind switch
+        {
+            SqlStatementKind.Write => MeteredOperation.Write,
+            SqlStatementKind.Read when plan.ReadsTables => MeteredOperation.SqlRead,
+            _ => null,
+        };
+        if (metered is not { } operation)
+        {
+            return null;
+        }
+
+        return await allowance.CheckAsync(database, operation, cancellationToken).ConfigureAwait(false) switch
+        {
+            QuotaExceeded exceeded => SqlErrors.Quota(exceeded.Message),
+            Unavailable => SqlErrors.Busy("usage accounting is unavailable; retry"),
+            _ => null,
+        };
     }
 
     private async ValueTask<SqlOutcome> AutocommitAsync(
@@ -659,7 +690,7 @@ internal sealed class SqlSession(
             lease?.Committed(growth);
             if (tally.Rows > 0)
             {
-                usage.RecordWrites(database, (int)tally.Rows, tally.Rows);
+                usage.RecordWrites(database, (int)tally.Rows, Math.Max(tally.Rows, OperationUnits.Of(Math.Max(0, growth))));
                 foreach (var (kind, count) in tally.Operations)
                 {
                     usage.RecordOperation(database, kind, count);
