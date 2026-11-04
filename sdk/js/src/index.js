@@ -24,6 +24,7 @@ export {
 export { v1Filter } from "./v1/filter.js";
 export { V1TableShape } from "./v1/table-shape.js";
 /** @typedef {import("./v1/table-shape.js").V1TableRow} V1TableRow */
+/** @typedef {import("./v1/table-shape.js").V1TableShapeRequest} V1TableShapeRequest */
 /** @typedef {import("./v1/table-shape.js").V1TableShapeSubscribeOptions} V1TableShapeSubscribeOptions */
 export { V1ShapeSubscription } from "./v1/shape-subscription.js";
 export { indexedDbShapeReplica } from "./v1/shape-replica.js";

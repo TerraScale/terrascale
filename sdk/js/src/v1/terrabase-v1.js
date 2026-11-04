@@ -989,12 +989,13 @@ export class V1Database {
   }
 
   /**
-   * A SQL table's shape: `shape("todos").subscribe(({ rows }) => …)` syncs every row, then live changes.
+   * A SQL table's shape: `shape("todos", { where: "done = 0" }).subscribe(({ rows }) => …)` syncs the matching rows, then live changes.
    * @param {string} table
+   * @param {import("./table-shape.js").V1TableShapeRequest} [request]
    * @returns {V1TableShape}
    */
-  shape(table) {
-    return new V1TableShape(this.#transport, this.name, table);
+  shape(table, request = {}) {
+    return new V1TableShape(this.#transport, this.name, table, request);
   }
 
   /** @param {import("./changes.js").V1ChangeStreamRequest} [request] @param {V1RequestOptions} [options] */

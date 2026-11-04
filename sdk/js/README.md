@@ -284,7 +284,15 @@ listener runs after the snapshot and after every change, with `rows` keyed by ro
 `upToDate` once the shape reached the table's head. Row values decode like SQL results (`Uint8Array` blobs).
 A schema change of the table restarts the shape from a new snapshot; transient refusals and lost connections retry
 with backoff; authentication, scope and unknown-table errors reject `done`. It needs `documents:read`; end-user
-tokens are not accepted yet, and filters and column lists are not available yet.
+tokens are not accepted yet.
+
+```js
+const open = db.shape("todos", { where: "done = 0", columns: ["id", "title"] }).subscribe(({ rows }) => render(rows));
+```
+
+`where` is a SQL condition and `columns` the columns each row carries; the SDK repeats both on every request. A row
+that starts matching moves in and one that stops matching moves out, so `rows` always holds exactly the matching
+rows.
 
 ## Collection shape subscriptions (retired)
 

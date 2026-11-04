@@ -3,6 +3,7 @@ import { expect, test } from "vitest";
 import { fixture, prefix, token } from "./helpers/v1-http.js";
 
 const recorded = JSON.parse(readFileSync(new URL("./fixtures/table-shape/todos.json", import.meta.url), "utf8"));
+const filtered = JSON.parse(readFileSync(new URL("./fixtures/table-shape/todos-where.json", import.meta.url), "utf8"));
 
 test("shape(table).subscribe() applies the snapshot, then live changes", async () => {
   const { client, requests } = await fixture((request, response) => {
@@ -25,4 +26,25 @@ test("shape(table).subscribe() applies the snapshot, then live changes", async (
     { offset: "6", upToDate: true, rows: { 3: { id: 3, title: "Renamed", data: null }, 7: { id: 7, title: "Live", data: null } } },
   ]);
   expect(requests.at(-1)?.url.searchParams.get("cursor")).toBe("88400000");
+});
+
+test("shape(table, { where, columns }) repeats the filter on every call and applies move-in and move-out", async () => {
+  const { client, requests } = await fixture((request, response) => {
+    const exchange = filtered.exchanges.find((/** @type {{ offset: string }} */ entry) => entry.offset === request.url.searchParams.get("offset"));
+    if (exchange === undefined) { response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ...filtered.exchanges[2].body, offset: "10", changes: [] })); return; }
+    if (exchange.status === 307) { response.writeHead(307, { location: `${request.url.pathname}?where=${encodeURIComponent(filtered.where)}&columns=${filtered.columns}&${exchange.location}` }).end(); return; }
+    response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(exchange.body));
+  });
+  /** @type {Record<string, unknown>[]} */
+  const views = [];
+  const subscription = client.database("app").shape("todos", { where: filtered.where, columns: ["id", "title"] }).subscribe(state => {
+    views.push(Object.fromEntries(state.rows));
+    if (state.offset === "10") subscription.close();
+  });
+  await subscription.done;
+  expect(requests.every(request => request.url.searchParams.get("where") === filtered.where && request.url.searchParams.get("columns") === filtered.columns)).toBe(true);
+  expect(views).toEqual([
+    { 3: { id: 3, title: "Write docs" }, 4: { id: 4, title: "Ship" } },
+    { 4: { id: 4, title: "Ship it" }, 9: { id: 9, title: "Reopened" } },
+  ]);
 });

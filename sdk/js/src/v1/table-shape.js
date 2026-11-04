@@ -16,6 +16,11 @@ import { decodeSqlValue } from "./sql-execute.js";
  * @property {string} offset The commit boundary the rows are at.
  */
 /**
+ * @typedef {object} V1TableShapeRequest
+ * @property {string | undefined} [where] A SQL condition over the table's columns; only matching rows are in the shape.
+ * @property {readonly string[] | undefined} [columns] The columns each row carries; default every stored column.
+ */
+/**
  * @typedef {object} V1TableShapeSubscribeOptions
  * @property {AbortSignal | undefined} [signal] Closes the subscription when aborted.
  */
@@ -44,12 +49,29 @@ export class V1TableShape {
   #transport;
   /** @type {Readonly<Record<string, string>>} */
   #params;
+  /** @type {Readonly<Record<string, string>>} */
+  #filter;
 
-  /** @param {V1Transport} transport @param {string} database @param {string} table */
-  constructor(transport, database, table) {
+  /** @param {V1Transport} transport @param {string} database @param {string} table @param {V1TableShapeRequest} [request] */
+  constructor(transport, database, table, request = {}) {
     if (typeof table !== "string" || !tablePattern.test(table)) throw new TypeError("A table name is 1 to 63 letters, digits and underscores, not starting with a digit, _tb_, turso_ or sqlite_.");
+    if (request === null || typeof request !== "object" || Array.isArray(request)) throw new TypeError("A shape request is { where?, columns? }.");
+    const { where, columns, ...extra } = request;
+    for (const member of Object.keys(extra)) throw new TypeError(`Unknown shape member ${member}.`);
+    /** @type {Record<string, string>} */
+    const filter = {};
+    if (where !== undefined) {
+      if (typeof where !== "string" || where.trim() === "") throw new TypeError("where is a non-empty SQL condition.");
+      filter.where = where;
+    }
+    if (columns !== undefined) {
+      if (!Array.isArray(columns) || columns.length === 0 || columns.some(column => typeof column !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(column)) || new Set(columns).size !== columns.length)
+        throw new TypeError("columns is a non-empty list of distinct column names.");
+      filter.columns = columns.join(",");
+    }
     this.#transport = transport;
     this.#params = Object.freeze({ database, table });
+    this.#filter = Object.freeze(filter);
   }
 
   /**
@@ -82,7 +104,7 @@ export class V1TableShape {
     /** @type {string | undefined} */
     let cursor;
     for (let attempt = 0; !signal.aborted;) {
-      const query = new URLSearchParams(handle === "" ? { offset } : { handle, offset });
+      const query = new URLSearchParams({ ...this.#filter, ...(handle === "" ? { offset } : { handle, offset }) });
       if (upToDate && !offset.startsWith("snap.")) {
         query.set("live", "true");
         if (cursor !== undefined) query.set("cursor", cursor);
@@ -114,8 +136,9 @@ export class V1TableShape {
         for (const entry of array(object(change, "shape change").ops, "shape ops")) {
           const op = object(entry, "shape op");
           const key = string(op.key, "shape key");
-          if (op.op === "delete") rows.delete(key);
-          else if (op.op === "insert" || op.op === "update") rows.set(key, decodeRow(object(op.row, "shape row")));
+          if (op.move !== undefined && op.move !== "in" && op.move !== "out") malformed("shape move");
+          if (op.move === "out" || (op.move === undefined && op.op === "delete")) rows.delete(key);
+          else if (op.move === "in" || op.op === "insert" || op.op === "update") rows.set(key, decodeRow(object(op.row, "shape row")));
           else malformed("shape op");
         }
       }

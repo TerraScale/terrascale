@@ -1,0 +1,17 @@
+{
+  "source": "F2 handoff 2026-11-04: where=<sql> and columns=a,b repeated on every call; ops may carry move: in | out",
+  "where": "done = 0",
+  "columns": "id,title",
+  "exchanges": [
+    { "offset": "-1", "status": 307, "location": "handle=h1-fedcba9876543210&offset=snap.8.0" },
+    { "offset": "snap.8.0", "status": 200, "body": { "shape_id": "fedcba9876543210fedcba9876543210", "handle": "h1-fedcba9876543210", "offset": "snap.8.0", "next_offset": "8", "values_at": "8", "up_to_date": true,
+      "changes": [{ "offset": "8", "ops": [
+        { "op": "insert", "key": "3", "row": { "id": 3, "title": "Write docs" } },
+        { "op": "insert", "key": "4", "row": { "id": 4, "title": "Ship" } }] }] } },
+    { "offset": "8", "status": 200, "body": { "shape_id": "fedcba9876543210fedcba9876543210", "handle": "h1-fedcba9876543210", "offset": "8", "next_offset": "10", "values_at": "10", "up_to_date": true,
+      "changes": [{ "offset": "10", "ops": [
+        { "op": "update", "key": "3", "move": "out" },
+        { "op": "update", "key": "9", "move": "in", "row": { "id": 9, "title": "Reopened" } },
+        { "op": "update", "key": "4", "row": { "id": 4, "title": "Ship it" } }] }] } }
+  ]
+}
