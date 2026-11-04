@@ -141,6 +141,10 @@ def prepare(area, sha, directory):
     env = dict(os.environ, CI='true', RUNNER_TEMP=str(directory), TS_AUTH_REVISION=sha,
                TERRABASE_REVISION=sha, SourceRevisionId=sha, ContinuousIntegrationBuild='true',
                DeterministicSourcePaths='false')
+    # Runtime-specific executables consume portable project-reference outputs.
+    # Auth pins the SDK reference's framework, which bypasses MSBuild's normal
+    # RID-agnostic negotiation; retain its existing portable locked assets.
+    env['_GlobalPropertiesToRemoveFromProjectReferences'] = ';RuntimeIdentifier;SelfContained'
     # Use the real CLI after phased tests; all checks and packaging run once.
     env.pop('TS_SHIP_PHASE', None)
     env.pop('TS_SHIP_MANIFEST', None)
