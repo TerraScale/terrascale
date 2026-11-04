@@ -154,7 +154,7 @@ internal sealed class UserAuthenticationHandler(
             {
                 claims.AddRange(tables.EnumerateArray().Select(table => table.GetString()!).Distinct(StringComparer.Ordinal).Select(table => new Claim("tables", table)));
             }
-            // These admit only the document pipeline; collection rules decide every data operation.
+            // The endpoint gate admits end users only to shapes and file storage; read grants and bucket rules decide each operation.
             claims.Add(new Claim("scope", "sql:read"));
             claims.Add(new Claim("scope", "sql:write"));
         }

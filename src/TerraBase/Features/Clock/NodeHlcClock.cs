@@ -24,9 +24,9 @@ internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions optio
     {
         var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
         await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
-        var document = await transaction.GetAsync("node_clocks", options.MachineId, cancellationToken).ConfigureAwait(false);
-        var state = document is null ? null : JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.HlcState);
-        if (document is not null && (state is not { Version: 1 } || state.Timestamp.PhysicalMilliseconds < 0 || state.Timestamp.NodeId != options.MachineId))
+        var record = await transaction.GetAsync("node_clocks", options.MachineId, cancellationToken).ConfigureAwait(false);
+        var state = record is null ? null : JsonSerializer.Deserialize(record.Json.Span, TerraBaseJsonContext.Default.HlcState);
+        if (record is not null && (state is not { Version: 1 } || state.Timestamp.PhysicalMilliseconds < 0 || state.Timestamp.NodeId != options.MachineId))
         {
             throw new InvalidDataException("the persisted HLC is invalid");
         }

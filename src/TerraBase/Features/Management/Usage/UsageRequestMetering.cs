@@ -13,7 +13,7 @@ public static class UsageRequestMetering
 {
     /// <summary>
     /// Attributes the request to an authorized database an endpoint resolved itself, without publishing it as the request's
-    /// tenant: its request count, latency and body bytes are metered, and no document operation is.
+    /// tenant: its request count, latency and body bytes are metered, and no database operation is.
     /// </summary>
     public static void Attribute(HttpContext context, TenantContext database)
     {

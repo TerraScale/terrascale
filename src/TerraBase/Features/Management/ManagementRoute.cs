@@ -42,12 +42,6 @@ internal static class ManagementRoute
         "Authorization: Bearer <ts-auth access token>; its sub is the acting user. On the internal listener only, the "
         + "platform operator instead, with X-TerraBase-User-Id naming the acting user. Organizations the user did not create answer 404.";
 
-    public const string Sql = Database + "/sql";
-    public const string SavedQueries = Project + "/saved-queries";
-    public const string SavedQuery = SavedQueries + "/{query}";
-    public const string Indexes = Database + "/indexes";
-    public const string Index = Indexes + "/{index}";
-    public const string IndexRecommendations = Database + "/index-recommendations";
     public const string PageDescription = "Query: after (exclusive cursor from the previous page's next), limit (1 to 100, default 20). Items are in creation order.";
 
     private const int MaxDisplayNameLength = 128;
@@ -58,7 +52,7 @@ internal static class ManagementRoute
     {
         foreach (var (name, value) in context.Request.RouteValues)
         {
-            if (name is not ("index" or "collection" or "databaseName" or "recommendation" or "function" or "table")
+            if (name is not ("databaseName" or "function" or "table")
                 && !EntityIds.IsValid(value as string))
             {
                 return new Validation(name + " must be a canonical uppercase ULID");

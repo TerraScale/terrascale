@@ -174,15 +174,15 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
             return !meters ? Strip(counts, meters) : filter is null ? counts : Retain(counts, filter);
         }
 
-        OpCounts Parse(StoredRecord document)
+        OpCounts Parse(StoredRecord record)
         {
             if (!meters)
             {
-                return JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.UsageTotals)!.Counts;
+                return JsonSerializer.Deserialize(record.Json.Span, TerraBaseJsonContext.Default.UsageTotals)!.Counts;
             }
 
-            using var parsing = filter?.Hold(document.Json.Length * ParsedBytesPerJsonByte);
-            return Shape(JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.OpCounts)!);
+            using var parsing = filter?.Hold(record.Json.Length * ParsedBytesPerJsonByte);
+            return Shape(JsonSerializer.Deserialize(record.Json.Span, TerraBaseJsonContext.Default.OpCounts)!);
         }
 
         var owner = DatabaseOwner.Of(database);
@@ -294,7 +294,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
             new UsageCounts(
                 await ReadLifetimeAsync(transaction, owner.DatabaseId, parse, cancellationToken).ConfigureAwait(false),
                 await ReadSeriesAsync(transaction, owner.DatabaseId, window, parse, proceed, cancellationToken).ConfigureAwait(false)),
-            await SystemCatalog.GetAsync(transaction, UsageCollection(owner.DatabaseId), Own(LastFlush), TerraBaseJsonContext.Default.String,
+            await SystemCatalog.GetAsync(transaction, UsageKind(owner.DatabaseId), Own(LastFlush), TerraBaseJsonContext.Default.String,
                 cancellationToken).ConfigureAwait(false)),
             static error => error, cancellationToken).ConfigureAwait(false);
 
@@ -401,7 +401,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         {
             foreach (var database in doubt.Batch.Select(entry => entry.Key.Database.DatabaseId).Distinct())
             {
-                if (await SystemCatalog.GetAsync(transaction, UsageCollection(database), Own(LastFlush), TerraBaseJsonContext.Default.String, cancellationToken)
+                if (await SystemCatalog.GetAsync(transaction, UsageKind(database), Own(LastFlush), TerraBaseJsonContext.Default.String, cancellationToken)
                     .ConfigureAwait(false) == doubt.Id)
                 {
                     return true;
@@ -441,7 +441,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         string id, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
     {
         var minute = CurrentMinute();
-        List<(string Collection, string OldestKept)> pruned = [];
+        List<(string Kind, string OldestKept)> pruned = [];
         var result = await catalog.WriteAsync<FlushResult>(async transaction =>
         {
             pruned.Clear();
@@ -465,18 +465,18 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                     dropped++;
                     foreach (var granularity in UsageWindow.Granularities)
                     {
-                        _ = _pruned.TryRemove(Collection(database.DatabaseId, granularity), out _);
+                        _ = _pruned.TryRemove(Kind(database.DatabaseId, granularity), out _);
                     }
 
                     continue;
                 }
 
-                var usage = UsageCollection(database.DatabaseId);
+                var usage = UsageKind(database.DatabaseId);
                 await AddAsync(transaction, usage, Own(Ops), entries.Aggregate(OpCounts.Zero, (sum, entry) => sum + entry.Value), cancellationToken).ConfigureAwait(false);
                 await PutAsync(transaction, usage, Own(LastFlush), id, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false);
                 foreach (var granularity in UsageWindow.Granularities)
                 {
-                    var buckets = Collection(database.DatabaseId, granularity);
+                    var buckets = Kind(database.DatabaseId, granularity);
 
                     var oldestKept = OldestKept(granularity, minute);
                     foreach (var bucket in entries.Where(entry => entry.Key.In(granularity)).GroupBy(entry => entry.Key.Bucket(granularity))
@@ -499,25 +499,25 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         }, static error => error, cancellationToken).ConfigureAwait(false);
         if (result is int)
         {
-            foreach (var (collection, oldest) in pruned)
+            foreach (var (kind, oldest) in pruned)
             {
-                _pruned[collection] = oldest;
+                _pruned[kind] = oldest;
             }
         }
 
         return result;
     }
 
-    private static async ValueTask AddAsync(IStorageTransaction transaction, string collection, string id, OpCounts counts, CancellationToken cancellationToken)
+    private static async ValueTask AddAsync(IStorageTransaction transaction, string kind, string id, OpCounts counts, CancellationToken cancellationToken)
     {
-        var saved = await SystemCatalog.GetAsync(transaction, collection, id, TerraBaseJsonContext.Default.OpCounts, cancellationToken).ConfigureAwait(false);
-        await PutAsync(transaction, collection, id, (saved ?? OpCounts.Zero) + counts, TerraBaseJsonContext.Default.OpCounts, cancellationToken).ConfigureAwait(false);
+        var saved = await SystemCatalog.GetAsync(transaction, kind, id, TerraBaseJsonContext.Default.OpCounts, cancellationToken).ConfigureAwait(false);
+        await PutAsync(transaction, kind, id, (saved ?? OpCounts.Zero) + counts, TerraBaseJsonContext.Default.OpCounts, cancellationToken).ConfigureAwait(false);
     }
 
-    private static async ValueTask AddUnitsAsync(IStorageTransaction transaction, string collection, string id, UsageTotals units, CancellationToken cancellationToken)
+    private static async ValueTask AddUnitsAsync(IStorageTransaction transaction, string kind, string id, UsageTotals units, CancellationToken cancellationToken)
     {
-        var saved = await SystemCatalog.GetAsync(transaction, collection, id, TerraBaseJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false);
-        await PutAsync(transaction, collection, id, (saved ?? new UsageTotals(0, 0)) with { Reads = (saved?.Reads ?? 0) + units.Reads, Writes = (saved?.Writes ?? 0) + units.Writes },
+        var saved = await SystemCatalog.GetAsync(transaction, kind, id, TerraBaseJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false);
+        await PutAsync(transaction, kind, id, (saved ?? new UsageTotals(0, 0)) with { Reads = (saved?.Reads ?? 0) + units.Reads, Writes = (saved?.Writes ?? 0) + units.Writes },
             TerraBaseJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false);
     }
 
@@ -531,9 +531,9 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
             {
                 foreach (var (organizationId, stored) in batch)
                 {
-                    var collection = OrganizationMonths(organizationId);
+                    var kind = OrganizationMonths(organizationId);
                     var id = Own(month);
-                    var saved = await SystemCatalog.GetAsync(transaction, collection, id, TerraBaseJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false)
+                    var saved = await SystemCatalog.GetAsync(transaction, kind, id, TerraBaseJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false)
                         ?? new UsageTotals(0, 0);
                     if (saved.SampledHour >= hour)
                     {
@@ -541,7 +541,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                     }
 
                     var hours = saved.SampledHour >= 0 && MonthId(saved.SampledHour) == month ? hour - saved.SampledHour : 1;
-                    await PutAsync(transaction, collection, id, saved with { StorageByteHours = checked(saved.StorageByteHours + (stored * hours)), SampledHour = hour },
+                    await PutAsync(transaction, kind, id, saved with { StorageByteHours = checked(saved.StorageByteHours + (stored * hours)), SampledHour = hour },
                         TerraBaseJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false);
                 }
 
@@ -570,21 +570,21 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
 
             var read = await catalog.ReadAsync<MonthUnitsResult>(async transaction =>
             {
-                var collection = projectId is null ? OrganizationMonths(organizationId) : ProjectMonths(projectId);
+                var kind = projectId is null ? OrganizationMonths(organizationId) : ProjectMonths(projectId);
                 var units = new UsageTotals(0, 0);
 
                 var after = month;
                 while (true)
                 {
-                    var page = await transaction.ListAsync(collection, after, limit: 100, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-                    foreach (var document in page.Records)
+                    var page = await transaction.ListAsync(kind, after, limit: 100, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+                    foreach (var record in page.Records)
                     {
-                        if (Name(document.Id) != month)
+                        if (Name(record.Id) != month)
                         {
                             return units;
                         }
 
-                        var saved = JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.UsageTotals)!;
+                        var saved = JsonSerializer.Deserialize(record.Json.Span, TerraBaseJsonContext.Default.UsageTotals)!;
                         units = new(units.Reads + saved.Reads, units.Writes + saved.Writes) { StorageByteHours = checked(units.StorageByteHours + saved.StorageByteHours) };
                     }
 
@@ -622,15 +622,15 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         }
     }
 
-    private static async ValueTask PruneAsync(IStorageTransaction transaction, string collection, string oldestKept, CancellationToken cancellationToken)
+    private static async ValueTask PruneAsync(IStorageTransaction transaction, string kind, string oldestKept, CancellationToken cancellationToken)
     {
         while (true)
         {
-            var page = await transaction.ListAsync(collection, afterId: null, PrunePage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-            var expired = page.Records.TakeWhile(document => string.CompareOrdinal(document.Id, oldestKept) < 0).ToList();
-            foreach (var document in expired)
+            var page = await transaction.ListAsync(kind, afterId: null, PrunePage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+            var expired = page.Records.TakeWhile(record => string.CompareOrdinal(record.Id, oldestKept) < 0).ToList();
+            foreach (var record in expired)
             {
-                await transaction.DeleteAsync(collection, document.Id, cancellationToken).ConfigureAwait(false);
+                await transaction.DeleteAsync(kind, record.Id, cancellationToken).ConfigureAwait(false);
             }
 
             if (expired.Count < page.Records.Count || !page.HasMore)
@@ -712,10 +712,10 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         string? after = null;
         while (true)
         {
-            var page = await transaction.ListAsync(UsageCollection(databaseId), after, limit: 100, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-            foreach (var document in page.Records.Where(document => Name(document.Id) == Ops))
+            var page = await transaction.ListAsync(UsageKind(databaseId), after, limit: 100, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+            foreach (var record in page.Records.Where(entry => Name(entry.Id) == Ops))
             {
-                lifetime += parse(document);
+                lifetime += parse(record);
             }
 
             if (!page.HasMore)
@@ -732,25 +732,25 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         CancellationToken cancellationToken)
     {
         var series = Enumerable.Repeat(OpCounts.Zero, window.Count).ToArray();
-        var collection = Collection(databaseId, window.Granularity);
+        var kind = Kind(databaseId, window.Granularity);
         var after = window.Granularity.Id(window.First - 1);
         var end = window.Granularity.Id(window.First + window.Count);
         while (true)
         {
             proceed?.Invoke();
-            var page = await transaction.ListAsync(collection, after, limit: 100, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-            foreach (var document in page.Records)
+            var page = await transaction.ListAsync(kind, after, limit: 100, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+            foreach (var record in page.Records)
             {
-                if (string.CompareOrdinal(document.Id, end) >= 0)
+                if (string.CompareOrdinal(record.Id, end) >= 0)
                 {
                     return series;
                 }
 
-                var index = window.Granularity.Parse(Name(document.Id)) - window.First;
+                var index = window.Granularity.Parse(Name(record.Id)) - window.First;
 
                 if (index >= 0 && index < series.Length)
                 {
-                    series[index] += parse(document);
+                    series[index] += parse(record);
                 }
             }
 
@@ -770,7 +770,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         DisposeMeasurements();
     }
 
-    private static string UsageCollection(string databaseId) => DatabaseState(databaseId) + "usage";
+    private static string UsageKind(string databaseId) => DatabaseState(databaseId) + "usage";
 
     private static string ProjectMonths(string projectId) => ProjectState(projectId) + "usage-months";
 
@@ -782,7 +782,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
 
     private static string Name(string id) => id.IndexOf(NodeSeparator, StringComparison.Ordinal) is >= 0 and var at ? id[..at] : id;
 
-    private static string Collection(string databaseId, UsageGranularity granularity) => DatabaseState(databaseId) + granularity.Collection;
+    private static string Kind(string databaseId, UsageGranularity granularity) => DatabaseState(databaseId) + granularity.Kind;
 
     private long CurrentMinute() => time.GetUtcNow().ToUnixTimeSeconds() / 60;
 

@@ -44,7 +44,7 @@ internal sealed class ListPlatformDatabasesEndpoint(IManagementService managemen
             }
         }
 
-        PlatformExplore.Audit(logger, HttpContext, "*", null, null);
+        PlatformExplore.Audit(logger, HttpContext);
         return TypedResults.Ok(new PlatformDatabaseListBody(items));
     }
 }

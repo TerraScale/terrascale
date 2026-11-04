@@ -10,7 +10,7 @@ namespace TerraBase.Features.UserAuth;
 
 /// <summary>
 /// ts-auth's signing keys, read through OIDC discovery (<c>{auth-issuer}/.well-known/openid-configuration</c>, then its
-/// <c>jwks_uri</c>) and cached in memory. Each fetch has one <see cref="FetchTimeout"/> deadline for both documents and stops
+/// <c>jwks_uri</c>) and cached in memory. Each fetch has one <see cref="FetchTimeout"/> deadline for both responses and stops
 /// at shutdown. The first fetch starts with the host without delaying it; a background loop then retries every
 /// <see cref="StartupRetry"/> until one succeeds, and refreshes every <see cref="RefreshInterval"/>. A failed fetch keeps the
 /// cached keys. Requests never fetch, except through <see cref="RefreshAsync"/> (an unknown key id); before the first keys
@@ -21,8 +21,8 @@ internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
     /// <summary>Name of the <see cref="HttpClient"/> that reaches ts-auth.</summary>
     public const string HttpClientName = "ts-auth";
 
-    /// <summary>Largest discovery or JWKS document read; a larger one fails the fetch.</summary>
-    public const int MaxDocumentBytes = 1024 * 1024;
+    /// <summary>Largest discovery or JWKS response read; a larger one fails the fetch.</summary>
+    public const int MaxResponseBytes = 1024 * 1024;
 
     /// <summary>Deadline of one fetch, discovery and JWKS together.</summary>
     public static readonly TimeSpan FetchTimeout = TimeSpan.FromSeconds(10);
@@ -144,15 +144,15 @@ internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
             using var deadline = new CancellationTokenSource(FetchTimeout, _time);
             using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, _stopping);
             var client = _http.CreateClient(HttpClientName);
-            var configuration = OpenIdConnectConfiguration.Create(await GetDocumentAsync(client, _discovery, cancellation.Token).ConfigureAwait(false));
+            var configuration = OpenIdConnectConfiguration.Create(await GetJsonAsync(client, _discovery, cancellation.Token).ConfigureAwait(false));
             if (!string.Equals(configuration.Issuer, _issuer, StringComparison.Ordinal))
             {
-                // OIDC Discovery 1.0 §4.3: a document naming another issuer must not be used, so its jwks_uri is never fetched.
+                // OIDC Discovery 1.0 §4.3: a discovery document naming another issuer must not be used, so its jwks_uri is never fetched.
                 _logger.ZLogError($"The ts-auth discovery document names an issuer other than auth-issuer; its keys were not used");
                 return Fail();
             }
 
-            var keySet = new JsonWebKeySet(await GetDocumentAsync(client, configuration.JwksUri, cancellation.Token).ConfigureAwait(false));
+            var keySet = new JsonWebKeySet(await GetJsonAsync(client, configuration.JwksUri, cancellation.Token).ConfigureAwait(false));
             // Asymmetric keys only: a symmetric ("oct") key would let anyone holding it sign tokens.
             SecurityKey[] keys = [.. keySet.GetSigningKeys().Where(key => key is AsymmetricSecurityKey or JsonWebKey { Kty: "RSA" or "EC" })];
             if (keys.Length == 0)
@@ -184,12 +184,12 @@ internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
         return Keys;
     }
 
-    // Every document must come from an https URL with a 2xx answer. The client follows no redirects, so a 3xx fails here.
-    private static async Task<string> GetDocumentAsync(HttpClient client, string? address, CancellationToken cancellationToken)
+    // Every response must come from an https URL with a 2xx answer. The client follows no redirects, so a 3xx fails here.
+    private static async Task<string> GetJsonAsync(HttpClient client, string? address, CancellationToken cancellationToken)
     {
         if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
         {
-            throw new ArgumentException("ts-auth documents must be served over https");
+            throw new ArgumentException("ts-auth keys and discovery must be served over https");
         }
 
         using var response = await client.GetAsync(uri, cancellationToken).ConfigureAwait(false);

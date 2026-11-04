@@ -7,14 +7,14 @@ namespace TerraBase.Features.Management.Usage;
 /// <param name="From">Start of the first bucket.</param>
 /// <param name="To">End of the last bucket, exclusive.</param>
 /// <param name="Granularity"><c>hour</c> or <c>day</c>.</param>
-/// <param name="Reads">Document reads in the period.</param>
-/// <param name="Writes">Document writes in the period.</param>
+/// <param name="Reads">Reads in the period.</param>
+/// <param name="Writes">Writes in the period.</param>
 public sealed record UsagePeriod(DateTimeOffset From, DateTimeOffset To, string Granularity, long Reads, long Writes);
 
 /// <summary>Reads and writes of one bucket.</summary>
 /// <param name="Start">Start of the bucket (UTC hour or day).</param>
-/// <param name="Reads">Document reads.</param>
-/// <param name="Writes">Document writes.</param>
+/// <param name="Reads">Reads.</param>
+/// <param name="Writes">Writes.</param>
 public sealed record UsagePoint(DateTimeOffset Start, long Reads, long Writes);
 
 /// <summary>What one database uses. Counters are best-effort dashboard usage, not billing.</summary>
