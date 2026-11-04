@@ -1,7 +1,5 @@
 namespace TerraBase.Engine.Revisions;
 
-// Owned by one open revision ledger and protected by its gate. These are observations, never durable application data.
-// Keep at most eight placed replicas and 256 commit boundaries for pulls still in flight.
 internal sealed class ReplicaPullProgress
 {
     private const int MaxCommits = 256;
@@ -9,7 +7,7 @@ internal sealed class ReplicaPullProgress
     private readonly Dictionary<string, Pull> _pulls = new(StringComparer.Ordinal);
     private DatabaseRevision? _baseline;
 
-    private sealed record Pull(DatabaseRevision Revision, DateTimeOffset At, bool Known, DateTimeOffset? MissingSince);
+    private sealed record Pull(DatabaseRevision Revision, long CdcPosition, DateTimeOffset At, bool Known, DateTimeOffset? MissingSince);
 
     internal long Bytes => _commits.Count * 64L + _pulls.Count * 256L;
 
@@ -43,10 +41,9 @@ internal sealed class ReplicaPullProgress
         }
     }
 
-    internal void Pulled(string region, DatabaseRevision revision, DateTimeOffset at)
+    internal void Pulled(string region, DatabaseRevision revision, long cdcPosition, DateTimeOffset at)
     {
         _pulls.TryGetValue(region, out var previous);
-        // A slower concurrent stream cannot replace a newer successfully served revision.
         if (previous is not null && previous.Revision.Incarnation == revision.Incarnation && Compare(previous.Revision, revision) > 0)
         {
             _pulls[region] = previous with { At = at };
@@ -60,15 +57,17 @@ internal sealed class ReplicaPullProgress
 
         var known = _baseline is { } baseline && revision.Incarnation == baseline.Incarnation && Compare(revision, baseline) >= 0;
         var missing = known ? _commits.FirstOrDefault(commit => Compare(commit.Revision, revision) > 0).At : (DateTimeOffset?)null;
-        // An unchanged served revision keeps its known oldest missing commit even after the in-flight history expires.
         if (!known && previous is { Known: true } && previous.Revision == revision)
         {
             known = true;
             missing = previous.MissingSince;
         }
 
-        _pulls[region] = new Pull(revision, at, known, missing == default(DateTimeOffset) ? null : missing);
+        _pulls[region] = new Pull(revision, cdcPosition, at, known, missing == default(DateTimeOffset) ? null : missing);
     }
+
+    internal long? AcknowledgedCdc(string region, string? revision) =>
+        _pulls.TryGetValue(region, out var pull) && pull.Revision.ToString() == revision ? pull.CdcPosition : null;
 
     internal IReadOnlyList<ReplicaPullObservation> Read(DatabaseRevision current, IReadOnlyList<string> regions, DateTimeOffset now)
     {

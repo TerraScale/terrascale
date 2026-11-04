@@ -114,7 +114,6 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
         }
     }
 
-    /// <summary>Indexes the writer's new frames; whether the committed WAL moved, so the database has a newer revision.</summary>
     internal bool AfterWrite(SqliteConnection writer)
     {
         lock (_gate)
@@ -149,12 +148,20 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
         }
     }
 
-    internal void RecordReplicaPull(string region, DatabaseRevision revision)
+    internal void RecordReplicaPull(string region, RevisionPullResult offered)
     {
         lock (_gate)
         {
-            _replicaProgress.Pulled(region, revision, DateTimeOffset.UtcNow);
+            _replicaProgress.Pulled(region, offered.Revision, offered.CdcPosition, DateTimeOffset.UtcNow);
             Account();
+        }
+    }
+
+    internal long? AcknowledgedReplicaCdc(string region, string? revision)
+    {
+        lock (_gate)
+        {
+            return _replicaProgress.AcknowledgedCdc(region, revision);
         }
     }
 

@@ -81,7 +81,7 @@ internal sealed partial class TursoStorageEngine : IDatabaseRevisions
             await retention.SetReplicaCdcRegionsAsync(placement.Replicas, placement.Version, cancellationToken).ConfigureAwait(false);
             if (region is not null)
             {
-                await retention.AcknowledgeReplicaCdcAsync(region, revision, cancellationToken).ConfigureAwait(false);
+                await retention.AcknowledgeReplicaCdcAsync(region, store.Revisions.AcknowledgedReplicaCdc(region, revision), cancellationToken).ConfigureAwait(false);
             }
 
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -92,10 +92,7 @@ internal sealed partial class TursoStorageEngine : IDatabaseRevisions
     {
         if (await OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is TursoDatabaseStore store)
         {
-            await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
-            await ((ICdcReplicaRetentionTransaction)transaction).OfferReplicaCdcAsync(region, offered, cancellationToken).ConfigureAwait(false);
-            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            store.Revisions.RecordReplicaPull(region, offered.Revision);
+            store.Revisions.RecordReplicaPull(region, offered);
         }
     }
 

@@ -1,6 +1,5 @@
 using System.Text;
 using TerraBase.Configuration;
-using TerraBase.Engine.Revisions;
 
 namespace TerraBase.Engine.Turso;
 
@@ -19,7 +18,7 @@ internal sealed partial class TursoStorageTransaction : ICdcReplicaRetentionTran
         await RunAsync(() =>
         {
             var incarnation = (string)Command(TursoStatements.Incarnation).ExecuteScalar()!;
-            var identity = ReplicaOffer("~placement");
+            var identity = ReplicaPlacement();
             var sameIncarnation = identity?.Revision == incarnation;
             if (sameIncarnation && identity?.Position >= version)
             {
@@ -39,7 +38,6 @@ internal sealed partial class TursoStorageTransaction : ICdcReplicaRetentionTran
             foreach (var region in existing.Where(region => !sameIncarnation || !regions.Contains(region)))
             {
                 SetCdcConsumerFloor("replica:" + region, null);
-                DeleteReplicaOffer(region);
             }
 
             foreach (var region in regions.Distinct().Where(region => !sameIncarnation || !existing.Contains(region)))
@@ -47,7 +45,7 @@ internal sealed partial class TursoStorageTransaction : ICdcReplicaRetentionTran
                 SetCdcConsumerFloor("replica:" + region, ShapeHead());
             }
 
-            var mark = Command("INSERT INTO _tb_shape_chunk(handle, offset, end_offset, body, sealed_at) VALUES ('~replica:~placement', 0, $version, $incarnation, 0) ON CONFLICT(handle, offset) DO UPDATE SET end_offset = excluded.end_offset, body = excluded.body;");
+            var mark = Command("INSERT INTO _tb_shape_chunk(handle, offset, end_offset, body, sealed_at) VALUES ('~replicas', 0, $version, $incarnation, 0) ON CONFLICT(handle, offset) DO UPDATE SET end_offset = excluded.end_offset, body = excluded.body;");
             mark.Parameters.AddWithValue("$version", version);
             mark.Parameters.AddWithValue("$incarnation", Encoding.UTF8.GetBytes(incarnation));
             _ = mark.ExecuteNonQuery();
@@ -55,47 +53,17 @@ internal sealed partial class TursoStorageTransaction : ICdcReplicaRetentionTran
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
-    public async ValueTask AcknowledgeReplicaCdcAsync(string region, string? revision, CancellationToken cancellationToken)
+    public async ValueTask AcknowledgeReplicaCdcAsync(string region, long? position, CancellationToken cancellationToken)
     {
         await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
         await RunAsync(() =>
         {
-            if (ReplicaCdcFloor(region) is not { } floor || ReplicaOffer(region) is not { } offered || offered.Revision != revision)
+            if (position is not { } acknowledged || ReplicaCdcFloor(region) is not { } floor || acknowledged <= floor)
             {
                 return false;
             }
 
-            if (offered.Position > floor)
-            {
-                SetCdcConsumerFloor("replica:" + region, offered.Position);
-            }
-
-            DeleteReplicaOffer(region);
-            return true;
-        }, cancellationToken, mutation: true).ConfigureAwait(false);
-    }
-
-    public async ValueTask OfferReplicaCdcAsync(string region, RevisionPullResult offered, CancellationToken cancellationToken)
-    {
-        await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
-        await RunAsync(() =>
-        {
-            if (ReplicaCdcFloor(region) is not { } floor || offered.CdcPosition <= floor)
-            {
-                return false;
-            }
-
-            var revision = offered.Revision.ToString();
-            if (ReplicaOffer(region) is { } previous && previous.Position >= offered.CdcPosition)
-            {
-                return false;
-            }
-
-            var save = Command("INSERT INTO _tb_shape_chunk(handle, offset, end_offset, body, sealed_at) VALUES ($key, 0, $floor, $revision, 0) ON CONFLICT(handle, offset) DO UPDATE SET end_offset = excluded.end_offset, body = excluded.body;");
-            save.Parameters.AddWithValue("$key", "~replica:" + region);
-            save.Parameters.AddWithValue("$floor", offered.CdcPosition);
-            save.Parameters.AddWithValue("$revision", Encoding.UTF8.GetBytes(revision));
-            _ = save.ExecuteNonQuery();
+            SetCdcConsumerFloor("replica:" + region, acknowledged);
             return true;
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
@@ -107,18 +75,10 @@ internal sealed partial class TursoStorageTransaction : ICdcReplicaRetentionTran
         return read.ExecuteScalar() as long?;
     }
 
-    private (long Position, string Revision)? ReplicaOffer(string region)
+    private (long Position, string Revision)? ReplicaPlacement()
     {
-        var read = Command("SELECT end_offset, CAST(body AS TEXT) FROM _tb_shape_chunk WHERE handle = $key AND offset = 0;");
-        read.Parameters.AddWithValue("$key", "~replica:" + region);
+        var read = Command("SELECT end_offset, CAST(body AS TEXT) FROM _tb_shape_chunk WHERE handle = '~replicas' AND offset = 0;");
         using var reader = read.ExecuteReader();
         return reader.Read() ? (reader.GetInt64(0), reader.GetString(1)) : null;
-    }
-
-    private void DeleteReplicaOffer(string region)
-    {
-        var delete = Command("DELETE FROM _tb_shape_chunk WHERE handle = $key AND offset = 0;");
-        delete.Parameters.AddWithValue("$key", "~replica:" + region);
-        _ = delete.ExecuteNonQuery();
     }
 }
