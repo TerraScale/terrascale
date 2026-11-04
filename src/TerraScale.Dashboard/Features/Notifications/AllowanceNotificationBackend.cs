@@ -9,14 +9,15 @@ using System.Text.Json;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
-    public sealed class AllowanceNotificationBackend(IHttpClientFactory http, IDashboardIdentity identity, TerraBaseRpcClient rpc) : IAllowanceNotificationBackend
+    public sealed class AllowanceNotificationBackend(IHttpClientFactory http, IDashboardIdentity identity, TerraBaseRpcClient rpc, TimeProvider clock) : IAllowanceNotificationBackend
     {
 
-        public async Task<AllowanceUsagePage> ReadAsync(string? after, CancellationToken cancellationToken)
+        public async Task<AllowanceUsagePage> ReadAsync(string? after, bool previous, CancellationToken cancellationToken)
         {
             try
             {
-                var answer = await rpc.Platform<IUsageService>().WithCancellationToken(cancellationToken).ListAllowancesAsync(after);
+                var month = previous ? clock.GetUtcNow().AddMonths(-1).ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture) : null;
+                var answer = await rpc.Platform<IUsageService>().WithCancellationToken(cancellationToken).ListAllowancesAsync(after, month);
                 return answer.Deserialize(AllowanceBackendJson.Default.AllowanceUsagePage) ?? throw new IOException("Allowance producer response is empty.");
             }
             catch (TerraBaseException) { throw new IOException("Allowance producer is unavailable."); }

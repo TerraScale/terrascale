@@ -94,6 +94,9 @@ public sealed class LifecycleQuotaTests
         public ValueTask<long> ReadBytesAsync(TenantContext database, CancellationToken cancellationToken) =>
             throw new QueryCapacityException("injected accounting capacity");
 
+        public ValueTask<OrganizationBytesResult> ReadOrganizationsAsync(CancellationToken cancellationToken) =>
+            inner.ReadOrganizationsAsync(cancellationToken);
+
         public void Dispose() => inner.Dispose();
     }
 }

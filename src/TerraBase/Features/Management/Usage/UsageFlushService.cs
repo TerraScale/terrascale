@@ -9,8 +9,9 @@ namespace TerraBase.Features.Management.Usage;
 
 internal sealed class UsageFlushService(
     UsageMeter meter, QueryFieldRecorder recorder, QueryShapeRecorder shapes, TimeProvider time, TerraBaseOptions options, ILogger<UsageFlushService> logger,
-    IStorageEngine engine, IRequestLogs logs) : BackgroundService
+    IStorageEngine engine, IRequestLogs logs, Features.Qos.IStorageQuota quota) : BackgroundService
 {
+    private long _storageHour = -1;
     private const int MaxSamplesPerMinute = 128;
     private long _sampledMinute = -1;
     private string? _cursor;
@@ -42,7 +43,8 @@ internal sealed class UsageFlushService(
     }
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
-        Task.WhenAll(LoopAsync(FlushAsync, stoppingToken), LoopAsync(SampleStorageAsync, stoppingToken), LoopAsync(RefreshMonthsAsync, stoppingToken));
+        Task.WhenAll(LoopAsync(FlushAsync, stoppingToken), LoopAsync(SampleStorageAsync, stoppingToken), LoopAsync(RefreshMonthsAsync, stoppingToken),
+            LoopAsync(MeterStorageAsync, stoppingToken));
 
     private async Task LoopAsync(Func<CancellationToken, Task> work, CancellationToken stoppingToken)
     {
@@ -102,6 +104,28 @@ internal sealed class UsageFlushService(
             {
                 logger.ZLogWarning(error, $"Flushing workload observations failed; they stay pending");
             }
+        }
+    }
+
+    internal async Task MeterStorageAsync(CancellationToken cancellationToken)
+    {
+        var hour = time.GetUtcNow().ToUnixTimeSeconds() / 3600;
+        if (hour == _storageHour)
+        {
+            return;
+        }
+
+        try
+        {
+            if (await quota.ReadOrganizationsAsync(cancellationToken).ConfigureAwait(false) is IReadOnlyDictionary<string, long> bytes
+                && await meter.AddStorageHoursAsync(bytes, cancellationToken).ConfigureAwait(false) is null)
+            {
+                _storageHour = hour;
+            }
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.ZLogWarning(error, $"Metering stored bytes failed; the next tick retries");
         }
     }
 

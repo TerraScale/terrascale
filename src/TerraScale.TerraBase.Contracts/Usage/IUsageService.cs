@@ -21,8 +21,8 @@ namespace TerraScale.TerraBase.Contracts.Usage
         /// <summary><c>GET /v1/usage/projects/{project}/analytics?range=1h</c>.</summary>
         UnaryResult<JsonElement> GetOperatorAnalyticsAsync(string projectId);
 
-        /// <summary><c>GET /v1/usage/allowances</c>.</summary>
-        UnaryResult<JsonElement> ListAllowancesAsync(string? after);
+        /// <summary><c>GET /v1/usage/allowances</c>; <paramref name="month"/> is the current or previous UTC month, <c>yyyy-MM</c>.</summary>
+        UnaryResult<JsonElement> ListAllowancesAsync(string? after, string? month);
 
     }
 }
