@@ -95,7 +95,7 @@ public sealed class AllowanceEmailEndpoint(AuthStore store, PlatformDirectory di
                 _ = await store.CreateAsync(Collection, OidcIssuer.InstanceId, key,
                     JsonSerializer.SerializeToElement(delivery, AllowanceEmailJson.Default.AllowanceEmailDelivery), cancellationToken).ConfigureAwait(false);
             }
-            catch (TerraBasePreconditionFailedException) { }
+            catch (StorePreconditionFailedException) { }
         }
 
         var current = await ReadAsync(key, request, cancellationToken).ConfigureAwait(false);
@@ -142,10 +142,10 @@ public sealed class AllowanceEmailEndpoint(AuthStore store, PlatformDirectory di
         return TypedResults.Json(new AllowanceEmailResponse(result), AllowanceEmailJson.Default.AllowanceEmailResponse);
     }
 
-    internal static MembershipRecord ReadMember(TerraBaseDocument document, string organizationId)
+    internal static MembershipRecord ReadMember(StoredDocument document, string organizationId)
     {
         var member = document.Document.Deserialize(PlatformJson.Default.MembershipRecord);
-        if (document.State != "value" || member is null || member.InstanceId != OidcIssuer.InstanceId || member.OrganizationId != organizationId || !TerraScaleIds.IsValid(member.UserId) ||
+        if (member is null || member.InstanceId != OidcIssuer.InstanceId || member.OrganizationId != organizationId || !TerraScaleIds.IsValid(member.UserId) ||
             document.Id != AuthStore.NaturalKeyId(OidcIssuer.InstanceId, AuthStore.MembershipCollection, $"{organizationId}/{member.UserId}"))
         {
             throw ApiException.Unavailable();
@@ -166,7 +166,7 @@ public sealed class AllowanceEmailEndpoint(AuthStore store, PlatformDirectory di
     {
         var document = await store.GetAsync(Collection, OidcIssuer.InstanceId, key, cancellationToken).ConfigureAwait(false) ?? throw ApiException.Unavailable();
         var delivery = document.Document.Deserialize(AllowanceEmailJson.Default.AllowanceEmailDelivery);
-        if (document.State != "value" || document.Id != AuthStore.NaturalKeyId(OidcIssuer.InstanceId, Collection, key) ||
+        if (document.Id != AuthStore.NaturalKeyId(OidcIssuer.InstanceId, Collection, key) ||
             delivery is null || delivery.InstanceId != OidcIssuer.InstanceId || delivery.OrganizationId != request.OrganizationId ||
             delivery.BillingMonth != request.BillingMonth || delivery.Metric != request.Metric || delivery.Threshold != request.Threshold || delivery.Recipients is null)
         {

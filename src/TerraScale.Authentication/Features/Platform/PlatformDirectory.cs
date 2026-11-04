@@ -651,13 +651,11 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TotpCredenti
         return new(job, document.Version);
     }
 
-    /// <summary>True only after every holder fenced this account generation; a pending barrier returns 503.</summary>
     internal async Task<bool> CancelClosureAsync(Versioned<ClosureJob> job, CancellationToken cancellationToken, string? unlessAccount = null)
     {
         if (job.Value.Scope == "account")
         {
-            var answer = await store.CancelAccountClosureAsync(job.Value, cancellationToken).ConfigureAwait(false);
-            return answer.Status switch
+            return await store.CancelAccountClosureAsync(job.Value, cancellationToken).ConfigureAwait(false) switch
             {
                 "cancelled" => true,
                 "committed" => false,
@@ -1122,12 +1120,12 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TotpCredenti
     internal async Task<Page<Versioned<T>>> PageAsync<T>(string collection, IReadOnlyList<JsonObject> conditions, JsonTypeInfo<T> type, string sort, int limit, string? after, bool descending, CancellationToken cancellationToken)
         where T : class
     {
-        TerraBaseDocumentPage page;
+        StoredPage page;
         try
         {
             page = await store.PageAsync(collection, Instance, conditions, [sort], limit, after, descending, cancellationToken).ConfigureAwait(false);
         }
-        catch (TerraBaseException error) when (error.ErrorCode == "invalid_cursor")
+        catch (StoreCursorException)
         {
             throw new ApiException(StatusCodes.Status400BadRequest, "invalid_request", "after is not a cursor of this list.");
         }

@@ -62,8 +62,8 @@ public sealed class StorageRecoveryTests
             await Assert.That((terrabase.ClientAddress, terrabase.InternalAddress)).IsEqualTo(front);
             await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, Recovery)).IsTrue();
             await Assert.That(await KeyIdAsync(auth)).IsEqualTo(before);
-            var keys = await terrabase.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth").ListDocumentsAsync(AuthStore.SigningKeyCollection);
-            await Assert.That(keys.Items.Count).IsEqualTo(1);
+            var keys = await terrabase.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth").RowsAsync(AuthStore.SigningKeyCollection);
+            await Assert.That(keys.Count).IsEqualTo(1);
         }
         finally
         {
@@ -84,8 +84,8 @@ public sealed class StorageRecoveryTests
         var created = await database.CreateAsync();
         await using var auth = await StartAuthAsync(terrabase, tenant, provision: true);
         await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, Recovery)).IsTrue();
-        var keys = await database.ListDocumentsAsync(AuthStore.SigningKeyCollection);
-        await Assert.That(keys.Items.Count).IsEqualTo(1);
+        var keys = await database.RowsAsync(AuthStore.SigningKeyCollection);
+        await Assert.That(keys.Count).IsEqualTo(1);
 
         await terrabase.StopAsync();
         await LeaveFaultingMarkAsync(terrabase, tenant.Organization.Id, tenant.Project.Id, created.Id);
@@ -96,7 +96,7 @@ public sealed class StorageRecoveryTests
         using var ready = await auth.Client.GetAsync("/readyz");
         await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         var refusal = await Assert.ThrowsAsync<TerraBaseUnavailableException>(async () =>
-            await database.CreateCollectionAsync("after_crash"))
+            await database.CreateTableAsync("after_crash"))
             ?? throw new InvalidOperationException("The faulted copy accepted an ordinary write.");
         await Assert.That(refusal.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(refusal.ErrorCode).IsEqualTo("copy_faulted");

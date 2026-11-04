@@ -75,7 +75,7 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
     {
         await new KeyRing(new AuthStore(copy, TimeProvider.System), auth.App.Services.GetRequiredService<AuthOptions>(), TimeProvider.System)
             .ProvisionAsync(OidcIssuer.InstanceId, CancellationToken.None);
-        return (await copy.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items.Single().Document.GetProperty("id").GetString()!;
+        return (await copy.RowsAsync(AuthStore.SigningKeyCollection)).Single().Document.GetProperty("id").GetString()!;
     }
 
     private static async Task<HttpStatusCode> DiscoveryAsync(AuthTestServer auth, string project)

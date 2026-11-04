@@ -96,7 +96,7 @@ public sealed partial class AlertEmailEndpoint(AuthStore store, PlatformDirector
                 _ = await store.CreateAsync(Collection, OidcIssuer.InstanceId, key, Serialize(new(OidcIssuer.InstanceId, organization, request.AlertId!, request.State, recipients)),
                     cancellationToken).ConfigureAwait(false);
             }
-            catch (TerraBasePreconditionFailedException) { }
+            catch (StorePreconditionFailedException) { }
         }
 
         var message = Message(request, name, project.Name, threshold, value);
@@ -161,7 +161,7 @@ public sealed partial class AlertEmailEndpoint(AuthStore store, PlatformDirector
     {
         var document = await store.GetAsync(Collection, OidcIssuer.InstanceId, key, cancellationToken).ConfigureAwait(false) ?? throw ApiException.Unavailable();
         var delivery = document.Document.Deserialize(AlertEmailJson.Default.AlertEmailDelivery);
-        if (document.State != "value" || document.Id != AuthStore.NaturalKeyId(OidcIssuer.InstanceId, Collection, key) || delivery is null ||
+        if (document.Id != AuthStore.NaturalKeyId(OidcIssuer.InstanceId, Collection, key) || delivery is null ||
             delivery.InstanceId != OidcIssuer.InstanceId || delivery.OrganizationId != request.OrganizationId || delivery.AlertId != request.AlertId ||
             delivery.State != request.State || delivery.Recipients is null)
         {

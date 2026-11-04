@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Store;
 using TerraScale.DotNet.TerraBase;
 
@@ -31,24 +30,25 @@ public sealed class SharedStateTarget
     {
         ArgumentNullException.ThrowIfNull(fixture);
         var (tenant, database) = await fixture.CreateDatabaseAsync();
-        // ProvisionAsync already creates the collections readiness requires.
-        foreach (var collection in new[] { AttemptLimiter.Collection }.Except(AuthStore.RequiredCollections))
-        {
-            await database.CreateCollectionAsync(collection);
-        }
-
         return new SharedStateTarget(fixture, tenant, database);
     }
 
-    /// <summary>Points the server's storage at this database, through <paramref name="apiKey"/> instead of the tenant's own key when given.</summary>
     public void Register(IServiceCollection services, string? apiKey = null) => this.fixture.UseStorage(services, this.tenant, apiKey: apiKey);
 
-    /// <summary>A stored document, read directly from TerraBase, or <see langword="null"/>.</summary>
-    public async Task<JsonElement?> ReadAsync(string collection, string instanceId, string key) =>
-        (await this.Database.GetDocumentAsync(collection, AuthStore.NaturalKeyId(instanceId, collection, key)))?.Document;
+    public async Task<JsonElement?> ReadAsync(string collection, string instanceId, string key)
+    {
+        var rows = await this.Database.QuerySqlAsync($"SELECT body FROM \"{collection}\" WHERE id = ?", [AuthStore.NaturalKeyId(instanceId, collection, key)]);
+        if (rows.Count == 0)
+        {
+            return null;
+        }
 
-    /// <summary>How many documents a collection holds.</summary>
-    public async Task<int> CountAsync(string collection) => (await this.Database.ListDocumentsAsync(collection)).Items.Count;
+        using var body = JsonDocument.Parse(rows[0].GetString(0));
+        return body.RootElement.Clone();
+    }
+
+    public async Task<int> CountAsync(string collection) =>
+        (int)(await this.Database.QuerySqlAsync($"SELECT count(*) FROM \"{collection}\""))[0].GetInt64(0);
 }
 
 /// <summary>A wall clock the test moves by hand.</summary>

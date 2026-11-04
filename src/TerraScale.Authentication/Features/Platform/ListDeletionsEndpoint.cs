@@ -2,13 +2,12 @@ using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Store;
-using TerraScale.DotNet.TerraBase;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.Platform;
 
 /// <summary>Private dashboard handoff of verified platform logical deletions.</summary>
-public sealed class ListDeletionsEndpoint(AuthStore store, TerraBaseDatabase database, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class ListDeletionsEndpoint(AuthStore store, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -27,5 +26,5 @@ public sealed class ListDeletionsEndpoint(AuthStore store, TerraBaseDatabase dat
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         DashboardClientAuthentication.Refuse(this.HttpContext, options)
-        ?? TypedResults.Json(await DashboardDeletionProofs.ListAsync(store, database, cancellationToken), DashboardDeletionJson.Default.DashboardDeletionList);
+        ?? TypedResults.Json(await DashboardDeletionProofs.ListAsync(store, cancellationToken), DashboardDeletionJson.Default.DashboardDeletionList);
 }

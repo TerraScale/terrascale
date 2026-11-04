@@ -3,7 +3,6 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Store;
-using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Features.Platform;
 
@@ -29,7 +28,7 @@ public sealed partial class DashboardDeletionJson : JsonSerializerContext;
 
 internal static class DashboardDeletionProofs
 {
-    internal static async Task<DashboardDeletionList> ListAsync(AuthStore store, TerraBaseDatabase database, CancellationToken cancellationToken)
+    internal static async Task<DashboardDeletionList> ListAsync(AuthStore store, CancellationToken cancellationToken)
     {
         using var filter = JsonDocument.Parse(new JsonObject
         {
@@ -38,26 +37,24 @@ internal static class DashboardDeletionProofs
                 new JsonObject { ["ne"] = new JsonArray("/authLogicalVerifiedAt", null) },
                 new JsonObject { ["eq"] = new JsonArray("/dashboardVerifiedAt", null) }),
         }.ToJsonString());
-        var cursorId = AuthStore.NaturalKeyId(PlatformDirectory.Instance, AuthStore.DashboardDeletionCursorCollection, "pending");
-        var position = await database.GetDocumentAsync(AuthStore.DashboardDeletionCursorCollection, cursorId, cancellationToken).ConfigureAwait(false);
+        var position = await store.GetAsync(AuthStore.DashboardDeletionCursorCollection, PlatformDirectory.Instance, "pending", cancellationToken).ConfigureAwait(false);
         var cursor = position?.Document.Deserialize(DashboardDeletionJson.Default.DashboardDeletionCursor);
-        var page = await database.QueryAsync(AuthStore.DeletionJobCollection, new TerraBaseQuery
-        {
-            Filter = filter.RootElement,
-            Limit = 20,
-            Cursor = cursor?.NextCursor,
-        }, cancellationToken).ConfigureAwait(false);
+        StoredPage page;
         try
         {
-            // Claim the entire page before validating anything. Even malformed or maximum-size jobs stay untouched.
-            // The SDK's null NextCursor wraps the next poll to the beginning, without a second query this poll.
-            await database.PutDocumentAsync(AuthStore.DashboardDeletionCursorCollection, cursorId,
-                JsonSerializer.SerializeToElement(new DashboardDeletionCursor(page.NextCursor), DashboardDeletionJson.Default.DashboardDeletionCursor),
-                position is null ? TerraBasePrecondition.Absent : TerraBasePrecondition.Matches(position.Version), cancellationToken).ConfigureAwait(false);
+            page = await store.PageAsync(AuthStore.DeletionJobCollection, filter.RootElement, 20, cursor?.NextCursor, cancellationToken).ConfigureAwait(false);
         }
-        catch (TerraBasePreconditionFailedException error) when (error.ErrorCode == "precondition_failed")
+        catch (StoreCursorException)
         {
-            // Another poll advanced the durable position. Retry on the next poll, with no retry scan here.
+            page = await store.PageAsync(AuthStore.DeletionJobCollection, filter.RootElement, 20, null, cancellationToken).ConfigureAwait(false);
+        }
+
+        var next = JsonSerializer.SerializeToElement(new DashboardDeletionCursor(page.NextCursor), DashboardDeletionJson.Default.DashboardDeletionCursor);
+        var claimed = position is null
+            ? await TryCreateAsync(store, next, cancellationToken).ConfigureAwait(false)
+            : await store.CompareAndPutAsync(AuthStore.DashboardDeletionCursorCollection, PlatformDirectory.Instance, "pending", next, position.Version, cancellationToken).ConfigureAwait(false);
+        if (!claimed)
+        {
             return new([]);
         }
 
@@ -71,6 +68,19 @@ internal static class DashboardDeletionProofs
         }
 
         return new(items);
+    }
+
+    private static async Task<bool> TryCreateAsync(AuthStore store, JsonElement next, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await store.CreateAsync(AuthStore.DashboardDeletionCursorCollection, PlatformDirectory.Instance, "pending", next, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (StorePreconditionFailedException)
+        {
+            return false;
+        }
     }
 
     internal static async Task AcknowledgeAsync(AuthStore store, TimeProvider clock, string? id, DashboardDeletionAcknowledgement request, CancellationToken cancellationToken)
@@ -101,7 +111,7 @@ internal static class DashboardDeletionProofs
         throw new ApiException(StatusCodes.Status409Conflict, "deletion_changed", "Retry acknowledgement of the same proof.");
     }
 
-    private static async Task<DashboardDeletionProof?> ProofAsync(AuthStore store, TerraBaseDocument document, CancellationToken cancellationToken)
+    private static async Task<DashboardDeletionProof?> ProofAsync(AuthStore store, StoredDocument document, CancellationToken cancellationToken)
     {
         DeletionJob? job;
         try

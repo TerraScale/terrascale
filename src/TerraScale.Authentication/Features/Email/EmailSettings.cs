@@ -169,7 +169,7 @@ public sealed class EmailSettings(AuthStore store, TimeProvider clock)
     public async Task<IReadOnlyList<EmailConfig>> ListVersionsAsync(string instanceId, int limit, CancellationToken cancellationToken = default)
     {
         var filter = JsonSerializer.SerializeToElement(new JsonObject { ["eq"] = new JsonArray("/instance_id", instanceId) });
-        var items = await store.QueryAsync(VersionCollection, filter, limit, [new TerraBaseSort("/version", "desc")], cancellationToken).ConfigureAwait(false);
+        var items = await store.QueryAsync(VersionCollection, filter, limit, [new StoreSort("/version", "desc")], cancellationToken).ConfigureAwait(false);
         return [.. items.Select(item => Read(item.Document, instanceId)).OrderByDescending(config => config.Version)];
     }
 

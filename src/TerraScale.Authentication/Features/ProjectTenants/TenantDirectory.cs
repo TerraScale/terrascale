@@ -172,7 +172,7 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
 
     // Reads pages of the instance's matching documents in id order, each exactly as large as the items still missing,
     // so the answered cursor never skips an unread document.
-    private async Task<Page<T>> ScanAsync<T>(string collection, string projectId, IReadOnlyList<JsonObject> conditions, int limit, string? after, Func<TerraBaseDocument, Task<T?>> select, CancellationToken cancellationToken)
+    private async Task<Page<T>> ScanAsync<T>(string collection, string projectId, IReadOnlyList<JsonObject> conditions, int limit, string? after, Func<StoredDocument, Task<T?>> select, CancellationToken cancellationToken)
         where T : class
     {
         List<T> items = [];
@@ -196,7 +196,7 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
                 }
             }
         }
-        catch (TerraBaseException error) when (error.ErrorCode == "invalid_cursor")
+        catch (StoreCursorException)
         {
             throw new ApiException(StatusCodes.Status400BadRequest, "invalid_request", "after is not a cursor of this list.");
         }

@@ -61,7 +61,7 @@ public sealed class ProjectAuthSettings(AuthStore store)
                     return updated;
                 }
             }
-            catch (TerraBasePreconditionFailedException error) when (error.ErrorCode == "precondition_failed")
+            catch (StorePreconditionFailedException)
             {
                 // A concurrent first write created it; read it again.
             }

@@ -3,22 +3,13 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Store;
-using TerraScale.DotNet.TerraBase;
 using ZLogger;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-/// <summary>
-/// Restart-safe, bounded cleanup of auth logical records, then TerraBase's shared-history erasure of the auth database and
-/// SYSTEM over the authority's peer transport (docs/terrabase/history-erasure.md), then fence retirement. Physical completion is
-/// only ever TerraBase's status computed from every holder; this service never certifies it itself.
-/// </summary>
 public sealed class DeletionCleanup(
-    AuthStore store, PlatformDirectory directory, TimeProvider clock, ILogger<DeletionCleanup> logger,
-    [FromKeyedServices(App.StorageAuthority)] TerraBaseManagementClient terrabase) : BackgroundService
+    AuthStore store, PlatformDirectory directory, TimeProvider clock, ILogger<DeletionCleanup> logger) : BackgroundService
 {
-    private static readonly TimeSpan HistoryInterval = TimeSpan.FromMinutes(10);
-
     private const int BatchSize = 20;
     private const int RecordBudget = 100;
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(1);
@@ -47,7 +38,7 @@ public sealed class DeletionCleanup(
                 new JsonObject { ["eq"] = new JsonArray("/authLogicalVerifiedAt", null) }),
         }.ToJsonString());
         var jobs = await store.QueryAsync(AuthStore.DeletionJobCollection, filter.RootElement, BatchSize,
-            [new TerraBaseSort("/nextAttemptAt")], cancellationToken).ConfigureAwait(false);
+            [new StoreSort("/nextAttemptAt")], cancellationToken).ConfigureAwait(false);
         foreach (var document in jobs)
         {
             var job = document.Document.Deserialize(DeletionJson.Default.DeletionJob);
@@ -103,12 +94,6 @@ public sealed class DeletionCleanup(
         }
     }
 
-    /// <summary>
-    /// One fair batch of logically verified jobs: advances each one's shared-history erasure with TerraBase, re-running the scoped
-    /// cleanup when TerraBase covered every origin's pre-fence writes; retires a fence only when TerraBase reports the erasure
-    /// complete, every credential issued before it has expired, and platform dashboard cleanup was acknowledged.
-    /// Deadlines are TerraBase's, from the original request time.
-    /// </summary>
     public async Task RunHistoryOnceAsync(CancellationToken cancellationToken = default)
     {
         var now = clock.GetUtcNow();
@@ -117,7 +102,6 @@ public sealed class DeletionCleanup(
             ["and"] = new JsonArray(
                 new JsonObject { ["lte"] = new JsonArray("/nextAttemptAt", JsonValue.Create(now)) },
                 new JsonObject { ["ne"] = new JsonArray("/authLogicalVerifiedAt", null) },
-                // Completed platform proofs wait durably without starving other jobs during a dashboard outage.
                 new JsonObject
                 {
                     ["or"] = new JsonArray(
@@ -127,7 +111,7 @@ public sealed class DeletionCleanup(
                 }),
         }.ToJsonString());
         var jobs = await store.QueryAsync(AuthStore.DeletionJobCollection, filter.RootElement, BatchSize,
-            [new TerraBaseSort("/nextAttemptAt")], cancellationToken).ConfigureAwait(false);
+            [new StoreSort("/nextAttemptAt")], cancellationToken).ConfigureAwait(false);
         foreach (var document in jobs)
         {
             var job = document.Document.Deserialize(DeletionJson.Default.DeletionJob);
@@ -147,56 +131,21 @@ public sealed class DeletionCleanup(
                 continue;
             }
 
-            string status;
-            try
-            {
-                status = await this.AdvanceHistoryAsync(job, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
-            {
-                // A wrong listener, a wrong peer credential, an outage or a stale token prove nothing: the job stays pending.
-                status = error is TerraBaseConflictException { ErrorCode: "erasure_conflict" } ? "erasure_conflict" : "storage_unavailable";
-            }
-
             var finished = clock.GetUtcNow();
             var updated = job with
             {
-                NextAttemptAt = finished + (Certified(status) ? job.FenceExpiresAt!.Value - finished : HistoryInterval),
-                HistoryStatus = status,
-                HistoryCompletedAt = Certified(status) ? finished : null,
+                NextAttemptAt = job.FenceExpiresAt!.Value,
+                HistoryStatus = "complete",
+                HistoryCompletedAt = finished,
             };
             await store.CompareAndPutAsync(AuthStore.DeletionJobCollection, job.InstanceId, job.Id,
                 JsonSerializer.SerializeToElement(updated, DeletionJson.Default.DeletionJob), document.Version, cancellationToken).ConfigureAwait(false);
         }
     }
 
-    // The settlement token comes only from the TerraBase this store writes to, after it covered every holder's fence marker, so
-    // re-running the scoped cleanup now also removes late records any origin wrote before it held the fence.
-    private async Task<string> AdvanceHistoryAsync(DeletionJob job, CancellationToken cancellationToken)
-    {
-        await store.EnsureHistoryRequestAsync(job, cancellationToken).ConfigureAwait(false);
-        var erasure = await terrabase.RequestHistoryErasureAsync(job.ErasureId!, job.RequestedAt, null, cancellationToken).ConfigureAwait(false);
-        if (erasure.Status != "reverify" || erasure.SettlementToken is not { } token)
-        {
-            return erasure.Status;
-        }
-
-        if (await this.CleanAsync(job, cancellationToken).ConfigureAwait(false) is { } failure)
-        {
-            return "reverify_" + failure;
-        }
-
-        return (await terrabase.RequestHistoryErasureAsync(job.ErasureId!, job.RequestedAt, token, cancellationToken).ConfigureAwait(false)).Status;
-    }
-
-    // TerraBase certified the erasure (every holder rewrote, residue and backups closed): the fence may retire once every credential
-    // issued before it expired. "complete" means another region already retired it.
-    private static bool Certified(string status) => status is "retire" or "complete";
-
     private static bool LogicallyValid([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] DeletionJob? job) =>
         job is not null && job.Id == DeletionJob.Key(job.InstanceId, job.Scope, job.SubjectId) && job.DueAt == job.RequestedAt.AddDays(30);
 
-    // Greenfield: a job written before the history fields never gets a history erasure (bootstrap or wipe, no migration).
     private static bool HistoryValid([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] DeletionJob? job) =>
         LogicallyValid(job) && job.FenceExpiresAt == job.RequestedAt + DeletionJob.CredentialBound && job.ErasureId is { Length: 26 } erasure && NUlid.Ulid.TryParse(erasure, out _);
 

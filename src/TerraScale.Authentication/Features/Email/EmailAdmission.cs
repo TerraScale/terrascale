@@ -49,7 +49,7 @@ public sealed class EmailAdmission(AuthStore store, TimeProvider clock)
                 {
                     _ = await store.CreateAsync(Collection, OidcIssuer.InstanceId, Key, record, cancellationToken).ConfigureAwait(false);
                 }
-                catch (TerraBasePreconditionFailedException) { continue; }
+                catch (StorePreconditionFailedException) { continue; }
             }
             else if (!await store.CompareAndPutAsync(Collection, OidcIssuer.InstanceId, Key, record, document.Version, cancellationToken).ConfigureAwait(false))
             {
@@ -62,14 +62,14 @@ public sealed class EmailAdmission(AuthStore store, TimeProvider clock)
         return false;
     }
 
-    private static EmailBudget Read(TerraBaseDocument? document)
+    private static EmailBudget Read(StoredDocument? document)
     {
         if (document is null)
         {
             return new(OidcIssuer.InstanceId, [], default);
         }
         var state = document.Document.Deserialize(EmailAdmissionJson.Default.EmailBudget);
-        return document.State == "value" && document.Id == AuthStore.NaturalKeyId(OidcIssuer.InstanceId, Collection, Key) &&
+        return document.Id == AuthStore.NaturalKeyId(OidcIssuer.InstanceId, Collection, Key) &&
             state is { InstanceId: OidcIssuer.InstanceId, Reservations.Count: <= 1000 } ? state
             : throw new InvalidOperationException("Invalid mail admission record.");
     }

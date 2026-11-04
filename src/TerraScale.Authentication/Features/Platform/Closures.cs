@@ -244,7 +244,7 @@ public sealed class Closures(
         {
             ["lte"] = new JsonArray("/nextAttemptAt", JsonValue.Create(clock.GetUtcNow())),
         }.ToJsonString());
-        return [.. (await store.QueryAsync(AuthStore.ClosureJobCollection, filter.RootElement, limit, [new TerraBaseSort("/nextAttemptAt")], cancellationToken).ConfigureAwait(false))
+        return [.. (await store.QueryAsync(AuthStore.ClosureJobCollection, filter.RootElement, limit, [new StoreSort("/nextAttemptAt")], cancellationToken).ConfigureAwait(false))
             .Select(document => document.Document.Deserialize(ClosureJson.Default.ClosureJob)).OfType<ClosureJob>()];
     }
 

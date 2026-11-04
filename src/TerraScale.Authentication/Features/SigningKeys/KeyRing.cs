@@ -594,9 +594,9 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
     private sealed record Snapshot(IReadOnlyList<(SigningKey Key, string Version)> Keys, long Sent);
 
     // One source's reads by instance: the last snapshot, the read in flight and when a read last failed.
-    private sealed class Reads(Func<string, CancellationToken, IAsyncEnumerable<TerraBaseDocument>> query)
+    private sealed class Reads(Func<string, CancellationToken, IAsyncEnumerable<StoredDocument>> query)
     {
-        public Func<string, CancellationToken, IAsyncEnumerable<TerraBaseDocument>> Query { get; } = query;
+        public Func<string, CancellationToken, IAsyncEnumerable<StoredDocument>> Query { get; } = query;
 
         public ConcurrentDictionary<string, Snapshot> Cached { get; } = new(StringComparer.Ordinal);
 

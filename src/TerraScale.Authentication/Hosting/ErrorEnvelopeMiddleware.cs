@@ -2,6 +2,7 @@ using System.Globalization;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.SignIn;
+using TerraScale.Authentication.Store;
 using TerraScale.DotNet.TerraBase;
 using ZLogger;
 
@@ -35,7 +36,7 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorE
             Diagnose(context, error, () => logger.ZLogError(error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error);
         }
-        catch (TerraBasePreconditionFailedException conflict) when (!context.Response.HasStarted)
+        catch (StorePreconditionFailedException conflict) when (!context.Response.HasStarted)
         {
             // A conditional write lost to a concurrent change, or a retried write found its own earlier commit
             // (QA round 4: the token endpoint answered 500 and the dashboard sign-in bounced to sign-in).
@@ -48,6 +49,12 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorE
             // A store's conditional write lost inside an OpenIddict flow: the same race as above, never a 500.
             var error = new ApiException(409, "conflict", "A concurrent change won; retry the request.", conflict);
             Diagnose(context, error, () => logger.ZLogWarning(error, $"Request failed with {error.Code:@Code}"));
+            await WriteAsync(context, error);
+        }
+        catch (TerraBaseSqlException busy) when (!context.Response.HasStarted && busy.Code == "sql_conflict")
+        {
+            var error = ApiException.Unavailable(busy);
+            Diagnose(context, error, () => logger.ZLogError(error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error);
         }
         catch (TerraBaseUnavailableException unavailable) when (!context.Response.HasStarted)

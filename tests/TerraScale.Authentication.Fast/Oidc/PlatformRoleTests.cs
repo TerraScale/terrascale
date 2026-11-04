@@ -46,10 +46,10 @@ public sealed class PlatformRoleTests(TerraBaseFixture fixture)
     private static async Task SetRoleAsync(TerraBaseDatabase database, string userId, string? role)
     {
         var id = AuthStore.NaturalKeyId(OidcIssuer.InstanceId, AuthStore.UserCollection, userId);
-        var stored = (await database.GetDocumentAsync(AuthStore.UserCollection, id))!;
+        var stored = (await database.RowAsync(AuthStore.UserCollection, id))!;
         var user = JsonNode.Parse(stored.Document.GetRawText())!.AsObject();
         user["platformRole"] = role;
-        await database.PutDocumentAsync(AuthStore.UserCollection, id, JsonSerializer.SerializeToElement(user), TerraBasePrecondition.Matches(stored.Version));
+        await database.OverwriteAsync(AuthStore.UserCollection, id, JsonSerializer.SerializeToElement(user), stored.Version);
     }
 
     private static string? Role(JsonElement tokens) =>

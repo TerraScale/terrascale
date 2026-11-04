@@ -38,7 +38,7 @@ public sealed class SessionCookieTests(TerraBaseFixture fixture)
         var attributes = cookie.Split(';').Skip(1).Select(part => part.Trim().ToLowerInvariant()).ToArray();
         await Assert.That(attributes).IsEquivalentTo(["path=/", "secure", "samesite=lax", "httponly"]);
         await Assert.That((await SessionAsync(auth, token)).Status).IsEqualTo(HttpStatusCode.OK);
-        var stored = (await database.ListDocumentsAsync("sessions")).Items.Single().Document.GetRawText();
+        var stored = (await database.RowsAsync("sessions")).Single().Document.GetRawText();
         await Assert.That(stored).DoesNotContain(token);
 
         // Signing in again over an existing session replaces its identifier.

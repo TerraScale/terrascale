@@ -100,8 +100,14 @@ public sealed class DeletionCleanupTests(TerraBaseFixture fixture)
             await Assert.That(await restartedStore.QueryAsync(AuthStore.UniqueCollection, alice.InstanceId, "/ownerId", tokenId).AnyAsync()).IsFalse();
         }
 
-        await Assert.ThrowsAsync<TerraBasePreconditionFailedException>(() => restartedStore.CreateAsync(AuthStore.SessionCollection, alice.InstanceId, hash,
+        await Assert.ThrowsAsync<StorePreconditionFailedException>(() => restartedStore.CreateAsync(AuthStore.SessionCollection, alice.InstanceId, hash,
             TerraBaseFixture.Json($$"""{"instanceId":"{{alice.InstanceId}}","userId":"{{alice.Id}}","tokenHash":"{{hash}}"}""")));
+
+        await restarted.App.Services.GetRequiredService<DeletionCleanup>().RunHistoryOnceAsync();
+        var erased = await JobAsync(restartedStore, alice.InstanceId, "account", alice.Id);
+        await Assert.That(erased.HistoryStatus).IsEqualTo("complete");
+        await Assert.That(erased.HistoryCompletedAt).IsEqualTo(clock.UtcNow);
+        await Assert.That(erased.NextAttemptAt).IsEqualTo(erased.FenceExpiresAt!.Value);
     }
 
     private static async Task<DeletionJob> JobAsync(AuthStore store, string instanceId, string scope, string subjectId) =>
@@ -117,14 +123,19 @@ public sealed class DeletionCleanupTests(TerraBaseFixture fixture)
             set => Volatile.Write(ref this.fail, value ? 1 : 0);
         }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            if (this.Fail && collections.Any(collection => request.RequestUri!.AbsolutePath.EndsWith("/collections/" + collection + "/query", StringComparison.Ordinal)))
+            if (this.Fail && request.Content is not null && request.RequestUri!.AbsolutePath.EndsWith("/sql/execute", StringComparison.Ordinal))
             {
-                throw new HttpRequestException("Synthetic cleanup outage");
+                var body = await request.Content.ReadAsStringAsync(cancellationToken);
+                if (collections.Any(collection => body.Contains("FROM \\u0022" + collection + "\\u0022 WHERE 1 = 1", StringComparison.Ordinal)
+                    || body.Contains("FROM \\\"" + collection + "\\\" WHERE 1 = 1", StringComparison.Ordinal)))
+                {
+                    throw new HttpRequestException("Synthetic cleanup outage");
+                }
             }
 
-            return base.SendAsync(request, cancellationToken);
+            return await base.SendAsync(request, cancellationToken);
         }
     }
 }

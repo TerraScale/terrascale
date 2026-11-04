@@ -77,13 +77,13 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
             }
         }
 
-        TerraBaseDocumentPage page;
+        StoredPage page;
         try
         {
             page = await store.PageAsync(AuthStore.UserCollection, projectId,
                 [new JsonObject { ["lt"] = new JsonArray("/createdAt", JsonValue.Create(cutoff)) }], [], limit, position, cancellationToken: cancellationToken);
         }
-        catch (TerraBaseException error) when (error.ErrorCode == "invalid_cursor")
+        catch (StoreCursorException)
         {
             throw Invalid("after must be a cursor from this project's export.");
         }

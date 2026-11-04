@@ -232,7 +232,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         }
     }
 
-    private async Task ProcessAsync(TerraBaseDocument document)
+    private async Task ProcessAsync(StoredDocument document)
     {
         var row = document.Document.Deserialize(MailJson.Default.MailRow);
         if (row is null)

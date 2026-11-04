@@ -627,7 +627,7 @@ public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions 
                 return;
             }
             catch (Exception error) when (error is OpenIddictExceptions.ConcurrencyException
-                || error is TerraBasePreconditionFailedException { ErrorCode: "precondition_failed" }
+                || error is StorePreconditionFailedException
                 // OpenIddict's own duplicate-client check fires when another replica created the client in between;
                 // a descriptor that is invalid for any other reason fails again on the last attempt and propagates.
                 || error is OpenIddictExceptions.ValidationException && attempt < 2)

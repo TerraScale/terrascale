@@ -113,7 +113,7 @@ public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory dire
             version = (await store.CreateAsync(Collection, OidcIssuer.InstanceId, request.RequestId, JsonSerializer.SerializeToElement(
                 delivery, SupportEmailJson.Default.SupportEmailDelivery), cancellationToken).ConfigureAwait(false)).Version;
         }
-        catch (TerraBasePreconditionFailedException)
+        catch (StorePreconditionFailedException)
         {
             // A concurrent repeat claimed the id first; it owns the send.
             return Answer((await this.ReadAsync(request, cancellationToken).ConfigureAwait(false))?.Delivery ?? throw ApiException.Unavailable());
@@ -211,7 +211,7 @@ public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory dire
             return null;
         }
         var delivery = document.Document.Deserialize(SupportEmailJson.Default.SupportEmailDelivery);
-        if (document.State != "value" || document.Id != AuthStore.NaturalKeyId(OidcIssuer.InstanceId, Collection, request.RequestId) ||
+        if (document.Id != AuthStore.NaturalKeyId(OidcIssuer.InstanceId, Collection, request.RequestId) ||
             delivery is null || delivery.InstanceId != OidcIssuer.InstanceId || delivery.RequestId != request.RequestId)
         {
             throw ApiException.Unavailable();

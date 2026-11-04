@@ -438,7 +438,7 @@ public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor
         }
     }
 
-    private static OidcAuthorization? Read(TerraBaseDocument? document, string tenant)
+    private static OidcAuthorization? Read(StoredDocument? document, string tenant)
     {
         var authorization = document?.Document.Deserialize(OidcJson.Default.OidcAuthorization);
         if (authorization is not { Id: not null } || authorization.InstanceId != tenant)
@@ -749,7 +749,7 @@ public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStor
         return revoked;
     }
 
-    private static OidcToken? Read(TerraBaseDocument? document, string tenant)
+    private static OidcToken? Read(StoredDocument? document, string tenant)
     {
         var token = document?.Document.Deserialize(OidcJson.Default.OidcToken);
         if (token is not { Id: not null } || token.InstanceId != tenant)
