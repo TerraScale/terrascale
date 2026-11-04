@@ -41,6 +41,9 @@ public static class TerraBaseSqlErrorCodes
     /// <summary>Writes and schema changes need the documents:write scope (42501, HTTP 403).</summary>
     public const string ForbiddenScope = "forbidden_scope";
 
+    /// <summary>The statement leaves the database's SQL sandbox, such as ATTACH, VACUUM or a file function (42501, HTTP 403).</summary>
+    public const string SqlSandbox = "sql_sandbox";
+
     /// <summary>A concurrent writer won; the request rolled back and may be sent again (40001, HTTP 409).</summary>
     public const string SerializationConflict = "serialization_conflict";
 
