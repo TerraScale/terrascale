@@ -62,7 +62,9 @@ internal sealed partial class TursoStorageTransaction : IShapeRetentionTransacti
         snapshots.Parameters.AddWithValue("$limit", (long)(maxRows - deleted));
         (rows, var snapshotBytes, _, var snapshotMore) = ShapeBudget(snapshots, maxBytes - bytes);
         deleted += DeleteShapeRows("_tb_shape_snapshot", rows, cancellationToken);
-        _ = Trim(session.Connection, transaction, store.BackupAnchor ?? 0);
+        var backup = store.BackupAnchor ?? 0;
+        var rewrite = store.RewriteAnchor;
+        _ = Trim(session.Connection, transaction, rewrite < 0 ? backup : Math.Min(backup, rewrite));
         store.ObserveCdcSize(session.Connection, transaction);
         return (deleted, bytes + snapshotBytes, raised, more || snapshotMore);
     }
