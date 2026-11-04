@@ -15,11 +15,17 @@ with tempfile.TemporaryDirectory() as scratch:
         report.write_text('<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010"><Results>'
                           f'<UnitTestResult testName="critical" duration="{duration}" />'
                           '</Results></TestRun>')
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            return budget.check(report, suite)
-    assert not check('00:00:10', 120)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as warnings:
+            result = budget.check(report, suite)
+        if float(duration.split(':')[-1]) > 10:
+            assert 'WARN Fast test exceeded 10s' in warnings.getvalue()
+        if suite >= 30:
+            assert 'WARN Fast suite exceeded 30s' in warnings.getvalue()
+        return result
+    assert not check('00:00:10', 29.999999)
+    assert not check('00:00:01', 30)
     assert not check('00:00:10.000001', 1)
-    assert check('00:00:01', 120.000001)
+    assert not check('00:00:01', 30.000001)
     assert not check('00:01:00', 1)
     report.write_text('<TestRun/>')
     try:
@@ -28,4 +34,4 @@ with tempfile.TemporaryDirectory() as scratch:
         pass
     else:
         raise AssertionError('Missing timings must not pass')
-print('fast-budget-test: ok (120s suite, temporary #1084 warnings; missing timing rejected)')
+print('fast-budget-test: ok (30s suite and 10s test temporary #1084 warnings; missing timing rejected)')
