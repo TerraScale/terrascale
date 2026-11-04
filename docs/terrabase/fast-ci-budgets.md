@@ -2,7 +2,7 @@
 
 `ts-ship` builds and runs the affected Fast suites on mariogk-dev or beta before pushing main. Each suite has a separate 120-second test deadline after compilation. Each .NET Fast test must finish within 10 seconds. The runner retains TRX results and prints the ten slowest tests. An over-budget result fails shipping and publishes a failure status; it cannot qualify CI.
 
-The core Makefile targets use `scripts/ci/fast-budget.py`, so direct Fast runs and Docker test stages enforce the same test-duration limits. Docker test stages also have a 120-second deadline. Tests retain their existing cases and parallel execution.
+The core Makefile targets use `scripts/ci/fast-budget.py`, so direct Fast runs and Docker test stages enforce the same test-duration limits. Docker test stages also have a 120-second deadline. Tests retain their existing cases and use TUnit default parallelism and automatic CPU/GC discovery. Compiler CPU limits apply only during compilation.
 
 For Libraries, Auth and TerraBase, shipping also runs the checked Release build, formatting and static checks. Auth retains its audit and OpenAPI checks. TerraBase retains its analyzer-negative check, native single-file execution and local integration proof. These checks run on the existing Fast outputs before packaging, on a dev host, with a separate build deadline.
 
