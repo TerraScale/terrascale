@@ -198,6 +198,8 @@ async function main({ readerCounts = [1, 10, 100, 1000], regions = ["gru", "sjc"
           let outcome = "complete";
           let rejectReader;
           const readerFailed = new Promise((_, reject) => { rejectReader = reject; });
+          // Raw sockets can fail while the rest of the cohort is still connecting.
+          readerFailed.catch(() => {});
           const measuredFetch = async (input, init) => {
             const url = new URL(String(input));
             if (url.hostname.startsWith("shapes-")) requests.cdn++;
@@ -265,7 +267,7 @@ async function main({ readerCounts = [1, 10, 100, 1000], regions = ["gru", "sjc"
                 deadline.addEventListener("abort", close, { once: true });
                 subscriptions.push({ close: () => { deadline.removeEventListener("abort", close); socket.close(); }, done: Promise.resolve() });
                 waiters.push({ ready: readyPromise, tail: tailPromise });
-                await delay(25);
+                await Promise.race([delay(25), readerFailed]);
               }
             } else for (let index = 0; index < readers; index++) {
               const begin = performance.now();
