@@ -177,34 +177,6 @@ class SqlErrorCodes:
     INTERNAL_ERROR = "internal_error"
 
 
-SQLSTATES: dict[str, str] = {
-    "sql_error": "0A000",
-    "syntax_error": "42601",
-    "undefined_table": "42P01",
-    "undefined_column": "42703",
-    "duplicate_object": "42P07",
-    "primary_key_violation": "23505",
-    "unique_violation": "23505",
-    "not_null_violation": "23502",
-    "check_violation": "23514",
-    "foreign_key_violation": "23503",
-    "constraint_violation": "23000",
-    "forbidden_scope": "42501",
-    "serialization_conflict": "40001",
-    "too_large": "54000",
-    "query_canceled": "57014",
-    "transaction_rolled_back": "40000",
-    "transaction_aborted": "25P02",
-    "read_only_transaction": "25006",
-    "quota_exceeded": "53100",
-    "invalid_request": "22023",
-    "transaction_state": "25000",
-    "tenant_busy": "53300",
-    "unavailable": "57P03",
-    "unauthorized": "28000",
-    "internal_error": "XX000",
-}
-
 
 class SqlError(APIError):
     """A refused SQL statement; the whole request rolled back. ``code`` is one of
@@ -257,7 +229,7 @@ def error_for(status: int, body: Any, headers: Any = None, *, mutation: bool = F
             etag = raw_etag.removeprefix("W/").strip('"')
     statement = err.get("statement") if type(err.get("statement")) is int else None
     raw_state = err.get("sqlstate")
-    sqlstate = raw_state if isinstance(raw_state, str) and raw_state else SQLSTATES.get(code)
+    sqlstate = raw_state if isinstance(raw_state, str) and raw_state else None
     cls = _BY_CODE.get(code) or _BY_STATUS.get(status) or APIError
     if mutation and status >= 500:
         cls = CommitUncertainError
