@@ -29,7 +29,9 @@ public sealed class ManagementApi : IAsyncDisposable
         Tls = tls;
         Issuer = issuer;
         User = user;
-        _cleanup = new(() => CleanupAssetsAsync(server.CleanupCompletion, tls, ownsIssuer ? issuer : null));
+        _cleanup = new(() => ownsServer
+            ? CleanupAssetsAsync(server.CleanupCompletion, tls, ownsIssuer ? issuer : null)
+            : Task.CompletedTask);
         Client = As(user);
     }
 
