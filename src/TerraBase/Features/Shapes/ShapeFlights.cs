@@ -249,7 +249,6 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
             Settle(key.Database.OrganizationId);
         }
         flight.Memory.Dispose();
-        flight.Cancel.Dispose();
     }
     private async Task<Answer> AnswerAsync(ShapeFlightRequest request, ShapeHeadProbe probe, ShapeTailReader<T> read, DatabaseState state, CancellationToken cancellationToken)
     {

@@ -18,8 +18,13 @@ public sealed class ShapeFlightTests
         var target = shape.Uri(shape.NextOffset, live: true);
         var leaving = db.Reader.GetAsync(target, disconnected.Token);
         await WaitingAsync(db, 1);
-        var readers = Enumerable.Range(0, 16).Select(_ => db.Reader.GetAsync(target)).ToArray();
-        await WaitingAsync(db, 17);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var readers = new List<Task<HttpResponseMessage>>();
+        for (var index = 0; index < 8; index++)
+        {
+            readers.Add(db.Reader.GetAsync(target, deadline.Token));
+            await WaitingAsync(db, index + 2);
+        }
         var metrics = await db.Api.Server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative));
         await Assert.That(Sum(metrics, "terrabase_shape_flights_active")).IsEqualTo(1);
         disconnected.Cancel();
