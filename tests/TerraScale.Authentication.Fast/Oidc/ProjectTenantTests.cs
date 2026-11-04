@@ -26,14 +26,7 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         var faker = new Faker();
         var clock = new ManualClock(DateTimeOffset.UtcNow);
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
-        var owner = faker.Internet.Email().ToLowerInvariant();
-        var ownerUser = await oidc.CreateUserAsync(owner);
-        var (ownerSession, ownerTokens) = await oidc.CreateSessionAndRedeemAsync(ownerUser);
-        var ownerToken = ownerTokens.GetProperty("access_token").GetString()!;
-        var project = await oidc.CreateProjectAsync(ownerToken, await oidc.CreateOrganizationAsync(ownerToken), faker.Commerce.ProductName());
-        var application = await oidc.OkAsync(HttpMethod.Post, $"/v1/{project}/clients", ownerToken,
-            new { name = "Example app", type = "public", redirect_uris = new[] { Callback } }, HttpStatusCode.Created);
-        var clientId = application.GetProperty("client_id").GetString()!;
+        var (ownerSession, project, clientId) = await CreateClientAsync(oidc, faker);
         var issuer = $"{OidcHarness.PublicOrigin}/{project}";
 
         using var discovery = await oidc.Client.GetAsync($"/{project}/.well-known/openid-configuration");
@@ -96,6 +89,32 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         using var platformUserInfo = await oidc.UserInfoAsync(access);
         await Assert.That(platformUserInfo.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
 
+    }
+
+    [Test]
+    public async Task Project_refresh_rotation_and_revocation_end_only_the_project_grant()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var (_, project, clientId) = await CreateClientAsync(oidc, new Faker());
+        var issuer = $"{OidcHarness.PublicOrigin}/{project}";
+        var users = oidc.Server.App.Services.GetRequiredService<Users>();
+        var user = await users.CreateAsync(project, "end-user@example.test") ?? throw new InvalidOperationException("Duplicate address.");
+        var session = await oidc.Server.App.Services.GetRequiredService<Sessions>().CreateAsync(user);
+        var (verifier, challenge) = OidcHarness.Pkce();
+        var authorize = OidcHarness.AuthorizePath(challenge, redirectUri: Callback, clientId: clientId).Replace($"/{OidcIssuer.Slug}/", $"/{project}/", StringComparison.Ordinal);
+        using var authorized = await oidc.Client.SendAsync(new HttpRequestMessage(HttpMethod.Get, authorize)
+        {
+            Headers = { { "Cookie", $"tsauth_session_{project}={session.Token}" } },
+        });
+        var code = OidcHarness.Query(authorized.Headers.Location!)["code"]!;
+        using var redeemed = await oidc.PostTokenAsync(new()
+        {
+            ["grant_type"] = "authorization_code", ["code"] = code, ["redirect_uri"] = Callback,
+            ["code_verifier"] = verifier, ["client_id"] = clientId,
+        }, null, null, tenant: project);
+        await Assert.That(redeemed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var tokens = await OidcHarness.JsonAsync(redeemed);
+
         using var refreshed = await oidc.PostTokenAsync(new() { ["grant_type"] = "refresh_token", ["refresh_token"] = tokens.GetProperty("refresh_token").GetString()!, ["client_id"] = clientId },
             null, null, tenant: project);
         await Assert.That(refreshed.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -125,5 +144,18 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
             ["refresh_token"] = rotated.GetProperty("refresh_token").GetString()!,
         }, null, null, tenant: project);
         await Assert.That(revokedRefresh.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+    }
+
+    private static async Task<(string OwnerSession, string Project, string ClientId)> CreateClientAsync(OidcHarness oidc, Faker faker)
+    {
+        var owner = faker.Internet.Email().ToLowerInvariant();
+        var ownerUser = await oidc.CreateUserAsync(owner);
+        var (ownerSession, ownerTokens) = await oidc.CreateSessionAndRedeemAsync(ownerUser);
+        var ownerToken = ownerTokens.GetProperty("access_token").GetString()!;
+        var project = await oidc.CreateProjectAsync(ownerToken, await oidc.CreateOrganizationAsync(ownerToken), faker.Commerce.ProductName());
+        var application = await oidc.OkAsync(HttpMethod.Post, $"/v1/{project}/clients", ownerToken,
+            new { name = "Example app", type = "public", redirect_uris = new[] { Callback } }, HttpStatusCode.Created);
+        var clientId = application.GetProperty("client_id").GetString()!;
+        return (ownerSession, project, clientId);
     }
 }
