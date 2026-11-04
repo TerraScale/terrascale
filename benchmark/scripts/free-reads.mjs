@@ -128,7 +128,14 @@ async function main({ readerCounts = [1, 10, 100, 1000], regions = ["gru", "sjc"
     cpu: "Process CPU ticks divided by the minimum of affinity and cgroup v2 ancestor quotas; stop on process or capacity change",
     latency: "Dev-host SDK through regional SSH CONNECT egress; includes tunnel and write request latency; nearest-rank percentiles per repeat" });
   await monitor();
-  for (const previous of (await writer.databases.list({ limit: 100 }, { signal: signal() })).items) {
+  let previousDatabases = [];
+  try {
+    previousDatabases = (await writer.databases.list({ limit: 100 }, { signal: signal() })).items;
+  } catch (error) {
+    // A new hosted project enters TerraBase's catalog on its first database creation.
+    if (error.status !== 404 || error.code !== "unknown_database") throw error;
+  }
+  for (const previous of previousDatabases) {
     if (!previous.name.startsWith("f10-")) throw new Error("OWNED_CLEANUP_REFUSED");
     await writer.deleteDatabase(credentials.project, previous.id, { signal: signal() });
     emit({ type: "cleanup", previous_database_deleted: true });
@@ -331,6 +338,8 @@ async function main({ readerCounts = [1, 10, 100, 1000], regions = ["gru", "sjc"
 export async function runFreeReads(options) {
   try { await main(options); }
   catch (error) { emit({ type: "failure", phase, error: controller.signal.aborted ? controller.signal.reason.message : /^[A-Z][A-Z0-9_]+$/.test(error.message) ? error.message : error.name,
+    status: Number.isInteger(error.status) ? error.status : undefined,
+    code: typeof error.code === "string" && /^[a-z_]+$/.test(error.code) ? error.code : undefined,
     cause: typeof error.cause?.code === "string" && /^[A-Z0-9_]+$/.test(error.cause.code) ? error.cause.code : undefined,
     frames: error.stack?.split("\n").slice(1).filter(line => line.includes("/benchmark/") || line.includes("/sdk/js/")).slice(0, 5) }); process.exitCode = 1; }
   finally { for (const child of children) { child.stdin?.end(); child.kill(); } }
