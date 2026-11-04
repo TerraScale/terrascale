@@ -248,57 +248,6 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         running.Dispose();
     }
 
-    /// <summary>Hashes a stopped tenant copy without opening Turso or exposing its encrypted documents.</summary>
-    public async Task<IReadOnlyDictionary<string, string>> SnapshotDatabaseFilesAsync(string organization, string project, string database)
-    {
-        if (this.process is not null)
-        {
-            throw new InvalidOperationException("Stop TerraBase before capturing its database files.");
-        }
-
-        var path = Path.Combine(this.directory, "data", organization, project, database + ".db");
-        var hashes = new Dictionary<string, string>();
-        foreach (var suffix in (string[])["", "-wal", "-journal", ".key"])
-        {
-            if (suffix.Length == 0 || File.Exists(path + suffix))
-            {
-                hashes.Add(suffix, await HashAsync(path + suffix));
-            }
-        }
-
-        return hashes;
-    }
-
-    /// <summary>Checks the exact original tenant image remains at its one retained rebuild path.</summary>
-    public async Task<bool> RetainedDatabaseMatchesAsync(
-        string organization, string project, string database, IReadOnlyDictionary<string, string> hashes)
-    {
-        var parent = Path.Combine(this.directory, "data", organization, project);
-        var copies = Directory.GetFiles(parent, $".{database}.*.rebuild");
-        if (copies.Length != 1)
-        {
-            return false;
-        }
-
-        foreach (var suffix in (string[])["", "-wal", "-journal", ".key"])
-        {
-            var path = copies[0] + suffix;
-            if (File.Exists(path) != hashes.ContainsKey(suffix)
-                || (hashes.TryGetValue(suffix, out var hash) && await HashAsync(path) != hash))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static async Task<string> HashAsync(string path)
-    {
-        await using var file = File.OpenRead(path);
-        return Convert.ToHexString(await SHA256.HashDataAsync(file));
-    }
-
     /// <summary>Starts the stopped server again on the same data directory, front ports and credential.</summary>
     public Task RestartAsync(CancellationToken cancellationToken = default) =>
         this.process is null

@@ -15,6 +15,5 @@ eight OIDC writes to five; an authorization code issued from a bound session sav
 
 An entry is never stored without its bindings, and no credential is returned before
 its entry exists, so the revocation and replay rules are unchanged.
-`TokenWriteBudgetTests` keeps the refresh grant at five OIDC writes.
 
 Measure live with `scripts/auth/flow-latency.py` (synthetic account, deleted at the end).

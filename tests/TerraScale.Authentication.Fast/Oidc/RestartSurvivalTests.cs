@@ -1,7 +1,7 @@
 using System.Net;
 using TerraScale.Authentication.Tests;
 
-namespace TerraScale.Authentication.Slow.Oidc;
+namespace TerraScale.Authentication.Fast.Oidc;
 
 /// <summary>
 /// A ts-auth restart signs nobody out. Hosted sessions are opaque tokens stored in TerraBase; authorization codes,

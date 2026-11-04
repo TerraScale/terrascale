@@ -22,19 +22,9 @@ per-tenant password/code attempt budgets, shared sign-in/sign-up code budget,
 independent reset-code budget, durable once-per-window notice claims and unknown
 account response behavior are preserved. No extra completion email is introduced.
 
-`Identity/HostedEmailLocaleTests.cs` adds Fast integration coverage through real
-hosted HTTP routes and TerraBase persistence with a capturing sender:
-
-- New sign-up, existing-account sign-up and password reset in English and
-  Portuguese, for platform and project tenants; assert message language, purpose,
-  tenant and successful code redemption (plus password login after reset).
-- Project password, sign-in-code, sign-up-code and reset-code lockouts, with and
-  without custom project branding; assert Portuguese notices, deadline, fixed
-  sender/footer, platform customization isolation, independent tenant budgets and
-  no duplicate notice after repeated refusals and worker drain.
-
-These tests send no live mail. Required CI checks, including Fast, remain the
-merge gate.
+The locale and lockout matrix tests were deleted under the 2026-11-04 happy-path
+test policy. Fast `EmailApiTests` keeps one case: the next sign-in code email uses
+the saved branding and copy.
 
 The separate [queue admission change](queue-admission.md) refuses a full or
 stopping authentication queue before accepting a start or committing an
