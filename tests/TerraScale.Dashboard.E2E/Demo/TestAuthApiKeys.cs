@@ -113,8 +113,14 @@ namespace TerraScale.Dashboard.E2E.Demo
                 if (parent.Key is null || parent.Key.ExpiresAt <= DateTimeOffset.UtcNow) return Error(HttpStatusCode.Unauthorized, "invalid_client");
                 if (uri.AbsolutePath == "/terrascale/oauth/token")
                 {
-                    var claims = new { org_id = parent.Key.OrganizationId, project_id = parent.Key.ProjectId, database = parent.Key.Database,
-                        scope = string.Join(' ', parent.Key.Scopes), nonce = Guid.NewGuid().ToString("N") };
+                    var claims = new
+                    {
+                        org_id = parent.Key.OrganizationId,
+                        project_id = parent.Key.ProjectId,
+                        database = parent.Key.Database,
+                        scope = string.Join(' ', parent.Key.Scopes),
+                        nonce = Guid.NewGuid().ToString("N")
+                    };
                     var machineToken = "e30." + WebEncoders.Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(claims)) + ".synthetic";
                     lock (gate) machineTokens[machineToken] = parent.Key with { ExpiresAt = parent.Key.ExpiresAt ?? DateTimeOffset.UtcNow.AddHours(1) };
                     return Json(new { access_token = machineToken, token_type = "Bearer", expires_in = 60 });
