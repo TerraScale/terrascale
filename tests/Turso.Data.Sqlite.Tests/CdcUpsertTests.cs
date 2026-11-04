@@ -1,20 +1,17 @@
 using System.Text.Json;
-using Bogus;
 
 namespace Turso.Data.Sqlite.Tests;
 
 public sealed class CdcUpsertTests
 {
-    private readonly Faker _faker = new();
-
     [Test]
     public async Task AnUpsertCapturedInFullModeKeepsTheRowAndRecordsTheOldRowAsItsBeforeImage()
     {
         using var database = new TemporaryDatabase();
         var connection = database.Connection;
-        var key = _faker.Random.Long(1, long.MaxValue);
-        var old = _faker.Lorem.Sentence();
-        var updated = _faker.Lorem.Sentence();
+        var key = Random.Shared.NextInt64(1, long.MaxValue);
+        var old = "old-" + Guid.NewGuid().ToString("N");
+        var updated = "new-" + Guid.NewGuid().ToString("N");
         using (var setup = connection.CreateCommand())
         {
             setup.CommandText = "CREATE TABLE u (k INTEGER PRIMARY KEY, v TEXT NOT NULL); PRAGMA capture_data_changes_conn('full');";
