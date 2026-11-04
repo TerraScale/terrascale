@@ -11,7 +11,7 @@ namespace TerraBase.Fast.Shapes;
 public sealed class CdcRetentionTests
 {
     [Test]
-    public async Task Backup_cleanup_preserves_the_slowest_shape_then_retention_preserves_the_backup_position_and_bounds_cdc()
+    public async Task Cleanup_never_trims_past_a_live_shape_backup_replica_or_push_floor_and_bounds_cdc()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var host = await BackupShippingHost.StartAsync();
@@ -46,12 +46,25 @@ public sealed class CdcRetentionTests
         _ = await retention.RunPassAsync(store, slow.Handle!, token);
         _ = await retention.RunPassAsync(store, fast.Handle!, token);
         await Assert.That(await OldestAsync(store, token)).IsLessThanOrEqualTo(backup);
-        await SetConsumerAsync(store, backup, token);
+        var push = await ScalarAsync(store, "SELECT max(change_id) FROM turso_cdc WHERE change_type = 2;", token);
+        await SetConsumerAsync(store, "replica:sjc", backup, token);
+        await SetConsumerAsync(store, "region-to-home", push, token);
         await host.ShipAsync(TimeSpan.FromSeconds(3), token);
         await Assert.That(await OldestAsync(store, token)).IsLessThanOrEqualTo(backup);
-        await SetConsumerAsync(store, null, token);
+        await SetConsumerAsync(store, "replica:sjc", push, token);
         _ = await retention.RunPassAsync(store, fast.Handle!, token);
-        await Assert.That(await OldestAsync(store, token)).IsGreaterThan(slowOffset);
+        await Assert.That(await OldestAsync(store, token)).IsGreaterThan(backup);
+        await host.PutAsync("people", "two", "ahead-of-push", token);
+        var replica = await ScalarAsync(store, "SELECT max(change_id) FROM turso_cdc WHERE change_type = 2;", token);
+        await SetConsumerAsync(store, "replica:sjc", replica, token);
+        await host.ShipAsync(TimeSpan.FromSeconds(3), token);
+        _ = await retention.RunPassAsync(store, slow.Handle!, token);
+        _ = await retention.RunPassAsync(store, fast.Handle!, token);
+        await Assert.That(await OldestAsync(store, token)).IsLessThanOrEqualTo(push);
+        await SetConsumerAsync(store, "region-to-home", null, token);
+        _ = await retention.RunPassAsync(store, fast.Handle!, token);
+        await Assert.That(await OldestAsync(store, token)).IsGreaterThan(push);
+        await SetConsumerAsync(store, "replica:sjc", null, token);
         for (var round = 0; round < 3; round++)
         {
             for (var write = 0; write < 20; write++)
@@ -67,10 +80,10 @@ public sealed class CdcRetentionTests
         }
     }
 
-    private static async Task SetConsumerAsync(TursoDatabaseStore store, long? position, CancellationToken token)
+    private static async Task SetConsumerAsync(TursoDatabaseStore store, string consumer, long? position, CancellationToken token)
     {
         await using var transaction = await store.BeginTransactionAsync(write: true, token);
-        await ((ICdcRetentionTransaction)transaction).SetCdcConsumerFloorAsync("region-to-home", position, token);
+        await ((ICdcRetentionTransaction)transaction).SetCdcConsumerFloorAsync(consumer, position, token);
         _ = await transaction.CommitAsync(token);
     }
 

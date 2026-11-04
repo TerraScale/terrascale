@@ -31,7 +31,6 @@ internal sealed partial class EngineManagementService(
 
     private const string CatalogVersion = ManagementCatalog.Version;
 
-    // Every database id this catalog unregistered, kept so the id is never adopted again.
     internal const string RetiredDatabases = "retired_databases";
     private const long MaxPageBytes = 1024 * 1024;
 
@@ -237,12 +236,22 @@ internal sealed partial class EngineManagementService(
             Unavailable error => error,
         };
 
-    public ValueTask<SetDatabaseRegionsResult> SetDatabaseRegionsAsync(
+    public async ValueTask<SetDatabaseRegionsResult> SetDatabaseRegionsAsync(
         string userId, string organizationId, string projectId, string databaseId, IReadOnlyList<string> replicaRegions, CancellationToken cancellationToken,
-        bool allRegions = false) =>
-        WriteAsync(
+        bool allRegions = false)
+    {
+        var result = await WriteAsync(
             transaction => SetDatabaseRegionsAsync(transaction, userId, organizationId, projectId, databaseId, replicaRegions, cancellationToken, allRegions), static error => error,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+        if (result is ManagedDatabase database && engine is IDatabaseRevisions revisions)
+        {
+            var tenant = new TenantContext(organizationId, PlanTier.Hobby, projectId, databaseId);
+            var placement = new DatabasePlacement(database.Home(options.Region), database.ReplicaRegions ?? [], database.PlacementVersion, database.AllRegions);
+            await revisions.RetainReplicaCdcAsync(tenant, placement, null, null, cancellationToken).ConfigureAwait(false);
+        }
+
+        return result;
+    }
 
     private async ValueTask<SetDatabaseRegionsResult> SetDatabaseRegionsAsync(
         IStorageTransaction transaction, string userId, string organizationId, string projectId, string databaseId, IReadOnlyList<string> replicaRegions,
@@ -319,7 +328,6 @@ internal sealed partial class EngineManagementService(
                 : ManagementErrors.NotFound,
             static error => error, cancellationToken);
 
-    /// <summary>The local page behind the internal peer listener: the project's databases without membership checks.</summary>
     public ValueTask<ListProjectDatabasesResult> ListProjectDatabasesAsync(
         string projectId, string? after, int limit, CancellationToken cancellationToken) =>
         ReadAsync<ListProjectDatabasesResult>(
@@ -407,7 +415,6 @@ internal sealed partial class EngineManagementService(
                 await UnregisterDatabaseAsync(transaction, userId, organizationId, projectId, databaseId, options.Region, token).ConfigureAwait(false) is TenantContext,
             cancellationToken).ConfigureAwait(false) switch
         {
-            // The deletion is durable: destroy its backup keys now rather than at the next erasure pass.
             bool deleted => deleted ? Shredded(deletable.Storage) : ManagementErrors.NotFound,
             Unavailable refused => refused,
         };
@@ -972,7 +979,6 @@ internal sealed partial class EngineManagementService(
         IStorageTransaction transaction, string kind, string id, T value, JsonTypeInfo<T> type, CancellationToken cancellationToken) =>
         await transaction.PutAsync(kind, id, EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(value, type), id, nested: true), cancellationToken).ConfigureAwait(false);
 
-    // The caller's file and line name its transactions (terrabase.storage.transactions{at}), as WriteAsync's do.
     private async ValueTask<T> ReadAsync<T>(Func<IStorageTransaction, ValueTask<T>> read, Func<Unavailable, T> unavailable, CancellationToken cancellationToken,
         [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
     {

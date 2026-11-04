@@ -5,7 +5,6 @@ namespace TerraBase.Engine;
 
 internal interface IDatabaseRevisions
 {
-    /// <summary>Raised after a commit gives a client database a newer revision. Handlers must not block.</summary>
     event Action<TenantContext>? Revised;
 
     ValueTask<RevisionPullResult?> PullAsync(TenantContext database, string? clientRevision, IRevisionPullSink sink, CancellationToken cancellationToken);
@@ -14,7 +13,9 @@ internal interface IDatabaseRevisions
 
     ValueTask<IReadOnlyList<ReplicaPullObservation>> ReplicaStatusAsync(TenantContext database, IReadOnlyList<string> regions, CancellationToken cancellationToken);
 
-    ValueTask RecordReplicaPullAsync(TenantContext database, string region, DatabaseRevision revision, CancellationToken cancellationToken);
+    ValueTask RetainReplicaCdcAsync(TenantContext database, DatabasePlacement placement, string? region, string? revision, CancellationToken cancellationToken);
+
+    ValueTask RecordReplicaPullAsync(TenantContext database, string region, RevisionPullResult offered, CancellationToken cancellationToken);
 
     ValueTask<bool> StartIncarnationAsync(TenantContext database, CancellationToken cancellationToken);
 }

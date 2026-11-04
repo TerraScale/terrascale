@@ -72,11 +72,30 @@ internal sealed partial class TursoStorageEngine : IDatabaseRevisions
         return await store.ReplicaStatusAsync(regions, cancellationToken).ConfigureAwait(false);
     }
 
-    public async ValueTask RecordReplicaPullAsync(TenantContext database, string region, DatabaseRevision revision, CancellationToken cancellationToken)
+    public async ValueTask RetainReplicaCdcAsync(TenantContext database, DatabasePlacement placement, string? region, string? revision, CancellationToken cancellationToken)
     {
         if (await OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is TursoDatabaseStore store)
         {
-            store.Revisions.RecordReplicaPull(region, revision);
+            await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+            var retention = (ICdcReplicaRetentionTransaction)transaction;
+            await retention.SetReplicaCdcRegionsAsync(placement.Replicas, placement.Version, cancellationToken).ConfigureAwait(false);
+            if (region is not null)
+            {
+                await retention.AcknowledgeReplicaCdcAsync(region, revision, cancellationToken).ConfigureAwait(false);
+            }
+
+            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public async ValueTask RecordReplicaPullAsync(TenantContext database, string region, RevisionPullResult offered, CancellationToken cancellationToken)
+    {
+        if (await OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is TursoDatabaseStore store)
+        {
+            await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+            await ((ICdcReplicaRetentionTransaction)transaction).OfferReplicaCdcAsync(region, offered, cancellationToken).ConfigureAwait(false);
+            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            store.Revisions.RecordReplicaPull(region, offered.Revision);
         }
     }
 

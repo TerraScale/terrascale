@@ -7,7 +7,6 @@ namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoDatabaseStore
 {
-    /// <summary>Called after a commit gives the database a newer revision; it must not block or throw.</summary>
     internal Action<TenantContext>? Revised { get; init; }
 
     private async ValueTask IndexRevisionAsync()
@@ -96,7 +95,13 @@ internal sealed partial class TursoDatabaseStore
                 sent += count;
             }
 
-            return new RevisionPullResult(plan.Revision, plan.Full, sent, plan.DatabaseSize);
+            var cdcPosition = await io.RunAsync(() =>
+            {
+                using var command = reader.CreateCommand();
+                command.CommandText = "SELECT coalesce((SELECT change_id FROM turso_cdc WHERE change_type = 2 ORDER BY change_id DESC LIMIT 1), 0);";
+                return (long)command.ExecuteScalar()!;
+            }, cancellationToken).ConfigureAwait(false);
+            return new RevisionPullResult(plan.Revision, plan.Full, sent, plan.DatabaseSize) { CdcPosition = cdcPosition };
         }
         finally
         {

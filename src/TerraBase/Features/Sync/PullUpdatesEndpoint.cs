@@ -108,6 +108,21 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
 
     private async ValueTask<IResult> PullAsync(TenantContext database, string clientRevision, CancellationToken cancellationToken)
     {
+        var meshPeers = await peers.ListAsync(cancellationToken).ConfigureAwait(false);
+        var address = HttpContext.Connection.RemoteIpAddress?.MapToIPv4();
+        var peer = meshPeers.FirstOrDefault(candidate =>
+            IPAddress.TryParse(candidate.Internal.Host, out var ip) && ip.MapToIPv4().Equals(address));
+        if (peer is not null && await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false)
+            is TenantDatabaseRecord { Placement: var placement } && (placement.AllRegions || placement.Replicas.Contains(peer.Region)))
+        {
+            IReadOnlyList<string> regions = placement.AllRegions ? [.. meshPeers.Select(candidate => candidate.Region).Distinct()] : placement.Replicas;
+            await revisions.RetainReplicaCdcAsync(database, placement with { Replicas = regions }, peer.Region, clientRevision, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            peer = null;
+        }
+
         RevisionPullResult? answer;
         try
         {
@@ -130,14 +145,9 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
         }
 
         await FlushAsync(HttpContext.Response.BodyWriter, cancellationToken).ConfigureAwait(false);
-        // Identify the authenticated mesh peer by its source address, never by a caller-supplied region header.
-        var address = HttpContext.Connection.RemoteIpAddress?.MapToIPv4();
-        var peer = (await peers.ListAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(peer =>
-            IPAddress.TryParse(peer.Internal.Host, out var ip) && ip.MapToIPv4().Equals(address));
-        if (peer is not null && await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false)
-            is TenantDatabaseRecord { Placement: var placement } && (placement.AllRegions || placement.Replicas.Contains(peer.Region)))
+        if (peer is not null)
         {
-            await revisions.RecordReplicaPullAsync(database, peer.Region, answer.Revision, cancellationToken).ConfigureAwait(false);
+            await revisions.RecordReplicaPullAsync(database, peer.Region, answer, cancellationToken).ConfigureAwait(false);
         }
 
         return Results.Empty;

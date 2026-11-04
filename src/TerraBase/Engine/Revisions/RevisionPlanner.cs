@@ -15,7 +15,10 @@ internal readonly record struct RevisionPlan(FullReason? Full, IReadOnlySet<uint
     public static RevisionPlan Resend(FullReason reason) => new(reason, new HashSet<uint>());
 }
 
-internal sealed record RevisionPullResult(DatabaseRevision Revision, FullReason? Full, int Pages, uint DatabaseSize);
+internal sealed record RevisionPullResult(DatabaseRevision Revision, FullReason? Full, int Pages, uint DatabaseSize)
+{
+    public long CdcPosition { get; init; }
+}
 
 internal readonly record struct RevisionPullStart(DatabaseRevision Revision, FullReason? Full, uint DatabaseSize);
 

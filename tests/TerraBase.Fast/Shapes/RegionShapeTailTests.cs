@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Shapes;
@@ -39,6 +40,17 @@ public sealed class RegionShapeTailTests
         var replication = sjc.Server.Services.GetRequiredService<RegionReplication>();
         await replication.SyncCatalogsAsync(token);
         await replication.PullAllAsync(token);
+        await replication.PullAllAsync(token);
+        var tenant = new TenantContext(organization, PlanTier.Hobby, project, database.Id);
+        var store = await gru.Server.StoreAsync(tenant);
+        Task<long> ReadReplicaFloorAsync() => store.WithWriterAsync(writer =>
+        {
+            using var command = writer.Connection.CreateCommand();
+            command.CommandText = "SELECT end_offset FROM _tb_shape_chunk WHERE handle = '~cdc:replica:sjc' AND offset = 0;";
+            return (long)command.ExecuteScalar()!;
+        }, "the persisted replica CDC floor", token);
+        var replicaFloor = await ReadReplicaFloorAsync();
+        await Assert.That(replicaFloor).IsGreaterThan(0);
         var waiting = new TableShapeClient(local, ManagementApi.Uri(database.Data).ToString(), "items");
         var target = shape.Uri(shape.NextOffset, live: true);
         var parked = waiting.GetAsync(target);
@@ -46,6 +58,8 @@ public sealed class RegionShapeTailTests
             new { statements = new object[] { new { sql = "UPDATE items SET score = 30 WHERE id = 1" }, new { sql = "UPDATE items SET score = 0 WHERE id = 2" } } }, token);
         changed.EnsureSuccessStatusCode();
         await replication.PullAllAsync(token);
+        await replication.PullAllAsync(token);
+        await Assert.That(await ReadReplicaFloorAsync()).IsGreaterThan(replicaFloor);
         await gru.DisposeAsync();
         var reply = await parked.WaitAsync(TimeSpan.FromSeconds(10), token);
         await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.OK).Because(System.Text.Encoding.UTF8.GetString(reply.Body));
