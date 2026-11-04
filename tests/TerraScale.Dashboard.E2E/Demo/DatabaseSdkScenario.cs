@@ -964,7 +964,7 @@ namespace TerraScale.Dashboard.E2E
             }
 
             // I2 canonical project lifecycle and database operations. {database} is the name; each operation demands the exact
-            // action scope its SDK method requires (databases:* lifecycle and backups, documents:read for SQL).
+            // action scope its SDK method requires (databases:* lifecycle and backups, sql:read for SQL).
             private async Task<IResult> CanonicalAsync(HttpContext http)
             {
                 var parts = http.Request.Path.Value!.Split('/', StringSplitOptions.RemoveEmptyEntries).Select(Uri.UnescapeDataString).ToArray();
@@ -975,7 +975,7 @@ namespace TerraScale.Dashboard.E2E
                 var scope = parts switch
                 {
                     [_, _, _, _] or [_, _, _, _, _] when method == "GET" => "databases:read",
-                    [_, _, _, _, _, "sql", "execute"] => "documents:read",
+                    [_, _, _, _, _, "sql", "execute"] => "sql:read",
                     [_, _, _, _, _, "backups" or "backup-policy"] when method == "GET" => "databases:read",
                     _ => "databases:write"
                 };
@@ -1143,7 +1143,7 @@ namespace TerraScale.Dashboard.E2E
                         var engine = SqlEngine(current.Id);
                         {
                             if (statements.Any(sql => System.Text.RegularExpressions.Regex.IsMatch(sql, @"^\s*(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) &&
-                                Authorize(http, project, "documents:write") is not null)
+                                Authorize(http, project, "sql:write") is not null)
                             {
                                 return SqlError(403, "forbidden_scope", "not authorized", "42501");
                             }

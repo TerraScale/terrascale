@@ -117,7 +117,7 @@ try:
     tenant["management"] += f"/projects/{tenant['project']}"
     name = "perf-" + secrets.token_hex(4)
     tenant["database"] = expect(admin("POST", tenant["management"] + "/databases", {"name": name}, user=True), 201)["id"]
-    created = expect(admin("POST", "/admin/api-keys", {"name": "perf usage live", "scopes": ["documents:read", "documents:write"],
+    created = expect(admin("POST", "/admin/api-keys", {"name": "perf usage live", "scopes": ["sql:read", "sql:write"],
                                                       "organizationId": tenant["organization"], "projectId": tenant["project"],
                                                       "databaseId": tenant["database"]}), 201)
     tenant["key_id"], key = created["id"], created["secret"]

@@ -2,7 +2,7 @@
 
 `get_collection_schema` continues returning inferred fields and uniqueness declarations. Use `get_collection_validation` for declared `{schema, dialect}` validation. Both fields are explicitly null when detached (null in the SDK model); `schema: false` remains an attached rejecting schema.
 
-`set_collection_schema` replaces declared validation and returns `{collection, status: "applied"}` only after producer success. It requires owner/admin management access. Platform databases remain read-only. The dashboard exchanges the current session for a project token with `documents:write` (read uses `documents:read`); personal access tokens are never forwarded to TerraBase.
+`set_collection_schema` replaces declared validation and returns `{collection, status: "applied"}` only after producer success. It requires owner/admin management access. Platform databases remain read-only. The dashboard exchanges the current session for a project token with `sql:write` (read uses `sql:read`); personal access tokens are never forwarded to TerraBase.
 
 The `schema` argument now explicitly accepts a JSON object or boolean, widening the old object-only MCP input. Existing object callers keep their request shape. `true` accepts all future local writes; `false` rejects them. Null, arrays, strings and numbers are rejected; null does not remove validation. Review generated MCP discovery/client schemas when integrating this change. The tool is marked destructive because replacing validation can weaken existing rules.
 

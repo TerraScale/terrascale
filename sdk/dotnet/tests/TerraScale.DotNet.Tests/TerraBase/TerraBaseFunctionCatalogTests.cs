@@ -23,7 +23,7 @@ public sealed class TerraBaseFunctionCatalogTests
             await Assert.That(request.Headers.Authorization!.ToString()).IsEqualTo("Bearer project-user-token");
             await Assert.That(request.Headers.Contains("Idempotency-Key")).IsFalse();
             await Assert.That(route.GetProperty("scopes").EnumerateArray().Select(s => s.GetString()!).ToArray())
-                .IsEquivalentTo(new[] { "documents:read", "documents:write" });
+                .IsEquivalentTo(new[] { "sql:read", "sql:write" });
             if (request.Method == HttpMethod.Delete) return new HttpResponseMessage(HttpStatusCode.NoContent);
             if (request.Method == HttpMethod.Put)
             {

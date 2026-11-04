@@ -89,7 +89,7 @@ namespace TerraScale.Dashboard.Features.Functions
             }
 
             var home = await databases.HomeAsync(context, database, ct);
-            var access = await tokens.GetAsync(context.Session, scope.OrganizationId, scope.ProjectId, ["documents:read", "documents:write"], ct);
+            var access = await tokens.GetAsync(context.Session, scope.OrganizationId, scope.ProjectId, ["sql:read", "sql:write"], ct);
             return (rpc.User<IFunctionsService>(access, home.Id).WithCancellationToken(ct).WithDeadline(DateTime.UtcNow.AddSeconds(30)), scope.ProjectId, database.Name);
         }
 

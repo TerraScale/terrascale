@@ -147,16 +147,16 @@ interpreted; TerraBase and the platform API check scopes, never roles.
 | --- | --- |
 | `databases:read` | TerraBase: read databases, schema, indexes, backups, backup policies and saved queries; read-only SQL |
 | `databases:write` | TerraBase: create, branch and delete databases; backups, restores and policies; indexes; saved queries |
-| `documents:read` | TerraBase: read collections and documents; queries |
-| `documents:write` | TerraBase: write collections and documents; transactions |
+| `sql:read` | TerraBase: read collections and documents; queries |
+| `sql:write` | TerraBase: write collections and documents; transactions |
 | `usage:read` | TerraBase usage, and the platform API's usage views |
 | `billing:read` | Platform API (ts-dashboard): read the organization's plan, subscription, invoices and spending caps |
 | `billing:write` | Platform API: change the plan, payment method and spending caps |
 
 | Token | Role | Scopes |
 | --- | --- | --- |
-| Project token | project `viewer` | `databases:read documents:read usage:read` |
-| Project token | project `member`, `admin` | the viewer's and `databases:write documents:write` |
+| Project token | project `viewer` | `databases:read sql:read usage:read` |
+| Project token | project `member`, `admin` | the viewer's and `databases:write sql:write` |
 | Organization token | organization `viewer` | the project viewer's and `billing:read` |
 | Organization token | organization `member`, `admin` | the project member's and `billing:read` |
 | Organization token | organization `owner` | the project member's, `billing:read` and `billing:write` |
@@ -251,7 +251,7 @@ POST /terrascale/oauth/token
 Authorization: Basic base64(01M4EQ2FRJ8S8B29E8TQVWNW4K:01M4EQ2FRJ8S8B29E8TQVWNW4K_<secret>)
 Content-Type: application/x-www-form-urlencoded
 
-grant_type=client_credentials&project=01M4EQ2FRJ8S8B29E8TQVWNW41&scope=documents:read%20documents:write
+grant_type=client_credentials&project=01M4EQ2FRJ8S8B29E8TQVWNW41&scope=sql:read%20sql:write
 ```
 
 | Parameter | Meaning |
@@ -259,7 +259,7 @@ grant_type=client_credentials&project=01M4EQ2FRJ8S8B29E8TQVWNW41&scope=documents
 | `project` | Organization keys: the project the token acts in; omit it for an organization token. Project keys: optional, must equal the key's project |
 | `scope` | Optional subset of the key's scopes; default all of them |
 
-Answer: `{"access_token":"…","token_type":"Bearer","expires_in":900,"scope":"documents:read documents:write"}`.
+Answer: `{"access_token":"…","token_type":"Bearer","expires_in":900,"scope":"sql:read sql:write"}`.
 No refresh or identity token.
 
 ### 6.2 User token → organization or project token (token exchange)

@@ -27,7 +27,7 @@ export function createServerClient() {
     const result = await auth.oidc.token(keyId, apiKey, {
       grant_type: 'client_credentials',
       project,
-      scope: 'documents:read documents:write',
+      scope: 'sql:read sql:write',
     })
     if (!result.ok) throw new Error('Project token exchange failed; check server key permissions.')
     const value = result.value

@@ -33,7 +33,7 @@ const (
 	platformAud    = "https://" + apiHost
 	tenantPath     = "/terrascale"
 	managementPath = "/v1/terrascale"
-	allScopes      = "databases:read databases:write documents:read documents:write"
+	allScopes      = "databases:read databases:write sql:read sql:write"
 	tokenLifetime  = time.Hour
 )
 

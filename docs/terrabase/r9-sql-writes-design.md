@@ -50,7 +50,7 @@ one of three writes.
   set, as the ops API's `set` does.
 - Rejected with 400: `INSERT … SELECT`, `ON CONFLICT`, `REPLACE`, `RETURNING`, `UPSERT`, DDL, `PRAGMA`, `ATTACH`,
   several statements, writes to reserved collections (`_collections`, `_indexes`, `_unique`) and `_tb_*`.
-- Scope (COS decision): the same route `POST …/sql`. Reads keep their scope; a write also needs `documents:write`,
+- Scope (COS decision): the same route `POST …/sql`. Reads keep their scope; a write also needs `sql:write`,
   checked after parsing (the statement kind is only known then).
 - Response: `{"affected": n, "ids": [… up to 1000]}`.
 
@@ -97,7 +97,7 @@ gate is the harness's; R9 changes no limit.
 | GC interplay | Fast: SQL `DELETE`, collection below the horizon, then `INSERT` of the same id | no ghost fields (E14 rule); the new document only has its own fields |
 | Unique | Fast: concurrent `INSERT`s of one unique value in two regions | smallest id wins everywhere; `UPDATE … WHERE` does not see the loser |
 | Limits | Fast: 1025 rows; 2 MiB of bodies; 257 conditions | 413 `sql_too_large` / 413 `sql_too_large` / 400, nothing committed |
-| Scope | Fast: a `documents:read` key posts an `UPDATE` | 403, nothing written |
+| Scope | Fast: a `sql:read` key posts an `UPDATE` | 403, nothing written |
 | Grammar | Fast: every rejected form of section 2 | 400 with a message that quotes no client text |
 
 ## 6. Slice plan (each ≤ 1,500 lines, no storage format change)
@@ -115,4 +115,4 @@ The storage format stays `StorageFormat.Id` of the base (no schema or encoding c
 1. v1: one atomic change group per statement (1024 documents / 2 MiB); a larger statement is 413 `sql_too_large`,
    naming the limit. Chunking (R9c) is the planned follow-up. Section 12 of [multi-region-replication.md](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/multi-region-replication.md) says so.
 2. v1 refuses a computed `SET f = <other field or arithmetic>` with a 400 that names the rule (it does not converge).
-3. The same `POST …/sql` route; a write also requires `documents:write`.
+3. The same `POST …/sql` route; a write also requires `sql:write`.

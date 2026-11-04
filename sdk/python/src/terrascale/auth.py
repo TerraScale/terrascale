@@ -27,7 +27,7 @@ from .ids import validate_id
 __all__ = ["DEFAULT_ISSUER", "SCOPES", "APIKeyTokenSource", "AsyncAPIKeyTokenSource"]
 
 DEFAULT_ISSUER = "https://auth.terrascale.tech/terrascale"
-SCOPES = ("databases:read", "databases:write", "documents:read", "documents:write")
+SCOPES = ("databases:read", "databases:write", "sql:read", "sql:write")
 
 _KEY = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$")
 # Token endpoint answers worth another exchange: issuing a token changes no

@@ -7,10 +7,10 @@ namespace TerraBase.Features.ApiKeys;
 public static class ApiKeyScopes
 {
     /// <summary>Read documents and list collections.</summary>
-    public const string DocumentsRead = "documents:read";
+    public const string SqlRead = "sql:read";
 
     /// <summary>Write or delete collections and documents.</summary>
-    public const string DocumentsWrite = "documents:write";
+    public const string SqlWrite = "sql:write";
 
     /// <summary>Read databases and database tooling.</summary>
     public const string DatabasesRead = "databases:read";
@@ -19,7 +19,7 @@ public static class ApiKeyScopes
     public const string DatabasesWrite = "databases:write";
 
     /// <summary>Scopes an operator-issued tb_ key can hold.</summary>
-    public static IReadOnlyList<string> All { get; } = [DocumentsRead, DocumentsWrite];
+    public static IReadOnlyList<string> All { get; } = [SqlRead, SqlWrite];
 
     /// <summary>Additional scopes only ts-auth access tokens carry; operator-issued tb_ keys cannot hold them.</summary>
     public static IReadOnlyList<string> ProjectTokenScopes { get; } = [DatabasesRead, DatabasesWrite];

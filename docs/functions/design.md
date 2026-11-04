@@ -52,8 +52,8 @@ for moving execution onto dedicated function hosts; v1 shares the TerraBase proc
 
 ## Auth, billing, secrets and logs
 
-- **Auth**: deploy, list, logs and delete need a project API key with `documents:read` and `documents:write`; invoke
-  needs `documents:read`. SQL runs with the function's authority (reads and writes), like a backend endpoint.
+- **Auth**: deploy, list, logs and delete need a project API key with `sql:read` and `sql:write`; invoke
+  needs `sql:read`. SQL runs with the function's authority (reads and writes), like a backend endpoint.
 - **Billing**: every invocation counts one `invoke` operation in the database's usage, next to reads and writes, and its SQL
   counts as normal SQL reads and writes. Pricing treats invocations as operations.
 - **Secrets**: v1 has none. Per-function secrets will be stored encrypted with the database key (`secrets` map, write-only)

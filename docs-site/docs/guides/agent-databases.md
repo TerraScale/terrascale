@@ -56,7 +56,7 @@ ts --json schema apply schema.sql --database agent-run
 
 JSON plans contain `statements` (DDL strings), `destructive` and `applied`. A refused drop returns
 `schema_drop_refused` and exits with status `1`. An unchanged schema returns an empty `statements` array.
-Pull and diff need `documents:read`; applying DDL also needs `documents:write`. API-key commands use the key's
+Pull and diff need `sql:read`; applying DDL also needs `sql:write`. API-key commands use the key's
 project; organization keys also need `--project <id>`. Signed-in callers can omit `--database` after saving a
 database with `ts context set <org> <project> <database>`.
 
@@ -105,8 +105,8 @@ Content-Type: application/json
 
 ## Hand the agent a scoped key
 
-Mint a key from your own API key. It reaches one database, with `read` (`documents:read`) or `read_write`
-(`documents:read documents:write`) access:
+Mint a key from your own API key. It reaches one database, with `read` (`sql:read`) or `read_write`
+(`sql:read sql:write`) access:
 
 ```http
 POST https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys

@@ -43,8 +43,8 @@ at the core commit above (or an independently reviewed compatible successor). It
 must expose the real project database/import/document routes, local TLS trust and
 an existing synthetic project identity. Its fixture owner must supply a private
 0600 curl config with a test-issued project JWT, TLS CA and region pin, plus the
-fixture URL/project. Scopes: `databases:read databases:write documents:read
-documents:write`. No ts-auth accounts, source credentials, customer tokens, live
+fixture URL/project. Scopes: `databases:read databases:write sql:read
+sql:write`. No ts-auth accounts, source credentials, customer tokens, live
 services, bypasses, `--insecure`, shared listeners or arbitrary discovered ports.
 
 The source contains `ImportClient.StartAsync()` / `ManagementApi.StartAsync()` and

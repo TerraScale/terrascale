@@ -93,7 +93,7 @@ The C#, TypeScript, Go, Python and Rust SDKs call the same endpoint; see [SDKs](
 
 Errors use TerraScale codes and PostgreSQL SQLSTATEs across REST, WebSocket and the Postgres wire. For example, `unique_violation` carries `23505`, `foreign_key_violation` carries `23503`, and a retryable `serialization_conflict` carries `40001`. A refused HTTP statement rolls back the request and returns an `error` with `code`, `message`, `statement` and `sqlstate`. Writes with a read-only key answer `403 forbidden_scope` over HTTP and `42501` over the Postgres wire.
 
-Reads need the `documents:read` scope; writes and schema changes also need `documents:write`. A **Read and write** key from the dashboard has both.
+Reads need the `sql:read` scope; writes and schema changes also need `sql:write`. A **Read and write** key from the dashboard has both.
 
 ## Live shapes and table grants
 

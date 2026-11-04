@@ -1,6 +1,6 @@
 # Project file buckets
 
-Files use `/v1/projects/{project}/buckets`. Requests carry ts-auth project or end-user tokens and the existing `documents:read` / `documents:write` scopes. Database-restricted tokens cannot use project files. Project credentials create/list/delete buckets and replace their access rules. End users upload, list, download and delete only as the bucket policy allows.
+Files use `/v1/projects/{project}/buckets`. Requests carry ts-auth project or end-user tokens and the existing `sql:read` / `sql:write` scopes. Database-restricted tokens cannot use project files. Project credentials create/list/delete buckets and replace their access rules. End users upload, list, download and delete only as the bucket policy allows.
 
 ## HTTP contract
 

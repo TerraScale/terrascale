@@ -18,7 +18,7 @@ Each one removes origin work for readers of the same shape.
   query, so every reader and every epoch shares one cache key. Any other bucket keeps presigned URLs (T1).
 - Each object is PUT once with `Cache-Control: public, max-age=31536000, immutable`. Its name is a SHA-256, and its
   bytes are TBS1 ciphertext (AES-GCM under an epoch key). A cached copy is useless without the key, which only
-  `GET …/shape/keys` releases: authenticated, `documents:read`, `private, no-store`, revocation rechecked.
+  `GET …/shape/keys` releases: authenticated, `sql:read`, `private, no-store`, revocation rechecked.
 - `expires_at` in the manifest is still the start of the next epoch. A client reads the manifest again after that
   time. A CDN link itself does not expire.
 

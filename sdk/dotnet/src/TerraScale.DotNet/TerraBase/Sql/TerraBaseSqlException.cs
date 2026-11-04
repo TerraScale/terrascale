@@ -38,7 +38,7 @@ public static class TerraBaseSqlErrorCodes
     /// <summary>Another constraint failed (23000).</summary>
     public const string ConstraintViolation = "constraint_violation";
 
-    /// <summary>Writes and schema changes need the documents:write scope (42501, HTTP 403).</summary>
+    /// <summary>Writes and schema changes need the sql:write scope (42501, HTTP 403).</summary>
     public const string ForbiddenScope = "forbidden_scope";
 
     /// <summary>The statement leaves the database's SQL sandbox, such as ATTACH, VACUUM or a file function (42501, HTTP 403).</summary>

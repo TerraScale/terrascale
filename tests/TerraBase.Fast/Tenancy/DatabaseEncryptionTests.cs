@@ -56,7 +56,7 @@ public sealed class DatabaseEncryptionTests
     {
         var organization = await api.CreateOrganizationAsync(marker);
         var project = await api.CreateProjectAsync(organization, "Main");
-        var apiKey = await api.Server.IssueAsync(organization, "documents:read", "documents:write");
+        var apiKey = await api.Server.IssueAsync(organization, "sql:read", "sql:write");
         using var data = api.DataClient(apiKey);
         Seed? first = null;
         foreach (var name in (string[])["first", "second"])

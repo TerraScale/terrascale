@@ -38,7 +38,7 @@ with open(output, "x") as stream:
         _, body = live.http(region, "POST", live.management + "/databases", {"name": live.name, "homeRegion": region, "replicaRegions": [PAIR[region]]},
                             user=True, expect={201})
         live.database = body["id"]
-        _, body = live.http(region, "POST", "/admin/api-keys", {"name": "rt6 matrix", "scopes": ["documents:read", "documents:write"],
+        _, body = live.http(region, "POST", "/admin/api-keys", {"name": "rt6 matrix", "scopes": ["sql:read", "sql:write"],
                             "organizationId": live.organization, "projectId": live.project, "databaseId": live.database}, expect={201})
         live.key_id, live.key = body["id"], body["secret"]
         live.record(kind="database", database=live.database, name=live.name, key_id=live.key_id, regions=[region, PAIR[region]])

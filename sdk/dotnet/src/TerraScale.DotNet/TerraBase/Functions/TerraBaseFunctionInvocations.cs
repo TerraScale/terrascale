@@ -33,7 +33,7 @@ public sealed record TerraBaseFunctionLog(string Id, DateTimeOffset At, string T
 public sealed partial class TerraBaseDatabase
 {
     /// <summary>
-    /// Invokes once with documents:read. Body is at most 1 MiB: parsed JSON becomes event.body, otherwise UTF-8
+    /// Invokes once with sql:read. Body is at most 1 MiB: parsed JSON becomes event.body, otherwise UTF-8
     /// text; empty input becomes null. Query values become event.query. Every 2xx returns raw bytes, including
     /// empty 204; every other status throws TerraBaseFunctionInvocationException preserving its raw response
     /// and any JSON error code (including 500 function_error). Auth refusals also throw. Redirects must be disabled.
@@ -62,7 +62,7 @@ public sealed partial class TerraBaseDatabase
         }, cancellationToken);
     }
 
-    /// <summary>Lists invocation logs, newest first, with both documents:read and documents:write. Limit 1–100, default 50; no cursor.</summary>
+    /// <summary>Lists invocation logs, newest first, with both sql:read and sql:write. Limit 1–100, default 50; no cursor.</summary>
     public async Task<IReadOnlyList<TerraBaseFunctionLog>> ListFunctionLogsAsync(string functionName, int? limit = null,
         CancellationToken cancellationToken = default)
     {
