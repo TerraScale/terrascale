@@ -1,5 +1,5 @@
 # Renewing server token provider
 
-This unpublished source example is awaiting the SQL product update.
-It is not a current connection or API guide. See the
+Server-side client that exchanges a dashboard API key for short-lived project access tokens, renews them before they
+expire and sends SQL with the exchanged bearer token. See the
 [SQL overview](https://docs.terrascale.tech/concepts/sql).

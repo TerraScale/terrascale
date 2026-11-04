@@ -1,4 +1,4 @@
-import { createTerraBaseV1Client, TerraBaseV1Error } from "@terrascale/sdk";
+import { createTerraBaseV1Client } from "@terrascale/sdk";
 
 // Server-only: the API key never reaches the browser. Never prefix it with NEXT_PUBLIC_.
 const tokenUrl = "https://auth.terrascale.tech/terrascale/oauth/token";
@@ -33,15 +33,14 @@ async function accessToken(): Promise<string> {
   return cached.token;
 }
 
-export async function posts() {
+export async function database() {
   const client = createTerraBaseV1Client({
     baseUrl: "https://api.terrascale.tech",
     project: required("TERRASCALE_PROJECT_ID"),
     token: await accessToken(),
   });
-  const database = client.database(required("TERRASCALE_DATABASE"));
-  // A new database has no collections; 409 means this one already exists.
-  try { await database.collections.create("posts"); }
-  catch (error) { if (!(error instanceof TerraBaseV1Error && error.status === 409)) throw error; }
-  return database.collection("posts");
+  const db = client.database(required("TERRASCALE_DATABASE"));
+  // IF NOT EXISTS keeps this safe on every request.
+  await db.execute("CREATE TABLE IF NOT EXISTS posts (id TEXT PRIMARY KEY, title TEXT NOT NULL, published_at TEXT NOT NULL)");
+  return db;
 }
