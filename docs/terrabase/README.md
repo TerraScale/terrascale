@@ -93,6 +93,7 @@ Each database is served by its home region only ([cross-region.md](cross-region.
 anti-entropy and `GET /replication` status are removed. Superseded designs are kept in [archive/](archive/README.md).
 Region replicas (read-only page-pull copies in replica regions, PIVOT R3): [`region-replicas.md`](region-replicas.md).
 Home apply of transactions committed in other regions, `terrascale.conflicts` and write states (PIVOT R6): [`home-apply.md`](home-apply.md).
+Home leases, failover, fencing epochs and the `durability` modes with their RPO (PIVOT R8): [`home-failover.md`](home-failover.md).
 Local writes in a replica region, the local overlay, the push stream to the home and `durability=home` (PIVOT R7): [`local-overlay.md`](local-overlay.md).
 Two-node acknowledgement of local writes in a region, the hold on the second node and its push after a node loss (PIVOT R10, D16): [`in-region-ack.md`](in-region-ack.md).
 System records (catalog bookkeeping) are plain rows: [plain-row storage](decisions/2026-11-04-plain-row-storage.md).
