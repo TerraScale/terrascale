@@ -11,21 +11,19 @@ using static TerraBase.Features.Shapes.ShapeRoute;
 
 namespace TerraBase.Features.Shapes;
 
-/// <summary><c>GET …/tables/{table}/shape</c>: a table's rows as snapshot pages, change chunks and a live tail.</summary>
 internal sealed class GetShapeEndpoint(
     ITenantDirectory tenants, IShapeLineages lineages, IShapeSnapshots snapshots, IShapeChunks chunks, IShapeLiveTail live,
     IShapeMetrics metrics, IShapeFlights<ShapeRead> flights, IShapeMirror mirror) : EndpointWithoutRequest<IResult>
 {
     private static readonly Validation BadOffset = new("offset must be -1, snap.<S>.<P> or a decimal commit boundary");
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(Shape);
         Name("getShape");
         Summary("Syncs a table shape");
         Description("""
-            Requires documents:read. A shape is the rows of one ordinary rowid table that match where (every row when omitted), with the listed columns (every stored column when omitted), read from the home database's committed changes. Send the same where and columns on every request; each pair has its own handle. offset=-1 answers 307 to the first page of the newest snapshot; follow next_offset from there: snap.<S>.<P> pages, then decimal commit boundaries, then live=true long-polls with the TB-Shape-Cursor bucket. Each operation is insert, update or delete with the row id as key; inserts and updates carry the shape's columns. A row that starts matching where arrives as an insert with move "in"; a row that stops matching arrives as a delete with move "out". Apply operations in order. handle is required on every request but the bootstrap. A changed table definition, a stale handle, an offset below retention or above the head, or an unretained snapshot page answers 409 must_refetch with the current handle in TB-Shape-Handle and the body; restart at offset=-1. 429 shape_busy and 503 shape_too_large or unavailable: keep state and retry with backoff.
+            Requires documents:read. A shape is the rows of one ordinary rowid table that match where (every row when omitted), with the listed columns (every stored column when omitted), read from committed changes. Snapshots and sealed chunks come from the database home; live tails use the current region's replica when it holds the database. Send the same where and columns on every request; each pair has its own handle. offset=-1 answers 307 to the first page of the newest snapshot; follow next_offset from there: snap.<S>.<P> pages, then decimal commit boundaries, then live=true long-polls with the TB-Shape-Cursor bucket. Each operation is insert, update or delete with the row id as key; inserts and updates carry the shape's columns. A row that starts matching where arrives as an insert with move "in"; a row that stops matching arrives as a delete with move "out". Apply operations in order. handle is required on every request but the bootstrap. A changed table definition, a stale handle, an offset below retention, an offset above the home head, or an unretained snapshot page answers 409 must_refetch with the current handle in TB-Shape-Handle and the body; restart at offset=-1. A live offset ahead of the replica waits for catch-up and returns 503 unavailable if it still has not arrived. 429 shape_busy and 503 shape_too_large or unavailable: keep state and retry with backoff.
             """);
         Tags("Live");
         Produces<ShapeResponse>();
@@ -58,7 +56,6 @@ internal sealed class GetShapeEndpoint(
         Schema = new OpenApiSchema { Type = JsonSchemaType.String },
     };
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var resolved = await ResolveAsync(HttpContext, tenants, lineages, cancellationToken);
