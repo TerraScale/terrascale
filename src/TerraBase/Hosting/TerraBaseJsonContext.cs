@@ -20,6 +20,7 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Hosting;
 
+[JsonSerializable(typeof(TerraScale.TerraBase.Contracts.Management.TerraBaseDatabaseRegions))]
 [JsonSerializable(typeof(DeployFunctionRequest))]
 [JsonSerializable(typeof(FunctionBody))]
 [JsonSerializable(typeof(FunctionBody[]))]

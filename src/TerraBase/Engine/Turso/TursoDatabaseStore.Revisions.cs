@@ -113,6 +113,14 @@ internal sealed partial class TursoDatabaseStore
         }
     }
 
+    internal Task<IReadOnlyList<ReplicaPullObservation>> ReplicaStatusAsync(IReadOnlyList<string> regions, CancellationToken cancellationToken) =>
+        WithWriterAsync(writer =>
+        {
+            RefuseFaultedCopy();
+            Revisions.Catch(writer.Connection);
+            return Revisions.ReplicaStatus(regions);
+        }, "replica pull observations", cancellationToken);
+
     internal Task StartIncarnationAsync(CancellationToken cancellationToken) =>
         WithWriterAsync(writer =>
         {
