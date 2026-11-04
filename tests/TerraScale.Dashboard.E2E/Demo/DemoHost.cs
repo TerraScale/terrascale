@@ -120,6 +120,13 @@ namespace TerraScale.Dashboard.E2E.Demo
                 configureScenario?.Invoke(builder);
             });
             app.MapGet("/__test/checkout", (string id) => Results.Redirect(stripe.Complete(id)));
+            // Test-only: ts-auth completes the held deletions and the reconciler runs the account proof's operation cleanup.
+            app.MapPost("/__test/deletions/complete/{userId}", async (string userId, IDashboardState state, IDashboardIdentity identity, TimeProvider clock) =>
+            {
+                workspace.CompleteHeldDeletions();
+                await TerraScale.Dashboard.Features.Profile.AccountDeletion.CleanOperationsAsync(state, identity, userId, clock, default);
+                return Results.NoContent();
+            });
             // Test-only: report the signed-in organization's operation units now (or mark its pending overage invoiced), then list its overage items.
             app.MapPost("/__test/billing/overage", async (HttpContext http, DashboardSessions sessions, AccountService accounts, UsageOverageReporter reporter) =>
             {
@@ -488,6 +495,17 @@ namespace TerraScale.Dashboard.E2E.Demo
         public void SetDeletionStatus(string receipt, bool completed)
         {
             deletionReceipts[receipt] = completed;
+        }
+
+        // ts-auth accepts deletions but leaves them pending until CompleteHeldDeletions, as while storage regions confirm.
+        public bool HoldDeletions { get; set; }
+
+        public void CompleteHeldDeletions()
+        {
+            foreach (var receipt in deletionReceipts.Keys)
+            {
+                deletionReceipts[receipt] = true;
+            }
         }
 
         public readonly object Gate = new();
@@ -975,6 +993,12 @@ namespace TerraScale.Dashboard.E2E.Demo
             if (AuthorizeDeletion?.Invoke(session, receipt, authorization) != true)
             {
                 throw StepUpFlow.Required();
+            }
+
+            if (HoldDeletions)
+            {
+                deletionReceipts[receipt] = false;
+                return Task.FromResult(false);
             }
 
             deletionReceipts[receipt] = true;

@@ -49,6 +49,12 @@ namespace TerraScale.Dashboard.Features.Profile
                 }
 
                 attempt = Math.Clamp(attempt, 0, AutomaticChecks);
+                if (await CompletedAsync(http, state))
+                {
+                    http.Response.Cookies.Delete(Cookie);
+                    return HttpRedirects.SeeOther("/account-deleted");
+                }
+
                 var operation = await ReadOperationAsync(http, state, identity);
                 if (operation is null)
                 {
