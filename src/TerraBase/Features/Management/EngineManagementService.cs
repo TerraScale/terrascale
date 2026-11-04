@@ -7,6 +7,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Qos;
@@ -22,7 +23,7 @@ namespace TerraBase.Features.Management;
 internal sealed partial class EngineManagementService(
     IStorageEngine engine, IOrphanDatabaseFiles orphanFiles, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger, DatabaseLifecycleCheckpoint checkpoint, IMeterFactory meters,
     IProjectAuthorityVerifier projectAuthority, Lazy<IStorageQuota> quota,
-    Lazy<ICatalogGate> catalogGate, DatabaseAllowance databaseAllowance)
+    Lazy<ICatalogGate> catalogGate, DatabaseAllowance databaseAllowance, Lazy<IBackupKeyShredding> shredding)
     : IManagementService, ITenantDirectory, IHostedService, ICatalogGuard, IDatabaseFileCatalog
 {
     private const string Catalog = ManagementCatalog.Collection;
@@ -401,9 +402,16 @@ internal sealed partial class EngineManagementService(
                 await UnregisterDatabaseAsync(transaction, userId, organizationId, projectId, databaseId, options.Region, token).ConfigureAwait(false) is TenantContext,
             cancellationToken).ConfigureAwait(false) switch
         {
-            bool deleted => deleted ? new Done() : ManagementErrors.NotFound,
+            // The deletion is durable: destroy its backup keys now rather than at the next erasure pass.
+            bool deleted => deleted ? Shredded(deletable.Storage) : ManagementErrors.NotFound,
             Unavailable refused => refused,
         };
+    }
+
+    private Done Shredded(TenantContext storage)
+    {
+        shredding.Value.Shred(storage);
+        return new Done();
     }
 
     private async ValueTask<RecordedDeletion> DeleteRecordedAsync(

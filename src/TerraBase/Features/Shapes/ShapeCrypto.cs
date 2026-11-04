@@ -10,7 +10,7 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Shapes;
 
-/// <summary>An epoch key <c>K_e</c> released for one handle, epoch and project data key.</summary>
+/// <summary>An epoch key <c>K_e</c> released for one handle, epoch and database data key.</summary>
 internal sealed record ShapeEpochKey(string Handle, long Epoch, string KeyId, byte[] Key);
 
 /// <summary>A TBS1 object's exact bytes and the epoch and data key that sealed them; disposing releases its memory.</summary>
@@ -26,7 +26,7 @@ internal sealed class ShapeCiphertext(byte[] bytes, string keyId, long epoch, IM
 }
 
 /// <summary>The project has no data key store on this machine (no backup bucket), so no shape key exists.</summary>
-internal sealed class ShapeKeysUnavailableException() : IOException("unavailable: shape keys need the project data key store");
+internal sealed class ShapeKeysUnavailableException() : IOException("unavailable: shape keys need the database data key store");
 
 /// <summary>
 /// Proof that a retained TBS1 object of <c>handle</c> names an <c>(epoch, key_id)</c> pair. Historic keys are released
@@ -45,13 +45,13 @@ internal interface IShapeCrypto
 
     /// <summary>
     /// <c>K_e</c> for a served pair, or <see langword="null"/> (<c>409 must_refetch</c>). Served: the current epoch under
-    /// the project's current data key, and any pair a retained object proves. The caller has already checked that
+    /// the database's current data key, and any pair a retained object proves. The caller has already checked that
     /// <paramref name="handle"/> is current and answered a future epoch with <c>400</c>.
     /// </summary>
     /// <exception cref="ShapeKeysUnavailableException">This machine has no data key store.</exception>
     Task<ShapeEpochKey?> GetKeyAsync(TenantContext database, string handle, long epoch, string keyId, CancellationToken cancellationToken);
 
-    /// <summary><c>K_e</c> of the current epoch under the project's current data key.</summary>
+    /// <summary><c>K_e</c> of the current epoch under the database's current data key.</summary>
     /// <exception cref="ShapeKeysUnavailableException">This machine has no data key store.</exception>
     Task<ShapeEpochKey> CurrentKeyAsync(TenantContext database, string handle, CancellationToken cancellationToken);
 
@@ -61,7 +61,7 @@ internal interface IShapeCrypto
     Task<ShapeCiphertext> EncryptAsync(TenantContext database, string handle, string requestOffset, ReadOnlyMemory<byte> plain, CancellationToken cancellationToken);
 }
 
-/// <summary>TBS1 over the project data keys backups use; the epoch and object steps are domain-separated from backup keys.</summary>
+/// <summary>TBS1 over the per-database data keys backups use; the epoch and object steps are domain-separated from backup keys.</summary>
 internal sealed class ShapeCrypto(DataKeys? keys, IShapeKeyRetention retention, IMemoryBudget memory, TimeProvider time) : IShapeCrypto
 {
     internal const int EpochSeconds = 600;
@@ -91,7 +91,17 @@ internal sealed class ShapeCrypto(DataKeys? keys, IShapeKeyRetention retention, 
         var scope = Scope(database);
         if (epoch == CurrentEpoch)
         {
-            var (id, dataKey) = await store.CurrentAsync(scope, cancellationToken).ConfigureAwait(false);
+            string id;
+            byte[] dataKey;
+            try
+            {
+                (id, dataKey) = await store.CurrentAsync(scope, cancellationToken).ConfigureAwait(false);
+            }
+            catch (DatabaseShreddedException)
+            {
+                return null; // A deleted database's cached chunks stay sealed: no key exists to release.
+            }
+
             if (id == keyId && epoch == CurrentEpoch)
             {
                 return new(handle, epoch, keyId, EpochKey(dataKey, handle, epoch));
@@ -108,7 +118,7 @@ internal sealed class ShapeCrypto(DataKeys? keys, IShapeKeyRetention retention, 
         {
             return new(handle, epoch, keyId, EpochKey(await store.GetAsync(scope, keyId, cancellationToken).ConfigureAwait(false), handle, epoch));
         }
-        catch (InvalidDataException)
+        catch (Exception error) when (error is InvalidDataException or DatabaseShreddedException)
         {
             return null;
         }
@@ -227,7 +237,7 @@ internal sealed class ShapeCrypto(DataKeys? keys, IShapeKeyRetention retention, 
         return output;
     }
 
-    // K_d is the project's data key; without a project there is no scope to derive from.
+    // K_d is the database's data key; deleting the database destroys it, so cached chunks become unreadable.
     private static string Scope(TenantContext database)
     {
         ArgumentException.ThrowIfNullOrEmpty(database.ProjectId);

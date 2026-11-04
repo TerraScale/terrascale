@@ -1,3 +1,4 @@
+using TerraBase.Features.Backup;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management.Indexes;
@@ -18,6 +19,7 @@ internal static class ManagementExtensions
         services.AddSingleton<DatabaseAllowance>();
         services.AddSingleton(provider => new Lazy<ICatalogGate>(provider.GetRequiredService<ICatalogGate>));
         services.AddSingleton(provider => new Lazy<IStorageQuota>(provider.GetRequiredService<IStorageQuota>));
+        services.AddSingleton(provider => new Lazy<IBackupKeyShredding>(provider.GetRequiredService<IBackupKeyShredding>));
         services.AddHostedService(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddHostedService<CatalogConvergence>();
         services.AddSingleton<IManagementService>(provider => provider.GetRequiredService<EngineManagementService>());

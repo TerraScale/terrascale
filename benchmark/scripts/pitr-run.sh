@@ -108,7 +108,7 @@ heavy() { flock -o "$LOCK" nice -n 19 "$PB" "$@"; }
 runjson() { jq -r "$1" "$RUN/run.json"; }
 cutjson() { jq -r --arg c "$1" "select(.name==\$c) | $2" "$RUN/cuts.jsonl"; }
 db_prefix() { echo "v1/$(runjson .organization)/$(runjson .project)/$(runjson .database_id)/"; }
-keys_prefix() { echo "v1/keys/$(runjson .organization)/$(runjson .project)/"; }
+keys_prefix() { echo "v1/keys/$(runjson .organization)/$(runjson .project)/$(runjson .database_id)/"; }
 acks() { local n; n=$(grep -c '"ev":"ack"' "$RUN/ledger/$1.jsonl" 2>/dev/null) || true; echo "${n:-0}"; } # 0 before the ledger exists
 
 # lab JOB [ENV_FILE]: one PitrLab job with its master key and optional S3 credentials.

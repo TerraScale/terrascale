@@ -370,7 +370,7 @@ internal static class PitrSelfCheck
         await PitrTarget.CheckAsync(work, root, database, api.User, status.LastShippedAt!.Value, texts, masterKey, time, Handler, check, cancellationToken);
 
         var scratch = Path.Combine(work, "scratch");
-        var keysPrefix = $"v1/keys/{database.Organization}/{database.Project}/";
+        var keysPrefix = $"v1/keys/{database.Organization}/{database.Project}/{database.Id}/";
         var original = await AuditAsync(root, file + "/", keysPrefix, masterKey, scratch, Path.Combine(work, "audit-original.json"), cancellationToken);
         var generation = original.Generations.Count > 0 ? original.Generations[0] : null;
         check("audit.original", original.Verdict == "ok" && original.Generations.Count == 1 && original.Totals.Snapshots == 2 && original.Totals.Segments >= 4

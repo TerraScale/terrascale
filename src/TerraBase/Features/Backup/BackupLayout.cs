@@ -26,7 +26,17 @@ internal static class BackupLayout
     public static string FileRoot(TenantContext? database) =>
         database is null ? $"{Version}/{System}" : $"{Version}/{database.OrganizationId}/{database.ProjectId}/{database.DatabaseId}";
 
-    public static string KeyScope(TenantContext? database) => database is null ? System : $"{database.OrganizationId}/{database.ProjectId}";
+    // Each database has its own data keys, so deleting it destroys exactly its keys (crypto-shredding).
+    public static string KeyScope(TenantContext? database) =>
+        database is null ? System : $"{database.OrganizationId}/{database.ProjectId}/{database.DatabaseId}";
+
+    // Project-wide keys from before per-database scopes; a database's shred removes them too.
+    public static string ProjectKeys(TenantContext database) => $"{Version}/keys/{database.OrganizationId}/{database.ProjectId}/";
+
+    // The deletion record left in a shredded scope; never a ULID, so key selection never picks it.
+    public const string ShreddedName = "shredded";
+
+    public static string Shredded(string scope) => Keys(scope) + ShreddedName;
 
     public static string Snapshots(string file) => $"{file}/snapshots/";
 

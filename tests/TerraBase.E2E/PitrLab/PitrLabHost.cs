@@ -25,13 +25,13 @@
 //              credentials are accepted; none is logged.
 //
 //   download   {"mode":"download","source":{"kind":"s3"}|{"kind":"dir","root":"<dir>"},"prefixes":["v1/<org>/<project>/<db>/",
-//               "v1/keys/<org>/<project>/"],"root":"<dest dir>","manifest":"<path>"}
+//               "v1/keys/<org>/<project>/<db>/"],"root":"<dest dir>","manifest":"<path>"}
 //              Byte-exact copy into a root s3-serve can serve. An s3 source reads AWS_ENDPOINT_URL_S3, AWS_REGION,
 //              BUCKET_NAME, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY from the environment and only lists and gets.
 //              Manifest: [{"key","size","sha256","etag"}], rewritten every 500 objects; a rerun skips objects whose
 //              listed size and ETag match the manifest and whose local file still hashes to it.
 //
-//   audit      {"mode":"audit","source":...,"database_prefix":"v1/<org>/<project>/<db>/","keys_prefix":"v1/keys/<org>/<project>/",
+//   audit      {"mode":"audit","source":...,"database_prefix":"v1/<org>/<project>/<db>/","keys_prefix":"v1/keys/<org>/<project>/<db>/",
 //               "out":"<path>"}
 //              Opens every snapshot and segment with the product's reader under TERRABASE_MASTER_KEY (environment only),
 //              counts each segment's change records and walks each generation as a restore does. out:

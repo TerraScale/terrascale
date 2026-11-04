@@ -163,7 +163,7 @@ public sealed class PointInTimeHistoryTests
 
         // The wrapped data key the sealed object key names.
         public string DataKeyObject(string key) =>
-            BackupLayout.Key($"{Database.Organization}/{Database.Project}", Encoding.ASCII.GetString(s3.Objects[key], 4, 26));
+            BackupLayout.Key($"{Database.Organization}/{Database.Project}/{Database.Id}", Encoding.ASCII.GetString(s3.Objects[key], 4, 26));
 
         public byte[] Unwrap(string wrapped) => s3.Unwrap(wrapped);
 
@@ -267,7 +267,7 @@ public sealed class PointInTimeHistoryTests
         private (string KeyId, byte[] DataKey) DataKey(byte[] sealedObject)
         {
             var keyId = Encoding.ASCII.GetString(sealedObject, 4, 26);
-            return (keyId, s3.Unwrap(Encoding.ASCII.GetString(s3.Objects[BackupLayout.Key($"{Database.Organization}/{Database.Project}", keyId)])));
+            return (keyId, s3.Unwrap(Encoding.ASCII.GetString(s3.Objects[BackupLayout.Key($"{Database.Organization}/{Database.Project}/{Database.Id}", keyId)])));
         }
 
         // A real S3 DELETE through the node's own object store, as a bucket-side deletion would remove it.

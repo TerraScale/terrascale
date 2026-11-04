@@ -11,7 +11,7 @@ namespace TerraBase.Features.Backup;
 /// LZ4-compressed when that is smaller and sealed with AES-256-GCM.
 /// </summary>
 /// <remarks>
-/// Header (62 bytes): magic <c>TBK1</c>, the 26-character id of the project data key, a random 32-byte salt. Each object
+/// Header (62 bytes): magic <c>TBK1</c>, the 26-character id of the database data key, a random 32-byte salt. Each object
 /// gets its own AES key, HKDF-SHA256 of the data key with the salt and, as info, the object's bucket key, so an object
 /// moved to another key does not decrypt. Chunk <c>i</c>: a big-endian word with the plain length (low 30 bits), bit 30
 /// set when LZ4-compressed and bit 31 on the last chunk; a big-endian word with the stored length; the ciphertext and its
