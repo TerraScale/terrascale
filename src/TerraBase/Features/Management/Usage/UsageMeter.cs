@@ -70,7 +70,7 @@ internal sealed record UsageCounts(OpCounts Lifetime, OpCounts[] Series);
 internal readonly union UsageCountsResult(UsageCounts, Unavailable);
 
 internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider time, TerraBaseOptions options, ILogger<UsageMeter> logger, IMemoryBudget memory, IMeterFactory meters,
-    IDatabaseStats stats)
+    IDatabaseStats stats, PeerUsage peers)
     : IUsageMeter, IDisposable
 {
 
