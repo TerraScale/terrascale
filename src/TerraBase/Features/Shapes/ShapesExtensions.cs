@@ -108,6 +108,7 @@ public static class ShapesExtensions
             .AddSingleton<ReplicaShapeTails>()
             .AddSingleton<ShapeService>()
             .AddSingleton<IShapeLineages>(provider => provider.GetRequiredService<ShapeService>())
+            .AddSingleton<IShapeGrants>(provider => provider.GetRequiredService<ShapeService>())
             .AddSingleton<IShapeSnapshots>(provider => provider.GetRequiredService<ShapeService>())
             .AddSingleton<IShapeChunks>(provider => provider.GetRequiredService<ShapeService>())
             .AddSingleton<IShapeLiveTail>(provider => provider.GetRequiredService<ShapeService>())

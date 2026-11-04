@@ -60,9 +60,10 @@ internal sealed class PutShapeGrantEndpoint(IManagementService management, IShap
                 return ErrorResponse.From(error);
         }
 
-        return await grants.PutGrantAsync(database.DatabaseId!, grant, cancellationToken) switch
+        return await grants.PutGrantAsync(database, grant, cancellationToken) switch
         {
             ShapeGrant saved => TypedResults.Ok(ShapeGrantBody.From(saved)),
+            NotFound error => ErrorResponse.From(error),
             Unavailable error => ErrorResponse.From(error),
         };
     }

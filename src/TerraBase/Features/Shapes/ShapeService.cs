@@ -11,7 +11,7 @@ namespace TerraBase.Features.Shapes;
 internal sealed class ShapeService(
     IStorageEngine engine, IShapeSealer sealer, IShapeSnapshotSealer snapshots, IShapeStorage storage, IShapeRetention retention,
     ShapeRegistry registry, ShapeLiveGate gate, IShapeFlights<ShapeRead> flights, IMemoryBudget memory, IHostApplicationLifetime lifetime,
-    ILogger<ShapeService> logger, ReplicaShapeTails replicaTails, ShapeControls controls, IShapeMirror mirror, TimeProvider time) : IShapeLineages, IShapeSnapshots, IShapeChunks, IShapeLiveTail
+    ILogger<ShapeService> logger, ReplicaShapeTails replicaTails, ShapeControls controls, IShapeMirror mirror, TimeProvider time) : IShapeLineages, IShapeSnapshots, IShapeChunks, IShapeLiveTail, IShapeGrants
 {
     private int _maintaining;
     private readonly ClosedChunks _closed = new(memory);
@@ -54,6 +54,89 @@ internal sealed class ShapeService(
             return shape;
         }
         catch (Exception error) when (error is ShapeSealOffsetException or ObjectDisposedException or StorageBusyException or QosMemoryException)
+        {
+            return new Unavailable("shape storage changed or is busy; retry later");
+        }
+    }
+
+    public async ValueTask<ShapeGrantRead> GetGrantAsync(TenantContext database, string table, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (replicaTails.Holds(database))
+            {
+                return await replicaTails.GrantAsync(database, table, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+            {
+                return UnknownDatabase;
+            }
+
+            await using var reader = await storage.BeginTransactionAsync(store, write: false, cancellationToken).ConfigureAwait(false);
+            return await Tables(reader).ReadShapeGrantAsync(table, cancellationToken).ConfigureAwait(false) is { } grant
+                ? grant
+                : new NotFound("the table has no read grant", "no_read_grant");
+        }
+        catch (Exception error) when (error is ObjectDisposedException or StorageBusyException or QosMemoryException)
+        {
+            return new Unavailable("shape storage changed or is busy; retry later");
+        }
+    }
+
+    public async ValueTask<ShapeGrantList> ListGrantsAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+            {
+                return UnknownDatabase;
+            }
+
+            await using var reader = await storage.BeginTransactionAsync(store, write: false, cancellationToken).ConfigureAwait(false);
+            return new ShapeGrantList(await Tables(reader).ListShapeGrantsAsync(cancellationToken).ConfigureAwait(false));
+        }
+        catch (Exception error) when (error is ObjectDisposedException or StorageBusyException or QosMemoryException)
+        {
+            return new Unavailable("shape storage changed or is busy; retry later");
+        }
+    }
+
+    public async ValueTask<ShapeGrantPut> PutGrantAsync(TenantContext database, ShapeGrant grant, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+            {
+                return UnknownDatabase;
+            }
+
+            await using var writer = await storage.BeginTransactionAsync(store, write: true, cancellationToken).ConfigureAwait(false);
+            await Tables(writer).PutShapeGrantAsync(grant, cancellationToken).ConfigureAwait(false);
+            _ = await writer.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return grant;
+        }
+        catch (Exception error) when (error is ObjectDisposedException or StorageBusyException or QosMemoryException)
+        {
+            return new Unavailable("shape storage changed or is busy; retry later");
+        }
+    }
+
+    public async ValueTask<ShapeGrantDelete> DeleteGrantAsync(TenantContext database, string table, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+            {
+                return UnknownDatabase;
+            }
+
+            await using var writer = await storage.BeginTransactionAsync(store, write: true, cancellationToken).ConfigureAwait(false);
+            var removed = await Tables(writer).DeleteShapeGrantAsync(table, cancellationToken).ConfigureAwait(false);
+            _ = await writer.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return removed;
+        }
+        catch (Exception error) when (error is ObjectDisposedException or StorageBusyException or QosMemoryException)
         {
             return new Unavailable("shape storage changed or is busy; retry later");
         }

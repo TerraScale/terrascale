@@ -46,6 +46,9 @@ internal sealed class TursoReplicaShapeReader : IReplicaShapeReader
     public ValueTask<LineageResult> ResolveAsync(string table, ShapeQuery query, CancellationToken cancellationToken) =>
         new(Task.Run(() => Resolve(table, query), cancellationToken));
 
+    public ValueTask<ShapeGrant?> ReadGrantAsync(string table, CancellationToken cancellationToken) =>
+        new(Task.Run(() => _reader.Grant(table), cancellationToken));
+
     public ValueTask<ShapeRead?> ReadAsync(ShapeScope scope, ShapeLineage lineage, long offset, IMemoryBudget memory, CancellationToken cancellationToken) =>
         new(Task.Run<ShapeRead?>(() =>
         {

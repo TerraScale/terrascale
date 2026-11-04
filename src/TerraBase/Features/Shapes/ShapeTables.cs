@@ -21,6 +21,14 @@ internal interface IShapeTableStorage
     ValueTask<ShapeTableState> RenewShapeTableAsync(string table, CancellationToken cancellationToken);
 
     ValueTask<ShapeFilterResult> ReadShapeFilterAsync(string table, string generation, ShapeQuery query, CancellationToken cancellationToken);
+
+    ValueTask<ShapeGrant?> ReadShapeGrantAsync(string table, CancellationToken cancellationToken);
+
+    ValueTask<IReadOnlyList<ShapeGrant>> ListShapeGrantsAsync(CancellationToken cancellationToken);
+
+    ValueTask PutShapeGrantAsync(ShapeGrant grant, CancellationToken cancellationToken);
+
+    ValueTask<bool> DeleteShapeGrantAsync(string table, CancellationToken cancellationToken);
 }
 
 internal readonly union ShapeFilterResult(ShapeFilter, Validation, Forbidden, Unavailable);

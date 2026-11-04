@@ -80,7 +80,7 @@ internal static class ShapeRoute
                         return NotGranted;
                     }
 
-                    switch (await context.RequestServices.GetRequiredService<IShapeGrants>().GetGrantAsync(database.DatabaseId!, table!, cancellationToken))
+                    switch (await context.RequestServices.GetRequiredService<IShapeGrants>().GetGrantAsync(database, table!, cancellationToken))
                     {
                         case ShapeGrant grant:
                             string? bound = null;

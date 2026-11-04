@@ -382,7 +382,7 @@ internal sealed partial class TursoDatabaseStore
                             if (!IsSystem)
                             {
 
-                                Execute(copy, "DELETE FROM _tb_shape_chunk; DELETE FROM _tb_shape_snapshot;");
+                                Execute(copy, "DELETE FROM _tb_shape_chunk WHERE NOT (handle >= '~grant:' AND handle < '~grant;' AND offset = 0); DELETE FROM _tb_shape_snapshot;");
                             }
                             using var refreshMeasured = MeasureRewrite("refresh_digest");
                             foreach (var table in RewriteRefreshTables)

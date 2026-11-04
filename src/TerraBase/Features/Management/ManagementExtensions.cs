@@ -25,7 +25,6 @@ internal static class ManagementExtensions
         services.AddSingleton<Platform.IPlatformCatalog>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<ICatalogGuard>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<IDatabaseFileCatalog>(provider => provider.GetRequiredService<EngineManagementService>());
-        services.AddSingleton<Shapes.IShapeGrants>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<SystemCatalog>();
         services.AddSingleton<RemoteDatabases>();
         services.AddHttpClient(RemoteDatabases.HttpClientName);

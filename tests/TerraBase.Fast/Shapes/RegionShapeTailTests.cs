@@ -18,6 +18,10 @@ public sealed class RegionShapeTailTests
 {
     private static readonly string[] Projected = ["name", "score"];
     private static readonly string[] Tables = ["items"];
+    private static readonly string[] GrantedColumns = ["id", "owner_id", "body"];
+    private static readonly string[] AliceFirst = ["1"];
+    private static readonly string[] AliceNew = ["4"];
+    private static readonly string[] NotesTable = ["notes"];
 
     [Test]
     public async Task A_shape_in_sjc_reads_gru_updates_and_filtered_moves_from_its_replica_even_after_home_disconnects()
@@ -173,6 +177,70 @@ public sealed class RegionShapeTailTests
                 await Assert.That(repeated.Body).IsEquivalentTo(first.Body);
             }
         }
+    }
+
+    [Test]
+    public async Task An_end_user_tails_only_their_granted_rows_from_the_sjc_replica()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        using var issuer = new TestIssuer();
+        var regions = new List<RegionPeer>();
+        await using var gru = await StartAsync("gru", issuer, regions);
+        regions.Add(new RegionPeer("gru", gru.Server.BaseAddress));
+        await using var sjc = await StartAsync("sjc", issuer, regions);
+        regions.Add(new RegionPeer("sjc", sjc.Server.BaseAddress));
+        var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
+        var project = await gru.CreateProjectAsync(organization, "Project");
+        using var created = await gru.Client.PostAsJsonAsync(
+            ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"), new { name = "main", replicaRegions = new List<string> { "sjc" } }, token);
+        created.EnsureSuccessStatusCode();
+        var database = new ManagedDatabaseRef(organization, project, (await created.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!, "main");
+        using var owner = gru.DataClient(gru.ProjectToken(project, "databases:read databases:write sql:read sql:write"));
+        var (alice, bob) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        using var seeded = await owner.PostAsJsonAsync(ManagementApi.Uri(database.Data + "/sql/execute"), new
+        {
+            statements = new object[]
+            {
+                new { sql = "CREATE TABLE notes(id INTEGER PRIMARY KEY, owner_id TEXT NOT NULL, body TEXT, secret TEXT)" },
+                new { sql = "INSERT INTO notes VALUES (1, ?, 'a1', 's'), (2, ?, 'b1', 's')", args = new[] { alice, bob } },
+            },
+        }, token);
+        seeded.EnsureSuccessStatusCode();
+        using var granted = await owner.PutAsJsonAsync(ManagementApi.Uri(database.Data + "/tables/notes/read-grant"),
+            new { where = "owner_id = :sub", columns = GrantedColumns }, token);
+        await Assert.That(granted.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var replication = sjc.Server.Services.GetRequiredService<RegionReplication>();
+        await replication.SyncCatalogsAsync(token);
+        await replication.PullAllAsync(token);
+        await replication.PullAllAsync(token);
+
+        var endUser = issuer.Mint(alice, jwt =>
+        {
+            jwt.Claims["token_kind"] = "end_user";
+            jwt.Claims["project_id"] = project;
+            jwt.Claims["instance_id"] = project;
+            jwt.Claims["database"] = database.Id;
+            jwt.Claims["roles"] = Array.Empty<string>();
+            jwt.Claims["tables"] = NotesTable;
+        });
+        using var home = gru.DataClient(endUser);
+        using var local = sjc.DataClient(endUser);
+        var shape = new TableShapeClient(home, ManagementApi.Uri(database.Data).ToString(), "notes");
+        await shape.SyncAsync();
+        await Assert.That(shape.State.Keys.ToList()).IsEquivalentTo(AliceFirst);
+        var parked = new TableShapeClient(local, ManagementApi.Uri(database.Data).ToString(), "notes").GetAsync(shape.Uri(shape.NextOffset, live: true));
+        using var changed = await owner.PostAsJsonAsync(ManagementApi.Uri(database.Data + "/sql/execute"), new
+        {
+            statements = new object[] { new { sql = "INSERT INTO notes VALUES (3, ?, 'b2', 's'), (4, ?, 'a2', 's')", args = new[] { bob, alice } } },
+        }, token);
+        changed.EnsureSuccessStatusCode();
+        await replication.PullAllAsync(token);
+        await replication.PullAllAsync(token);
+        var reply = await parked.WaitAsync(TimeSpan.FromSeconds(10), token);
+        await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.OK).Because(System.Text.Encoding.UTF8.GetString(reply.Body));
+        var ops = reply.Ops.ToList();
+        await Assert.That(ops.Select(op => op.GetProperty("key").GetString()!).ToList()).IsEquivalentTo(AliceNew);
+        await Assert.That(ops.Single().GetProperty("row").TryGetProperty("secret", out _)).IsFalse();
     }
 
     private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, List<RegionPeer> regions, FakeS3? backups = null, TimeProvider? time = null) => ManagementApi.StartAsync(

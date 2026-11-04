@@ -36,7 +36,7 @@ internal sealed class GetShapeGrantEndpoint(IManagementService management, IShap
             return (IResult)resolved;
         }
 
-        return await grants.GetGrantAsync(database.DatabaseId!, table, cancellationToken) switch
+        return await grants.GetGrantAsync(database, table, cancellationToken) switch
         {
             ShapeGrant grant => TypedResults.Ok(ShapeGrantBody.From(grant)),
             NotFound error => ErrorResponse.From(error),

@@ -1,5 +1,4 @@
 using TerraBase.Engine;
-using TerraBase.Features.Shapes;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
@@ -57,15 +56,6 @@ internal static class CatalogTables
             organization_id TEXT NOT NULL,
             project_id TEXT NOT NULL,
             plan INTEGER NOT NULL)
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS catalog_shape_grants(
-            database_id TEXT NOT NULL,
-            table_name TEXT NOT NULL,
-            where_sql TEXT,
-            columns TEXT,
-            updated_at INTEGER NOT NULL,
-            PRIMARY KEY (database_id, table_name))
         """,
     ];
 
@@ -230,7 +220,6 @@ internal static class CatalogTables
     public static async ValueTask<bool> DeleteDatabaseAsync(IStorageTransaction transaction, string id, CancellationToken cancellationToken)
     {
         _ = await ExecuteAsync(transaction, Sql("DELETE FROM catalog_database_replicas WHERE database_id = ?", id), cancellationToken).ConfigureAwait(false);
-        _ = await DeleteShapeGrantAsync(transaction, id, null, cancellationToken).ConfigureAwait(false);
         await DatabaseTtl.WriteAsync(transaction, id, null, cancellationToken).ConfigureAwait(false);
         await RetireAsync(transaction, id, cancellationToken).ConfigureAwait(false);
         return await ExecuteAsync(transaction, Sql("DELETE FROM catalog_databases WHERE id = ?", id), cancellationToken).ConfigureAwait(false) > 0;
@@ -256,27 +245,6 @@ internal static class CatalogTables
 
     public static async ValueTask<bool> DeletePendingCleanupAsync(IStorageTransaction transaction, string databaseId, CancellationToken cancellationToken) =>
         await ExecuteAsync(transaction, Sql("DELETE FROM catalog_pending_cleanup WHERE database_id = ?", databaseId), cancellationToken).ConfigureAwait(false) > 0;
-
-    public static async ValueTask<IReadOnlyList<ShapeGrant>> ShapeGrantsAsync(
-        IStorageTransaction transaction, string databaseId, string? table, CancellationToken cancellationToken) =>
-        [.. (await RowsAsync(transaction, table is null
-            ? Sql("SELECT table_name, where_sql, columns, updated_at FROM catalog_shape_grants WHERE database_id = ? ORDER BY table_name", databaseId)
-            : Sql("SELECT table_name, where_sql, columns, updated_at FROM catalog_shape_grants WHERE database_id = ? AND table_name = ?", databaseId, table),
-            cancellationToken).ConfigureAwait(false))
-            .Select(row => new ShapeGrant((string)row[0]!, (string?)row[1], row[2] is string columns ? columns.Split(',') : null, Time(row[3])))];
-
-    public static ValueTask<long> PutShapeGrantAsync(IStorageTransaction transaction, string databaseId, ShapeGrant grant, CancellationToken cancellationToken) =>
-        ExecuteAsync(transaction, Sql(
-            """
-            INSERT INTO catalog_shape_grants(database_id, table_name, where_sql, columns, updated_at) VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(database_id, table_name) DO UPDATE SET where_sql = excluded.where_sql, columns = excluded.columns, updated_at = excluded.updated_at
-            """,
-            databaseId, grant.Table, grant.Where, grant.Columns is { } columns ? string.Join(',', columns) : null, grant.UpdatedAt.UtcTicks), cancellationToken);
-
-    public static async ValueTask<bool> DeleteShapeGrantAsync(IStorageTransaction transaction, string databaseId, string? table, CancellationToken cancellationToken) =>
-        await ExecuteAsync(transaction, table is null
-            ? Sql("DELETE FROM catalog_shape_grants WHERE database_id = ?", databaseId)
-            : Sql("DELETE FROM catalog_shape_grants WHERE database_id = ? AND table_name = ?", databaseId, table), cancellationToken).ConfigureAwait(false) > 0;
 
     public static string Key(string name) => name.ToLowerInvariant();
 

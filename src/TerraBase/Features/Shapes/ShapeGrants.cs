@@ -1,4 +1,5 @@
 using TerraBase.Errors;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Shapes;
 
@@ -6,19 +7,19 @@ internal sealed record ShapeGrant(string Table, string? Where, IReadOnlyList<str
 
 internal readonly union ShapeGrantRead(ShapeGrant, NotFound, Unavailable);
 
-internal readonly union ShapeGrantList(IReadOnlyList<ShapeGrant>, Unavailable);
+internal readonly union ShapeGrantList(IReadOnlyList<ShapeGrant>, NotFound, Unavailable);
 
-internal readonly union ShapeGrantDelete(bool, Unavailable);
+internal readonly union ShapeGrantDelete(bool, NotFound, Unavailable);
 
-internal readonly union ShapeGrantPut(ShapeGrant, Unavailable);
+internal readonly union ShapeGrantPut(ShapeGrant, NotFound, Unavailable);
 
 internal interface IShapeGrants
 {
-    ValueTask<ShapeGrantRead> GetGrantAsync(string databaseId, string table, CancellationToken cancellationToken);
+    ValueTask<ShapeGrantRead> GetGrantAsync(TenantContext database, string table, CancellationToken cancellationToken);
 
-    ValueTask<ShapeGrantList> ListGrantsAsync(string databaseId, CancellationToken cancellationToken);
+    ValueTask<ShapeGrantList> ListGrantsAsync(TenantContext database, CancellationToken cancellationToken);
 
-    ValueTask<ShapeGrantPut> PutGrantAsync(string databaseId, ShapeGrant grant, CancellationToken cancellationToken);
+    ValueTask<ShapeGrantPut> PutGrantAsync(TenantContext database, ShapeGrant grant, CancellationToken cancellationToken);
 
-    ValueTask<ShapeGrantDelete> DeleteGrantAsync(string databaseId, string table, CancellationToken cancellationToken);
+    ValueTask<ShapeGrantDelete> DeleteGrantAsync(TenantContext database, string table, CancellationToken cancellationToken);
 }

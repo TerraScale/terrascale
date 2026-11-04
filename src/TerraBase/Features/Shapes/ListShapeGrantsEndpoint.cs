@@ -31,9 +31,10 @@ internal sealed class ListShapeGrantsEndpoint(IManagementService management, ISh
             return (IResult)resolved;
         }
 
-        return await grants.ListGrantsAsync(database.DatabaseId!, cancellationToken) switch
+        return await grants.ListGrantsAsync(database, cancellationToken) switch
         {
             IReadOnlyList<ShapeGrant> list => TypedResults.Ok(new ShapeGrantsBody([.. list.Select(ShapeGrantBody.From)])),
+            NotFound error => ErrorResponse.From(error),
             Unavailable error => ErrorResponse.From(error),
         };
     }

@@ -38,10 +38,11 @@ internal sealed class DeleteShapeGrantEndpoint(IManagementService management, IS
             return (IResult)resolved;
         }
 
-        return await grants.DeleteGrantAsync(database.DatabaseId!, table, cancellationToken) switch
+        return await grants.DeleteGrantAsync(database, table, cancellationToken) switch
         {
             true => TypedResults.NoContent(),
             false => ErrorResponse.From(new NotFound("the table has no read grant", "no_read_grant")),
+            NotFound error => ErrorResponse.From(error),
             Unavailable error => ErrorResponse.From(error),
         };
     }
