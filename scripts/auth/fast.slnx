@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="../../src/TerraBase/TerraBase.csproj" />
+  <Project Path="../../tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj" />
+</Solution>
