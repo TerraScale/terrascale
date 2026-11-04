@@ -27,7 +27,7 @@ public sealed class TerraBasePublicInventoryTests
         var documents = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = origin, ApiKey = "fake-token" });
         var db = documents.Database(ProjectId, "app");
         var project = documents.Project(ProjectId);
-        var sql = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { BaseAddress = origin, ApiKey = "fake-token" }).Database(ProjectId, "app");
+        var sql = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { BaseAddress = origin, AccessTokenProvider = _ => ValueTask.FromResult("fake-token") }).Database(ProjectId, "app");
         var platform = new TerraBasePlatformClient(http, new TerraBasePlatformClientOptions { BaseAddress = origin, AccessTokenProvider = _ => ValueTask.FromResult("fake-token") });
         var health = new TerraBaseHealthClient(http, origin);
         var shapes = new TerraBaseShapeClient(http, new TerraBaseShapeClientOptions { BaseAddress = origin, ApiKey = "fake-token" });

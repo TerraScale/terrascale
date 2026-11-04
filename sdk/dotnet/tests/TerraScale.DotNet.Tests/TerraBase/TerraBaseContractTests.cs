@@ -216,7 +216,7 @@ public sealed class TerraBaseContractTests
         object sdk = client switch
         {
             "documents" or "project" => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = origin, ApiKey = "tb_test_key" }),
-            "sql" => new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { BaseAddress = origin, ApiKey = "tb_test_key" }),
+            "sql" => new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { BaseAddress = origin, AccessTokenProvider = _ => ValueTask.FromResult("tb_test_key") }),
             "platform" => new TerraBasePlatformClient(http, new TerraBasePlatformClientOptions { BaseAddress = origin, AccessTokenProvider = _ => ValueTask.FromResult("user-token") }),
             _ => new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Private }),
         };

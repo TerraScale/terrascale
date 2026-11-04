@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json.Serialization.Metadata;
 
 namespace TerraScale.DotNet.TerraBase;
@@ -20,7 +21,12 @@ public sealed record TerraBaseSqlClientOptions
     /// </summary>
     public string? Region { get; init; }
 
-    /// <summary>An API key with <c>documents:read</c>; writes and schema changes also need <c>documents:write</c>.</summary>
+    /// <summary>
+    /// A TerraScale API key from the dashboard with <c>documents:read</c>; writes and schema changes also need
+    /// <c>documents:write</c>. The client exchanges it at ts-auth for an access token to the project named in
+    /// <see cref="TerraBaseSqlClient.Database"/>, caches the token and renews it before it expires. The key is sent
+    /// only to ts-auth.
+    /// </summary>
     public string? ApiKey { get; init; }
 
     /// <summary>Supplies the current bearer credential per request. Set this or ApiKey, exclusively.</summary>
@@ -36,7 +42,10 @@ public sealed record TerraBaseSqlClientOptions
 /// </summary>
 public sealed class TerraBaseSqlClient
 {
-    private readonly TerraBaseConnection connection;
+    private readonly Func<Func<CancellationToken, ValueTask<string>>?, TerraBaseConnection>? connect;
+    private readonly TerraScaleApiKeyTokens? apiKeyTokens;
+    private readonly ConcurrentDictionary<string, TerraBaseConnection>? projectConnections;
+    private readonly TerraBaseConnection? connection;
 
     /// <summary>
     /// Creates a client and validates <paramref name="options"/>. The HttpClient must disable automatic redirects; use
@@ -45,15 +54,39 @@ public sealed class TerraBaseSqlClient
     public TerraBaseSqlClient(HttpClient httpClient, TerraBaseSqlClientOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, options.ApiKey, nameof(options.ApiKey), TerraBaseConnection.RequestDeadline,
-            TerraBaseConnection.DefaultMaxResponseBytes, options.AccessTokenProvider, anonymousAllowed: true, region: options.Region);
+        if (options.ApiKey is null)
+        {
+            connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, null, nameof(options.ApiKey), TerraBaseConnection.RequestDeadline,
+                TerraBaseConnection.DefaultMaxResponseBytes, options.AccessTokenProvider, anonymousAllowed: true, region: options.Region);
+            return;
+        }
+
+        if (options.AccessTokenProvider is not null)
+        {
+            throw new ArgumentException("Set either ApiKey or AccessTokenProvider, not both.", nameof(options));
+        }
+
+        ArgumentNullException.ThrowIfNull(httpClient);
+        connect = provider => new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, null, nameof(options.ApiKey), TerraBaseConnection.RequestDeadline,
+            TerraBaseConnection.DefaultMaxResponseBytes, provider, region: options.Region);
+        _ = connect(static _ => ValueTask.FromResult(string.Empty)); // validates the endpoint options now
+        apiKeyTokens = new TerraScaleApiKeyTokens(httpClient, options.ApiKey, nameof(options.ApiKey), TimeProvider.System);
+        projectConnections = new(StringComparer.Ordinal);
     }
 
     internal TerraBaseSqlClient(TerraBaseConnection connection) => this.connection = connection;
 
-    /// <summary>Addresses database <paramref name="database"/> (its name or ULID) in project <paramref name="projectId"/>.</summary>
-    public TerraBaseSqlDatabase Database(string projectId, string database) =>
-        new(connection, $"/v1/projects/{TerraBaseConnection.Segment(projectId, nameof(projectId))}/databases/{TerraBaseConnection.Segment(database, nameof(database))}");
+    /// <summary>
+    /// Addresses database <paramref name="database"/> (its name or ULID) in project <paramref name="projectId"/>. With
+    /// an ApiKey, the project's access token is requested on the first call.
+    /// </summary>
+    public TerraBaseSqlDatabase Database(string projectId, string database)
+    {
+        var path = $"/v1/projects/{TerraBaseConnection.Segment(projectId, nameof(projectId))}/databases/{TerraBaseConnection.Segment(database, nameof(database))}";
+        if (connection is not null) return new(connection, path);
+        TerraScaleIds.Validate(projectId);
+        return new(projectConnections!.GetOrAdd(projectId, project => connect!(apiKeyTokens!.For(project))), path);
+    }
 }
 
 /// <summary>

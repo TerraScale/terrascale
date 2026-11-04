@@ -152,4 +152,37 @@ public sealed partial class TerraBaseSqlRestTests
         await Assert.That(() => (TerraBaseSqlValue)double.NaN).Throws<ArgumentOutOfRangeException>();
         await Assert.That(calls).IsEqualTo(0);
     }
+
+    [Test]
+    public async Task A_dashboard_api_key_is_exchanged_once_at_ts_auth_and_the_bearer_is_the_project_token()
+    {
+        var key = "01JA00000000000000000000K9_" + new string('a', 52);
+        var exchanges = 0;
+        var bearers = new List<string?>();
+        using var handler = new TerraBaseTestHandler(async (request, token) =>
+        {
+            if (request.RequestUri!.Host == "auth.terrascale.tech")
+            {
+                Interlocked.Increment(ref exchanges);
+                await Assert.That(request.RequestUri.AbsolutePath).IsEqualTo("/terrascale/oauth/token");
+                await Assert.That(request.Headers.Authorization!.Scheme).IsEqualTo("Basic");
+                await Assert.That(System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(request.Headers.Authorization.Parameter!))).IsEqualTo($"{key[..26]}:{key}");
+                await Assert.That(await request.Content!.ReadAsStringAsync(token)).IsEqualTo($"grant_type=client_credentials&project={TerraBaseIntegrationFixture.ProjectId}");
+                return TerraBaseIntegrationFixture.Json("""{"access_token":"exchanged-project-token","token_type":"Bearer","expires_in":900}""");
+            }
+
+            await Assert.That(request.RequestUri.AbsolutePath).IsEqualTo(Route);
+            lock (bearers) bearers.Add(request.Headers.Authorization?.Parameter);
+            return TerraBaseIntegrationFixture.Json("""{"results":[{"columns":[],"rows":[],"rows_affected":0,"last_insert_rowid":null}]}""");
+        });
+        using var http = new HttpClient(handler);
+        var db = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { Region = "gru", ApiKey = key }).Database(TerraBaseIntegrationFixture.ProjectId, "app");
+
+        await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => db.ExecuteAsync("SELECT 1")));
+        await db.ExecuteAsync("SELECT 1");
+
+        await Assert.That(exchanges).IsEqualTo(1);
+        await Assert.That(bearers).Count().IsEqualTo(5);
+        await Assert.That(bearers.All(bearer => bearer == "exchanged-project-token")).IsTrue();
+    }
 }

@@ -37,6 +37,10 @@ IReadOnlyList<TerraBaseSqlRecord> rows = await db.QueryAsync("SELECT id, name FR
 IReadOnlyList<Person> people = await db.QueryAsync("SELECT id, name FROM people", null, AppJson.Default.Person, ct);
 ```
 
+- `ApiKey` is a project or organization API key from the dashboard. The client exchanges it at ts-auth
+  (`client_credentials`) for an access token to the project named in `Database(projectId, …)`, caches the token and
+  renews it before it expires; concurrent calls share one exchange and the key goes only to ts-auth. Pass
+  `AccessTokenProvider` instead to supply your own bearer token.
 - `ExecuteAsync`, `QueryAsync` and `BatchAsync` send one request that runs as one transaction, all or nothing.
   `BatchAsync` takes 1 to 256 statements in a body of at most 1 MiB and returns one result per statement.
 - Arguments are positional (`?`, `?NNN`) or named (keys without `:`, `@` or `$`). Values are null, 64-bit integers,
