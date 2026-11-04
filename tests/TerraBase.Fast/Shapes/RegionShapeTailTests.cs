@@ -25,14 +25,10 @@ public sealed class RegionShapeTailTests
         var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
         var project = await gru.CreateProjectAsync(organization, "Project");
         using var created = await gru.Client.PostAsJsonAsync(
-            ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"), new { name = "main", replicaRegions = new[] { "sjc" } }, token);
+            ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"), new { name = "main", replicaRegions = new List<string> { "sjc" } }, token);
         created.EnsureSuccessStatusCode();
         var database = new ManagedDatabaseRef(organization, project, (await created.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!, "main");
-        var bearer = issuer.Mint(gru.ApiKeyId, descriptor =>
-        {
-            descriptor.Claims["project_id"] = project;
-            descriptor.Claims["scope"] = "databases:read documents:read documents:write";
-        });
+        var bearer = gru.ProjectToken(project, "databases:read documents:read documents:write");
         using var home = gru.DataClient(bearer);
         using var local = sjc.DataClient(bearer);
         using var seeded = await home.PostAsJsonAsync(ManagementApi.Uri(database.Data + "/sql/execute"),
@@ -53,7 +49,7 @@ public sealed class RegionShapeTailTests
         await gru.DisposeAsync();
         var reply = await parked.WaitAsync(TimeSpan.FromSeconds(10), token);
         await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.OK).Because(System.Text.Encoding.UTF8.GetString(reply.Body));
-        await Assert.That(reply.Ops.Select(op => (op.GetProperty("op").GetString(), op.GetProperty("key").GetString(), op.GetProperty("move").GetString())).ToList())
+        await Assert.That(reply.Ops.Select(op => (op.GetProperty("op").GetString()!, op.GetProperty("key").GetString()!, op.GetProperty("move").GetString()!)).ToList())
             .IsEquivalentTo([("insert", "1", "in"), ("delete", "2", "out")]);
         var repeated = await waiting.GetAsync(target);
         await Assert.That(repeated.Body).IsEquivalentTo(reply.Body);
