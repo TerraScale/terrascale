@@ -21,7 +21,9 @@ control requests, live polling, retries and refusals. CDN caching reduced
 payload delivery from the origin; total origin requests increased with
 reader count, including HTTP 429 responses at higher concurrency.
 
-These results do not establish performance for larger snapshots or
-1,000-reader cohorts. See the
+The full regional matrix is not qualified. One 1,000-reader pilot did not
+finish within 180 seconds, and the run was stopped after a CPU measurement
+error was found. These results do not establish performance for larger
+snapshots, 1,000-reader cohorts or browser bootstrap. See the
 [benchmark method and results](https://github.com/TerraScale/terrascale/blob/main/benchmark/bench/2026-11-04-f10-free-reads.md),
 [subscription pricing](/pricing/) and [usage accounting](/concepts/pricing-philosophy).

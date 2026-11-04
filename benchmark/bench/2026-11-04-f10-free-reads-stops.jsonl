@@ -1,0 +1,22 @@
+{"run":"attempt-1.jsonl","type":"method","sha":"8a386658d7ab99c49aabf144389fe1af073c3b67","host":"delta","node":"v24.21.0","rows":16,"body_bytes":128,"repeats":3,"readers":[1,10,100,1000],"cpu_limit_percent":70,"latency":"Dev-host SDK through regional SSH CONNECT egress; includes tunnel and write request latency; nearest-rank percentiles per repeat"}
+{"run":"attempt-1.jsonl","type":"cleanup","database_deleted":true}
+{"run":"attempt-1.jsonl","type":"failure","error":"TypeError"}
+{"run":"attempt-2.jsonl","type":"method","sha":"7e809fbd7332a00def7e82c34bdb87577b23f8e1","host":"delta","node":"v24.21.0","rows":16,"body_bytes":128,"repeats":3,"readers":[1,10,100,1000],"cpu_limit_percent":70,"latency":"Dev-host SDK through regional SSH CONNECT egress; includes tunnel and write request latency; nearest-rank percentiles per repeat"}
+{"run":"attempt-2.jsonl","type":"cleanup","database_deleted":true}
+{"run":"attempt-2.jsonl","type":"failure","phase":"setup_gru_table_1_1","error":"TypeError"}
+{"run":"attempt-3.jsonl","type":"method","sha":"ee0d5bd5d0d6bb2331a041d875d0c57bb1299c6a","host":"delta","node":"v24.21.0","rows":16,"body_bytes":128,"repeats":3,"readers":[1,10,100,1000],"cpu_limit_percent":70,"latency":"Dev-host SDK through regional SSH CONNECT egress; includes tunnel and write request latency; nearest-rank percentiles per repeat"}
+{"run":"attempt-3.jsonl","type":"failure","phase":"readers_gru_table_100_3","error":"V1InvalidKeyError"}
+{"run":"attempt-4-relocated.jsonl","type":"method","sha":"f7ab01c85552baf146aa2ccf6c390a856b3f3957","host":"beta","node":"v24.21.0","rows":16,"body_bytes":128,"repeats":3,"readers":[1,10,100,1000],"cpu_limit_percent":70,"cohort_deadline_seconds":180,"latency":"Dev-host SDK through regional SSH CONNECT egress; includes tunnel and write request latency; nearest-rank percentiles per repeat"}
+{"run":"attempt-4-relocated.jsonl","type":"cleanup","previous_database_deleted":true}
+{"run":"attempt-4-relocated.jsonl","type":"cleanup","database_deleted":true}
+{"run":"attempt-4-relocated.jsonl","type":"failure","phase":"setup_gru_table_1_1","error":"V1ForbiddenScopeError"}
+{"run":"attempt-5.jsonl","type":"method","sha":"f7ab01c85552baf146aa2ccf6c390a856b3f3957","host":"beta","node":"v24.21.0","rows":16,"body_bytes":128,"repeats":3,"readers":[1,10,100,1000],"cpu_limit_percent":70,"cohort_deadline_seconds":180,"latency":"Dev-host SDK through regional SSH CONNECT egress; includes tunnel and write request latency; nearest-rank percentiles per repeat"}
+{"run":"attempt-5.jsonl","type":"cleanup","database_deleted":true}
+{"run":"attempt-5.jsonl","type":"failure","phase":"readers_gru_table_1000_1","error":"TimeoutError"}
+{"run":"attempt-6.jsonl","type":"method","sha":"9c462073a829554873731e8912fc6b31a4c032b6","host":"delta","node":"v24.21.0","resumed_cohorts":["f10_gru_table_1_1","f10_gru_table_1_2","f10_gru_table_1_3","f10_gru_table_10_1","f10_gru_table_10_2","f10_gru_table_10_3","f10_gru_table_100_1","f10_gru_table_100_2","f10_gru_table_100_3"],"rows":16,"body_bytes":128,"repeats":3,"readers":[1,10,100,1000],"cpu_limit_percent":70,"cohort_deadline_seconds":180,"latency":"Dev-host SDK through regional SSH CONNECT egress; includes tunnel and write request latency; nearest-rank percentiles per repeat"}
+{"run":"attempt-6.jsonl","type":"cleanup","database_deleted":true}
+{"run":"attempt-6.jsonl","type":"failure","phase":"readers_gru_where_columns_1_3","error":"TypeError"}
+{"run":"attempt-7.jsonl","type":"method","sha":"aa75d0f21f4bcde787682e3d328eede732a4c4da","host":"mariogk-dev","node":"v24.21.0","resumed_cohorts":["f10_gru_table_100_1","f10_gru_table_100_2","f10_gru_table_100_3","f10_gru_table_10_1","f10_gru_table_10_2","f10_gru_table_10_3","f10_gru_table_1_1","f10_gru_table_1_2","f10_gru_table_1_3","f10_gru_where_columns_1_1","f10_gru_where_columns_1_2","f10_gru_where_columns_1_3"],"rows":16,"body_bytes":128,"repeats":3,"readers":[1,10,100,1000],"cpu_limit_percent":70,"cohort_deadline_seconds":180,"latency":"Dev-host SDK through regional SSH CONNECT egress; includes tunnel and write request latency; nearest-rank percentiles per repeat"}
+{"run":"attempt-7.jsonl","type":"guard","error":"CPU telemetry unavailable or process restarted"}
+{"run":"attempt-7.jsonl","type":"failure","phase":"readers_sjc_where_columns_1_2","error":"CPU_UNAVAILABLE"}
+{"run":"attempt-8.jsonl","type":"stop","at":"2026-11-04T20:26:09Z","reason":"CPU_CAPACITY_MISMATCH"}

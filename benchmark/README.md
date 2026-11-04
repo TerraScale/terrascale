@@ -139,7 +139,8 @@ file containing a throwaway account's `project` and `apiKey`. The key needs
 in arguments. An optional `completed` array contains cohort names already
 proven by retained receipts when resuming a stopped run.
 
-The driver stops on gru TerraBase CPU above 70% or missing telemetry. A
+The driver stops on gru TerraBase CPU above 70% of its cgroup/affinity
+capacity, or unavailable process/capacity observations. A
 180-second cohort deadline records incomplete reader delivery without
 reporting percentiles from the successful subset. The origin control plane
 and live tail remain part of request accounting.
