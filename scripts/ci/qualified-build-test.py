@@ -13,7 +13,7 @@ qualified = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(qualified)
 sha = 'a' * 40
 manifest = {'schema': 'terrascale.ci-build/v1', 'revision': sha, 'area': 'terrabase', 'files': {},
-            'image': 'ghcr.io/terrascale/terrabase@sha256:' + 'b' * 64}
+            'payload': {'key': f'fast-ci/{sha}/terrabase/image-payloads.tar.gz', 'sha256': 'b' * 64}}
 
 with tempfile.TemporaryDirectory() as scratch:
     directory = Path(scratch)
@@ -56,7 +56,7 @@ with tempfile.TemporaryDirectory() as scratch:
     rejects()
     rows['ci-build/terrabase']['description'] = 'Checked build; manifest sha256 ' + qualified.digest(path)
     rejects()
-    path.write_text(json.dumps({**manifest, 'image': 'ghcr.io/outside/image@sha256:' + 'b' * 64}))
+    path.write_text(json.dumps({**manifest, 'payload': {'key': 'outside/image.tar.gz', 'sha256': 'b' * 64}}))
     rows['ci-build/terrabase']['description'] = 'Checked build; manifest sha256 ' + qualified.digest(path)
     rejects()
-print('qualified-build-test: ok (pending/failure, actor, timing, checksum, revision and registry boundaries)')
+print('qualified-build-test: ok (pending/failure, actor, timing, checksum, revision and object-key boundaries)')
