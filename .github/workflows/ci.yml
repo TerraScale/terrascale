@@ -339,10 +339,12 @@ jobs:
       actions: write
     steps: &production-steps
       - *checkout
-      - name: Restore the exact checked runtime image receipt
+      - name: Restore the exact checked runtime payload
         working-directory: terrascale
         env:
           GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: python3 scripts/ci/qualified-build.py restore "$AREA"
       - *setup-builder
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -350,16 +352,20 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      # Dev hosts checked both runtime architectures. CI promotes their immutable digest after verifying Fast.
+      # Dev hosts checked both runtime architectures. CI wraps their verified bytes without compiling.
       - id: image
-        name: Promote the checked multi-architecture runtime image
-        env:
-          REGISTRY_IMAGE: ghcr.io/terrascale/${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}
-        run: |
-          image=$(jq -r .image "$RUNNER_TEMP/manifest.json")
-          [[ $image == "$REGISTRY_IMAGE"@sha256:* ]]
-          docker buildx imagetools create --tag "$REGISTRY_IMAGE:$GITHUB_SHA" --tag "$REGISTRY_IMAGE:main" "$image"
-          echo "digest=${image#*@}" >> "$GITHUB_OUTPUT"
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ${{ runner.temp }}/image-payloads
+          file: ${{ runner.temp }}/image-payloads/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/terrascale/${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}:${{ github.sha }}
+            ghcr.io/terrascale/${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}:main
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          push: true
       # Index digest plus each platform's child digest (ts-orch specs pin the linux/arm64 child).
       - env:
           IMAGE: ghcr.io/terrascale/${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}@${{ steps.image.outputs.digest }}
