@@ -38,7 +38,7 @@ PROJECT = 'ts-status'
 CLI_CLIENT = '00000000000000000000000007'  # ts-auth's registered public ts-cli client.
 STATE = Path.home() / '.local/state/ts-status/canaries.json'
 DOCUMENT = '00000000000000000000000007'
-SCOPES = ['documents:read', 'documents:write']
+SCOPES = ['sql:read', 'sql:write']
 # The canary table: the Data API canary reads its fixture row, the write probe inserts and deletes rows.
 TABLE = 'CREATE TABLE IF NOT EXISTS "canary" (id TEXT PRIMARY KEY, canary TEXT NOT NULL)'
 CLOUDFLARE_ACCOUNT = '6cd3f3639e928077593d9b470765efeb'
@@ -280,7 +280,7 @@ class Setup:
                 {'grant_type': 'urn:ietf:params:oauth:grant-type:token-exchange', 'client_id': CLI_CLIENT,
                  'subject_token': grant['access_token'], 'subject_token_type': 'urn:ietf:params:oauth:token-type:access_token',
                  'organization': organization, 'project': project,
-                 'scope': 'databases:read databases:write documents:read documents:write'}, form=True)['access_token']
+                 'scope': 'databases:read databases:write sql:read sql:write'}, form=True)['access_token']
 
     def create_api_key(self, grant, organization, project, database, name):
         """One password-approved step-up proof per database-narrowed key."""

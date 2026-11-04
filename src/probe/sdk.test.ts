@@ -52,7 +52,7 @@ describe("TS-603 SDK draft", () => {
       request: {
         grant_type: "client_credentials",
         project: config().project,
-        scope: "documents:read documents:write",
+        scope: "sql:read sql:write",
       },
     });
     expect(probeCredentials("management", config()).request.scope).toBe("databases:read");

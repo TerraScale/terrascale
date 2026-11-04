@@ -65,7 +65,7 @@ describe("read-only Data API probe", () => {
       client_id: canary.key.slice(0, 26),
       client_secret: canary.key,
       project: canary.project,
-      scope: "documents:read",
+      scope: "sql:read",
     });
     const [readUrl, readInit] = fetcher.mock.calls[1]!;
     expect(readUrl).toBe(`${canary.origin}/v1/projects/${canary.project}/databases/status_canary/sql/execute`);

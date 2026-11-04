@@ -28,8 +28,8 @@ export interface CanaryConfig {
   document: string;
   /** Platform issuer, including /terrascale. */
   issuer: string;
-  /** A ts-auth project key narrowed to this database: documents:read for the
-      Data API canary, plus documents:write for the Document API probe. */
+  /** A ts-auth project key narrowed to this database: sql:read for the
+      Data API canary, plus sql:write for the Document API probe. */
   key: string;
 }
 
@@ -327,7 +327,7 @@ export function forgetToken(config: Pick<CanaryConfig, "key">, fetcher: typeof f
 export async function readToken(
   config: Pick<CanaryConfig, "issuer" | "project" | "key">,
   fetcher: typeof fetch,
-  scope = "documents:read",
+  scope = "sql:read",
 ): Promise<string> {
   const name = `${config.issuer} ${config.project} ${scope} ${config.key}`;
   const hit = tokens.get(fetcher)?.get(name);
@@ -408,7 +408,7 @@ export async function runTokenProbe(config: CanaryConfig, fetcher: typeof fetch 
           client_id: config.key.slice(0, 26),
           client_secret: config.key,
           project: config.project,
-          scope: "documents:read",
+          scope: "sql:read",
         }).toString(),
         cache: "no-store",
       },

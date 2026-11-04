@@ -63,7 +63,7 @@ export function probeCredentials(probe: SdkProbe, config: SdkProbeConfig) {
     request: {
       grant_type: "client_credentials" as const,
       project: config.project,
-      scope: probe === "documents" ? "documents:read documents:write" : "databases:read",
+      scope: probe === "documents" ? "sql:read sql:write" : "databases:read",
     },
   };
 }

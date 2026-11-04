@@ -86,7 +86,7 @@ describe("TerraBase probes", () => {
       [{ sql: 'SELECT count(*) FROM "canary" WHERE id = ? AND canary = ?', args: [id, "round"] }],
       [{ sql: 'DELETE FROM "canary" WHERE id = ?', args: [id] }],
     ]);
-    expect(String(fetcher.mock.calls[0]![1]?.body)).toContain("scope=documents%3Aread+documents%3Awrite");
+    expect(String(fetcher.mock.calls[0]![1]?.body)).toContain("scope=sql%3Aread+sql%3Awrite");
     for (const [, init] of fetcher.mock.calls.slice(1)) {
       expect(init).toMatchObject({ redirect: "manual" });
       expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${grant.access_token}`);

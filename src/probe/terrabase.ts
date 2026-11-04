@@ -33,7 +33,7 @@ export interface TerraBaseConfig {
   region: string;
   /** Platform issuer, including /terrascale; required for document reads. */
   issuer?: string;
-  /** Database-scoped ts-auth project key with documents:read and documents:write. */
+  /** Database-scoped ts-auth project key with sql:read and sql:write. */
   key?: string;
   project?: string;
   database?: string;
@@ -55,7 +55,7 @@ export const notConfiguredSample = (endpointId: string): Sample => ({
 const isString = (value: unknown): value is string => typeof value === "string" && value.length > 0;
 
 /** The write probe inserts and deletes its own canary rows. */
-const DOCUMENT_SCOPES = "documents:read documents:write";
+const DOCUMENT_SCOPES = "sql:read sql:write";
 
 const ROUTES = {
   readyz: "/readyz",
