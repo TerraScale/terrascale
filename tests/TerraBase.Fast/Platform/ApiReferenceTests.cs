@@ -95,6 +95,7 @@ public sealed class ApiReferenceTests
         POST /v1/projects/{project}/databases/{database}/point-in-time/recover TsAuth(databases:write,documents:write) recoverHistoricalRecords Backups
         POST /v1/projects/{project}/databases/{database}/point-in-time/recovery-preview TsAuth(databases:write,documents:read) previewSelectiveRecovery Backups
         POST /v1/projects/{project}/databases/{database}/point-in-time/restore TsAuth(databases:write) restorePointInTime Backups
+        POST /v1/projects/{project}/databases/{database}/point-in-time/rewind TsAuth(databases:write) rewindPointInTime Backups
         POST /v1/projects/{project}/databases/{database}/sql TsAuth(databases:read) runSql Queries
         POST /v1/projects/{project}/databases/{database}/sql/check TsAuth(databases:read) checkSql Queries
         POST /v1/projects/{project}/databases/{database}/sql/execute TsAuth(documents:read) executeSql Queries
