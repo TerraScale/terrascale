@@ -19,7 +19,32 @@ ever pushed, and a replica can always be deleted and pulled again.
   replica, under the home's row, byte and time limits, and is metered as reads in the replica region.
 - A statement that writes, a request before the replica's first pull, and every other data API answer
   `421 wrong_region` naming the home (`ts-replay: region=<home>`), so the edge replays them there.
-- Reads are eventually consistent: a replica may lag its home. Read-your-writes needs the home.
+- **Postgres wire and SQL WebSocket** sessions stay in the region they reached. A read outside a transaction runs on the
+  replica; so does a READ ONLY transaction (`BEGIN READ ONLY`, and every read-only WebSocket `execute` frame), on one
+  replica snapshot. Read statements are described (Postgres Parse/Describe) on the replica; writes are described at the home, where they run. Postgres catalog
+  queries (`\d`, `pg_tables`) list the replica's tables.
+- A REST read is eventually consistent: a replica may lag its home.
+
+## Writes and transactions
+
+A write, a transaction that is not READ ONLY, and a read the replica cannot answer yet run on one SQL session at the
+home: `POST /v1/internal/sql/session` on the home's internal listener, with the peer credential, over the private mesh.
+Both bodies are streams of length-prefixed JSON frames (4-byte big-endian length, at most 24 MiB each, reserved against
+the memory budget before they are read): an open frame naming the organization, project, database, replica region and
+whether the session may write, then `execute` and `describe` calls, each answered in order with the result or error
+and whether the home session is outside a transaction. The home serves only a database it homes whose placement names
+the calling region. The replica region checks the client's credential, scope and IP allowlist before every statement,
+as it does for its own reads, so revocation cuts both legs. Ending the request body ends the home session and rolls back
+its open transaction. When the home cannot be reached, a write answers `unavailable` (SQLSTATE `57P03`) naming
+the home; reads keep working from the replica.
+
+## Read-your-writes
+
+Each node keeps a pull position that grows when any replica pull starts. After anything a session ran at the home, it
+takes the node's position and asks its replica to pull now. A later read of that session runs on the replica only when
+the replica's last completed pull started after that position, so it holds the write; until then the read runs at the
+home. A session that never wrote reads from the replica straight away. REST requests carry no session and get
+eventual consistency.
 
 ## How a replica follows its home
 
@@ -61,6 +86,5 @@ listener, as for every peer request.
 - **NATS in production.** ts-orch does not yet pass `TS_NATS_URL` and the token to TerraBase, so production replicas
   follow on the 30-second sweep until it does.
 - **One node per region.** A replica pulls from the first node the peers file lists for its home region.
-- **Reads only through relational SQL.** Document, query, shape and Postgres reads of a replicated database are served by
-  its home.
+- **Reads only through relational SQL.** Document, query and shape reads of a replicated database are served by its home.
 - **Buffered pulls.** The page sync host buffers each answer in memory (see [page sync host](page-sync-host.md)).

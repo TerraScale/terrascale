@@ -36,6 +36,19 @@ internal interface IDatabaseReplicas
     /// reader sees the same revision; nothing it runs is kept.
     /// </summary>
     ValueTask<IReplicaReader?> BeginReadAsync(TenantContext database, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// This node's pull position: it grows when any replica's pull starts. A session that just wrote at the home takes it
+    /// after the write's answer; a replica whose last completed pull started after that position holds the write
+    /// (docs/terrabase/region-replicas.md#read-your-writes).
+    /// </summary>
+    long Position { get; }
+
+    /// <summary>
+    /// As <see cref="BeginReadAsync(TenantContext, CancellationToken)"/>, but only from a replica whose last completed pull
+    /// started after <paramref name="position"/>; <see langword="null"/> otherwise.
+    /// </summary>
+    ValueTask<IReplicaReader?> BeginReadAsync(TenantContext database, long position, CancellationToken cancellationToken);
 }
 
 /// <summary>One read transaction on a replica. Disposing it rolls back.</summary>
@@ -43,4 +56,7 @@ internal interface IReplicaReader : IAsyncDisposable
 {
     /// <summary>Runs one read statement; a statement that would write fails with <see cref="SqlFailure.ReadOnly"/>.</summary>
     ValueTask<SqlStatementResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken);
+
+    /// <summary>Prepares one statement without running it: its parameters and result columns.</summary>
+    ValueTask<SqlStatementShape> DescribeAsync(string sql, CancellationToken cancellationToken);
 }

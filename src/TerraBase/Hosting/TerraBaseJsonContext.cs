@@ -196,4 +196,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaCatalogPage))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaCatalogEntry))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaRevisionNotice))]
+[JsonSerializable(typeof(TerraBase.Features.Replicas.HomeSessionOpen))]
+[JsonSerializable(typeof(TerraBase.Features.Replicas.HomeSessionCall))]
+[JsonSerializable(typeof(TerraBase.Features.Replicas.HomeSessionAnswer))]
 internal sealed partial class TerraBaseJsonContext : JsonSerializerContext;

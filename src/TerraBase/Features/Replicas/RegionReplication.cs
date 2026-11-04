@@ -122,6 +122,16 @@ internal sealed class RegionReplication(
         }
     }
 
+    /// <summary>Has the replica of <paramref name="database"/> pull soon, as a revision notice would: a session here just wrote at its home.</summary>
+    internal void PullSoon(TenantContext database)
+    {
+        if (database.ProjectId is { } project && database.DatabaseId is { } id
+            && _followers.TryGetValue((database.OrganizationId, project, id), out var follower))
+        {
+            follower.Signal(0);
+        }
+    }
+
     /// <summary>Pulls every replica now, waiting for the pulls.</summary>
     internal async Task PullAllAsync(CancellationToken cancellationToken) =>
         await Task.WhenAll(_followers.Values.Select(follower => follower.PullNowAsync(cancellationToken))).ConfigureAwait(false);

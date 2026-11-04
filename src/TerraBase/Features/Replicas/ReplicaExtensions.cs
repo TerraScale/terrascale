@@ -10,6 +10,7 @@ public static class ReplicaExtensions
         services.TryAddSingleton<IReplicaPeers, PeersFileReplicaPeers>();
         services.TryAddSingleton<IReplicaCatalog, TenantReplicaCatalog>();
         services.AddSingleton<RegionReplication>();
+        services.AddSingleton<HomeSessions>();
         return services.AddHostedService(provider => provider.GetRequiredService<RegionReplication>());
     }
 }

@@ -28,6 +28,7 @@ internal sealed class TursoReplicas(
     private const int MaxReadRows = 10_000;
 
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), Lazy<Task<Replica>>> _replicas = new();
+    private long _position;
     private int _disposed;
 
     private string Root => Path.Combine(options.DataDirectory, DirectoryName);
@@ -90,6 +91,15 @@ internal sealed class TursoReplicas(
         await FindAsync(database).ConfigureAwait(false) is { Pulled: true } replica
             ? await replica.BeginReadAsync(cancellationToken).ConfigureAwait(false)
             : null;
+
+    public long Position => Volatile.Read(ref _position);
+
+    public async ValueTask<IReplicaReader?> BeginReadAsync(TenantContext database, long position, CancellationToken cancellationToken) =>
+        await FindAsync(database).ConfigureAwait(false) is { Pulled: true } replica && replica.Applied > position
+            ? await replica.BeginReadAsync(cancellationToken).ConfigureAwait(false)
+            : null;
+
+    private long NextPosition() => Interlocked.Increment(ref _position);
 
     public async ValueTask DisposeAsync()
     {
@@ -156,7 +166,7 @@ internal sealed class TursoReplicas(
         {
             try
             {
-                return new Replica(await TursoSyncDatabase.OpenAsync(Options(path, hexKey, source, http)).ConfigureAwait(false), path, logger, pulled: true);
+                return new Replica(this, await TursoSyncDatabase.OpenAsync(Options(path, hexKey, source, http)).ConfigureAwait(false), path, logger, pulled: true);
             }
             catch (TursoException error)
             {
@@ -166,7 +176,7 @@ internal sealed class TursoReplicas(
 
         _ = await Task.Run(() => DeleteFiles(path)).ConfigureAwait(false);
         hexKey = await NewKeyAsync(path).ConfigureAwait(false);
-        var replica = new Replica(await TursoSyncDatabase.CreateAsync(Options(path, hexKey, source, http)).ConfigureAwait(false), path, logger, pulled: false);
+        var replica = new Replica(this, await TursoSyncDatabase.CreateAsync(Options(path, hexKey, source, http)).ConfigureAwait(false), path, logger, pulled: false);
         try
         {
             _ = await replica.PullAsync(CancellationToken.None).ConfigureAwait(false);
@@ -270,7 +280,7 @@ internal sealed class TursoReplicas(
         return deleted;
     }
 
-    private sealed class Replica(TursoSyncDatabase sync, string path, ILogger logger, bool pulled) : IAsyncDisposable
+    private sealed class Replica(TursoReplicas owner, TursoSyncDatabase sync, string path, ILogger logger, bool pulled) : IAsyncDisposable
     {
         private readonly SemaphoreSlim _pulls = new(1, 1);
         private readonly ConcurrentQueue<TursoDatabaseHandle> _idle = new();
@@ -281,12 +291,19 @@ internal sealed class TursoReplicas(
         // is the first applied pull of this replica's files.
         public bool Pulled { get; private set; } = pulled;
 
+        // The node position its last completed pull started at; a pull that starts after a home's answer holds what it answered.
+        public long Applied => Volatile.Read(ref _applied);
+
+        private long _applied;
+
         public async Task<ReplicaPullResult> PullAsync(CancellationToken cancellationToken)
         {
             await _pulls.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                var position = owner.NextPosition();
                 var changed = await sync.PullAsync(cancellationToken).ConfigureAwait(false);
+                Volatile.Write(ref _applied, position);
                 Pulled = true;
                 // The replica's own log only holds pulled pages; fold it into the file once it outgrows the home's policy.
                 var log = new FileInfo(path + "-wal");
@@ -419,6 +436,13 @@ internal sealed class TursoReplicas(
                 return new(Task.Run(() => Execute(statement, cancellationToken), cancellationToken));
             }
 
+            public ValueTask<SqlStatementShape> DescribeAsync(string sql, CancellationToken cancellationToken)
+            {
+                ArgumentNullException.ThrowIfNull(sql);
+                ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+                return new(Task.Run(() => Describe(sql), cancellationToken));
+            }
+
             public ValueTask DisposeAsync()
             {
                 if (Interlocked.Exchange(ref _disposed, 1) == 0)
@@ -427,6 +451,34 @@ internal sealed class TursoReplicas(
                 }
 
                 return ValueTask.CompletedTask;
+            }
+
+            private SqlStatementShape Describe(string sql)
+            {
+                try
+                {
+                    var (prepared, _) = TursoStorageTransaction.Prepare(native, sql, first: false);
+                    try
+                    {
+                        var parameters = new string?[TursoBindings.GetParameterCount(prepared)];
+                        for (var i = 0; i < parameters.Length; i++)
+                        {
+                            parameters[i] = TursoBindings.GetParameterName(prepared, i + 1);
+                        }
+
+                        return new SqlStatementShape(parameters, TursoStorageTransaction.Columns(prepared));
+                    }
+                    finally
+                    {
+                        TursoStorageTransaction.Release(prepared);
+                    }
+                }
+                catch (TursoException error)
+                {
+                    var (failure, message) = TursoStorageTransaction.Classify(native, error);
+                    _healthy = failure is not SqlFailure.Error;
+                    throw new SqlStatementException(failure, message, transactionEnded: false, error);
+                }
             }
 
             private SqlStatementResult Execute(SqlStatement statement, CancellationToken cancellationToken)

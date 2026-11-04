@@ -1,22 +1,29 @@
 using System.Text;
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Replicas;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Sql;
 
 internal sealed class SqlService(
     IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time,
-    [FromKeyedServices(SqlLimits.TransactionClock)] TimeProvider transactionTime) : ISqlService
+    [FromKeyedServices(SqlLimits.TransactionClock)] TimeProvider transactionTime,
+    IDatabaseReplicas replicas, IReplicaCatalog placements, HomeSessions homes, RegionReplication replication, TerraBaseOptions options) : ISqlService
 {
     private const int MaxTables = 10_000;
 
     public ISqlSession Open(TenantContext database, bool canWrite)
     {
         ArgumentNullException.ThrowIfNull(database);
-        return new SqlSession(engine, quota, usage, allowance, time, transactionTime, database, canWrite);
+        ISqlSession Local() => new SqlSession(engine, quota, usage, allowance, time, transactionTime, database, canWrite);
+        // Only a region holding a replica of the database serves it from one; its home always holds the file.
+        return replicas.Holds(database)
+            ? new ReplicaSqlSession(this, replicas, placements, homes, replication, options, transactionTime, database, canWrite, Local)
+            : Local();
     }
 
     public async ValueTask<ReplicaSqlOutcome> ExecuteOnReplicaAsync(
@@ -30,11 +37,27 @@ internal sealed class SqlService(
         for (var i = 0; i < statements.Count; i++)
         {
             var (plan, command) = statements[i];
+            if (plan.ReadsTables)
+            {
+                switch (await allowance.CheckAsync(database, MeteredOperation.SqlRead, cancellationToken).ConfigureAwait(false))
+                {
+                    case QuotaExceeded exceeded:
+                        return new ReplicaSqlFailure(SqlErrors.Quota(exceeded.Message), i);
+                    case Unavailable:
+                        return new ReplicaSqlFailure(SqlErrors.Busy("usage accounting is unavailable; retry"), i);
+                }
+            }
+
+            if (command.Args.Concat(command.Named.Values).Any(value => value.Kind == SqlValueKind.Real && !double.IsFinite(value.Real)))
+            {
+                return new ReplicaSqlFailure(SqlErrors.NonFinite, i);
+            }
+
             SqlStatementResult raw;
             try
             {
                 raw = await reader.ExecuteAsync(
-                    new SqlStatement(plan.Sql, [.. command.Args.Select(SqlSession.Bound)],
+                    new SqlStatement(plan.Run, [.. command.Args.Select(SqlSession.Bound)],
                         command.Named.ToDictionary(pair => pair.Key, pair => SqlSession.Bound(pair.Value), StringComparer.Ordinal),
                         SqlSession.MaxRows, SqlSession.MaxBytes, SqlLimits.MaxRequestTime),
                     cancellationToken).ConfigureAwait(false);
@@ -42,6 +65,11 @@ internal sealed class SqlService(
             catch (SqlStatementException error)
             {
                 return new ReplicaSqlFailure(SqlSession.Map(error, canWrite: false), i);
+            }
+
+            if (plan.HiddenColumns.Count > 0)
+            {
+                raw = raw with { Rows = SqlSandbox.HideRows(raw.Rows, plan.HiddenColumns) };
             }
 
             if (raw.Truncated)
@@ -72,6 +100,19 @@ internal sealed class SqlService(
     public async ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(TenantContext database, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
+        if (replicas.Holds(database))
+        {
+            // A replica region lists its replica's tables; document collections stay on the home's document API.
+            var reader = await replicas.BeginReadAsync(database, cancellationToken).ConfigureAwait(false);
+            if (reader is not null)
+            {
+                await using (reader.ConfigureAwait(false))
+                {
+                    return await ListTablesAsync(statement => reader.ExecuteAsync(statement, cancellationToken), new HashSet<string>(), cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
+
         if (await engine.BeginTransactionAsync(database, write: false, cancellationToken).ConfigureAwait(false) is not { } transaction)
         {
             return [];
@@ -80,33 +121,38 @@ internal sealed class SqlService(
         await using (transaction.ConfigureAwait(false))
         {
             var collections = await SqlSession.CollectionsAsync(transaction, cancellationToken).ConfigureAwait(false);
-            var names = await transaction.ExecuteStatementAsync(
-                SqlSession.Internal("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name"), cancellationToken).ConfigureAwait(false);
-            var tables = new List<SqlTableInfo>();
-            foreach (var row in names.Rows)
+            return await ListTablesAsync(statement => transaction.ExecuteStatementAsync(statement, cancellationToken), collections, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static async ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(
+        Func<SqlStatement, ValueTask<SqlStatementResult>> run, HashSet<string> collections, CancellationToken cancellationToken)
+    {
+        var names = await run(SqlSession.Internal("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name")).ConfigureAwait(false);
+        var tables = new List<SqlTableInfo>();
+        foreach (var row in names.Rows)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (row[0] is not string name || SqlScript.IsReservedName(name) || collections.Contains(name))
             {
-                if (row[0] is not string name || SqlScript.IsReservedName(name) || collections.Contains(name))
-                {
-                    continue;
-                }
-
-                if (tables.Count == MaxTables)
-                {
-                    break;
-                }
-
-                var columns = await transaction.ExecuteStatementAsync(
-                    SqlSession.Internal($"PRAGMA table_xinfo(\"{name.Replace("\"", "\"\"", StringComparison.Ordinal)}\")"), cancellationToken).ConfigureAwait(false);
-                tables.Add(new SqlTableInfo(name, [.. columns.Rows.Select(column => new SqlTableColumn(
-                    column[1] as string ?? "",
-                    column[2] is string { Length: > 0 } type ? type : null,
-                    column[3] is long and not 0 || column[5] is long and > 0,
-                    column[5] is long and > 0,
-                    column[4] as string))]));
+                continue;
             }
 
-            return tables;
+            if (tables.Count == MaxTables)
+            {
+                break;
+            }
+
+            var columns = await run(SqlSession.Internal($"PRAGMA table_xinfo(\"{name.Replace("\"", "\"\"", StringComparison.Ordinal)}\")")).ConfigureAwait(false);
+            tables.Add(new SqlTableInfo(name, [.. columns.Rows.Select(column => new SqlTableColumn(
+                column[1] as string ?? "",
+                column[2] is string { Length: > 0 } type ? type : null,
+                column[3] is long and not 0 || column[5] is long and > 0,
+                column[5] is long and > 0,
+                column[4] as string))]));
         }
+
+        return tables;
     }
 }
 

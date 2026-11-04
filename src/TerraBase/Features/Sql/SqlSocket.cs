@@ -159,7 +159,7 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
         switch (await Management.DatabaseRegions.RecordAsync(context, (string)context.Request.RouteValues["project"]!, (string)context.Request.RouteValues["database"]!)
             .ConfigureAwait(false))
         {
-            case Management.ManagedDatabase record when !record.PlacedIn(region):
+            case Management.ManagedDatabase record when !record.PlacedIn(region) && !record.Replicas.Contains(region):
                 return await RefuseAsync(request.Id, new SqlError(SqlErrors.WrongRegion,
                     $"the database is served in {string.Join(", ", record.Regions(region))}, not {region}; connect through its home region {record.Home(region)}"),
                     cancellationToken).ConfigureAwait(false);

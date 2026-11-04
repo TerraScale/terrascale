@@ -54,6 +54,9 @@ mesh.
   duplex HTTP/2 stream on the internal listener), and the home authenticates it again. An unreachable home answers
   `FATAL 08001` naming the home region; a database that exists in no region answers `FATAL 3D000`. A cancel request sent
   to the relaying region does not reach the home.
+- **Replica regions.** A Postgres or WebSocket session that reaches a replica region of its database is not relayed: it
+  reads from the replica and runs writes and transactions on a session at the home
+  ([region replicas](region-replicas.md#writes-and-transactions)).
 - `X-TerraBase-Forwarded-For` and the relay are honored only on the internal listener with a matching peer credential;
   public forwarded headers are never trusted.
 
