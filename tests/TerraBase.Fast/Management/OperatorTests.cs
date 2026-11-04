@@ -16,7 +16,7 @@ public sealed class OperatorTests
     [Test]
     public async Task The_operator_is_refused_on_the_public_listener_and_tokens_on_the_internal_listener()
     {
-        await using var api = await ManagementApi.StartAsync(settings => { });
+        await using var api = await ManagementApi.StartSharedAsync();
         using var client = api.WithToken(null);
         var user = EntityIds.New().ToString();
 
