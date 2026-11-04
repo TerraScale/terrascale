@@ -11,10 +11,12 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
     : IUsageService
 {
     /// <summary>
-    /// What <see cref="AllowanceUsage.Operations"/> counts: 4 KiB operation units, each read and write once in the region
-    /// that served it (replication is not billed), summed over every region and node.
+    /// What <see cref="AllowanceUsage.Operations"/> counts: write units, one per changed row and one per started 4 KiB the
+    /// write grew the database by, whichever is more, summed over every region and node. Reads are not billed.
     /// </summary>
-    internal const string OperationsContract = "operation-units-4kib-global-v1";
+    internal const string OperationsContract = "write-units-4kib-global-v2";
+
+    internal const string StorageContract = "stored-byte-hours-global-v1";
 
     private const int AllowancePageSize = 25;
 
@@ -205,15 +207,15 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
         return new ProjectUsage(
             projectId, items.Count, items.Sum(item => item.Collections), checked(items.Sum(item => item.StorageBytes) + fileBytes), checked(items.Sum(item => item.LogicalBytes) + fileBytes), items.Sum(item => item.Documents),
             items.Sum(item => item.Reads), items.Sum(item => item.Writes), Period(window, series), series, [.. items.Select(item => item with { Series = [] })],
-            new UsageMonth(month, project.Reads, project.Writes, project.Reads + project.Writes, organization.Reads + organization.Writes))
+            new UsageMonth(month, project.Reads, project.Writes, project.Writes, organization.Writes, organization.Reads))
         { FileBytes = fileBytes };
     }
 
-    public async ValueTask<AllowanceUsageResult> ListAllowanceUsageAsync(string? after, CancellationToken cancellationToken)
+    public async ValueTask<AllowanceUsageResult> ListAllowanceUsageAsync(string? after, bool previous, CancellationToken cancellationToken)
     {
-        // The page is labelled with the month and instant it started in; a scan that ends in another month is refused.
         var observedAt = time.GetUtcNow();
-        var month = new DateTimeOffset(observedAt.Year, observedAt.Month, 1, 0, 0, 0, TimeSpan.Zero);
+        var current = new DateTimeOffset(observedAt.Year, observedAt.Month, 1, 0, 0, 0, TimeSpan.Zero);
+        var month = previous ? current.AddMonths(-1) : current;
         using var budget = new CancellationTokenSource(AllowanceScanBudget, time);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, budget.Token);
         try
@@ -235,22 +237,22 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
             var items = new List<AllowanceUsage>(organizations.Ids.Count);
             foreach (var organizationId in organizations.Ids)
             {
-                if (await meter.GetMonthAsync(organizationId, projectId: null, bounded.Token).ConfigureAwait(false) is not UsageTotals units)
+                if (await meter.GetMonthAsync(organizationId, projectId: null, bounded.Token, month).ConfigureAwait(false) is not UsageTotals units)
                 {
                     return new Unavailable("usage accounting is unavailable; retry");
                 }
 
-                items.Add(new AllowanceUsage(organizationId, checked(units.Reads + units.Writes), null));
+                items.Add(new AllowanceUsage(organizationId, units.Writes, null, units.Reads, units.StorageByteHours));
             }
 
             var ended = time.GetUtcNow();
-            if (ended.Year != month.Year || ended.Month != month.Month)
+            if (ended.Year != current.Year || ended.Month != current.Month)
             {
                 return new Unavailable("the UTC month changed during the usage scan; retry");
             }
 
             return new AllowanceUsagePage(month, observedAt, items,
-                organizations.More && items.Count > 0 ? items[^1].OrganizationId : null, OperationsContract, "none");
+                organizations.More && items.Count > 0 ? items[^1].OrganizationId : null, OperationsContract, StorageContract);
         }
         catch (OperationCanceledException) when (budget.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {

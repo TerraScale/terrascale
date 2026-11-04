@@ -464,6 +464,7 @@ internal static partial class PostgresStatements
         "SQLITE_AUTH" => "42501",
         "SQLITE_BUSY" => "40001",
         "SQLITE_TOOBIG" => "54000",
+        "SQLITE_QUOTA" => "53400",
         "SQLITE_INTERRUPT" => "57014",
         "SQLITE_ABORT" => "40000",
         _ => error.Kind switch

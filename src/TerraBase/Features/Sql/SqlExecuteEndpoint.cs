@@ -23,7 +23,7 @@ internal sealed class SqlExecuteEndpoint(ISqlService sql, IAuthorizationService 
         Name("executeSql");
         Summary("Runs relational SQL statements");
         Description("""
-            {"statements":[{"sql":…,"args":[…],"named":{…}}]} with 1 to 256 statements of at most 16 KiB each, in a body of at most 1 MiB. Statements are SQLite SQL over the database's own tables: CREATE, ALTER and DROP TABLE, indexes (unique, partial, expression), views and triggers pass through, foreign keys are always enforced, and JSON columns are TEXT read with json_extract, -> and ->>. Arguments are null, numbers, booleans (1 or 0), strings, or blobs written {"base64":"…"} (standard base64). Results: one per statement, {"columns","rows","rows_affected","last_insert_rowid"}; row values are null, numbers, strings, or blobs as {"base64":"…"}. All statements run as one transaction: all or nothing; BEGIN, COMMIT and ROLLBACK are refused, SAVEPOINT, RELEASE and ROLLBACK TO are accepted. Names starting with _tb_ or turso_, ATTACH, DETACH, VACUUM, ANALYZE and PRAGMAs other than the schema-reading ones are refused. A refused statement rolls everything back and answers {"error":{"code","message","statement","sqlite_code"}}: 400 sql_error (constraint failures carry SQLITE_CONSTRAINT_PRIMARYKEY, _UNIQUE, _NOTNULL, _CHECK or _FOREIGNKEY), 403 forbidden_scope (SQLITE_AUTH: writes and DDL need documents:write), 409 sql_conflict (SQLITE_BUSY) or 413 sql_too_large (SQLITE_TOOBIG).
+            {"statements":[{"sql":…,"args":[…],"named":{…}}]} with 1 to 256 statements of at most 16 KiB each, in a body of at most 1 MiB. Statements are SQLite SQL over the database's own tables: CREATE, ALTER and DROP TABLE, indexes (unique, partial, expression), views and triggers pass through, foreign keys are always enforced, and JSON columns are TEXT read with json_extract, -> and ->>. Arguments are null, numbers, booleans (1 or 0), strings, or blobs written {"base64":"…"} (standard base64). Results: one per statement, {"columns","rows","rows_affected","last_insert_rowid"}; row values are null, numbers, strings, or blobs as {"base64":"…"}. All statements run as one transaction: all or nothing; BEGIN, COMMIT and ROLLBACK are refused, SAVEPOINT, RELEASE and ROLLBACK TO are accepted. Names starting with _tb_ or turso_, ATTACH, DETACH, VACUUM, ANALYZE and PRAGMAs other than the schema-reading ones are refused. A refused statement rolls everything back and answers {"error":{"code","message","statement","sqlite_code"}}: 400 sql_error (constraint failures carry SQLITE_CONSTRAINT_PRIMARYKEY, _UNIQUE, _NOTNULL, _CHECK or _FOREIGNKEY), 403 forbidden_scope (SQLITE_AUTH: writes and DDL need documents:write), 409 sql_conflict (SQLITE_BUSY), 413 sql_too_large (SQLITE_TOOBIG) or 429 quota_exceeded (SQLITE_QUOTA: the plan's monthly write cap or SQL read fair use is used up; shape reads stay available).
             """);
         Tags("Queries");
         Metadata(new RequestBodyMetadata(typeof(SqlExecuteRequest), DocumentRoute.JsonMediaType));
@@ -33,6 +33,7 @@ internal sealed class SqlExecuteEndpoint(ISqlService sql, IAuthorizationService 
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<SqlErrorBody>(StatusCodes.Status409Conflict);
         Produces<SqlErrorBody>(StatusCodes.Status413PayloadTooLarge);
+        Produces<SqlErrorBody>(StatusCodes.Status429TooManyRequests);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
         Metadata(ListenerMetadata.Client);
@@ -129,6 +130,7 @@ internal sealed class SqlExecuteEndpoint(ISqlService sql, IAuthorizationService 
             "SQLITE_AUTH" => (StatusCodes.Status403Forbidden, "forbidden_scope"),
             "SQLITE_BUSY" => (StatusCodes.Status409Conflict, "sql_conflict"),
             "SQLITE_TOOBIG" => (StatusCodes.Status413PayloadTooLarge, "sql_too_large"),
+            "SQLITE_QUOTA" => (StatusCodes.Status429TooManyRequests, "quota_exceeded"),
             _ => (StatusCodes.Status400BadRequest, "sql_error"),
         };
         HttpContext.Response.Headers.CacheControl = "no-store";

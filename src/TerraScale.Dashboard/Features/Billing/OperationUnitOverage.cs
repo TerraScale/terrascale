@@ -2,17 +2,14 @@ using TerraScale.Dashboard.Common.Formatting;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
-    // The hourly Stripe reporter and the billing page share this overage math.
     public static class OperationUnitOverage
     {
         public const string Kind = "operation_unit_overage";
 
-        // Stripe's unit_amount_decimal is in cents: $5 per million units is 0.0005 cents per unit.
         public static decimal UnitAmountCents => PlanCatalog.OperationUnitsPerMillionUsd * 100m / 1_000_000m;
 
         public static string Rate => MoneyFormat.Money(checked((long)(PlanCatalog.OperationUnitsPerMillionUsd * 100m))) + " per million";
 
-        // Free has no overages: it stops new writes at its allowance.
         public static long Units(BillingPlan plan, long used)
         {
             return plan.PriceCents > 0 ? Math.Max(0, used - plan.Allowances.MonthlyOperations) : 0;
@@ -21,6 +18,25 @@ namespace TerraScale.Dashboard.Features.Billing
         public static long Cents(long units)
         {
             return checked((long)Math.Round(units * UnitAmountCents, 0, MidpointRounding.AwayFromZero));
+        }
+    }
+
+    public static class StorageOverage
+    {
+        public const string Kind = "storage_overage";
+
+        public static decimal UnitAmountCents => PlanCatalog.StorageGbMonthUsd * 100m / 1_000m;
+
+        public static long MegabyteMonths(BillingPlan plan, long byteHours, DateTimeOffset month)
+        {
+            if (plan.PriceCents <= 0)
+            {
+                return 0;
+            }
+
+            var hours = (long)(month.AddMonths(1) - month).TotalHours;
+            var over = (System.Numerics.BigInteger)byteHours - (System.Numerics.BigInteger)plan.Allowances.StorageBytes * hours;
+            return over <= 0 ? 0 : (long)(over / hours / 1_000_000);
         }
     }
 }
