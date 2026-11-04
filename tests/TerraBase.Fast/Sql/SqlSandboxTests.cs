@@ -66,7 +66,7 @@ public sealed class SqlSandboxTests
             var (status, body) = await db.PostAsync(db.Writer, Stmt(sql));
             var error = body.GetProperty("error");
             await Assert.That((status, error.GetProperty("code").GetString())).IsEqualTo((HttpStatusCode.BadRequest, "undefined_table")).Because(sql);
-            await Assert.That(error.GetProperty("message").GetString()).StartsWith("no such table: ").Because(sql);
+            await Assert.That(error.GetProperty("message").GetString()).IsEqualTo("no such table").Because(sql);
             await Assert.That(ErrorState(await psql.QueryAsync(sql))).IsEqualTo("42P01").Because(sql);
         }
 
