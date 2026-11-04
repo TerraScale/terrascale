@@ -138,7 +138,7 @@ def prepare(area, sha, directory):
             return
         except (ValueError, subprocess.CalledProcessError):
             pass
-    env = dict(os.environ, RUNNER_TEMP=str(directory), TS_AUTH_REVISION=sha,
+    env = dict(os.environ, CI='true', RUNNER_TEMP=str(directory), TS_AUTH_REVISION=sha,
                TERRABASE_REVISION=sha, SourceRevisionId=sha, ContinuousIntegrationBuild='true',
                DeterministicSourcePaths='false')
     # Use the real CLI after phased tests; all checks and packaging run once.
