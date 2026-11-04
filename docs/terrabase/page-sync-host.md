@@ -10,7 +10,7 @@ TerraBase serves Turso Sync page pull for its own databases, inside the TerraBas
 - **Internal auth.** Every internal-listener request must carry the peer credential (`X-TerraBase-Peer-Credential`). Anything else gets 401 before routing.
 - **Per-database scope.** The organization, project and database in the path must resolve in this node's catalog, otherwise the answer is 404. A pull streams that one database's pages and nothing else.
 - **Protocol.** The request is the official client's protobuf pull-updates request, in page mode with raw encoding. The answer is a length-delimited protobuf header (`server_revision`, `db_size`, `protocol = pages`) followed by one message per page. Errors before the first byte are TerraBase JSON errors. A failure after the header aborts the HTTP/2 stream, so a client never applies a truncated answer.
-- **Refused requests (400 `unsupported_pull`).** Zstd encoding, MVCC logical pulls, a pinned `server_revision`, and page or query selectors (partial sync). Long polls are answered immediately: replicas learn about new revisions from NATS (D25, R3).
+- **Refused requests (400 `unsupported_pull`).** Zstd encoding, MVCC logical pulls, a pinned `server_revision`, and page or query selectors (partial sync). Long polls are answered immediately: replicas learn about new revisions from NATS (D25, R3), and small answers arrive with the notice ([region replicas](region-replicas.md#how-a-replica-follows-its-home)).
 
 ## Revisions
 

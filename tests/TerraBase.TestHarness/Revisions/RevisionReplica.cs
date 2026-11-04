@@ -93,7 +93,7 @@ internal sealed class ReceivedPages : IRevisionPullSink
 {
     public Dictionary<uint, byte[]> Pages { get; } = [];
 
-    public ValueTask StartAsync(RevisionPullStart start, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+    public ValueTask<bool> StartAsync(RevisionPullStart start, CancellationToken cancellationToken) => ValueTask.FromResult(true);
 
     public ValueTask WriteAsync(RevisionPageBatch batch, CancellationToken cancellationToken)
     {

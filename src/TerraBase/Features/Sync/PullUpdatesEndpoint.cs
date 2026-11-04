@@ -13,7 +13,7 @@ namespace TerraBase.Features.Sync;
 
 internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRevisions revisions, IReplicaPeers peers) : EndpointWithoutRequest<IResult>, IRevisionPullSink
 {
-    private const string MediaType = "application/protobuf";
+    private const string MediaType = PullAnswer.MediaType;
     private const int MaxBodyBytes = 64 * 1024;
 
     public override void Configure()
@@ -59,7 +59,7 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
             return ErrorResponse.From(new Validation("the body is not a pull-updates request"));
         }
 
-        if (Refusal(request) is { } refusal)
+        if (PullAnswer.Refusal(request) is { } refusal)
         {
             return ErrorResponse.From(new Validation(refusal, "unsupported_pull"));
         }
@@ -71,15 +71,6 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
             TenantContext database => await PullAsync(database, request.ClientRevision, cancellationToken).ConfigureAwait(false),
         };
     }
-
-    private static string? Refusal(PullUpdatesRequest request) => request switch
-    {
-        { Encoding: not PageEncoding.Raw } => "only raw page encoding is served",
-        { StreamKind: not StreamKind.Pages } => "only page pulls are served",
-        { ServerRevision.Length: > 0 } or { ServerQuerySelector.Length: > 0 } or { ServerPagesSelector.IsEmpty: false } or { ClientPages.IsEmpty: false }
-            => "partial pulls are not served: send only client_revision",
-        _ => null,
-    };
 
     private string RouteValue(string name) => HttpContext.Request.RouteValues[name] as string ?? string.Empty;
 
@@ -153,37 +144,22 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
         return Results.Empty;
     }
 
-    async ValueTask IRevisionPullSink.StartAsync(RevisionPullStart start, CancellationToken cancellationToken)
+    async ValueTask<bool> IRevisionPullSink.StartAsync(RevisionPullStart start, CancellationToken cancellationToken)
     {
         var response = HttpContext.Response;
         response.StatusCode = StatusCodes.Status200OK;
         response.ContentType = MediaType;
         response.Headers.CacheControl = "no-store";
         response.Headers[DatabaseRevision.Header] = start.Revision.ToString();
-        Write(response.BodyWriter, new PullUpdatesHeader
-        {
-            ServerRevision = start.Revision.ToString(),
-            DbSize = start.DatabaseSize,
-            RawEncoding = new RawPageEncoding(),
-            StreamKind = StreamKind.Pages,
-            Protocol = PullProtocol.Pages,
-        });
+        PullAnswer.WriteHeader(response.BodyWriter, start);
         await FlushAsync(response.BodyWriter, cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     async ValueTask IRevisionPullSink.WriteAsync(RevisionPageBatch batch, CancellationToken cancellationToken)
     {
-        var writer = HttpContext.Response.BodyWriter;
-        for (var index = 0; index < batch.Numbers.Length; index++)
-        {
-            Write(writer, new PageData
-            {
-                PageId = batch.Numbers.Span[index] - 1UL,
-                EncodedPage = UnsafeByteOperations.UnsafeWrap(batch.Pages.Slice(index * batch.PageSize, batch.PageSize)),
-            });
-        }
-
-        await FlushAsync(writer, cancellationToken).ConfigureAwait(false);
+        PullAnswer.WritePages(HttpContext.Response.BodyWriter, batch);
+        await FlushAsync(HttpContext.Response.BodyWriter, cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask FlushAsync(PipeWriter writer, CancellationToken cancellationToken)
@@ -193,20 +169,5 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
         {
             throw new OperationCanceledException("the replica stopped reading the pull", cancellationToken);
         }
-    }
-
-    private static void Write(PipeWriter writer, IMessage message)
-    {
-        var length = (uint)message.CalculateSize();
-        var prefix = writer.GetSpan(5);
-        var used = 0;
-        for (; length >= 0x80; length >>= 7)
-        {
-            prefix[used++] = (byte)(length | 0x80);
-        }
-
-        prefix[used++] = (byte)length;
-        writer.Advance(used);
-        message.WriteTo(writer);
     }
 }

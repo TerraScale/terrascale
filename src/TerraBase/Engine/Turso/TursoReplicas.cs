@@ -1,10 +1,15 @@
 using System.Collections.Concurrent;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using TerraBase.Configuration;
 using TerraBase.Engine.Revisions;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Memory;
 using TerraBase.Features.Shapes;
+using TerraBase.Features.Sync;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using Turso;
@@ -16,7 +21,7 @@ using ZLogger;
 namespace TerraBase.Engine.Turso;
 
 internal sealed class TursoReplicas(
-    TerraBaseOptions options, [FromKeyedServices(EngineExtensions.DatabaseMasterKey)] IMasterKey master, ILogger<TursoReplicas> logger)
+    TerraBaseOptions options, [FromKeyedServices(EngineExtensions.DatabaseMasterKey)] IMasterKey master, IMemoryBudget memory, ILogger<TursoReplicas> logger)
     : IDatabaseReplicas, IAsyncDisposable
 {
     internal const string DirectoryName = ".replicas";
@@ -48,14 +53,26 @@ internal sealed class TursoReplicas(
         }
     }
 
-    public async ValueTask<ReplicaPullResult?> PullAsync(TenantContext database, CancellationToken cancellationToken)
+    public async ValueTask<ReplicaPullResult?> PullAsync(TenantContext database, bool fromHome, CancellationToken cancellationToken)
     {
         if (await FindAsync(database).ConfigureAwait(false) is not { } replica)
         {
             return null;
         }
 
-        return await replica.PullAsync(cancellationToken).ConfigureAwait(false);
+        return await replica.PullAsync(fromHome, cancellationToken).ConfigureAwait(false);
+    }
+
+    public bool Offer(TenantContext database, DatabaseRevision from, DatabaseRevision to, ReadOnlyMemory<byte> answer)
+    {
+        if (!_replicas.TryGetValue(Key(database), out var opening) || !opening.IsValueCreated || !opening.Value.IsCompletedSuccessfully
+            || memory.TryReserve(MemoryLane.Bulk, answer.Length, database) is not { } reservation)
+        {
+            return false;
+        }
+
+        opening.Value.Result.Offer(new PushedAnswer(from, to, answer, reservation));
+        return true;
     }
 
     public async ValueTask<bool> DeleteAsync(TenantContext database, CancellationToken cancellationToken)
@@ -191,7 +208,7 @@ internal sealed class TursoReplicas(
         var replica = new Replica(this, await TursoSyncDatabase.CreateAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, pulled: false);
         try
         {
-            _ = await replica.PullAsync(CancellationToken.None).ConfigureAwait(false);
+            _ = await replica.PullAsync(fromHome: true, CancellationToken.None).ConfigureAwait(false);
             return replica;
         }
         catch
@@ -291,14 +308,132 @@ internal sealed class TursoReplicas(
         return deleted;
     }
 
+    private sealed class PushedAnswer(DatabaseRevision from, DatabaseRevision to, ReadOnlyMemory<byte> answer, IMemoryReservation reservation) : IDisposable
+    {
+        public DatabaseRevision To => to;
+
+        public bool Covers(DatabaseRevision held) =>
+            held.Incarnation == from.Incarnation && to.Incarnation == from.Incarnation && DatabaseRevision.Compare(from, held) <= 0 && DatabaseRevision.Compare(held, to) < 0;
+
+        public bool Stale(DatabaseRevision held) => held.Incarnation == to.Incarnation && DatabaseRevision.Compare(to, held) <= 0;
+
+        public HttpResponseMessage Answer(HttpRequestMessage request)
+        {
+            var bytes = MemoryMarshal.TryGetArray(answer, out var segment) ? segment : new ArraySegment<byte>(answer.ToArray());
+            var content = new PushedContent(bytes, reservation);
+            content.Headers.ContentType = new MediaTypeHeaderValue(PullAnswer.MediaType);
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = content, RequestMessage = request };
+            _ = response.Headers.TryAddWithoutValidation(DatabaseRevision.Header, to.ToString());
+            return response;
+        }
+
+        public void Dispose() => reservation.Dispose();
+    }
+
+    private sealed class PushedContent(ArraySegment<byte> bytes, IMemoryReservation reservation) : ByteArrayContent(bytes.Array!, bytes.Offset, bytes.Count)
+    {
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                reservation.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+    }
+
     private sealed class RevisionObserver(HttpClient http) : HttpMessageHandler
     {
+        private const int MaxPushes = 8;
+        private readonly Lock _gate = new();
+        private readonly List<PushedAnswer> _pushes = [];
         private string? _seen;
+        private bool _pushedAllowed;
+        private bool _served;
 
         public string? Take() => Interlocked.Exchange(ref _seen, null);
 
+        public void Begin(bool fromHome) => (_pushedAllowed, _served) = (!fromHome, false);
+
+        public bool End()
+        {
+            _pushedAllowed = false;
+            return _served;
+        }
+
+        public void Offer(PushedAnswer push)
+        {
+            lock (_gate)
+            {
+                if (_pushes.Count == MaxPushes)
+                {
+                    _pushes[0].Dispose();
+                    _pushes.RemoveAt(0);
+                }
+
+                _pushes.Add(push);
+            }
+        }
+
+        public bool Pending(DatabaseRevision? held)
+        {
+            lock (_gate)
+            {
+                return held is { } revision && _pushes.Exists(push => push.Covers(revision));
+            }
+        }
+
+        public void Clear()
+        {
+            lock (_gate)
+            {
+                _pushes.ForEach(push => push.Dispose());
+                _pushes.Clear();
+            }
+        }
+
+        private PushedAnswer? Covering(DatabaseRevision held)
+        {
+            lock (_gate)
+            {
+                PushedAnswer? best = null;
+                foreach (var push in _pushes.Where(push => push.Covers(held)))
+                {
+                    best = best is null || DatabaseRevision.Compare(push.To, best.To) > 0 ? push : best;
+                }
+
+                _ = _pushes.RemoveAll(push =>
+                {
+                    if (ReferenceEquals(push, best))
+                    {
+                        return true;
+                    }
+
+                    var drop = push.Stale(best?.To ?? held);
+                    if (drop)
+                    {
+                        push.Dispose();
+                    }
+
+                    return drop;
+                });
+                return best;
+            }
+        }
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (_pushedAllowed && request.Method == HttpMethod.Post && request.Content is { } body
+                && request.RequestUri?.AbsolutePath.EndsWith("/pull-updates", StringComparison.Ordinal) == true
+                && PullAnswer.TryClientRevision(await body.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false), out var client)
+                && DatabaseRevision.TryParse(client, out var held) && Covering(held) is { } push)
+            {
+                _served = true;
+                Volatile.Write(ref _seen, push.To.ToString());
+                return push.Answer(request);
+            }
+
             using var copy = new HttpRequestMessage(request.Method, request.RequestUri)
             {
                 Content = request.Content,
@@ -402,7 +537,9 @@ internal sealed class TursoReplicas(
             return hasher.Finish(home.Table, home.After, home.Last);
         }
 
-        public async Task<ReplicaPullResult> PullAsync(CancellationToken cancellationToken)
+        public void Offer(PushedAnswer push) => observer.Offer(push);
+
+        public async Task<ReplicaPullResult> PullAsync(bool fromHome, CancellationToken cancellationToken)
         {
             await _pulls.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
@@ -410,6 +547,8 @@ internal sealed class TursoReplicas(
                 var position = owner.NextPosition();
                 _ = observer.Take();
                 bool changed;
+                bool pushed;
+                observer.Begin(fromHome);
                 try
                 {
                     changed = await sync.PullAsync(cancellationToken).ConfigureAwait(false);
@@ -419,8 +558,16 @@ internal sealed class TursoReplicas(
                     Held = null;
                     throw;
                 }
+                finally
+                {
+                    pushed = observer.End();
+                }
 
-                Volatile.Write(ref _applied, position);
+                if (!pushed)
+                {
+                    Volatile.Write(ref _applied, position);
+                }
+
                 Held = DatabaseRevision.TryParse(observer.Take(), out var held) ? held : null;
                 Pulled = true;
                 var log = new FileInfo(path + "-wal");
@@ -436,7 +583,7 @@ internal sealed class TursoReplicas(
                     }
                 }
 
-                return new ReplicaPullResult(changed);
+                return new ReplicaPullResult(changed, pushed, observer.Pending(Held));
             }
             finally
             {
@@ -494,6 +641,7 @@ internal sealed class TursoReplicas(
 
             sync.Dispose();
             observed.Dispose();
+            observer.Clear();
             _pulls.Dispose();
             return ValueTask.CompletedTask;
         }

@@ -4,7 +4,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Engine.Revisions;
 using TerraBase.Engine.Turso;
+using TerraBase.Features.Memory;
+using TerraBase.Features.Replicas;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -34,7 +37,7 @@ public sealed class RegionReplicaTests
 
             var options = server.Services.GetRequiredService<TerraBaseOptions>() with { DataDirectory = directory };
             using var http = PeerTls.CreateClient(server.BaseAddress);
-            var replicas = new TursoReplicas(options, new TestMasterKey(), NullLogger<TursoReplicas>.Instance);
+            var replicas = new TursoReplicas(options, new TestMasterKey(), server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<TursoReplicas>.Instance);
             await using (replicas)
             {
                 await replicas.OpenAsync(database, server.PullAddress(database), http, token);
@@ -47,16 +50,32 @@ public sealed class RegionReplicaTests
                 await server.ExecuteAsync(database, "DELETE FROM items WHERE id = 'r0099'");
                 await server.ExecuteAsync(database, "CREATE TABLE extra(k INTEGER PRIMARY KEY, w TEXT NOT NULL)");
                 await server.ExecuteAsync(database, "INSERT INTO extra(k, w) VALUES (7, 'seven')");
-                await Assert.That((await replicas.PullAsync(database, token))!.Changed).IsTrue();
+                await Assert.That((await replicas.PullAsync(database, fromHome: true, token))!.Changed).IsTrue();
                 await Assert.That(await RowsAsync(replicas, database, token)).IsEquivalentTo(expected);
                 await Assert.That(await ScalarAsync(replicas, database, "SELECT w FROM extra WHERE k = 7", token)).IsEqualTo("seven");
+
+                var held = replicas.HeldRevision(database)!.Value;
+                expected["r0500"] = "pushed";
+                await server.ExecuteAsync(database, $"INSERT INTO items(id, tenant, v) VALUES ('r0500', '{database.DatabaseId}', 'pushed')");
+                using (var push = await RevisionPush.BuildAsync(server.Services.GetRequiredService<IDatabaseRevisions>(), server.Services.GetRequiredService<IMemoryBudget>(),
+                    database, held.ToString(), 0, token))
+                {
+                    await Assert.That(RevisionPush.TryRead(push!.Payload.ToArray(), out var notice, out var answer)).IsTrue();
+                    await Assert.That(notice!.Base).IsEqualTo(held.ToString());
+                    await Assert.That(DatabaseRevision.TryParse(notice.Revision, out var to)).IsTrue();
+                    await Assert.That(replicas.Offer(database, held, to, answer)).IsTrue();
+                }
+
+                var applied = (await replicas.PullAsync(database, fromHome: false, token))!;
+                await Assert.That(applied.Pushed && applied.Changed).IsTrue();
+                await Assert.That(await RowsAsync(replicas, database, token)).IsEquivalentTo(expected);
 
                 await server.ExecuteAsync(database, "PRAGMA wal_checkpoint(TRUNCATE)");
                 expected["r1000"] = "after-checkpoint";
                 await server.ExecuteAsync(database, $"INSERT INTO items(id, tenant, v) VALUES ('r1000', '{database.DatabaseId}', 'after-checkpoint')");
-                await Assert.That((await replicas.PullAsync(database, token))!.Changed).IsTrue();
+                await Assert.That((await replicas.PullAsync(database, fromHome: true, token))!.Changed).IsTrue();
                 await Assert.That(await RowsAsync(replicas, database, token)).IsEquivalentTo(expected);
-                await Assert.That((await replicas.PullAsync(database, token))!.Changed).IsFalse();
+                await Assert.That((await replicas.PullAsync(database, fromHome: true, token))!.Changed).IsFalse();
 
                 await using var reader = (await replicas.BeginReadAsync(database, token))!;
                 var refused = await Assert.That(async () => await reader.ExecuteAsync(Statement("INSERT INTO extra(k, w) VALUES (8, 'eight')"), token))
@@ -67,10 +86,10 @@ public sealed class RegionReplicaTests
 
             expected["r2000"] = "while-closed";
             await server.ExecuteAsync(database, $"INSERT INTO items(id, tenant, v) VALUES ('r2000', '{database.DatabaseId}', 'while-closed')");
-            await using var reopened = new TursoReplicas(options, new TestMasterKey(), NullLogger<TursoReplicas>.Instance);
+            await using var reopened = new TursoReplicas(options, new TestMasterKey(), server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<TursoReplicas>.Instance);
             await reopened.OpenAsync(database, server.PullAddress(database), http, token);
             await Assert.That((await RowsAsync(reopened, database, token)).ContainsKey("r2000")).IsFalse();
-            await Assert.That((await reopened.PullAsync(database, token))!.Changed).IsTrue();
+            await Assert.That((await reopened.PullAsync(database, fromHome: true, token))!.Changed).IsTrue();
             await Assert.That(await RowsAsync(reopened, database, token)).IsEquivalentTo(expected);
             await Assert.That(await LeakingAsync(directory, marker, token)).IsEmpty();
             await Assert.That(await reopened.DeleteAsync(database, token)).IsTrue();

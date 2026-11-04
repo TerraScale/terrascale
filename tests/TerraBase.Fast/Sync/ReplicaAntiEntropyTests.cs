@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
+using TerraBase.Features.Memory;
 using TerraBase.Features.Replicas;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -31,7 +32,7 @@ public sealed class ReplicaAntiEntropyTests
             var source = server.PullAddress(database);
             using var http = PeerTls.CreateClient(server.BaseAddress);
 
-            await using (var replicas = new TursoReplicas(options, new TestMasterKey(), NullLogger<TursoReplicas>.Instance))
+            await using (var replicas = new TursoReplicas(options, new TestMasterKey(), server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<TursoReplicas>.Instance))
             {
                 await replicas.OpenAsync(database, source, http, token);
                 var verifier = new ReplicaVerifier(replicas, http);
@@ -43,7 +44,7 @@ public sealed class ReplicaAntiEntropyTests
 
             await TamperAsync(directory, database, source, http);
 
-            await using var reopened = new TursoReplicas(options, new TestMasterKey(), NullLogger<TursoReplicas>.Instance);
+            await using var reopened = new TursoReplicas(options, new TestMasterKey(), server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<TursoReplicas>.Instance);
             await reopened.OpenAsync(database, source, http, token);
             var healing = new ReplicaVerifier(reopened, http);
             var diverged = await healing.RoundAsync(database, source, null, token);
