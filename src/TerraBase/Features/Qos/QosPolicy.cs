@@ -14,17 +14,23 @@ namespace TerraBase.Features.Qos;
 /// <param name="ScanRows">Maximum candidate document rows scanned.</param>
 /// <param name="ScanBytes">Maximum candidate JSON bytes scanned.</param>
 /// <param name="StorageBytes">Maximum live document bytes per organization, in decimal GB as pricing.json entitlements.storageLimitGb publishes it.</param>
-/// <param name="MonthlyOperations">Operation units included per organization and UTC month (https://terrascale.tech/pricing.json); only hobby stops new puts and patches there, paid plans are billed for the units over it.</param>
 /// <param name="Databases">Live databases per organization, across its projects, before new ones are refused (https://terrascale.tech/pricing.json).</param>
+/// <param name="MonthlyWriteCap">Write units per organization and UTC month after which new writes stop: the hard cap of pricing.json limits.operationUnitCapPerMonth.</param>
+/// <param name="MonthlySqlReads">SQL read units per organization and UTC month after which SQL reads stop: the fair use of pricing.json limits.sqlReadUnitsPerMonth. Shape reads are never counted.</param>
 public sealed record QosPolicy(
     int RequestsPerSecond, int Burst, int Concurrency, int Weight, double MemoryShare, double CacheShare,
-    TimeSpan QueryTimeout, long QueryWork, long ScanRows, long ScanBytes, long StorageBytes, long MonthlyOperations, long Databases)
+    TimeSpan QueryTimeout, long QueryWork, long ScanRows, long ScanBytes, long StorageBytes, long Databases,
+    long MonthlyWriteCap, long MonthlySqlReads)
 {
-    private static readonly QosPolicy Hobby = new(50, 100, 4, 1, .0625, .0625, TimeSpan.FromSeconds(1), 1_000_000, 10_000, 16 * 1024 * 1024, 100_000_000, 50_000, 1);
-    private static readonly QosPolicy Starter = new(200, 400, 8, 2, .125, .125, TimeSpan.FromSeconds(2), 2_000_000, 50_000, 64 * 1024 * 1024, 5_000_000_000, 250_000, 5);
-    private static readonly QosPolicy Pro = new(500, 1000, 16, 4, .25, .25, TimeSpan.FromSeconds(5), 5_000_000, 100_000, 128 * 1024 * 1024, 100_000_000_000, 2_000_000, 25);
-    private static readonly QosPolicy Team = new(500, 1000, 16, 4, .25, .25, TimeSpan.FromSeconds(5), 5_000_000, 100_000, 128 * 1024 * 1024, 100_000_000_000, 5_000_000, 100);
-    private static readonly QosPolicy Enterprise = new(0, 0, 0, 16, 1, 1, Timeout.InfiniteTimeSpan, long.MaxValue, long.MaxValue, long.MaxValue, long.MaxValue, long.MaxValue, long.MaxValue);
+    private static readonly QosPolicy Hobby = new(50, 100, 4, 1, .0625, .0625, TimeSpan.FromSeconds(1), 1_000_000, 10_000, 16 * 1024 * 1024, 100_000_000, 1, Cap(PlanTier.Hobby), Reads(PlanTier.Hobby));
+    private static readonly QosPolicy Starter = new(200, 400, 8, 2, .125, .125, TimeSpan.FromSeconds(2), 2_000_000, 50_000, 64 * 1024 * 1024, 5_000_000_000, 5, Cap(PlanTier.Starter), Reads(PlanTier.Starter));
+    private static readonly QosPolicy Pro = new(500, 1000, 16, 4, .25, .25, TimeSpan.FromSeconds(5), 5_000_000, 100_000, 128 * 1024 * 1024, 100_000_000_000, 25, Cap(PlanTier.Pro), Reads(PlanTier.Pro));
+    private static readonly QosPolicy Team = new(500, 1000, 16, 4, .25, .25, TimeSpan.FromSeconds(5), 5_000_000, 100_000, 128 * 1024 * 1024, 100_000_000_000, 100, Cap(PlanTier.Team), Reads(PlanTier.Team));
+    private static readonly QosPolicy Enterprise = new(0, 0, 0, 16, 1, 1, Timeout.InfiniteTimeSpan, long.MaxValue, long.MaxValue, long.MaxValue, long.MaxValue, long.MaxValue, Cap(PlanTier.Enterprise), Reads(PlanTier.Enterprise));
+
+    private static long Cap(PlanTier plan) => PlanPricing.Ceiling(plan, "operationUnitCapPerMonth");
+
+    private static long Reads(PlanTier plan) => PlanPricing.Ceiling(plan, "sqlReadUnitsPerMonth");
 
     /// <summary>Limits for a validated plan; enterprise retains only process-wide safety bounds.</summary>
     public static QosPolicy For(PlanTier plan) => plan switch

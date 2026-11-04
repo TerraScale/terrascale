@@ -41,6 +41,8 @@ export type PlanLimits = {
   members: number | null
   storageGb: number | null
   operationUnitsPerMonth: number | null
+  operationUnitCapPerMonth: number | null
+  sqlReadUnitsPerMonth: number | null
   egressGbPerMonth: number | null
 }
 
