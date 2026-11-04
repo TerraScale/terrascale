@@ -74,10 +74,10 @@ namespace TerraScale.Dashboard.E2E.Platform
                     await ShotAsync("database-fork-dialog");
                     await GotoAsync($"/databases/{databaseId}/settings");
                     await page.Locator("#database-ttl").FillAsync("6");
-                    await SubmitAsync("form[action=\"/v1/databases/ttl\"]", "Set TTL");
+                    await SubmitAsync("form:is([action=\"/v1/databases/ttl\"],[action^=\"/v1/databases/ttl?\"])", "Set TTL");
                     await page.GetByRole(AriaRole.Button, new() { Name = "Clear TTL", Exact = true }).WaitForAsync();
                     await ShotAsync("database-settings");
-                    await SubmitAsync("form[action=\"/v1/databases/ttl\"]", "Clear TTL");
+                    await SubmitAsync("form:is([action=\"/v1/databases/ttl\"],[action^=\"/v1/databases/ttl?\"])", "Clear TTL");
                     await Assert.That(await page.GetByRole(AriaRole.Button, new() { Name = "Clear TTL", Exact = true }).CountAsync()).IsEqualTo(0);
                     await GotoAsync($"/databases/{databaseId}/sql");
                     foreach (var statement in new[] { "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, score INTEGER)", "INSERT INTO users (name, score) VALUES ('Ada', 7)", "SELECT * FROM users LIMIT 100" })
