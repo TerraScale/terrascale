@@ -6,7 +6,8 @@ namespace TerraBase.Features.Sql;
 
 /// <summary>Statements to run as one transaction.</summary>
 /// <param name="Statements">1 to 256 statements.</param>
-internal sealed record SqlExecuteRequest(IReadOnlyList<SqlExecuteStatement>? Statements);
+/// <param name="Durability"><c>all</c> answers only after every replica region holds the write.</param>
+internal sealed record SqlExecuteRequest(IReadOnlyList<SqlExecuteStatement>? Statements, string? Durability = null);
 
 /// <summary>One statement and its arguments.</summary>
 /// <param name="Sql">Statement text, at most 16 KiB.</param>

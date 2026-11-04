@@ -23,7 +23,7 @@ namespace TerraBase.Features.Replicas;
 /// </summary>
 internal sealed class RegionReplication(
     TerraBaseOptions options, IReplicaPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas,
-    IDatabaseRevisions revisions, IMemoryBudget memory, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<RegionReplication> logger) : BackgroundService
+    IDatabaseRevisions revisions, IMemoryBudget memory, ReplicaHolds holds, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<RegionReplication> logger) : BackgroundService
 {
     /// <summary>How often every replica pulls and every home's catalog is read again without a notice.</summary>
     internal static readonly TimeSpan Sweep = TimeSpan.FromSeconds(30);
@@ -174,7 +174,8 @@ internal sealed class RegionReplication(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await (_nats is { } nats
-            ? Task.WhenAll(PublishAsync(nats, stoppingToken), SubscribeAsync(nats, stoppingToken), WatchConnectionAsync(nats, stoppingToken), CatalogAsync(stoppingToken))
+            ? Task.WhenAll(PublishAsync(nats, stoppingToken), SubscribeAsync(nats, stoppingToken), HoldsAsync(nats, stoppingToken), WatchConnectionAsync(nats, stoppingToken),
+                CatalogAsync(stoppingToken))
             : CatalogAsync(stoppingToken)).ConfigureAwait(false);
     }
 
@@ -253,6 +254,57 @@ internal sealed class RegionReplication(
                 logger.ZLogInformation($"The revision subscription restarts: {error.GetType().Name:@Error}");
                 await Task.Delay(MaxBackoff, time, cancellationToken).ConfigureAwait(false);
             }
+        }
+    }
+
+    private async Task HoldsAsync(NatsConnection nats, CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await foreach (var message in nats.SubscribeAsync<byte[]>(ReplicaSubjects.HeldAt(options.Region), cancellationToken: cancellationToken).ConfigureAwait(false))
+                {
+                    try
+                    {
+                        if (message.Data is { } data && JsonSerializer.Deserialize(data, TerraBaseJsonContext.Default.ReplicaHeldNotice) is { } notice)
+                        {
+                            holds.Held(notice);
+                        }
+                    }
+                    catch (JsonException)
+                    {
+                    }
+                }
+            }
+            catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                logger.ZLogInformation($"The held-revision subscription restarts: {error.GetType().Name:@Error}");
+                await Task.Delay(MaxBackoff, time, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private void PublishHeld(TenantContext database, string home)
+    {
+        if (_nats is not { } nats || replicas.HeldRevision(database) is not { } held)
+        {
+            return;
+        }
+
+        var notice = new ReplicaHeldNotice(database.OrganizationId, database.ProjectId!, database.DatabaseId!, options.Region, held.ToString());
+        _ = PublishHeldAsync(nats, ReplicaSubjects.Held(home, database.DatabaseId!), JsonSerializer.SerializeToUtf8Bytes(notice, TerraBaseJsonContext.Default.ReplicaHeldNotice));
+    }
+
+    private async Task PublishHeldAsync(NatsConnection nats, string subject, byte[] data)
+    {
+        try
+        {
+            await nats.PublishAsync(subject, data).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is NatsException or OperationCanceledException)
+        {
+            logger.ZLogInformation($"A held-revision notice was not published: {error.GetType().Name:@Error}");
         }
     }
 
@@ -753,6 +805,7 @@ internal sealed class RegionReplication(
                     Volatile.Write(ref _lastChangedAt, _syncedAt.Value.ToUnixTimeMilliseconds());
                 }
 
+                _owner.PublishHeld(Database, _home.Region);
                 if (pending)
                 {
                     Signal(0, fromHome: false);
