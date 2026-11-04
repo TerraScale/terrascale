@@ -654,6 +654,7 @@
           "Microsoft.AspNetCore.OpenApi": "[11.0.0-rc.3.26522.148, )",
           "Microsoft.IdentityModel.Protocols.OpenIdConnect": "[8.23.0, )",
           "NATS.Client.Core": "[3.3.2, )",
+          "NATS.Client.JetStream": "[3.3.2, )",
           "NUlid": "[1.7.3, )",
           "NativeCompressions": "[0.6.1, )",
           "OpenTelemetry.Exporter.Prometheus.AspNetCore": "[1.19.1-beta.1, )",
@@ -1032,6 +1033,15 @@
         "dependencies": {
           "NATS.Client.Abstractions": "3.3.2",
           "NATS.NKeys": "1.0.1"
+        }
+      },
+      "NATS.Client.JetStream": {
+        "type": "CentralTransitive",
+        "requested": "[3.3.2, )",
+        "resolved": "3.3.2",
+        "contentHash": "JF2xH52Fjj/KTpiCqLgOvFGoJl92eKlgT62X02oEkff/TphWjoXG1s26I7ySIwiScHgToW/fAuM0HW/76k7J4Q==",
+        "dependencies": {
+          "NATS.Client.Core": "3.3.2"
         }
       },
       "NUlid": {
