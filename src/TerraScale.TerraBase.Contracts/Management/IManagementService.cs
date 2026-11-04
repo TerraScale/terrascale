@@ -27,6 +27,12 @@ namespace TerraScale.TerraBase.Contracts.Management
         /// <summary><c>POST /v1/projects/{project}/databases/{database}/branches</c>.</summary>
         UnaryResult<TerraBaseManagedDatabase> BranchAsync(string projectId, string database, string name);
 
+        /// <summary>Forks with an optional TTL through the existing branches route.</summary>
+        UnaryResult<TerraBaseManagedDatabase> BranchWithTtlAsync(string projectId, string database, string name, long? ttlSeconds);
+
+        /// <summary>Sets or clears the database TTL through PUT or DELETE .../ttl.</summary>
+        UnaryResult<TerraBaseManagedDatabase> SetDatabaseTtlAsync(string projectId, string database, long? ttlSeconds);
+
         /// <summary><c>GET /v1/projects/{project}/databases/{database}/schema</c>.</summary>
         UnaryResult<TerraBaseCollectionStatsPage> ListCollectionStatsAsync(string projectId, string database);
 
