@@ -26,7 +26,7 @@ public sealed class CrossRegionMeteringTests
         {
             descriptor.Claims["project_id"] = database.Project;
             descriptor.Claims["org_id"] = database.Organization;
-            descriptor.Claims["scope"] = "databases:read databases:write documents:read documents:write";
+            descriptor.Claims["scope"] = "databases:read databases:write sql:read sql:write";
         });
         using var viaGru = gru.WithToken(token);
         using var viaSjc = sjc.WithToken(token);

@@ -200,7 +200,7 @@ public sealed class HomeApplyTests
                 ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"), new { name = "main", replicaRegions = Replicas });
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
             var database = new ManagedDatabaseRef(organization, project, (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!, "main");
-            var writer = await api.Server.IssueNarrowedAsync(organization, project, null, "documents:read", "documents:write");
+            var writer = await api.Server.IssueNarrowedAsync(organization, project, null, "sql:read", "sql:write");
             return new Home(api, database, api.DataClient(writer), PeerTls.CreateClient(api.Server.BaseAddress));
         }
         catch
