@@ -147,7 +147,7 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
         {
             Check(observed.GetProperty("contractFailures").GetInt32() == 0 && observed.GetProperty("unsupportedIntrospectionRequests").GetInt32() == 0,
                 "Current origin, client and UserInfo contracts are preserved without unsupported introspection calls");
-            Check(observed.GetProperty("credentialsEncrypted").GetBoolean(), "Every rotated grant remains encrypted in persistent dashboard documents");
+            Check(observed.GetProperty("credentialsEncrypted").GetBoolean(), "Every rotated grant remains encrypted in persistent dashboard storage");
         }
 
         private static void Check(bool condition, string message)

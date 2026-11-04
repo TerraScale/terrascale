@@ -25,7 +25,7 @@ namespace TerraScale.Dashboard.Platform.Contracts
                     openApi.Info.Description = "Same-origin dashboard APIs. Existing /api/v1 browser paths are preserved. " +
                         "New public APIs use /v1. Mutations require the current session and the _csrf form token " +
                         "bound to the same origin; authentication and membership checks run before actions. " +
-                        "This document covers explicitly annotated integration routes, not every UI page.";
+                        "This API description covers explicitly annotated integration routes, not every UI page.";
                     openApi.Components ??= new();
                     openApi.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
                     openApi.Components.SecuritySchemes["dashboardSession"] = new OpenApiSecurityScheme

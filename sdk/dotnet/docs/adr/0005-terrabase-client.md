@@ -16,8 +16,8 @@ store.
 `TerraScale.DotNet.TerraBase` is the SDK's database client. Its data and
 Management clients follow TerraBase's published contract at the pinned server
 revision `ff256067015433c8c40b59879f1282d2a40480ce`; they add no route, field
-or header the server does not document. TerraBase rejects `Idempotency-Key`, so
-requests are sent once, except the 503 refusals TerraBase documents as answered
+or header the server does not publish. TerraBase rejects `Idempotency-Key`, so
+requests are sent once, except the 503 refusals TerraBase declares answered
 before execution with `Retry-After` (`remote_region_unavailable`,
 `confirmation_busy`, `catalog_stale`) and, for reads, `429 tenant_busy`, the transient
 503s `auth_unavailable`, `storage_busy` and `capacity`, gateway 502/504 and lost connections.
