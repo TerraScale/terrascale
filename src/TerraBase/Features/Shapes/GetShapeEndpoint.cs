@@ -60,16 +60,16 @@ internal sealed class GetShapeEndpoint(
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        var checkedRequest = CheckRequest();
-        if (checkedRequest is not ShapeRequest request)
-        {
-            return ErrorResponse.From((Validation)checkedRequest);
-        }
-
         var resolved = await ResolveAsync(HttpContext, tenants, lineages, cancellationToken);
         if (resolved is not ResolvedShape shape)
         {
             return Error(resolved);
+        }
+
+        var checkedRequest = CheckRequest();
+        if (checkedRequest is not ShapeRequest request)
+        {
+            return ErrorResponse.From((Validation)checkedRequest);
         }
 
         var (scope, lineage) = (shape.Scope, shape.Lineage);

@@ -54,6 +54,12 @@ internal sealed class GetShapeManifestEndpoint(
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
+        var resolved = await ResolveAsync(HttpContext, tenants, lineages, cancellationToken);
+        if (resolved is not ResolvedShape shape)
+        {
+            return Error(resolved);
+        }
+
         if (DocumentRoute.CheckParameters(HttpContext, "handle", "offset") is Validation invalid)
         {
             return ErrorResponse.From(invalid);
@@ -68,12 +74,6 @@ internal sealed class GetShapeManifestEndpoint(
         if (!query.TryGetValue("offset", out var offsets) || CheckOffset(offsets.ToString()) is not { } offset || offset is Bootstrap)
         {
             return ErrorResponse.From(BadOffset);
-        }
-
-        var resolved = await ResolveAsync(HttpContext, tenants, lineages, cancellationToken);
-        if (resolved is not ResolvedShape shape)
-        {
-            return Error(resolved);
         }
 
         var (scope, lineage) = (shape.Scope, shape.Lineage);
