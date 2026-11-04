@@ -46,26 +46,10 @@ internal sealed record TerraBaseSqlStatementBody(
     }
 }
 
-internal sealed record TerraBaseSqlSocketRequest(long Id, string Type, IReadOnlyList<TerraBaseSqlStatement>? Statements = null);
-
-internal sealed record TerraBaseSqlSocketError(string Code, string Message, int Statement, string Sqlstate);
-
-internal sealed record TerraBaseSqlSocketAnswer(long? Id, string Type, bool Transaction, IReadOnlyList<TerraBaseSqlStatementBody>? Results = null, TerraBaseSqlSocketError? Error = null)
-    : IJsonOnDeserialized
-{
-    void IJsonOnDeserialized.OnDeserialized()
-    {
-        if (Type is not ("result" or "error") || (Type == "result" ? Results is null : Error is null)) throw new JsonException("A SQL frame is a result or an error.");
-        if (Results is not null) TerraBaseJsonContext.RequireNonNullItems(Results);
-    }
-}
-
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true)]
 [JsonSerializable(typeof(TerraBaseSqlExecuteRequest))]
 [JsonSerializable(typeof(TerraBaseSqlExecuteResponse))]
-[JsonSerializable(typeof(TerraBaseSqlSocketRequest))]
-[JsonSerializable(typeof(TerraBaseSqlSocketAnswer))]
 internal sealed partial class TerraBaseSqlJsonContext : JsonSerializerContext
 {
     public static TerraBaseSqlJsonContext Wire { get; } = new(new JsonSerializerOptions(JsonSerializerDefaults.Web)
