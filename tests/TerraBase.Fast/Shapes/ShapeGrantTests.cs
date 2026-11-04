@@ -16,7 +16,7 @@ public sealed class ShapeGrantTests
     [Test]
     public async Task An_end_user_reads_only_their_own_rows_and_the_granted_columns()
     {
-        await using var db = await StartAsync();
+        await using var db = await StartIsolatedAsync();
         var (alice, bob) = (EntityIds.New().ToString(), EntityIds.New().ToString());
         await db.OkAsync(Notes);
         await db.OkAsync(Stmt("INSERT INTO notes (id, owner_id, body, secret) VALUES (1, ?, 'a1', 's'), (2, ?, 'b1', 's'), (3, ?, 'a2', 's')", alice, bob, alice));
@@ -36,7 +36,7 @@ public sealed class ShapeGrantTests
     [Test]
     public async Task Ungranted_tables_and_expired_end_user_tokens_are_refused()
     {
-        await using var db = await StartAsync();
+        await using var db = await StartIsolatedAsync();
         var alice = EntityIds.New().ToString();
         await db.OkAsync(Notes, "CREATE TABLE audit (id INTEGER PRIMARY KEY, entry TEXT)");
         await GrantAsync(db, "notes", new { where = "owner_id = :sub" });

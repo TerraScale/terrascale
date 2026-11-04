@@ -14,7 +14,7 @@ public sealed class TableShapeTests
     public async Task A_client_syncs_snapshot_then_chunks_then_parks_live_and_sees_inserts_updates_and_deletes()
     {
         // This journey observes the host-wide parked-reader gauge.
-        await using var db = await StartAsync(services: _ => { });
+        await using var db = await StartIsolatedAsync();
         await db.OkAsync(Items);
         await db.OkAsync(Stmt("INSERT INTO items (id, name) VALUES (1, ?), (2, ?), (3, ?)", "a", "b", "c"));
         var client = Client(db);
@@ -44,7 +44,7 @@ public sealed class TableShapeTests
     [Test]
     public async Task Upserts_under_full_change_capture_commit_and_reach_the_shape_as_insert_then_update()
     {
-        await using var db = await StartAsync();
+        await using var db = await StartIsolatedAsync();
         await db.OkAsync(Items);
         var client = Client(db);
         await client.SyncAsync();
@@ -70,7 +70,7 @@ public sealed class TableShapeTests
     [Test]
     public async Task Schema_changes_answer_must_refetch_with_a_new_handle()
     {
-        await using var db = await StartAsync();
+        await using var db = await StartIsolatedAsync();
         await db.OkAsync(Items);
         await db.OkAsync(Stmt("INSERT INTO items (id, name) VALUES (1, ?)", "a"));
         var client = Client(db);
@@ -105,7 +105,7 @@ public sealed class TableShapeTests
     [Test]
     public async Task A_filtered_shape_carries_its_columns_and_moves_rows_in_and_out_as_they_start_and_stop_matching()
     {
-        await using var db = await StartAsync();
+        await using var db = await StartIsolatedAsync();
         await db.OkAsync(Items);
         await db.OkAsync(Stmt("INSERT INTO items (id, name, score) VALUES (1, ?, 5), (2, ?, 50), (3, ?, 70)", "low", "high", "top"));
         var client = Client(db, "&where=" + Uri.EscapeDataString("score >= 10 AND name != 'hidden'") + "&columns=name,score");
@@ -136,7 +136,7 @@ public sealed class TableShapeTests
     [Test]
     public async Task A_schema_change_gives_a_filtered_shape_a_new_handle_and_409_for_the_old_one()
     {
-        await using var db = await StartAsync();
+        await using var db = await StartIsolatedAsync();
         await db.OkAsync(Items);
         await db.OkAsync(Stmt("INSERT INTO items (id, name, score) VALUES (1, ?, 50)", "a"));
         var client = Client(db, "&where=" + Uri.EscapeDataString("score > 10") + "&columns=name");
@@ -158,7 +158,7 @@ public sealed class TableShapeTests
     [Test]
     public async Task Unsafe_or_unknown_where_and_columns_are_refused()
     {
-        await using var db = await StartAsync();
+        await using var db = await StartIsolatedAsync();
         await db.OkAsync(Items);
         foreach (var (query, code) in ((string, string)[])[
             ("where=" + Uri.EscapeDataString("id IN (SELECT id FROM items)"), "unsafe_where"),

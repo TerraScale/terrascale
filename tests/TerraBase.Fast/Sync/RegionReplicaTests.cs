@@ -18,7 +18,8 @@ public sealed class RegionReplicaTests
     public async Task AnEncryptedReplicaFollowsItsHomeThroughDmlDdlACheckpointAndAReopen()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
-        await using var server = await TerraBaseTestServer.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
+        var server = api.Server;
         var directory = Directory.CreateTempSubdirectory("terrabase-region-replica-").FullName;
         try
         {

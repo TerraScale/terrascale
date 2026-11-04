@@ -52,6 +52,9 @@ internal sealed class SqlNativeDatabase : IAsyncDisposable
         }
     }
 
+    /// <summary>Owns a host when a journey needs its own snapshot sealer or host-wide metrics.</summary>
+    public static Task<SqlNativeDatabase> StartIsolatedAsync() => StartAsync(services: _ => { });
+
     public static object Stmt(string sql, params object?[] args) => new { sql, args };
 
     public static object Named(string sql, Dictionary<string, object?> named) => new { sql, named };
