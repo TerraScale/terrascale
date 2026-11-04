@@ -21,6 +21,9 @@ namespace TerraScale.TerraBase.Contracts.Management
         /// <summary><c>PATCH /v1/projects/{project}/databases/{database}</c>.</summary>
         UnaryResult<TerraBaseManagedDatabase> SetDatabaseAsync(string projectId, string database, TerraBaseDatabasePlacement request);
 
+        /// <summary><c>POST /v1/projects/{project}/databases/{database}/move-home</c>.</summary>
+        UnaryResult<TerraBaseManagedDatabase> MoveDatabaseHomeAsync(string projectId, string database, TerraBaseMoveHome request);
+
         /// <summary><c>DELETE /v1/projects/{project}/databases/{database}</c>.</summary>
         UnaryResult<bool> DeleteDatabaseAsync(string projectId, string database);
 
