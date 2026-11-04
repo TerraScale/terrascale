@@ -15,7 +15,8 @@ pin=$(tr -d '\n' < .go-version)
 # pin the build toolchain and the cached vulnerability scanner explicitly so
 # every step, including the goreleaser post-build hook, sees the same tools.
 scanner="$HOME/.cache/terrascale/govulncheck-v1.9.0-go$pin"
-export PATH="$(mise where go@"$pin")/bin:$scanner:$PATH"
+export GOROOT="$(mise where go@"$pin")"
+export PATH="$GOROOT/bin:$scanner:$PATH"
 test "$(go env GOVERSION)" = "go$pin"
 latest=$(git tag --list 'sdk/go/v0.0.*' --merged HEAD --sort=-v:refname | head -n 1)
 case "$latest" in
@@ -34,7 +35,8 @@ go vet ./...
 go test -race -count=1 ./...
 # Invoke resolved tools directly: mise exec can prepend the system profile's Go
 # ahead of the pinned PATH on dev hosts.
-PATH="$(mise where go@1.25.0)/bin:$PATH" bash scripts/check-consumer.sh
+consumer_go_root=$(mise where go@1.25.0)
+GOROOT="$consumer_go_root" PATH="$consumer_go_root/bin:$PATH" bash scripts/check-consumer.sh
 "$(mise where goreleaser@2.19.0)/goreleaser" release --snapshot --clean
 python3 scripts/test-release.py
 cp dist/*.tar.gz dist/*.zip dist/checksums.txt dist/homebrew/Formula/ts.rb scripts/install.sh "$output/"
