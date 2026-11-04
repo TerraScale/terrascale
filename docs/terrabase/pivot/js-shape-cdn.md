@@ -1,5 +1,8 @@
 # JavaScript SQL shape CDN reads
 
+The current live subscription, sharing and hint behavior is documented in
+[live shape reads](../free-reads-live.md); it supersedes the origin fan-out behavior below.
+
 The JS SDK's `db.shape(table, { where, columns }).subscribe()` uses the authenticated
 bootstrap redirect to obtain the handle and first snapshot offset. It requests
 `shape/manifest` for snapshot and catch-up offsets and fetches the listed sealed

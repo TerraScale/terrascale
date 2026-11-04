@@ -3,7 +3,8 @@ import { spawn, execFileSync } from "node:child_process";
 import { createServer, createConnection } from "node:net";
 import { createInterface } from "node:readline";
 import { hostname } from "node:os";
-import { ProxyAgent } from "../../sdk/js/node_modules/undici/index.js";
+import { pathToFileURL } from "node:url";
+import { ProxyAgent, WebSocket } from "../../sdk/js/node_modules/undici/index.js";
 import { createTerraBaseClient } from "../../sdk/js/src/index.js";
 
 const api = "https://api.terrascale.tech";
@@ -94,7 +95,7 @@ async function egress(region) {
   return { agent, async close() { await agent.destroy(); tunnel.kill(); server.stdin.end(); server.kill(); } };
 }
 
-async function main() {
+async function main({ readerCounts = [1, 10, 100, 1000], regions = ["gru", "sjc", "fra"], holdMs = 0, flightMetrics = false } = {}) {
   const input = [];
   for await (const part of process.stdin) input.push(part);
   const credentials = JSON.parse(Buffer.concat(input).toString("utf8"));
@@ -123,7 +124,7 @@ async function main() {
   const writer = createTerraBaseClient(config);
   const sha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   emit({ type: "method", sha, host: hostname(), node: process.version, resumed_cohorts: [...completed],
-    rows: 16, body_bytes: 128, repeats: 3, readers: [1, 10, 100, 1000], cpu_limit_percent: 70, cohort_deadline_seconds: 180,
+    rows: 16, body_bytes: 128, repeats: 3, readers: readerCounts, regions, transport_sharing: "Identical subscriptions on one SDK client share one upstream stream", hold_ms: holdMs, cpu_limit_percent: 70, cohort_deadline_seconds: 180,
     cpu: "Process CPU ticks divided by the minimum of affinity and cgroup v2 ancestor quotas; stop on process or capacity change",
     latency: "Dev-host SDK through regional SSH CONNECT egress; includes tunnel and write request latency; nearest-rank percentiles per repeat" });
   await monitor();
@@ -142,7 +143,7 @@ async function main() {
     return response;
   };
   try {
-    for (const readers of [1, 10, 100, 1000]) for (const region of ["gru", "sjc", "fra"]) {
+    for (const readers of readerCounts) for (const region of regions) {
       phase = `egress_${region}_${readers}`;
       const route = await egress(region);
       try {
@@ -182,7 +183,8 @@ async function main() {
           const monthBefore = (await writer.metrics.usage({}, { signal: signal() })).month;
           phase = `readers_${region}_${shape}_${readers}_${repeat}`;
           const started = Date.now();
-          const requests = { bootstrap: 0, manifest: 0, keys: 0, snapshot_payload: 0, catchup_payload: 0, head: 0, tail: 0, cdn: 0 };
+          const flightBefore = flightMetrics ? await shapeFlights() : undefined;
+          const requests = { sockets: 0, hints: 0, bootstrap: 0, manifest: 0, keys: 0, snapshot_payload: 0, catchup_payload: 0, head: 0, tail: 0, cdn: 0 };
           const statuses = {};
           const originStatuses = {};
           const colos = {};
@@ -215,7 +217,19 @@ async function main() {
             } else originStatuses[response.status] = (originStatuses[response.status] ?? 0) + 1;
             return response;
           };
-          const reader = createTerraBaseClient({ ...config, fetch: measuredFetch }).database(catalog.id);
+          class MeasuredSocket extends WebSocket {
+            constructor(url, options) {
+              super(url, { ...(Array.isArray(options) ? { protocols: options } : options), dispatcher: route.agent });
+              requests.sockets++;
+              this.addEventListener("message", event => {
+                let frame;
+                try { frame = JSON.parse(event.data); } catch { controller.abort(new Error("HINT_FRAME_INVALID")); return; }
+                if (frame.type === "ready") live++;
+                if (frame.type === "new_data") requests.hints++;
+              });
+            }
+          }
+          const reader = createTerraBaseClient({ ...config, fetch: measuredFetch, WebSocket: MeasuredSocket }).database(catalog.id);
           const deadline = AbortSignal.any([controller.signal, AbortSignal.timeout(180_000)]);
           try {
             for (let index = 0; index < readers; index++) {
@@ -238,8 +252,10 @@ async function main() {
             }
             const failed = new Promise((_, reject) => deadline.addEventListener("abort", () => reject(deadline.reason), { once: true }));
             await Promise.race([Promise.all(waiters.map(waiter => waiter.ready)), failed, readerFailed]);
-            for (let attempt = 0; live < readers && attempt < 100; attempt++) { deadline.throwIfAborted(); await delay(10); }
-            if (live < readers) throw new Error("LIVE_NOT_READY");
+            for (let attempt = 0; live < 1 && attempt < 100; attempt++) { deadline.throwIfAborted(); await delay(10); }
+            if (live < 1) throw new Error("LIVE_NOT_READY");
+            if (holdMs) await delay(holdMs);
+            deadline.throwIfAborted();
             tailStarted = performance.now();
             await db.execute(`UPDATE ${table} SET version = 2 WHERE id = 1`, undefined, { signal: deadline });
             await Promise.race([Promise.all(waiters.map(waiter => waiter.tail)), failed, readerFailed]);
@@ -253,8 +269,10 @@ async function main() {
           const ended = Date.now();
           const after = await db.metrics.usage({}, { signal: signal() });
           const monthAfter = (await writer.metrics.usage({}, { signal: signal() })).month;
+          const flightAfter = flightMetrics ? await shapeFlights() : undefined;
           const samples = cpu.filter(sample => sample.at * 1000 >= started && sample.at * 1000 <= ended);
           emit({ type: "cell", sha, outcome, region, shape, readers, repeat, start: new Date(started).toISOString(), end: new Date(ended).toISOString(),
+            shared_flights_started: flightBefore === undefined ? undefined : flightAfter - flightBefore,
             snapshot: stats(snapshot, readers), catchup: stats(caughtUp, readers), tail: stats(tail, readers), requests, statuses, origin_statuses: originStatuses, colos,
             cdn_hit_ratio: (statuses.HIT ?? 0) / requests.cdn,
             cpu_samples: samples.length, cpu_max_percent: samples.length ? Math.max(...samples.map(sample => sample.cpu_percent)) : null,
@@ -273,10 +291,23 @@ async function main() {
   }
 }
 
-try { await main(); }
-catch (error) { emit({ type: "failure", phase, error: controller.signal.aborted ? controller.signal.reason.message : /^[A-Z][A-Z0-9_]+$/.test(error.message) ? error.message : error.name,
-  cause: typeof error.cause?.code === "string" && /^[A-Z0-9_]+$/.test(error.cause.code) ? error.cause.code : undefined,
-  frames: error.stack?.split("\n").slice(1).filter(line => line.includes("/benchmark/") || line.includes("/sdk/js/")).slice(0, 5) }); process.exitCode = 1; }
-finally {
-  for (const child of children) { child.stdin?.end(); child.kill(); }
+export async function runFreeReads(options) {
+  try { await main(options); }
+  catch (error) { emit({ type: "failure", phase, error: controller.signal.aborted ? controller.signal.reason.message : /^[A-Z][A-Z0-9_]+$/.test(error.message) ? error.message : error.name,
+    cause: typeof error.cause?.code === "string" && /^[A-Z0-9_]+$/.test(error.cause.code) ? error.cause.code : undefined,
+    frames: error.stack?.split("\n").slice(1).filter(line => line.includes("/benchmark/") || line.includes("/sdk/js/")).slice(0, 5) }); process.exitCode = 1; }
+  finally { for (const child of children) { child.stdin?.end(); child.kill(); } }
 }
+
+async function shapeFlights() {
+  const source = "import urllib.request; text=urllib.request.urlopen('http://127.0.0.1:9464/metrics',timeout=5).read().decode(); values=[float(line.split()[-1]) for line in text.splitlines() if line.startswith('terrabase_shape_flights_started_total ')]; assert values, 'FLIGHT_METRIC_MISSING'; print(sum(values))";
+  const child = spawn("ssh", ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "ts-gru-1", `python3 -c ${quote(source)}`], { stdio: ["ignore", "pipe", "ignore"] });
+  let output = "";
+  child.stdout.on("data", part => { output += part; });
+  await new Promise((resolve, reject) => { child.on("exit", code => code === 0 ? resolve() : reject(new Error("FLIGHT_METRICS_UNAVAILABLE"))); });
+  const count = Number(output.trim());
+  if (!Number.isSafeInteger(count) || count < 0) throw new Error("FLIGHT_METRICS_INVALID");
+  return count;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await runFreeReads();
