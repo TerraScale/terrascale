@@ -121,6 +121,14 @@ func (d *Database) RestorePointInTime(ctx context.Context, in PointInTimeRequest
 	return databaseCall[ManagedDatabase](ctx, d, http.MethodPost, nil, in, "point-in-time", "restore")
 }
 
+// RewindPointInTime replaces the database's tables in place with their state at the selected instant.
+func (d *Database) RewindPointInTime(ctx context.Context, in PointInTimeRequest) (*ManagedDatabase, error) {
+	return databaseCall[ManagedDatabase](ctx, d, http.MethodPost, nil, struct {
+		PointInTime time.Time `json:"pointInTime"`
+		Destination string    `json:"destination,omitempty"`
+	}{in.PointInTime, in.Destination}, "point-in-time", "rewind")
+}
+
 // ProjectBackupDestination is customer bucket metadata without credentials.
 type ProjectBackupDestination struct {
 	Endpoint  string    `json:"endpoint"`
