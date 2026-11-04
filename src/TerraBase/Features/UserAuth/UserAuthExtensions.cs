@@ -26,7 +26,16 @@ internal static class UserAuthExtensions
             client.Timeout = TsAuthKeys.FetchTimeout;
             client.MaxResponseContentBufferSize = TsAuthKeys.MaxResponseBytes;
         })
-            .ConfigurePrimaryHttpMessageHandler((handler, _) => ((SocketsHttpHandler)handler).AllowAutoRedirect = false)
+            .ConfigurePrimaryHttpMessageHandler((handler, _) =>
+            {
+                // Other regions reach ts-auth across continents: keep one pool, warm between key checks, so a check does not
+                // pay a new TLS handshake whenever the factory would rotate handlers. Connections still renew for DNS changes.
+                var sockets = (SocketsHttpHandler)handler;
+                sockets.AllowAutoRedirect = false;
+                sockets.PooledConnectionIdleTimeout = TimeSpan.FromMinutes(10);
+                sockets.PooledConnectionLifetime = TimeSpan.FromMinutes(10);
+            })
+            .SetHandlerLifetime(System.Threading.Timeout.InfiniteTimeSpan)
             .AddHttpMessageHandler(provider => RequestIdentity.CreatePropagationHandler(
                 provider.GetRequiredService<InternalCredential>().CorrelationKey,
                 new Uri(provider.GetRequiredService<TerraBaseOptions>().AuthIssuer ?? "about:blank")))

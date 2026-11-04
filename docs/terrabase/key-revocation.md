@@ -80,7 +80,11 @@ storage-backed checks per second for one key, key string and project. Beyond tho
 TerraBase refuses on both. A caller hammering its own key throttles only that key.
 
 A node asks about each active key about once a second. From `sjc` and `fra`, that is one round trip to ts-auth in `gru`.
-Requests never wait on it while the key stays busy. An idle key's first request waits for one round trip.
+Requests never wait on it while the key stays busy. An idle key's first request waits for one round trip. A new key
+works in every region from its first request: when the first answer arrives too late to admit new work (a cold
+cross-region connection), TerraBase asks once more before it answers `503 auth_unavailable`. That second question is
+fresh, so the revocation bound is unchanged. Nodes keep their connection pool to ts-auth warm for 10 minutes between
+checks.
 
 ## Not covered
 
