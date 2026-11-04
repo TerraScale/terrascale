@@ -1,0 +1,394 @@
+{
+  "project": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "database": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+  "source": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+  "apiKey": "01ARZ3NDEKTSV4RRFFQ69G5FAY_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "happy": [
+    {
+      "name": "exchange",
+      "method": "POST",
+      "url": "https://auth.terrascale.tech/terrascale/oauth/token",
+      "authorization": "Basic MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQVk6MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQVlfYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYQ==",
+      "body": null,
+      "form": {
+        "grant_type": [
+          "client_credentials"
+        ],
+        "project": [
+          "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        ]
+      },
+      "status": 200,
+      "response": {
+        "access_token": "header.project.signature",
+        "token_type": "Bearer",
+        "expires_in": 3600
+      },
+      "headers": {}
+    },
+    {
+      "name": "create",
+      "method": "POST",
+      "url": "https://api.terrascale.tech/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases",
+      "authorization": "Bearer header.project.signature",
+      "body": {
+        "name": "agent-run",
+        "ttlSeconds": 3600
+      },
+      "form": null,
+      "status": 201,
+      "response": {
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "name": "agent-run",
+        "branchedFrom": null,
+        "createdAt": "2026-11-04T12:00:00Z",
+        "region": "gru-1",
+        "homeRegion": "gru-1",
+        "expiresAt": "2026-11-04T13:00:00Z"
+      },
+      "headers": {}
+    },
+    {
+      "name": "create-permanent",
+      "method": "POST",
+      "url": "https://api.terrascale.tech/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases",
+      "authorization": "Bearer header.project.signature",
+      "body": {
+        "name": "permanent"
+      },
+      "form": null,
+      "status": 201,
+      "response": {
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "name": "permanent",
+        "branchedFrom": null,
+        "createdAt": "2026-11-04T12:00:00Z",
+        "region": "gru-1",
+        "homeRegion": "gru-1",
+        "expiresAt": null
+      },
+      "headers": {}
+    },
+    {
+      "name": "fork",
+      "method": "POST",
+      "url": "https://api.terrascale.tech/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/01ARZ3NDEKTSV4RRFFQ69G5FAX/branches",
+      "authorization": "Bearer header.project.signature",
+      "body": {
+        "name": "agent-fork",
+        "ttlSeconds": 3600
+      },
+      "form": null,
+      "status": 201,
+      "response": {
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "name": "agent-fork",
+        "branchedFrom": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+        "createdAt": "2026-11-04T12:00:00Z",
+        "region": "gru-1",
+        "homeRegion": "gru-1",
+        "expiresAt": "2026-11-04T13:00:00Z"
+      },
+      "headers": {}
+    },
+    {
+      "name": "fork-permanent",
+      "method": "POST",
+      "url": "https://api.terrascale.tech/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/agent-run/branches",
+      "authorization": "Bearer header.project.signature",
+      "body": {
+        "name": "agent-fork"
+      },
+      "form": null,
+      "status": 201,
+      "response": {
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "name": "agent-fork",
+        "branchedFrom": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+        "createdAt": "2026-11-04T12:00:00Z",
+        "region": "gru-1",
+        "homeRegion": "gru-1",
+        "expiresAt": null
+      },
+      "headers": {}
+    },
+    {
+      "name": "restore",
+      "method": "POST",
+      "url": "https://api.terrascale.tech/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/01ARZ3NDEKTSV4RRFFQ69G5FAX/point-in-time/restore",
+      "authorization": "Bearer header.project.signature",
+      "body": {
+        "name": "agent-restore",
+        "pointInTime": "2026-11-04T12:00:00Z",
+        "ttlSeconds": 3600
+      },
+      "form": null,
+      "status": 201,
+      "response": {
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "name": "agent-restore",
+        "branchedFrom": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+        "createdAt": "2026-11-04T12:00:00Z",
+        "region": "gru-1",
+        "homeRegion": "gru-1",
+        "expiresAt": "2026-11-04T13:00:00Z"
+      },
+      "headers": {}
+    },
+    {
+      "name": "set-ttl",
+      "method": "PUT",
+      "url": "https://api.terrascale.tech/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/01ARZ3NDEKTSV4RRFFQ69G5FAW/ttl",
+      "authorization": "Bearer header.project.signature",
+      "body": {
+        "ttlSeconds": 3600
+      },
+      "form": null,
+      "status": 200,
+      "response": {
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "name": "agent-run",
+        "branchedFrom": null,
+        "createdAt": "2026-11-04T12:00:00Z",
+        "region": "gru-1",
+        "homeRegion": "gru-1",
+        "expiresAt": "2026-11-04T13:00:00Z"
+      },
+      "headers": {}
+    },
+    {
+      "name": "clear-ttl",
+      "method": "DELETE",
+      "url": "https://api.terrascale.tech/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/agent-run/ttl",
+      "authorization": "Bearer header.project.signature",
+      "body": null,
+      "form": null,
+      "status": 200,
+      "response": {
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "name": "agent-run",
+        "branchedFrom": null,
+        "createdAt": "2026-11-04T12:00:00Z",
+        "region": "gru-1",
+        "homeRegion": "gru-1",
+        "expiresAt": null
+      },
+      "headers": {}
+    },
+    {
+      "name": "scoped",
+      "method": "POST",
+      "url": "https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys",
+      "authorization": "Basic MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQVk6MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQVlfYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYQ==",
+      "body": {
+        "project": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "database": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "access": "read_write",
+        "ttl_seconds": 3600
+      },
+      "form": null,
+      "status": 201,
+      "response": {
+        "key": "01ARZ3NDEKTSV4RRFFQ69G5FAZ_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "database": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "access": "read_write",
+        "project_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "expires_at": "2026-11-04T13:00:00Z"
+      },
+      "headers": {}
+    },
+    {
+      "name": "scoped-defaults",
+      "method": "POST",
+      "url": "https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys",
+      "authorization": "Basic MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQVk6MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQVlfYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYQ==",
+      "body": {
+        "database": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "access": "read"
+      },
+      "form": null,
+      "status": 201,
+      "response": {
+        "key": "01ARZ3NDEKTSV4RRFFQ69G5FAZ_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "database": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "access": "read",
+        "project_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "expires_at": "2026-11-04T13:00:00Z"
+      },
+      "headers": {}
+    },
+    {
+      "name": "child-exchange",
+      "method": "POST",
+      "url": "https://auth.terrascale.tech/terrascale/oauth/token",
+      "authorization": "Basic MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQVo6MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQVpfYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYg==",
+      "body": null,
+      "form": {
+        "grant_type": [
+          "client_credentials"
+        ],
+        "project": [
+          "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        ]
+      },
+      "status": 200,
+      "response": {
+        "access_token": "header.project.signature",
+        "token_type": "Bearer",
+        "expires_in": 3600
+      },
+      "headers": {}
+    },
+    {
+      "name": "child-query",
+      "method": "POST",
+      "url": "https://api.terrascale.tech/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/01ARZ3NDEKTSV4RRFFQ69G5FAW/sql/execute",
+      "authorization": "Bearer header.project.signature",
+      "body": {
+        "statements": [
+          {
+            "sql": "SELECT 1"
+          }
+        ]
+      },
+      "form": null,
+      "status": 200,
+      "response": {
+        "results": [
+          {
+            "columns": [
+              {
+                "name": "1",
+                "decltype": null
+              }
+            ],
+            "rows": [
+              [
+                1
+              ]
+            ],
+            "rows_affected": 0,
+            "last_insert_rowid": null
+          }
+        ]
+      },
+      "headers": {}
+    },
+    {
+      "name": "delete",
+      "method": "DELETE",
+      "url": "https://api.terrascale.tech/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      "authorization": "Bearer header.project.signature",
+      "body": null,
+      "form": null,
+      "status": 204,
+      "response": null,
+      "headers": {}
+    }
+  ],
+  "failure": [
+    {
+      "name": "invalid_request",
+      "method": "POST",
+      "url": "https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys",
+      "authorization": "Basic MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQVk6MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQVlfYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYQ==",
+      "body": {
+        "project": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "database": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "access": "read_write",
+        "ttl_seconds": 3600
+      },
+      "form": null,
+      "status": 400,
+      "response": {
+        "error": "invalid_request",
+        "error_description": "Scoped key request refused"
+      },
+      "headers": {}
+    },
+    {
+      "name": "invalid_client",
+      "method": "POST",
+      "url": "https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys",
+      "authorization": "Basic MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQVk6MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQVlfYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYQ==",
+      "body": {
+        "project": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "database": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "access": "read_write",
+        "ttl_seconds": 3600
+      },
+      "form": null,
+      "status": 401,
+      "response": {
+        "error": "invalid_client",
+        "error_description": "Scoped key request refused"
+      },
+      "headers": {}
+    },
+    {
+      "name": "forbidden",
+      "method": "POST",
+      "url": "https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys",
+      "authorization": "Basic MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQVk6MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQVlfYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYQ==",
+      "body": {
+        "project": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "database": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "access": "read_write",
+        "ttl_seconds": 3600
+      },
+      "form": null,
+      "status": 403,
+      "response": {
+        "error": "forbidden",
+        "error_description": "Scoped key request refused"
+      },
+      "headers": {}
+    },
+    {
+      "name": "rate_limited",
+      "method": "POST",
+      "url": "https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys",
+      "authorization": "Basic MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQVk6MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQVlfYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYQ==",
+      "body": {
+        "project": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "database": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "access": "read_write",
+        "ttl_seconds": 3600
+      },
+      "form": null,
+      "status": 429,
+      "response": {
+        "error": "rate_limited",
+        "error_description": "Scoped key request refused"
+      },
+      "headers": {
+        "Retry-After": "7"
+      }
+    },
+    {
+      "name": "expired",
+      "method": "DELETE",
+      "url": "https://api.terrascale.tech/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      "authorization": "Bearer header.project.signature",
+      "body": null,
+      "form": null,
+      "status": 404,
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "Database not found"
+        }
+      },
+      "headers": {}
+    }
+  ]
+}

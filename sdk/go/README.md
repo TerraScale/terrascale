@@ -1,6 +1,6 @@
 # TerraScale Go SDK (`terrascale.tech/sdk`)
 
-Package `v1` is the TerraBase client for project JWTs: databases, SQL over REST
+Package `v1` is the TerraBase client for API keys and project JWTs: databases, SQL over REST
 and WebSocket, backups, functions, usage and analytics. `tsauth` exchanges
 customer API keys and user tokens for project access tokens. The root package
 holds hosted TSAuth clients, pure SQL builders and the PostgreSQL client.
@@ -90,6 +90,40 @@ what to do. `500 internal_error` is never retried. Requests have a fixed
 30-second total budget and 64 MiB response cap. A server cooldown is never
 shortened: `RetryBudgetError` retains the typed API error and full cooldown when
 it cannot fit the remaining deadline. Earlier caller cancellation wins.
+
+### Databases for agents
+
+Use `Config.APIKey` to create a database per agent, session or test run and mint
+a key that reaches only its database ULID. The client exchanges API keys at the
+fixed auth origin and caches project tokens for REST and SQL WebSocket calls.
+`APIKey`, `Token` and `TokenSource` are mutually exclusive.
+
+```go
+c, err := tb.New(tb.Config{APIKey: apiKey})
+ttl := int64(3600)
+db, err := c.CreateDatabase(ctx, projectID, "agent-run", tb.CreateDatabaseOptions{TTLSeconds: &ttl})
+fork, err := c.ForkDatabase(ctx, projectID, db.ID, "agent-fork", tb.ForkDatabaseOptions{})
+key, err := c.CreateScopedKey(ctx, tb.ScopedKeyRequest{
+    Project: projectID, Database: fork.ID, Access: tb.ScopedKeyReadWrite, TTLSeconds: &ttl,
+})
+agent, err := tb.New(tb.Config{APIKey: key.Key})
+rows, err := agent.Database(projectID, fork.ID).Query(ctx, "SELECT 1")
+```
+
+`ForkDatabaseOptions.PointInTime` accepts `*time.Time`; nil copies the source now.
+Forks do not inherit TTLs. `SetDatabaseTTL(ctx, project, database, seconds)` and
+`ClearDatabaseTTL(ctx, project, database)` return `ManagedDatabase`, including
+nullable `ExpiresAt`; `DeleteDatabase(ctx, project, database)` deletes it.
+Database TTLs are 60–31,536,000 seconds. Expiry deletes data, backups and data
+keys; the database counts against limits and billing until deleted.
+
+Scoped keys use `ScopedKeyRead` or `ScopedKeyReadWrite`, default to 3600 seconds,
+and accept 60–2,592,000 seconds. They never outlive the parent; revoking or rotating
+the parent revokes them. `Project` is required for organization keys. The key
+is returned once and cannot manage databases or mint more keys. Scoped key calls
+preserve `*tb.APIError`, including auth refusal codes and `RetryAfter`, and send
+once. [Contract fixtures](contracts/terrabase/agent/) qualify the HTTP boundary;
+live server behavior remains unqualified.
 
 ### Relational SQL
 

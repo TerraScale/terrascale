@@ -236,6 +236,10 @@ func (s *SQLSession) dial(ctx context.Context) (*sqlConn, error) {
 	if err != nil {
 		return nil, err
 	}
+	c, err = c.projectClient(s.d.project)
+	if err != nil {
+		return nil, err
+	}
 	target, err := c.url(ctx, p, nil)
 	if err != nil {
 		return nil, err

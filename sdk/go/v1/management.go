@@ -126,8 +126,9 @@ type ManagedDatabase struct {
 	// ConflictOf is the winning database ULID; a successful rename clears both fields.
 	ConflictOf *string `json:"conflictOf,omitempty" ulid:"optional"`
 	// BranchedFrom is the id of the database this one was branched from.
-	BranchedFrom *string   `json:"branchedFrom" ulid:"optional"`
-	CreatedAt    time.Time `json:"createdAt"`
+	BranchedFrom *string    `json:"branchedFrom" ulid:"optional"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	ExpiresAt    *time.Time `json:"expiresAt"`
 	// Region identifies the answering node; it is absent from restore results.
 	Region string `json:"region"`
 	// HomeRegion is null when catalog placement has not been assigned.

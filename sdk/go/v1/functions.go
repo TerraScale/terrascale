@@ -110,7 +110,11 @@ func (d *Database) InvokeFunction(ctx context.Context, name string, body []byte,
 	}
 	ctx, cancel := context.WithTimeout(ctx, OperationTimeout)
 	defer cancel()
-	token, err := d.c.bearerToken(ctx, "")
+	c, err := d.c.projectClient(d.project)
+	if err != nil {
+		return nil, err
+	}
+	token, err := c.bearerToken(ctx, "")
 	if err != nil {
 		return nil, err
 	}

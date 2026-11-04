@@ -51,6 +51,10 @@ func (c *Client) ProjectPrometheusMetrics(ctx context.Context, project string) (
 	if err = checkID(project); err != nil {
 		return nil, err
 	}
+	c, err = c.projectClient(project)
+	if err != nil {
+		return nil, err
+	}
 	target, err := c.url(ctx, []string{"v1", "projects", project, "metrics"}, nil)
 	if err != nil {
 		return nil, err

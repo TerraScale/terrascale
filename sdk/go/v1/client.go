@@ -30,9 +30,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"terrascale.tech/sdk/internal/entityid"
+	"terrascale.tech/sdk/tsauth"
 )
 
 // Protocol limits and client defaults.
@@ -51,6 +53,10 @@ const (
 
 // Config configures a Client or a Management client.
 type Config struct {
+	// APIKey is a platform API key. It is exchanged only at the fixed auth origin
+	// for cached project access tokens and can mint database-scoped keys.
+	// Set this, Token or TokenSource exclusively.
+	APIKey string
 	// BaseURL is the TerraBase origin; empty uses DefaultBaseURL.
 	// It must be HTTPS; plain HTTP is accepted only for loopback hosts. A path
 	// prefix is kept; a query, fragment or user info is rejected.
@@ -75,6 +81,8 @@ type Config struct {
 
 // Client is a data-plane client for one API key. It is safe for concurrent use.
 type Client struct {
+	apiKey      string
+	projects    *sync.Map
 	resolver    Resolver
 	token       string
 	tokenSource TokenSource
@@ -112,13 +120,16 @@ var (
 
 // New returns a data-plane client.
 func New(cfg Config) (*Client, error) {
-	if cfg.TokenSource == nil && !tokenPattern.MatchString(cfg.Token) && !jwtPattern.MatchString(cfg.Token) {
+	if cfg.APIKey == "" && cfg.TokenSource == nil && !tokenPattern.MatchString(cfg.Token) && !jwtPattern.MatchString(cfg.Token) {
 		return nil, errors.New("terrabase: Token must be a tb_ API key or a ts-auth project access token")
 	}
 	return newClient(cfg)
 }
 
 func newClient(cfg Config) (*Client, error) {
+	if cfg.APIKey != "" && (cfg.Token != "" || cfg.TokenSource != nil) {
+		return nil, errors.New("terrabase: set APIKey, Token or TokenSource exclusively")
+	}
 	if cfg.Token != "" && cfg.TokenSource != nil {
 		return nil, errors.New("terrabase: set either Token or TokenSource")
 	}
@@ -149,6 +160,13 @@ func newClient(cfg Config) (*Client, error) {
 	}
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	c := &Client{resolver: cfg.Resolver, token: cfg.Token, tokenSource: cfg.TokenSource, hc: hc, maxRetries: DefaultMaxRetries, maxResponse: DefaultMaxResponseBytes}
+	if cfg.APIKey != "" {
+		source, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: cfg.APIKey, HTTPClient: hc})
+		if err != nil {
+			return nil, err
+		}
+		c.apiKey, c.projects, c.tokenSource = cfg.APIKey, new(sync.Map), source
+	}
 	return c, nil
 }
 
@@ -267,6 +285,13 @@ func (c *Client) url(ctx context.Context, segments []string, query url.Values) (
 func (c *Client) do(ctx context.Context, req request) (*response, error) {
 	ctx, cancel := context.WithTimeout(ctx, OperationTimeout)
 	defer cancel()
+	if len(req.path) >= 3 && req.path[0] == "v1" && req.path[1] == "projects" {
+		var err error
+		c, err = c.projectClient(req.path[2])
+		if err != nil {
+			return nil, err
+		}
+	}
 	if len(req.body) > MaxRequestBytes {
 		return nil, fmt.Errorf("terrabase: request body is %d bytes, over the %d byte limit", len(req.body), MaxRequestBytes)
 	}
