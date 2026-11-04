@@ -1129,16 +1129,17 @@ namespace TerraScale.Dashboard.E2E
                         var request = await JsonAsync(http);
                         Require(request.EnumerateObject().All(field => field.Name is "name" or "ttlSeconds"), "The branch body accepts only its new database name");
                         var branchName = request.GetProperty("name").GetString()!;
+                        var branch = new ManagedDatabase(ids.NewId(), project, branchName, DateTimeOffset.UtcNow, current.Id, current.HomeRegion, [])
+                        { ExpiresAt = request.TryGetProperty("ttlSeconds", out var ttl) ? DateTimeOffset.UtcNow.AddSeconds(ttl.GetInt64()) : null };
                         lock (gate)
                         {
                             if (databases.Values.Any(database => database.ProjectId == project && database.Name == branchName))
                             { Interlocked.Increment(ref branchConflicts); return Error(409, "name_taken"); }
-                            var branch = new ManagedDatabase(ids.NewId(), project, branchName, DateTimeOffset.UtcNow, current.Id, current.HomeRegion, [])
-                            { ExpiresAt = request.TryGetProperty("ttlSeconds", out var ttl) ? DateTimeOffset.UtcNow.AddSeconds(ttl.GetInt64()) : null };
                             databases.Add(branch.Id, branch);
                             Interlocked.Increment(ref branchCreates);
-                            return Results.Json(Wire(branch, answering), statusCode: 201);
                         }
+                        await SqlEngine(branch.Id).ExecuteAsync(SqlEngine(current.Id).Snapshot(), http.RequestAborted);
+                        return Results.Json(Wire(branch, answering), statusCode: 201);
                     case (7, "POST", "sql") when parts[6] == "execute":
                         // TerraBase's relational SQL API: statements run in one transaction on the database's own SQL engine.
                         var statements = (await JsonAsync(http)).GetProperty("statements").EnumerateArray().Select(item => item.GetProperty("sql").GetString()!).ToArray();
