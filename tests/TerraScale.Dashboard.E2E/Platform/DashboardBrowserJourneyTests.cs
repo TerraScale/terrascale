@@ -74,10 +74,10 @@ namespace TerraScale.Dashboard.E2E.Platform
                     await ShotAsync("database-fork-dialog");
                     await GotoAsync($"/databases/{databaseId}/settings");
                     await page.Locator("#database-ttl").FillAsync("6");
-                    await SubmitAsync("form[action=\"/v1/databases/ttl\"]", "Set TTL");
+                    await SubmitAsync("form:is([action=\"/v1/databases/ttl\"],[action^=\"/v1/databases/ttl?\"])", "Set TTL");
                     await page.GetByRole(AriaRole.Button, new() { Name = "Clear TTL", Exact = true }).WaitForAsync();
                     await ShotAsync("database-settings");
-                    await SubmitAsync("form[action=\"/v1/databases/ttl\"]", "Clear TTL");
+                    await SubmitAsync("form:is([action=\"/v1/databases/ttl\"],[action^=\"/v1/databases/ttl?\"])", "Clear TTL");
                     await Assert.That(await page.GetByRole(AriaRole.Button, new() { Name = "Clear TTL", Exact = true }).CountAsync()).IsEqualTo(0);
                     await GotoAsync($"/databases/{databaseId}/documents");
                     await page.GetByRole(AriaRole.Button, new() { Name = "New collection", Exact = true }).Last.ClickAsync();
