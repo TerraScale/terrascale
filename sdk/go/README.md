@@ -554,7 +554,6 @@ cap, bounded safe-read retries and `*sdk.APIError` responses. Full `Retry-After`
 is preserved; `RetryBudgetError` refuses a retry that cannot fit the deadline.
 Mutations and quota failures are not replayed; redirects are refused.
 The service briefly caches responses; the SDK adds no cache.
-[`status_example_test.go`](status_example_test.go) contains a compilable example.
 
 Unit tests use `httptest`. The live contract test requires authorized test inputs and skips HTTP 404
 until the endpoint is deployed:
@@ -623,8 +622,7 @@ key, err := u.CreateAPIKey(ctx, org.ID, project.ID, tsauth.APIKeyRequest{Name: "
 tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: key.Key}) // key.Key is shown once
 ```
 
-Management tests use the pinned local contract,
-`tsauth/testdata/platform-api.openapi.json`. They do not establish deployed
+Management calls are not covered by local tests and do not establish deployed
 platform compatibility; see the qualification limits in the matrix.
 
 ### Retired headless authentication

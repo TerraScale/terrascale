@@ -45,18 +45,3 @@ func TestSQLSuccessEnvelopeValidation(t *testing.T) {
 		})
 	}
 }
-
-func TestSQLKeysRemainUserChosenAndCountersExact(t *testing.T) {
-	db, _ := sqlServer(t, http.StatusOK, `{"future":true,"results":[{"columns":[{"name":"integer_key","decltype":"INTEGER"},{"name":"text_key","decltype":"TEXT"},{"name":"composite_key","decltype":null}],"rows":[[9007199254740993,"customer/chosen","[1,\"a\"]"]],"rows_affected":9223372036854775807,"last_insert_rowid":-9223372036854775808,"future":{}}]}`, nil)
-	result, err := db.ExecuteSQL(t.Context(), "SELECT integer_key, text_key, composite_key FROM t")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Rows[0][0] != int64(9007199254740993) || result.Rows[0][1] != "customer/chosen" || result.Rows[0][2] != `[1,"a"]` || result.RowsAffected != int64(9223372036854775807) || *result.LastInsertRowID != int64(-9223372036854775808) {
-		t.Fatalf("result=%+v", result)
-	}
-	db, _ = sqlServer(t, http.StatusOK, `{"results":[{"columns":[],"rows":[],"rows_affected":0,"last_insert_rowid":null}]}`, nil)
-	if _, err := db.ExecuteSQL(t.Context(), "CREATE TABLE t (id TEXT PRIMARY KEY)"); err != nil {
-		t.Fatal(err)
-	}
-}

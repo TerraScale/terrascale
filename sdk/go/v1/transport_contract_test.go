@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
+
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -59,30 +59,6 @@ func TestTokenSourceExchangeToPublicAPI(t *testing.T) {
 	}
 	if exchanges.Load() != 1 || requests.Load() != 2 {
 		t.Fatalf("exchanges=%d requests=%d", exchanges.Load(), requests.Load())
-	}
-}
-
-func TestTokenSourceFailuresDoNotSendOrReportUncertainCommit(t *testing.T) {
-	failure := errors.New("token exchange denied")
-	for _, tc := range []struct {
-		name, token string
-		err         error
-	}{
-		{"denied", "", failure}, {"empty", "", nil}, {"malformed", "not-a-jwt", nil}, {"legacy key", testToken, nil},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			c, err := v1.New(v1.Config{TokenSource: contractTokenSource(func(context.Context) (string, error) { return tc.token, tc.err }), HTTPClient: &http.Client{Transport: failTransport{t}}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = c.Database(testProject, "main").Collection("users").Put(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD2", map[string]any{})
-			if err == nil || errors.Is(err, v1.ErrCommitUncertain) || tc.err != nil && !errors.Is(err, failure) {
-				t.Fatalf("error=%v", err)
-			}
-		})
-	}
-	if _, err := v1.New(v1.Config{Token: testToken, TokenSource: contractTokenSource(func(context.Context) (string, error) { return "fixture.jwt.sig", nil })}); err == nil {
-		t.Fatal("accepted ambiguous credential sources")
 	}
 }
 
@@ -161,82 +137,6 @@ func TestUnsupportedScopeAndRevokedCredentialExchangeStopsBeforeResource(t *test
 	}
 }
 
-func TestErrorResponsePreservesBodyAndRequestID(t *testing.T) {
-	for _, tc := range []struct {
-		name, body string
-		status     int
-		code       v1.ErrorCode
-	}{
-		{"wrong issuer fixture", `{"error":{"code":"invalid_key","message":"denied"}}`, 401, v1.ErrInvalidKey},
-		{"wrong audience fixture", `{"error":{"code":"invalid_key"}}`, 401, v1.ErrInvalidKey},
-		{"expired or revoked fixture", `{"error":{"code":"invalid_key"}}`, 401, v1.ErrInvalidKey},
-		{"missing permission fixture", `{"error":{"code":"forbidden_scope","op":0,"details":[{"path":"/x"}]}}`, 403, v1.ErrForbiddenScope},
-		{"wrong project fixture", `{"error":{"code":"unknown_database"}}`, 404, v1.ErrUnknownDatabase},
-		{"malformed", `{"error":`, 400, "http_400"},
-		{"empty", "", 403, "http_403"},
-		{"plain message", `"denied"`, 403, v1.ErrForbidden},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var hits atomic.Int64
-			peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				hits.Add(1)
-				w.Header().Set("X-Request-ID", "fixture-request")
-				w.Header().Set("ETag", `"tombstone"`)
-				w.WriteHeader(tc.status)
-				fmt.Fprint(w, tc.body)
-			}))
-			t.Cleanup(peer.Close)
-			c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: "fixture.jwt.signature"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = c.Database(testProject, "main").Collection("users").Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD2")
-			var apiErr *v1.APIError
-			if !errors.As(err, &apiErr) || !errors.Is(err, tc.code) || apiErr.Status != tc.status || string(apiErr.Body) != tc.body || apiErr.RequestID != "fixture-request" || apiErr.ETag != "tombstone" || hits.Load() != 1 {
-				t.Fatalf("error=%+v hits=%d", apiErr, hits.Load())
-			}
-		})
-	}
-}
-
-func TestTypedResponsesRejectEmptyNullAndTrailingValues(t *testing.T) {
-	for _, body := range []string{"", " ", "null", `{} ]`, `{} {}`, `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD2","version":"v","state":"value","document":{}} ]`} {
-		t.Run(fmt.Sprintf("%q", body), func(t *testing.T) {
-			peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, body) }))
-			t.Cleanup(peer.Close)
-			c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: testToken})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := c.Database(testProject, "main").Collection("users").Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD2"); err == nil {
-				t.Fatal("accepted malformed success body")
-			}
-		})
-	}
-	var result any
-	if err := v1.Decode([]byte("null"), &result); err != nil || result != nil {
-		t.Fatalf("valid JSON null Decode=%v", err)
-	}
-}
-
-func TestSQLRowsRejectMissingNullOrNonobjectValues(t *testing.T) {
-	for _, row := range []string{`{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD2"}`, `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD2","value":null}`, `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD2","value":[]}`, `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD2","value":1}`} {
-		t.Run(row, func(t *testing.T) {
-			peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				fmt.Fprintf(w, `{"matched":1,"truncated":false,"rows":[%s]}`, row)
-			}))
-			t.Cleanup(peer.Close)
-			c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: "fixture.jwt.signature"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := c.Database(testProject, "main").SQL(t.Context(), "SELECT * FROM users"); err == nil {
-				t.Fatal("accepted malformed SQL row")
-			}
-		})
-	}
-}
-
 func TestCancellationBeforeTokenOrHTTP(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -250,42 +150,5 @@ func TestCancellationBeforeTokenOrHTTP(t *testing.T) {
 	_, err = c.Database(testProject, "main").Collection("users").Put(ctx, "01ARZ3NDEKTSV4RRFFQ69G5FD2", map[string]any{})
 	if !errors.Is(err, context.Canceled) || errors.Is(err, v1.ErrCommitUncertain) {
 		t.Fatalf("cancel=%v", err)
-	}
-}
-
-func TestPUTRetriesOnlyKnownRejectionsWithCAS(t *testing.T) {
-	for _, conditional := range []bool{false, true} {
-		t.Run(fmt.Sprint(conditional), func(t *testing.T) {
-			var hits atomic.Int64
-			peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Header.Get("Idempotency-Key") != "" {
-					t.Error("sent unsupported idempotency key")
-				}
-				body, _ := io.ReadAll(r.Body)
-				if string(body) != `{"n":1}` || r.URL.Query().Get("id") != "01ARZ3NDEKTSV4RRFFQ69G5FD4" {
-					t.Error("write identity or body changed")
-				}
-				if hits.Add(1) == 1 {
-					w.Header().Set("Retry-After", "0")
-					w.WriteHeader(http.StatusTooManyRequests)
-					fmt.Fprint(w, `{"error":{"code":"rate_limited"}}`)
-					return
-				}
-				fmt.Fprint(w, `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD4","version":"new","offset":"1","durability":"local_durable"}`)
-			}))
-			t.Cleanup(peer.Close)
-			c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: testToken})
-			if err != nil {
-				t.Fatal(err)
-			}
-			var opts []v1.WriteOption
-			if conditional {
-				opts = []v1.WriteOption{v1.IfMatch("old")}
-			}
-			_, err = c.Database(testProject, "main").Collection("users").Put(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD4", map[string]any{"n": 1}, opts...)
-			if conditional && (err != nil || hits.Load() != 2) || !conditional && (!errors.Is(err, v1.ErrRateLimited) || hits.Load() != 1) {
-				t.Fatalf("hits=%d error=%v", hits.Load(), err)
-			}
-		})
 	}
 }

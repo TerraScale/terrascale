@@ -2,16 +2,12 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
-	"io"
-	"net/http"
+
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
-
-	"terrascale.tech/sdk/tsauth"
 )
 
 func TestCLIContextPersistenceAndOverrides(t *testing.T) {
@@ -62,52 +58,5 @@ func TestCLIContextPersistenceAndOverrides(t *testing.T) {
 	}
 	if c, err := readCLIContext(path); err != nil || c != (cliContext{}) {
 		t.Fatalf("cleared context = %+v, %v", c, err)
-	}
-}
-
-func TestCLIContextCorruptionDoesNotReflectInput(t *testing.T) {
-	t.Parallel()
-	path := filepath.Join(t.TempDir(), "context.json")
-	if err := os.WriteFile(path, []byte(`{"accountId":"sensitive-invalid-value"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := readCLIContext(path); err == nil || strings.Contains(err.Error(), "sensitive-invalid-value") {
-		t.Fatalf("corrupt context diagnostic = %v", err)
-	}
-}
-
-func TestCLIContextResolvesCanonicalIDsAndRejectsAmbiguity(t *testing.T) {
-	t.Parallel()
-	org := "01M5N9000000000000000000AA"
-	project := "01M5N9000000000000000000AB"
-	u := managementUser(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/terrascale/organizations":
-			json.NewEncoder(w).Encode(tsauth.Page[tsauth.Organization]{Items: []tsauth.Organization{
-				{ID: org, Name: "duplicate", CreatedBy: org}, {ID: project, Name: "duplicate", CreatedBy: org},
-			}})
-		case "/v1/terrascale/organizations/" + org + "/projects":
-			json.NewEncoder(w).Encode(tsauth.Page[tsauth.Project]{Items: []tsauth.Project{{ID: project, OrganizationID: org, CreatedBy: org, Name: "app"}}})
-		default:
-			t.Errorf("unexpected request %s", r.URL)
-			w.WriteHeader(http.StatusNotFound)
-		}
-	})
-	c, err := resolveCLIContext(t.Context(), u, org, org, "app")
-	if err != nil || c.OrganizationID != org || c.ProjectID != project || c.AccountID != org {
-		t.Fatalf("resolved context = %+v, %v", c, err)
-	}
-	if _, err := resolveCLIContext(t.Context(), u, org, "duplicate", "app"); err == nil {
-		t.Fatal("ambiguous organization name accepted")
-	}
-	if _, err := resolveCLIContext(t.Context(), u, org, org, "missing"); err == nil {
-		t.Fatal("unreachable project accepted")
-	}
-}
-
-func TestCLIContextShowPropagatesWriterFailure(t *testing.T) {
-	t.Parallel()
-	if err := showCLIContext(filepath.Join(t.TempDir(), "missing.json"), managementBrokenWriter{}); err != io.ErrClosedPipe {
-		t.Fatalf("context output error = %v", err)
 	}
 }

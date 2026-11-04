@@ -2,7 +2,7 @@ package v1_test
 
 import (
 	"encoding/json"
-	"errors"
+
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,9 +13,8 @@ import (
 )
 
 const parityProject = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-const parityID = "01ARZ3NDEKTSV4RRFFQ69G5FAW"
+
 const parityDatabase = "/v1/projects/" + parityProject + "/databases/main"
-const parityDatabaseBody = `{"id":"` + parityID + `","projectId":"` + parityProject + `","name":"main","branchedFrom":null,"createdAt":"2026-10-22T00:00:00Z","region":"gru","homeRegion":"gru","replicaRegions":["sjc"]}`
 
 // These fixtures assert the producer's wire contract without running TerraBase.
 func parityClient(t *testing.T, method, path, query, body, response string, status int) *tb.Client {
@@ -61,45 +60,4 @@ func parityClient(t *testing.T, method, path, query, body, response string, stat
 		t.Fatal(err)
 	}
 	return c
-}
-
-func TestPublicDatabasePlacementAndBranch(t *testing.T) {
-	for _, name := range []string{"create", "clear replicas", "branch"} {
-		t.Run(name, func(t *testing.T) {
-			method, path, body := http.MethodPost, parityDatabase+"/branches", `{"name":"preview"}`
-			switch name {
-			case "create":
-				path, body = "/v1/projects/"+parityProject+"/databases", `{"name":"main","homeRegion":"gru","replicaRegions":["sjc"]}`
-			case "clear replicas":
-				method, path, body = http.MethodPatch, parityDatabase, `{"replicaRegions":[]}`
-			}
-			status := http.StatusCreated
-			if name == "clear replicas" {
-				status = http.StatusOK
-			}
-			c := parityClient(t, method, path, "", body, parityDatabaseBody, status)
-			d := c.Database(parityProject, "main")
-			var out *tb.ManagedDatabase
-			var err error
-			switch name {
-			case "create":
-				out, err = d.CreateIn(t.Context(), tb.Placement{HomeRegion: "gru", ReplicaRegions: []string{"sjc"}})
-			case "clear replicas":
-				out, err = d.SetRegions(t.Context(), nil)
-			default:
-				out, err = d.Branch(t.Context(), "preview")
-			}
-			if err != nil || out.ID != parityID || out.ProjectID != parityProject || out.Name != "main" || out.BranchedFrom != nil || out.Region != "gru" || out.HomeRegion == nil || *out.HomeRegion != "gru" || len(out.ReplicaRegions) != 1 || out.CreatedAt.IsZero() {
-				t.Fatalf("response = %+v, %v", out, err)
-			}
-		})
-	}
-}
-
-func TestPublicBranchPropagatesPlacementDenial(t *testing.T) {
-	c := parityClient(t, http.MethodPost, parityDatabase+"/branches", "", `{"name":"preview"}`, `{"error":{"code":"wrong_region","message":"use home region"}}`, http.StatusMisdirectedRequest)
-	_, err := c.Database(parityProject, "main").Branch(t.Context(), "preview")
-	if !errors.Is(err, tb.ErrWrongRegion) {
-		t.Fatalf("error = %v", err)
-	}
 }

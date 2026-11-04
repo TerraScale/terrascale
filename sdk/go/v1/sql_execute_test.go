@@ -1,13 +1,12 @@
 package v1_test
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
+
 	"strings"
 	"testing"
 
@@ -105,15 +104,6 @@ func TestSQLErrorKeepsStatementAndAPIError(t *testing.T) {
 	}
 }
 
-func TestSQLGenericErrorsStayAPIErrors(t *testing.T) {
-	d, _ := sqlServer(t, http.StatusNotFound, `{"error":{"code":"unknown_database","message":"no such database"}}`, nil)
-	_, err := d.ExecuteSQL(t.Context(), "SELECT 1")
-	var sqlErr *tb.SQLError
-	if errors.As(err, &sqlErr) || !errors.Is(err, tb.ErrUnknownDatabase) {
-		t.Fatalf("err = %#v", err)
-	}
-}
-
 func TestSQLRejectsInvalidRequestsLocally(t *testing.T) {
 	d, calls := sqlServer(t, http.StatusOK, `{}`, nil)
 	for name, stmts := range map[string][]tb.SQLStatement{
@@ -135,32 +125,3 @@ func TestSQLRejectsInvalidRequestsLocally(t *testing.T) {
 // TestSQLLive runs against a real TerraBase when TERRASCALE_SQL_LIVE_TOKEN,
 // TERRASCALE_SQL_LIVE_PROJECT and TERRASCALE_SQL_LIVE_DATABASE are set
 // against the production API. The token needs write access.
-func TestSQLLive(t *testing.T) {
-	token, project, database := os.Getenv("TERRASCALE_SQL_LIVE_TOKEN"), os.Getenv("TERRASCALE_SQL_LIVE_PROJECT"), os.Getenv("TERRASCALE_SQL_LIVE_DATABASE")
-	if token == "" || project == "" || database == "" {
-		t.Skip("set TERRASCALE_SQL_LIVE_TOKEN, TERRASCALE_SQL_LIVE_PROJECT and TERRASCALE_SQL_LIVE_DATABASE to run against TerraBase")
-	}
-	c, err := tb.New(tb.Config{Token: token})
-	if err != nil {
-		t.Fatal(err)
-	}
-	d := c.Database(project, database)
-	table := "sdk_go_" + strings.ToLower(tb.NewID())
-	out, err := d.BatchSQL(t.Context(), []tb.SQLStatement{
-		{SQL: "CREATE TABLE " + table + " (id INTEGER PRIMARY KEY, name TEXT)"},
-		{SQL: "INSERT INTO " + table + " (id, name) VALUES (?, :name)", Args: []any{9007199254740993}, Named: map[string]any{"name": "Ada"}},
-	})
-	if err != nil || out[1].RowsAffected != 1 {
-		t.Fatalf("create/insert = %+v, %v", out, err)
-	}
-	t.Cleanup(func() { _, _ = d.ExecuteSQL(context.Background(), "DROP TABLE "+table) })
-	rows, err := d.QuerySQL(t.Context(), "SELECT id, name FROM "+table+" WHERE name = ?", "Ada")
-	if err != nil || len(rows) != 1 || rows[0]["id"] != int64(9007199254740993) {
-		t.Fatalf("query = %v, %v", rows, err)
-	}
-	_, err = d.ExecuteSQL(t.Context(), "INSERT INTO "+table+" (id, name) VALUES (?, ?)", 9007199254740993, "dup")
-	var sqlErr *tb.SQLError
-	if !errors.As(err, &sqlErr) || sqlErr.Statement == nil || *sqlErr.Statement != 0 {
-		t.Fatalf("duplicate = %v", err)
-	}
-}

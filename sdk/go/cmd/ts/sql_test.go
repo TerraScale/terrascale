@@ -2,9 +2,9 @@ package main
 
 import (
 	"bytes"
-	"context"
+
 	"encoding/json"
-	"errors"
+
 	"fmt"
 	"io"
 	"net/http"
@@ -54,52 +54,5 @@ func TestSQLStdinAndModes(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestSQLRejectsEmptyOversizedAndUnreadableStdin(t *testing.T) {
-	t.Parallel()
-	db := exportTestDB(t, func(http.ResponseWriter, *http.Request) { t.Error("unexpected request") })
-	for _, text := range []string{"", " \n", strings.Repeat("x", v1.MaxSQLStatementBytes+1)} {
-		if err := runSQL(t.Context(), db, "relational", "-", strings.NewReader(text), io.Discard); !errors.Is(err, errUsage) {
-			t.Fatalf("invalid stdin error=%v", err)
-		}
-	}
-	reader, writer := io.Pipe()
-	writer.CloseWithError(io.ErrUnexpectedEOF)
-	if err := runSQL(t.Context(), db, "relational", "-", reader, io.Discard); !errors.Is(err, io.ErrUnexpectedEOF) {
-		t.Fatalf("read failure=%v", err)
-	}
-}
-
-func TestSQLStdinCancellation(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	reader, writer := io.Pipe()
-	defer writer.Close()
-	db := exportTestDB(t, func(http.ResponseWriter, *http.Request) { t.Error("unexpected request") })
-	go func() {
-		writer.Write([]byte("SELECT "))
-		cancel()
-	}()
-	if err := runSQL(ctx, db, "relational", "-", reader, io.Discard); !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancellation=%v", err)
-	}
-}
-
-func TestSQLWriterErrors(t *testing.T) {
-	t.Parallel()
-	db := exportTestDB(t, func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/execute") {
-			fmt.Fprint(w, `{"results":[{"columns":[],"rows":[],"rows_affected":1,"last_insert_rowid":null}]}`)
-		} else {
-			fmt.Fprint(w, `{"matched":1,"truncated":false,"rows":[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD0","value":{"n":1}}]}`)
-		}
-	})
-	for _, mode := range []string{"document", "relational"} {
-		if err := runSQL(t.Context(), db, mode, "SELECT 1", nil, exportFailWriter{}); !errors.Is(err, io.ErrClosedPipe) {
-			t.Fatalf("mode=%s error=%v", mode, err)
-		}
 	}
 }

@@ -10,7 +10,7 @@ Source commit: `993927ce7ecf8f9b889d24d4d1d21ec96eaf9416` in TerraScale/terrasca
 
 - [shape-reads.md](https://github.com/TerraScale/terrascale/blob/993927ce7ecf8f9b889d24d4d1d21ec96eaf9416/docs/terrabase/shape-reads.md): normative v1 protocol.
 - [free-reads.md](https://github.com/TerraScale/terrascale/blob/993927ce7ecf8f9b889d24d4d1d21ec96eaf9416/docs/terrabase/free-reads.md): producer implementation plan and limits.
-- [shape-vectors.json](https://github.com/TerraScale/terrascale/blob/993927ce7ecf8f9b889d24d4d1d21ec96eaf9416/docs/terrabase/shape-vectors.json): copied unchanged into [testdata](../v1/testdata/shape-vectors.json); [provenance](../v1/testdata/README.md).
+- [shape-vectors.json](https://github.com/TerraScale/terrascale/blob/993927ce7ecf8f9b889d24d4d1d21ec96eaf9416/docs/terrabase/shape-vectors.json): upstream vectors; the SDK keeps no local copy or vector tests.
 
 Precedence for this lane: specification, then vectors, then the work brief.
 Repeated events are applied under section 7 rule 4. Object-storage transport

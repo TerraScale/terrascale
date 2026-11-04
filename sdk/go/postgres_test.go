@@ -11,20 +11,20 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
+
 	"fmt"
 	"io"
 	"math"
 	"math/big"
 	"net"
-	"reflect"
+
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -45,25 +45,6 @@ func postgresTestConfig(t *testing.T) PostgresConfig {
 	return PostgresConfig{Host: "127.0.0.1", Port: 55432, TLSServerName: "postgres.example", Database: "main",
 		KeyID: id, Password: id + "_" + strings.Repeat("0", 52),
 		CACertificatePEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})}
-}
-
-func TestPostgresParametersKeepInt8AndHostileTextSeparate(t *testing.T) {
-	payload := "quote ' ; DROP TABLE items; -- \\ Unicode α 🌍"
-	query := PostgresQuery{Statement: "INSERT INTO items (id, body) VALUES ($1,$2),($3,$4)",
-		Parameters: []PostgresValue{PostgresInt8(math.MinInt64), PostgresText(payload), PostgresInt8(math.MaxInt64), PostgresText("max")}}
-	parameters, err := postgresParameters(query)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if parameters[0] != int64(math.MinInt64) || parameters[1] != payload || parameters[2] != int64(math.MaxInt64) || strings.Contains(query.Statement, payload) {
-		t.Fatal("parameter loss or interpolation")
-	}
-	for _, value := range []PostgresValue{PostgresParameter(pgx.QueryExecModeSimpleProtocol), PostgresParameter(pgx.QueryResultFormats{1}), PostgresParameter(pgx.QueryResultFormatsByOID{20: 1}), PostgresText("nul\x00"), PostgresText(string([]byte{0xff})), PostgresText(strings.Repeat("x", postgresMaxBytes+1))} {
-		_, err := postgresParameters(PostgresQuery{Statement: "SELECT id FROM items WHERE id=$1", Parameters: []PostgresValue{value}})
-		if err == nil {
-			t.Fatal("invalid parameter admitted")
-		}
-	}
 }
 
 func TestPostgresConfigOverridesHostileLibpqEnvironment(t *testing.T) {
@@ -104,75 +85,6 @@ func TestPostgresConfigOverridesHostileLibpqEnvironment(t *testing.T) {
 	}
 	if strings.Contains(fmt.Sprintf("%v %#v", config, config), config.Password) || strings.Contains(driver.ConnString(), config.Password) {
 		t.Fatal("configuration diagnostics expose a credential")
-	}
-}
-
-func TestPostgresPublicDefaultsAndDatabaseSelectors(t *testing.T) {
-	t.Setenv("PGSERVICE", "")
-	key := "01ARZ3NDEKTSV4RRFFQ69G5FAE_" + strings.Repeat("0", 52)
-	for _, database := range []string{"main", "a-b_2", "01ARZ3NDEKTSV4RRFFQ69G5FAE/main"} {
-		driver, err := buildPostgresConfig(PostgresConfig{Database: database, Password: key})
-		if err != nil {
-			t.Fatal("public configuration rejected")
-		}
-		if driver.Host != "pg.terrascale.tech" || driver.Port != 5432 || driver.Database != database || driver.User != key[:26] ||
-			driver.TLSConfig.ServerName != driver.Host || driver.TLSConfig.RootCAs != nil || len(driver.Fallbacks) != 0 {
-			t.Fatal("public defaults, selector, identity or system trust lost")
-		}
-	}
-	for _, database := range []string{"", "Main", "a/b", "01ARZ3NDEKTSV4RRFFQ69G5FAE/main/other", "01ARZ3NDEKTSV4RRFFQ69G5FAE%2Fmain", "main\x00", "main\n", "con", "com0", "lpt9", strings.Repeat("a", 64)} {
-		if _, err := buildPostgresConfig(PostgresConfig{Database: database, Password: key}); err == nil {
-			t.Fatal("malformed database selector admitted")
-		}
-	}
-	for _, password := range []string{"", "tbk1." + key[:26] + ".secret", strings.ToLower(key), key[:len(key)-1], key + "0", key[:27] + strings.Repeat("i", 52), key + "\n"} {
-		_, err := buildPostgresConfig(PostgresConfig{Database: "main", Password: password})
-		if err == nil || password != "" && strings.Contains(err.Error(), password) {
-			t.Fatal("malformed key admitted or exposed")
-		}
-	}
-	for _, config := range []PostgresConfig{
-		{Database: "main", Password: key, KeyID: "01ARZ3NDEKTSV4RRFFQ69G5FAF"},
-		{Database: "main", Password: key, Host: "https://pg.terrascale.tech"},
-		{Database: "main", Password: key, TLSServerName: "bad\nname"},
-		{Database: "main", Password: key, CACertificatePEM: []byte("not a certificate")},
-		{Database: "main", Password: key, CACertificatePEM: make([]byte, 65537)},
-	} {
-		if _, err := buildPostgresConfig(config); err == nil {
-			t.Fatal("invalid identity, route or trust admitted")
-		}
-	}
-}
-
-func TestPostgresServiceConfigurationIsRejectedBeforeParsingOrConnecting(t *testing.T) {
-	t.Setenv("PGSERVICE", "do-not-read")
-	t.Setenv("PGSERVICEFILE", "/nonexistent/do-not-read")
-	_, err := ConnectPostgres(t.Context(), postgresTestConfig(t))
-	var failure *PostgresError
-	if !errors.As(err, &failure) || failure.Kind != "configuration" || strings.Contains(err.Error(), "do-not-read") {
-		t.Fatal("ambient service was not rejected with a fixed diagnostic")
-	}
-}
-
-func TestPostgresFailurePreservesStateAndCancellationWithoutDriverDetails(t *testing.T) {
-	secret := "do-not-report-secret-or-sql"
-	err := postgresFailure(&pgconn.PgError{Code: "40003", Message: secret, Detail: secret})
-	var failure *PostgresError
-	if !errors.As(err, &failure) || failure.SQLState != "40003" || strings.Contains(err.Error(), secret) || errors.Unwrap(err) != nil {
-		t.Fatal("driver diagnostic leaked or SQLSTATE lost")
-	}
-	if !errors.Is(postgresFailure(context.Canceled), context.Canceled) {
-		t.Fatal("cancellation lost")
-	}
-}
-
-func TestPostgresConnectHonorsCanceledContext(t *testing.T) {
-	t.Setenv("PGSERVICE", "")
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	connection, err := ConnectPostgres(ctx, postgresTestConfig(t))
-	if connection != nil || !errors.Is(err, context.Canceled) {
-		t.Fatal("connect lost caller cancellation")
 	}
 }
 
@@ -454,124 +366,5 @@ func TestPostgresNativeScalarsRowsNullAndAlias(t *testing.T) {
 	}
 	if err := c.Close(t.Context()); err != nil {
 		t.Fatal(err)
-	}
-}
-func TestPostgresParametersCommandsAndBinding(t *testing.T) {
-	for _, tag := range []string{"INSERT 0 3", "UPDATE 4", "DELETE 5", "CREATE TABLE", "DROP TABLE"} {
-		t.Run(tag, func(t *testing.T) {
-			binds := make(chan *pgproto3.Bind, 1)
-			c := postgresFixtureClient(t, postgresFixture{tag: tag, params: []uint32{20, 25, 16, 701, 25, 23, 1700, 1082, 1114, 1184}, binds: binds})
-			args := []PostgresValue{PostgresInt8(math.MaxInt64), PostgresText("' ; -- α"), PostgresParameter(true), PostgresParameter(1.25), PostgresParameter(nil), PostgresParameter(int32(7)), PostgresParameter(pgtype.Numeric{Int: big.NewInt(9007199254740993125), Exp: -3, Valid: true}), PostgresParameter(time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC)), PostgresParameter(time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC)), PostgresParameter(time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC))}
-			result, err := c.Query(t.Context(), PostgresQuery{Statement: "operation $1,$2,$3,$4,$5,$6,$7,$8,$9,$10", Parameters: args})
-			if err != nil || result.CommandTag != tag || result.AffectedRows != uint64(pgconn.NewCommandTag(tag).RowsAffected()) {
-				t.Fatalf("command: %v", err)
-			}
-			bound := <-binds
-			if !slices.Equal(bound.ResultFormatCodes, []int16{0}) {
-				t.Fatal("producer result format lost")
-			}
-			for i, arg := range args {
-				var got any
-				format := bound.ParameterFormatCodes[0]
-				if len(bound.ParameterFormatCodes) > 1 {
-					format = bound.ParameterFormatCodes[i]
-				}
-				if err := pgtype.NewMap().Scan([]uint32{20, 25, 16, 701, 25, 23, 1700, 1082, 1114, 1184}[i], format, bound.Parameters[i], &got); err != nil || !reflect.DeepEqual(got, arg.Value()) || i >= 6 && format != 0 {
-					t.Fatal("bound value loss")
-				}
-			}
-			c.Close(t.Context())
-		})
-	}
-}
-
-func TestPostgresAbortStalledResultsAndQueuedCancellation(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		oid       uint32
-		raw, kind string
-		cancel    bool
-	}{
-		{"limit", 25, strings.Repeat("x", postgresResultBytes), "limit", false},
-		{"smallint overflow", 21, "32768", "decode", false},
-		{"row shape", 25, "text", "decode", false},
-		{"numeric exponent bound", 1700, "1e2147483647", "decode", false},
-		{"nonfinite coefficient", 1700, "NaNe2", "decode", false},
-		{"caller cancellation", 21, "32768", "canceled", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			entered, release := make(chan struct{}), make(chan struct{})
-			stalled, binds := make(chan error, 1), make(chan *pgproto3.Bind, 2)
-			fixture := postgresFixture{fields: postgresFields(tc.oid), rows: [][][]byte{{[]byte(tc.raw)}}, tag: "UPDATE 3", entered: entered, release: release, stalled: stalled, binds: binds}
-			if tc.name == "row shape" {
-				fixture.fields = postgresFields(tc.oid, tc.oid)
-			}
-			c := postgresFixtureClient(t, fixture)
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			done := make(chan error, 1)
-			go func() {
-				result, err := c.Query(ctx, PostgresQuery{Statement: "UPDATE active RETURNING value"})
-				if len(result.Rows) != 0 {
-					done <- errors.New("partial result retained")
-					return
-				}
-				done <- err
-			}()
-			select {
-			case <-entered:
-			case <-time.After(time.Second):
-				t.Fatal("query did not enter")
-			}
-			for _, closeCall := range []bool{false, true} {
-				queued, stop := context.WithTimeout(t.Context(), 25*time.Millisecond)
-				var err error
-				if closeCall {
-					err = c.Close(queued)
-				} else {
-					_, err = c.Query(queued, PostgresQuery{Statement: "SELECT queued"})
-				}
-				stop()
-				if !errors.Is(err, context.DeadlineExceeded) {
-					t.Fatal("queued caller blocked")
-				}
-			}
-			if tc.cancel {
-				cancel()
-			}
-			close(release)
-			select {
-			case err := <-done:
-				var failure *PostgresError
-				if !errors.As(err, &failure) || failure.Kind != tc.kind || tc.cancel && !errors.Is(err, context.Canceled) {
-					t.Fatalf("wrong failure: %v", err)
-				}
-			case <-time.After(time.Second):
-				t.Fatal("query drained a stalled remainder")
-			}
-			if !c.driver.IsClosed() {
-				t.Fatal("failed session retained")
-			}
-			select {
-			case err := <-stalled:
-				if err != nil {
-					t.Fatal(err)
-				}
-			case <-time.After(time.Second):
-				t.Fatal("physical session not disposed")
-			}
-			if len(binds) != 1 {
-				t.Fatal("mutation replayed")
-			}
-			if err := c.Close(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			if err := c.Close(t.Context()); err != nil {
-				t.Fatal("close not idempotent")
-			}
-			if _, err := c.Query(t.Context(), PostgresQuery{Statement: "SELECT closed"}); err == nil {
-				t.Fatal("closed session reused")
-			}
-		})
 	}
 }

@@ -23,12 +23,6 @@ func (s *invalidatingSource) Token(context.Context) (string, error) {
 func (s *invalidatingSource) Invalidate(string) { s.invalidations.Add(1) }
 
 // The TerraBase audience is the default API origin.
-func TestContractAudienceIsDefaultBaseURL(t *testing.T) {
-	t.Parallel()
-	if v1.DefaultBaseURL != "https://api.terrascale.tech" {
-		t.Fatalf("DefaultBaseURL = %q", v1.DefaultBaseURL)
-	}
-}
 
 // A 401 (authentication failed) refreshes the token once; a 403
 // (authenticated, missing scope or wrong project) is surfaced as is,

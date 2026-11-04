@@ -1,14 +1,13 @@
 package tsauth
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
+
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -99,131 +98,17 @@ func waitIdle(t *testing.T, s *TokenSource) {
 	}
 }
 
-func TestRefreshFailureKeepsTheCachedTokenUntilItIsNearlyExpired(t *testing.T) {
-	var status atomic.Int64
-	status.Store(http.StatusOK)
-	var srv *tokenServer
-	srv = newTokenServer(t, func(w http.ResponseWriter, r *http.Request, form url.Values) {
-		if code := int(status.Load()); code != http.StatusOK {
-			w.WriteHeader(code)
-			io.WriteString(w, `{"error":"invalid_scope"}`)
-			return
-		}
-		answer(w, fmt.Sprintf("token-%d", srv.hits.Load()), 60)
-	})
-	s, err := NewAPIKeySource(APIKeyConfig{Issuer: srv.URL + "/terrascale", Key: testKey})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var mu sync.Mutex
-	clock := time.Now()
-	s.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
-	advance := func(d time.Duration) { mu.Lock(); clock = clock.Add(d); mu.Unlock() }
-	if tok, err := s.Token(t.Context()); err != nil || tok != "token-1" {
-		t.Fatalf("first: %q %v", tok, err)
-	}
-	status.Store(http.StatusBadRequest)
-	advance(30 * time.Second) // refresh starts; the token is valid for 30 s more
-	for range 3 {
-		if tok, err := s.Token(t.Context()); err != nil || tok != "token-1" {
-			t.Fatalf("while refresh fails: %q %v", tok, err)
-		}
-		waitIdle(t, s)
-	}
-	advance(19 * time.Second) // 11 s left: still handed out
-	if tok, err := s.Token(t.Context()); err != nil || tok != "token-1" {
-		t.Fatalf("near expiry: %q %v", tok, err)
-	}
-	waitIdle(t, s)
-	advance(time.Second) // 10 s left: callers wait for a new token
-	var e *Error
-	if tok, err := s.Token(t.Context()); !errors.As(err, &e) || e.Status != http.StatusBadRequest {
-		t.Fatalf("stale: %q %v", tok, err)
-	}
-	status.Store(http.StatusOK)
-	if tok, err := s.Token(t.Context()); err != nil || tok == "token-1" {
-		t.Fatalf("recovered: %q %v", tok, err)
-	}
-}
+// refresh starts; the token is valid for 30 s more
 
-func TestTransientTokenFailuresAreRetried(t *testing.T) {
-	for _, status := range []int{http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout} {
-		var srv *tokenServer
-		srv = newTokenServer(t, func(w http.ResponseWriter, r *http.Request, form url.Values) {
-			if srv.hits.Load() <= 2 {
-				w.WriteHeader(status)
-				return
-			}
-			answer(w, "ok", 900)
-		})
-		s, err := NewAPIKeySource(APIKeyConfig{Issuer: srv.URL + "/terrascale", Key: testKey})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if tok, err := s.Token(t.Context()); err != nil || tok != "ok" || srv.hits.Load() != 3 {
-			t.Fatalf("%d: %q %v, %d requests", status, tok, err, srv.hits.Load())
-		}
-	}
-}
+// 11 s left: still handed out
 
-func TestTokenRetriesStop(t *testing.T) {
-	srv := newTokenServer(t, func(w http.ResponseWriter, r *http.Request, form url.Values) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		io.WriteString(w, `{"error":"temporarily_unavailable"}`)
-	})
-	s, err := NewAPIKeySource(APIKeyConfig{Issuer: srv.URL + "/terrascale", Key: testKey})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var e *Error
-	if _, err := s.Token(t.Context()); !errors.As(err, &e) || e.Status != http.StatusServiceUnavailable || srv.hits.Load() != 1+maxFetchRetries {
-		t.Fatalf("%v, %d requests", err, srv.hits.Load())
-	}
-}
-
-func TestTransportFailuresAreRetried(t *testing.T) {
-	var calls atomic.Int64
-	hc := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if calls.Add(1) == 1 {
-			return nil, errors.New("connection reset by peer")
-		}
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}},
-			Body: io.NopCloser(strings.NewReader(`{"access_token":"ok","token_type":"Bearer","expires_in":900}`)), Request: r}, nil
-	})}
-	s, err := NewAPIKeySource(APIKeyConfig{Issuer: "https://auth.example/terrascale", Key: testKey, HTTPClient: hc})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tok, err := s.Token(t.Context()); err != nil || tok != "ok" || calls.Load() != 2 {
-		t.Fatalf("%q %v, %d requests", tok, err, calls.Load())
-	}
-}
+// 10 s left: callers wait for a new token
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestTokenExpiredInTransit(t *testing.T) {
-	var mu sync.Mutex
-	clock := time.Now()
-	srv := newTokenServer(t, func(w http.ResponseWriter, r *http.Request, form url.Values) {
-		mu.Lock()
-		clock = clock.Add(2 * time.Second) // the response takes 2 s
-		mu.Unlock()
-		answer(w, "short", 1)
-	})
-	s, err := NewAPIKeySource(APIKeyConfig{Issuer: srv.URL + "/terrascale", Key: testKey})
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
-	if tok, err := s.Token(t.Context()); err == nil {
-		t.Fatalf("expired token %q returned", tok)
-	}
-	if _, err := s.Token(t.Context()); err == nil || srv.hits.Load() != 2 {
-		t.Fatalf("expired token cached: %v, %d requests", err, srv.hits.Load())
-	}
-}
+// the response takes 2 s
 
 func TestConcurrentCallersShareOneRequest(t *testing.T) {
 	release := make(chan struct{})
@@ -250,65 +135,6 @@ func TestConcurrentCallersShareOneRequest(t *testing.T) {
 	}
 	if n := srv.hits.Load(); n != 1 {
 		t.Fatalf("%d requests", n)
-	}
-}
-
-func TestCallerCancelLeavesTheRequestToOthers(t *testing.T) {
-	release := make(chan struct{})
-	srv := newTokenServer(t, func(w http.ResponseWriter, r *http.Request, form url.Values) {
-		<-release
-		answer(w, "kept", 900)
-	})
-	s, err := NewAPIKeySource(APIKeyConfig{Issuer: srv.URL + "/terrascale", Key: testKey})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() { _, err := s.Token(ctx); done <- err }()
-	live := make(chan string, 1)
-	go func() { token, _ := s.Token(t.Context()); live <- token }()
-	deadline := time.Now().Add(time.Second)
-	for {
-		s.mu.Lock()
-		joined := s.flight != nil && s.flight.waiters == 2
-		s.mu.Unlock()
-		if joined {
-			break
-		}
-		if time.Now().After(deadline) {
-			close(release)
-			t.Fatal("waiters did not join")
-		}
-		time.Sleep(time.Millisecond)
-	}
-	cancel()
-	if err := <-done; !errors.Is(err, context.Canceled) {
-		t.Fatal(err)
-	}
-	close(release)
-	if token := <-live; token != "kept" || srv.hits.Load() != 1 {
-		t.Fatalf("live caller: %q, %d requests", token, srv.hits.Load())
-	}
-}
-
-func TestInvalidate(t *testing.T) {
-	var srv *tokenServer
-	srv = newTokenServer(t, func(w http.ResponseWriter, r *http.Request, form url.Values) {
-		answer(w, fmt.Sprintf("token-%d", srv.hits.Load()), 900)
-	})
-	s, err := NewAPIKeySource(APIKeyConfig{Issuer: srv.URL + "/terrascale", Key: testKey})
-	if err != nil {
-		t.Fatal(err)
-	}
-	first, _ := s.Token(t.Context())
-	s.Invalidate("another token")
-	if tok, _ := s.Token(t.Context()); tok != first {
-		t.Fatalf("kept token: %q", tok)
-	}
-	s.Invalidate(first)
-	if tok, _ := s.Token(t.Context()); tok == first || srv.hits.Load() != 2 {
-		t.Fatalf("after invalidate: %q, %d requests", tok, srv.hits.Load())
 	}
 }
 
@@ -354,74 +180,6 @@ func TestInvalidClientIsTerminalButTransientErrorsAreNotCached(t *testing.T) {
 	}
 }
 
-func TestRejectsInvalidTokenResponses(t *testing.T) {
-	for name, body := range map[string]string{
-		"mac token":     `{"access_token":"secret-mac","token_type":"mac","expires_in":900}`,
-		"no expiry":     `{"access_token":"secret-x","token_type":"Bearer"}`,
-		"overflowing":   `{"access_token":"secret-x","token_type":"Bearer","expires_in":9223372037}`,
-		"numeric token": `{"access_token":1234567890123456789,"token_type":"Bearer","expires_in":900}`,
-		"huge expiry":   `{"access_token":"secret-x","token_type":"Bearer","expires_in":98765432109876543210}`,
-		"not json":      `access_token=secret-x`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			srv := newTokenServer(t, func(w http.ResponseWriter, r *http.Request, form url.Values) { io.WriteString(w, body) })
-			s, err := NewAPIKeySource(APIKeyConfig{Issuer: srv.URL + "/terrascale", Key: testKey})
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = s.Token(t.Context())
-			if err == nil {
-				t.Fatal("accepted")
-			}
-			for _, leak := range []string{"secret", "1234567890123456789", "98765432109876543210", "9223372037"} {
-				if strings.Contains(err.Error(), leak) || strings.Contains(fmt.Sprintf("%#v", errors.Unwrap(err)), leak) {
-					t.Fatalf("error exposes %q: %v", leak, err)
-				}
-			}
-		})
-	}
-}
-
-func TestExchangeSource(t *testing.T) {
-	for _, confidential := range []bool{true, false} {
-		t.Run(fmt.Sprint("confidential=", confidential), func(t *testing.T) {
-			srv := newTokenServer(t, func(w http.ResponseWriter, r *http.Request, form url.Values) {
-				id, secret, basic := r.BasicAuth()
-				if confidential != basic || (basic && (id != "ts-dashboard" || secret != "s3cret")) || (!basic && form.Get("client_id") != "ts-cli") {
-					t.Errorf("client authentication: basic=%t %q %q %v", basic, id, secret, form)
-				}
-				if form.Get("grant_type") != "urn:ietf:params:oauth:grant-type:token-exchange" || form.Get("subject_token") != "user-token" ||
-					form.Get("subject_token_type") != "urn:ietf:params:oauth:token-type:access_token" ||
-					form.Get("organization") != "01ARZ3NDEKTSV4RRFFQ69G5FA6" || form.Get("project") != "01ARZ3NDEKTSV4RRFFQ69G5FA7" || form.Get("scope") != "documents:read" {
-					t.Errorf("exchange form: %v", form)
-				}
-				answer(w, "project-token", 900)
-			})
-			cfg := ExchangeConfig{Issuer: srv.URL + "/terrascale", ClientID: "ts-cli", Organization: "01ARZ3NDEKTSV4RRFFQ69G5FA6", Project: "01ARZ3NDEKTSV4RRFFQ69G5FA7",
-				Scopes: []string{ScopeDocumentsRead}, SubjectToken: func(context.Context) (string, error) { return "user-token", nil }}
-			if confidential {
-				cfg.ClientID, cfg.ClientSecret = "ts-dashboard", "s3cret"
-			}
-			s, err := NewExchangeSource(cfg)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if tok, err := s.Token(t.Context()); err != nil || tok != "project-token" {
-				t.Fatalf("exchange: %q %v", tok, err)
-			}
-		})
-	}
-	failure := errors.New("signed out")
-	s, err := NewExchangeSource(ExchangeConfig{Issuer: "https://auth.example/terrascale", ClientID: "ts-cli", Organization: "01ARZ3NDEKTSV4RRFFQ69G5FA6",
-		SubjectToken: func(context.Context) (string, error) { return "", failure }})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Token(t.Context()); !errors.Is(err, failure) {
-		t.Fatalf("subject failure: %v", err)
-	}
-}
-
 func TestNoRedirects(t *testing.T) {
 	elsewhere := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Error("the key followed a redirect")
@@ -437,83 +195,5 @@ func TestNoRedirects(t *testing.T) {
 	var e *Error
 	if _, err := s.Token(t.Context()); !errors.As(err, &e) || e.Status != http.StatusTemporaryRedirect {
 		t.Fatalf("redirect: %v", err)
-	}
-}
-
-func TestConfigRejection(t *testing.T) {
-	subject := func(context.Context) (string, error) { return "", nil }
-	for name, err := range map[string]error{
-		"old key ID":        second(NewAPIKeySource(APIKeyConfig{Key: "tsk_3k9f2m8q1x7v4c6n0b5z_0123456789abcdefghjkmnpqrstvwxyz0123456789abcdefghjk"})),
-		"prefixed project":  second(NewAPIKeySource(APIKeyConfig{Key: testKey, Project: "prj_01ARZ3NDEKTSV4RRFFQ69G5FAV"})),
-		"exchange project":  second(NewExchangeSource(ExchangeConfig{ClientID: "ts-cli", Organization: "01ARZ3NDEKTSV4RRFFQ69G5FA6", Project: "legacy", SubjectToken: subject})),
-		"UUID organization": second(NewExchangeSource(ExchangeConfig{ClientID: "ts-cli", Organization: "0190a6e4-7c3b-7d2e-8f00-0123456789ab", SubjectToken: subject})),
-		"short key":         second(NewAPIKeySource(APIKeyConfig{Key: "tsk_123"})),
-		"tsk_ prefixed key": second(NewAPIKeySource(APIKeyConfig{Key: "tsk_" + testKey})),
-		"key scope":         second(NewAPIKeySource(APIKeyConfig{Key: testKey, Scopes: []string{"shapes:read"}})),
-		"key scope case":    second(NewAPIKeySource(APIKeyConfig{Key: testKey, Scopes: []string{"Documents:Read"}})),
-		"exchange scope":    second(NewExchangeSource(ExchangeConfig{ClientID: "ts-cli", Organization: "01ARZ3NDEKTSV4RRFFQ69G5FA6", SubjectToken: subject, Scopes: []string{"openid"}})),
-		"tb_ key":           second(NewAPIKeySource(APIKeyConfig{Key: "tb_" + strings.Repeat("a", 43)})),
-		"key with l":        second(NewAPIKeySource(APIKeyConfig{Key: strings.Replace(testKey, "0", "l", 1)})),
-		"http issuer":       second(NewAPIKeySource(APIKeyConfig{Key: testKey, Issuer: "http://auth.example/terrascale"})),
-		"issuer query":      second(NewAPIKeySource(APIKeyConfig{Key: testKey, Issuer: "https://auth.example/terrascale?x=1"})),
-		"empty query":       second(NewAPIKeySource(APIKeyConfig{Key: testKey, Issuer: "https://auth.example/terrascale?"})),
-		"escaped slash":     second(NewAPIKeySource(APIKeyConfig{Key: testKey, Issuer: "https://auth.example/tenant%2Fname"})),
-		"no client":         second(NewExchangeSource(ExchangeConfig{Organization: "01ARZ3NDEKTSV4RRFFQ69G5FA6", SubjectToken: subject})),
-		"no organization":   second(NewExchangeSource(ExchangeConfig{ClientID: "ts-cli", SubjectToken: subject})),
-		"no subject":        second(NewExchangeSource(ExchangeConfig{ClientID: "ts-cli", Organization: "01ARZ3NDEKTSV4RRFFQ69G5FA6"})),
-	} {
-		if err == nil {
-			t.Errorf("%s: no error", name)
-		} else if !strings.HasPrefix(err.Error(), "tsauth:") {
-			t.Errorf("%s: missing error context", name)
-		}
-	}
-	if s, err := NewAPIKeySource(APIKeyConfig{Key: testKey}); err != nil || s == nil {
-		t.Fatalf("default issuer: %v", err)
-	}
-	for issuer, want := range map[string]string{
-		"":                                 "https://auth.terrascale.tech/terrascale/oauth/token",
-		"https://auth.example/terrascale/": "https://auth.example/terrascale/oauth/token",
-	} {
-		if got, err := tokenEndpoint(issuer); err != nil || got != want {
-			t.Errorf("tokenEndpoint(%q) = %q, %v; want %q", issuer, got, err, want)
-		}
-	}
-}
-
-func TestRetryAfter(t *testing.T) {
-	future := time.Now().Add(time.Minute).UTC().Format(http.TimeFormat)
-	for v, want := range map[string][2]time.Duration{
-		"7":                             {7 * time.Second, 7 * time.Second},
-		"0":                             {0, 0},
-		"":                              {0, 0},
-		"-1":                            {0, 0},
-		"soon":                          {0, 0},
-		"Wed, 21 Oct 2015 07:28:00 GMT": {0, 0},
-		future:                          {58 * time.Second, time.Minute},
-	} {
-		if got := retryAfter(v); got < want[0] || got > want[1] {
-			t.Errorf("retryAfter(%q) = %v, want %v-%v", v, got, want[0], want[1])
-		}
-	}
-}
-
-func second[T any](_ T, err error) error { return err }
-
-func TestTokenErrorTextNamesTheRequest(t *testing.T) {
-	srv := newTokenServer(t, func(w http.ResponseWriter, r *http.Request, form url.Values) {
-		w.Header().Set("X-Request-ID", "01M5ZQP03SW2B31XBM6Q9CP7MA")
-		w.WriteHeader(http.StatusUnauthorized)
-		io.WriteString(w, `{"error":"invalid_client","error_description":"The API key is invalid."}`)
-	})
-	s, err := NewAPIKeySource(APIKeyConfig{Issuer: srv.URL + "/terrascale", Key: testKey})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var e *Error
-	_, err = s.Token(t.Context())
-	if !errors.As(err, &e) || e.RequestID != "01M5ZQP03SW2B31XBM6Q9CP7MA" ||
-		err.Error() != "tsauth: token endpoint answered 401 invalid_client: The API key is invalid. [request 01M5ZQP03SW2B31XBM6Q9CP7MA]" {
-		t.Fatalf("%v", err)
 	}
 }

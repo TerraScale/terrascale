@@ -11,9 +11,7 @@ missing-primary-key policy.
 `ImportTable` has exactly `source`, `collection`, `excluded`, `rows`,
 `primaryKey`, `columns`, `constraints`, and `issues`. Rows are an int64 count;
 primary-key columns remain source metadata. The producer returns no `idPolicy`.
-The fixtures in `v1/public_imports_test.go` check exact create/update bodies,
-nullable collection decoding and lossless table field round trips. They are
-synthetic HTTP contracts, not live imports or producer binaries.
+The SDK has no local import fixture tests.
 
 Let D = `/v1/projects/{project}/databases/{database}/import`. Existing operations:
 
