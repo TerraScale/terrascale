@@ -51,6 +51,7 @@ public static class EngineExtensions
         services.AddSingleton<IRecoverySnapshotReader>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton<IHealthyRewrite>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton<IDatabaseRevisions>(provider => provider.GetRequiredService<TursoStorageEngine>());
+        services.AddSingleton<IDatabaseRewind>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton<IStorageCopyFaults>(provider => provider.GetRequiredService<TursoStorageEngine>().Ledger);
         services.AddSingleton(provider => provider.GetRequiredService<TursoStorageEngine>().Member);
         services.AddSingleton(provider => new FeedRetention(provider.GetRequiredService<TursoStorageEngine>(), provider.GetRequiredService<ILogger<FeedRetention>>(), provider.GetRequiredService<ICatalogGate>()));
