@@ -29,7 +29,10 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status401Unauthorized);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         AllowAnonymous();
         Metadata(ListenerMetadata.Client, OriginNoStore.Instance, new AuthorizeAttribute(ApiKeyScopes.SqlRead),
             new Management.DatabaseRegions.ReplicaReads());
@@ -37,6 +40,26 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
+        if (HttpContext.Request.Headers.Authorization.Count > 0)
+        {
+            if (HttpContext.User.Identity?.IsAuthenticated != true)
+            {
+                return ErrorResponse.From(new Unauthorized("the credential is missing, unknown or expired", "invalid_key"));
+            }
+
+            var tenant = await DatabaseRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken).ConfigureAwait(false);
+            if (tenant is not TenantContext)
+            {
+                return tenant switch
+                {
+                    Validation error => ErrorResponse.From(error),
+                    NotFound error => ErrorResponse.From(error),
+                    Unavailable error => ErrorResponse.From(error),
+                    _ => throw new System.Diagnostics.UnreachableException(),
+                };
+            }
+        }
+
         if (!HttpContext.WebSockets.IsWebSocketRequest)
         {
             return ErrorResponse.From(new Validation("connect with a WebSocket upgrade", "websocket_required"));

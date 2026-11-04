@@ -42,6 +42,7 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/tables/{table}/shape TsAuth(sql:read) getShape Live
         GET /v1/projects/{project}/databases/{database}/tables/{table}/shape/keys TsAuth(sql:read) getShapeKey Live
         GET /v1/projects/{project}/databases/{database}/tables/{table}/shape/manifest TsAuth(sql:read) getShapeManifest Live
+        GET /v1/projects/{project}/databases/{database}/tables/{table}/shape/ws TsAuth(sql:read) connectShapeHints Live
         GET /v1/projects/{project}/databases/{database}/usage TsAuth(databases:read) getDatabaseUsage Usage
         GET /v1/projects/{project}/metrics TsAuth(databases:read) getProjectMetrics Analytics
         GET /v1/projects/{project}/usage TsAuth(databases:read) getProjectUsage Usage
@@ -132,7 +133,7 @@ public sealed class ApiReferenceTests
                 var example = success.GetProperty("content").GetProperty("application/json").GetProperty("example");
                 await Assert.That(EntityIds.IsValid(example.GetProperty("id").GetString())).IsTrue().Because(line);
             }
-            var succeeds = operation.GetProperty("operationId").GetString() == "connectSql"
+            var succeeds = operation.GetProperty("operationId").GetString() is "connectSql" or "connectShapeHints"
                 ? responses.Any(status => status.Name == "101")
                 : responses.Any(status => status.Name.StartsWith('2'));
             await Assert.That(succeeds).IsTrue().Because(line);
