@@ -1,0 +1,11 @@
+{
+  "tag": "f12-tail-20261104-9fa05",
+  "database_cleanup": "all proof databases deleted; interrupted database removed before resume",
+  "account_cleanup": "ts-throwaway-account --delete completed; account state and key removed only after account-deleted confirmation",
+  "private_inputs_removed_from": [
+    "delta",
+    "mariogk-dev",
+    "beta"
+  ],
+  "f12_live_load_remaining": false
+}
