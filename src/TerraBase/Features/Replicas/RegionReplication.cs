@@ -72,6 +72,12 @@ internal sealed class RegionReplication(
 
     public override async Task StartAsync(CancellationToken cancellationToken)
     {
+        // Holders keep local acknowledgements; only the region's data owner follows replicas.
+        if (await new PeersFile(options).IsHolderAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
         _peers = await peers.ListAsync(cancellationToken).ConfigureAwait(false);
         _lag = _meter.CreateHistogram<double>("terrabase.replica.lag", "ms",
             "Time from a home's commit, on its clock, to the replica holding it after the notice's pull.");
