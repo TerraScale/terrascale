@@ -14,7 +14,7 @@ internal sealed record ShapeLineage(string ShapeId, string Handle);
 
 internal sealed record ResolvedShape(ShapeScope Scope, ShapeLineage Lineage);
 
-internal sealed record ShapeBody(ReadOnlyMemory<byte> Json, string NextOffset, bool UpToDate, IDisposable? Lease = null);
+internal sealed record ShapeBody(ReadOnlyMemory<byte> Json, string NextOffset, bool UpToDate, IDisposable? Lease = null, ShapeMirrorManifest? Manifest = null);
 
 internal sealed record MustRefetch(string Message, ShapeLineage? Lineage = null);
 

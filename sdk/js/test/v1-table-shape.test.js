@@ -148,7 +148,7 @@ test("identical subscriptions share one hint socket and fetch hinted changes fro
   expect(sockets).toBe(1);
   expect(origin).toBe(5);
   expect(objects).toBe(2);
-});
+}, 5000);
 
 test("a hint authentication refusal ends the subscription without a payload fallback", async () => {
   let calls = 0;
@@ -171,4 +171,4 @@ test("a hint authentication refusal ends the subscription without a payload fall
   const subscription = client.database("app").shape("todos").subscribe(() => {});
   await expect(subscription.done).rejects.toMatchObject({ status: 401, code: "invalid_key" });
   expect(calls).toBe(1);
-});
+}, 5000);

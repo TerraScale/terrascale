@@ -23,9 +23,11 @@ export function subscribeShape(transport, key, run, listener, external) {
   }
   const shared = group;
   if (shared.observers.size >= 4096) throw new RangeError("A shape supports at most 4096 listeners per client.");
-  /** @type {Observer} */
-  let observer;
-  const done = new Promise((resolve, reject) => { observer = { listener, resolve, reject }; });
+  let resolveDone = () => {};
+  /** @type {(error: unknown) => void} */
+  let rejectDone = () => {};
+  const done = new Promise((resolve, reject) => { resolveDone = () => resolve(undefined); rejectDone = reject; });
+  const observer = { listener, resolve: resolveDone, reject: rejectDone };
   let closed = false;
   const close = () => {
     if (closed) return;

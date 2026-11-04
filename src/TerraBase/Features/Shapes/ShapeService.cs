@@ -11,7 +11,7 @@ namespace TerraBase.Features.Shapes;
 internal sealed class ShapeService(
     IStorageEngine engine, IShapeSealer sealer, IShapeSnapshotSealer snapshots, IShapeStorage storage, IShapeRetention retention,
     ShapeRegistry registry, ShapeLiveGate gate, IShapeFlights<ShapeRead> flights, IMemoryBudget memory, IHostApplicationLifetime lifetime,
-    ILogger<ShapeService> logger, ReplicaShapeTails replicaTails, ShapeControls controls) : IShapeLineages, IShapeSnapshots, IShapeChunks, IShapeLiveTail
+    ILogger<ShapeService> logger, ReplicaShapeTails replicaTails, ShapeControls controls, IShapeMirror mirror, TimeProvider time) : IShapeLineages, IShapeSnapshots, IShapeChunks, IShapeLiveTail
 {
     private int _maintaining;
     private readonly ClosedChunks _closed = new(memory);
@@ -303,7 +303,8 @@ internal sealed class ShapeService(
             async ValueTask<ShapeRead> Read(IDatabaseStore current, CancellationToken token)
             {
                 gate.Unpark(group);
-                return Detach(await ReadAtAsync(current, scope, lineage, offset, fresh: parked, token).ConfigureAwait(false));
+                return await MirrorTailAsync(scope, lineage, offset,
+                    Detach(await ReadAtAsync(current, scope, lineage, offset, fresh: parked, token).ConfigureAwait(false)), mirror, time, token).ConfigureAwait(false);
             }
         }
         finally
@@ -437,8 +438,33 @@ internal sealed class ShapeService(
                 return Busy;
             }
 
-            return new ShapeBody(body.Json.ToArray(), body.NextOffset, body.UpToDate);
+            return new ShapeBody(body.Json.ToArray(), body.NextOffset, body.UpToDate, Manifest: body.Manifest);
         }
+    }
+
+    internal static async ValueTask<ShapeRead> MirrorTailAsync(ShapeScope scope, ShapeLineage lineage, long offset, ShapeRead read,
+        IShapeMirror mirror, TimeProvider time, CancellationToken cancellationToken)
+    {
+        var at = Decimal(offset);
+        if (read is not ShapeBody body || body.NextOffset == at)
+        {
+            return read;
+        }
+
+        QosContext.ReserveResult(64 * 1024);
+        mirror.Warm(scope.Database, lineage.ShapeId, lineage.Handle, at, body.NextOffset);
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            var manifest = await mirror.ManifestAsync(scope.Database, lineage.ShapeId, lineage.Handle, at, 0, cancellationToken).ConfigureAwait(false);
+            if (manifest.Objects.Count > 0)
+            {
+                return body with { Manifest = manifest };
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(50), time, cancellationToken).ConfigureAwait(false);
+        }
+
+        return body;
     }
 
     private static ShapeRead Hold(ShapeFlight<ShapeRead> flight)
@@ -449,7 +475,7 @@ internal sealed class ShapeService(
             return flight.Value;
         }
 
-        return new ShapeBody(body.Json, body.NextOffset, body.UpToDate, flight);
+        return new ShapeBody(body.Json, body.NextOffset, body.UpToDate, flight, body.Manifest);
     }
 
     private static readonly ShapeHeadProbe NotParked = static (_, _) => ValueTask.FromResult(false);

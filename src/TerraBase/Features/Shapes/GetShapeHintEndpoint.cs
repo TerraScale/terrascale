@@ -13,7 +13,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Shapes;
 
 internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLineages lineages, IShapeLiveTail live,
-    ShapeConnections connections, IMemoryBudget memory, IAuthorizationService authorization, IShapeMirror mirror,
+    ShapeConnections connections, IMemoryBudget memory, IAuthorizationService authorization,
     TimeProvider time, IHostApplicationLifetime lifetime) : EndpointWithoutRequest<IResult>
 {
     internal const string Protocol = "terrascale.shape.v1";
@@ -165,7 +165,7 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
                         }
 
                         var at = offset.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                        var manifest = await mirror.ManifestAsync(tenant, shape.Lineage.ShapeId, shape.Lineage.Handle, at, 0, disconnected.Token).ConfigureAwait(false);
+                        var manifest = body.Manifest ?? new ShapeMirrorManifest(shape.Lineage.Handle, []);
                         await SendAsync(socket, new ShapeHintFrame("new_data", shape.Lineage.Handle, at, body.NextOffset, manifest), disconnected.Token).ConfigureAwait(false);
                         offset = next;
                     }

@@ -25,12 +25,12 @@ export class ShapeHints {
     /** @type {(error: unknown) => void} */
     let rejectReady = () => {};
     const connected = new Promise((resolve, reject) => { resolveReady = () => resolve(undefined); rejectReady = reject; });
-    const fail = (/** @type {Error} */ error) => { session.#error = error; session.#wake?.(); rejectReady(error); };
+    const fail = (/** @type {Error} */ error) => { session.#error ??= error; session.#wake?.(); rejectReady(session.#error); };
     const abort = () => { session.close(); fail(signal.reason); };
-    const deadline = setTimeout(() => { session.close(); fail(new Error("Shape hint connection timed out.")); }, 10_000);
+    const deadline = setTimeout(() => { fail(new Error("Shape hint connection timed out.")); session.close(); }, 10_000);
     signal.addEventListener("abort", abort, { once: true });
     socket.addEventListener("open", () => {
-      if (socket.protocol !== shapeHintProtocol) { session.close(); fail(new TypeError("Invalid shape hint subprotocol.")); return; }
+      if (socket.protocol !== shapeHintProtocol) { fail(new TypeError("Invalid shape hint subprotocol.")); session.close(); return; }
       if (token !== undefined) socket.send(JSON.stringify({ type: "auth", token }));
     }, { once: true });
     socket.addEventListener("error", () => fail(new Error("Shape hint connection failed.")));
@@ -52,7 +52,7 @@ export class ShapeHints {
           || !/^(0|[1-9]\d*)$/u.test(next) || BigInt(next) <= BigInt(offset)) throw new TypeError("Invalid shape hint boundary.");
         session.#latest = { handle, offset, next_offset: next, manifest: object(frame.manifest, "shape hint manifest") };
         session.#wake?.();
-      } catch (error) { session.close(); fail(error instanceof Error ? error : new Error("Invalid shape hint.")); }
+      } catch (error) { fail(error instanceof Error ? error : new Error("Invalid shape hint.")); session.close(); }
     });
     try {
       signal.throwIfAborted();
@@ -76,5 +76,5 @@ export class ShapeHints {
     }
   }
 
-  close() { this.#socket.close(1000, ""); this.#error ??= new Error("Shape hints closed."); this.#wake?.(); }
+  close() { this.#error ??= new Error("Shape hints closed."); this.#socket.close(1000, ""); this.#wake?.(); }
 }
