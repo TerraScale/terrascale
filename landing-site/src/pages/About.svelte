@@ -5,12 +5,6 @@
   import { dict } from '@/lib/i18n'
   import { launchRegions } from '@/lib/site'
 
-  type Pillar = {
-    icon: AppIconName
-    title: string
-    text: string
-  }
-
   const pillarIcons: AppIconName[] = ['database', 'shield', 'dollarSign']
   $: pillars = $dict.about.pillars.map((pillar, i) => ({
     icon: pillarIcons[i] ?? 'database',
@@ -46,7 +40,6 @@
           <span class="ts-icon-tile"><Icon name={pillar.icon} /></span>
           <div>
             <h3 class="about-pillar__title">{pillar.title}</h3>
-            <p class="about-pillar__text">{pillar.text}</p>
           </div>
         </article>
       {/each}
@@ -124,7 +117,7 @@
     border-bottom: 1px solid var(--ts-line);
   }
 
-  /* Title centred on the 32px icon tile; the text hangs under it. */
+  /* Title centred on the 32px icon tile. */
   .about-pillar__title {
     display: flex;
     align-items: center;
@@ -132,10 +125,6 @@
     font-size: var(--ts-fs-lg);
   }
 
-  .about-pillar__text {
-    margin-top: var(--ts-s1);
-    color: var(--ts-ink-2);
-  }
 
   .about-regions {
     list-style: none;

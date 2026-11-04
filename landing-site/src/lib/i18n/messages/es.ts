@@ -4,7 +4,7 @@ export const es: Messages = {
   meta: {
     title: 'TerraScale Public Alpha | Base de datos SQL regional',
     description:
-      'TerraScale Public Alpha ofrece bases de datos SQL, cada una almacenada y servida en una región principal: São Paulo, San Francisco Bay Area o Fráncfort.',
+      'TerraScale Public Alpha: bases SQL con una región de escritura y réplicas de lectura cifradas en São Paulo, San Francisco Bay Area y Fráncfort.',
   },
 
   chrome: {
@@ -71,34 +71,21 @@ export const es: Messages = {
 
   hero: {
     headlineLead: 'Base de datos SQL,',
-    headlineAccent: 'en la región que elijas.',
+    headlineAccent: 'con réplicas de lectura regionales.',
     cta: 'Empieza gratis',
   },
 
+
   features: {
-    titleLead: 'Lo que cubre Public Alpha,',
-    titleAccent: 'y dónde termina.',
+    titleLead: 'Bases de datos SQL',
+    titleAccent: 'y réplicas de lectura.',
     items: [
-      {
-        headline: 'SQL con tablas, índices y claves foráneas',
-        text: 'Crea tablas, índices, vistas y triggers en el dialecto de SQLite. Las claves foráneas siempre se aplican, las columnas JSON funcionan con json_extract y hasta 256 sentencias se confirman como una transacción.',
-      },
-      {
-        headline: 'Conéctate con psql, HTTP o la CLI',
-        text: 'Los clientes de Postgres se conectan por el protocolo de red con una clave de API como contraseña. La API HTTP, la CLI y los SDK ejecutan el mismo SQL; los clientes MCP ejecutan consultas de solo lectura.',
-      },
-      {
-        headline: 'Una región principal por base de datos',
-        text: 'Elige São Paulo, San Francisco Bay Area o Fráncfort al crear una base de datos. Se almacena y se sirve en esa región.',
-      },
-      {
-        headline: 'Estado publicado, no prometido',
-        text: 'La disponibilidad actual y la latencia de API se publican en la página de estado. No hay porcentaje de disponibilidad, promesa de latencia ni SLA.',
-      },
-      {
-        headline: 'Cifrado en tránsito y en reposo',
-        text: 'El tráfico del cliente requiere TLS 1.2 o posterior, los datos en reposo usan cifrado calificado y cada solicitud requiere autorización.',
-      },
+      { headline: 'Tablas SQL, índices y claves foráneas' },
+      { headline: 'Conexiones con psql, HTTP y WebSocket' },
+      { headline: 'Réplicas de lectura cifradas en otras regiones' },
+      { headline: 'Shapes filtradas con permisos de lectura por tabla' },
+      { headline: 'Bases para agentes con TTL, forks y claves limitadas' },
+      { headline: 'El borrado destruye las claves de las copias de seguridad' },
     ],
   },
 
@@ -132,11 +119,11 @@ export const es: Messages = {
       },
       {
         q: '¿Qué regiones sirven hoy?',
-        a: 'São Paulo (gru), San Francisco Bay Area (sjc) y Fráncfort (fra). Cada base de datos vive en una región principal, elegida al crearla.',
+        a: 'São Paulo (gru), San Francisco Bay Area (sjc) y Fráncfort (fra). Elige una región principal para escribir y otras regiones para réplicas de lectura cifradas.',
       },
       {
         q: '¿Mi base de datos se copia a otras regiones?',
-        a: 'Hoy no. Una base de datos se almacena y se sirve solo en su región principal. Las copias de seguridad la protegen contra la pérdida de datos.',
+        a: 'Sí. Elige regiones de réplica para mantener copias de solo lectura cifradas fuera de la región principal. REST puede leer una réplica local lista; las lecturas locales por psql y WebSocket llegarán próximamente. Las réplicas tienen consistencia eventual. Las escrituras van a la región principal desde cualquier región en servicio.',
       },
       {
         q: '¿Puedo usar mis herramientas de Postgres?',
@@ -152,7 +139,7 @@ export const es: Messages = {
       },
       {
         q: '¿Cómo se protegen mis datos?',
-        a: 'El tráfico del cliente requiere TLS 1.2 o posterior, los datos en reposo usan cifrado calificado y cada solicitud requiere autorización.',
+        a: 'El tráfico del cliente usa TLS y los archivos de base de datos, las réplicas y las copias de seguridad se cifran en reposo. El borrado destruye las claves de las copias de seguridad e impide restaurarlas. La limpieza física es un paso separado.',
       },
       {
         q: '¿Cuánto cuesta empezar?',
@@ -162,6 +149,9 @@ export const es: Messages = {
         q: '¿Puedo exportar mis datos e irme?',
         a: 'Sí. Exporta desde el panel o la API en cualquier momento. No hay tarifa de salida por dejar TerraScale.',
       },
+      { q: '¿Los clientes pueden suscribirse a parte de una tabla?', a: 'Sí. Las shapes en vivo admiten filtros y selección de columnas. Los permisos de lectura por tabla permiten a los tokens de usuario final leer las tablas autorizadas; un filtro no sustituye la autorización.' },
+      { q: '¿Puedo dar a un agente su propia base de datos?', a: 'Sí. Crea una base con TTL, haz un fork y emite una clave limitada a una base con acceso de lectura o lectura y escritura. Al expirar, la base se elimina. La restauración a un punto en el tiempo en una base nueva está disponible; la restauración sobre la misma base llegará próximamente.' },
+      { q: '¿Puedo limitar el uso?', a: 'Sí. Los planes aplican topes mensuales de escritura y uso razonable de lecturas SQL. El tope de escritura detiene nuevas escrituras; la asignación de lectura detiene lecturas SQL, pero las shapes siguen disponibles. Los topes de gasto definidos por el cliente llegarán próximamente.' },
     ],
     contactSales: 'Contáctanos',
   },
@@ -236,18 +226,9 @@ export const es: Messages = {
       title: 'Almacenamiento, operaciones y salida a clientes.',
     },
     triad: [
-      {
-        title: 'Almacenamiento',
-        text: 'GB decimales almacenados, promediados durante el mes',
-      },
-      {
-        title: 'Unidades de operación',
-        text: 'Cada 4 KiB iniciados leídos o escritos',
-      },
-      {
-        title: 'Asignaciones y uso adicional',
-        text: 'Las unidades de operación sobre la asignación pagada van a la próxima factura y el almacenamiento por encima de ella se factura por GB-mes; el excedente de salida a clientes aún no se factura',
-      },
+      { title: 'Almacenamiento en la región principal' },
+      { title: 'Escrituras contadas en unidades de 4 KiB' },
+      { title: 'Topes de escritura en todos los planes' },
     ],
     compare: {
       title: 'Asignaciones por plan.',
@@ -267,7 +248,7 @@ export const es: Messages = {
       storageLimit: 'Límite de almacenamiento',
       pitr: 'Recuperación a un punto en el tiempo',
       backupRetention: 'Retención de copias de seguridad',
-      regionsPerDatabase: 'Regiones por base de datos',
+      regionsPerDatabase: 'Regiones principales por base de datos',
       support: 'Objetivo de respuesta de soporte',
       noCeiling: 'Sin límite del plan',
       seconds: '{n} s',
@@ -292,7 +273,7 @@ export const es: Messages = {
         {
           item: 'Unidades de operación',
           unit: '/millón de unidades',
-          details: 'Cada 4 KiB iniciados de cada lectura o escritura exitosa cuentan por separado.',
+          details: 'Cada 4 KiB escritos correctamente iniciados se cuentan por separado; cada fila modificada cuenta al menos una unidad.',
         },
         {
           item: 'Almacenamiento',
@@ -313,7 +294,7 @@ export const es: Messages = {
       items: [
         {
           q: '¿Qué es una unidad de operación?',
-          a: 'Una unidad de operación es cada 4 KiB (4.096 bytes) iniciados de un objeto lógico leído o escrito correctamente. Las listas, consultas y lotes cuentan cada elemento por separado. Las solicitudes fallidas, denegadas, inválidas, limitadas y no encontradas no se facturan.',
+          a: 'Una unidad de escritura es cada 4 KiB (4.096 bytes) escritos correctamente, iniciados. Cada fila modificada cuenta al menos una unidad. Las lecturas SQL no se facturan y cuentan para el uso razonable mensual; las lecturas de shapes desde el edge son gratuitas. No se facturan solicitudes fallidas, denegadas, inválidas, limitadas o no encontradas.',
         },
         {
           q: '¿Qué ocurre si necesito más operaciones, almacenamiento o salida?',
@@ -331,6 +312,7 @@ export const es: Messages = {
           q: '¿Qué incluye Enterprise?',
           a: 'Enterprise tiene una base mensual de soporte de ${enterprisePriceUsd} más uso. Consulta las condiciones con ventas; Enterprise no se vende en el checkout.',
         },
+        { q: '¿Cómo se facturan las réplicas?', a: 'El catálogo incluye una región principal por base de datos en todos los planes. Las escrituras y los bytes almacenados se cuentan en la región principal; el almacenamiento de réplicas no tiene cargo separado. Se aplican los topes de escritura y el uso razonable de lecturas SQL.' },
       ],
       contactSales: 'Contactar ventas',
     },
@@ -361,18 +343,9 @@ export const es: Messages = {
     regionsAria: 'Regiones en servicio',
     missionTitle: 'Una plataforma para bases de datos, claves y facturación.',
     pillars: [
-      {
-        title: 'Fundación TerraBase',
-        text: 'TerraScale se construye sobre TerraBase, que ejecuta SQL sobre Turso detrás de una única superficie pública de la plataforma.',
-      },
-      {
-        title: 'Una región principal',
-        text: 'Cada base de datos se almacena y se sirve en la región que eliges al crearla.',
-      },
-      {
-        title: 'Facturación consciente del uso',
-        text: 'Free no requiere tarjeta. Los planes pagados facturan en la próxima factura las unidades de operación por encima de la asignación y el almacenamiento por encima de ella se factura por GB-mes; el excedente de salida a clientes aún no se factura.',
-      },
+      { title: 'SQL sobre Turso' },
+      { title: 'Una región de escritura y réplicas cifradas' },
+      { title: 'Topes de escritura por plan' },
     ],
     bandTitle: 'Precios regionales planos, medidos por el uso real.',
     bandText:

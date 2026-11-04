@@ -7,7 +7,7 @@
 
   const featureIcons: AppIconName[] = ['database', 'globe', 'target', 'activity', 'shieldCheck']
   // The regions card shows the serving regions it describes.
-  const featureRegions = [[], ['gru', 'sjc', 'fra']] as const
+  const featureRegions = [[], [], ['gru', 'sjc', 'fra']] as const
   $: features = $dict.features.items.map((item, i) => ({
     icon: featureIcons[i] ?? 'zap',
     regions: featureRegions[i] ?? [],
@@ -31,7 +31,6 @@
             <Icon name={feature.icon} className="feature__icon-svg" />
           </span>
           <h3 class="feature__headline">{feature.headline}</h3>
-          <p class="feature__text">{feature.text}</p>
           {#if feature.regions.length}
             <div class="feature__tags">
               {#each feature.regions as code (code)}
@@ -134,13 +133,6 @@
     text-wrap: balance;
   }
 
-  .feature__text {
-    margin: 0;
-    font-size: 14px;
-    color: var(--ts-text-muted);
-    line-height: 24px;
-    text-wrap: pretty;
-  }
 
   .feature__tags {
     display: flex;

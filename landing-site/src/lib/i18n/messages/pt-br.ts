@@ -4,7 +4,7 @@ export const ptBr: Messages = {
   meta: {
     title: 'TerraScale Public Alpha | Banco de dados SQL regional',
     description:
-      'TerraScale Public Alpha oferece bancos de dados SQL, cada um armazenado e servido em uma região principal: São Paulo, San Francisco Bay Area ou Frankfurt.',
+      'TerraScale Public Alpha: bancos SQL com uma região de escrita e réplicas de leitura criptografadas em São Paulo, San Francisco Bay Area e Frankfurt.',
   },
 
   chrome: {
@@ -71,34 +71,21 @@ export const ptBr: Messages = {
 
   hero: {
     headlineLead: 'Banco de dados SQL,',
-    headlineAccent: 'na região que você escolher.',
+    headlineAccent: 'com réplicas de leitura regionais.',
     cta: 'Comece grátis',
   },
 
+
   features: {
-    titleLead: 'O que o Public Alpha cobre,',
-    titleAccent: 'e onde ele para.',
+    titleLead: 'Bancos de dados SQL',
+    titleAccent: 'e réplicas de leitura.',
     items: [
-      {
-        headline: 'SQL com tabelas, índices e chaves estrangeiras',
-        text: 'Crie tabelas, índices, views e triggers no dialeto do SQLite. Chaves estrangeiras são sempre aplicadas, colunas JSON funcionam com json_extract e até 256 instruções são confirmadas como uma transação.',
-      },
-      {
-        headline: 'Conecte com psql, HTTP ou a CLI',
-        text: 'Clientes Postgres conectam pelo protocolo de rede com uma chave de API como senha. A API HTTP, a CLI e os SDKs executam o mesmo SQL; clientes MCP executam consultas somente leitura.',
-      },
-      {
-        headline: 'Uma região principal por banco de dados',
-        text: 'Escolha São Paulo, San Francisco Bay Area ou Frankfurt ao criar um banco de dados. Ele é armazenado e servido nessa região.',
-      },
-      {
-        headline: 'Status publicado, não prometido',
-        text: 'A disponibilidade atual e a latência da API são publicadas na página de status. Não há porcentagem de disponibilidade, promessa de latência nem SLA.',
-      },
-      {
-        headline: 'Criptografia em trânsito e em repouso',
-        text: 'O tráfego do cliente exige TLS 1.2 ou superior, os dados em repouso usam criptografia qualificada e toda requisição exige autorização.',
-      },
+      { headline: 'Tabelas SQL, índices e chaves estrangeiras' },
+      { headline: 'Conexões com psql, HTTP e WebSocket' },
+      { headline: 'Réplicas de leitura criptografadas em outras regiões' },
+      { headline: 'Shapes filtradas com permissões de leitura por tabela' },
+      { headline: 'Bancos para agentes com TTL, forks e chaves limitadas' },
+      { headline: 'A exclusão destrói as chaves dos backups' },
     ],
   },
 
@@ -132,11 +119,11 @@ export const ptBr: Messages = {
       },
       {
         q: 'Quais regiões atendem hoje?',
-        a: 'São Paulo (gru), San Francisco Bay Area (sjc) e Frankfurt (fra). Cada banco de dados fica em uma região principal, escolhida ao criá-lo.',
+        a: 'São Paulo (gru), San Francisco Bay Area (sjc) e Frankfurt (fra). Escolha uma região principal para escritas e outras regiões para réplicas de leitura criptografadas.',
       },
       {
         q: 'Meu banco de dados é copiado para outras regiões?',
-        a: 'Hoje não. Um banco de dados é armazenado e servido apenas na região principal. Os backups o protegem contra perda de dados.',
+        a: 'Sim. Escolha regiões de réplica para manter cópias criptografadas somente leitura fora da região principal. REST pode ler uma réplica local pronta; leituras locais por psql e WebSocket estão chegando. As réplicas têm consistência eventual. As escritas vão para a região principal a partir de qualquer região em operação.',
       },
       {
         q: 'Posso usar minhas ferramentas do Postgres?',
@@ -152,7 +139,7 @@ export const ptBr: Messages = {
       },
       {
         q: 'Como meus dados são protegidos?',
-        a: 'O tráfego do cliente exige TLS 1.2 ou superior, os dados em repouso usam criptografia qualificada e toda requisição exige autorização.',
+        a: 'O tráfego do cliente usa TLS e arquivos de banco de dados, réplicas e backups são criptografados em repouso. A exclusão destrói as chaves dos backups e impede sua restauração. A limpeza física é uma etapa separada.',
       },
       {
         q: 'Quanto custa para começar?',
@@ -162,6 +149,9 @@ export const ptBr: Messages = {
         q: 'Posso exportar meus dados e sair?',
         a: 'Sim. Exporte pelo painel ou pela API a qualquer momento. Não há taxa de saída para deixar a TerraScale.',
       },
+      { q: 'Os clientes podem assinar parte de uma tabela?', a: 'Sim. Shapes ao vivo aceitam filtros e seleção de colunas. Permissões de leitura por tabela permitem que tokens de usuário final leiam as tabelas autorizadas; um filtro não substitui a autorização.' },
+      { q: 'Posso dar a um agente seu próprio banco de dados?', a: 'Sim. Crie um banco com TTL, faça um fork e emita uma chave limitada a um banco com acesso de leitura ou leitura e escrita. Ao expirar, o banco é excluído. A restauração para um ponto no tempo em um banco novo está disponível; a restauração no mesmo banco está chegando.' },
+      { q: 'Posso limitar o uso?', a: 'Sim. Os planos aplicam tetos mensais de escrita e uso justo de leituras SQL. O teto de escrita interrompe novas escritas; a franquia de leitura interrompe leituras SQL, mas as shapes continuam disponíveis. Tetos de gastos definidos pelo cliente estão chegando.' },
     ],
     contactSales: 'Fale conosco',
   },
@@ -236,18 +226,9 @@ export const ptBr: Messages = {
       title: 'Armazenamento, operações e saída para clientes.',
     },
     triad: [
-      {
-        title: 'Armazenamento',
-        text: 'GB decimais armazenados, em média ao longo do mês',
-      },
-      {
-        title: 'Unidades de operação',
-        text: 'Cada 4 KiB iniciados lidos ou gravados',
-      },
-      {
-        title: 'Franquias e uso adicional',
-        text: 'Unidades de operação acima da franquia paga vão para a próxima fatura e o armazenamento acima dela é cobrado por GB-mês; o excedente de saída para clientes ainda não é cobrado',
-      },
+      { title: 'Armazenamento na região principal' },
+      { title: 'Escritas contadas em unidades de 4 KiB' },
+      { title: 'Tetos de escrita em todos os planos' },
     ],
     compare: {
       title: 'Franquias por plano.',
@@ -267,7 +248,7 @@ export const ptBr: Messages = {
       storageLimit: 'Limite de armazenamento',
       pitr: 'Recuperação para um ponto no tempo',
       backupRetention: 'Retenção de backups',
-      regionsPerDatabase: 'Regiões por banco de dados',
+      regionsPerDatabase: 'Regiões principais por banco de dados',
       support: 'Meta de resposta do suporte',
       noCeiling: 'Sem limite do plano',
       seconds: '{n} s',
@@ -292,7 +273,7 @@ export const ptBr: Messages = {
         {
           item: 'Unidades de operação',
           unit: '/milhão de unidades',
-          details: 'Cada 4 KiB iniciados de cada leitura ou gravação bem-sucedida contam separadamente.',
+          details: 'Cada 4 KiB escritos com sucesso iniciados são contados separadamente; cada linha alterada conta pelo menos uma unidade.',
         },
         {
           item: 'Armazenamento',
@@ -313,7 +294,7 @@ export const ptBr: Messages = {
       items: [
         {
           q: 'O que é uma unidade de operação?',
-          a: 'Uma unidade de operação é cada 4 KiB (4.096 bytes) iniciados de um objeto lógico lido ou gravado com sucesso. Listas, consultas e lotes contam cada item separadamente. Solicitações com falha, negadas, inválidas, limitadas e não encontradas não são cobradas.',
+          a: 'Uma unidade de escrita é cada 4 KiB (4.096 bytes) escritos com sucesso, iniciados. Cada linha alterada conta pelo menos uma unidade. Leituras SQL não são cobradas e contam para o uso justo mensal; leituras de shapes pelo edge são gratuitas. Requisições com falha, negadas, inválidas, limitadas ou não encontradas não são cobradas.',
         },
         {
           q: 'E se eu precisar de mais operações, armazenamento ou saída?',
@@ -331,6 +312,7 @@ export const ptBr: Messages = {
           q: 'O que Enterprise inclui?',
           a: 'Enterprise tem uma base mensal de suporte de ${enterprisePriceUsd} mais uso. Consulte as condições com vendas; o Enterprise não é vendido pelo checkout.',
         },
+        { q: 'Como as réplicas são cobradas?', a: 'O catálogo inclui uma região principal por banco de dados em todos os planos. Escritas e bytes armazenados são contados na região principal; o armazenamento de réplicas não tem cobrança separada. Os tetos de escrita e o uso justo de leituras SQL se aplicam.' },
       ],
       contactSales: 'Falar com vendas',
     },
@@ -361,18 +343,9 @@ export const ptBr: Messages = {
     regionsAria: 'Regiões em operação',
     missionTitle: 'Uma plataforma para bancos de dados, chaves e cobrança.',
     pillars: [
-      {
-        title: 'Fundação TerraBase',
-        text: 'A TerraScale é construída sobre o TerraBase, que executa SQL sobre o Turso por trás de uma única superfície pública da plataforma.',
-      },
-      {
-        title: 'Uma região principal',
-        text: 'Cada banco de dados é armazenado e servido na região escolhida ao criá-lo.',
-      },
-      {
-        title: 'Cobrança consciente do uso',
-        text: 'Free não exige cartão. Planos pagos cobram na próxima fatura as unidades de operação acima da franquia e o armazenamento acima dela é cobrado por GB-mês; o excedente de saída para clientes ainda não é cobrado.',
-      },
+      { title: 'SQL sobre Turso' },
+      { title: 'Uma região de escrita e réplicas criptografadas' },
+      { title: 'Tetos de escrita por plano' },
     ],
     bandTitle: 'Preços regionais fixos, medidos pelo uso real.',
     bandText:

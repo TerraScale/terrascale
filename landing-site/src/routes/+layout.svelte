@@ -15,12 +15,12 @@
     '/': {
       title: 'TerraScale Public Alpha | Regional SQL Database',
       description:
-        'TerraScale Public Alpha provides SQL databases, each stored and served in one home region: São Paulo, the San Francisco Bay Area, or Frankfurt.',
+        'TerraScale Public Alpha: SQL databases with one write region and encrypted read replicas in São Paulo, the San Francisco Bay Area and Frankfurt.',
     },
     '/about': {
       title: 'About TerraScale',
       description:
-        'Learn how TerraScale Public Alpha provides SQL databases, each served from one home region.',
+        'SQL databases with one write region and encrypted regional read replicas.',
     },
     '/contact': {
       title: 'Contact TerraScale',

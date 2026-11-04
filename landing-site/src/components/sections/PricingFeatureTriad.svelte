@@ -21,7 +21,6 @@
           <Icon name={it.icon} className="triad__icon-svg" />
         </span>
         <h3 class="triad__title">{it.title}</h3>
-        <p class="triad__text">{it.text}</p>
       </article>
     {/each}
   </div>
@@ -96,12 +95,6 @@
     color: var(--ts-text);
   }
 
-  .triad__text {
-    margin: 0;
-    font-size: 14px;
-    line-height: 1.7;
-    color: var(--ts-text-muted);
-  }
 
   @media (max-width: 900px) {
     .triad__grid {
@@ -134,7 +127,7 @@
     }
 
     .triad__icon {
-      grid-row: span 2;
+      grid-row: 1;
     }
 
     .triad__title {
@@ -142,8 +135,5 @@
       font-size: 14px;
     }
 
-    .triad__text {
-      font-size: 13px;
-    }
   }
 </style>

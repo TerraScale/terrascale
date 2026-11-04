@@ -2,7 +2,7 @@ export const en = {
   meta: {
     title: 'TerraScale Public Alpha | Regional SQL Database',
     description:
-      'TerraScale Public Alpha provides SQL databases, each stored and served in one home region: São Paulo, the San Francisco Bay Area, or Frankfurt.',
+      'TerraScale Public Alpha: SQL databases with one write region and encrypted read replicas in São Paulo, the San Francisco Bay Area and Frankfurt.',
   },
 
   chrome: {
@@ -69,34 +69,21 @@ export const en = {
 
   hero: {
     headlineLead: 'SQL database,',
-    headlineAccent: 'in the region you choose.',
+    headlineAccent: 'with regional read replicas.',
     cta: 'Start free',
   },
 
+
   features: {
-    titleLead: 'What Public Alpha covers,',
-    titleAccent: 'and where it stops.',
+    titleLead: 'SQL databases',
+    titleAccent: 'and read replicas.',
     items: [
-      {
-        headline: 'SQL with tables, indexes, and foreign keys',
-        text: 'Create tables, indexes, views, and triggers in the SQLite dialect. Foreign keys are always enforced, JSON columns work with json_extract, and up to 256 statements commit as one transaction.',
-      },
-      {
-        headline: 'Connect with psql, HTTP, or the CLI',
-        text: 'Postgres clients connect over the wire protocol with an API key as the password. The HTTP API, the CLI, and the SDKs run the same SQL; MCP clients run read-only queries.',
-      },
-      {
-        headline: 'One home region per database',
-        text: 'Pick São Paulo, the San Francisco Bay Area, or Frankfurt when you create a database. It is stored and served in that region.',
-      },
-      {
-        headline: 'Status published, not promised',
-        text: 'Current availability and API latency are published on the status page. There is no uptime percentage, latency promise, or SLA.',
-      },
-      {
-        headline: 'Encrypted in transit and at rest',
-        text: 'Customer traffic requires TLS 1.2 or newer, data at rest uses qualified encryption, and every request requires authorization.',
-      },
+      { headline: 'SQL tables, indexes and foreign keys' },
+      { headline: 'psql, HTTP and WebSocket connections' },
+      { headline: 'Encrypted read replicas in other regions' },
+      { headline: 'Filtered live shapes with table read grants' },
+      { headline: 'Agent databases with TTL, forks and scoped keys' },
+      { headline: 'Database deletion destroys backup keys' },
     ],
   },
 
@@ -130,11 +117,11 @@ export const en = {
       },
       {
         q: 'Which regions serve today?',
-        a: 'São Paulo (gru), the San Francisco Bay Area (sjc), and Frankfurt (fra). Each database lives in one home region, chosen when you create it.',
+        a: 'São Paulo (gru), the San Francisco Bay Area (sjc), and Frankfurt (fra). Choose one home region for writes and other regions for encrypted read replicas.',
       },
       {
         q: 'Is my database copied to other regions?',
-        a: 'Not today. A database is stored and served only in its home region. Backups protect it against data loss.',
+        a: 'Yes. Choose replica regions to keep encrypted read-only copies outside the home region. REST can read a ready local replica; local psql and WebSocket reads are coming. Replicas are eventually consistent. Writes go to the home region, reached from any serving region.',
       },
       {
         q: 'Can I use my Postgres tools?',
@@ -150,7 +137,7 @@ export const en = {
       },
       {
         q: 'How is my data protected?',
-        a: 'Customer traffic requires TLS 1.2 or newer, data at rest uses qualified encryption, and every request requires authorization.',
+        a: 'Customer traffic uses TLS and database files, replicas and backups are encrypted at rest. Database deletion destroys its backup data keys so retained encrypted backups cannot be restored. Physical cleanup is a separate step.',
       },
       {
         q: 'What does it cost to start?',
@@ -160,6 +147,9 @@ export const en = {
         q: 'Can I export my data and leave?',
         a: 'Yes. Export through the dashboard or API at any time. There is no exit fee for leaving TerraScale.',
       },
+      { q: 'Can clients subscribe to part of a table?', a: 'Yes. Live shapes support filters and selected columns. Table read grants let end-user tokens read allowed tables; a shape filter does not replace authorization.' },
+      { q: 'Can I give an agent its own database?', a: 'Yes. Create a database with a TTL, fork a database, and issue a key scoped to one database with read or read-write access. Expiry deletes the database. Point-in-time restore to a new database is available; in-place restore is coming.' },
+      { q: 'Can I cap usage?', a: 'Yes. Plans enforce monthly write caps and SQL read fair use. The write cap stops new writes; the read allowance stops SQL reads while shape reads stay available. Customer-set hard spending caps are coming.' },
     ],
     contactSales: 'Contact us',
   },
@@ -234,18 +224,9 @@ export const en = {
       title: 'Storage, operations, and client egress.',
     },
     triad: [
-      {
-        title: 'Storage',
-        text: 'Decimal GB stored, averaged over the month',
-      },
-      {
-        title: 'Operation units',
-        text: 'Each started 4 KiB read or written',
-      },
-      {
-        title: 'Allowances then usage',
-        text: 'Operation units over a paid allowance go on the next invoice and storage over it is billed per GB-month; client egress overage is not billed yet',
-      },
+      { title: 'Storage in the home region' },
+      { title: 'Writes counted in 4 KiB units' },
+      { title: 'Write caps on every plan' },
     ],
     compare: {
       title: 'Plan allowances.',
@@ -265,7 +246,7 @@ export const en = {
       storageLimit: 'Storage limit',
       pitr: 'Point-in-time recovery',
       backupRetention: 'Backup retention',
-      regionsPerDatabase: 'Regions per database',
+      regionsPerDatabase: 'Home regions per database',
       support: 'Support response target',
       noCeiling: 'No plan ceiling',
       seconds: '{n} s',
@@ -290,7 +271,7 @@ export const en = {
         {
           item: 'Operation units',
           unit: '/million units',
-          details: 'Each started 4 KiB of each successful read or write counts separately.',
+          details: 'Each started 4 KiB successfully written counts separately; every changed row counts at least one unit.',
         },
         {
           item: 'Storage',
@@ -311,7 +292,7 @@ export const en = {
       items: [
         {
           q: 'What is an operation unit?',
-          a: 'One operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written. Lists, queries, and batches count each item independently. Failed, denied, invalid, throttled, and not-found requests are not billed.',
+          a: 'A write unit is each started 4 KiB (4,096 bytes) successfully written. Every changed row counts at least one unit. SQL reads are not billed and count toward monthly fair use; shape reads served from the edge are free. Failed, denied, invalid, throttled and not-found requests are not billed.',
         },
         {
           q: 'What if I need more operations, storage, or egress?',
@@ -329,6 +310,7 @@ export const en = {
           q: 'What does Enterprise include?',
           a: 'Enterprise has a ${enterprisePriceUsd} monthly support base plus usage. Contact sales for terms; Enterprise is not sold through checkout.',
         },
+        { q: 'How are replicas billed?', a: 'The catalog lists one home region per database on every plan. Writes and stored bytes are counted in the home region; replica storage has no separate charge. Plan write caps and SQL read fair use apply.' },
       ],
       contactSales: 'Contact Sales',
     },
@@ -359,18 +341,9 @@ export const en = {
     regionsAria: 'Serving regions',
     missionTitle: 'One platform for databases, keys, and billing.',
     pillars: [
-      {
-        title: 'TerraBase foundation',
-        text: 'TerraScale is built on TerraBase, which runs SQL on Turso behind one public platform surface.',
-      },
-      {
-        title: 'One home region',
-        text: 'Each database is stored and served in the region you pick when you create it.',
-      },
-      {
-        title: 'Usage-aware billing',
-        text: 'Free requires no card. Paid plans bill operation units over the allowance on the next invoice and storage over it is billed per GB-month; client egress overage is not billed yet.',
-      },
+      { title: 'SQL on Turso' },
+      { title: 'One write region, encrypted read replicas' },
+      { title: 'Plan write caps' },
     ],
     bandTitle: 'Flat regional pricing, metered by real use.',
     bandText:

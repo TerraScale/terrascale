@@ -17,17 +17,16 @@ const usageCaveats = {
 const overageRules = { en: /next (?:subscription )?invoice/i, es: /próxima factura/i, 'pt-BR': /próxima fatura/i };
 const staleClaims = /not yet collected|aún no se cobran|ainda não são coletadas|self-service purchase|compra directa|contratação direta|confirm (?:paid plan )?enrollment/i;
 const operationRules = { en: /each started 4 KiB/i, es: /cada 4 KiB.*iniciados/i, 'pt-BR': /cada 4 KiB.*iniciados/i };
-// Each database lives in one home region, so no copy may describe or price replication.
-const replication = /replic/i;
+// Replicas do not multiply customer writes or the billed storage.
 
 for (const [locale, messages] of locales) {
-  test(`${locale}: operation units count each started 4 KiB and never mention replication`, () => {
-    for (const copy of [messages.pricing.triad[1].text, messages.pricing.detailed.rows[0].details,
+  test(`${locale}: operation units count each started 4 KiB without replica write charges`, () => {
+    for (const copy of [messages.pricing.detailed.rows[0].details,
       messages.pricing.faq.items[0].a]) {
       assert.match(copy, operationRules[locale]);
     }
-    assert.doesNotMatch(JSON.stringify(messages), replication);
-    assert.doesNotMatch(JSON.stringify(catalog), replication);
+    assert.match(catalog.metering.storage.definition, /Replica storage is not billed separately/);
+    assert.ok(catalog.plans.every((plan) => plan.entitlements.regionsPerDatabase === 1));
     assert.ok(catalog.metering.operationUnit.rules.includes('Each database lives in one home region; writes count there.'));
   });
   test(`${locale}: pricing states the overage rule, storage billing and the egress caveat`, () => {
@@ -40,8 +39,8 @@ for (const [locale, messages] of locales) {
     // Free, Starter, Pro and Team each have their own checkout action; Enterprise goes to sales.
     for (const plan of Object.values(messages.pricing.plans)) assert.ok(plan.cta.trim());
     assert.equal(new Set(Object.values(messages.pricing.plans).map((plan) => plan.cta)).size, 5);
-    for (const copy of [messages.pricing.triad[2].text, messages.pricing.detailed.text,
-      messages.pricing.faq.items[1].a, messages.about.pillars[2].text]) {
+    for (const copy of [messages.pricing.detailed.text,
+      messages.pricing.faq.items[1].a]) {
       assert.match(copy, usageCaveats[locale]);
     }
   });
