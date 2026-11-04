@@ -150,6 +150,7 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
     {
         var snapshot = reader.GetWalState();
         var size = PageCount(reader);
+        var pageSize = reader.PageSize;
         lock (_gate)
         {
             ThrowIfFenced();
@@ -160,7 +161,7 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
                 throw new InvalidOperationException("a pull snapshot must match the revision index it was planned against");
             }
 
-            var reservation = memory?.TryReserve(MemoryLane.Bulk, BaseBytes + (IndexedPages() * PageNumberBytes * 2), tenant);
+            var reservation = memory?.TryReserve(MemoryLane.Bulk, BaseBytes + (IndexedPages() * PageNumberBytes * 2) + RevisionPullPlan.BatchBytes + pageSize, tenant);
             if (memory is not null && reservation is null)
             {
                 throw new StorageBusyException();
@@ -170,7 +171,7 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
             {
                 var plan = RevisionPlanner.Plan(_manifest, _live, clientRevision);
                 uint[]? pages = plan.Full is null ? [.. plan.Pages.Where(number => number <= size).Order()] : null;
-                return new RevisionPullPlan(_manifest.Current(snapshot.MaxFrame), plan.Full, pages, size, reservation);
+                return new RevisionPullPlan(_manifest.Current(snapshot.MaxFrame), plan.Full, pages, size, pageSize, reservation);
             }
             catch
             {
@@ -180,32 +181,22 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
         }
     }
 
-    internal static RevisionPullResult Stream(SqliteConnection reader, RevisionPullPlan plan, Action<uint, ReadOnlySpan<byte>> page, CancellationToken cancellationToken)
+    internal static int ReadBatch(SqliteConnection reader, RevisionPullPlan plan, int start, uint[] numbers, byte[] pages, CancellationToken cancellationToken)
     {
-        var pages = plan.Pages ?? Enumerable.Range(1, (int)plan.DatabaseSize).Select(number => (uint)number);
-        var sent = 0;
-        var buffer = ArrayPool<byte>.Shared.Rent(reader.PageSize);
-        try
+        var count = Math.Min(plan.BatchPages, plan.Count - start);
+        for (var index = 0; index < count; index++)
         {
-            var span = buffer.AsSpan(0, reader.PageSize);
-            foreach (var number in pages)
+            cancellationToken.ThrowIfCancellationRequested();
+            var number = plan.PageAt(start + index);
+            if (!reader.TryReadSnapshotPage(number, pages.AsSpan(index * plan.PageSize, plan.PageSize)))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!reader.TryReadSnapshotPage(number, span))
-                {
-                    throw StoredDataCorruption.Create(string.Create(CultureInfo.InvariantCulture, $"page {number} of {plan.DatabaseSize} is missing at frame {plan.Revision.Frame}"));
-                }
-
-                page(number, span);
-                sent++;
+                throw StoredDataCorruption.Create(string.Create(CultureInfo.InvariantCulture, $"page {number} of {plan.DatabaseSize} is missing at frame {plan.Revision.Frame}"));
             }
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(buffer);
+
+            numbers[index] = number;
         }
 
-        return new RevisionPullResult(plan.Revision, plan.Full, sent, plan.DatabaseSize);
+        return count;
     }
 
     public void Dispose()
@@ -230,6 +221,11 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
         var needed = BaseBytes + (IndexedPages() * IndexEntryBytes);
         if (_retained is { } held && held.Bytes >= needed)
         {
+            if (held.Bytes > 2 * needed)
+            {
+                memory.Shrink(held, held.Bytes - needed);
+            }
+
             return;
         }
 

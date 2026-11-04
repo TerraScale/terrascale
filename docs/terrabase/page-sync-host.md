@@ -16,9 +16,12 @@ TerraBase serves Turso Sync page pull for its own databases, inside the TerraBas
 
 `server_revision` is the durable revision `ts1:<incarnation>:<generation>:<frame>` from the revision ledger (R1). A client revision that the retained history cannot serve incrementally gets every page: bootstrap, an unrecognized revision, another incarnation, a revision ahead of history, an expired one, or a rewritten database. The client applies a full answer as a rebootstrap.
 
+## Streaming
+
+An answer streams in bounded batches. The pull plans against one read snapshot, writes the header, then reads at most 256 KiB of pages on a storage thread and writes and flushes them to the HTTP/2 stream before it reads the next batch. HTTP/2 flow control pushes back on the reads, so a pull holds about one batch in memory, whatever the database size. The batch is reserved from the memory budget with the plan. The revision index returns reservation it no longer needs after checkpoints trim it, so a tenant whose index once peaked can still pull. The read snapshot, its pooled connection and its storage admission are held until the last page is sent, so a slow replica holds them longer. A failure after the header, including a copy fault noticed after the last page, resets the stream.
+
 ## Status (work in progress, landed when the pivot halted)
 
-- **Buffered answers.** The endpoint collects every page of an answer in memory before it writes the header, because the revision API hands pages to a synchronous callback. A full answer therefore costs memory equal to the database size. Streaming in bounded batches across awaits is not done.
 - **Client change log collision.** Turso's sync client keeps its own local change log in a table named `turso_cdc`. TerraBase captures changes in a table of the same name on every database, and page pull copies it to the replica. The client then replays the home's captured changes as its own local writes. The first incremental pull fails with "failed to replay local change after remote apply: Corrupt database". `src/vendor/Turso.Native/patches/0006-sync-client-own-cdc-table.patch` moves the client's log to `turso_sync_cdc`. It is in the pinned combined release `turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-20261029` (maintenance run 40945318877).
 
 ## Client and native artifact
@@ -27,5 +30,6 @@ Clients are Turso's official sync clients. The tests use the vendored upstream .
 
 ## Proof
 
-- Fast: `PageSyncTests`. The official client bootstraps, pulls inserts, an update and a delete, and pulls across a checkpoint. It then gets an empty pull. A bad peer credential, the public listener, a crossed or unknown database, and a partial pull are each refused.
+- Fast: `PageSyncTests`. The official client bootstraps, pulls inserts, an update and a delete, and pulls across a checkpoint. It then gets an empty pull. A bad peer credential, the public listener, a crossed or unknown database, and a partial pull are each refused. A copy fault after the header resets the stream, so the reader gets an I/O error instead of a clean end.
+- Slow: `BoundedPullMemoryTests`. In its own process, a 706 MiB database (180,774 pages) is fully pulled through a server with a 32 MiB memory budget. Peak RSS growth during the pull stays under 64 MiB (measured 23–30 MiB on beta, 2026-11-04).
 - Slow: `ThousandDatabaseSyncTests`. 1,000 databases are bootstrapped and pulled through the host by the official client, with zero wrong-tenant rows. A bad credential is refused.

@@ -1,7 +1,12 @@
+using System.Net.Http.Headers;
+using Bogus;
+using Google.Protobuf;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
+using TerraBase.Features.Sync;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using Turso;
 
@@ -19,14 +24,70 @@ internal static class SyncReplicas
 
     public static async Task ExecuteAsync(this TerraBaseTestServer server, TenantContext database, string sql)
     {
-        var store = (TursoDatabaseStore?)await server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
-            ?? throw new InvalidOperationException("the database does not exist");
+        var store = await server.StoreAsync(database);
         await store.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
             command.CommandText = sql;
             return command.ExecuteNonQuery();
         }, "a sync test write", CancellationToken.None);
+    }
+
+    public static async Task FillAsync(this TerraBaseTestServer server, TenantContext database, long bytes)
+    {
+        const int RowBytes = 3000;
+        const int RowsPerStatement = 300;
+        var faker = new Faker();
+        for (long written = 0; written < bytes; written += RowBytes * RowsPerStatement)
+        {
+            await server.ExecuteAsync(database, "INSERT INTO items(id, tenant, v) VALUES "
+                + string.Join(", ", Enumerable.Range(0, RowsPerStatement).Select(_ => $"('{EntityIds.New()}', '{database.DatabaseId}', '{faker.Random.AlphaNumeric(RowBytes)}')")));
+        }
+    }
+
+    public static async Task<TursoDatabaseStore> StoreAsync(this TerraBaseTestServer server, TenantContext database) =>
+        (TursoDatabaseStore?)await server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
+        ?? throw new InvalidOperationException("the database does not exist");
+
+    public static async Task<HttpResponseMessage> StartPullAsync(this TerraBaseTestServer server, TenantContext database, CancellationToken cancellationToken)
+    {
+        using var content = new ByteArrayContent(new PullUpdatesRequest().ToByteArray());
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/protobuf");
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(server.PullAddress(database) + "/pull-updates")) { Content = content };
+        var response = await server.Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            using (response)
+            {
+                throw new HttpRequestException($"the pull answered {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync(cancellationToken)}");
+            }
+        }
+
+        return response;
+    }
+
+    public static async Task<T?> ReadMessageAsync<T>(this Stream answer, MessageParser<T> parser, CancellationToken cancellationToken)
+        where T : IMessage<T>
+    {
+        var length = 0;
+        var single = new byte[1];
+        for (var shift = 0; ; shift += 7)
+        {
+            if (await answer.ReadAsync(single, cancellationToken) == 0)
+            {
+                return shift == 0 ? default : throw new EndOfStreamException("the pull ended inside a length prefix");
+            }
+
+            length |= (single[0] & 0x7F) << shift;
+            if (single[0] < 0x80)
+            {
+                break;
+            }
+        }
+
+        var message = new byte[length];
+        await answer.ReadExactlyAsync(message, cancellationToken);
+        return parser.ParseFrom(message);
     }
 
     public static Uri PullAddress(this TerraBaseTestServer server, TenantContext database, Uri? listener = null) =>

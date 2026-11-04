@@ -83,6 +83,27 @@ public sealed class PageSyncTests
         }
     }
 
+    [Test]
+    public async Task AFaultAfterTheHeaderResetsThePullInsteadOfEndingIt(CancellationToken cancellationToken)
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+        var database = await server.CreateSyncedDatabaseAsync();
+        await server.FillAsync(database, 8 * 1024 * 1024);
+
+        using var response = await server.StartPullAsync(database, cancellationToken);
+        await using var answer = new BufferedStream(await response.Content.ReadAsStreamAsync(cancellationToken));
+        var header = await answer.ReadMessageAsync(PullUpdatesHeader.Parser, cancellationToken);
+        await Assert.That(header!.DbSize).IsGreaterThan(1000UL);
+
+        (await server.StoreAsync(database)).NoteCopyFault("a page sync test fault");
+        await Assert.That(async () =>
+        {
+            while (await answer.ReadMessageAsync(PageData.Parser, cancellationToken) is not null)
+            {
+            }
+        }).Throws<IOException>();
+    }
+
     private async Task InsertAsync(TerraBaseTestServer server, TenantContext database, SortedDictionary<string, string> expected, int rows)
     {
         var values = Enumerable.Range(0, rows).Select(_ => (Id: EntityIds.New().ToString(), Value: _faker.Lorem.Sentence())).ToList();

@@ -66,6 +66,14 @@ internal sealed class MemoryBudget : IMemoryBudget
 
     public bool TryGrow(IMemoryReservation reservation, long bytes) => reservation is Reservation owned && owned.TryGrow(this, bytes);
 
+    public void Shrink(IMemoryReservation reservation, long bytes)
+    {
+        if (reservation is Reservation owned)
+        {
+            owned.Shrink(this, bytes);
+        }
+    }
+
     private sealed class Reservation(MemoryBudget budget, long bytes, string? organization, long tenantLimit) : IMemoryReservation
     {
         private long _bytes = bytes;
@@ -98,6 +106,28 @@ internal sealed class MemoryBudget : IMemoryBudget
                 budget._reserved += more;
                 _bytes += more;
                 return true;
+            }
+        }
+
+        public void Shrink(MemoryBudget issuer, long less)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(less);
+            lock (budget._gate)
+            {
+                if (issuer != budget || Volatile.Read(ref _released) != 0)
+                {
+                    return;
+                }
+
+                less = Math.Min(less, _bytes);
+                if (organization is not null)
+                {
+                    var current = budget._tenants[organization];
+                    budget._tenants[organization] = current with { Bytes = current.Bytes - less };
+                }
+
+                budget._reserved -= less;
+                _bytes -= less;
             }
         }
 

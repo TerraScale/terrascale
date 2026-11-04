@@ -1,6 +1,7 @@
-using System.Buffers;
+using System.IO.Pipelines;
 using Google.Protobuf;
 using TerraBase.Engine;
+using TerraBase.Engine.Revisions;
 using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -8,7 +9,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Sync;
 
-internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRevisions revisions) : EndpointWithoutRequest<IResult>
+internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRevisions revisions) : EndpointWithoutRequest<IResult>, IRevisionPullSink
 {
     private const string MediaType = "application/protobuf";
     private const int MaxBodyBytes = 64 * 1024;
@@ -105,32 +106,73 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
 
     private async ValueTask<IResult> PullAsync(TenantContext database, string clientRevision, CancellationToken cancellationToken)
     {
-        var pages = new ArrayBufferWriter<byte>();
-        var answer = await revisions.PullAsync(database, clientRevision.Length == 0 ? null : clientRevision,
-            (number, page) => Write(pages, new PageData { PageId = number - 1UL, EncodedPage = ByteString.CopyFrom(page) }), cancellationToken).ConfigureAwait(false);
+        RevisionPullResult? answer;
+        try
+        {
+            answer = await revisions.PullAsync(database, clientRevision.Length == 0 ? null : clientRevision, this, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (HttpContext.Response.HasStarted)
+        {
+            HttpContext.Abort();
+            if (error is OperationCanceledException or IOException)
+            {
+                return Results.Empty;
+            }
+
+            throw;
+        }
+
         if (answer is null)
         {
             return ErrorResponse.From(new NotFound("the database is not stored on this node"));
         }
 
+        await HttpContext.Response.BodyWriter.FlushAsync(cancellationToken).ConfigureAwait(false);
+        return Results.Empty;
+    }
+
+    async ValueTask IRevisionPullSink.StartAsync(RevisionPullStart start, CancellationToken cancellationToken)
+    {
         var response = HttpContext.Response;
         response.StatusCode = StatusCodes.Status200OK;
         response.ContentType = MediaType;
         response.Headers.CacheControl = "no-store";
         Write(response.BodyWriter, new PullUpdatesHeader
         {
-            ServerRevision = answer.Revision.ToString(),
-            DbSize = answer.DatabaseSize,
+            ServerRevision = start.Revision.ToString(),
+            DbSize = start.DatabaseSize,
             RawEncoding = new RawPageEncoding(),
             StreamKind = StreamKind.Pages,
             Protocol = PullProtocol.Pages,
         });
-        response.BodyWriter.Write(pages.WrittenSpan);
-        await response.BodyWriter.FlushAsync(cancellationToken).ConfigureAwait(false);
-        return Results.Empty;
+        await FlushAsync(response.BodyWriter, cancellationToken).ConfigureAwait(false);
     }
 
-    private static void Write(IBufferWriter<byte> writer, IMessage message)
+    async ValueTask IRevisionPullSink.WriteAsync(RevisionPageBatch batch, CancellationToken cancellationToken)
+    {
+        var writer = HttpContext.Response.BodyWriter;
+        for (var index = 0; index < batch.Numbers.Length; index++)
+        {
+            Write(writer, new PageData
+            {
+                PageId = batch.Numbers.Span[index] - 1UL,
+                EncodedPage = UnsafeByteOperations.UnsafeWrap(batch.Pages.Slice(index * batch.PageSize, batch.PageSize)),
+            });
+        }
+
+        await FlushAsync(writer, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask FlushAsync(PipeWriter writer, CancellationToken cancellationToken)
+    {
+        var flushed = await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+        if (flushed.IsCompleted || flushed.IsCanceled)
+        {
+            throw new OperationCanceledException("the replica stopped reading the pull", cancellationToken);
+        }
+    }
+
+    private static void Write(PipeWriter writer, IMessage message)
     {
         var length = (uint)message.CalculateSize();
         var prefix = writer.GetSpan(5);

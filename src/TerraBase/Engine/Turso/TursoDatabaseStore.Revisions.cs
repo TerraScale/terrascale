@@ -1,4 +1,6 @@
+using System.Buffers;
 using TerraBase.Engine.Revisions;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Engine.Turso;
 
@@ -22,7 +24,7 @@ internal sealed partial class TursoDatabaseStore
         }
     }
 
-    internal async Task<RevisionPullResult> PullRevisionAsync(string? clientRevision, Action<uint, ReadOnlySpan<byte>> page, CancellationToken cancellationToken)
+    internal async Task<RevisionPullResult> PullRevisionAsync(string? clientRevision, IRevisionPullSink sink, CancellationToken cancellationToken)
     {
         if (Ledger is { } ledger && !IsSystem)
         {
@@ -51,7 +53,7 @@ internal sealed partial class TursoDatabaseStore
             }, "a revision pull", cancellationToken).ConfigureAwait(false);
             try
             {
-                result = await io.RunAsync(() => TursoRevisionLedger.Stream(reader.Connection, plan, page, cancellationToken), cancellationToken).ConfigureAwait(false);
+                result = await StreamAsync(reader.Connection, plan, sink, cancellationToken).ConfigureAwait(false);
             }
             finally
             {
@@ -69,6 +71,31 @@ internal sealed partial class TursoDatabaseStore
 
         await ReturnAsync(reader).ConfigureAwait(false);
         return result;
+    }
+
+    private async Task<RevisionPullResult> StreamAsync(SqliteConnection reader, RevisionPullPlan plan, IRevisionPullSink sink, CancellationToken cancellationToken)
+    {
+        await sink.StartAsync(new RevisionPullStart(plan.Revision, plan.Full, plan.DatabaseSize), cancellationToken).ConfigureAwait(false);
+        var numbers = ArrayPool<uint>.Shared.Rent(plan.BatchPages);
+        var pages = ArrayPool<byte>.Shared.Rent(plan.BatchPages * plan.PageSize);
+        try
+        {
+            var sent = 0;
+            while (sent < plan.Count)
+            {
+                var start = sent;
+                var count = await io.RunAsync(() => TursoRevisionLedger.ReadBatch(reader, plan, start, numbers, pages, cancellationToken), cancellationToken).ConfigureAwait(false);
+                await sink.WriteAsync(new RevisionPageBatch(numbers.AsMemory(0, count), pages.AsMemory(0, count * plan.PageSize), plan.PageSize), cancellationToken).ConfigureAwait(false);
+                sent += count;
+            }
+
+            return new RevisionPullResult(plan.Revision, plan.Full, sent, plan.DatabaseSize);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(pages);
+            ArrayPool<uint>.Shared.Return(numbers);
+        }
     }
 
     private void RefuseFaultedCopy()

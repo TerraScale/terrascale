@@ -16,4 +16,7 @@ public interface IMemoryBudget
     IMemoryReservation? TryReserve(MemoryLane lane, long bytes);
     IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant);
     bool TryGrow(IMemoryReservation reservation, long bytes) => false;
+    void Shrink(IMemoryReservation reservation, long bytes)
+    {
+    }
 }

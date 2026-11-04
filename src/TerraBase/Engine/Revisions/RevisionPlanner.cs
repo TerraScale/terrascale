@@ -17,8 +17,20 @@ internal readonly record struct RevisionPlan(FullReason? Full, IReadOnlySet<uint
 
 internal sealed record RevisionPullResult(DatabaseRevision Revision, FullReason? Full, int Pages, uint DatabaseSize);
 
-internal sealed record RevisionPullPlan(DatabaseRevision Revision, FullReason? Full, uint[]? Pages, uint DatabaseSize, IDisposable? Reservation) : IDisposable
+internal readonly record struct RevisionPullStart(DatabaseRevision Revision, FullReason? Full, uint DatabaseSize);
+
+internal readonly record struct RevisionPageBatch(ReadOnlyMemory<uint> Numbers, ReadOnlyMemory<byte> Pages, int PageSize);
+
+internal sealed record RevisionPullPlan(DatabaseRevision Revision, FullReason? Full, uint[]? Pages, uint DatabaseSize, int PageSize, IDisposable? Reservation) : IDisposable
 {
+    public const int BatchBytes = 256 * 1024;
+
+    public int Count => Pages?.Length ?? (int)DatabaseSize;
+
+    public int BatchPages => Math.Max(1, BatchBytes / PageSize);
+
+    public uint PageAt(int index) => Pages?[index] ?? (uint)(index + 1);
+
     public void Dispose() => Reservation?.Dispose();
 }
 

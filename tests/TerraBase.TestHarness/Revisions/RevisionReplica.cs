@@ -19,16 +19,16 @@ internal sealed class RevisionReplica
 
     public async Task<RevisionPullResult> PullAsync(TerraBaseTestServer server, TenantContext database)
     {
-        var received = new Dictionary<uint, byte[]>();
+        var received = new ReceivedPages();
         var result = await server.Services.GetRequiredService<IDatabaseRevisions>()
-            .PullAsync(database, Revision, (number, page) => received[number] = page.ToArray(), CancellationToken.None)
+            .PullAsync(database, Revision, received, CancellationToken.None)
             ?? throw new InvalidOperationException("the database does not exist");
         if (result.Full is not null)
         {
             _pages.Clear();
         }
 
-        foreach (var (number, page) in received)
+        foreach (var (number, page) in received.Pages)
         {
             _pages[number] = page;
         }
@@ -86,6 +86,23 @@ internal sealed class RevisionReplica
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+}
+
+internal sealed class ReceivedPages : IRevisionPullSink
+{
+    public Dictionary<uint, byte[]> Pages { get; } = [];
+
+    public ValueTask StartAsync(RevisionPullStart start, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+
+    public ValueTask WriteAsync(RevisionPageBatch batch, CancellationToken cancellationToken)
+    {
+        for (var index = 0; index < batch.Numbers.Length; index++)
+        {
+            Pages[batch.Numbers.Span[index]] = batch.Pages.Slice(index * batch.PageSize, batch.PageSize).ToArray();
+        }
+
+        return ValueTask.CompletedTask;
     }
 }
 
