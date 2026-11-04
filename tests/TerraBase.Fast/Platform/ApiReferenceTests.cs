@@ -58,6 +58,7 @@ public sealed class ApiReferenceTests
         POST /v1/projects/{project}/databases/{database}/branches TsAuth(databases:write) branchDatabase Databases
         POST /v1/projects/{project}/databases/{database}/branches/if-id/{expectedId} TsAuth(databases:write) branchDatabaseIfId Databases
         POST /v1/projects/{project}/databases/{database}/functions/{function}/invoke TsAuth(sql:read) invokeFunction Functions
+        POST /v1/projects/{project}/databases/{database}/move-home TsAuth(databases:write) moveDatabaseHome Databases
         POST /v1/projects/{project}/databases/{database}/point-in-time/plan TsAuth(databases:read) planPointInTime Backups
         POST /v1/projects/{project}/databases/{database}/point-in-time/restore TsAuth(databases:write) restorePointInTime Backups
         POST /v1/projects/{project}/databases/{database}/point-in-time/rewind TsAuth(databases:write) rewindPointInTime Backups

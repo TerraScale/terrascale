@@ -200,6 +200,7 @@ internal sealed class SqlExecuteEndpoint(
         if (failure.Error.Home is { } home)
         {
             HttpContext.Response.Headers["X-TerraBase-Database-Home"] = home;
+            HttpContext.Response.Headers.Location = HomeForwarding.RetryUrl(HttpContext, home);
             Listeners.ReplayIn(HttpContext, home);
         }
 
