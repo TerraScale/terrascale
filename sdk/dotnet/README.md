@@ -187,9 +187,16 @@ TerraBaseManagedDatabase app = await client.Project(projectId).CreateDatabaseAsy
 TerraBaseManagedDatabase copy = await client.Database(projectId, "app").BranchAsync("app-copy", cancellationToken);
 ```
 
-A database is stored and served in exactly one region, its `HomeRegion`. `CreateDatabaseAsync` without a home region
-uses the called region. Call `DeleteDatabaseAsync` in the database's region. A 204 response records logical deletion
-and local cleanup; branches remain independent.
+`HomeRegion` names the write region. `CreateDatabaseAsync` without a home region uses the called region.
+
+A database has one home region for writes and can have encrypted read replicas in other serving regions.
+REST reads can use a ready local replica; writes route to the home from any serving region. Replicas are eventually
+consistent: read from the home when you need to see your latest write. Local replica reads over psql and SQL
+WebSocket are coming. Automatic all-regions placement is coming; use an explicit replica-region list today.
+
+The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
+storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data
+keys, making retained encrypted backups unreadable; physical cleanup is separate. Forks remain independent.
 
 ```csharp
 // Use the ts-orch NetBird service address; the caller configures the required peer credential on httpClient.

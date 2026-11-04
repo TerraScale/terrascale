@@ -103,14 +103,15 @@ for these methods has not run; this evidence does not establish deployed TTL del
 
 ```js
 const db = await client.createDatabase(project, "orders", { homeRegion: "gru", replicaRegions: ["sjc"] });
-await client.setDatabasePlacement(project, db.id, { allRegions: true });
-await client.moveDatabaseHome(project, db.id, "sjc");
+await client.setDatabasePlacement(project, db.id, { replicaRegions: ["sjc", "fra"] });
 ```
 
 Databases carry `homeRegion`, `replicaRegions` and `allRegions`. `setDatabasePlacement` takes exactly one of
 `replicaRegions` or `allRegions`. `moveDatabaseHome` waits for the move without a client timeout and resends only on
 `503 move_unresolved` (at most 5 times, after `Retry-After` or 1 s). Encoding and decoding are covered by the
 [recorded placement fixtures](../dotnet/contracts/terrabase/placement/); live producer qualification has not run.
+
+Automatic all-regions placement and moving the home region are coming on the server.
 
 ## Atlas and endpoint selection
 
@@ -175,9 +176,16 @@ authorization belong to the producer. SQL reads need the data read scope; writes
 scope, checked per statement. Keep service credentials private and out of logs and browser bundles.
 `createTerraBaseClient` is an alias of `createTerraBaseV1Client`.
 
-Each database is stored and served in one region. `client.databases.create({ name })` uses the called region;
-`homeRegion` selects another serving region. Call `client.databases.delete(name)` in that region. A 204 response
-records logical deletion and local cleanup; branches remain independent.
+`client.databases.create({ name })` uses the called region as the home; `homeRegion` selects another serving region.
+
+A database has one home region for writes and can have encrypted read replicas in other serving regions.
+REST reads can use a ready local replica; writes route to the home from any serving region. Replicas are eventually
+consistent: read from the home when you need to see your latest write. Local replica reads over psql and SQL
+WebSocket are coming. Automatic all-regions placement is coming; use an explicit replica-region list today.
+
+The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
+storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data
+keys, making retained encrypted backups unreadable; physical cleanup is separate. Forks remain independent.
 
 Project and database IDs are canonical uppercase 26-character ULIDs. `generateId()`, `isValidId()` and `requireId()`
 retain that entity-ID contract; use `generateId()` for primary keys of tables that take local writes.
@@ -227,8 +235,8 @@ todos.close();
 listener runs after the snapshot and after every change, with `rows` keyed by row id (a decimal string) and
 `upToDate` once the shape reached the table's head. Row values decode like SQL results (`Uint8Array` blobs).
 A schema change of the table restarts the shape from a new snapshot; transient refusals and lost connections retry
-with backoff; authentication, scope and unknown-table errors reject `done`. It needs the data read scope; end-user
-tokens are not accepted yet.
+with backoff; authentication, scope and unknown-table errors reject `done`. It needs the data read scope, or an end-user token with a read grant for the selected table.
+Table grants authorize access; shape filters do not replace authorization.
 
 ```js
 const open = db.shape("todos", { where: "done = 0", columns: ["id", "title"] }).subscribe(({ rows }) => render(rows));
