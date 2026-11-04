@@ -13,7 +13,7 @@ public class TerraBaseException : HttpRequestException
     private const int MaxErrorBytes = 64 * 1024;
     private const int MaxMessageLength = 1024;
 
-    internal TerraBaseException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
+    internal TerraBaseException(HttpStatusCode? statusCode, string message, string? errorCode, int? operationIndex)
         : base(message, inner: null, statusCode)
     {
         ErrorCode = errorCode;
@@ -55,7 +55,7 @@ public class TerraBaseException : HttpRequestException
         string? code = null;
         string? message = null;
         int? op = null, statement = null;
-        string? sqliteCode = null;
+        string? sqlstate = null;
         string? machine = null, outcomeRegion = null;
         var details = new List<TerraBaseValidationDetail>();
         try
@@ -86,7 +86,7 @@ public class TerraBaseException : HttpRequestException
                         }
                     }
                     statement = error.TryGetProperty("statement", out var s) && s.ValueKind == JsonValueKind.Number && s.TryGetInt32(out var index0) ? index0 : null;
-                    sqliteCode = error.TryGetProperty("sqlite_code", out var sc) && sc.ValueKind == JsonValueKind.String ? Clean(sc.GetString()) : null;
+                    sqlstate = error.TryGetProperty("sqlstate", out var sc) && sc.ValueKind == JsonValueKind.String ? Clean(sc.GetString()) : null;
                     op = error.TryGetProperty("op", out var o) && o.ValueKind == JsonValueKind.Number && o.TryGetInt32(out var index) ? index : null;
                 }
             }
@@ -100,9 +100,7 @@ public class TerraBaseException : HttpRequestException
         var text = Clean(message) ?? $"TerraBase answered HTTP {(int)status}{(code is null ? null : $" ({Clean(code)})")}.";
         TerraBaseException exception = (int)status switch
         {
-            // Only the SQL execute route names a statement and its SQLite code.
-            400 or 403 or 409 or 413 when code is not null && statement is { } failed && sqliteCode is not null =>
-                new TerraBaseSqlException(status, text, code, failed, sqliteCode),
+            _ when code is not null && statement is { } failed && sqlstate is not null => new TerraBaseSqlException(status, text, code, failed, sqlstate),
             400 or 413 or 415 => new TerraBaseValidationException(status, text, code, op),
             401 when code == "key_revoked" => new TerraBaseKeyRevokedException(status, text, code, op),
             401 when code == "key_expired" => new TerraBaseKeyExpiredException(status, text, code, op),

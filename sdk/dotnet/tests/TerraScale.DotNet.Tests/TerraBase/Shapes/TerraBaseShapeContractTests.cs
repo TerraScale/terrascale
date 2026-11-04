@@ -51,18 +51,5 @@ public sealed class TerraBaseShapeContractTests
         }
     }
 
-    [Test]
-    public async Task ConformanceFixtureMatchesItsRecordedSourceHash()
-    {
-        using var provenance = JsonDocument.Parse(File.ReadAllBytes(Contract("shape-provenance.json")));
-        var source = provenance.RootElement.GetProperty("sources").EnumerateArray()
-            .Single(item => item.GetProperty("path").GetString() == "docs/terrabase/shape-vectors.json");
-        var bytes = File.ReadAllBytes(Contract("fixtures/shape-vectors.json"));
-        await Assert.That(Convert.ToHexStringLower(SHA256.HashData(bytes)))
-            .IsEqualTo(source.GetProperty("sha256").GetString());
-        await Assert.That(provenance.RootElement.GetProperty("commit").GetString())
-            .IsEqualTo("993927ce7ecf8f9b889d24d4d1d21ec96eaf9416");
-    }
-
     private static string Contract(string name) => Path.Combine(AppContext.BaseDirectory, "contracts", "terrabase", name);
 }

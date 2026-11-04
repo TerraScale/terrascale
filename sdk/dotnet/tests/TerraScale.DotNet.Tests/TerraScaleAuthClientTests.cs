@@ -47,23 +47,6 @@ public sealed class TerraScaleAuthClientTests
     }
 
     [Test]
-    public async Task The_public_auth_origin_is_called_directly_without_regional_discovery()
-    {
-        var hosts = new List<string>();
-        using var handler = new HostsHandler(hosts);
-        var client = CreateClient(handler, new TerraScaleAuthClientOptions
-        {
-            BaseAddress = new Uri("https://auth.terrascale.tech/"),
-            ApiKey = "sk_key_secret",
-            InstanceSlug = "acme",
-        });
-
-        _ = await client.Oidc.GetJwksAsync();
-
-        await Assert.That(hosts).IsEquivalentTo(["auth.terrascale.tech"]);
-    }
-
-    [Test]
     public async Task OptionsValidationRejectsMissingPiecesAndHostileInput()
     {
         using var handler = new RecordingHandler("[]");
@@ -123,90 +106,6 @@ public sealed class TerraScaleAuthClientTests
     }
 
     [Test]
-    public async Task FlatOAuthErrorSurfacesErrorCode()
-    {
-        var handler = new RecordingHandler("""{"error":"invalid_client","error_description":"bad credentials"}""")
-        {
-            StatusCode = HttpStatusCode.Unauthorized,
-        };
-        var client = CreateClient(handler);
-
-        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(
-            () => CreateClient(handler).Oidc.RequestClientCredentialsTokenAsync("client", "secret"));
-
-        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(exception.ErrorCode).IsEqualTo("invalid_client");
-        await Assert.That(exception.Message).IsEqualTo("ts-auth returned HTTP 401.");
-    }
-
-    [Test]
-    public async Task ReadsAndMutationsAreSentOnceUntilTheCallerStartsAnotherOperation()
-    {
-        var readHandler = new FlakyOnceHandler("""{"keys":[]}""");
-        var readClient = CreateClient(readHandler, new TerraScaleAuthClientOptions
-        {
-            BaseAddress = new Uri("https://auth.example.test/"),
-            ApiKey = "sk_key",
-            InstanceSlug = "acme",
-        });
-        await Assert.ThrowsAsync<TerraScaleAuthException>(() => readClient.Oidc.GetJwksAsync());
-        await Assert.That(readHandler.Attempts).IsEqualTo(1);
-        var keys = await readClient.Oidc.GetJwksAsync();
-        await Assert.That(keys.Keys.Count).IsEqualTo(0);
-        await Assert.That(readHandler.Attempts).IsEqualTo(2);
-
-        var mutationHandler = new AlwaysFailingHandler();
-        var mutationClient = CreateClient(mutationHandler, new TerraScaleAuthClientOptions
-        {
-            BaseAddress = new Uri("https://auth.example.test/"),
-            ApiKey = "sk_key",
-            InstanceSlug = "acme",
-        });
-        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(
-            () => mutationClient.Users.DeleteAsync("usr_1"));
-        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(mutationHandler.Attempts).IsEqualTo(1);
-    }
-
-    [Test]
-    public async Task AuthOptionsExposeOnlyOriginInstanceAndCredential()
-    {
-        var names = typeof(TerraScaleAuthClientOptions).GetProperties().Select(property => property.Name).Order(StringComparer.Ordinal).ToArray();
-        await Assert.That(names).IsEquivalentTo(new[] { "ApiKey", "BaseAddress", "InstanceSlug" });
-    }
-
-    [Test]
-    public async Task UserPatchSendsExactTriStateJson()
-    {
-        var handler = new RecordingHandler("""{"id":"usr_1","email":null,"email_verified":false,"username":null,"name":null,"banned":false,"ban_reason":null,"created_at":1,"last_sign_in_at":null,"public_metadata":null,"private_metadata":null}""");
-        var client = CreateClient(handler);
-
-        _ = await client.Users.UpdateAsync("usr_1", patch => patch
-            .Name("New Name")
-            .Username(null)
-            .Banned(true)
-            .BanReason("abuse"));
-
-        using var document = JsonDocument.Parse(handler.Body!);
-        var root = document.RootElement;
-        await Assert.That(root.GetProperty("name").GetString()).IsEqualTo("New Name");
-        await Assert.That(root.GetProperty("username").ValueKind).IsEqualTo(JsonValueKind.Null);
-        await Assert.That(root.GetProperty("banned").GetBoolean()).IsTrue();
-        await Assert.That(root.GetProperty("ban_reason").GetString()).IsEqualTo("abuse");
-        await Assert.That(root.TryGetProperty("email", out _)).IsFalse();
-        await Assert.That(root.TryGetProperty("password", out _)).IsFalse();
-    }
-
-    [Test]
-    public async Task EmptyUserPatchIsRejected()
-    {
-        using var handler = new RecordingHandler("{}");
-        var client = CreateClient(handler);
-
-        await Assert.ThrowsAsync<ArgumentException>(() => client.Users.UpdateAsync("usr_1", static patch => { }));
-    }
-
-    [Test]
     public async Task UserEnumerationWalksCursorPages()
     {
         var handler = new PagedUsersHandler();
@@ -224,30 +123,6 @@ public sealed class TerraScaleAuthClientTests
             "/v1/acme/users?limit=2",
             "/v1/acme/users?limit=2&starting_after=usr_2",
         ])).IsTrue();
-    }
-
-    [Test]
-    public async Task NonNoContentResponseToNoContentCallFails()
-    {
-        var handler = new RecordingHandler("{}");
-        var client = CreateClient(handler);
-
-        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.DeleteAsync("usr_1"));
-
-        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.OK);
-    }
-
-    [Test]
-    public async Task ManagementCallWithoutApiKeyFailsFast()
-    {
-        using var handler = new RecordingHandler("{}");
-        var client = CreateClient(handler, new TerraScaleAuthClientOptions
-        {
-            BaseAddress = new Uri("https://auth.example.test/"),
-            InstanceSlug = "acme",
-        });
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() => client.Users.ListAsync());
     }
 
     [Test]

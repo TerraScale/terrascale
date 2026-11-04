@@ -489,7 +489,7 @@
       "path": "/v1/projects/{project}/databases/{database}/sql"
     },
     {
-      "client": "documents",
+      "client": "sql",
       "operation": "executeSql",
       "method": "POST",
       "path": "/v1/projects/{project}/databases/{database}/sql/execute"

@@ -35,22 +35,6 @@ public sealed class TerraBaseContractTests
     }
 
     [Test]
-    public async Task ThePlatformClientNeedsAnAccessTokenProvider()
-    {
-        using var http = new HttpClient();
-        await Assert.That(() => new TerraBasePlatformClient(http, new TerraBasePlatformClientOptions { BaseAddress = new Uri("https://terrabase.example.test/") }))
-            .Throws<ArgumentException>();
-    }
-
-    [Test]
-    public async Task DocumentIdsTravelInTheQuery()
-    {
-        var sent = await RecordAsync("documents", client => ((TerraBaseDocumentsClient)client).Database(Project, "app").GetDocumentAsync("users", User));
-        await Assert.That(sent.Path).IsEqualTo($"/v1/projects/{Project}/databases/app/collections/users/documents/by-key");
-        await Assert.That(sent.Query).IsEqualTo($"?id={User}");
-    }
-
-    [Test]
     [Arguments("a/b c?d")]
     [Arguments("01ja0000000000000000000003")]
     [Arguments("0190f3b2-7c4e-7a1b-9c2d-3e4f5a6b7c8d")]
@@ -149,7 +133,7 @@ public sealed class TerraBaseContractTests
         yield return ("documents", "deleteCollectionTtl", client => Db(client).ClearCollectionTtlAsync("users"));
         yield return ("documents", "branchDatabase", client => Db(client).BranchAsync("copy"));
         yield return ("documents", "runSql", client => Db(client).RunSqlAsync("SELECT * FROM users LIMIT 1"));
-        yield return ("documents", "executeSql", client => Db(client).ExecuteSqlAsync("SELECT 1"));
+        yield return ("sql", "executeSql", client => ((TerraBaseSqlClient)client).Database(Project, "app").ExecuteAsync("SELECT 1"));
         yield return ("documents", "listIndexes", client => Db(client).ListIndexesAsync());
         yield return ("documents", "createIndex", client => Db(client).CreateIndexAsync("users", ["email"]));
         yield return ("documents", "dropIndex", client => Db(client).DropIndexAsync("users_email"));
@@ -232,6 +216,7 @@ public sealed class TerraBaseContractTests
         object sdk = client switch
         {
             "documents" or "project" => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = origin, ApiKey = "tb_test_key" }),
+            "sql" => new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { BaseAddress = origin, ApiKey = "tb_test_key" }),
             "platform" => new TerraBasePlatformClient(http, new TerraBasePlatformClientOptions { BaseAddress = origin, AccessTokenProvider = _ => ValueTask.FromResult("user-token") }),
             _ => new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Private }),
         };

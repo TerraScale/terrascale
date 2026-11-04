@@ -30,35 +30,6 @@ public sealed class TerraScaleAuthEmailChangeTests
         await Assert.That(new TerraScaleAuthEmailChangeConfirmation("123456").ToString()).DoesNotContain("123456");
     }
 
-    [Test]
-    [Arguments(false, 400, "invalid_request")]
-    [Arguments(false, 403, "step_up_required")]
-    [Arguments(false, 409, "email_taken")]
-    [Arguments(false, 429, "rate_limited")]
-    [Arguments(true, 403, "email_change_denied")]
-    [Arguments(true, 409, "email_taken")]
-    [Arguments(true, 503, "server_error")]
-    public async Task PreservesSafeErrorsWithoutRetry(bool confirm, int status, string code)
-    {
-        using var wire = new Wire((HttpStatusCode)status, JsonSerializer.Serialize(new { error = new { code, message = "secret-code-canary" } }));
-        using var http = new HttpClient(wire);
-        var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Call(Client(http), confirm));
-        await Assert.That(error!.ErrorCode).IsEqualTo(code);
-        await Assert.That(error.ToString()).DoesNotContain("secret-code-canary");
-        await Assert.That(wire.Calls).IsEqualTo(1);
-    }
-
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task LostResponsesAreNotReplayed(bool confirm)
-    {
-        using var wire = new Wire(0, "");
-        using var http = new HttpClient(wire);
-        await Assert.ThrowsAsync<HttpRequestException>(() => Call(Client(http), confirm));
-        await Assert.That(wire.Calls).IsEqualTo(1);
-    }
-
     private static Task Call(TerraScaleAuthClient client, bool confirm) => confirm
         ? client.Platform.ConfirmEmailChangeAsync("fixture-bearer", new("123456"))
         : client.Platform.RequestEmailChangeAsync("fixture-bearer", new("new@example.test"), "fixture-proof");

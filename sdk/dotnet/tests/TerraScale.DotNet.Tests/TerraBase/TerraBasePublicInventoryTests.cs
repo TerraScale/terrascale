@@ -27,6 +27,7 @@ public sealed class TerraBasePublicInventoryTests
         var documents = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = origin, ApiKey = "fake-token" });
         var db = documents.Database(ProjectId, "app");
         var project = documents.Project(ProjectId);
+        var sql = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { BaseAddress = origin, ApiKey = "fake-token" }).Database(ProjectId, "app");
         var platform = new TerraBasePlatformClient(http, new TerraBasePlatformClientOptions { BaseAddress = origin, AccessTokenProvider = _ => ValueTask.FromResult("fake-token") });
         var health = new TerraBaseHealthClient(http, origin);
         var shapes = new TerraBaseShapeClient(http, new TerraBaseShapeClientOptions { BaseAddress = origin, ApiKey = "fake-token" });
@@ -117,7 +118,7 @@ public sealed class TerraBasePublicInventoryTests
             ("restorePointInTime", () => db.RestorePointInTimeAsync(DateTimeOffset.UnixEpoch)),
             ("resumeImport", () => db.ResumeImportAsync()),
             ("runSql", () => db.RunSqlAsync("SELECT * FROM items LIMIT 1")),
-            ("executeSql", () => db.ExecuteSqlAsync("SELECT 1")),
+            ("executeSql", () => sql.ExecuteAsync("SELECT 1")),
             ("runTransaction", () => db.TransactAsync([TerraBaseTransactionOperation.Put("items", "01JA00000000000000000000D1", json)])),
             ("setBackupDestination", () => project.SetBackupDestinationAsync(new("https://s3.example.test", "region", "bucket", "fake-id", "fake-secret", "both"))),
             ("setBackupPolicy", () => db.SetBackupPolicyAsync(null, 7)),

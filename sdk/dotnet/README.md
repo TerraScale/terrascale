@@ -16,6 +16,60 @@ pack with the same version cannot be reused. See the [pinned C# quickstart](http
 These are source/API availability claims. The included producer contracts and HTTP fixtures
 carry their own pins; deployment, scope, plan and live-method qualification remain separate gates.
 
+## SQL
+
+`TerraBaseSqlClient` is the SQL surface: SQL over REST (`POST …/sql/execute`,
+[contract](contracts/terrabase/sql-execute.md)) and SQL over WebSocket (`GET …/sql/ws`, subprotocol
+`terrascale.sql.v1`, [contract](contracts/terrabase/sql-websocket.md)). Reads need `documents:read`; writes and
+schema changes need `documents:write`. The other SDKs copy this shape ([API shape](../SQL-API.md)).
+
+```csharp
+using var http = new HttpClient(TerraBaseHttp.CreateHandler());
+var sql = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { Region = "gru", ApiKey = apiKey });
+TerraBaseSqlDatabase db = sql.Database(projectId, "app");
+
+await db.BatchAsync([
+    new("CREATE TABLE people (id TEXT PRIMARY KEY, name TEXT NOT NULL, avatar BLOB)"),
+    new("INSERT INTO people (id, name) VALUES (:id, :name)", Named: new Dictionary<string, TerraBaseSqlValue> { ["id"] = ids.NewId(), ["name"] = "Ada" }),
+], ct);
+
+IReadOnlyList<TerraBaseSqlRecord> rows = await db.QueryAsync("SELECT id, name FROM people WHERE name = ?", ["Ada"], ct);
+IReadOnlyList<Person> people = await db.QueryAsync("SELECT id, name FROM people", null, AppJson.Default.Person, ct);
+```
+
+- `ExecuteAsync`, `QueryAsync` and `BatchAsync` send one request that runs as one transaction, all or nothing.
+  `BatchAsync` takes 1 to 256 statements in a body of at most 1 MiB and returns one result per statement.
+- Arguments are positional (`?`, `?NNN`) or named (keys without `:`, `@` or `$`). Values are null, 64-bit integers,
+  finite doubles, booleans (stored as 1 or 0), strings and blobs (`TerraBaseSqlValue.FromBytes`, sent as
+  `{"base64":"…"}`).
+- `TerraBaseSqlRecord` reads values by ordinal or column name (`GetInt64`, `GetDouble`, `GetBoolean`, `GetString`,
+  `GetBytes`, `IsNull`). `As<T>(JsonTypeInfo<T>)` and the typed `QueryAsync<T>` map a row through source-generated
+  JSON metadata: the row becomes an object keyed by column name and a blob a base64 string.
+- A refused statement throws `TerraBaseSqlException` with `Code` (one of `TerraBaseSqlErrorCodes`, such as
+  `unique_violation`), `Sqlstate` (such as `23505`) and `Statement` (zero-based index). The request rolled back.
+  A REST request refused with `serialization_conflict` is resent at most twice; nothing else is resent.
+- Primary keys are ULIDs from `TerraScaleIdGenerator`; tables that take local writes avoid `AUTOINCREMENT`.
+
+Interactive transactions use the WebSocket session. The caller owns it; dispose closes it and rolls back an open
+transaction. A transaction lasts at most 5 seconds. Calls on one session may overlap; answers are matched by id.
+
+```csharp
+await using TerraBaseSqlSession session = await db.ConnectAsync(ct);
+long balance = await session.TransactionAsync(async (tx, token) =>
+{
+    await tx.ExecuteAsync("UPDATE accounts SET balance = balance - ? WHERE id = ?", [amount, from], token);
+    await tx.ExecuteAsync("UPDATE accounts SET balance = balance + ? WHERE id = ?", [amount, to], token);
+    return (await tx.QueryAsync("SELECT balance FROM accounts WHERE id = ?", [from], token))[0].GetInt64(0);
+}, ct);
+```
+
+`TransactionAsync` begins, runs the callback and commits; when the callback throws it rolls back and rethrows.
+`BeginAsync`, `CommitAsync` and `RollbackAsync` are the explicit form. After a failed statement inside a transaction
+every call throws `transaction_aborted` until rollback; commit then rolls back and throws `transaction_rolled_back`.
+Session errors have a null `StatusCode`. A refused upgrade throws the usual `TerraBaseException` subclass (401, 404,
+421 `TerraBaseWrongRegionException`). The session connects with its own `ClientWebSocket`, not the caller's
+`HttpClient`, and is never resent.
+
 ## Database request observations
 
 Read recent authorized request observations with `await database.ListRequestLogsAsync(status: "2xx", cancellationToken: ct)`.
@@ -127,29 +181,7 @@ home region uses the called region. Region replicas are not available yet: a non
 Call `DeleteAsync` directly in the database's home region. A 204 response records logical deletion and local
 cleanup; branches remain independent.
 
-Relational SQL runs on the same database handle and project access token
-([contract](contracts/terrabase/sql-execute.md)). Each call is one transaction, all or nothing; reads need
-`documents:read`, writes and DDL `documents:write`. Arguments are positional (`?`) or named (keys without `:`, `@`
-or `$`); values are null, integers, finite doubles, booleans (stored as 1/0) or strings. Integers come back as JSON
-numbers: exact here, but JavaScript clients lose precision beyond 2^53.
-
-```csharp
-await database.ExecuteSqlBatchAsync([
-    new("CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT)"),
-    new("INSERT INTO people (name) VALUES (:name)", Named: new Dictionary<string, TerraBaseSqlValue> { ["name"] = "Ada" }),
-], cancellationToken);
-
-TerraBaseSqlStatementResult inserted = await database.ExecuteSqlAsync(
-    "INSERT INTO people (name) VALUES (?)", ["Grace"], cancellationToken); // RowsAffected, LastInsertRowid
-
-foreach (TerraBaseSqlRecord row in await database.QuerySqlAsync("SELECT id, name FROM people WHERE id > ?", [0], cancellationToken))
-    names[row.GetInt64("id")] = row.GetString("name");
-```
-
-A refused statement rolls the request back and throws `TerraBaseSqlException` with `Code` (`sql_error`,
-`forbidden_scope`, `sql_conflict`, `sql_too_large`), `Statement` (zero-based index) and `SqliteCode`; other failures
-keep the usual `TerraBaseException` types. Nothing is retried. `RunSqlAsync` is the legacy read-only document SQL
-subset (`databases:read`, refused for dashboard keys); prefer the methods above.
+Relational SQL uses `TerraBaseSqlClient`; see [SQL](#sql).
 
 One-time imports follow TerraBase's import contract (monorepo `docs/terrabase/import.md` and `import-ndjson.md` at
 `2cc348ec75a11079aa20547c09203e581ce70cb8`; nothing here is live-qualified). Every imported row gets a generated deterministic ULID document id;

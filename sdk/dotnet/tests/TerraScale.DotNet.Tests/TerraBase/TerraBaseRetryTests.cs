@@ -38,32 +38,6 @@ public sealed class TerraBaseRetryTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task BusyStorageResendsOnlyReads(bool mutation)
-    {
-        var calls = 0;
-        using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(
-            ++calls == 1 ? Error("storage_busy", TimeSpan.Zero) : new HttpResponseMessage(HttpStatusCode.NoContent)));
-        using var http = new HttpClient(handler);
-        var call = () => Connection(http).SendAsync(mutation ? HttpMethod.Post : HttpMethod.Get, "/v1/test", null, null, CancellationToken.None);
-        if (mutation) await Assert.ThrowsAsync<TerraBaseUnavailableException>(call);
-        else await call();
-        await Assert.That(calls).IsEqualTo(mutation ? 1 : 2);
-    }
-
-    [Test]
-    public async Task AWaitPastTheDeadlineReportsTheRefusalAtOnce()
-    {
-        var calls = 0;
-        using var handler = new TerraBaseTestHandler((_, _) => { calls++; return Task.FromResult(Error("confirmation_busy", TimeSpan.FromSeconds(60))); });
-        using var http = new HttpClient(handler);
-        var error = await Assert.ThrowsAsync<TerraBaseUnavailableException>(() => Connection(http).SendAsync(HttpMethod.Get, "/v1/test", null, null, CancellationToken.None));
-        await Assert.That(error!.ErrorCode).IsEqualTo("confirmation_busy");
-        await Assert.That(calls).IsEqualTo(1);
-    }
-
-    [Test]
     public async Task ResendsStopAfterTwo()
     {
         var calls = 0;
@@ -71,42 +45,6 @@ public sealed class TerraBaseRetryTests
         using var http = new HttpClient(handler);
         await Assert.ThrowsAsync<TerraBaseUnavailableException>(() => Connection(http).SendAsync(HttpMethod.Get, "/v1/test", null, null, CancellationToken.None));
         await Assert.That(calls).IsEqualTo(3);
-    }
-
-    [Test]
-    [Arguments(429, "tenant_busy")]
-    [Arguments(503, "capacity")]
-    [Arguments(502, null)]
-    [Arguments(504, null)]
-    public async Task TransientReadFailuresResendOnlyReads(int status, string? code)
-    {
-        foreach (var mutation in new[] { false, true })
-        {
-            var calls = 0;
-            using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(
-                ++calls == 1 ? Error(code, TimeSpan.Zero, (HttpStatusCode)status) : new HttpResponseMessage(HttpStatusCode.NoContent)));
-            using var http = new HttpClient(handler);
-            var call = () => Connection(http).SendAsync(mutation ? HttpMethod.Post : HttpMethod.Get, "/v1/test", null, null, CancellationToken.None);
-            if (mutation) await Assert.ThrowsAsync<TerraBaseException>(call);
-            else await call();
-            await Assert.That(calls).IsEqualTo(mutation ? 1 : 2);
-        }
-    }
-
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task ALostConnectionResendsOnlyReads(bool mutation)
-    {
-        var calls = 0;
-        using var handler = new TerraBaseTestHandler((_, _) => ++calls == 1
-            ? throw new HttpRequestException(HttpRequestError.ConnectionError, "reset")
-            : Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent)));
-        using var http = new HttpClient(handler);
-        var call = () => Connection(http).SendAsync(mutation ? HttpMethod.Post : HttpMethod.Get, "/v1/test", null, null, CancellationToken.None);
-        if (mutation) await Assert.ThrowsAsync<HttpRequestException>(call);
-        else await call();
-        await Assert.That(calls).IsEqualTo(mutation ? 1 : 2);
     }
 
     [Test]

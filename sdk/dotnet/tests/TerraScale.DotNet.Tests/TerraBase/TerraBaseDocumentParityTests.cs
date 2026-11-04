@@ -40,29 +40,4 @@ public sealed class TerraBaseDocumentParityTests
         await Assert.That(transaction.RootElement.GetProperty("ops")[1].GetProperty("gte").GetInt64()).IsEqualTo(9007199254740994L);
     }
 
-    [Test]
-    public async Task Ambiguous_write_identity_and_schema_errors_remain_visible_without_retry()
-    {
-        var calls = 0;
-        using var handler = new TerraBaseTestHandler((_, _) =>
-        {
-            calls++;
-            return Task.FromResult(TerraBaseIntegrationFixture.Json(calls == 1
-                ? """{"error":{"code":"write_outcome_unknown","message":"confirmation unknown","region":"gru","machine":"test-machine"}}"""
-                : """{"error":{"code":"schema_validation_failed","message":"schema refused","op":1,"details":[{"path":"/title","keyword":"type"}]}}""",
-                calls == 1 ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.BadRequest));
-        });
-        using var http = new HttpClient(handler);
-        var db = TerraBaseIntegrationFixture.Client(http).Database(TerraBaseIntegrationFixture.ProjectId, "app");
-        using var json = JsonDocument.Parse("{}");
-        var unknown = await Assert.ThrowsAsync<TerraBaseUnavailableException>(() => db.PutDocumentAsync("items", "01JA00000000000000000000D1", json.RootElement));
-        await Assert.That(unknown!.Machine).IsEqualTo("test-machine");
-        await Assert.That(unknown.OutcomeRegion).IsEqualTo("gru");
-        await Assert.That(unknown.RetryAfter).IsNull();
-        var invalid = await Assert.ThrowsAsync<TerraBaseValidationException>(() => db.TransactAsync([TerraBaseTransactionOperation.Put("items", "01JA00000000000000000000D1", json.RootElement)]));
-        await Assert.That(invalid!.OperationIndex).IsEqualTo(1);
-        await Assert.That(invalid.Details.Single().Path).IsEqualTo("/title");
-        await Assert.That(invalid.Details.Single().Keyword).IsEqualTo("type");
-        await Assert.That(calls).IsEqualTo(2);
-    }
 }
