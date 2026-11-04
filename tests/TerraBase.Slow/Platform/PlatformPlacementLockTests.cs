@@ -10,15 +10,14 @@ namespace TerraBase.Slow.Platform;
 
 public sealed class PlatformPlacementLockTests
 {
-    private const string UnavailableMessage = "all-region placement is unavailable: name the replica regions";
-    private const string UnservedMessage = "replicaRegions names sjc, a region TerraBase does not serve; choose from: gru";
+    private const string UnavailableMessage = "databases serve only in their home region until replicas are available";
 
     private static readonly string[] RemoteRegions = ["sjc"];
 
     [Test]
     [Arguments(PlatformDatabases.AuthProjectId, PlatformDatabases.Auth)]
     [Arguments(PlatformDatabases.DashboardProjectId, PlatformDatabases.Dashboard)]
-    public async Task Unserved_and_all_region_placements_are_refused_and_platform_databases_and_branches_stay_local(string project, string name, CancellationToken cancellationToken)
+    public async Task Placement_changes_are_refused_and_platform_databases_and_branches_stay_local(string project, string name, CancellationToken cancellationToken)
     {
         var production = TerraBaseOptions.FromValues(new Dictionary<string, string>(), production: true);
         await using var api = await ManagementApi.StartAsync(settings =>
@@ -40,16 +39,16 @@ public sealed class PlatformPlacementLockTests
         }));
         var route = ManagementApi.Uri($"/v1/projects/{project}/databases/{name}");
 
-        (object Body, string Code, string Message)[] refused =
+        object[] refused =
         [
-            (new { allRegions = true }, "replicas_unavailable", UnavailableMessage),
-            (new { replicaRegions = RemoteRegions }, "invalid_request", UnservedMessage),
-            (new { allRegions = false, replicaRegions = new[] { "sjc", "fra" } }, "invalid_request", UnservedMessage),
-            (new { allRegions = true, replicaRegions = RemoteRegions }, "replicas_unavailable", UnavailableMessage),
+            new { allRegions = true },
+            new { replicaRegions = RemoteRegions },
+            new { allRegions = false, replicaRegions = new[] { "sjc", "fra" } },
+            new { allRegions = true, replicaRegions = RemoteRegions },
         ];
-        foreach (var (body, code, message) in refused)
+        foreach (var body in refused)
         {
-            await ErrorAssert.ErrorAsync(projectClient.PatchAsJsonAsync(route, body, cancellationToken), HttpStatusCode.BadRequest, code, message);
+            await ErrorAssert.ErrorAsync(projectClient.PatchAsJsonAsync(route, body, cancellationToken), HttpStatusCode.BadRequest, "replicas_unavailable", UnavailableMessage);
             await Assert.That(await RecordAsync(server, project, name, cancellationToken)).IsEqualTo(before);
         }
 
@@ -89,7 +88,7 @@ public sealed class PlatformPlacementLockTests
         await Assert.That(branchRecord.ReplicaCount).IsEqualTo(0);
         await ErrorAssert.ErrorAsync(
             projectClient.PatchAsJsonAsync(ManagementApi.Uri($"/v1/projects/{project}/databases/{name}-branch"), new { replicaRegions = RemoteRegions }, cancellationToken),
-            HttpStatusCode.BadRequest, "invalid_request", UnservedMessage);
+            HttpStatusCode.BadRequest, "replicas_unavailable", UnavailableMessage);
         await Assert.That(await RecordAsync(server, project, name + "-branch", cancellationToken)).IsEqualTo(branchRecord);
         await Assert.That(await RecordAsync(server, project, name, cancellationToken)).IsEqualTo(before);
     }

@@ -7,9 +7,12 @@ ever pushed, and a replica can always be deleted and pulled again.
 
 ## Placement
 
-- `POST …/databases` takes `replicaRegions`: distinct regions this cluster serves, other than the home, at most 8.
-  `PATCH` changes them; the home raises the placement version on every change. `allRegions` stays refused
-  (`replicas_unavailable`).
+- **Not yet open:** `replicaRegions` and `allRegions` answer `400 replicas_unavailable` until replicas are encrypted at
+  rest like their home (Q-ENC, see Known gaps). The replication machinery below is in place and covered by Fast tests on records
+  placed directly in the catalog; `benchmark/cmd/region-sim` (which creates databases through the CLI) passed against
+  it before the refusal and passes again once Q-ENC lifts it.
+- Once open, `POST …/databases` takes `replicaRegions`: distinct regions this cluster serves, other than the home, at
+  most 8, and `PATCH` changes them; the home raises the placement version on every change.
 - Only the home holds a database file and backs it up. A replica region records the database, with the home's name and
   placement, and keeps its replica under `<data-directory>/.replicas/<organization>/<project>/<database>.db`.
 
