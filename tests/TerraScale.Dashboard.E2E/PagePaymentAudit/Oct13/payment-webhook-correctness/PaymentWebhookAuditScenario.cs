@@ -41,10 +41,10 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
             await environment.InitializeAsync();
             try
             {
-                scenario.first = environment.CreateTestHost(root.FullName, 0, "http://127.0.0.1", scenario.Configure);
+                scenario.first = await environment.CreateTestHostAsync(root.FullName, 0, "http://127.0.0.1", scenario.Configure);
                 await scenario.first.StartAsync();
                 scenario.Origin = Address(scenario.first);
-                scenario.second = environment.CreateTestHost(root.FullName, 0, scenario.Origin.ToString().TrimEnd('/'), scenario.Configure);
+                scenario.second = await environment.CreateTestHostAsync(root.FullName, 0, scenario.Origin.ToString().TrimEnd('/'), scenario.Configure);
                 await scenario.second.StartAsync();
                 scenario.ReplicaOrigin = Address(scenario.second);
                 return scenario;

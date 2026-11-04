@@ -79,46 +79,62 @@ namespace TerraScale.Dashboard.E2E.Demo
         }
 
         // contentRoot holds web/static: the project directory, or the published application directory.
-        public WebApplication CreateHost(string contentRoot, int port, string origin, Action<WebApplicationBuilder>? configureScenario = null)
+        public async Task<WebApplication> CreateHostAsync(string contentRoot, int port, string origin, Action<WebApplicationBuilder>? configureScenario = null)
         {
             var hostArgs = new[] { "--contentRoot", contentRoot, "--environment", "Development", "--urls", $"http://0.0.0.0:{port}" };
             stripe.SetOrigin(origin);
-            var app = DashboardApplication.Build(hostArgs, builder =>
+            TestRestRpcHost.Target? target = null;
+            var rpc = await TestRestRpcHost.StartAsync(() => target ?? throw new InvalidOperationException("The fixture RPC target has not initialized."));
+            WebApplication app;
+            try
             {
-                builder.Services.AddSingleton<IStartupFilter, TestClientAddress>();
-                builder.Services.AddSingleton(stripe);
-                builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardState>(checkoutPersistence));
-                builder.Services.Replace(ServiceDescriptor.Singleton<IAuthGateway>(auth));
-                builder.Services.Replace(ServiceDescriptor.Singleton<IAuthRefreshGateway>(auth));
-                builder.Services.Replace(ServiceDescriptor.Singleton<IAuthOidcGateway>(auth));
-                builder.Services.Replace(ServiceDescriptor.Singleton<IAuthLogoutGateway>(auth));
-                builder.Services.Replace(ServiceDescriptor.Singleton<IPlatformRoleGateway>(auth));
-                builder.Services.Replace(ServiceDescriptor.Singleton<IProjectAccessTokens>(auth));
-                builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthPlatform>(workspace));
-                builder.Services.AddSingleton(workspace);
-                builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthProjects>(authentication));
-                builder.Services.Replace(ServiceDescriptor.Singleton<IDatabaseBackend>(databases));
-                builder.Services.Replace(ServiceDescriptor.Singleton<IHomeMeasurements>(new TestMeasurements()));
-                builder.Services.Replace(ServiceDescriptor.Singleton<TerraScale.Dashboard.Features.Notifications.IAllowanceNotificationBackend, TestAllowanceNotifications>());
-                builder.Services.Replace(ServiceDescriptor.Singleton<TerraScale.Dashboard.Features.Support.ISupportMail, TestSupportMail>());
-                // Test hosts report overage through UsageOverageReporter directly; the hourly worker would share the allowance feed.
-                builder.Services.Remove(builder.Services.Single(service => service.ImplementationType == typeof(TerraScale.Dashboard.Features.Billing.UsageOverageWorker)));
-                builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TestHttpFactory(reporting)));
-                builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(identity));
-                builder.Services.Replace(ServiceDescriptor.Singleton<TimeProvider>(TimeProvider.System));
-                // Scenarios run plan reconciliation on demand, so its timer never races their billing assertions.
-                builder.Services.Remove(builder.Services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == typeof(PlanReconciler)));
-                // Registration journeys run cleanup on demand, without racing the background timer.
-                builder.Services.Remove(builder.Services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == typeof(TerraScale.Dashboard.Platform.Mcp.McpRegistrationReclaimer)));
-                // Deletion journeys run the production consumer on demand against their isolated producer.
-                builder.Services.Remove(builder.Services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == typeof(TerraScale.Dashboard.Features.Profile.DeletionReconciler)));
-                builder.Logging.ClearProviders();
-                builder.Logging.AddConsole().SetMinimumLevel(LogLevel.Warning);
-                // Reporting uses the production MagicOnion services over the scenario's REST handlers.
-                builder.Services.AddSingleton(services => TestRestRpcHost.StartAsync(services.GetRequiredService<IHttpClientFactory>(), "https://gru.api.terrascale.tech/").GetAwaiter().GetResult());
-                builder.Services.Replace(ServiceDescriptor.Singleton<TerraScale.Dashboard.Platform.Rpc.TerraBaseRpcClient>(services => services.GetRequiredService<TestRestRpcHost>().Client));
-                configureScenario?.Invoke(builder);
-            });
+                app = DashboardApplication.Build(hostArgs, builder =>
+                {
+                    builder.Services.AddSingleton<IStartupFilter, TestClientAddress>();
+                    builder.Services.AddSingleton(stripe);
+                    builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardState>(checkoutPersistence));
+                    builder.Services.Replace(ServiceDescriptor.Singleton<IAuthGateway>(auth));
+                    builder.Services.Replace(ServiceDescriptor.Singleton<IAuthRefreshGateway>(auth));
+                    builder.Services.Replace(ServiceDescriptor.Singleton<IAuthOidcGateway>(auth));
+                    builder.Services.Replace(ServiceDescriptor.Singleton<IAuthLogoutGateway>(auth));
+                    builder.Services.Replace(ServiceDescriptor.Singleton<IPlatformRoleGateway>(auth));
+                    builder.Services.Replace(ServiceDescriptor.Singleton<IProjectAccessTokens>(auth));
+                    builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthPlatform>(workspace));
+                    builder.Services.AddSingleton(workspace);
+                    builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthProjects>(authentication));
+                    builder.Services.Replace(ServiceDescriptor.Singleton<IDatabaseBackend>(databases));
+                    builder.Services.Replace(ServiceDescriptor.Singleton<IHomeMeasurements>(new TestMeasurements()));
+                    builder.Services.Replace(ServiceDescriptor.Singleton<TerraScale.Dashboard.Features.Notifications.IAllowanceNotificationBackend, TestAllowanceNotifications>());
+                    builder.Services.Replace(ServiceDescriptor.Singleton<TerraScale.Dashboard.Features.Support.ISupportMail, TestSupportMail>());
+                    // Test hosts report overage through UsageOverageReporter directly; the hourly worker would share the allowance feed.
+                    builder.Services.Remove(builder.Services.Single(service => service.ImplementationType == typeof(TerraScale.Dashboard.Features.Billing.UsageOverageWorker)));
+                    builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TestHttpFactory(reporting)));
+                    builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(identity));
+                    builder.Services.Replace(ServiceDescriptor.Singleton<TimeProvider>(TimeProvider.System));
+                    // Scenarios run plan reconciliation on demand, so its timer never races their billing assertions.
+                    builder.Services.Remove(builder.Services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == typeof(PlanReconciler)));
+                    // Registration journeys run cleanup on demand, without racing the background timer.
+                    builder.Services.Remove(builder.Services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == typeof(TerraScale.Dashboard.Platform.Mcp.McpRegistrationReclaimer)));
+                    // Deletion journeys run the production consumer on demand against their isolated producer.
+                    builder.Services.Remove(builder.Services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == typeof(TerraScale.Dashboard.Features.Profile.DeletionReconciler)));
+                    builder.Logging.ClearProviders();
+                    builder.Logging.AddConsole().SetMinimumLevel(LogLevel.Warning);
+                    // Reporting uses the production MagicOnion services over the scenario's REST handlers.
+                    builder.Services.AddSingleton(_ => rpc);
+                    builder.Services.Replace(ServiceDescriptor.Singleton<TerraScale.Dashboard.Platform.Rpc.TerraBaseRpcClient>(services => services.GetRequiredService<TestRestRpcHost>().Client));
+                    configureScenario?.Invoke(builder);
+                });
+                target = app.Services.GetService<TestRestRpcHost.Target>()
+                    ?? new(app.Services.GetRequiredService<IHttpClientFactory>(), "https://gru.api.terrascale.tech/", "platform");
+                // Resolve the fixture so the application owns its asynchronous disposal, including scenarios with another RPC client.
+                _ = app.Services.GetRequiredService<TestRestRpcHost>();
+            }
+            catch
+            {
+                await rpc.DisposeAsync();
+                throw;
+            }
+
             app.MapGet("/__test/checkout", (string id) => Results.Redirect(stripe.Complete(id)));
             // Test-only: report the signed-in organization's operation units now (or mark its pending overage invoiced), then list its overage items.
             app.MapPost("/__test/billing/overage", async (HttpContext http, DashboardSessions sessions, AccountService accounts, UsageOverageReporter reporter) =>

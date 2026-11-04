@@ -33,7 +33,7 @@ namespace TerraScale.Dashboard.E2E
         {
             var scenario = new DeletionProjectRecordsScenario();
             await scenario.environment.InitializeAsync();
-            scenario.app = scenario.environment.CreateTestHost(root, 0, "http://127.0.0.1");
+            scenario.app = await scenario.environment.CreateTestHostAsync(root, 0, "http://127.0.0.1");
             scenario.app.MapPost("/__test/project-records/{organizationId}/{projectId}", async (string organizationId, string projectId, HttpContext http) =>
             {
                 try

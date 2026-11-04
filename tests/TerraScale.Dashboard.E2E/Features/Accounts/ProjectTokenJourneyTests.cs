@@ -130,7 +130,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
                 {
                     await scenario.environment.InitializeAsync();
                     scenario.terraBase = await AuthRpcProducer.StartAsync((request, _) => Task.FromResult(scenario.Recorder.Handle(request)));
-                    scenario.host = scenario.environment.CreateTestHost(Root, 0, "http://127.0.0.1", builder =>
+                    scenario.host = await scenario.environment.CreateTestHostAsync(Root, 0, "http://127.0.0.1", builder =>
                     {
                         scenario.terraBase.Configure(builder);
                         var auth = (TestAuth)builder.Services.Last(service => service.ServiceType == typeof(IAuthGateway)).ImplementationInstance!;
