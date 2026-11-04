@@ -16,19 +16,11 @@ public sealed record ReplicaCatalogEntry(
 /// <param name="Next">The cursor of the next page, or null once the scan ended.</param>
 public sealed record ReplicaCatalogPage(IReadOnlyList<ReplicaCatalogEntry> Databases, string? Next);
 
-/// <summary>A home's NATS notice that a database has a newer revision.</summary>
-/// <param name="OrganizationId">Its organization.</param>
-/// <param name="ProjectId">Its project.</param>
-/// <param name="DatabaseId">The database.</param>
-/// <param name="CommittedAt">When the home committed it, Unix milliseconds on the home's clock.</param>
-public sealed record ReplicaRevisionNotice(string OrganizationId, string ProjectId, string DatabaseId, long CommittedAt);
+internal sealed record ReplicaRevisionNotice(string OrganizationId, string ProjectId, string DatabaseId, long CommittedAt, string? Revision, string? Base);
 
-/// <summary>NATS subjects of region replication.</summary>
 internal static class ReplicaSubjects
 {
-    /// <summary>A database's newer revision, published by its home: <c>terrabase.revision.&lt;home&gt;.&lt;database&gt;</c>.</summary>
-    public static string Revision(string home, string database) => $"terrabase.revision.{home}.{database}";
+    public static string Revision(string replica, string home, string database) => $"terrabase.revision.{replica}.{home}.{database}";
 
-    /// <summary>Every revision notice.</summary>
-    public const string Revisions = "terrabase.revision.>";
+    public static string Revisions(string replica) => $"terrabase.revision.{replica}.>";
 }

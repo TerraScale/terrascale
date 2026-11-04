@@ -2,8 +2,8 @@
 
 A database has one home region, which serves its writes, and up to eight replica regions. A replica region holds a
 read-only copy that it pulls from the home with Turso's official sync client in page mode, through the home's
-[in-process page sync host](page-sync-host.md). The topology is a star: every replica pulls from its home, nothing is
-ever pushed, and a replica can always be deleted and pulled again.
+[in-process page sync host](page-sync-host.md). The topology is a star: every replica follows its home, only the home's
+page answers move (never Turso's push), and a replica can always be deleted and pulled again.
 
 ## Placement
 
@@ -41,8 +41,8 @@ the home; reads keep working from the replica.
 ## Read-your-writes
 
 Each node keeps a pull position that grows when any replica pull starts. After anything a session ran at the home, it
-takes the node's position and asks its replica to pull now. A later read of that session runs on the replica only when
-the replica's last completed pull started after that position, so it holds the write; until then the read runs at the
+takes the node's position and asks its replica to pull from the home now (never from a pushed answer). A later read of that session runs on the replica only when
+the replica's last completed pull from the home started after that position, so it holds the write; until then the read runs at the
 home. A session that never wrote reads from the replica straight away. REST requests carry no session and get
 eventual consistency.
 
@@ -56,13 +56,24 @@ eventual consistency.
    `GET /v1/sync/organizations/{organization}/projects/{project}/databases/{database}/placement`: `404` means it was
    deleted, so the region forgets it and deletes the replica; otherwise the region takes the new placement and deletes
    the replica when it no longer names this region.
-2. **Notices.** After each commit that advances a database's revision, its home publishes
-   `terrabase.revision.<home>.<database>` on NATS (`TS_NATS_URL`, token from `TERRABASE_NATS_TOKEN_FILE`) with the
-   organization, project, database and commit time. Notices are coalesced per database and never delay the commit.
-3. **Pulls.** A follower pulls once per batch of notices, at most 8 pulls at a time per node. A failed pull is retried
-   with backoff from 50 ms to 2 s until it succeeds. Every replica also pulls on the 30-second sweep and after every
-   NATS reconnect, so lost notices and network cuts converge. Without NATS settings a node logs a warning and replicas
-   follow on the sweep alone.
+2. **Notices.** After each commit that advances a database's revision, its home publishes one notice per replica region on
+   core NATS (`TS_NATS_URL`, token from `TERRABASE_NATS_TOKEN_FILE`), subject
+   `terrabase.revision.<replica-region>.<home>.<database>`. Notices are coalesced per database and never delay the commit.
+   A notice carries the organization, project, database, commit time and the home's revision. When the changed pages fit
+   in 768 KiB, it also carries the home's page-pull answer from the revision it last announced (`base`) to that revision:
+   the same bytes `pull-updates` would stream. Payload: the answer, then the JSON notice, then the notice's length as a
+   4-byte big-endian integer. A full answer (bootstrap, rewrite, new incarnation) is never pushed.
+   The home records a pushed answer as offered to that region, as it does a pull answer, so the region's next pull from
+   the home acknowledges it for [CDC retention](region-shape-tails-and-cdc-retention.md).
+3. **Pulls.** A follower pulls once per batch of notices, at most 8 pulls at a time per node. The replica's sync client
+   still makes its own `pull-updates` request; when a pushed answer starts at or before the revision the client sends
+   and ends after it (same incarnation), that request is answered from the pushed bytes without a round trip, since a
+   page answer holds the final content of every page changed after its base. Otherwise the request goes to the home.
+   A node keeps at most 8 pushed answers per replica, reserved against its memory budget. A notice for a revision the
+   replica already holds is ignored. A failed pull is retried with backoff from 50 ms to 2 s until it succeeds. Every
+   replica also pulls from the home on the 30-second sweep and after every NATS reconnect, so lost notices and network
+   cuts converge. Without NATS settings a node logs a warning and replicas follow on the sweep alone. Status reports
+   to the home run beside the pull loop, never between pulls.
 4. **Restarts.** A restarted replica region reopens its replicas from their files and serves them before the home is
    reachable again; the next pull is incremental. A restarted home keeps its durable revision ledger, so replicas pull
    incrementally or, for a rewritten or restored home, take a full answer.
@@ -114,7 +125,7 @@ listener, as for every peer request.
 ## Metrics
 
 - `terrabase.replica.lag` (ms): from the home's commit, on its clock, to the replica holding it after the notice's pull.
-- `terrabase.replica.pulls` (`result` = `changed`, `unchanged`, `failed`).
+- `terrabase.replica.pulls` (`result` = `pushed` (applied from a notice's answer), `changed`, `unchanged`, `failed`).
 - `terrabase.replica.verifications` (`result` = `equal`, `diverged`, `skipped`, `failed`).
 - `terrabase.replica.rebootstraps`: replicas deleted and bootstrapped again after a divergence.
 - `terrabase.replica.max_lag` (ms) and `terrabase.replica.max_verification_age` (s): the worst replica on the node.

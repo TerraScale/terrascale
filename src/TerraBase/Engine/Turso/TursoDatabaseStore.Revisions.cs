@@ -81,7 +81,11 @@ internal sealed partial class TursoDatabaseStore
 
     private async Task<RevisionPullResult> StreamAsync(SqliteConnection reader, RevisionPullPlan plan, IRevisionPullSink sink, CancellationToken cancellationToken)
     {
-        await sink.StartAsync(new RevisionPullStart(plan.Revision, plan.Full, plan.DatabaseSize), cancellationToken).ConfigureAwait(false);
+        if (!await sink.StartAsync(new RevisionPullStart(plan.Revision, plan.Full, plan.DatabaseSize, plan.Count, plan.PageSize), cancellationToken).ConfigureAwait(false))
+        {
+            return new RevisionPullResult(plan.Revision, plan.Full, 0, plan.DatabaseSize);
+        }
+
         var numbers = ArrayPool<uint>.Shared.Rent(plan.BatchPages);
         var pages = ArrayPool<byte>.Shared.Rent(plan.BatchPages * plan.PageSize);
         try

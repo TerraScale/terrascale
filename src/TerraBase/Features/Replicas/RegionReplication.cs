@@ -8,6 +8,7 @@ using NATS.Client.Core;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Revisions;
+using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -22,7 +23,7 @@ namespace TerraBase.Features.Replicas;
 /// </summary>
 internal sealed class RegionReplication(
     TerraBaseOptions options, IReplicaPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas,
-    IDatabaseRevisions revisions, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<RegionReplication> logger) : BackgroundService
+    IDatabaseRevisions revisions, IMemoryBudget memory, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<RegionReplication> logger) : BackgroundService
 {
     /// <summary>How often every replica pulls and every home's catalog is read again without a notice.</summary>
     internal static readonly TimeSpan Sweep = TimeSpan.FromSeconds(30);
@@ -39,6 +40,7 @@ internal sealed class RegionReplication(
 
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), Follower> _followers = new();
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (TenantContext Database, long At)> _revised = new();
+    private readonly ConcurrentDictionary<(string Organization, string Project, string Database), string> _published = new();
     private readonly Channel<bool> _publish = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
     private readonly Channel<string> _catalogWakes = Channel.CreateBounded<string>(new BoundedChannelOptions(64) { FullMode = BoundedChannelFullMode.DropWrite });
     private readonly SemaphoreSlim _pulls = new(MaxConcurrentPulls, MaxConcurrentPulls);
@@ -74,7 +76,7 @@ internal sealed class RegionReplication(
         {
             _lag = _meter.CreateHistogram<double>("terrabase.replica.lag", "ms",
                 "Time from a home's commit, on its clock, to the replica holding it after the notice's pull.");
-            _pullCount = _meter.CreateCounter<long>("terrabase.replica.pulls", "{pull}", "Replica pulls by result (changed, unchanged, failed).");
+            _pullCount = _meter.CreateCounter<long>("terrabase.replica.pulls", "{pull}", "Replica pulls by result (pushed, changed, unchanged, failed).");
             _verifications = _meter.CreateCounter<long>("terrabase.replica.verifications", "{round}",
                 "Replica checksum rounds against the home by result (equal, diverged, skipped, failed).");
             _rebootstraps = _meter.CreateCounter<long>("terrabase.replica.rebootstraps", "{rebootstrap}", "Replicas deleted and bootstrapped again after a divergence.");
@@ -154,7 +156,7 @@ internal sealed class RegionReplication(
         if (database.ProjectId is { } project && database.DatabaseId is { } id
             && _followers.TryGetValue((database.OrganizationId, project, id), out var follower))
         {
-            follower.Signal(0);
+            follower.Signal(0, fromHome: true);
         }
     }
 
@@ -183,7 +185,7 @@ internal sealed class RegionReplication(
 
     private async Task PublishAsync(NatsConnection nats, CancellationToken cancellationToken)
     {
-        await foreach (var _ in _publish.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        await foreach (var wake in _publish.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
         {
             foreach (var key in _revised.Keys)
             {
@@ -194,17 +196,39 @@ internal sealed class RegionReplication(
 
                 try
                 {
-                    if (await catalog.FindAsync(revised.Database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
-                        && placement.Home == options.Region && placement.Replicas.Count > 0)
+                    if (await catalog.FindAsync(revised.Database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
+                        || placement.Home != options.Region || placement.Replicas.Count == 0)
                     {
-                        var notice = new ReplicaRevisionNotice(key.Organization, key.Project, key.Database, revised.At);
-                        await nats.PublishAsync(ReplicaSubjects.Revision(options.Region, key.Database),
-                            JsonSerializer.SerializeToUtf8Bytes(notice, TerraBaseJsonContext.Default.ReplicaRevisionNotice), cancellationToken: cancellationToken).ConfigureAwait(false);
+                        _ = _published.TryRemove(key, out _);
+                        continue;
+                    }
+
+                    using var push = await RevisionPush.BuildAsync(revisions, memory, revised.Database, _published.GetValueOrDefault(key), revised.At, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (push is not { Notice.Revision: { } revision })
+                    {
+                        continue;
+                    }
+
+                    if (_published.TryGetValue(key, out var last) && last == revision)
+                    {
+                        continue;
+                    }
+
+                    _published[key] = revision;
+                    foreach (var region in placement.Replicas)
+                    {
+                        await nats.PublishAsync(ReplicaSubjects.Revision(region, options.Region, key.Database), push.Payload, cancellationToken: cancellationToken)
+                            .ConfigureAwait(false);
+                        if (push is { HasPages: true, Result: { } offered })
+                        {
+                            await revisions.RecordReplicaPullAsync(revised.Database, region, offered, cancellationToken).ConfigureAwait(false);
+                        }
                     }
                 }
                 catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
                 {
-                    // Replicas catch up on their sweep; a notice is an accelerator, never the only path.
+                    _ = _published.TryRemove(key, out _);
                     logger.ZLogInformation($"A revision notice was not published: {error.GetType().Name:@Error}");
                 }
             }
@@ -217,7 +241,7 @@ internal sealed class RegionReplication(
         {
             try
             {
-                await foreach (var message in nats.SubscribeAsync<byte[]>(ReplicaSubjects.Revisions, cancellationToken: cancellationToken).ConfigureAwait(false))
+                await foreach (var message in nats.SubscribeAsync<byte[]>(ReplicaSubjects.Revisions(options.Region), cancellationToken: cancellationToken).ConfigureAwait(false))
                 {
                     Notice(message.Subject, message.Data);
                 }
@@ -232,33 +256,29 @@ internal sealed class RegionReplication(
 
     private void Notice(string subject, byte[]? data)
     {
-        if (subject.Split('.') is not ["terrabase", "revision", var home, _] || home == options.Region || data is null)
-        {
-            return;
-        }
-
-        ReplicaRevisionNotice? notice;
-        try
-        {
-            notice = JsonSerializer.Deserialize(data, TerraBaseJsonContext.Default.ReplicaRevisionNotice);
-        }
-        catch (JsonException)
-        {
-            return;
-        }
-
-        if (notice is null)
+        if (subject.Split('.') is not ["terrabase", "revision", var replica, var home, _] || replica != options.Region || home == options.Region || data is null
+            || !RevisionPush.TryRead(data, out var notice, out var answer) || notice is null)
         {
             return;
         }
 
         if (_followers.TryGetValue((notice.OrganizationId, notice.ProjectId, notice.DatabaseId), out var follower))
         {
-            follower.Signal(notice.CommittedAt);
+            var known = DatabaseRevision.TryParse(notice.Revision, out var to);
+            if (known && replicas.HeldRevision(follower.Database) is { } held && held.Incarnation == to.Incarnation && DatabaseRevision.Compare(to, held) <= 0)
+            {
+                return;
+            }
+
+            if (known && answer.Length > 0 && DatabaseRevision.TryParse(notice.Base, out var from))
+            {
+                _ = replicas.Offer(follower.Database, from, to, answer);
+            }
+
+            follower.Signal(notice.CommittedAt, fromHome: false);
         }
         else
         {
-            // A database new to this region, or one that is not replicated here: the home's catalog says which.
             _ = _catalogWakes.Writer.TryWrite(home);
         }
     }
@@ -290,7 +310,7 @@ internal sealed class RegionReplication(
             {
                 foreach (var follower in _followers.Values)
                 {
-                    follower.Signal(0);
+                    follower.Signal(0, fromHome: true);
                 }
             }
 
@@ -306,7 +326,7 @@ internal sealed class RegionReplication(
             await SyncCatalogsAsync(cancellationToken).ConfigureAwait(false);
             foreach (var follower in _followers.Values)
             {
-                follower.Signal(0);
+                follower.Signal(0, fromHome: true);
             }
 
             using var sweep = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -488,6 +508,8 @@ internal sealed class RegionReplication(
         private ChecksumCursor? _cursor;
         private TaskCompletionSource _pulled = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private Task _loop = Task.CompletedTask;
+        private Task _report = Task.CompletedTask;
+        private int _fromHome;
 
         private Follower(RegionReplication owner, TenantContext database, ReplicaPeer home)
         {
@@ -522,8 +544,13 @@ internal sealed class RegionReplication(
             return follower;
         }
 
-        public void Signal(long committedAt)
+        public void Signal(long committedAt, bool fromHome)
         {
+            if (fromHome)
+            {
+                Volatile.Write(ref _fromHome, 1);
+            }
+
             if (committedAt > 0)
             {
                 // The oldest unpulled commit times the lag of the pull that delivers it.
@@ -536,7 +563,7 @@ internal sealed class RegionReplication(
         public Task PullNowAsync(CancellationToken cancellationToken)
         {
             var pulled = Volatile.Read(ref _pulled).Task;
-            Signal(0);
+            Signal(0, fromHome: true);
             return pulled.WaitAsync(cancellationToken);
         }
 
@@ -546,6 +573,14 @@ internal sealed class RegionReplication(
             try
             {
                 await _loop.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+
+            try
+            {
+                await _report.ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -566,25 +601,31 @@ internal sealed class RegionReplication(
                 return true;
             }, "open", cancellationToken).ConfigureAwait(false);
             _state = ReplicaStates.Following;
-            Signal(0);
+            Signal(0, fromHome: true);
             await foreach (var _ in _signals.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
             {
                 var completing = Interlocked.Exchange(ref _pulled, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
                 var noticed = Interlocked.Exchange(ref _noticed, 0);
                 var started = _owner.Time.GetUtcNow();
+                var fromHome = Interlocked.Exchange(ref _fromHome, 0) == 1;
+                var pending = false;
+                var pushed = false;
                 var changed = await RetryAsync(async () =>
                 {
                     await _owner._pulls.WaitAsync(cancellationToken).ConfigureAwait(false);
                     try
                     {
-                        return (await _owner.Replicas.PullAsync(Database, cancellationToken).ConfigureAwait(false))?.Changed ?? false;
+                        var result = await _owner.Replicas.PullAsync(Database, fromHome, cancellationToken).ConfigureAwait(false);
+                        pending = result?.Pending ?? false;
+                        pushed = result?.Pushed ?? false;
+                        return result?.Changed ?? false;
                     }
                     finally
                     {
                         _owner._pulls.Release();
                     }
                 }, "pull", cancellationToken).ConfigureAwait(false);
-                _owner._pullCount?.Add(1, new KeyValuePair<string, object?>("result", changed ? "changed" : "unchanged"));
+                _owner._pullCount?.Add(1, new KeyValuePair<string, object?>("result", pushed ? "pushed" : changed ? "changed" : "unchanged"));
                 if (noticed > 0)
                 {
                     _owner._lag?.Record(Math.Max(0, _owner.Time.GetUtcNow().ToUnixTimeMilliseconds() - noticed));
@@ -592,8 +633,17 @@ internal sealed class RegionReplication(
 
                 Volatile.Write(ref _pullStartedAt, started.ToUnixTimeMilliseconds());
                 _syncedAt = _owner.Time.GetUtcNow();
+                if (pending)
+                {
+                    Signal(0, fromHome: false);
+                }
+
                 await VerifyAsync(cancellationToken).ConfigureAwait(false);
-                await ReportAsync(cancellationToken).ConfigureAwait(false);
+                if (_report.IsCompleted)
+                {
+                    _report = ReportAsync(cancellationToken);
+                }
+
                 completing.TrySetResult();
             }
         }
@@ -679,7 +729,7 @@ internal sealed class RegionReplication(
         private void Count(string result) => _owner._verifications?.Add(1, new KeyValuePair<string, object?>("result", result));
 
         private void WakeAfter(TimeSpan delay, CancellationToken cancellationToken) =>
-            _ = Task.Delay(delay, _owner.Time, cancellationToken).ContinueWith(_ => Signal(0), CancellationToken.None, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
+            _ = Task.Delay(delay, _owner.Time, cancellationToken).ContinueWith(_ => Signal(0, fromHome: true), CancellationToken.None, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
 
         private async Task ReportAsync(CancellationToken cancellationToken)
         {

@@ -19,7 +19,7 @@ internal sealed class ReplicaVerifier(IDatabaseReplicas replicas, HttpClient htt
         {
             if (attempt > 0 || replicas.HeldRevision(database) is null)
             {
-                _ = await replicas.PullAsync(database, cancellationToken).ConfigureAwait(false);
+                _ = await replicas.PullAsync(database, fromHome: true, cancellationToken).ConfigureAwait(false);
             }
 
             if (replicas.HeldRevision(database) is not { } held)

@@ -4,7 +4,7 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Engine;
 
-internal sealed record ReplicaPullResult(bool Changed);
+internal sealed record ReplicaPullResult(bool Changed, bool Pushed, bool Pending);
 
 internal enum ReplicaVerdict
 {
@@ -19,7 +19,9 @@ internal interface IDatabaseReplicas
 {
     ValueTask OpenAsync(TenantContext database, Uri source, HttpClient http, CancellationToken cancellationToken);
 
-    ValueTask<ReplicaPullResult?> PullAsync(TenantContext database, CancellationToken cancellationToken);
+    ValueTask<ReplicaPullResult?> PullAsync(TenantContext database, bool fromHome, CancellationToken cancellationToken);
+
+    bool Offer(TenantContext database, DatabaseRevision from, DatabaseRevision to, ReadOnlyMemory<byte> answer);
 
     ValueTask<bool> DeleteAsync(TenantContext database, CancellationToken cancellationToken);
 

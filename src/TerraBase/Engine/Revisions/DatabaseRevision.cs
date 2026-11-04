@@ -7,6 +7,9 @@ internal readonly record struct DatabaseRevision(Ulid Incarnation, ulong Generat
     internal const string Header = "TerraBase-Revision";
     private const string Prefix = "ts1:";
 
+    public static int Compare(DatabaseRevision left, DatabaseRevision right) =>
+        left.Generation != right.Generation ? left.Generation.CompareTo(right.Generation) : left.Frame.CompareTo(right.Frame);
+
     public override string ToString() =>
         string.Create(CultureInfo.InvariantCulture, $"{Prefix}{Incarnation}:{Generation}:{Frame}");
 

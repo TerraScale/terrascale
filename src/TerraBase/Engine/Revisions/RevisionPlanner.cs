@@ -20,7 +20,7 @@ internal sealed record RevisionPullResult(DatabaseRevision Revision, FullReason?
     public long CdcPosition { get; init; }
 }
 
-internal readonly record struct RevisionPullStart(DatabaseRevision Revision, FullReason? Full, uint DatabaseSize);
+internal readonly record struct RevisionPullStart(DatabaseRevision Revision, FullReason? Full, uint DatabaseSize, int Pages, int PageSize);
 
 internal readonly record struct RevisionPageBatch(ReadOnlyMemory<uint> Numbers, ReadOnlyMemory<byte> Pages, int PageSize);
 

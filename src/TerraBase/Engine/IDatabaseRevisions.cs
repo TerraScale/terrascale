@@ -22,7 +22,7 @@ internal interface IDatabaseRevisions
 
 internal interface IRevisionPullSink
 {
-    ValueTask StartAsync(RevisionPullStart start, CancellationToken cancellationToken);
+    ValueTask<bool> StartAsync(RevisionPullStart start, CancellationToken cancellationToken);
 
     ValueTask WriteAsync(RevisionPageBatch batch, CancellationToken cancellationToken);
 }
