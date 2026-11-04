@@ -14,7 +14,7 @@ public sealed class HomeRegionForwardingTests
     private static readonly Faker Faker = new();
 
     [Test]
-    public async Task Rest_and_postgres_in_other_regions_reach_the_database_home()
+    public async Task Rest_and_postgres_in_other_regions_reach_the_database_home_and_every_region_creates_lists_and_drops()
     {
         using var issuer = new TestIssuer();
         var mesh = new Mesh();
@@ -47,6 +47,31 @@ public sealed class HomeRegionForwardingTests
         var items = (await listed.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("items").EnumerateArray();
         await Assert.That(items.Select(item => item.GetProperty("name").GetString())).Contains(database.Name);
         await Assert.That(read).IsEqualTo(note);
+
+        using var manager = sjc.WithToken(issuer.Mint(gru.User, descriptor =>
+        {
+            descriptor.Claims["project_id"] = database.Project;
+            descriptor.Claims["org_id"] = database.Organization;
+            descriptor.Claims["scope"] = "databases:read databases:write";
+        }));
+        var databases = ManagementApi.Uri($"/v1/projects/{database.Project}/databases");
+        using var created = await manager.PostAsJsonAsync(databases, new { name = "sjc-home" });
+        await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
+        var homed = await created.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(homed.GetProperty("homeRegion").GetString()).IsEqualTo("sjc");
+        await Assert.That(await NamesAsync(viaFra, databases)).IsEquivalentTo([database.Name, "sjc-home"]);
+
+        using var dropped = await manager.DeleteAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{homed.GetProperty("id").GetString()}"));
+        await Assert.That(dropped.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        using var viaGru = gru.WithToken(token);
+        await Assert.That(await NamesAsync(viaGru, databases)).IsEquivalentTo([database.Name]);
+    }
+
+    private static async Task<List<string>> NamesAsync(HttpClient client, Uri databases)
+    {
+        using var response = await client.GetAsync(databases);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        return [.. (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("items").EnumerateArray().Select(item => item.GetProperty("name").GetString()!)];
     }
 
     private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, Mesh mesh) => ManagementApi.StartAsync(
