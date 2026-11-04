@@ -41,6 +41,35 @@ internal sealed partial class TerraScaleApiKeyTokens
         return cache.GetAsync;
     }
 
+    internal async Task<TerraBaseScopedKey> CreateScopedKeyAsync(TerraBaseScopedKeyRequest body, CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(ExchangeDeadline);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys")
+        {
+            Content = TerraBaseConnection.Json(body, TerraBaseJsonContext.Wire.TerraBaseScopedKeyRequest),
+        };
+        request.Headers.Authorization = basic;
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        try
+        {
+            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                throw await TerraBaseException.FromResponseAsync(response, deadline.Token).ConfigureAwait(false);
+            using var answer = new BoundedHttpBodyStream(MaxResponseBytes, () => new InvalidDataException("ts-auth's scoped key answer exceeds 64 KiB."), deadline.Token);
+            await response.Content.CopyToAsync(answer, deadline.Token).ConfigureAwait(false);
+            return TerraBaseConnection.ReadResponse(answer.Written.Span, TerraBaseJsonContext.Wire.TerraBaseScopedKey, response.StatusCode);
+        }
+        catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            throw new TimeoutException("ts-auth did not answer the scoped key request within the request deadline.", error);
+        }
+        finally
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+    }
+
     [GeneratedRegex("^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$", RegexOptions.CultureInvariant)]
     private static partial Regex KeyPattern();
 

@@ -23,9 +23,9 @@ public sealed record TerraBaseSqlClientOptions
 
     /// <summary>
     /// A TerraScale API key from the dashboard with <c>documents:read</c>; writes and schema changes also need
-    /// <c>documents:write</c>. The client exchanges it at ts-auth for an access token to the project named in
-    /// <see cref="TerraBaseSqlClient.Database"/>, caches the token and renews it before it expires. The key is sent
-    /// only to ts-auth.
+    /// <c>documents:write</c>. Database lifecycle mutations need <c>databases:write</c>. The client exchanges the key
+    /// at ts-auth for an access token to each operation's project, caches the token and renews it before it expires.
+    /// The key is sent only to ts-auth.
     /// </summary>
     public string? ApiKey { get; init; }
 
@@ -40,7 +40,7 @@ public sealed record TerraBaseSqlClientOptions
 /// The TerraBase SQL client: SQL over REST (<c>…/sql/execute</c>) and over the WebSocket (<c>…/sql/ws</c>). Built over
 /// a caller-owned <see cref="HttpClient"/> that it never disposes. Thread-safe.
 /// </summary>
-public sealed class TerraBaseSqlClient
+public sealed partial class TerraBaseSqlClient
 {
     private readonly Func<Func<CancellationToken, ValueTask<string>>?, TerraBaseConnection>? connect;
     private readonly TerraScaleApiKeyTokens? apiKeyTokens;
@@ -83,9 +83,7 @@ public sealed class TerraBaseSqlClient
     public TerraBaseSqlDatabase Database(string projectId, string database)
     {
         var path = $"/v1/projects/{TerraBaseConnection.Segment(projectId, nameof(projectId))}/databases/{TerraBaseConnection.Segment(database, nameof(database))}";
-        if (connection is not null) return new(connection, path);
-        TerraScaleIds.Validate(projectId);
-        return new(projectConnections!.GetOrAdd(projectId, project => connect!(apiKeyTokens!.For(project))), path);
+        return new(ProjectConnection(projectId), path);
     }
 }
 

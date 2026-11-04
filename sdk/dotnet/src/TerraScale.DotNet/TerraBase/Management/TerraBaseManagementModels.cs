@@ -101,6 +101,9 @@ public sealed record TerraBaseHistoryErasure(
 /// <param name="CreatedAt">Creation time.</param>
 public sealed record TerraBaseManagedDatabase(string Id, string ProjectId, string Name, string? BranchedFrom, DateTimeOffset CreatedAt)
 {
+    /// <summary>The expiry instant, or null without a TTL. Expiry deletes the database, backups and data keys.</summary>
+    public DateTimeOffset? ExpiresAt { get; init; }
+
     /// <summary>The region that answered.</summary>
     [JsonRequired]
     public string Region { get; init; } = null!;

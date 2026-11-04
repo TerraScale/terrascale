@@ -78,6 +78,35 @@ Session errors have a null `StatusCode`. A refused upgrade throws the usual `Ter
 transaction open at the drop rolled back, so every call but `RollbackAsync` throws `transaction_rolled_back` until the
 caller rolls back.
 
+## Databases for agents
+
+`TerraBaseSqlClient` creates, forks and deletes databases, sets or clears their TTL, and mints database-scoped
+API keys. Database mutations need `databases:write` and use the same `ApiKey` exchange or `AccessTokenProvider`
+as SQL calls. Database names or ULIDs are accepted except when minting a key, which requires the database ULID.
+
+```csharp
+TerraBaseManagedDatabase agent = await sql.CreateDatabaseAsync(projectId, "agent", ttlSeconds: 3600, cancellationToken: ct);
+TerraBaseManagedDatabase fork = await sql.ForkDatabaseAsync(projectId, agent.Id, "agent-copy", ttlSeconds: 3600, cancellationToken: ct);
+TerraBaseScopedKey key = await sql.CreateScopedKeyAsync(agent.Id, "read_write", projectId, ttlSeconds: 3600, cancellationToken: ct);
+var agentClient = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { Region = "gru", ApiKey = key.Key });
+await sql.SetDatabaseTtlAsync(projectId, agent.Id, 7200, ct);
+await sql.ClearDatabaseTtlAsync(projectId, agent.Id, ct);
+await sql.DeleteDatabaseAsync(projectId, agent.Id, ct);
+```
+
+Database TTL is 60 to 31,536,000 seconds. `ExpiresAt` is null without a TTL; expiry deletes the database, backups
+and data keys. TTL databases count against plan limits and billing until deleted. Forks never inherit the source's
+TTL. Pass `pointInTime` to `ForkDatabaseAsync` to restore an instant inside the source's restore window.
+
+`CreateScopedKeyAsync` requires the client's `ApiKey` and sends Basic `keyId:key` only to ts-auth. Access is `read`
+or `read_write`; TTL is 60 to 2,592,000 seconds, default 3600, bounded by the parent's expiry. Pass the project for
+organization keys; it must match project keys. The returned `Key` is shown once. It cannot mint keys, manage databases
+or reach another database; parent revocation or rotation revokes it. ts-auth snake_case fields map to `ProjectId`
+and `ExpiresAt`. HTTP refusals use the existing `TerraBaseException` types and scoped-key requests are sent once.
+
+The [shared HTTP fixtures](contracts/terrabase/agent/) record the [published API contract](../SQL-API.md#databases-for-agents)
+with synthetic values. Both supported .NET frameworks replay them; live producer qualification is separate.
+
 ## Database request observations
 
 Read recent authorized request observations with `await database.ListRequestLogsAsync(status: "2xx", cancellationToken: ct)`.
