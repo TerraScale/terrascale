@@ -23,6 +23,7 @@ var commandSyntax = map[string]string{
 	"backup list":      "backup list <database>", "backup create": "backup create <database>",
 	"backup restore":    "backup restore <database> <backup-id> <new-database>",
 	"backup restore-at": "backup restore-at <database> <RFC3339-time> <new-database> [platform|customer]",
+	"backup rewind":     "backup rewind <database> <RFC3339-time> [platform|customer]",
 	"backup policy":     "backup policy <database>", "backup policy-set": "backup policy-set <database> <five-field-UTC-cron|none> <days:1..35>",
 	"backup window": "backup window <database> [platform|customer]", "backup plan": "backup plan <database> <RFC3339-time> [platform|customer]",
 	"backup destination": "backup destination get|set|delete",
