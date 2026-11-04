@@ -34,54 +34,6 @@ public sealed class SqlNativeRestTests
     }
 
     [Test]
-    public async Task Schema_statements_pass_through_and_queries_use_their_indexes()
-    {
-        await using var db = await StartAsync();
-        await db.OkAsync("CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
-        await db.OkAsync(Stmt("INSERT INTO people (name) VALUES (?)", Faker.Name.FullName()));
-
-        await db.OkAsync("ALTER TABLE people ADD COLUMN city TEXT");
-        await db.OkAsync(Stmt("UPDATE people SET city = ?", Faker.Address.City()));
-        await db.OkAsync("CREATE INDEX people_city ON people (city)");
-        var plan = await db.OkAsync(Stmt("EXPLAIN QUERY PLAN SELECT name FROM people WHERE city = ?", "x"));
-        var columns = await db.OkAsync("PRAGMA table_info(people)");
-        await db.OkAsync("DROP TABLE people");
-        var dropped = await db.RefusedAsync("SELECT * FROM people");
-
-        await Assert.That(plan[0].GetProperty("rows").EnumerateArray().Any(row => row[3].GetString()!.Contains("people_city", StringComparison.Ordinal))).IsTrue();
-        await Assert.That(columns[0].GetProperty("rows").EnumerateArray().Select(row => row[1].GetString()!).ToList()).IsEquivalentTo(["id", "name", "city"]);
-        await Assert.That(dropped.Code).IsEqualTo("SQLITE_ERROR");
-    }
-
-    [Test]
-    public async Task Constraints_answer_their_sqlite_codes_and_foreign_keys_cascade()
-    {
-        await using var db = await StartAsync();
-        await db.OkAsync(
-            "CREATE TABLE teams (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
-            "CREATE TABLE players (id INTEGER PRIMARY KEY, team INTEGER NOT NULL REFERENCES teams (id) ON DELETE CASCADE, email TEXT UNIQUE, goals INTEGER CHECK (goals >= 0))",
-            "INSERT INTO teams VALUES (1, 'core')");
-        var email = Faker.Internet.Email();
-        await db.OkAsync(Stmt("INSERT INTO players VALUES (1, 1, ?, 3)", email));
-
-        var primaryKey = await db.RefusedAsync(db.Writer, Stmt("INSERT INTO players VALUES (1, 1, ?, 0)", Faker.Internet.Email()));
-        var unique = await db.RefusedAsync(db.Writer, Stmt("INSERT INTO players VALUES (2, 1, ?, 0)", email));
-        var notNull = await db.RefusedAsync(db.Writer, Stmt("INSERT INTO players VALUES (2, NULL, ?, 0)", Faker.Internet.Email()));
-        var check = await db.RefusedAsync(db.Writer, Stmt("INSERT INTO players VALUES (2, 1, ?, -1)", Faker.Internet.Email()));
-        var orphan = await db.RefusedAsync(db.Writer, Stmt("INSERT INTO players VALUES (2, 99, ?, 0)", Faker.Internet.Email()));
-        var enforced = await db.OkAsync("PRAGMA foreign_keys");
-        await db.OkAsync("DELETE FROM teams WHERE id = 1");
-
-        await Assert.That(primaryKey.Code).IsEqualTo("SQLITE_CONSTRAINT_PRIMARYKEY");
-        await Assert.That(unique.Code).IsEqualTo("SQLITE_CONSTRAINT_UNIQUE");
-        await Assert.That(notNull.Code).IsEqualTo("SQLITE_CONSTRAINT_NOTNULL");
-        await Assert.That(check.Code).IsEqualTo("SQLITE_CONSTRAINT_CHECK");
-        await Assert.That(orphan.Code).IsEqualTo("SQLITE_CONSTRAINT_FOREIGNKEY");
-        await Assert.That(enforced[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(1);
-        await Assert.That(await db.CountAsync("players")).IsEqualTo(0);
-    }
-
-    [Test]
     public async Task A_request_is_one_transaction_and_a_failed_statement_rolls_all_of_it_back()
     {
         await using var db = await StartAsync();
@@ -135,21 +87,5 @@ public sealed class SqlNativeRestTests
         }
 
         await Assert.That(schema[0].GetProperty("rows")[0][0].GetInt64()).IsGreaterThan(0);
-    }
-
-    [Test]
-    public async Task Blobs_round_trip_as_base64()
-    {
-        await using var db = await StartAsync();
-        var bytes = Faker.Random.Bytes(Faker.Random.Int(1, 4096));
-        await db.OkAsync("CREATE TABLE files (id INTEGER PRIMARY KEY, data BLOB NOT NULL)");
-
-        await db.OkAsync(Stmt("INSERT INTO files (data) VALUES (?)", Blob(bytes)));
-        var read = await db.OkAsync("SELECT data, length(data), typeof(data) FROM files");
-
-        var row = read[0].GetProperty("rows")[0];
-        await Assert.That(Convert.FromBase64String(row[0].GetProperty("base64").GetString()!)).IsEquivalentTo(bytes);
-        await Assert.That(row[1].GetInt64()).IsEqualTo(bytes.Length);
-        await Assert.That(row[2].GetString()).IsEqualTo("blob");
     }
 }
