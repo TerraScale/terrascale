@@ -55,3 +55,6 @@ gh workflow run images-ghcr.yml --repo TerraScale/terrascale --ref main
 Inspect the CI and Images run URLs and the final live readiness revision before
 reporting recovery. A successful dispatch request alone is not deployment proof.
 The focused gate regression fixtures run during dev-host dashboard qualification.
+
+Use the [controlled missed-push drill](ci-recovery-drill.md) to prove recovery
+without a push CI run and record the exact revision and deployment evidence.
