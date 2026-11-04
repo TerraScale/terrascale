@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.Shapes;
 using TerraBase.Tenancy;
@@ -41,7 +42,11 @@ public sealed class CdcRetentionTests
         _ = await retention.RunPassAsync(store, slow.Handle!, token);
         _ = await retention.RunPassAsync(store, fast.Handle!, token);
         await Assert.That(await OldestAsync(store, token)).IsLessThanOrEqualTo(backup);
+        await SetConsumerAsync(store, backup, token);
         await host.ShipAsync(TimeSpan.FromSeconds(3), token);
+        await Assert.That(await OldestAsync(store, token)).IsLessThanOrEqualTo(backup);
+        await SetConsumerAsync(store, null, token);
+        _ = await retention.RunPassAsync(store, fast.Handle!, token);
         await Assert.That(await OldestAsync(store, token)).IsGreaterThan(slowOffset);
         for (var round = 0; round < 3; round++)
         {
@@ -56,6 +61,13 @@ public sealed class CdcRetentionTests
             var count = await ScalarAsync(store, "SELECT count(*) FROM turso_cdc;", token);
             await Assert.That(count).IsLessThan(100L);
         }
+    }
+
+    private static async Task SetConsumerAsync(TursoDatabaseStore store, long? position, CancellationToken token)
+    {
+        await using var transaction = await store.BeginTransactionAsync(write: true, token);
+        await ((ICdcRetentionTransaction)transaction).SetCdcConsumerFloorAsync("region-to-home", position, token);
+        _ = await transaction.CommitAsync(token);
     }
 
     private static Task<long> OldestAsync(TursoDatabaseStore store, CancellationToken token) =>

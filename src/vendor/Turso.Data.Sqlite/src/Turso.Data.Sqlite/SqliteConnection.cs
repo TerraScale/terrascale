@@ -48,7 +48,7 @@ public partial class SqliteConnection : DbConnection
     {
         ArgumentNullException.ThrowIfNull(connection);
         var options = new SqliteConnectionStringBuilder(connection.ConnectionString);
-        if (options.IsLocal)
+        if (options.IsLocal && connection.SyncDatabase is null)
         {
             throw new ArgumentException(
                 "Only direct remote and embedded replica Turso connections can be wrapped.",
