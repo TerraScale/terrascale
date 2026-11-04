@@ -17,7 +17,7 @@ namespace TerraBase.Features.Sql;
 /// <summary><c>POST /v1/projects/{project}/databases/{database}/sql/execute</c>: runs relational SQL statements.</summary>
 internal sealed class SqlExecuteEndpoint(
     ISqlService sql, IAuthorizationService authorization, ITenantDirectory tenants, IReplicaCatalog placements, IDatabaseReplicas replicas, IReplicaPeers peers,
-    WriteRouter router, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
+    WriteRouter router, ReplicaHolds holds, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
 {
 
     /// <inheritdoc />
@@ -61,7 +61,8 @@ internal sealed class SqlExecuteEndpoint(
                     byte[] body => RequestJson.Read<SqlExecuteRequest>(body, "invalid_request") switch
                     {
                         Validation error => ErrorResponse.From(error),
-                        SqlExecuteRequest request => await ExecuteAsync(database, request.Statements ?? [], body, cancellationToken),
+                        SqlExecuteRequest { Durability: not (null or "local" or "all") } => ErrorResponse.From(new Validation("durability is local or all", "invalid_request")),
+                        SqlExecuteRequest request => await ExecuteAsync(database, request.Statements ?? [], body, request.Durability == "all", cancellationToken),
                     },
                 },
             },
@@ -78,14 +79,15 @@ internal sealed class SqlExecuteEndpoint(
         _ => null,
     };
 
-    private async ValueTask<IResult> ExecuteAsync(TenantContext database, IReadOnlyList<SqlExecuteStatement> statements, byte[] body, CancellationToken cancellationToken)
+    private async ValueTask<IResult> ExecuteAsync(TenantContext database, IReadOnlyList<SqlExecuteStatement> statements, byte[] body, bool all,
+        CancellationToken cancellationToken)
         => SqlBatch.Commands(statements) switch
         {
             SqlBatchFailure invalid => Error(invalid),
-            List<SqlCommand> commands => await RunAsync(database, commands, body, cancellationToken),
+            List<SqlCommand> commands => await RunAsync(database, commands, body, all, cancellationToken),
         };
 
-    private async ValueTask<IResult> RunAsync(TenantContext database, List<SqlCommand> commands, byte[] body, CancellationToken cancellationToken)
+    private async ValueTask<IResult> RunAsync(TenantContext database, List<SqlCommand> commands, byte[] body, bool all, CancellationToken cancellationToken)
     {
         // Only a node holding a replica of the database reads its placement here; the home answers without another catalog read.
         if (replicas.Holds(database)
@@ -101,6 +103,12 @@ internal sealed class SqlExecuteEndpoint(
             session.BeginRequest();
             var outcome = await SqlBatch.RunAsync(session, commands, cancellationToken);
             await session.EndRequestAsync();
+            if (outcome is SqlExecuteBody && all && !await holds.WaitAllAsync(database, cancellationToken))
+            {
+                return Error(new SqlBatchFailure(new SqlError(SqlErrors.Unavailable,
+                    "the write committed at the home but not every replica region held it within 10 s; it may be lost if the home region fails"), commands.Count - 1));
+            }
+
             return outcome switch
             {
                 SqlExecuteBody answered => TypedResults.Json(answered, TerraBaseJsonContext.Default.SqlExecuteBody),
