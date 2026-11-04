@@ -450,10 +450,43 @@ export class V1Transport {
     try {
       const scoped = { ...options, signal: deadline.signal };
       const response = await this.#send(operation, params, scoped, deadline.expiresAt);
-      return { status: response.status, headers: response.headers, value: await this.readJson(response, scoped.signal),
+      return { status: response.status, headers: response.headers, value: response.status === 307 ? undefined : await this.readJson(response, scoped.signal),
         ...(response.redirected ? { redirectedTo: response.url } : {}) };
     } finally {
       deadline.clear();
+    }
+  }
+
+  /** @param {string} url @param {number} size @param {AbortSignal} signal */
+  async readShapeObject(url, size, signal) {
+    const target = new URL(url);
+    if (target.protocol !== "https:" || target.username !== "" || target.password !== "" || target.hash !== "" || !target.pathname.startsWith("/v1/shapes/")
+      || !Number.isSafeInteger(size) || size < 90 || size > 8 * 1024 * 1024 + 250 || size > this.#maxResponseBytes)
+      throw new TypeError("Invalid sealed shape object.");
+    const bounded = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
+    const response = await this.#fetch(target.href, { method: "GET", credentials: "omit", redirect: "error", referrerPolicy: "no-referrer", signal: bounded });
+    if (response.status !== 200) {
+      await response.body?.cancel();
+      throw new TypeError("The sealed shape object is unavailable.");
+    }
+    const reader = response.body?.getReader();
+    if (reader === undefined) throw new TypeError("The sealed shape object is empty.");
+    const bytes = new Uint8Array(size);
+    let at = 0;
+    try {
+      for (;;) {
+        bounded.throwIfAborted();
+        const part = await reader.read();
+        if (part.done) break;
+        if (at + part.value.length > size) throw new TypeError("The sealed shape object exceeds its size.");
+        bytes.set(part.value, at);
+        at += part.value.length;
+      }
+      if (at !== size) throw new TypeError("The sealed shape object has the wrong size.");
+      return bytes;
+    } finally {
+      await reader.cancel().catch(() => undefined);
+      reader.releaseLock();
     }
   }
 

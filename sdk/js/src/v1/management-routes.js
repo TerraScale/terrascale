@@ -1,9 +1,11 @@
-/** @typedef {"executeSql" | "readTableShape" | "connectSql" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"} ManagementOperation */
+/** @typedef {"executeSql" | "readTableShape" | "getShapeManifest" | "getShapeKey" | "connectSql" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"} ManagementOperation */
 const saved = "/v1/projects/{project}/saved-queries";
 /** @type {readonly import("./routes.js").V1Route[]} */
 export const managementV1Routes = Object.freeze([
   route("executeSql", "POST", "/v1/projects/{project}/databases/{database}/sql/execute"),
   route("readTableShape", "GET", "/v1/projects/{project}/databases/{database}/tables/{table}/shape"),
+  route("getShapeManifest", "GET", "/v1/projects/{project}/databases/{database}/tables/{table}/shape/manifest"),
+  route("getShapeKey", "GET", "/v1/projects/{project}/databases/{database}/tables/{table}/shape/keys"),
   route("connectSql", "GET", "/v1/projects/{project}/databases/{database}/sql/ws", 101),
   route("healthz", "GET", "/healthz"),
   route("readyz", "GET", "/readyz"),
@@ -34,13 +36,12 @@ export const managementV1Routes = Object.freeze([
 /** @param {ManagementOperation} operation @param {import("./routes.js").V1Route["method"]} method @param {string} pathTemplate @param {number} [status] @returns {import("./routes.js").V1Route} */
 function route(operation, method, pathTemplate, status = 200) {
   const write = method !== "GET" && operation !== "planPointInTime";
-  // SQL reads need sql:read; writes and DDL also need sql:write, checked per statement.
-  const sql = operation === "executeSql" || operation === "readTableShape" || operation === "connectSql";
+  const sql = operation === "executeSql" || operation === "readTableShape" || operation === "getShapeManifest" || operation === "getShapeKey" || operation === "connectSql";
   return Object.freeze({ operation, method, pathTemplate,
     permission: sql ? "sql:read" : pathTemplate.startsWith("/v1/platform/") ? "platform-admin" : !pathTemplate.startsWith("/v1/") ? "anonymous" : write ? "databases:write" : "databases:read",
     additionalPermissions: Object.freeze([]),
     requestMediaTypes: Object.freeze(operation === "createBackup" ? [] : method === "POST" || method === "PUT" || method === "PATCH" ? ["application/json"] : []),
-    responseMediaType: status === 204 || status === 101 ? "" : "application/json", successStatuses: Object.freeze(operation === "readyz" || operation === "backupz" ? [200, 503] : [status]),
+    responseMediaType: status === 204 || status === 101 ? "" : "application/json", successStatuses: Object.freeze(operation === "readTableShape" ? [200, 307] : operation === "readyz" || operation === "backupz" ? [200, 503] : [status]),
     idempotencyKey: "none", replaySafe: !write, contract: "docs/terrabase/api.md", contractText: Object.freeze([]),
   });
 }

@@ -238,6 +238,8 @@ listener runs after the snapshot and after every change, with `rows` keyed by ro
 A schema change of the table restarts the shape from a new snapshot; transient refusals and lost connections retry
 with backoff; authentication, scope and unknown-table errors reject `done`. It needs the data read scope, or an end-user token with a read grant for the selected table.
 Table grants authorize access; shape filters do not replace authorization.
+Snapshots and sealed catch-up chunks use the manifest’s CDN URLs. The client checks the object size, SHA-256, TBS1 header, AES-GCM frames and handle/offset binding before applying data. Epoch keys stay in the subscription and CDN requests carry no credentials. The live tail uses the authenticated origin. An unavailable or invalid cached object falls back to that offset at the origin. Browsers that hide the bootstrap redirect must fetch the first snapshot page from the origin.
+
 
 ```js
 const open = db.shape("todos", { where: "done = 0", columns: ["id", "title"] }).subscribe(({ rows }) => render(rows));

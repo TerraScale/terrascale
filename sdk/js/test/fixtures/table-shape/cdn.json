@@ -1,0 +1,111 @@
+{
+  "source": "ShapeCrypto.Seal and GetShapeManifestEndpoint at 3baf6b501; fixed epoch key and salts",
+  "handle": "h1-0123456789abcdef",
+  "epoch": "3000000",
+  "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
+  "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "objects": [
+    {
+      "page": {
+        "shape_id": "0123456789abcdef0123456789abcdef",
+        "handle": "h1-0123456789abcdef",
+        "offset": "snap.2.0",
+        "next_offset": "2",
+        "values_at": "2",
+        "up_to_date": false,
+        "changes": [
+          {
+            "offset": "2",
+            "ops": [
+              {
+                "op": "insert",
+                "key": "3",
+                "row": {
+                  "id": 3,
+                  "title": "Old",
+                  "data": null
+                }
+              },
+              {
+                "op": "insert",
+                "key": "5",
+                "row": {
+                  "id": 5,
+                  "title": "Gone",
+                  "data": null
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "base64": "VEJTMQAAAAAALcbAMDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQTEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAYAAAUH4aSVxDvFB9WjblG8lPqUcSIkSjz7Q+Uewqf6fLBn1WwrvGjFjYITWsqAAsec3ZUDPGL5jBjacLT9YBvssvO9ZJ7aWSyc8HXiuAi7kdB9swPBhiJWH72pBoOOh/3O5d70QGCP+KrwlfU2eRgVRFNeqVSr2myf916R6UjUK6AsujF1AIkN3onmLekNyGRZL7kZNs+XW7IjAuknTn2Z1fGH9t5eAZqb1dELemDvlZHSxQMZ26/x7UGSxJNScN8DAwLp2UYs7H7A3dsPJqr1F0pHQQkXBBHuRMmlME92vSGrud8d/7CRUgOuu2DjABD8LWV7KOh9XHZA80VSqbdYbj2+yQVLAlVFGZnxigSxP+PBocLZG9bNSjWi5B7dR7J7BeAyTD5ErQ8sSrXlt/InQnWoWEUfV5a2Jbt/orWrARvedGfiPOafP3PLabIQxHTOH81Ie",
+      "manifest": {
+        "offset": "snap.2.0",
+        "next_offset": "2",
+        "binding": "h1-0123456789abcdef\u0000snap.2.0",
+        "object": "v1/shapes/fixture/h1-0123456789abcdef/snap.2.0",
+        "url": "https://shapes-ts-terrabase-shapes-prod.terrascale.tech/v1/shapes/fixture/h1-0123456789abcdef/snap.2.0",
+        "expires_at": "2099-01-01T00:00:00Z",
+        "epoch": "3000000",
+        "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
+        "sha256": "1a4666050aad9b94a8a729d0d65d7af435b2496961ead2e88a825dfbf18d99e3",
+        "size": 411
+      }
+    },
+    {
+      "page": {
+        "shape_id": "0123456789abcdef0123456789abcdef",
+        "handle": "h1-0123456789abcdef",
+        "offset": "2",
+        "next_offset": "4",
+        "values_at": "4",
+        "up_to_date": false,
+        "changes": [
+          {
+            "offset": "4",
+            "ops": [
+              {
+                "op": "insert",
+                "key": "7",
+                "row": {
+                  "id": 7,
+                  "title": "New",
+                  "data": {
+                    "base64": "AAE="
+                  }
+                }
+              },
+              {
+                "op": "update",
+                "key": "3",
+                "row": {
+                  "id": 3,
+                  "title": "Renamed",
+                  "data": null
+                }
+              },
+              {
+                "op": "delete",
+                "key": "5"
+              }
+            ]
+          }
+        ]
+      },
+      "base64": "VEJTMQAAAAAALcbAMDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQTECAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAoAAAWTyIbwS/BhkATrk+SxgoDujOqAtHPnmrq/V4ZdLLpSHGokOWlQ6jcqAkEGUseakx0CcOaBxgIFpJ9DfXjazAmabifkeJJ9Z+cdfxHHZ6i5UQQZvXNKWEJn1YoWDJlnfPuWG5tCEAaJib3XFfoXwovCEce6MvleqRprsy5mEiTBKOGuphPia/8B9r6BPOfQfsKy/bHOfVOrPQHeXq4fcTfAmN52x/o5C3yyHR4w7acz+tfT1zVXOVrNrHu8g9Sx+00DW8ffIlY6LyudgQbP+hi0i2qC8DFjgNSBZiw7TDsiluwnTO/pXbTVa6X2SNs9xnjdl3U4Fk3gyiXWsba7uRRC3qzi+aYmXvjc2g50OUSaIWnASirTCAJdE2h4FTfpD3TFcdqe8Yr51QS+g95PtsmMEyg+GME202bRoI4BV1HC4EtQ85pBhg+p6CyL/cefGxIIRN6+HgyVzlrExwTr/7hjnUoRg5UkGkSPnSRkpQoqKVjTsIZY=",
+      "manifest": {
+        "offset": "2",
+        "next_offset": "4",
+        "binding": "h1-0123456789abcdef\u00002",
+        "object": "v1/shapes/fixture/h1-0123456789abcdef/2",
+        "url": "https://shapes-ts-terrabase-shapes-prod.terrascale.tech/v1/shapes/fixture/h1-0123456789abcdef/2",
+        "expires_at": "2099-01-01T00:00:00Z",
+        "epoch": "3000000",
+        "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
+        "sha256": "428b266f5fddaa82ff718ef14bcda523c02711a907b4269de99de93a618182e2",
+        "size": 446
+      }
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 import { array, boolean, malformed, object, string } from "./decode.js";
 import { isTerraBaseV1Error } from "./errors.js";
 import { decodeSqlValue } from "./sql-execute.js";
+import { ShapeCdn } from "./shape-cdn.js";
+import { OpaqueRedirectError } from "./transport.js";
 /**
  * @import { JsonObject } from "./json.js"
  * @import { V1SqlValue } from "./sql-execute.js"
@@ -101,6 +103,7 @@ export class V1TableShape {
     let handle = "";
     let offset = "-1";
     let upToDate = false;
+    let cdn = new ShapeCdn(this.#transport, this.#params, this.#filter);
     /** @type {string | undefined} */
     let cursor;
     for (let attempt = 0; !signal.aborted;) {
@@ -112,7 +115,26 @@ export class V1TableShape {
       /** @type {import("./transport.js").V1CallResult} */
       let response;
       try {
-        response = await this.#transport.call("readTableShape", this.#params, { query, signal, redirect: "follow" });
+        const cached = handle !== "" && !upToDate ? await cdn.read(handle, offset, signal) : undefined;
+        try {
+          response = cached ?? await this.#transport.call("readTableShape", this.#params, { query, signal });
+        } catch (error) {
+          if (!(error instanceof OpaqueRedirectError)) throw error;
+          response = await this.#transport.call("readTableShape", this.#params, { query, signal, redirect: "follow" });
+        }
+        if (response.status === 307) {
+          const base = await this.#transport.url("readTableShape", this.#params, signal);
+          const location = new URL(response.headers.get("location") ?? "", base);
+          const original = new URL(base);
+          const nextHandle = location.searchParams.get("handle");
+          const nextOffset = location.searchParams.get("offset");
+          if (handle !== "" || location.origin !== original.origin || location.pathname !== original.pathname
+            || nextHandle === null || !/^h1-[a-f0-9]{16}$/u.test(nextHandle) || nextOffset === null || !/^snap\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u.test(nextOffset))
+            malformed("shape bootstrap redirect");
+          handle = nextHandle;
+          offset = nextOffset;
+          continue;
+        }
       } catch (error) {
         if (signal.aborted) return;
         if (isTerraBaseV1Error(error, "must_refetch")) {
@@ -121,6 +143,7 @@ export class V1TableShape {
           offset = "-1";
           upToDate = false;
           cursor = undefined;
+          cdn = new ShapeCdn(this.#transport, this.#params, this.#filter);
           continue;
         }
         if (isTerraBaseV1Error(error) && (terminal.has(error.code) || !retryable.has(error.status))) throw error;
