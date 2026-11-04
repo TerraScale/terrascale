@@ -18,7 +18,7 @@ public sealed class IpAllowlistTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync("main");
-        var collections = Uri(database.Data + "/collections");
+        var sql = Uri(database.Data + "/sql/execute");
 
         async Task<(HttpStatusCode Status, string? Code)> GetAsync(string? keyCidrs, string? projectCidrs, string? forwardedFor = null)
         {
@@ -36,7 +36,7 @@ public sealed class IpAllowlistTests
                     token.Claims["project_cidrs"] = projectCidrs;
                 }
             }));
-            using var request = new HttpRequestMessage(HttpMethod.Get, collections);
+            using var request = new HttpRequestMessage(HttpMethod.Post, sql) { Content = JsonContent.Create(new { statements = new[] { new { sql = "SELECT 1" } } }) };
             if (forwardedFor is not null)
             {
                 request.Headers.Add("X-Forwarded-For", forwardedFor);

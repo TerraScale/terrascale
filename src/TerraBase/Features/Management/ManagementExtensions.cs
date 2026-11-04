@@ -1,9 +1,6 @@
 using TerraBase.Features.Backup;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Management.Backups;
-using TerraBase.Features.Management.Indexes;
-using TerraBase.Features.Management.Queries;
-using TerraBase.Features.Management.Schema;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
@@ -38,9 +35,6 @@ internal static class ManagementExtensions
         services.AddHostedService(provider => provider.GetRequiredService<HistoryErasures>());
         return services
             .AddTerraBaseManagementBackups()
-            .AddTerraBaseSchema()
-            .AddTerraBaseUsage()
-            .AddTerraBaseManagementQueries()
-            .AddTerraBaseManagementIndexes();
+            .AddTerraBaseUsage();
     }
 }

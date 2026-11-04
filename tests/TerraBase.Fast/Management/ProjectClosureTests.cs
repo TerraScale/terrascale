@@ -26,8 +26,7 @@ public sealed class ProjectClosureTests
         await Assert.That(issued.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var key = await issued.Content.ReadFromJsonAsync<JsonElement>();
         using var data = api.DataClient(key.GetProperty("secret").GetString());
-        var collections = ManagementApi.Uri(database.Data + "/collections");
-        using var before = await data.GetAsync(collections);
+        using var before = await ManagementApi.SqlAsync(data, database, "SELECT 1");
         await Assert.That(before.StatusCode).IsEqualTo(HttpStatusCode.OK);
         using var destination = await api.Client.PutAsJsonAsync(ManagementApi.Uri(route + "/backup-destination"), new Dictionary<string, string>
         {
@@ -46,7 +45,7 @@ public sealed class ProjectClosureTests
             await Assert.That(response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Accepted).IsTrue();
             return response.StatusCode == HttpStatusCode.OK;
         }, timeout: TimeSpan.FromSeconds(60));
-        using var revoked = await data.GetAsync(collections);
+        using var revoked = await ManagementApi.SqlAsync(data, database, "SELECT 1");
         await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         var catalog = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
         await using (var transaction = await catalog.BeginTransactionAsync(write: false, CancellationToken.None))

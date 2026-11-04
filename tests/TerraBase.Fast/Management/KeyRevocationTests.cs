@@ -20,8 +20,7 @@ public sealed class KeyRevocationTests
         var database = await api.CreateManagedDatabaseAsync();
         var (key, token) = Grant(api, database);
         using var client = api.WithToken(token);
-        var route = ManagementApi.Uri(database.Data + "/collections");
-        using (var first = await client.GetAsync(route))
+        using (var first = await ManagementApi.SqlAsync(client, database, "SELECT 1"))
         {
             await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
@@ -30,7 +29,7 @@ public sealed class KeyRevocationTests
 
         // Expire the cached authority without dispatching timers; this request must recheck the key itself.
         time.AdjustTime(time.GetUtcNow().AddSeconds(2));
-        using var response = await client.GetAsync(route, TestContext.Current!.Execution.CancellationToken);
+        using var response = await ManagementApi.SqlAsync(client, database, "SELECT 1", TestContext.Current!.Execution.CancellationToken);
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetProperty("code").GetString()).IsEqualTo(code);
         await Assert.That(response.Headers.WwwAuthenticate.ToString()).Contains(code);

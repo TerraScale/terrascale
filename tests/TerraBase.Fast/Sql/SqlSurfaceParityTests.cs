@@ -20,7 +20,7 @@ public sealed partial class SqlSurfaceParityTests
         var socketDatabase = await db.Api.CreateManagedDatabaseAsync(db.Database.Organization, db.Database.Project, "websocket");
         var wireDatabase = await db.Api.CreateManagedDatabaseAsync(db.Database.Organization, db.Database.Project, "wire");
         await using var socket = await SqlSocketClient.ConnectAsync(db.Api, socketDatabase.Data, apiKey: null);
-        var admitted = await socket.AuthAsync(ImportClient.Token(db.Api, db.Database.Project, "documents:read documents:write"));
+        var admitted = await socket.AuthAsync(db.Api.ProjectToken(db.Database.Project, "documents:read documents:write"));
         await using var wire = PostgresSql.Source(db.Api, db.WriterKey, wireDatabase.Name);
         await using var connection = await wire.OpenConnectionAsync();
         var (name, other, email, second, city) = (Faker.Name.FullName(), Faker.Name.FullName(), Faker.Internet.Email(), Faker.Internet.Email(), Faker.Address.City());

@@ -1,6 +1,6 @@
+using TerraBase.Hosting;
 using System.Globalization;
 using TerraBase.Errors;
-using TerraBase.Features.Documents;
 using TerraBase.Features.UserAuth;
 using TerraBase.Tenancy;
 
@@ -8,7 +8,7 @@ namespace TerraBase.Features.Shapes;
 
 internal static class ShapeRoute
 {
-    internal const string Shape = DocumentRoute.DatabaseRoute + "/tables/{table}/shape";
+    internal const string Shape = DatabaseRoute.Template + "/tables/{table}/shape";
 
     internal static readonly Validation BadTable = new("table must be an ordinary table name of at most 63 letters, digits and underscores");
 
@@ -53,7 +53,7 @@ internal static class ShapeRoute
     internal static async ValueTask<RouteResult> ResolveAsync(HttpContext context, ITenantDirectory tenants, IShapeLineages lineages,
         CancellationToken cancellationToken)
     {
-        switch (await DocumentRoute.CheckTenantAsync(context, tenants, cancellationToken))
+        switch (await DatabaseRoute.CheckTenantAsync(context, tenants, cancellationToken))
         {
             case Validation error:
                 return error;

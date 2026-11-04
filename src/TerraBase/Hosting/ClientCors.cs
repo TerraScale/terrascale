@@ -1,9 +1,9 @@
 namespace TerraBase.Hosting;
 
-/// <summary>Bearer-only browser access to the public document API.</summary>
+/// <summary>Bearer-only browser access to the public SQL and shape API.</summary>
 internal static class ClientCors
 {
-    private const string Policy = "document-api";
+    private const string Policy = "data-api";
     private const string ProbePolicy = "public-probes";
 
     public static IServiceCollection AddTerraBaseClientCors(this IServiceCollection services) => services.AddCors(cors =>
@@ -12,8 +12,8 @@ internal static class ClientCors
             .WithHeaders("X-TerraScale-Region-Pin")
             .WithExposedHeaders("X-TerraBase-Region", "X-Request-ID", "Retry-After"));
         cors.AddPolicy(Policy, policy => policy.AllowAnyOrigin()
-            .WithMethods("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE")
-            .WithHeaders("Authorization", "Content-Type", "If-Match", "If-None-Match", "Last-Event-ID", "TB-Shape-Resume", "X-TerraScale-Region-Pin")
+            .WithMethods("GET", "HEAD", "POST")
+            .WithHeaders("Authorization", "Content-Type", "If-None-Match", "TB-Shape-Resume", "X-TerraScale-Region-Pin")
             .WithExposedHeaders("ETag", "Location", "Retry-After", "TB-Shape-Cursor", "TB-Shape-Handle", "TB-Shape-Next-Offset", "TB-Shape-Up-To-Date", "X-TerraBase-Region", "X-TerraBase-Machine", "X-Request-ID"));
     });
 
@@ -39,9 +39,7 @@ internal static class ClientCors
             && string.Equals(segments[1], "v1", StringComparison.OrdinalIgnoreCase)
             && string.Equals(segments[2], "projects", StringComparison.OrdinalIgnoreCase)
             && string.Equals(segments[4], "databases", StringComparison.OrdinalIgnoreCase)
-            && (string.Equals(segments[6], "collections", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(segments[6], "transactions", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(segments[6], "changes", StringComparison.OrdinalIgnoreCase)
+            && (string.Equals(segments[6], "sql", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(segments[6], "tables", StringComparison.OrdinalIgnoreCase));
     }
 }

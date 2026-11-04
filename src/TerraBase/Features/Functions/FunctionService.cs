@@ -4,7 +4,6 @@ using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
-using TerraBase.Features.Documents;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
@@ -19,11 +18,11 @@ public static class FunctionsExtensions
 {
     /// <summary>Registers the always-on function store and runtime.</summary>
     public static IServiceCollection AddTerraBaseFunctions(this IServiceCollection services) =>
-        services.AddSingleton<FunctionService>().AddSingleton<IFunctions>(provider => provider.GetRequiredService<FunctionService>())
+        services.AddSingleton<FunctionWriter>().AddSingleton<FunctionService>().AddSingleton<IFunctions>(provider => provider.GetRequiredService<FunctionService>())
             .AddSingleton<FunctionScheduler>().AddHostedService(provider => provider.GetRequiredService<FunctionScheduler>());
 }
 
-internal sealed class FunctionService(SystemCatalog catalog, IDocumentService documents, IUsageMeter usage, IMemoryBudget memory,
+internal sealed class FunctionService(SystemCatalog catalog, FunctionWriter writer, IUsageMeter usage, IMemoryBudget memory,
     TerraBaseOptions options, TimeProvider time) : IFunctions
 {
     public const string Schedules = "function_schedules";
@@ -146,9 +145,9 @@ internal sealed class FunctionService(SystemCatalog catalog, IDocumentService do
         var run = await Task.Run(() => FunctionRunner.Run(source, eventJson, cancellationToken), cancellationToken).ConfigureAwait(false);
         var error = run.Error;
         if (error is null && run.Writes.Count > 0
-            && await documents.WriteAsync(tenant, run.Writes, indexErrors: true, cancellationToken).ConfigureAwait(false) is DocumentRejected rejected)
+            && await writer.WriteAsync(tenant, run.Writes, cancellationToken).ConfigureAwait(false) is { } refused)
         {
-            error = $"write {rejected.Op} was refused: " + Message(rejected.Error);
+            error = "the writes were refused: " + refused;
         }
 
         usage.RecordOperation(tenant, "invoke", 1);
@@ -194,18 +193,6 @@ internal sealed class FunctionService(SystemCatalog catalog, IDocumentService do
 
         return new FunctionResponse(200, "application/json", Encoding.UTF8.GetBytes(json));
     }
-
-    private static string Message(Failure error) => error switch
-    {
-        NotFound e => e.Message ?? "not found",
-        Conflict e => e.Message,
-        Validation e => e.Message,
-        PreconditionFailed e => e.Message,
-        QuotaExceeded e => e.Message,
-        PayloadTooLarge e => e.Message,
-        Unavailable e => e.Message,
-        _ => "the write was refused",
-    };
 
     private static FunctionBody Body(FunctionRecord record, bool withSource) =>
         new(record.Name, withSource ? record.Source : null, record.Cron, record.CreatedAt, record.UpdatedAt);

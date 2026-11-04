@@ -82,18 +82,18 @@ public sealed class ManagementApiTests
         using var created = await api.Client.PostAsJsonAsync(Uri(databases), new { name = "main" });
         var main = await created.Content.ReadFromJsonAsync<JsonElement>();
         var mainId = main.GetProperty("id").GetString()!;
-        (await data.PostAsJsonAsync(Uri($"{dataApi}/main/collections"), new { name = "people" })).EnsureSuccessStatusCode();
-        (await data.PutAsJsonAsync(Uri($"{dataApi}/main/collections/people/documents/by-key?id={p1}"), person)).EnsureSuccessStatusCode();
+        (await ManagementApi.SqlAsync(data, $"{dataApi}/main", "CREATE TABLE people (id TEXT PRIMARY KEY, name TEXT NOT NULL)")).EnsureSuccessStatusCode();
+        (await ManagementApi.SqlAsync(data, $"{dataApi}/main", $"INSERT INTO people VALUES ('{p1}', '{person.name.Replace("'", "''", StringComparison.Ordinal)}')")).EnsureSuccessStatusCode();
         using var branched = await api.Client.PostAsJsonAsync(Uri($"{databases}/{mainId}/branches"), new { name = "preview" });
         var branch = await branched.Content.ReadFromJsonAsync<JsonElement>();
-        (await data.PutAsJsonAsync(Uri($"{dataApi}/preview/collections/people/documents/by-key?id={p2}"), person)).EnsureSuccessStatusCode();
-        using var mainWithoutBranchWrite = await data.GetAsync(Uri($"{dataApi}/main/collections/people/documents/by-key?id={p2}"));
+        (await ManagementApi.SqlAsync(data, $"{dataApi}/preview", $"INSERT INTO people VALUES ('{p2}', 'branch')")).EnsureSuccessStatusCode();
+        var mainWithoutBranchWrite = await ManagementApi.RowsAsync(data, $"{dataApi}/main", $"SELECT id FROM people WHERE id = '{p2}'");
         using var list = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(databases)));
         using var projectNotEmpty = await api.Client.DeleteAsync(Uri($"/v1/management/organizations/{organization}/projects/{project}"));
         using var deleted = await api.Client.DeleteAsync(Uri($"{databases}/{mainId}"));
         using var gone = await api.Client.GetAsync(Uri($"{databases}/{mainId}"));
-        using var dataGone = await data.GetAsync(Uri($"{dataApi}/main/collections/people/documents/by-key?id={p1}"));
-        using var branchKeepsCopy = await data.GetAsync(Uri($"{dataApi}/preview/collections/people/documents/by-key?id={p1}"));
+        using var dataGone = await ManagementApi.SqlAsync(data, $"{dataApi}/main", "SELECT 1");
+        var branchKeepsCopy = await ManagementApi.RowsAsync(data, $"{dataApi}/preview", $"SELECT id FROM people WHERE id = '{p1}'");
 
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(main.GetProperty("name").GetString()).IsEqualTo("main");
@@ -102,7 +102,7 @@ public sealed class ManagementApiTests
         await Assert.That(branched.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(EntityIds.IsValid(branch.GetProperty("id").GetString())).IsTrue();
         await Assert.That(branch.GetProperty("branchedFrom").GetString()).IsEqualTo(mainId);
-        await Assert.That(mainWithoutBranchWrite.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(mainWithoutBranchWrite.Length).IsEqualTo(0);
         await Assert.That(list.RootElement.GetProperty("items").GetArrayLength()).IsEqualTo(2);
         await ErrorAssert.ErrorAsync(projectNotEmpty, HttpStatusCode.Conflict, "not_empty", "delete what it contains first");
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
@@ -110,7 +110,7 @@ public sealed class ManagementApiTests
         await Assert.That(dataGone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(File.Exists(Path.Combine(api.Server.DataDirectory, organization, project, mainId + ".db"))).IsFalse();
         await Assert.That(File.Exists(Path.Combine(api.Server.DataDirectory, organization, project, branch.GetProperty("id").GetString() + ".db"))).IsTrue();
-        await Assert.That(branchKeepsCopy.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(branchKeepsCopy.Length).IsEqualTo(1);
     }
 
     [Test]
@@ -150,7 +150,7 @@ public sealed class ManagementApiTests
         using var notAToken = await garbage.GetAsync(Uri("/v1/management/organizations"));
         using var withApiKey = await apiKey.GetAsync(Uri("/v1/management/organizations"));
         using var onAdmin = await api.Server.Client.SendAsync(adminRequest);
-        using var noDocumentAccess = await api.Client.PutAsync(Uri($"/v1/projects/{EntityIds.New()}/databases/x"), null);
+        using var noDataAccess = await ManagementApi.SqlAsync(api.Client, $"/v1/projects/{EntityIds.New()}/databases/x", "SELECT 1");
 
         await Assert.That(noToken.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(notAToken.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
@@ -158,7 +158,7 @@ public sealed class ManagementApiTests
         // The internal listener takes only the platform operator, never a ts-auth token.
         await Assert.That(onAdmin.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         // A sign-in token without project_id is not a data credential.
-        await Assert.That(noDocumentAccess.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(noDataAccess.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
     // Seeds current-format system documents after real-server bootstrap.

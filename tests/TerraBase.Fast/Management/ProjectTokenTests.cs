@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using Bogus;
 using Microsoft.IdentityModel.Tokens;
@@ -13,7 +12,7 @@ public sealed class ProjectTokenTests
     private const string AllScopes = "databases:read databases:write documents:read documents:write";
 
     [Test]
-    public async Task A_project_JWT_creates_and_manages_database_documents_without_organization_membership()
+    public async Task A_project_JWT_creates_a_database_and_runs_sql_without_organization_membership()
     {
         var faker = new Faker();
         await using var api = await ManagementApi.StartAsync();
@@ -21,9 +20,7 @@ public sealed class ProjectTokenTests
         using var client = api.WithToken(Token(api, EntityIds.New().ToString(), project, AllScopes));
         var databases = $"/v1/projects/{project}/databases";
         var database = databases + "/main";
-        var collection = database + "/collections/people";
-        var document = collection + "/documents/by-key?id=" + EntityIds.New();
-        var name = faker.Name.FullName();
+        var name = faker.Name.FullName().Replace("'", "''", StringComparison.Ordinal);
 
         using var created = await client.PostAsJsonAsync(Uri(databases), new { name = "main" });
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
@@ -33,27 +30,11 @@ public sealed class ProjectTokenTests
         await Assert.That((await client.GetFromJsonAsync<JsonElement>(Uri(database))).GetProperty("id").GetString())
             .IsEqualTo(info.GetProperty("id").GetString());
 
-        await Assert.That(await StatusAsync(client.PostAsJsonAsync(Uri(database + "/collections"), new { name = "people" })))
-            .IsEqualTo(HttpStatusCode.Created);
-        await Assert.That(await StatusAsync(client.PutAsJsonAsync(Uri(document), new { name, count = 1 }))).IsEqualTo(HttpStatusCode.Created);
-        var read = await client.GetFromJsonAsync<JsonElement>(Uri(document));
-        await Assert.That(read.GetProperty("document").GetProperty("name").GetString()).IsEqualTo(name);
-        using var patch = JsonContent.Create(new { count = 2 }, mediaType: new MediaTypeHeaderValue("application/merge-patch+json"));
-        await Assert.That(await StatusAsync(client.PatchAsync(Uri(document), patch))).IsEqualTo(HttpStatusCode.OK);
-
-        using var query = await client.PostAsJsonAsync(Uri(collection + "/query"), new { filter = new { eq = new object[] { "/count", 2 } } });
-        query.EnsureSuccessStatusCode();
-        await Assert.That((await query.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("items").GetArrayLength()).IsEqualTo(1);
-        var transactionId = EntityIds.New().ToString();
-        using var transaction = await client.PostAsJsonAsync(Uri(database + "/transactions"), new
-        {
-            ops = new object[] { new { op = "create", collection = "people", id = transactionId, document = new { name, count = 3 } } },
-        });
-        await Assert.That(transaction.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That((await client.GetFromJsonAsync<JsonElement>(Uri(collection + "/documents/by-key?id=" + transactionId)))
-            .GetProperty("document").GetProperty("count").GetInt32()).IsEqualTo(3);
-        await Assert.That(await StatusAsync(client.DeleteAsync(Uri(document)))).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await StatusAsync(client.GetAsync(Uri(document)))).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(await StatusAsync(ManagementApi.SqlAsync(client, database, "CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")))
+            .IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await StatusAsync(ManagementApi.SqlAsync(client, database, $"INSERT INTO people (name) VALUES ('{name}')"))).IsEqualTo(HttpStatusCode.OK);
+        var rows = await ManagementApi.RowsAsync(client, database, "SELECT name FROM people");
+        await Assert.That(rows.Length).IsEqualTo(1);
     }
 
     [Test]
@@ -107,9 +88,8 @@ public sealed class ProjectTokenTests
         using var legacy = await api.CreateClientAsync(first.Organization, "documents:read", "documents:write");
         foreach (var database in new[] { first, second })
         {
-            await ManagementApi.CreateCollectionAsync(legacy, database, "people");
-            using var written = await legacy.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "existing")), new { name = faker.Name.FullName() });
-            written.EnsureSuccessStatusCode();
+            (await ManagementApi.SqlAsync(legacy, database, "CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT)")).EnsureSuccessStatusCode();
+            (await ManagementApi.SqlAsync(legacy, database, $"INSERT INTO people (name) VALUES ('{faker.Name.FirstName()}')")).EnsureSuccessStatusCode();
         }
 
         using var backupResponse = await api.Client.PostAsync(Uri(first.Path + "/backups"), content: null);
@@ -122,7 +102,6 @@ public sealed class ProjectTokenTests
             .IsEquivalentTo(["first"]);
         var usage = await restricted.GetFromJsonAsync<JsonElement>(Uri($"/v1/projects/{first.Project}/usage"));
         await Assert.That(usage.GetProperty("databases").GetInt64()).IsEqualTo(1);
-        await Assert.That(usage.GetProperty("documents").GetInt64()).IsEqualTo(1);
         await Assert.That(usage.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("databaseId").GetString()!))
             .IsEquivalentTo([first.Id]);
         await Assert.That(await StatusAsync(restricted.GetAsync(Uri(first.Data)))).IsEqualTo(HttpStatusCode.OK);
@@ -132,8 +111,7 @@ public sealed class ProjectTokenTests
             "unknown_database", "the database does not exist");
         await ErrorAssert.ErrorAsync(restricted.PostAsJsonAsync(Uri(second.Data + "/branches"), new { name = "second-copy" }),
             HttpStatusCode.NotFound, "unknown_database", "the database does not exist");
-        await Assert.That(await StatusAsync(restricted.GetAsync(Uri(ManagementApi.DocumentPath(second, "people", "existing")))))
-            .IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(await StatusAsync(ManagementApi.SqlAsync(restricted, second, "SELECT * FROM people"))).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(await StatusAsync(restricted.PostAsJsonAsync(Uri(databases), new { name = "created" }))).IsEqualTo(HttpStatusCode.NotFound);
         await ErrorAssert.ErrorAsync(restricted.PostAsJsonAsync(Uri(first.Data + "/branches"), new { name = "branched" }),
             HttpStatusCode.NotFound, "unknown_route");

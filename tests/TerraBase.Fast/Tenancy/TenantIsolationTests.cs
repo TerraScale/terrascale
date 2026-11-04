@@ -16,12 +16,8 @@ public sealed class TenantIsolationTests
     // Client routes that address no organization, project or database: they act only for the caller.
     private static readonly string[] ReadScope = ["documents:read"];
 
-    // Index fields the Management API tooling routes are sent with.
-    private static readonly string[] NameField = ["name"];
-    private static readonly string[] OwnerField = ["owner"];
-
-    // The id of every document these tests write; documents are created with ULID keys.
-    private const string DocumentId = "01K6G00000E008000000000001";
+    // The id route parameters are filled with.
+    private const string Id = "01K6G00000E008000000000001";
 
     private static readonly string[] CallerOnlyRoutes =
     [
@@ -35,11 +31,8 @@ public sealed class TenantIsolationTests
         "GET /v1/regions",
         "GET /v1/management/organizations",
         "POST /v1/management/organizations",
-        // The platform explore API: platform admins only, over TerraScale's own databases, never a tenant's (PlatformExploreTests).
+        // Platform admins only, over TerraScale's own databases, never a tenant's.
         "GET /v1/platform/databases",
-        "GET /v1/platform/databases/{database}/collections",
-        "GET /v1/platform/databases/{database}/collections/{collection}/documents",
-        "GET /v1/platform/databases/{database}/collections/{collection}/documents/by-key",
     ];
 
     [Test]
@@ -62,21 +55,12 @@ public sealed class TenantIsolationTests
 
         using var aProject = ProjectClient(a);
         using var bProject = ProjectClient(b);
-        var aSecret = await SeedAsync(a);
-        var bSecret = await SeedAsync(b);
+        var aSecret = await SeedAsync(api, a, aDashboard);
+        var bSecret = await SeedAsync(api, b, bDashboard);
         // Canonical management addresses database names: this name exists only in B's project.
-        var bForeign = await CreateDatabaseAsync(b, "foreign");
-        // And the database tooling of the Management API: a saved query, an index, a backup and a recommendation.
+        var bForeign = await CreateDatabaseAsync(api, b, bDashboard, "foreign");
         var aTooling = await SeedToolingAsync(a, aDashboard, aSecret);
         var bTooling = await SeedToolingAsync(b, bDashboard, bSecret);
-        // Prove EXPLAIN accepts these credentials before testing the same route against another project.
-        foreach (var (tenant, client) in new[] { (a, aProject), (b, bProject) })
-        {
-            using var response = await client.PostAsJsonAsync(
-                new Uri($"/v1/projects/{tenant.ProjectId}/databases/secret/sql/explain", UriKind.Relative), new { sql = "SELECT * FROM people" });
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("ok").GetBoolean()).IsTrue();
-        }
 
         var aBefore = await SnapshotAsync(api, a, aDashboard, aSecret);
         var bBefore = await SnapshotAsync(api, b, bDashboard, bSecret);
@@ -108,8 +92,7 @@ public sealed class TenantIsolationTests
         // Routes that address no tenant show A only its own organization.
         using var listed = JsonDocument.Parse(await aDashboard.GetStringAsync(new Uri("/v1/management/organizations", UriKind.Relative)));
 
-        // Five data routes and twenty-eight management routes today.
-        await Assert.That(addressing.Count).IsGreaterThanOrEqualTo(33);
+        await Assert.That(addressing.Count).IsGreaterThanOrEqualTo(20);
         // Per request: every one answers 404, so another tenant's resources look exactly like ones that do not exist.
         await Assert.That(string.Join("\n", answers.Select(answer => $"{answer.Request} -> {(int)answer.Status}")))
             .IsEqualTo(string.Join("\n", answers.Select(answer => $"{answer.Request} -> 404")));
@@ -127,28 +110,22 @@ public sealed class TenantIsolationTests
         using var other = await api.CreateTenantAsync("documents:read");
         using var owner = api.As(tenant.User);
         var second = await api.CreateProjectAsync(tenant.OrganizationId, "Second", owner);
-        var app = await CreateDatabaseAsync(tenant, "app");
-        await CreateDatabaseAsync(tenant, "other");
-        using var secondApp = await tenant.Data.PutAsync(Database(second, "app"), null);
-        var secondAppId = (await secondApp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        var app = await CreateDatabaseAsync(api, tenant, owner, "app");
+        await CreateDatabaseAsync(api, tenant, owner, "other");
+        var secondAppId = await api.CreateDatabaseAsync(tenant.OrganizationId, second, "app", owner);
         using var project = api.DataClient(await api.Server.IssueNarrowedAsync(tenant.OrganizationId, tenant.ProjectId, null, "documents:read", "documents:write"));
         using var database = api.DataClient(await api.Server.IssueNarrowedAsync(tenant.OrganizationId, tenant.ProjectId, app, "documents:read", "documents:write"));
-        var body = new { value = 1 };
-        var document = $"/collections/c/documents/by-key?id={DocumentId}";
+        const string Write = "INSERT INTO c (value) VALUES (1)";
 
         List<(string Request, HttpStatusCode Expected, HttpStatusCode Actual)> checks =
         [
-            ("project key writes app", HttpStatusCode.Created, await StatusAsync(project.PutAsJsonAsync(tenant.Database("app", document), body))),
-            ("project key writes other", HttpStatusCode.Created, await StatusAsync(project.PutAsJsonAsync(tenant.Database("other", document), body))),
-            ("project key writes app of second project", HttpStatusCode.NotFound, await StatusAsync(project.PutAsJsonAsync(Database(second, "app", document), body))),
-            ("project key lists app of second project", HttpStatusCode.NotFound, await StatusAsync(project.GetAsync(Database(second, "app", "/collections/c/documents")))),
-            ("project key creates in second project", HttpStatusCode.NotFound, await StatusAsync(project.PutAsync(Database(second, "new"), null))),
-            ("project key creates in its project", HttpStatusCode.Created, await StatusAsync(project.PutAsync(tenant.Database("new"), null))),
-            ("database key writes app", HttpStatusCode.OK, await StatusAsync(database.PutAsJsonAsync(tenant.Database("app", document), body))),
-            ("database key reads other", HttpStatusCode.NotFound, await StatusAsync(database.GetAsync(tenant.Database("other", document)))),
-            ("database key creates app again", HttpStatusCode.OK, await StatusAsync(database.PutAsync(tenant.Database("app"), null))),
-            ("database key creates unwanted", HttpStatusCode.NotFound, await StatusAsync(database.PutAsync(tenant.Database("unwanted"), null))),
-            ("database key reads app of second project", HttpStatusCode.NotFound, await StatusAsync(database.GetAsync(Database(second, "app", document)))),
+            ("project key writes app", HttpStatusCode.OK, await StatusAsync(ManagementApi.SqlAsync(project, DataPath(tenant.ProjectId, "app"), Write))),
+            ("project key writes other", HttpStatusCode.OK, await StatusAsync(ManagementApi.SqlAsync(project, DataPath(tenant.ProjectId, "other"), Write))),
+            ("project key writes app of second project", HttpStatusCode.NotFound, await StatusAsync(ManagementApi.SqlAsync(project, DataPath(second, "app"), Write))),
+            ("project key reads app of second project", HttpStatusCode.NotFound, await StatusAsync(ManagementApi.SqlAsync(project, DataPath(second, "app"), "SELECT * FROM c"))),
+            ("database key writes app", HttpStatusCode.OK, await StatusAsync(ManagementApi.SqlAsync(database, DataPath(tenant.ProjectId, "app"), Write))),
+            ("database key reads other", HttpStatusCode.NotFound, await StatusAsync(ManagementApi.SqlAsync(database, DataPath(tenant.ProjectId, "other"), "SELECT * FROM c"))),
+            ("database key reads app of second project", HttpStatusCode.NotFound, await StatusAsync(ManagementApi.SqlAsync(database, DataPath(second, "app"), "SELECT * FROM c"))),
         ];
         using var secondDatabases = JsonDocument.Parse(await owner.GetStringAsync(
             new Uri($"/v1/management/organizations/{tenant.OrganizationId}/projects/{second}/databases", UriKind.Relative)));
@@ -158,11 +135,11 @@ public sealed class TenantIsolationTests
         // Per request: each status is checked against the request that produced it.
         await Assert.That(string.Join("\n", checks.Select(check => $"{check.Request} -> {check.Actual}")))
             .IsEqualTo(string.Join("\n", checks.Select(check => $"{check.Request} -> {check.Expected}")));
-        // Refused creations created nothing.
+        // Refused writes created nothing.
         await Assert.That(secondDatabases.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("name").GetString()!))
             .IsEquivalentTo(["app"]);
         await Assert.That(firstDatabases.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("name").GetString()!))
-            .IsEquivalentTo(["app", "other", "new"]);
+            .IsEquivalentTo(["app", "other"]);
 
         // Issuing: the organization is required, and a project and database must belong to it and nest.
         var issued = new List<HttpStatusCode>();
@@ -214,26 +191,16 @@ public sealed class TenantIsolationTests
                 .Replace("{expectedId}", database, StringComparison.Ordinal)
                 // Legacy management routes name a database by id; canonical management and data use its name.
                 .Replace("{database}", IsManagement(pattern) ? database : databaseName, StringComparison.Ordinal)
-                .Replace("{collection}", "people", StringComparison.Ordinal)
                 .Replace("{table}", "people", StringComparison.Ordinal)
-                .Replace("{id}", DocumentId, StringComparison.Ordinal)
+                .Replace("{id}", Id, StringComparison.Ordinal)
                 .Replace("{user}", user, StringComparison.Ordinal)
-                .Replace("{query}", tooling.Query, StringComparison.Ordinal)
                 .Replace("{backup}", tooling.Backup, StringComparison.Ordinal)
-                .Replace("{webhook}", DocumentId, StringComparison.Ordinal)
                 .Replace("{function}", "hello", StringComparison.Ordinal)
-                .Replace("{bucket}", DocumentId, StringComparison.Ordinal)
-                .Replace("{file}", DocumentId, StringComparison.Ordinal)
-                .Replace("{index}", tooling.Index, StringComparison.Ordinal)
-                .Replace("{recommendation}", tooling.Recommendation, StringComparison.Ordinal)
+                .Replace("{bucket}", Id, StringComparison.Ordinal)
+                .Replace("{file}", Id, StringComparison.Ordinal)
                 .Replace("{version}", "v3", StringComparison.Ordinal);
             // A new route parameter needs a value here.
             await Assert.That(path).DoesNotContain("{");
-            if (pattern.EndsWith("/documents/by-key", StringComparison.Ordinal))
-            {
-                path += "?id=" + System.Uri.EscapeDataString(DocumentId);
-            }
-
             using var request = new HttpRequestMessage(new HttpMethod(method), new Uri(path, UriKind.Relative));
             if (method is "POST" or "PUT" or "PATCH")
             {
@@ -248,9 +215,7 @@ public sealed class TenantIsolationTests
                     userId = user,
                     days = 30,
                     scopes = ReadScope,
-                    sql = "SELECT * FROM people",
-                    collection = "people",
-                    fields = OwnerField,
+                    statements = new[] { new { sql = "SELECT * FROM people" } },
                     fullBackupCron = "",
                     retentionDays = 7,
                 });
@@ -265,48 +230,35 @@ public sealed class TenantIsolationTests
         return sent;
     }
 
-    private static async Task<string> SeedAsync(Tenant tenant)
+    private static async Task<string> SeedAsync(ManagementApi api, Tenant tenant, HttpClient dashboard)
     {
-        var id = await CreateDatabaseAsync(tenant, "secret");
-        (await tenant.Data.PutAsJsonAsync(tenant.Database("secret", $"/collections/people/documents/by-key?id={DocumentId}"), new { owner = tenant.OrganizationId }))
+        var id = await CreateDatabaseAsync(api, tenant, dashboard, "secret");
+        (await ManagementApi.SqlAsync(tenant.Data, DataPath(tenant.ProjectId, "secret"), $"INSERT INTO people (owner) VALUES ('{tenant.OrganizationId}')"))
             .EnsureSuccessStatusCode();
         return id;
     }
 
-    // The Management API's tooling of a database: a saved query, an index on people.name, a backup, and a
-    // recommendation for people.owner from a SQL run.
+    // The Management API's tooling of a database: a backup.
     private static async Task<Tooling> SeedToolingAsync(Tenant tenant, HttpClient dashboard, string database)
     {
-        var project = $"/v1/management/organizations/{tenant.OrganizationId}/projects/{tenant.ProjectId}";
-        var path = $"{project}/databases/{database}";
-        async Task<JsonElement> PostAsync(string route, object? body)
-        {
-            using var response = await dashboard.PostAsJsonAsync(new Uri(route, UriKind.Relative), body);
-            response.EnsureSuccessStatusCode();
-            return await response.Content.ReadFromJsonAsync<JsonElement>();
-        }
-
-        var query = (await PostAsync($"{project}/saved-queries", new { name = "All", sql = "SELECT * FROM people" })).GetProperty("id").GetString()!;
-        var backup = (await PostAsync($"{path}/backups", null)).GetProperty("id").GetString()!;
-        var index = (await PostAsync($"{path}/indexes", new { collection = "people", fields = NameField })).GetProperty("name").GetString()!;
-        await PostAsync($"{path}/sql", new { sql = "SELECT * FROM people WHERE owner = 'nobody'" });
-        return new Tooling(query, backup, index, "people:owner");
+        var path = $"/v1/management/organizations/{tenant.OrganizationId}/projects/{tenant.ProjectId}/databases/{database}";
+        using var response = await dashboard.PostAsJsonAsync(new Uri($"{path}/backups", UriKind.Relative), (object?)null);
+        response.EnsureSuccessStatusCode();
+        return new Tooling((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!);
     }
 
-    private static Uri Database(string project, string name, string path = "") => new($"/v1/projects/{project}/databases/{name}{path}", UriKind.Relative);
+    private static string DataPath(string project, string name) => $"/v1/projects/{project}/databases/{name}";
 
-    // A database with the collections the tests write to, "people" and "c"; returns its id.
-    private static async Task<string> CreateDatabaseAsync(Tenant tenant, string name)
+    // A database with the tables the tests write to, "people" and "c"; returns its id.
+    private static async Task<string> CreateDatabaseAsync(ManagementApi api, Tenant tenant, HttpClient dashboard, string name)
     {
-        using var response = await tenant.Data.PutAsync(tenant.Database(name), null);
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        foreach (var collection in new[] { "people", "c" })
+        var id = await api.CreateDatabaseAsync(tenant.OrganizationId, tenant.ProjectId, name, dashboard);
+        foreach (var table in new[] { "CREATE TABLE people (id INTEGER PRIMARY KEY, owner TEXT)", "CREATE TABLE c (id INTEGER PRIMARY KEY, value INTEGER)" })
         {
-            using var created = await tenant.Data.PostAsJsonAsync(tenant.Database(name, "/collections"), new { name = collection });
-            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            using var created = await ManagementApi.SqlAsync(tenant.Data, DataPath(tenant.ProjectId, name), table);
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
-
-        return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        return id;
     }
 
     private static async Task<HttpStatusCode> StatusAsync(Task<HttpResponseMessage> request)
@@ -323,7 +275,7 @@ public sealed class TenantIsolationTests
             .Where(endpoint => endpoint.Metadata.GetMetadata<ListenerMetadata>()?.Listeners.Contains(TerraBaseListener.Client) == true)
             .SelectMany(endpoint => (endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods ?? [])
                 .Select(method => (method, endpoint.RoutePattern.RawText!, endpoint.Metadata.GetMetadata<ProjectManagementRoute>() is not null
-                    || endpoint.RoutePattern.RawText!.EndsWith("/sql/explain", StringComparison.Ordinal))))
+                    )))
             .Order(),
     ];
 
@@ -336,15 +288,14 @@ public sealed class TenantIsolationTests
         foreach (var path in new[]
         {
             organization, $"{organization}/projects", project, $"{project}/databases",
-            $"{project}/saved-queries", $"{database}/indexes", $"{database}/backups", $"{database}/backup-policy",
-            $"{database}/index-recommendations",
+            $"{database}/backups", $"{database}/backup-policy",
         })
         {
             using var response = await bDashboard.GetAsync(new Uri(path, UriKind.Relative));
             snapshot.Add($"{path} {(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
         }
 
-        snapshot.Add(await b.Data.GetStringAsync(b.Database("secret", "/collections/people/documents")));
+        snapshot.AddRange((await ManagementApi.RowsAsync(b.Data, DataPath(b.ProjectId, "secret"), "SELECT * FROM people")).Select(row => row.GetRawText()));
         snapshot.AddRange(Directory.EnumerateFiles(Path.Combine(api.Server.DataDirectory, b.OrganizationId), "*", SearchOption.AllDirectories)
             .Where(file => file.EndsWith(".db", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal));
@@ -352,5 +303,5 @@ public sealed class TenantIsolationTests
     }
 
     /// <summary>The ids of a tenant's Management API tooling that routes name.</summary>
-    private sealed record Tooling(string Query, string Backup, string Index, string Recommendation);
+    private sealed record Tooling(string Backup);
 }

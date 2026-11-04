@@ -3,14 +3,13 @@ using System.Text.Json;
 using Jint;
 using Jint.Runtime;
 using TerraBase.Engine;
-using TerraBase.Features.Documents;
 using TerraBase.Primitives;
 using JsEngine = Jint.Engine;
 
 namespace TerraBase.Features.Functions;
 
 /// <summary>A finished run: its JSON result or error, console lines and the document writes it recorded.</summary>
-internal sealed record FunctionRun(string? Result, string? Error, List<string> Lines, List<DocumentOperation> Writes);
+internal sealed record FunctionRun(string? Result, string? Error, List<string> Lines, List<FunctionWrite> Writes);
 /// <summary>Runs one invocation in a fresh Jint engine without CLR, file, network or environment access.</summary>
 internal static class FunctionRunner
 {
@@ -59,7 +58,7 @@ internal static class FunctionRunner
     public static FunctionRun Run(string source, string eventJson, CancellationToken cancellationToken)
     {
         var lines = new List<string>();
-        var writes = new List<DocumentOperation>();
+        var writes = new List<FunctionWrite>();
         using var engine = new JsEngine(options => options
             .Strict()
             .TimeoutInterval(TimeSpan.FromSeconds(2))
@@ -108,7 +107,7 @@ internal static class FunctionRunner
         }
     }
 
-    private static string Record(List<DocumentOperation> writes, string kind, string collection, string? id, string? json)
+    private static string Record(List<FunctionWrite> writes, string kind, string collection, string? id, string? json)
     {
         if (writes.Count >= MaxWrites)
         {
@@ -128,7 +127,7 @@ internal static class FunctionRunner
 
         if (kind == "delete")
         {
-            writes.Add(new DeleteOperation(collection, id, new Precondition(null, IfMatchAny: false, IfNoneMatch: false)));
+            writes.Add(new FunctionWrite(collection, id, null));
             return id;
         }
 
@@ -153,7 +152,7 @@ internal static class FunctionRunner
             throw new JavaScriptLimitException("the document is not valid: " + error.Message);
         }
 
-        writes.Add(new PutOperation(collection, id, bytes, new Precondition(null, IfMatchAny: false, IfNoneMatch: false)));
+        writes.Add(new FunctionWrite(collection, id, bytes));
         return id;
     }
 }

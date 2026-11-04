@@ -18,7 +18,7 @@ public sealed class TigrisBackupTests
     private static readonly TimeSpan ShippingDeadline = TimeSpan.FromMinutes(2);
 
     [Test]
-    public async Task A_database_shipped_to_Tigris_restores_identically_after_its_documents_are_wiped(CancellationToken cancellationToken)
+    public async Task A_database_shipped_to_Tigris_restores_identically_after_its_rows_are_wiped(CancellationToken cancellationToken)
     {
         var faker = new Faker();
         var prefix = $"ci/{EntityIds.New()}/";
@@ -33,12 +33,12 @@ public sealed class TigrisBackupTests
                 cancellationToken: cancellationToken, failedStartCleanup: cleanup => failedStartCleanup = cleanup);
             var database = await api.CreateManagedDatabaseAsync("main");
             using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
-            await ManagementApi.CreateCollectionAsync(data, database, "people", cancellationToken);
+            (await ManagementApi.SqlAsync(data, database, "CREATE TABLE people (id TEXT PRIMARY KEY, text TEXT NOT NULL)", cancellationToken)).EnsureSuccessStatusCode();
             await ShippedAsync(api, database, null, cancellationToken);
             var written = Enumerable.Range(0, 50).ToDictionary(i => $"p{i:D3}", _ => faker.Lorem.Paragraph(4));
             foreach (var (id, text) in written)
             {
-                (await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", id)), new { text }, cancellationToken)).EnsureSuccessStatusCode();
+                (await ManagementApi.SqlAsync(data, database, $"INSERT INTO people VALUES ('{id}', '{text.Replace("'", "''", StringComparison.Ordinal)}')", cancellationToken)).EnsureSuccessStatusCode();
             }
             var writtenAt = DateTimeOffset.UtcNow;
             var shipped = DateTimeOffset.FromUnixTimeSeconds(writtenAt.ToUnixTimeSeconds() + 1);
@@ -46,22 +46,15 @@ public sealed class TigrisBackupTests
             {
                 await Task.Delay(wait + TimeSpan.FromMilliseconds(1), cancellationToken);
             }
-            foreach (var id in written.Keys)
-            {
-                (await data.DeleteAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", id)), cancellationToken)).EnsureSuccessStatusCode();
-            }
-
-            using var wiped = await data.GetAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", written.Keys.First())), cancellationToken);
+            (await ManagementApi.SqlAsync(data, database, "DELETE FROM people", cancellationToken)).EnsureSuccessStatusCode();
+            var wiped = await ManagementApi.RowsAsync(data, database.Data, "SELECT id FROM people", cancellationToken);
             await ShippedAsync(api, database, shipped, cancellationToken);
             using var restore = await api.Client.PostAsJsonAsync(ManagementApi.Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = shipped, name = "main-restored" }, cancellationToken);
             var restored = database with { Name = "main-restored" };
             var read = new Dictionary<string, string?>();
-            foreach (var id in written.Keys)
+            foreach (var row in await ManagementApi.RowsAsync(data, restored.Data, "SELECT id, text FROM people", cancellationToken))
             {
-                using var response = await data.GetAsync(ManagementApi.Uri(ManagementApi.DocumentPath(restored, "people", id)), cancellationToken);
-                read[id] = response.IsSuccessStatusCode
-                    ? (await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("document").GetProperty("text").GetString()
-                    : response.StatusCode.ToString();
+                read[row[0].GetString()!] = row[1].GetString();
             }
 
             var objects = await ListAsync(s3, $"{prefix}v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local/", cancellationToken);
@@ -75,10 +68,10 @@ public sealed class TigrisBackupTests
                 sealedOnly &= buffer.GetBuffer().AsSpan(0, (int)buffer.Length).StartsWith("TBK1"u8) && buffer.ToArray().AsSpan().IndexOf(plain) < 0;
             }
 
-            await Assert.That(wiped.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+            await Assert.That(wiped.Length).IsEqualTo(0);
             await Assert.That(restore.StatusCode).IsEqualTo(HttpStatusCode.Created)
                 .Because(await restore.Content.ReadAsStringAsync(cancellationToken));
-            await Assert.That(read.Count(pair => pair.Value != written[pair.Key])).IsEqualTo(0);
+            await Assert.That(read.Count(pair => written.TryGetValue(pair.Key, out var text) && text == pair.Value)).IsEqualTo(written.Count);
             await Assert.That(objects.Any(key => key.Contains("/snapshots/", StringComparison.Ordinal))).IsTrue();
             await Assert.That(sealedOnly).IsTrue();
         }
