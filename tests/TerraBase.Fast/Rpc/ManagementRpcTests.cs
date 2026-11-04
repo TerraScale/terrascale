@@ -91,8 +91,8 @@ public sealed class ManagementRpcTests
         using var plan = JsonDocument.Parse("""{"plan":"pro"}""");
         var legacyPlan = await Fault(() => platform.SetProjectPlanAsync(api.Tenant.ProjectId, plan.RootElement).ResponseAsync);
         await platform.SetOrganizationPlanAsync(DocumentApi.NewId(), plan.RootElement);
-        var allowances = await Client<IUsageService>(channel, null).ListAllowancesAsync(null);
-        var userAllowances = await Fault(() => Client<IUsageService>(channel, Token(api, "databases:read")).ListAllowancesAsync(null).ResponseAsync);
+        var allowances = await Client<IUsageService>(channel, null).ListAllowancesAsync(null, null);
+        var userAllowances = await Fault(() => Client<IUsageService>(channel, Token(api, "databases:read")).ListAllowancesAsync(null, null).ResponseAsync);
 
         await Assert.That(regions.Regions).Contains(health.Region);
         await Assert.That(health.Status).IsEqualTo("ok");

@@ -85,6 +85,8 @@ internal static class SqlErrors
 
     public static SqlError TooBig(string message) => new(TooLarge, message);
 
+    public static SqlError Quota(string message) => new(QuotaExceeded, message);
+
     public static SqlError Interrupt { get; } = new(QueryCanceled, "query too expensive: it exceeds the work budget");
 
     public static SqlError InFailedTransaction { get; } =

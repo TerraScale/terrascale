@@ -126,8 +126,8 @@ Requests authenticated with project JWTs or document credentials share their org
 query costs, memory/cache shares and live-document storage quotas. The platform publishes the
 resource plan using the trusted platform operator; public user tokens cannot grant
 Enterprise admission. Rate, concurrency and memory refusals include `Retry-After`.
-Monthly [operation allowances](operation-allowance.md) stop new puts and patches at the plan's
-hard allowance; reads and deletes remain available.
+Monthly [operation allowances](operation-allowance.md) stop new writes at the plan's write cap
+and SQL reads at the plan's fair use; shape reads are never counted.
 New databases stop at the plan's [database allowance](plan-database-allowance.md) (`409 database_limit`).
 [Point-in-time restore admission and retention](pitr-plan-entitlements-2026-10-24.md) use those same plan entitlements.
 One process serves many databases: [shared-process tenancy](shared-process-tenancy.md) bounds open writers and
