@@ -14,7 +14,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             using var client = scenario.CreateClient();
             using var replica = scenario.CreateClient(replica: true);
             using var producer = scenario.CreateProviderClient();
-            var account = await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+            var account = await DatabaseJourney.NativeWorkspaceAsync(client);
             using var replicaLogin = await HttpJourney.LoginAsync(replica, account.Email, account.Password);
             var secret = await HttpJourney.CreatePatAsync(client, "Agent databases", account.Password);
             var source = await CallAsync(client, secret, "create_database", new { name = "agent-source", ttlHours = 1.5m });
@@ -24,11 +24,11 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             using var identity = await client.GetFromJsonAsync<JsonDocument>("/api/v1/auth/me");
             using var plan = await producer.PostAsJsonAsync("/__test/control", new { command = "plan", organizationId = identity!.RootElement.GetProperty("organizationId").GetString(), value = OrganizationRecord.StarterPlanId });
             plan.EnsureSuccessStatusCode();
-            await CallAsync(client, secret, "create_collection", new { databaseId = id, name = "notes" });
-            var documentId = "01K78CVSTMER00000000000000";
-            await CallAsync(client, secret, "create_document", new { databaseId = id, collection = "notes", documentId, document = new { text = "snapshot" } });
+            var csrf = await HttpJourney.CsrfAsync(client, "/databases/" + id + "/sql");
+            await SqlAsync("CREATE TABLE notes (text TEXT)");
+            await SqlAsync("INSERT INTO notes VALUES ('snapshot')");
             var backup = await CallAsync(client, secret, "create_backup", new { databaseId = id });
-            await CallAsync(client, secret, "replace_document", new { databaseId = id, collection = "notes", id = documentId, document = new { text = "current" } });
+            await SqlAsync("UPDATE notes SET text = 'current'");
             var fork = await CallAsync(client, secret, "fork_database", new { databaseId = id, name = "agent-current", ttlHours = 2m });
             var forkId = fork.GetProperty("id").GetString()!;
             await Assert.That(fork.GetProperty("expiresAt").ValueKind).IsEqualTo(JsonValueKind.String);
@@ -56,6 +56,13 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var listing = await CallAsync(replica, secret, "list_databases", new { });
             await Assert.That(listing.GetProperty("databases").GetArrayLength()).IsEqualTo(0);
 
+            async Task SqlAsync(string sql)
+            {
+                using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/sql", new()
+                { ["_csrf"] = csrf, ["databaseId"] = id, ["sql"] = sql });
+                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(sql);
+            }
+
             async Task QueryAsync(string databaseId, string expected)
             {
                 var query = await CallAsync(replica, secret, "run_sql", new { databaseId, sql = "SELECT * FROM notes LIMIT 100" });
@@ -69,7 +76,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
         {
             await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
             using var client = scenario.CreateClient();
-            var account = await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+            var account = await DatabaseJourney.NativeWorkspaceAsync(client);
             var secret = await HttpJourney.CreatePatAsync(client, "Invalid agent TTL", account.Password);
             var source = await CallAsync(client, secret, "create_database", new { name = "agent-guard", ttlHours = 1m });
             var id = source.GetProperty("id").GetString()!;
