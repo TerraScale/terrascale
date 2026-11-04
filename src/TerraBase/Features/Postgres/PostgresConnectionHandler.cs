@@ -683,7 +683,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         if (session.Failed && statement.Kind is not (PgKind.Commit or PgKind.Rollback or PgKind.Empty)
             && !(statement.Kind == PgKind.Savepoint && PostgresStatements.RollsBackTo(statement.Text)))
         {
-            return new PgError("25P02", "current transaction is aborted, commands ignored until end of transaction block");
+            return PostgresStatements.Error(SqlErrors.InFailedTransaction);
         }
 
         switch (statement.Kind)

@@ -98,8 +98,9 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             await Assert.That(read.Body.GetProperty("rows")[0][1].GetString()).IsEqualTo("Ada");
             var missing = await RunAsync("SELECT * FROM nope");
             await Assert.That(missing.Status).IsEqualTo(HttpStatusCode.BadRequest);
-            await Assert.That(missing.Body.GetProperty("detail").GetString()).IsEqualTo("no such table: nope (SQLITE_ERROR)");
-            await Assert.That(missing.Body.GetProperty("sqliteCode").GetString()).IsEqualTo("SQLITE_ERROR");
+            await Assert.That(missing.Body.GetProperty("detail").GetString()).IsEqualTo("no such table: nope (undefined_table)");
+            await Assert.That(missing.Body.GetProperty("code").GetString()).IsEqualTo("undefined_table");
+            await Assert.That(missing.Body.GetProperty("sqlstate").GetString()).IsEqualTo("42P01");
             var write = await RunAsync("CREATE TABLE things (id TEXT PRIMARY KEY)");
             await Assert.That(write.Status).IsEqualTo(HttpStatusCode.OK).Because("A member with write access runs DDL with a documents:write grant.");
             await Assert.That(write.Body.GetProperty("rowsAffected").GetInt64()).IsEqualTo(0).Because("DDL changes no rows.");

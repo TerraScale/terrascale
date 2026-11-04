@@ -448,7 +448,7 @@ namespace TerraScale.Dashboard.E2E
 
                 if (Mode == "forbidden" && (schema || writes.Length > 0))
                 {
-                    return SqlError(403, "forbidden_scope", "SQLITE_AUTH", 0);
+                    return SqlError(403, "forbidden_scope", "42501", 0);
                 }
 
                 if (schema)
@@ -500,9 +500,9 @@ namespace TerraScale.Dashboard.E2E
                 }
                 catch (TestSqlFailure failure)
                 {
-                    if (failure.SqliteCode.StartsWith("SQLITE_CONSTRAINT", StringComparison.Ordinal)) { Interlocked.Increment(ref conflicts); }
+                    if (failure.Sqlstate.StartsWith("23", StringComparison.Ordinal)) { Interlocked.Increment(ref conflicts); }
                     else if (!failure.Message.Contains("no such table", StringComparison.Ordinal)) { failures.Enqueue(failure.Message); }
-                    return SqlError(400, failure.Code, failure.SqliteCode, failure.Statement);
+                    return SqlError(400, failure.Code, failure.Sqlstate, failure.Statement);
                 }
             }
 
@@ -511,9 +511,9 @@ namespace TerraScale.Dashboard.E2E
                 return statement.Sql.StartsWith("INSERT INTO " + table + " ", StringComparison.Ordinal) || statement.Sql.StartsWith("UPDATE " + table + " ", StringComparison.Ordinal);
             }
 
-            private static IResult SqlError(int status, string code, string sqliteCode, int statement)
+            private static IResult SqlError(int status, string code, string sqlstate, int statement)
             {
-                return Results.Json(new { error = new { code, message = "Test-only state producer refusal.", statement, sqlite_code = sqliteCode } }, statusCode: status);
+                return Results.Json(new { error = new { code, message = "Test-only state producer refusal.", statement, sqlstate } }, statusCode: status);
             }
 
             private async Task<IResult> ControlAsync(HttpContext http)

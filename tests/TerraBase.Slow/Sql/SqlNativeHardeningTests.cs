@@ -34,7 +34,7 @@ public sealed class SqlNativeHardeningTests
 
         foreach (var refused in new[] { offset, quotedStats, commaJoin, trigger })
         {
-            await Assert.That((refused.Status, refused.Code)).IsEqualTo((HttpStatusCode.BadRequest, "SQLITE_ERROR"));
+            await Assert.That((refused.Status, refused.Code)).IsEqualTo((HttpStatusCode.BadRequest, "sql_error"));
         }
 
         await Assert.That((await db.OkAsync("SELECT count(*) FROM sqlite_schema WHERE name = 'wipe'"))[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(0);
@@ -91,7 +91,7 @@ public sealed class SqlNativeHardeningTests
         await db.OkAsync("INSERT INTO teams VALUES (7)", "INSERT INTO players VALUES (3, 7)");
         await PostgresSql.ExecuteAsync(connection, "INSERT INTO teams VALUES (8)");
 
-        await Assert.That(rest.Code).IsEqualTo("SQLITE_CONSTRAINT_FOREIGNKEY");
+        await Assert.That(rest.Code).IsEqualTo("foreign_key_violation");
         await Assert.That(postgres).IsEqualTo("23503");
         await Assert.That(await db.CountAsync("players")).IsEqualTo(1);
         await Assert.That(await db.CountAsync("teams")).IsEqualTo(2);
@@ -110,7 +110,7 @@ public sealed class SqlNativeHardeningTests
 
         foreach (var refused in new[] { zeroblob, randomblob, doubling, hex })
         {
-            await Assert.That((refused.Status, refused.Code)).IsEqualTo((HttpStatusCode.RequestEntityTooLarge, "SQLITE_TOOBIG"));
+            await Assert.That((refused.Status, refused.Code)).IsEqualTo((HttpStatusCode.RequestEntityTooLarge, "too_large"));
         }
 
         await Assert.That(fits[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(1048576);
@@ -128,14 +128,14 @@ public sealed class SqlNativeHardeningTests
         for (var i = 0; i < 64 && full is null; i++)
         {
             var (status, body) = await db.PostAsync(db.Writer, Stmt("INSERT INTO files (data) VALUES (randomblob(3000))"));
-            full = status == HttpStatusCode.OK ? null : body.GetProperty("error").GetProperty("sqlite_code").GetString();
+            full = status == HttpStatusCode.OK ? null : body.GetProperty("error").GetProperty("code").GetString();
         }
 
         var rows = await db.CountAsync("files");
         await db.OkAsync("DELETE FROM files");
         await db.OkAsync("INSERT INTO files (data) VALUES (randomblob(3000))");
 
-        await Assert.That(full).IsEqualTo("SQLITE_FULL");
+        await Assert.That(full).IsEqualTo("quota_exceeded");
         await Assert.That(rows).IsGreaterThan(0).And.IsLessThan(64);
         await Assert.That(await db.CountAsync("files")).IsEqualTo(1);
     }
@@ -202,7 +202,7 @@ public sealed class SqlNativeHardeningTests
 
         var duplicate = await db.RefusedAsync("INSERT OR ROLLBACK INTO keys VALUES (1)");
 
-        await Assert.That(duplicate.Code).IsEqualTo("SQLITE_CONSTRAINT_PRIMARYKEY");
+        await Assert.That(duplicate.Code).IsEqualTo("primary_key_violation");
         await Assert.That(await db.CountAsync("keys")).IsEqualTo(1);
     }
 

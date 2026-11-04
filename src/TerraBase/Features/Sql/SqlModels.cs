@@ -34,16 +34,16 @@ internal sealed record SqlStatementBody(
 /// <param name="Decltype">Declared type of a table column, or null for an expression.</param>
 internal sealed record SqlColumnBody(string Name, string? Decltype);
 
-/// <summary>A refused statement: <c>{"error":{"code","message","statement","sqlite_code"}}</c>.</summary>
+/// <summary>A refused statement: <c>{"error":{"code","message","statement","sqlstate"}}</c>.</summary>
 /// <param name="Error">The error.</param>
 internal sealed record SqlErrorBody(SqlErrorDetail Error);
 
-/// <summary>Why a statement failed.</summary>
-/// <param name="Code"><c>sql_error</c>, <c>forbidden_scope</c>, <c>sql_conflict</c> or <c>sql_too_large</c>.</param>
+/// <summary>Why a statement failed; the same code, message and SQLSTATE on REST, WebSocket and the Postgres wire.</summary>
+/// <param name="Code">The TerraScale error code, such as <c>unique_violation</c>, <c>forbidden_scope</c> or <c>serialization_conflict</c>.</param>
 /// <param name="Message">The rule that failed; never quotes the statement.</param>
 /// <param name="Statement">Zero-based index of the failing statement.</param>
-/// <param name="SqliteCode">The SQLite error code, such as <c>SQLITE_CONSTRAINT_PRIMARYKEY</c>.</param>
-internal sealed record SqlErrorDetail(string Code, string Message, int Statement, [property: JsonPropertyName("sqlite_code")] string SqliteCode);
+/// <param name="Sqlstate">The PostgreSQL SQLSTATE of the code, such as <c>23505</c>.</param>
+internal sealed record SqlErrorDetail(string Code, string Message, int Statement, string Sqlstate);
 
 /// <summary>Converts JSON arguments to SQL values.</summary>
 internal static class SqlJson
@@ -109,7 +109,7 @@ internal static class SqlJson
     }
 }
 
-/// <summary>Writes rows of SQL values as JSON arrays; integers as numbers, so clients needing 64 bits use Hrana.</summary>
+/// <summary>Writes rows of SQL values as JSON arrays.</summary>
 internal sealed class SqlRowsConverter : JsonConverter<IReadOnlyList<IReadOnlyList<SqlValue>>>
 {
     public override IReadOnlyList<IReadOnlyList<SqlValue>> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
