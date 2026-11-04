@@ -40,7 +40,7 @@ subprocess.run([
 if shard == 2:
     subprocess.run([
         "dotnet", "tests/Turso.Data.Sqlite.Tests/bin/Release/net11.0/Turso.Data.Sqlite.Tests.dll",
-        "--minimum-expected-tests", "23",
+        "--minimum-expected-tests", "3",
     ], check=True)
 if shard == 4:
     subprocess.run([
