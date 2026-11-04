@@ -246,7 +246,7 @@ internal sealed class ReplicaSqlSession(
             return (open, null);
         }
 
-        if (await placements.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement.Home: var home })
+        if (await placements.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: { Home: var home, Version: var epoch } })
         {
             return (null, new SqlError(SqlErrors.Unavailable, "the database's placement cannot be read now; retry"));
         }
@@ -257,7 +257,7 @@ internal sealed class ReplicaSqlSession(
             return (_home, null);
         }
 
-        switch (await homes.OpenAsync(database, home, canWrite, cancellationToken).ConfigureAwait(false))
+        switch (await homes.OpenAsync(database, home, epoch, canWrite, cancellationToken).ConfigureAwait(false))
         {
             case HomeSqlSession session:
                 session.BeginRequest();

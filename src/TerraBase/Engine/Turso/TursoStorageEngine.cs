@@ -76,6 +76,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
     internal StorageFaultLedger Ledger { get; }
 
+    internal HomeLeaseGate Leases { get; }
+
     internal void Checkpoint(string step, TenantContext database) => _checkpoint(step, database);
 
     internal TursoDatabaseStore? OpenStore(StorageFaultLedger.Key key) =>
@@ -345,6 +347,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             CheckIntentJournal();
             DeleteRewriteScratch();
             Ledger = new StorageFaultLedger(this, logger, schemaMemory);
+            Leases = new HomeLeaseGate();
 
             Io = new(threads, queue, meter, createWorker);
         }
@@ -1585,6 +1588,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             RewriteSteps = _rewriteSteps,
             WritersEvicted = _writersEvicted,
             Revised = RaiseRevised,
+            Leases = Leases,
         };
         var published = false;
         var admitted = false;
