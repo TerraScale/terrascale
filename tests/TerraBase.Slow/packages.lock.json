@@ -8,6 +8,20 @@
         "resolved": "35.6.5",
         "contentHash": "2FGZn+aAVHjmCgClgmGkTDBVZk0zkLvAKGaxEf5JL6b3i9JbHTE4wnuY4vHCuzlCmJdU6VZjgDfHwmYkQF8VAA=="
       },
+      "MagicOnion.Client": {
+        "type": "Direct",
+        "requested": "[7.11.0, )",
+        "resolved": "7.11.0",
+        "contentHash": "gBk8nKaaAF/yxtBt4zS3rOT1QLjG0d6TjwVBr3zGgJDGEVyrPNjo3T1g/xgjScDVNjyP3HBdtrMSSlDFD5ghnQ==",
+        "dependencies": {
+          "Grpc.Core.Api": "2.57.0",
+          "Grpc.Net.Client": "2.57.0",
+          "MagicOnion.Abstractions": "7.11.0",
+          "MagicOnion.Serialization.MessagePack": "7.11.0",
+          "MagicOnion.Shared": "7.11.0",
+          "MessagePack": "3.1.7"
+        }
+      },
       "Microsoft.AspNetCore.Mvc.Testing": {
         "type": "Direct",
         "requested": "[11.0.0-rc.3.26522.148, )",

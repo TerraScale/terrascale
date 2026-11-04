@@ -11,6 +11,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Npgsql" />
+    <PackageReference Include="MagicOnion.Client" />
     <!-- The real ts-auth, run in process, for the token interoperability test (Management/RealAuthFixture.cs). The alias
          keeps its generated Program apart from TerraBase's. -->
     <ProjectReference Include="../../src/TerraScale.Authentication/TerraScale.Authentication.csproj" Aliases="tsauth" />
