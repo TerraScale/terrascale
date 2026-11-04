@@ -152,7 +152,7 @@ namespace TerraScale.Dashboard.E2E
 
         private WebApplication Host()
         {
-            var app = environment.CreateTestHost(root, 0, "http://127.0.0.1", builder => ConfigureState(builder));
+            var app = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1", builder => ConfigureState(builder));
             return app;
         }
 

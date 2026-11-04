@@ -158,8 +158,8 @@ namespace TerraScale.Dashboard.E2E
                 application.Services.Replace(ServiceDescriptor.Singleton<IOrganizationAccess, TsOrganizationAccess>());
                 configureScenario?.Invoke(application);
             }
-            first = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
-            second = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
+            first = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1", Configure);
+            second = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1", Configure);
             configureApp?.Invoke(first);
             configureApp?.Invoke(second);
             protocol.ApiKeys!.StepUp = first.Services.GetRequiredService<TestStepUpGateway>();
