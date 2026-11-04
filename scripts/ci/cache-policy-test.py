@@ -80,10 +80,10 @@ for job in ("libs", "auth", "terrabase"):
     assert "event_name != 'push'" not in block, f"{job} must run on pushes to main"
 test_job = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  test:\n", 1)[1], maxsplit=1)[0]
 main_job = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  main:\n", 1)[1], maxsplit=1)[0]
-assert "    needs: [changes, native, terrabase]\n" in main_job, "TerraBase releases must wait for their own Fast shards and production packaging"
+assert "    needs: [changes, native, terrabase, test]\n" in main_job, "TerraBase releases must wait for their own Fast shards and production packaging"
 assert "!cancelled() && needs.terrabase.result == 'success'" in main_job
 main_auth = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  main-auth:\n", 1)[1], maxsplit=1)[0]
-assert "    needs: [changes, native, auth]\n" in main_auth, "Auth releases must wait for Auth Fast"
+assert "    needs: [changes, native, auth, test]\n" in main_auth, "Auth releases must wait for Auth Fast"
 assert "!cancelled() && needs.auth.result == 'success'" in main_auth
 for release in (main_job, main_auth):
     assert "cancel-in-progress: false" in release, "A running release must finish"
