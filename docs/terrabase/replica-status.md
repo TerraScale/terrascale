@@ -4,7 +4,7 @@
 
 The MagicOnion `IManagementService.GetDatabaseRegionsAsync` method returns the same contract. The dashboard calls the home through this RPC. Its Replication tab refreshes observations every ten seconds and also offers an explicit refresh.
 
-The response contains `databaseId`, `homeRegion`, `observedAt`, and `replicas`. Each replica has `region`, nullable `lagMs`, `lastPulledAt`, `lastVerified`, and `revision`. Placement includes every configured replica, including replicas with no observations.
+The response contains `databaseId`, `homeRegion`, `observedAt`, and `replicas`. Each replica has `region`, nullable `lagMs`, `lastPulledAt`, `lastVerified`, and `revision`. Placement includes every configured replica, including replicas with no observations. For an `allRegions` database, replicas are every serving region other than its home, discovered from the current region catalog.
 
 The home attributes a page pull to the authenticated internal peer's mesh source address from `TS_PEERS_FILE`, and records its returned revision only after all pages and the final flush succeed. `lastPulledAt` means a complete pull was served; it does not claim that the replica applied the pages. A cancelled or failed pull does not advance it, and an older concurrent pull cannot overwrite a newer revision.
 
