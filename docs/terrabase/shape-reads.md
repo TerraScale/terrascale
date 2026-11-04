@@ -182,7 +182,7 @@ tag answers `304`. Shared caching uses only sealed TBS1 ciphertext in R2 behind 
 ## 10. Encrypted objects, keys and manifest
 
 Sealed snapshot pages and chunks are mirrored as TBS1 ciphertext, unchanged from v1: AES-256-GCM frames under a
-per-object key derived from the project data key, a 10-minute epoch and the binding `handle ‖ 0x00 ‖ offset`
+per-object key derived from the database data key, a 10-minute epoch and the binding `handle ‖ 0x00 ‖ offset`
 ([shape-storage.md](shape-storage.md)).
 
 - `GET …/tables/{table}/shape/keys?handle=&epoch=&key_id=` releases the epoch key for the current handle, under the
