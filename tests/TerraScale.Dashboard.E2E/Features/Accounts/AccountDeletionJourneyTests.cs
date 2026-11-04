@@ -93,6 +93,43 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             await Assert.That(await completion.Content.ReadAsStringAsync()).Contains("Account deleted").And.Contains("Return to TerraScale");
         }
 
+        // The reconciler cleans the operation once ts-auth proves the deletion; the deleting browser must still see completion.
+        [Test]
+        public async Task CompletedDeletionStatusIsVisibleToItsBrowserOnly()
+        {
+            await using var scenario = await Scenario.StartAsync();
+            scenario.Environment.Workspace.HoldDeletions = true;
+            using (var pending = await scenario.DeleteAsync("user@example.com"))
+            {
+                await Assert.That(pending.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+                await Assert.That(new Uri(new Uri("http://dashboard"), pending.Headers.Location!).AbsolutePath).IsEqualTo("/account-deletion");
+            }
+
+            using (var status = await scenario.Client.GetAsync("/account-deletion"))
+            {
+                await Assert.That(status.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
+            }
+
+            using (var cleaned = await scenario.Client.PostAsync("/__test/deletions/complete/" + UserId, null))
+            {
+                await Assert.That(cleaned.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+            }
+            using (var other = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false })
+            { BaseAddress = scenario.Client.BaseAddress })
+            {
+                var cookie = scenario.Cookie("ts-dashboard-deletion");
+                var guessed = cookie[..^1] + (cookie[^1] == '0' ? '1' : '0');
+                using var request = new HttpRequestMessage(HttpMethod.Get, "/account-deletion");
+                request.Headers.Add("Cookie", "ts-dashboard-deletion=" + guessed);
+                using var stranger = await other.SendAsync(request);
+                await Assert.That(stranger.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+            }
+
+            using var completed = await scenario.Client.GetAsync("/account-deletion");
+            await Assert.That(completed.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            await Assert.That(completed.Headers.Location!.OriginalString).IsEqualTo("/account-deleted");
+        }
+
         [Test]
         public async Task PaidSoleOrganizationEndsAfterAuthDeletesIt()
         {
@@ -147,6 +184,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             public required DemoEnvironment Environment { get; init; }
             public required Microsoft.AspNetCore.Builder.WebApplication App { get; init; }
             public required HttpClient Client { get; init; }
+            public required HttpMessageHandler Handler { get; init; }
 
             public static async Task<Scenario> StartAsync(bool signIn = true)
             {
@@ -154,14 +192,15 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
                 await environment.InitializeAsync();
                 var app = environment.CreateTestHost(new DashboardE2EFixture().Root, 0, "http://127.0.0.1");
                 await app.StartAsync();
-                var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
+                var handler = new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() };
+                var client = new HttpClient(handler)
                 { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
                 if (signIn)
                 {
                     using var login = await HttpJourney.LoginAsync(client);
                     await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
                 }
-                return new() { Environment = environment, App = app, Client = client };
+                return new() { Environment = environment, App = app, Client = client, Handler = handler };
             }
 
             public string PersonalOrganizationId(string userId = UserId)
@@ -189,6 +228,11 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             {
                 var csrf = await HttpJourney.CsrfAsync(Client, "/profile?tab=danger");
                 return await HttpJourney.PostConfirmedFormAsync(Client, "/api/v1/dashboard/profile/delete", new() { ["_csrf"] = csrf, ["email"] = email });
+            }
+
+            public string Cookie(string name)
+            {
+                return ((HttpClientHandler)Handler).CookieContainer.GetCookies(Client.BaseAddress!)[name]!.Value;
             }
 
             public async Task<bool> ExistsAsync(string table, string id)
