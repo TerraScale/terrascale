@@ -1,8 +1,10 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Shapes;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -44,7 +46,8 @@ public sealed class CdcRetentionTests
         await Assert.That(await OldestAsync(store, token)).IsLessThanOrEqualTo(slowOffset);
         var kept = await slow.ReadAsync(slow.NextOffset);
         await Assert.That(kept.Ops.Any()).IsTrue();
-        await host.RestoreAsync(host.Status().LastShippedAt!.Value, "revoked", token);
+        var restorable = host.Api.Server.Services.GetRequiredService<IContinuousBackup>().LastShipped(tenant)!.Value;
+        await host.RestoreAsync(restorable, "revoked", token);
         using var restoredGrant = await data.GetAsync(ManagementApi.Uri((host.Database with { Name = "revoked" }).Data + "/tables/people/read-grant"), token);
         await Assert.That(restoredGrant.StatusCode).IsEqualTo(HttpStatusCode.NotFound).Because("backup replay must preserve grant revocations");
         var backup = store.BackupAnchor!.Value;
