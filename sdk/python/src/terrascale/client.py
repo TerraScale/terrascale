@@ -14,7 +14,7 @@ from . import _spec, models
 from . import sql as _sql
 from ._spec import Call
 from ._version import __version__
-from .auth import APIKeyTokenSource
+from .auth import APIKeyTokenSource, _scoped_key_call
 from .errors import APIError, CommitUncertainError, InvalidResponseError, SqlError, SqlErrorCodes, error_for
 from .ids import validate_id
 from .session import SqlSession
@@ -70,6 +70,8 @@ class TerraScale:
         self._max_attempts = max(1, max_attempts)
         self._source: APIKeyTokenSource | None = None
         self._token = token
+        self._api_key = api_key
+        self._issuer = issuer
         if token is None:
             assert api_key is not None
             self._source = APIKeyTokenSource(api_key, project=self.project, scopes=scopes, issuer=issuer,
@@ -104,12 +106,17 @@ class TerraScale:
         attempt = 0
         conflicts = 0
         while True:
-            token = self._bearer()
-            headers = {**self._headers, **call.headers, "Authorization": f"Bearer {token}"}
+            direct = "Authorization" in call.headers
+            token = "" if direct else self._bearer()
+            headers = dict(call.headers) if direct else {**self._headers, **call.headers, "Authorization": f"Bearer {token}"}
             if content is not None:
                 headers["Content-Type"] = call.content_type
             try:
-                response = self._http.request(call.method, url, params=call.params or None, headers=headers,
+                if direct:
+                    request = httpx.Request(call.method, url, headers=headers, content=content)
+                    response = self._http.send(request, auth=None, follow_redirects=False)
+                else:
+                    response = self._http.request(call.method, url, params=call.params or None, headers=headers,
                                               content=content)
             except (httpx.TransportError, httpx.DecodingError) as exc:
                 attempt += 1
@@ -129,7 +136,7 @@ class TerraScale:
                 if self._source is not None:
                     self._source.reject(err)
                 raise err
-            if response.status_code == 401 and self._source is not None and not refreshed:
+            if response.status_code == 401 and self._source is not None and not refreshed and not direct:
                 # Refresh an ordinary token refusal once, never a permanent key refusal.
                 self._source.invalidate(token)
                 refreshed = True
@@ -165,9 +172,36 @@ class TerraScale:
         """
         return self._send(_spec.rename_database(self.project, database_id, name))
 
-    def create_database(self, name: str, *, home_region: str | None = None) -> models.Database:
+    def create_database(
+        self, name: str, *, home_region: str | None = None, ttl_seconds: int | None = None,
+    ) -> models.Database:
         """Create a database in ``home_region`` (a region id such as ``"gru"``), or in the region that answers."""
-        return self._send(_spec.create_database(self.project, name, home_region))
+        return self._send(_spec.create_database(self.project, name, home_region, ttl_seconds))
+
+    def fork_database(
+        self, source: str, name: str, *, point_in_time: str | None = None, ttl_seconds: int | None = None,
+    ) -> models.Database:
+        """Fork the current database state, or an RFC 3339 point in its restore window, with an independent TTL."""
+        return self._send(_spec.fork_database(self.project, source, name, point_in_time, ttl_seconds))
+
+    def set_database_ttl(self, database: str, ttl_seconds: int) -> models.Database:
+        """Set expiry in 60 to 31,536,000 seconds; the database and backups are deleted on expiry."""
+        return self._send(_spec.set_database_ttl(self.project, database, ttl_seconds))
+
+    def clear_database_ttl(self, database: str) -> models.Database:
+        """Remove the database's expiry."""
+        return self._send(_spec.clear_database_ttl(self.project, database))
+
+    def delete_database(self, database: str) -> None:
+        """Delete by name or ULID in the database's home region."""
+        self._send(_spec.delete_database(self.project, database))
+
+    def create_scoped_key(
+        self, database: str, access: str, *, project: str | None = None, ttl_seconds: int | None = None,
+    ) -> models.ScopedKey:
+        """Mint a key for one database ULID, using this client's API key; the default lifetime is 3600 seconds."""
+        return self._send(_scoped_key_call(
+            self._api_key, self._issuer, project if project is not None else self.project, database, access, ttl_seconds))
 
 
 def _error(response: httpx.Response, *, mutation: bool = False) -> APIError:
@@ -175,6 +209,8 @@ def _error(response: httpx.Response, *, mutation: bool = False) -> APIError:
         body = response.json()
     except ValueError:
         body = None
+    if isinstance(body, dict) and isinstance(body.get("error"), str):
+        body = {"error": {"code": body["error"], "message": body.get("error_description", "")}}
     return error_for(response.status_code, body, response.headers, mutation=mutation)
 
 

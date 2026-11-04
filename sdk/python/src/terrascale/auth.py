@@ -20,7 +20,7 @@ from urllib.parse import quote_plus
 
 import httpx
 
-from . import _spec
+from . import _spec, models
 from .errors import TerraScaleError, TokenError, parse_retry_after, response_request_id
 from .ids import validate_id
 
@@ -33,6 +33,22 @@ _KEY = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$")
 # Token endpoint answers worth another exchange: issuing a token changes no
 # state, so overload and gateway failures are retried with backoff.
 _RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
+
+
+def _scoped_key_call(api_key: str | None, issuer: str | None, project: str, database: str,
+                     access: str, ttl_seconds: int | None) -> _spec.Call:
+    if api_key is None:
+        raise ValueError("create_scoped_key requires the client's api_key")
+    exchange = _Exchange(api_key, project, None, issuer)
+    if access not in ("read", "read_write"):
+        raise ValueError("access must be 'read' or 'read_write'")
+    body: dict[str, Any] = {"project": project, "database": validate_id(database, "database"), "access": access}
+    if ttl_seconds is not None:
+        body["ttl_seconds"] = _spec.ttl(ttl_seconds, 2_592_000)
+    origin = str(httpx.URL(exchange.endpoint).copy_with(path="/", query=None, fragment=None)).rstrip("/")
+    return _spec.Call("POST", ["v1", "terrascale", "api-keys", "self", "scoped-keys"],
+                      lambda r: models.ScopedKey.from_json(r.json()), headers=exchange.headers(), body=body,
+                      success=(201,), base_url=origin)
 
 
 def _transport_error(attempts: int, exc: Exception) -> TokenError:

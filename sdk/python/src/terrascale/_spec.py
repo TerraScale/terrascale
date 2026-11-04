@@ -48,6 +48,7 @@ class Call:
     # Only reads and read-only queries can be replayed.
     replay_safe: bool = False
     success: tuple[int, ...] = (200,)
+    base_url: str | None = None
 
     def decode(self, response: httpx.Response) -> Any:
         try:
@@ -66,7 +67,7 @@ class Call:
                       request_id=response_request_id(response.headers)) from None
 
     def url(self, base_url: str) -> str:
-        return base_url.rstrip("/") + "/" + "/".join(quote(s, safe="") for s in self.path)
+        return (self.base_url or base_url).rstrip("/") + "/" + "/".join(quote(s, safe="") for s in self.path)
 
     def content(self) -> bytes | None:
         if self.body is None:
@@ -142,10 +143,18 @@ def list_databases(project: str, limit: int | None, cursor: str | None) -> Call:
                 params=_page_params(limit, cursor), replay_safe=True)
 
 
-def create_database(project: str, db: str, home_region: str | None) -> Call:
-    body = {"name": database_name(db)}
+def ttl(value: int, maximum: int = 31_536_000) -> int:
+    if type(value) is not int or not 60 <= value <= maximum:
+        raise ValueError(f"ttl_seconds must be an integer from 60 to {maximum}")
+    return value
+
+
+def create_database(project: str, db: str, home_region: str | None, ttl_seconds: int | None = None) -> Call:
+    body: dict[str, Any] = {"name": database_name(db)}
     if home_region is not None:
         body["homeRegion"] = region(home_region)
+    if ttl_seconds is not None:
+        body["ttlSeconds"] = ttl(ttl_seconds)
     return Call("POST", ["v1", "projects", project, "databases"],
                 lambda r: models.Database.from_json(r.json()), body=body, success=(201,))
 
@@ -160,7 +169,28 @@ def rename_database(project: str, database_id: str, new_name: str) -> Call:
 
 
 def delete_database(project: str, db: str) -> Call:
-    return Call("DELETE", _db(project, db), _none, success=(204,))
+    return Call("DELETE", _db(project, database_selector(db)), _none, success=(204,))
+
+
+def fork_database(project: str, source: str, db: str, point_in_time: str | None, ttl_seconds: int | None) -> Call:
+    body: dict[str, Any] = {"name": database_name(db)}
+    route: tuple[str, ...] = ("branches",)
+    if point_in_time is not None:
+        body["pointInTime"] = point_in_time
+        route = ("point-in-time", "restore")
+    if ttl_seconds is not None:
+        body["ttlSeconds"] = ttl(ttl_seconds)
+    return Call("POST", _db(project, database_selector(source), *route),
+                lambda r: models.Database.from_json(r.json()), body=body, success=(201,))
+
+
+def set_database_ttl(project: str, db: str, ttl_seconds: int) -> Call:
+    return Call("PUT", _db(project, database_selector(db), "ttl"),
+                lambda r: models.Database.from_json(r.json()), body={"ttlSeconds": ttl(ttl_seconds)})
+
+
+def clear_database_ttl(project: str, db: str) -> Call:
+    return Call("DELETE", _db(project, database_selector(db), "ttl"), lambda r: models.Database.from_json(r.json()))
 
 
 def branch_database(project: str, db: str, branch: str) -> Call:

@@ -8,7 +8,7 @@ from typing import Any
 
 from .ids import validate_id
 
-__all__ = ["Database", "DatabasePage"]
+__all__ = ["Database", "DatabasePage", "ScopedKey"]
 
 
 @dataclass(frozen=True)
@@ -25,11 +25,14 @@ class Database:
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
     previous_name: str | None = None
     conflict_of: str | None = None
+    expires_at: str | None = None
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> Database:
         if any(not isinstance(body[k], str) or not body[k] for k in ("name", "createdAt", "region", "homeRegion")):
             raise ValueError("invalid database metadata")
+        if body.get("expiresAt") is not None and (not isinstance(body["expiresAt"], str) or not body["expiresAt"]):
+            raise ValueError("invalid database expiry")
         return cls(
             id=validate_id(body["id"]),
             project_id=validate_id(body["projectId"]),
@@ -40,8 +43,28 @@ class Database:
             branched_from=body["branchedFrom"],
             previous_name=body.get("previousName"),
             conflict_of=validate_id(body["conflictOf"]) if body.get("conflictOf") is not None else None,
+            expires_at=body.get("expiresAt"),
             raw=body,
         )
+
+
+@dataclass(frozen=True)
+class ScopedKey:
+    key: str = field(repr=False)
+    id: str
+    project_id: str
+    database: str
+    access: str
+    expires_at: str
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ScopedKey:
+        if any(not isinstance(body[k], str) or not body[k] for k in ("key", "expiresAt")):
+            raise ValueError("invalid scoped key metadata")
+        if body["access"] not in ("read", "read_write"):
+            raise ValueError("invalid scoped key access")
+        return cls(key=body["key"], id=validate_id(body["id"]), project_id=validate_id(body["projectId"]),
+                   database=validate_id(body["database"]), access=body["access"], expires_at=body["expiresAt"])
 
 
 @dataclass(frozen=True)

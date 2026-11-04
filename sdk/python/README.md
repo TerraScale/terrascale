@@ -117,11 +117,46 @@ async with AsyncTerraScale() as ts:
 
 `AsyncTerraScale` has the same methods as `TerraScale`, awaited.
 
+## Databases for agents
+
+The client uses its configured `project` for database management:
+
+```python
+with TerraScale() as ts:
+    agent = ts.create_database("agent", ttl_seconds=3600)
+    copy = ts.fork_database(agent.id, "agent-copy", ttl_seconds=600)
+    restored = ts.fork_database(agent.id, "agent-restored", point_in_time="2026-11-04T00:00:00Z")
+    ts.set_database_ttl(copy.id, 1200)
+    ts.clear_database_ttl(restored.id)
+    scoped = ts.create_scoped_key(agent.id, "read_write", ttl_seconds=600)
+    with TerraScale(scoped.key, project=ts.project) as worker:
+        worker.database(agent.id).execute("CREATE TABLE notes (id TEXT PRIMARY KEY)")
+    ts.delete_database(copy.id)
+    ts.delete_database(restored.id)
+```
+
+Database selectors accept names or ULIDs; scoped keys require the database ULID.
+Database TTLs are 60–31,536,000 seconds; `expires_at` is an RFC 3339 string or
+`None`. Expiry deletes the database, backups and data keys. Forks do not inherit
+the source TTL; `point_in_time` must be inside its restore window. Database
+management requires `databases:write`.
+
+`create_scoped_key(database, access, project=None, ttl_seconds=None)` uses the
+client's API key with HTTP Basic at ts-auth; a token alone cannot mint keys.
+`project` defaults to the client's project. Access is `read` or `read_write`;
+key TTLs are 60–2,592,000 seconds, default 3600, bounded by the parent key.
+The returned `ScopedKey` exposes `key`, `id`, `project_id`, `database`, `access`
+and `expires_at`; store `key` when returned because it is shown once. Scoped
+keys reach only their database, cannot manage databases or mint keys, and are
+revoked when their parent is revoked or rotated. Refusals retain `APIError`
+types, status, code and `retry_after`. Both clients expose these methods;
+await them on `AsyncTerraScale`.
+
 ## API
 
 | Surface | Methods |
 | --- | --- |
-| Client | `TerraScale(api_key=, project=, token=, base_url=, region=)`, `database(name)`, `list_databases()`, `create_database(name, home_region=)`, `rename_database(id, name)` |
+| Client | `TerraScale(api_key=, project=, token=, base_url=, region=)`, `database(name)`, `list_databases()`, `create_database(name, home_region=, ttl_seconds=)`, `rename_database(id, name)`, `fork_database`, `set_database_ttl`, `clear_database_ttl`, `delete_database`, `create_scoped_key` |
 | Database | `info()`, `delete()`, `branch(name)`, `execute`, `query`, `batch` (see [SQL](#sql)) |
 
 **IDs** are canonical ULIDs (`terrascale.new_id()`).

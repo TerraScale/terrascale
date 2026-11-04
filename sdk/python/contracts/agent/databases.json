@@ -1,0 +1,242 @@
+{
+  "contract": "sdk/SQL-API.md#databases-for-agents at ff77902c3; equivalent fixtures while shared .NET fixtures are absent",
+  "project": "01JAAAAAAAAAAAAAAAAAAAAAAA",
+  "database": "01JBBBBBBBBBBBBBBBBBBBBBBB",
+  "cases": [
+    {
+      "name": "create",
+      "request": {
+        "method": "POST",
+        "path": "/v1/projects/01JAAAAAAAAAAAAAAAAAAAAAAA/databases",
+        "body": {
+          "name": "agent",
+          "ttlSeconds": 3600
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "01JBBBBBBBBBBBBBBBBBBBBBBB",
+          "projectId": "01JAAAAAAAAAAAAAAAAAAAAAAA",
+          "name": "agent",
+          "branchedFrom": null,
+          "createdAt": "2026-11-04T00:00:00Z",
+          "region": "gru",
+          "homeRegion": "gru",
+          "expiresAt": "2026-11-04T01:00:00Z"
+        }
+      }
+    },
+    {
+      "name": "fork",
+      "request": {
+        "method": "POST",
+        "path": "/v1/projects/01JAAAAAAAAAAAAAAAAAAAAAAA/databases/agent/branches",
+        "body": {
+          "name": "copy",
+          "ttlSeconds": 600
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "01JCCCCCCCCCCCCCCCCCCCCCCC",
+          "projectId": "01JAAAAAAAAAAAAAAAAAAAAAAA",
+          "name": "copy",
+          "branchedFrom": "01JBBBBBBBBBBBBBBBBBBBBBBB",
+          "createdAt": "2026-11-04T00:00:00Z",
+          "region": "gru",
+          "homeRegion": "gru",
+          "expiresAt": "2026-11-04T00:10:00Z"
+        }
+      }
+    },
+    {
+      "name": "fork_without_ttl",
+      "request": {
+        "method": "POST",
+        "path": "/v1/projects/01JAAAAAAAAAAAAAAAAAAAAAAA/databases/01JBBBBBBBBBBBBBBBBBBBBBBB/branches",
+        "body": {
+          "name": "permanent"
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "01JCCCCCCCCCCCCCCCCCCCCCCC",
+          "projectId": "01JAAAAAAAAAAAAAAAAAAAAAAA",
+          "name": "permanent",
+          "branchedFrom": "01JBBBBBBBBBBBBBBBBBBBBBBB",
+          "createdAt": "2026-11-04T00:00:00Z",
+          "region": "gru",
+          "homeRegion": "gru",
+          "expiresAt": null
+        }
+      }
+    },
+    {
+      "name": "restore",
+      "request": {
+        "method": "POST",
+        "path": "/v1/projects/01JAAAAAAAAAAAAAAAAAAAAAAA/databases/01JBBBBBBBBBBBBBBBBBBBBBBB/point-in-time/restore",
+        "body": {
+          "name": "restored",
+          "pointInTime": "2026-11-03T23:59:00Z",
+          "ttlSeconds": 60
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "01JCCCCCCCCCCCCCCCCCCCCCCC",
+          "projectId": "01JAAAAAAAAAAAAAAAAAAAAAAA",
+          "name": "restored",
+          "branchedFrom": "01JBBBBBBBBBBBBBBBBBBBBBBB",
+          "createdAt": "2026-11-04T00:00:00Z",
+          "region": "gru",
+          "homeRegion": "gru",
+          "expiresAt": "2026-11-04T00:01:00Z"
+        }
+      }
+    },
+    {
+      "name": "set_ttl",
+      "request": {
+        "method": "PUT",
+        "path": "/v1/projects/01JAAAAAAAAAAAAAAAAAAAAAAA/databases/agent/ttl",
+        "body": {
+          "ttlSeconds": 600
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "01JBBBBBBBBBBBBBBBBBBBBBBB",
+          "projectId": "01JAAAAAAAAAAAAAAAAAAAAAAA",
+          "name": "agent",
+          "branchedFrom": null,
+          "createdAt": "2026-11-04T00:00:00Z",
+          "region": "gru",
+          "homeRegion": "gru",
+          "expiresAt": "2026-11-04T00:10:00Z"
+        }
+      }
+    },
+    {
+      "name": "clear_ttl",
+      "request": {
+        "method": "DELETE",
+        "path": "/v1/projects/01JAAAAAAAAAAAAAAAAAAAAAAA/databases/01JBBBBBBBBBBBBBBBBBBBBBBB/ttl",
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "01JBBBBBBBBBBBBBBBBBBBBBBB",
+          "projectId": "01JAAAAAAAAAAAAAAAAAAAAAAA",
+          "name": "agent",
+          "branchedFrom": null,
+          "createdAt": "2026-11-04T00:00:00Z",
+          "region": "gru",
+          "homeRegion": "gru",
+          "expiresAt": null
+        }
+      }
+    },
+    {
+      "name": "scoped_key",
+      "request": {
+        "method": "POST",
+        "path": "/v1/terrascale/api-keys/self/scoped-keys",
+        "body": {
+          "project": "01JAAAAAAAAAAAAAAAAAAAAAAA",
+          "database": "01JBBBBBBBBBBBBBBBBBBBBBBB",
+          "access": "read_write",
+          "ttl_seconds": 600
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "key": "01JDDDDDDDDDDDDDDDDDDDDDDD_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "id": "01JDDDDDDDDDDDDDDDDDDDDDDD",
+          "projectId": "01JAAAAAAAAAAAAAAAAAAAAAAA",
+          "database": "01JBBBBBBBBBBBBBBBBBBBBBBB",
+          "access": "read_write",
+          "expiresAt": "2026-11-04T00:10:00Z"
+        }
+      }
+    },
+    {
+      "name": "scoped_key_default",
+      "request": {
+        "method": "POST",
+        "path": "/v1/terrascale/api-keys/self/scoped-keys",
+        "body": {
+          "project": "01JAAAAAAAAAAAAAAAAAAAAAAA",
+          "database": "01JBBBBBBBBBBBBBBBBBBBBBBB",
+          "access": "read"
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "key": "01JDDDDDDDDDDDDDDDDDDDDDDD_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "id": "01JDDDDDDDDDDDDDDDDDDDDDDD",
+          "projectId": "01JAAAAAAAAAAAAAAAAAAAAAAA",
+          "database": "01JBBBBBBBBBBBBBBBBBBBBBBB",
+          "access": "read",
+          "expiresAt": "2026-11-04T01:00:00Z"
+        }
+      }
+    },
+    {
+      "name": "delete",
+      "request": {
+        "method": "DELETE",
+        "path": "/v1/projects/01JAAAAAAAAAAAAAAAAAAAAAAA/databases/agent",
+        "body": null
+      },
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    }
+  ],
+  "scoped_key_errors": [
+    {
+      "status": 400,
+      "body": {
+        "error": "invalid_request",
+        "error_description": "refused"
+      },
+      "headers": {}
+    },
+    {
+      "status": 401,
+      "body": {
+        "error": "invalid_client",
+        "error_description": "refused"
+      },
+      "headers": {}
+    },
+    {
+      "status": 403,
+      "body": {
+        "error": "forbidden",
+        "error_description": "refused"
+      },
+      "headers": {}
+    },
+    {
+      "status": 429,
+      "body": {
+        "error": "rate_limited",
+        "error_description": "refused"
+      },
+      "headers": {
+        "Retry-After": "7"
+      }
+    }
+  ]
+}

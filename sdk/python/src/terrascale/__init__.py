@@ -32,6 +32,7 @@ from .errors import (
     UniqueViolationError,
 )
 from .ids import is_valid_id, new_id, validate_id
+from .models import ScopedKey
 from .session import AsyncSqlSession, SqlSession
 from .sql import Column, Row, Statement, StatementResult
 
@@ -45,6 +46,7 @@ __all__ = [
     "AsyncAPIKeyTokenSource",
     "SqlSession",
     "AsyncSqlSession",
+    "ScopedKey",
     "Statement",
     "StatementResult",
     "Column",
