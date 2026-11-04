@@ -160,7 +160,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
 
         private static async Task<WebApplication> StartAsync(DemoEnvironment environment, string root)
         {
-            var app = environment.CreateTestHost(root, 0, "http://127.0.0.1");
+            var app = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1");
             await app.StartAsync();
             return app;
         }

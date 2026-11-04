@@ -109,8 +109,8 @@ namespace TerraScale.Dashboard.E2E
             ProviderOrigin = Address(producer);
             transport = new ProducerTransport(ProviderOrigin, provider.Billing, provider.ApiKeys);
             await environment.InitializeAsync();
-            first = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
-            second = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
+            first = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1", Configure);
+            second = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1", Configure);
             await first.StartAsync();
             await second.StartAsync();
             await Task.WhenAll(TestDeadline.StateInitializedAsync(first), TestDeadline.StateInitializedAsync(second));
@@ -167,21 +167,31 @@ namespace TerraScale.Dashboard.E2E
 
         // Invoke the production command entry and complete graph, with only its
         // named HTTP transport pointed at the already-running native application.
-        public Task<int> RunCliAsync(string[] args, TextWriter output, TextWriter error, CancellationToken cancellationToken = default)
+        public async Task<int> RunCliAsync(string[] args, TextWriter output, TextWriter error, CancellationToken cancellationToken = default)
         {
-            return InternalBillingCommands.RunAsync(args, _ =>
+            provider.Billing.BeforeCliBuild();
+            var app = await environment.CreateTestHostAsync(root, 0, Origin.ToString().TrimEnd('/'), Configure);
+            var handedOff = false;
+            try
             {
-                provider.Billing.BeforeCliBuild();
-                return environment.CreateTestHost(root, 0, Origin.ToString().TrimEnd('/'), Configure);
-            }, output, error, cancellationToken);
+                return await InternalBillingCommands.RunAsync(args, _ =>
+                {
+                    handedOff = true;
+                    return app;
+                }, output, error, cancellationToken);
+            }
+            finally
+            {
+                if (!handedOff) { await app.DisposeAsync(); }
+            }
         }
 
         public async Task RestartAsync()
         {
             await second!.StopAsync(); await second.DisposeAsync();
             await first!.StopAsync(); await first.DisposeAsync();
-            first = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
-            second = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
+            first = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1", Configure);
+            second = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1", Configure);
             await first.StartAsync(); await second.StartAsync();
             await Task.WhenAll(TestDeadline.StateInitializedAsync(first), TestDeadline.StateInitializedAsync(second));
             Origin = Address(first); ReplicaOrigin = Address(second);

@@ -29,15 +29,15 @@ namespace TerraScale.Dashboard.E2E
             Client = new(new TestIdentity(), origin, "gru", null, application.Services.GetRequiredService<IMeterFactory>());
         }
 
-        // Points the dashboard's TerraBase client at the registered host's MagicOnion services.
-        public static void UseRegisteredHost(IServiceCollection services)
-        {
-            services.Replace(ServiceDescriptor.Singleton<TerraBaseRpcClient>(provider => provider.GetRequiredService<TestRestRpcHost>().Client));
-        }
+        internal sealed record Target(IHttpClientFactory Factory, string Origin, string ClientName);
 
-        public static async Task<TestRestRpcHost> StartAsync(IHttpClientFactory factory, string origin = "https://api.terrascale.tech/", string clientName = "platform")
+        public static Task<TestRestRpcHost> StartAsync(IHttpClientFactory factory, string origin = "https://api.terrascale.tech/", string clientName = "platform") =>
+            StartAsync(() => new Target(factory, origin, clientName));
+
+        // The application supplies its final named transport after configuring the scenario.
+        public static async Task<TestRestRpcHost> StartAsync(Func<Target> target)
         {
-            var builder = WebApplication.CreateBuilder();
+            var builder = WebApplication.CreateSlimBuilder();
             builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0, listener => listener.Protocols = HttpProtocols.Http2));
             builder.Services.Configure<Microsoft.AspNetCore.Server.Kestrel.Transport.Sockets.SocketTransportOptions>(options => options.IOQueueCount = 0);
             builder.Logging.ClearProviders();
@@ -48,8 +48,9 @@ namespace TerraScale.Dashboard.E2E
             app.MapTerraBaseRestRpc();
             app.MapMethods("/{**path}", ["GET", "POST", "PUT", "PATCH", "DELETE"], async (HttpContext http) =>
             {
-                using var client = factory.CreateClient(clientName);
-                using var request = new HttpRequestMessage(new HttpMethod(http.Request.Method), new Uri(new Uri(origin), http.Request.Path + http.Request.QueryString));
+                var upstream = target();
+                using var client = upstream.Factory.CreateClient(upstream.ClientName);
+                using var request = new HttpRequestMessage(new HttpMethod(http.Request.Method), new Uri(new Uri(upstream.Origin), http.Request.Path + http.Request.QueryString));
                 if (http.Request.ContentLength is > 0)
                 {
                     request.Content = new StreamContent(http.Request.Body);

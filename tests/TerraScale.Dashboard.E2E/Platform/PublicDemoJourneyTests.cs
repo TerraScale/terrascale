@@ -75,7 +75,7 @@ namespace TerraScale.Dashboard.E2E.Platform
 
             var environment = new DemoEnvironment();
             await environment.InitializeAsync();
-            var app = environment.CreateTestHost(root, 0, "https://127.0.0.1", PublicDemo.Configure);
+            var app = await environment.CreateTestHostAsync(root, 0, "https://127.0.0.1", PublicDemo.Configure);
             app.MapGet("/__demo-error-probe", string () => throw new InvalidOperationException(Secret));
             await app.StartAsync();
             return new(app, new(app.Urls.Single()));

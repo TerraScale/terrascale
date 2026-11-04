@@ -15,7 +15,7 @@ namespace TerraScale.Dashboard.E2E.Platform
         {
             var environment = new DemoEnvironment();
             await environment.InitializeAsync();
-            await using var app = environment.CreateTestHost(fixture.Root, 0, "https://127.0.0.1");
+            await using var app = await environment.CreateTestHostAsync(fixture.Root, 0, "https://127.0.0.1");
             app.MapGet("/__test/host-cookie", (HttpContext http) =>
             {
                 var domain = http.Request.Query.ContainsKey("domain");
