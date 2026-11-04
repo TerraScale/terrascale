@@ -44,6 +44,13 @@ namespace TerraScale.TerraBase.Rpc.Management
         }
 
         /// <inheritdoc />
+        public async UnaryResult<TerraBaseManagedDatabase> MoveDatabaseHomeAsync(string projectId, string database, TerraBaseMoveHome request)
+        {
+            var answer = await api.SendAsync(Context, "POST", RestPaths.Database(projectId, database) + "/move-home", RestApi.Json(request, ManagementJson.Default.TerraBaseMoveHome));
+            return RestApi.Read(answer, ManagementJson.Default.TerraBaseManagedDatabase);
+        }
+
+        /// <inheritdoc />
         public async UnaryResult<bool> DeleteDatabaseAsync(string projectId, string database)
         {
             var answer = await api.SendAsync(Context, "DELETE", RestPaths.Database(projectId, database));
