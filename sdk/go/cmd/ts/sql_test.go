@@ -22,8 +22,8 @@ func TestSQLStdinAndModes(t *testing.T) {
 			const sql = "SELECT\n  9007199254740993 AS n"
 			db := exportTestDB(t, func(w http.ResponseWriter, r *http.Request) {
 				var body struct {
-					SQL        string            `json:"sql"`
-					Statements []v1.SQLStatement `json:"statements"`
+					SQL        string         `json:"sql"`
+					Statements []v1.Statement `json:"statements"`
 				}
 				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 					t.Error(err)

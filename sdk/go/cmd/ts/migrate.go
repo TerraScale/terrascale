@@ -113,7 +113,7 @@ func newMigrationIn(dir, name string, out io.Writer) error {
 
 // applied returns the checksum of each migration the database recorded.
 func applied(ctx context.Context, db *v1.Database) (map[string]string, error) {
-	rows, err := db.QuerySQL(ctx, "SELECT name, checksum FROM "+historyTable)
+	rows, err := db.Query(ctx, "SELECT name, checksum FROM "+historyTable)
 	if noTable(err) {
 		return map[string]string{}, nil
 	}
@@ -122,8 +122,8 @@ func applied(ctx context.Context, db *v1.Database) (map[string]string, error) {
 	}
 	out := make(map[string]string, len(rows))
 	for _, r := range rows {
-		name, _ := r["name"].(string)
-		sum, _ := r["checksum"].(string)
+		name, _ := r.String("name")
+		sum, _ := r.String("checksum")
 		out[name] = sum
 	}
 	return out, nil
@@ -133,7 +133,7 @@ func applied(ctx context.Context, db *v1.Database) (map[string]string, error) {
 // collection without one.
 func noTable(err error) bool {
 	sqlErr := (*v1.SQLError)(nil)
-	return errors.As(err, &sqlErr) && strings.Contains(sqlErr.Message, "no such table")
+	return errors.Is(err, v1.ErrUndefinedTable) || errors.As(err, &sqlErr) && strings.Contains(sqlErr.Message, "no such table")
 }
 
 // migrateUp applies each pending migration in its own transaction together
@@ -148,7 +148,7 @@ func migrateUp(ctx context.Context, db *v1.Database, out io.Writer) error {
 
 func applyMigrations(ctx context.Context, db *v1.Database, ms []migration, out io.Writer) error {
 	items := []string{}
-	if _, err := db.ExecuteSQL(ctx, "CREATE TABLE IF NOT EXISTS "+historyTable+
+	if _, err := db.Execute(ctx, "CREATE TABLE IF NOT EXISTS "+historyTable+
 		" (name TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL)"); err != nil {
 		return err
 	}
@@ -164,15 +164,15 @@ func applyMigrations(ctx context.Context, db *v1.Database, ms []migration, out i
 			}
 			continue
 		}
-		var batch []v1.SQLStatement
+		var batch []v1.Statement
 		for _, st := range splitSQL(m.sql) {
-			batch = append(batch, v1.SQLStatement{SQL: st})
+			batch = append(batch, v1.Statement{SQL: st})
 		}
-		batch = append(batch, v1.SQLStatement{
+		batch = append(batch, v1.Statement{
 			SQL:  "INSERT INTO " + historyTable + " (name, checksum, applied_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
 			Args: []any{m.name, m.checksum},
 		})
-		if _, err := db.BatchSQL(ctx, batch); err != nil {
+		if _, err := db.Batch(ctx, batch); err != nil {
 			return fmt.Errorf("%s: %w", m.name, err)
 		}
 		if jsonMode(out) {
@@ -249,11 +249,11 @@ func migrationStatus(ctx context.Context, db *v1.Database, ms []migration, out i
 // TerraBase reserves sqlite_schema, so it reads the collection and index
 // lists and each table's result columns instead.
 type schemaEntity struct {
-	Kind       string         `json:"kind"`
-	Name       string         `json:"name"`
-	Columns    []v1.SQLColumn `json:"columns,omitempty"`
-	Collection string         `json:"collection,omitempty"`
-	Fields     []string       `json:"fields,omitempty"`
+	Kind       string      `json:"kind"`
+	Name       string      `json:"name"`
+	Columns    []v1.Column `json:"columns,omitempty"`
+	Collection string      `json:"collection,omitempty"`
+	Fields     []string    `json:"fields,omitempty"`
 }
 
 func schema(ctx context.Context, db *v1.Database) (map[string]schemaEntity, error) {
@@ -264,7 +264,7 @@ func schema(ctx context.Context, db *v1.Database) (map[string]schemaEntity, erro
 			return nil, fmt.Errorf("%s: %w", db.Name(), err)
 		}
 		for _, c := range page.Items {
-			res, err := db.ExecuteSQL(ctx, `SELECT * FROM "`+c.Name+`" LIMIT 0`)
+			res, err := db.Execute(ctx, `SELECT * FROM "`+c.Name+`" LIMIT 0`)
 			if noTable(err) {
 				out["collection "+c.Name] = schemaEntity{Kind: "collection", Name: c.Name}
 				continue

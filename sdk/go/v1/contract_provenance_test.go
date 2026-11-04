@@ -26,8 +26,8 @@ func TestPinnedSQLAndExplainContractFixtures(t *testing.T) {
 		t.Fatal("producer revision changed without contract review")
 	}
 	db, _ := sqlServer(t, http.StatusOK, string(fixture.SQL.Success), nil)
-	rows, err := db.QuerySQL(t.Context(), "SELECT id FROM t")
-	if err != nil || len(rows) != 1 || rows[0]["id"] != "customer/chosen" {
+	rows, err := db.Query(t.Context(), "SELECT id FROM t")
+	if err != nil || len(rows) != 1 || rows[0].Map()["id"] != "customer/chosen" {
 		t.Fatalf("rows=%v error=%v", rows, err)
 	}
 	col := parityClient(t, http.MethodPost, parityDatabase+"/collections/articles/query", "", string(fixture.Query.Request), string(fixture.Query.Success), http.StatusOK).Database(parityProject, "main").Collection("articles")

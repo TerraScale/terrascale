@@ -21,8 +21,8 @@ collection names, region/service catalog names, versions and credentials
 remain protocol names or opaque tokens, not entity IDs.
 
 SQL and PostgreSQL primary keys are user-chosen values, including integer, text
-and composite keys; they do not need to be ULIDs. Relational `QuerySQL` and
-`BatchSQL` preserve these values. Document point operations still require ULIDs.
+and composite keys; they do not need to be ULIDs. Relational `Query` and
+`Batch` preserve these values. Document point operations still require ULIDs.
 Shared list/query/change/shape/export results legitimately carry either document
 ULIDs or SQL primary keys. Stored keys follow the producer's 1–256 UTF-16 code
 unit, non-control-character contract; export resume keys use that same contract.
@@ -164,7 +164,7 @@ ULID as the query value. Keys never enter path segments.
 Listing and generated creation use GET and POST `/documents`, respectively.
 The old `/documents/{id}` point routes are removed.
 The server implements If-Match/ETags and relational SQL, including writes and DDL through
-`ExecuteSQL`, `QuerySQL` and `BatchSQL`. It does not provide mutation deduplication or a
+`Execute`, `Query` and `Batch`. It does not provide mutation deduplication or a
 universal RFC 9457 response; preserve the documented typed errors and uncertain outcomes.
 
 ### Collection shapes
@@ -288,35 +288,66 @@ read-only `Database.SQL` route refuses dashboard API keys.
 
 ### Relational SQL
 
-`ExecuteSQL`, `QuerySQL` and `BatchSQL` call
-`POST /v1/projects/{project}/databases/{name}/sql/execute`
-([guide](https://docs.terrascale.tech/guides/sql-http)). Each call is one
-transaction: a batch of 1 to 256 statements applies completely or not at all,
-and `BEGIN`/`COMMIT`/`ROLLBACK` are refused. Arguments are `nil`, booleans
-(bound as 1/0), numbers and strings; `v1.Named` binds `:name`, `@name` or
-`$name` parameters.
+The SQL API follows the shared shape in [`sdk/SQL-API.md`](../SQL-API.md) and the
+[REST contract](contracts/terrabase/sql-execute.md). Every call is one
+`POST /v1/projects/{project}/databases/{database}/sql/execute` request and one
+transaction, all or nothing.
 
 ```go
+c, err := v1.New(v1.Config{Token: os.Getenv("TERRASCALE_API_KEY")})
 db := c.Database(projectID, "main")
-_, err := db.ExecuteSQL(ctx, "INSERT INTO users (id, name) VALUES (?, :name)", 1, v1.Named("name", "Ada"))
-res, err := db.ExecuteSQL(ctx, "SELECT id, name FROM users WHERE id = ?", 1)
-// res.Columns[0].Name == "id"; res.Rows[0][0] == int64(1); res.LastInsertRowID is *int64
-rows, err := db.QuerySQL(ctx, "SELECT id, name FROM users") // []map[string]any
-out, err := db.BatchSQL(ctx, []v1.SQLStatement{
-	{SQL: "UPDATE users SET name = ? WHERE id = ?", Args: []any{"Grace", 1}},
-	{SQL: "DELETE FROM users WHERE id = :id", Named: map[string]any{"id": 2}},
+
+_, err = db.Execute(ctx, "CREATE TABLE IF NOT EXISTS people (id TEXT PRIMARY KEY, name TEXT, avatar BLOB)")
+_, err = db.Execute(ctx, "INSERT INTO people VALUES (?, :name, ?)", v1.NewID(), sql.Named("name", "Ada"), []byte{1, 2, 3})
+
+rows, err := db.Query(ctx, "SELECT id, name FROM people")
+for _, row := range rows {
+	var id, name string
+	err = row.Scan(&id, &name)
+}
+
+type person struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+people, err := v1.QueryAs[person](ctx, db, "SELECT id, name FROM people WHERE name = ?", "Ada")
+
+results, err := db.Batch(ctx, []v1.Statement{
+	{SQL: "UPDATE people SET name = ? WHERE id = ?", Args: []any{"Grace", id}},
+	{SQL: "SELECT count(*) AS n FROM people"},
 })
-var sqlErr *v1.SQLError // Code, Message, Statement (0-based), SQLiteCode
-if errors.As(err, &sqlErr) { /* sql_error, sql_conflict, sql_too_large, forbidden_scope */ }
+
+var sqlErr *v1.SQLError
+if errors.As(err, &sqlErr) && errors.Is(err, v1.ErrUniqueViolation) {
+	// sqlErr.Statement (zero-based), sqlErr.SQLState ("23505"), sqlErr.Status
+}
 ```
 
-Row values are `nil`, `int64`, `float64` or `string`; integers decode exactly
-(the SDK never routes them through float64). `SQLError` wraps the `*APIError`,
-so `errors.Is(err, v1.ErrSQLConflict)` also matches. Other failures stay
-`*APIError`. Requests are never retried: a lost response returns
-`ErrCommitUncertain`. `TestSQLLive` runs against production when
-`TERRASCALE_SQL_LIVE_TOKEN`, `TERRASCALE_SQL_LIVE_PROJECT` and
-`TERRASCALE_SQL_LIVE_DATABASE` are set.
+- Arguments: `nil`, booleans (stored as 1/0), Go integers, finite floats,
+  strings, `[]byte` (sent as `{"base64":"…"}`), `json.Number` and any
+  `driver.Valuer`. `sql.Named` binds `:name`, `@name` or `$name`. A batch holds
+  1 to 256 statements in at most 1 MiB; NaN, infinity and empty SQL are refused
+  before sending.
+- Rows: `Scan` by ordinal like `database/sql` (including `sql.Null*` scanners),
+  or read by column name with `Int64`, `Float64`, `Bool`, `String`, `Bytes`,
+  `IsNull` and `Value`; a repeated column name resolves to its first ordinal.
+  Cells are `nil`, `int64` (exact), `float64`, `string` or `[]byte`. `QueryAs[T]`
+  maps each row as a JSON object keyed by column name; blobs map to `[]byte`.
+- Errors: a refused statement returns `*v1.SQLError` with `Code`, `Message`,
+  `Statement`, `SQLState` and `Status`; it wraps the `*APIError`, so
+  `errors.Is(err, v1.ErrSerializationConflict)` and every other code constant
+  match. Codes are in [error-codes.json](contracts/terrabase/sql/error-codes.json).
+  `IsTransient` is true for `serialization_conflict` and `tenant_busy`.
+- Retries: `409 serialization_conflict` is resent at most twice with jitter
+  (the request rolled back), plus the client's existing pre-execution refusals
+  (429 and transient 503 with Retry-After). A lost response returns
+  `ErrCommitUncertain` and is never resent.
+- Not yet: interactive transactions over the SQL WebSocket ship once TerraBase
+  serves that protocol on main. There is no `Region` option; the client uses the
+  one global origin.
+- Live sample: `go run ./examples/sql` with `TERRASCALE_API_KEY`,
+  `TERRASCALE_PROJECT` and `TERRASCALE_DATABASE` creates a throwaway table,
+  writes, reads and drops it.
 
 `Client.ProjectUsage` and `Database.Usage` use public project/name routes and
 the existing `UsageOptions`. Counts are best-effort dashboard observations,

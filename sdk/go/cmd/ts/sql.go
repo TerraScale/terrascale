@@ -12,10 +12,9 @@ import (
 
 func sqlInputLimit(mode string) int {
 	if mode == "document" {
-		// Document SQL permits 16K characters, up to four UTF-8 bytes each.
-		return 4 * v1.MaxSQLStatementBytes
+		return 64 << 10
 	}
-	return v1.MaxSQLStatementBytes
+	return v1.MaxSQLRequestBytes
 }
 
 // runSQL submits one complete statement; it does not split SQL or maintain a
@@ -62,7 +61,7 @@ func executeSQL(ctx context.Context, db *v1.Database, mode, statement string) (a
 	case "document":
 		return db.SQL(ctx, statement)
 	case "relational":
-		return db.ExecuteSQL(ctx, statement)
+		return db.Execute(ctx, statement)
 	default:
 		return nil, fmt.Errorf("SQL mode must be document or relational: %w", errUsage)
 	}
@@ -84,13 +83,13 @@ func writeSQLResult(out io.Writer, result any, diagnostics io.Writer) error {
 			return err
 		}
 		return nil
-	case *v1.SQLExecResult:
+	case *v1.Result:
 		if len(res.Columns) == 0 {
 			_, err := fmt.Fprintf(out, "%d rows affected\n", res.RowsAffected)
 			return err
 		}
-		for _, row := range res.Maps() {
-			if err := emitJSON(out, row); err != nil {
+		for _, row := range res.Rows {
+			if err := emitJSON(out, row.Map()); err != nil {
 				return err
 			}
 		}
