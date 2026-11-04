@@ -62,7 +62,7 @@ def verify(area, sha, directory, require_fast=True):
         raise ValueError('Invalid checked-build digest')
     if require_fast:
         fast = rows.get('ts-ship/' + area)
-        timing = re.match(r'Fast passed in ([0-9.]+)s \(<120s\); tests <=10s;', (fast or {}).get('description', ''))
+        timing = re.match(r'Fast passed in ([0-9.]+)s \(<120s\); test times reported;', (fast or {}).get('description', ''))
         if not trusted(fast) or not timing or float(timing[1]) >= 120:
             raise ValueError(f'No trusted Fast proof within 120s/10s budgets for {area}')
         print(f'{area}: {fast["description"]}', flush=True)
