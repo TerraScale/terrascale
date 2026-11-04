@@ -73,7 +73,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         }
     }
 
-    /// <summary>Origin of the public listener (Documents API with API keys and ts-auth tokens).</summary>
+    /// <summary>Origin of the public listener (API keys and ts-auth tokens).</summary>
     public Uri ClientAddress => this.publicFront?.Address ?? throw new InvalidOperationException("TerraBase has not started.");
 
     /// <summary>Origin of the internal listener (HTTP/2 only), which needs the peer credential that <see cref="Http"/> sends.</summary>
@@ -116,12 +116,12 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     /// <summary>A Management API client on the internal listener, acting as the platform operator.</summary>
     public TerraBaseManagementClient Management() => new(this.Http, new TerraBaseManagementClientOptions { BaseAddress = this.InternalAddress });
 
-    /// <summary>A Documents API client on the client listener, authenticated with <paramref name="apiKey"/>.</summary>
-    public TerraBaseDocumentsClient Documents(string apiKey) =>
-        new(this.PublicHttp, new TerraBaseDocumentsClientOptions { BaseAddress = this.ClientAddress, ApiKey = apiKey });
+    /// <summary>A TerraBase client on the client listener, authenticated with <paramref name="apiKey"/>.</summary>
+    public TerraBaseClient Client(string apiKey) =>
+        new(this.PublicHttp, new TerraBaseClientOptions { BaseAddress = this.ClientAddress, ApiKey = apiKey });
 
-    /// <summary>A Documents API client on the internal listener with the peer credential: how ts-auth reaches TerraBase.</summary>
-    public TerraBaseDocumentsClient InternalDocuments() => new(this.Http, new TerraBaseDocumentsClientOptions { BaseAddress = this.InternalAddress });
+    /// <summary>A TerraBase client on the internal listener with the peer credential: how ts-auth reaches TerraBase.</summary>
+    public TerraBaseClient InternalClient() => new(this.Http, new TerraBaseClientOptions { BaseAddress = this.InternalAddress });
 
     public TerraBaseSqlClient Sql(string apiKey) => new(this.PublicHttp, new TerraBaseSqlClientOptions { BaseAddress = this.ClientAddress, AccessTokenProvider = _ => ValueTask.FromResult(apiKey) });
 

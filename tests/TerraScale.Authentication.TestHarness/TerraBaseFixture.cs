@@ -24,7 +24,7 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     public async Task<(TerraBaseTestTenant Tenant, TerraBaseSqlDatabase Database)> CreateDatabaseAsync(bool provision = true)
     {
         var tenant = await this.Server.CreateTenantAsync();
-        await this.Server.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth").CreateAsync();
+        await this.Server.Client(tenant.ApiKey).Database(tenant.Project.Id, "auth").CreateAsync();
         var database = this.Server.Sql(tenant.ApiKey).Database(tenant.Project.Id, "auth");
         if (provision)
         {
@@ -65,7 +65,7 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     /// <summary>Creates and provisions another copy of the tenant's storage, <paramref name="name"/>: another region's.</summary>
     public async Task<TerraBaseSqlDatabase> CreateCopyAsync(TerraBaseTestTenant tenant, string name)
     {
-        await this.Server.Documents(tenant.ApiKey).Database(tenant.Project.Id, name).CreateAsync();
+        await this.Server.Client(tenant.ApiKey).Database(tenant.Project.Id, name).CreateAsync();
         var copy = this.Server.Sql(tenant.ApiKey).Database(tenant.Project.Id, name);
         await new AuthStore(copy, TimeProvider.System).ProvisionAsync();
         return copy;

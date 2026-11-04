@@ -24,7 +24,7 @@ public sealed class TerraBasePublicInventoryTests
         });
         using var http = new HttpClient(handler);
         var origin = new Uri("https://api.example.test");
-        var client = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = origin, ApiKey = "fake-token" });
+        var client = new TerraBaseClient(http, new TerraBaseClientOptions { BaseAddress = origin, ApiKey = "fake-token" });
         var db = client.Database(ProjectId, "app");
         var project = client.Project(ProjectId);
         var sql = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { BaseAddress = origin, AccessTokenProvider = _ => ValueTask.FromResult("fake-token") }).Database(ProjectId, "app");

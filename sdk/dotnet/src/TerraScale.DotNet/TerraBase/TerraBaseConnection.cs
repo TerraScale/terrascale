@@ -359,7 +359,7 @@ internal sealed class TerraBaseConnection
             if (accessTokenProvider is not null)
             {
                 bearer = await accessTokenProvider(deadline.Token).ConfigureAwait(false);
-                ValidateSecret(bearer, nameof(TerraBaseDocumentsClientOptions.AccessTokenProvider));
+                ValidateSecret(bearer, nameof(TerraBaseClientOptions.AccessTokenProvider));
             }
 
             if (bearer is not null) socket.Options.SetRequestHeader("Authorization", "Bearer " + bearer);
@@ -398,7 +398,7 @@ internal sealed class TerraBaseConnection
         if (accessTokenProvider is null) return;
         var token = await accessTokenProvider(cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        ValidateSecret(token, nameof(TerraBaseDocumentsClientOptions.AccessTokenProvider));
+        ValidateSecret(token, nameof(TerraBaseClientOptions.AccessTokenProvider));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
     }
 
