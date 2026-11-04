@@ -328,6 +328,12 @@ internal sealed class SqlExecuteEndpoint(
     private JsonResult Error(SqlBatchFailure failure)
     {
         HttpContext.Response.Headers.CacheControl = "no-store";
+        if (failure.Error.Home is { } home)
+        {
+            HttpContext.Response.Headers["X-TerraBase-Database-Home"] = home;
+            Listeners.ReplayIn(HttpContext, home);
+        }
+
         return TypedResults.Json(SqlBatch.Body(failure), TerraBaseJsonContext.Default.SqlErrorBody, statusCode: failure.Error.Status);
     }
 }
