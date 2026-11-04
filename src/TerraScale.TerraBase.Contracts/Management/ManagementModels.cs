@@ -18,6 +18,10 @@ namespace TerraScale.TerraBase.Contracts.Management
     [MessagePackObject(true)]
     public sealed record TerraBaseDatabaseTtl(long TtlSeconds);
 
+    /// <summary>A move of a database's home to one of its replica regions.</summary>
+    [MessagePackObject(true)]
+    public sealed record TerraBaseMoveHome(string HomeRegion);
+
     /// <summary>A table read grant: the condition and columns end-user tokens may read.</summary>
     [MessagePackObject(true)]
     public sealed record TerraBaseReadGrant(string Table, string? Where, IReadOnlyList<string>? Columns, DateTimeOffset UpdatedAt);
