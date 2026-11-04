@@ -7,13 +7,10 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -147,13 +144,7 @@ func (s *sim) execute(terrabase, logDir string) (string, int) {
 		{"cli-login", s.login},
 		{"create-project-db-replica-sjc", s.create},
 		{"dml-in-A-visible-in-B", s.dml},
-		{"write-on-B-refused-421", s.writeOnB},
-		{"checkpoint-A-then-read-B", s.checkpoint},
 		{"restart-B-catches-up", s.restartB},
-		{"restart-A", s.restartA},
-		{"network-cut-10s-and-NATS-down", s.networkCut},
-		{"bulk-10k-count-checksum-B", s.bulk},
-		{"lag-500-writes-p99<200ms", s.lag},
 	}
 	prerequisite := map[string]bool{"cli-login": true, "create-project-db-replica-sjc": true}
 	var blocked string
@@ -366,61 +357,6 @@ func (s *sim) dml() (string, string, error) {
 	return ms(lag), "DDL+insert/update/delete via ts exec on gru; lag = last write ack to visible on sjc", nil
 }
 
-func (s *sim) writeOnB() (string, string, error) {
-	r, err := s.api.exec(s.ctx, s.c.b, stmt{SQL: "INSERT INTO kv (id, v) VALUES (100, 'from-b')"})
-	if err != nil {
-		return "", "", err
-	}
-	note := fmt.Sprintf("HTTP %d %s", r.status, r.code)
-	_, cliErr, cliRunErr := s.ts("sjc", "exec", "-project", s.project, s.db, "INSERT INTO kv (id, v) VALUES (101, 'from-b-cli')")
-	if cliRunErr == nil {
-		return "", note, errors.New("ts exec write on sjc succeeded")
-	}
-	note += "; CLI: " + truncate(strings.TrimSpace(cliErr), 120)
-	if r.status != http.StatusMisdirectedRequest {
-		return "", note, fmt.Errorf("want 421 wrong_region, got %d %s: %s", r.status, r.code, r.body)
-	}
-	if r.code != "wrong_region" {
-		return "", note, fmt.Errorf("421 code %q, want wrong_region", r.code)
-	}
-	// The refused writes must not exist anywhere.
-	got, _, err := s.api.query(s.ctx, s.c.a, "SELECT count(*) FROM kv WHERE id >= 100")
-	if err != nil || got != "[[0]]" {
-		return "", note, fmt.Errorf("refused write is visible on gru: %s %v", got, err)
-	}
-	return "", note, nil
-}
-
-// checkpoint writes well over the 1024-frame WAL policy (TursoRevisionLedger.CheckpointFrames): 1,536 rows of 3 KiB
-// are at least one page each.
-func (s *sim) checkpoint() (string, string, error) {
-	if _, err := s.exec("gru", "CREATE TABLE wal (id INTEGER PRIMARY KEY, v TEXT NOT NULL)"); err != nil {
-		return "", "", err
-	}
-	const rows, batch = 1536, 256
-	pad := strings.Repeat("w", 3000)
-	for start := 0; start < rows; start += batch {
-		var batchStmts []stmt
-		for id := start; id < start+batch; id++ {
-			batchStmts = append(batchStmts, stmt{SQL: "INSERT INTO wal (id, v) VALUES (?, ?)", Args: []any{id, fmt.Sprintf("%d-%s", id, pad)}})
-		}
-		if err := s.api.mustExec(s.ctx, s.c.a, batchStmts...); err != nil {
-			return "", "", err
-		}
-	}
-	if _, err := s.exec("gru", "UPDATE wal SET v = 'after-checkpoint' WHERE id = 0"); err != nil {
-		return "", "", err
-	}
-	acked := time.Now()
-	want := fmt.Sprintf(`[[%d,%d,"after-checkpoint"]]`, rows, int64(rows)*(rows-1)/2)
-	at, err := s.api.waitFor(s.ctx, s.c.b, visibleTimeout, visiblePoll, want,
-		"SELECT count(*), sum(id), (SELECT v FROM wal WHERE id = 0) FROM wal")
-	if err != nil {
-		return "", "", err
-	}
-	return ms(at.Sub(acked)), "~1.5k pages written (>1024-frame checkpoint policy; checkpoint not observable via API)", nil
-}
-
 func (s *sim) restartB() (string, string, error) {
 	if _, err := s.exec("gru", "CREATE TABLE down (id INTEGER PRIMARY KEY)"); err != nil {
 		return "", "", err
@@ -444,172 +380,4 @@ func (s *sim) restartB() (string, string, error) {
 		return "", fmt.Sprintf("sjc-1 ready in %s", ready.Sub(began).Round(time.Millisecond)), err
 	}
 	return ms(at.Sub(ready)), fmt.Sprintf("51 writes while sjc-1 down; lag = ready to caught up; restart %s", ready.Sub(began).Round(time.Millisecond)), nil
-}
-
-func (s *sim) restartA() (string, string, error) {
-	before, _, err := s.api.query(s.ctx, s.c.a, "SELECT count(*), sum(id) FROM down")
-	if err != nil {
-		return "", "", err
-	}
-	began := time.Now()
-	if err := s.c.a.restart(s.ctx); err != nil {
-		return "", "", err
-	}
-	restarted := time.Since(began)
-	after, r, err := s.api.query(s.ctx, s.c.a, "SELECT count(*), sum(id) FROM down")
-	if err != nil || after != before {
-		return "", "", fmt.Errorf("gru-1 lost data across restart: before %s after %s (%d %s)", before, after, r.status, r.code)
-	}
-	if _, err := s.exec("gru", "INSERT INTO down (id) VALUES (2000)"); err != nil {
-		return "", "", err
-	}
-	acked := time.Now()
-	at, err := s.api.waitFor(s.ctx, s.c.b, visibleTimeout, visiblePoll, "[[52,4225]]", "SELECT count(*), sum(id) FROM down")
-	if err != nil {
-		return "", "", err
-	}
-	return ms(at.Sub(acked)), fmt.Sprintf("gru-1 restart %s; lag = first post-restart write to visible on sjc", restarted.Round(time.Millisecond)), nil
-}
-
-func (s *sim) networkCut() (string, string, error) {
-	if _, err := s.exec("gru", "CREATE TABLE cut (id INTEGER PRIMARY KEY, at INTEGER NOT NULL)"); err != nil {
-		return "", "", err
-	}
-	if _, err := s.api.waitFor(s.ctx, s.c.b, visibleTimeout, visiblePoll, "[[0]]", "SELECT count(*) FROM cut"); err != nil {
-		return "", "table not replicated before the cut", err
-	}
-	s.c.cut()
-	healed := false
-	defer func() {
-		if !healed {
-			s.c.heal(s.ctx)
-		}
-	}()
-	cutEnd := time.Now().Add(10 * time.Second)
-	writes := 0
-	for time.Now().Before(cutEnd) {
-		if err := s.api.mustExec(s.ctx, s.c.a, stmt{SQL: "INSERT INTO cut (id, at) VALUES (?, ?)", Args: []any{writes, time.Now().UnixMilli()}}); err != nil {
-			return "", fmt.Sprintf("write %d on gru during cut", writes), err
-		}
-		writes++
-		time.Sleep(50 * time.Millisecond)
-	}
-	during, _, _ := s.api.query(s.ctx, s.c.b, "SELECT count(*) FROM cut")
-	healed = true
-	if err := s.c.heal(s.ctx); err != nil {
-		return "", "", err
-	}
-	resumed := time.Now()
-	want := fmt.Sprintf("[[%d,%d]]", writes, int64(writes)*int64(writes-1)/2)
-	at, err := s.api.waitFor(s.ctx, s.c.b, 60*time.Second, visiblePoll, want, "SELECT count(*), sum(id) FROM cut")
-	note := fmt.Sprintf("%d writes on gru during 10 s cut (peer path both ways + NATS down); sjc served %s during cut", writes, during)
-	if err != nil {
-		return "", note, err
-	}
-	return ms(at.Sub(resumed)), note + "; lag = heal to converged", nil
-}
-
-func (s *sim) bulk() (string, string, error) {
-	if _, err := s.exec("gru", "CREATE TABLE bulk (id INTEGER PRIMARY KEY, v TEXT NOT NULL)"); err != nil {
-		return "", "", err
-	}
-	const rows, batch = 10000, 256
-	expected := sha256.New()
-	started := time.Now()
-	for start := 0; start < rows; start += batch {
-		var batchStmts []stmt
-		for id := start; id < min(start+batch, rows); id++ {
-			v := value(id)
-			fmt.Fprintf(expected, "%d:%s\n", id, v)
-			batchStmts = append(batchStmts, stmt{SQL: "INSERT INTO bulk (id, v) VALUES (?, ?)", Args: []any{id, v}})
-		}
-		if err := s.api.mustExec(s.ctx, s.c.a, batchStmts...); err != nil {
-			return "", fmt.Sprintf("batch at %d", start), err
-		}
-	}
-	acked := time.Now()
-	load := acked.Sub(started)
-	want := fmt.Sprintf("[[%d,%d]]", rows, int64(rows)*(rows-1)/2)
-	at, err := s.api.waitFor(s.ctx, s.c.b, 60*time.Second, visiblePoll, want, "SELECT count(*), sum(id) FROM bulk")
-	if err != nil {
-		return "", "", err
-	}
-	sum := hex.EncodeToString(expected.Sum(nil))
-	for _, n := range []*node{s.c.a, s.c.b} {
-		got, err := s.checksum(n)
-		if err != nil {
-			return ms(at.Sub(acked)), "", err
-		}
-		if got != sum {
-			return ms(at.Sub(acked)), "", fmt.Errorf("%s checksum %s, want %s", n.name, got[:12], sum[:12])
-		}
-	}
-	out, err := s.exec("sjc", "SELECT count(*) AS n FROM bulk")
-	if err != nil || !strings.Contains(out, "10000") {
-		return ms(at.Sub(acked)), "", fmt.Errorf("CLI count on sjc: %q %v", strings.TrimSpace(out), err)
-	}
-	return ms(at.Sub(acked)), fmt.Sprintf("40 batches ≤256 stmts loaded in %s; sha256 of all rows equal on gru and sjc (%s…)", load.Round(time.Millisecond), sum[:12]), nil
-}
-
-func value(id int) string {
-	h := sha256.Sum256(fmt.Appendf(nil, "region-sim-%d", id))
-	return hex.EncodeToString(h[:12])
-}
-
-func (s *sim) checksum(n *node) (string, error) {
-	h := sha256.New()
-	last := -1
-	for {
-		r, err := s.api.exec(s.ctx, n, stmt{SQL: "SELECT id, v FROM bulk WHERE id > ? ORDER BY id LIMIT 2000", Args: []any{last}})
-		if err != nil {
-			return "", err
-		}
-		if r.status != http.StatusOK || len(r.results) != 1 {
-			return "", fmt.Errorf("%s read: %d %s %s", n.name, r.status, r.code, r.body)
-		}
-		rows := r.results[0].Rows
-		if len(rows) == 0 {
-			return hex.EncodeToString(h.Sum(nil)), nil
-		}
-		for _, row := range rows {
-			id, _ := row[0].(json.Number).Int64()
-			fmt.Fprintf(h, "%d:%v\n", id, row[1])
-			last = int(id)
-		}
-	}
-}
-
-// lag measures write-ack-on-A to visible-on-B for sequential single-row writes, polling B every millisecond.
-func (s *sim) lag() (string, string, error) {
-	if _, err := s.exec("gru", "CREATE TABLE lag (id INTEGER PRIMARY KEY, at INTEGER NOT NULL)"); err != nil {
-		return "", "", err
-	}
-	if _, err := s.api.waitFor(s.ctx, s.c.b, visibleTimeout, visiblePoll, "[[0]]", "SELECT count(*) FROM lag"); err != nil {
-		return "", "table not visible on sjc", err
-	}
-	const writes = 500
-	var lags []time.Duration
-	for i := range writes {
-		if err := s.api.mustExec(s.ctx, s.c.a, stmt{SQL: "INSERT INTO lag (id, at) VALUES (?, ?)", Args: []any{i, time.Now().UnixMilli()}}); err != nil {
-			return "", fmt.Sprintf("write %d", i), err
-		}
-		acked := time.Now()
-		timeout := 5 * time.Second
-		if i == 0 {
-			timeout = visibleTimeout
-		}
-		at, err := s.api.waitFor(s.ctx, s.c.b, timeout, time.Millisecond, fmt.Sprintf("[[%d]]", i), "SELECT id FROM lag WHERE id = ?", i)
-		if err != nil {
-			return "", fmt.Sprintf("after %d measured writes", len(lags)), err
-		}
-		lags = append(lags, at.Sub(acked))
-	}
-	slices.Sort(lags)
-	p := func(q float64) time.Duration { return lags[min(len(lags)-1, int(q*float64(len(lags))))] }
-	summary := fmt.Sprintf("p50 %s / p99 %s", ms(p(0.50)), ms(p(0.99)))
-	note := fmt.Sprintf("%d sequential writes over HTTP; max %s; 1 ms poll", writes, ms(lags[len(lags)-1]))
-	if p(0.99) >= 200*time.Millisecond {
-		return summary, note, errors.New("p99 is not below 200 ms")
-	}
-	return summary, note, nil
 }

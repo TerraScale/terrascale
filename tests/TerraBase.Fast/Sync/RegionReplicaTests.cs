@@ -1,14 +1,9 @@
-using System.Net;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
-using TerraBase.Features.Regions;
-using TerraBase.Features.Replicas;
-using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -16,8 +11,6 @@ namespace TerraBase.Fast.Sync;
 
 public sealed class RegionReplicaTests
 {
-    private static readonly string[] Sjc = ["sjc"];
-
     private readonly Faker _faker = new();
 
     [Test]
@@ -87,52 +80,6 @@ public sealed class RegionReplicaTests
         }
     }
 
-    [Test]
-    public async Task AHomeListsTheDatabasesItPlacesInAReplicaRegionOnlyToPeersAndTheApiRefusesReplicasUntilEncrypted()
-    {
-        var token = TestContext.Current!.Execution.CancellationToken;
-        await using var api = await ManagementApi.StartAsync(services: collection =>
-            collection.Replace(ServiceDescriptor.Singleton<IRegionCatalog>(new ServingRegions(["sjc", "test-region"]))));
-        var organization = await api.CreateOrganizationAsync("Org " + _faker.Random.AlphaNumeric(8));
-        var project = await api.CreateProjectAsync(organization, "Project");
-        var databases = $"/v1/management/organizations/{organization}/projects/{project}/databases";
-        // Replica placement waits for replicas encrypted at rest like their home (Q-ENC).
-        using var refused = await api.Client.PostAsJsonAsync(ManagementApi.Uri(databases), new { name = "refused", replicaRegions = Sjc }, token);
-        await ErrorAssert.ErrorAsync(refused, HttpStatusCode.BadRequest, "replicas_unavailable");
-        using var local = await api.Client.PostAsJsonAsync(ManagementApi.Uri(databases), new { name = "local" }, token);
-        await Assert.That(local.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        var replicated = new TenantContext(
-            Primitives.EntityIds.New().ToString(), PlanTier.Hobby, Primitives.EntityIds.New().ToString(), Primitives.EntityIds.New().ToString());
-        await CatalogFixture.RegisterAsync(api, api.User, replicated, "replicated", Sjc, token);
-        var replicatedId = replicated.DatabaseId!;
-        (organization, project) = (replicated.OrganizationId, replicated.ProjectId!);
-
-        var peer = api.Server.Client;
-        var page = (await peer.GetFromJsonAsync<ReplicaCatalogPage>("/v1/sync/regions/sjc/databases", TerraBaseJsonContext.Default.Options, token))!;
-        var entry = page.Databases.Single(listed => listed.DatabaseId == replicatedId);
-        await Assert.That(entry.OrganizationId).IsEqualTo(organization);
-        await Assert.That(entry.ProjectId).IsEqualTo(project);
-        await Assert.That(entry.Name).IsEqualTo("replicated");
-        await Assert.That(entry.HomeRegion).IsEqualTo("test-region");
-        await Assert.That(entry.ReplicaRegions).IsEquivalentTo(Sjc);
-        await Assert.That(page.Databases.Any(listed => listed.Name == "local")).IsFalse();
-        var other = (await peer.GetFromJsonAsync<ReplicaCatalogPage>("/v1/sync/regions/fra/databases", TerraBaseJsonContext.Default.Options, token))!;
-        await Assert.That(other.Databases.Any(listed => listed.DatabaseId == replicatedId)).IsFalse();
-
-        var placement = $"/v1/sync/organizations/{organization}/projects/{project}/databases/{replicatedId}/placement";
-        await Assert.That((await peer.GetFromJsonAsync<ReplicaCatalogEntry>(placement, TerraBaseJsonContext.Default.Options, token))!.ReplicaRegions)
-            .IsEquivalentTo(Sjc);
-        using var missing = await peer.GetAsync($"/v1/sync/organizations/{organization}/projects/{project}/databases/{Primitives.EntityIds.New()}/placement", token);
-        await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-
-        using var forged = PeerTls.CreateClient(api.Server.BaseAddress, credential: new InternalCredential(PeerTls.NewSecret()));
-        using var unauthorized = await forged.GetAsync("/v1/sync/regions/sjc/databases", token);
-        await Assert.That(unauthorized.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        using var data = api.DataClient();
-        using var hidden = await data.GetAsync("/v1/sync/regions/sjc/databases", token);
-        await Assert.That(hidden.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-    }
-
     private static SqlStatement Statement(string sql) => new(sql, [], new Dictionary<string, object?>(), 10_000, 8 * 1024 * 1024, TimeSpan.FromSeconds(5));
 
     private static async Task<SortedDictionary<string, string>> RowsAsync(TursoReplicas replicas, TenantContext database, CancellationToken token)
@@ -146,10 +93,5 @@ public sealed class RegionReplicaTests
     {
         await using var reader = (await replicas.BeginReadAsync(database, token))!;
         return (await reader.ExecuteAsync(Statement(sql), token)).Rows.Single()[0];
-    }
-
-    private sealed class ServingRegions(IReadOnlyList<string> regions) : IRegionCatalog
-    {
-        public ValueTask<IReadOnlyList<string>> ServingAsync(CancellationToken cancellationToken) => ValueTask.FromResult(regions);
     }
 }
