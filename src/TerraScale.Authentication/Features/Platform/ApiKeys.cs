@@ -139,6 +139,32 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
             return new PlatformDirectory.Plan<(ApiKeyRecord, string)>(operations, (key, secret));
         }, cancellationToken);
 
+    public const int ScopedKeysPerMinute = 600;
+
+    public Task<(ApiKeyRecord Key, string Secret)> CreateScopedAsync(ApiKeyRecord parent, string generation, string projectId, string database, IReadOnlyList<string> scopes,
+        DateTimeOffset expiresAt, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(parent);
+        return directory.CommitAsync(() =>
+        {
+            var (id, secret) = Generate();
+            var key = new ApiKeyRecord(id, Instance, parent.OrganizationId, projectId, database, "scoped " + database, scopes, Tokens.Sha256Hex(secret), null, null,
+                parent.CreatedBy, clock.GetUtcNow(), expiresAt, parent.AllowedCidrs ?? [])
+            {
+                SecretBindings = parent.SecretBindings,
+                ParentKeyId = parent.Id,
+                ParentGeneration = generation,
+            };
+            List<StoreOperation> operations =
+            [
+                AuthStore.Create(AuthStore.ApiKeyCollection, Instance, id, Serialize(key)),
+                AuthStore.Require(AuthStore.ProjectCollection, Instance, projectId, PlatformDirectory.Filter("exists", "/id")),
+                directory.Audit(parent.OrganizationId, parent.Id, "api_key.scoped_created", id, database + " " + string.Join(' ', scopes)),
+            ];
+            return Task.FromResult(new PlatformDirectory.Plan<(ApiKeyRecord, string)>(operations, (key, secret)));
+        }, cancellationToken);
+    }
+
     /// <summary>A page of the organization's keys, or the project's, oldest first; the same roles as creating.</summary>
     public async Task<Page<ApiKeyRecord>> ListAsync(string userId, string organizationId, string? projectId, int limit, string? after, CancellationToken cancellationToken)
     {
@@ -217,7 +243,7 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
 
         var document = await store.GetAsync(AuthStore.ApiKeyCollection, Instance, keyId, cancellationToken).ConfigureAwait(false);
         if (document?.Document.Deserialize(PlatformJson.Default.ApiKeyRecord) is not { } key || key.InstanceId != Instance || key.Id != keyId
-            || key.ExpiresAt <= clock.GetUtcNow())
+            || key.ExpiresAt <= clock.GetUtcNow() || !await this.ParentActsAsync(key, cancellationToken).ConfigureAwait(false))
         {
             return null;
         }
@@ -262,6 +288,11 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
         if (key.ExpiresAt <= clock.GetUtcNow())
         {
             return "key_expired";
+        }
+
+        if (!await this.ParentActsAsync(key, cancellationToken).ConfigureAwait(false))
+        {
+            return "key_revoked";
         }
 
         if (generation.Length != 16 || !this.Digests(key).Any(digest => digest.StartsWith(generation, StringComparison.Ordinal))
@@ -344,6 +375,13 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
 
         return matched ? key : null;
     }
+
+    private async Task<bool> ParentActsAsync(ApiKeyRecord key, CancellationToken cancellationToken) =>
+        key.ParentKeyId is not { } parentId
+        || key.ParentGeneration is { Length: 16 } generation
+            && await this.FindAsync(parentId, cancellationToken).ConfigureAwait(false) is { ParentKeyId: null } parent
+            && parent.OrganizationId == key.OrganizationId
+            && this.Digests(parent).Any(digest => digest.StartsWith(generation, StringComparison.Ordinal));
 
     private static (string Id, string Secret) Generate()
     {

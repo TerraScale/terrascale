@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace TerraScale.Authentication.Contracts;
 
 /// <summary>An organization of the platform tenant (collection <c>organizations</c>).</summary>
@@ -93,6 +95,14 @@ public sealed record ApiKeyRecord(
 
     /// <summary>The previous secret's own winners during rotation grace; never replaced with the new secret's lineage.</summary>
     public IReadOnlyList<CredentialBinding> PreviousSecretBindings { get; init; } = [];
+
+    /// <summary>The key that minted this scoped key, or null for a key a user created.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ParentKeyId { get; init; }
+
+    /// <summary>The <c>key_gen</c> of the parent key string that minted it; a rotation of the parent retires it.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ParentGeneration { get; init; }
 }
 
 /// <summary>
