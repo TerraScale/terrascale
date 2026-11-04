@@ -77,8 +77,8 @@ internal sealed class TerraBaseSqlSocketServer : IAsyncDisposable
         return server;
     }
 
-    public TerraBaseSqlDatabase Database(string apiKey = "tb_test_key", string? region = null) =>
-        new TerraBaseSqlClient(new HttpClient(), new TerraBaseSqlClientOptions { BaseAddress = Address, ApiKey = apiKey, Region = region })
+    public TerraBaseSqlDatabase Database(string token = "tb_test_key", string? region = null) =>
+        new TerraBaseSqlClient(new HttpClient(), new TerraBaseSqlClientOptions { BaseAddress = Address, AccessTokenProvider = _ => ValueTask.FromResult(token), Region = region })
             .Database(TerraBaseIntegrationFixture.ProjectId, "app");
 
     public static async Task<JsonObject?> ReceiveAsync(WebSocket socket)
