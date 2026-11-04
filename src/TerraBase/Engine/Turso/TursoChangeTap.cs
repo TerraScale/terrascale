@@ -555,7 +555,7 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
     {
         var rewrite = _store.RewriteAnchor;
         var below = rewrite < 0 ? _durableAnchor : Math.Min(_durableAnchor, rewrite);
-        _ = TursoStorageTransaction.Trim(writer.Connection, null, below);
+        _ = TursoStorageTransaction.Trim(writer.Connection, null, below, _store.IsSystem);
         _store.ObserveCdcSize(writer.Connection);
         return true;
     }

@@ -18,8 +18,12 @@ public sealed class CdcRetentionTests
         host.Time.SetUtcNow(DateTimeOffset.UtcNow);
         using var data = await host.Api.CreateClientAsync(host.Database.Organization, "sql:read", "sql:write");
         var slow = new TableShapeClient(data, ManagementApi.Uri(host.Database.Data).ToString(), "people");
-        var synced = await slow.SyncAsync();
-        var slowOffset = long.Parse(synced.NextOffset!, CultureInfo.InvariantCulture);
+        var bootstrap = await slow.GetAsync(ManagementApi.Uri(slow.Path + "?offset=-1"));
+        await Assert.That(bootstrap.Status).IsEqualTo(System.Net.HttpStatusCode.TemporaryRedirect);
+        var snapshot = await slow.GetAsync(bootstrap.Location!);
+        await Assert.That(snapshot.Status).IsEqualTo(System.Net.HttpStatusCode.OK);
+        slow.Apply(snapshot);
+        var slowOffset = long.Parse(slow.NextOffset, CultureInfo.InvariantCulture);
         await host.ShipAsync(TimeSpan.FromSeconds(10), token);
         await host.PutAsync("people", "one", "first", token);
         var fast = new TableShapeClient(data, ManagementApi.Uri(host.Database.Data).ToString(), "people", "&columns=text");

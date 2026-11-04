@@ -8,32 +8,36 @@ internal sealed partial class TursoStorageTransaction
     private const long RetentionBytes = 64L * 1024 * 1024;
     private const string RetentionCut = "SELECT coalesce(max(change_id), 0) FROM turso_cdc WHERE change_id <= $below AND change_type = 2;";
 
-    internal static bool Trim(SqliteConnection connection, SqliteTransaction? transaction, long below)
+    internal static bool Trim(SqliteConnection connection, SqliteTransaction? transaction, long below, bool isSystem)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = """
-            WITH handles AS (
-                SELECT handle FROM _tb_shape_chunk WHERE handle >= 'h1-' AND handle < 'h2'
-                UNION SELECT handle FROM _tb_shape_snapshot WHERE handle >= 'h1-' AND handle < 'h2'
-                UNION SELECT substr(handle, 8) FROM _tb_shape_chunk WHERE handle >= '~floor:' AND handle < '~floor;' AND offset = 0
-            )
-            SELECT min(max(
-                coalesce((SELECT end_offset FROM _tb_shape_chunk WHERE handle = '~floor:' || h.handle AND offset = 0), 0),
-                coalesce((SELECT min(offset) FROM (
-                    SELECT offset FROM _tb_shape_snapshot WHERE handle = h.handle
-                    UNION ALL SELECT offset FROM _tb_shape_chunk WHERE handle = h.handle
-                )), 0))) FROM handles h;
-            """;
-        if (command.ExecuteScalar() is long shapeFloor)
+        if (!isSystem)
         {
-            below = Math.Min(below, shapeFloor);
-        }
+            command.CommandText = """
+                WITH handles AS (
+                    SELECT handle FROM _tb_shape_chunk WHERE handle >= 'h1-' AND handle < 'h2'
+                    UNION SELECT handle FROM _tb_shape_snapshot WHERE handle >= 'h1-' AND handle < 'h2'
+                    UNION SELECT substr(handle, 8) FROM _tb_shape_chunk WHERE handle >= '~floor:' AND handle < '~floor;' AND offset = 0
+                )
+                SELECT min(max(
+                    coalesce((SELECT end_offset FROM _tb_shape_chunk WHERE handle = '~floor:' || h.handle AND offset = 0), 0),
+                    coalesce((SELECT min(offset) FROM (
+                        SELECT offset FROM _tb_shape_snapshot WHERE handle = h.handle
+                        UNION ALL SELECT offset FROM _tb_shape_chunk WHERE handle = h.handle
+                    )), 0))) FROM handles h;
+                """;
+            if (command.ExecuteScalar() is long shapeFloor)
+            {
+                below = Math.Min(below, shapeFloor);
+            }
 
-        command.CommandText = "SELECT min(end_offset) FROM _tb_shape_chunk WHERE handle >= '~cdc:' AND handle < '~cdc;' AND offset = 0;";
-        if (command.ExecuteScalar() is long consumerFloor)
-        {
-            below = Math.Min(below, consumerFloor);
+            command.CommandText = "SELECT min(end_offset) FROM _tb_shape_chunk WHERE handle >= '~cdc:' AND handle < '~cdc;' AND offset = 0;";
+            if (command.ExecuteScalar() is long consumerFloor)
+            {
+                below = Math.Min(below, consumerFloor);
+            }
+
         }
 
         command.CommandText = RetentionCut;
