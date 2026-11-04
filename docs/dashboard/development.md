@@ -63,7 +63,11 @@ nice -n 19 make -f scripts/dashboard/Makefile perf
 `test-fast` runs the HTTP, MCP, CLI and customer-SDK journeys; `test-slow` runs the
 browser journeys and the internal-billing policy suites (`[Category("Slow")]`);
 `test-e2e` runs both for local investigation. Ship with `ts-ship` from the monorepo root;
-its dashboard Fast command runs on a dev host and must finish within five minutes.
+its dashboard Fast command runs on a dev host and must finish in under 30 s wall time; each single test must finish in under 10 s.
+A Fast suite over 30 s or a test over 10 s is a bug. Keep only happy-path and
+critical-path tests in Fast, move heavy critical tests to Slow and delete everything
+else. Delete at least 80% of tests against the 2026-11-04 workspace policy baseline.
+New features add at most one happy-path and one critical-failure test.
 GitHub Actions verifies that exact revision's Fast proof. Heavy validation runs through
 `ts-heavy-any`. A green dashboard Fast also runs `scripts/dashboard/prepare-deployment.sh`
 on the dev host, publishing the `dashboard/qualified-<sha>` release and the

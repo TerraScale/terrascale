@@ -26,7 +26,8 @@ TerraBase is a leaderless, multi-region document database. Current contracts and
 
 ## Build and tests
 
-- TerraBase Fast must finish in at most 5 minutes; keep it there.
+- TerraBase Fast must finish in under 30 s wall time; each single test must finish in under 10 s. A Fast suite over 30 s or a test over 10 s is a bug.
 
 - Build: `make terrabase-build`. Fast pre-push: `make terrabase-test-fast`. Slow: `make terrabase-test-slow`. Additional checks: `make terrabase-analyzer-check`, `make terrabase-check`.
 - Fast/Slow suites live in `tests/TerraBase.Fast` and `tests/TerraBase.Slow`. Drive the actual app over real listeners. `tests/TerraBase.TestHarness/TerraBaseTestServer.cs` starts top-level Program through `WebApplicationFactory<Program>.UseKestrel()` with an owned data directory.
+- Test only the happy path and critical paths in Fast; move heavy critical tests to Slow and delete everything else. Delete at least 80% of tests against the workspace `.cos/verify-20261103/test-policy.md` baseline (2026-11-04). New features add at most one happy-path and one critical-failure test.

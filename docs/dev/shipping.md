@@ -23,6 +23,18 @@ Run `ts-main` for a single CI snapshot: one line per active repository with
 main's result, result age and any failing job. Main CI must be green before a
 production deploy. Slow suites remain independent of the Fast shipping gate.
 
+Each area's Fast suite must finish in under 30 s wall time; each single test must
+finish in under 10 s. A Fast suite over 30 s or a test over 10 s is a bug. Fast
+covers only the happy path and critical paths, Slow keeps only heavy critical
+tests, and everything else is deleted. Delete at least 80% of tests against the
+2026-11-04 workspace `test-policy.md` baseline. New features add at most one
+happy-path and one critical-failure test.
+
+**Temporary enforcement until #1084 closes:** `ts-ship` keeps its current 120 s
+per-area suite cap and warn-only 10 s per-test check while the slow tests are
+fixed. Once #1084 closes, both caps become hard: 10 s per test and 30 s per suite.
+The temporary gate does not change the policy above.
+
 Fast batches and `ts-heavy-any` jobs wait for dev host capacity instead of
 overloading a host; see [Dev host capacity](dev-host-capacity.md).
 

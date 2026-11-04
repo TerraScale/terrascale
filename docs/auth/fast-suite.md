@@ -1,8 +1,8 @@
 # Auth Fast coverage and runtime
 
-Auth Fast runs the main feature flows in parallel and must finish within five minutes, including `make auth-test-fast` on a dev host and the Auth CI job. The 2026-10-29 user order is: "fast tests needs to be parallelized and run in under 5 minutes and tests all the main features only".
+Auth Fast runs only the happy path and critical paths in parallel. Each area’s Fast suite must finish in under 30 s wall time, including `make auth-test-fast` on a dev host; each single test must finish in under 10 s. A Fast suite over 30 s or a test over 10 s is a bug. The 2026-11-04 user orders are: "let's make the test run under 30" and "update all instructions and rules for that".
 
-The 2026-11-04 user order narrows both suites to the happy path and critical paths: "I just want to test the happy path and critical paths. Everything else needs to be deleted." See `.cos/verify-20261103/test-policy.md` in the workspace.
+The 2026-11-04 user order narrows both suites to the happy path and critical paths: "I just want to test the happy path and critical paths. Everything else needs to be deleted." See `.cos/verify-20261103/test-policy.md` in the workspace. Delete at least 80% of tests against that policy’s baseline.
 
 Fast has one happy-path test per public feature: sign-up, hosted sign-in, the OIDC code flow and tokens, social and SSO sign-in, MFA, organizations, projects, invitations, API keys, CLI device login, email delivery and branding, account and project deletion, the workload grant, health and OpenAPI/Scalar. It also covers the critical paths: token and API-key validation, revoked keys and sign-ins refused (also across replicas), refresh and code replay, cross-tenant isolation, storage unavailable failing readiness, and a restart keeping credentials valid.
 
