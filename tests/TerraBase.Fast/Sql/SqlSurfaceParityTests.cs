@@ -63,8 +63,8 @@ public sealed partial class SqlSurfaceParityTests
         }
 
         await Assert.That(string.Join(',', answers.Select(answer => answer.Http.Code)))
-            .IsEqualTo(",,,,,,primary_key_violation,unique_violation,not_null_violation,check_violation,undefined_table,undefined_column,syntax_error,sql_error,,");
-        await Assert.That(string.Join(',', answers.Select(answer => answer.Wire.Sqlstate))).IsEqualTo(",,,,,,23505,23505,23502,23514,42P01,42703,42601,0A000,,");
+            .IsEqualTo(",,,,,,primary_key_violation,unique_violation,not_null_violation,check_violation,undefined_table,undefined_column,syntax_error,undefined_table,,");
+        await Assert.That(string.Join(',', answers.Select(answer => answer.Wire.Sqlstate))).IsEqualTo(",,,,,,23505,23505,23502,23514,42P01,42703,42601,42P01,,");
         await Assert.That(answers[1].Http.RowsAffected).IsEqualTo(1);
         await Assert.That(answers[3].Http.RowsAffected).IsEqualTo(1);
         await Assert.That(answers[4].Http.Rows).IsEqualTo($"1|{name}|{email}|1.5|{city}|31\n2|{other}|{second}|∅|∅|40");

@@ -113,7 +113,7 @@ internal static class SqlScript
 
             if (SqlSandbox.IsHidden(token.Value))
             {
-                return verb is "CREATE" or "ALTER" ? SqlSandbox.Reserved : SqlSandbox.Hidden(token.Value);
+                return verb is "CREATE" or "ALTER" ? SqlSandbox.Reserved : SqlSandbox.Hidden;
             }
 
             names.Add(token.Value.ToLowerInvariant());
@@ -247,7 +247,7 @@ internal static class SqlScript
         };
         if (value is not null && SqlSandbox.IsHidden(value))
         {
-            return SqlSandbox.Hidden(value);
+            return SqlSandbox.Hidden;
         }
 
         if (name.Equals("foreign_keys", StringComparison.OrdinalIgnoreCase))
