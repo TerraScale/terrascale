@@ -18,18 +18,6 @@ namespace TerraScale.TerraBase.Contracts.Backups
         /// <summary><c>PUT /v1/projects/{project}/databases/{database}/backup-policy</c>.</summary>
         UnaryResult<JsonElement> SetPolicyAsync(string projectId, string database, JsonElement request);
 
-        /// <summary><c>GET /v1/projects/{project}/databases/{database}/export-schedule</c>.</summary>
-        UnaryResult<JsonElement> GetExportScheduleAsync(string projectId, string database);
-
-        /// <summary><c>PUT /v1/projects/{project}/databases/{database}/export-schedule</c>.</summary>
-        UnaryResult<JsonElement> SetExportScheduleAsync(string projectId, string database, JsonElement request);
-
-        /// <summary><c>POST /v1/projects/{project}/databases/{database}/point-in-time/recovery-preview</c>.</summary>
-        UnaryResult<JsonElement> PreviewRecoveryAsync(string projectId, string database, JsonElement request);
-
-        /// <summary><c>POST /v1/projects/{project}/databases/{database}/point-in-time/recover</c>.</summary>
-        UnaryResult<JsonElement> RecoverAsync(string projectId, string database, JsonElement request);
-
         /// <summary><c>POST /v1/projects/{project}/databases/{database}/backups/{backup}/restore</c>.</summary>
         UnaryResult<JsonElement> RestoreBackupAsync(string projectId, string database, string backupId, JsonElement request);
 

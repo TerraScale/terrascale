@@ -38,34 +38,6 @@ namespace TerraScale.TerraBase.Rpc.Backups
         }
 
         /// <inheritdoc />
-        public async UnaryResult<JsonElement> GetExportScheduleAsync(string projectId, string database)
-        {
-            var answer = await api.SendAsync(Context, "GET", RestPaths.Database(projectId, database) + "/export-schedule");
-            return RestApi.Read(answer, BackupsJson.Default.JsonElement);
-        }
-
-        /// <inheritdoc />
-        public async UnaryResult<JsonElement> SetExportScheduleAsync(string projectId, string database, JsonElement request)
-        {
-            var answer = await api.SendAsync(Context, "PUT", RestPaths.Database(projectId, database) + "/export-schedule", RestApi.Json(request, BackupsJson.Default.JsonElement));
-            return RestApi.Read(answer, BackupsJson.Default.JsonElement);
-        }
-
-        /// <inheritdoc />
-        public async UnaryResult<JsonElement> PreviewRecoveryAsync(string projectId, string database, JsonElement request)
-        {
-            var answer = await api.SendAsync(Context, "POST", RestPaths.Database(projectId, database) + "/point-in-time/recovery-preview", RestApi.Json(request, BackupsJson.Default.JsonElement));
-            return RestApi.Read(answer, BackupsJson.Default.JsonElement);
-        }
-
-        /// <inheritdoc />
-        public async UnaryResult<JsonElement> RecoverAsync(string projectId, string database, JsonElement request)
-        {
-            var answer = await api.SendAsync(Context, "POST", RestPaths.Database(projectId, database) + "/point-in-time/recover", RestApi.Json(request, BackupsJson.Default.JsonElement));
-            return RestApi.Read(answer, BackupsJson.Default.JsonElement);
-        }
-
-        /// <inheritdoc />
         public async UnaryResult<JsonElement> RestoreBackupAsync(string projectId, string database, string backupId, JsonElement request)
         {
             var answer = await api.SendAsync(Context, "POST", RestPaths.Database(projectId, database) + "/backups/" + Uri.EscapeDataString(backupId) + "/restore", RestApi.Json(request, BackupsJson.Default.JsonElement));

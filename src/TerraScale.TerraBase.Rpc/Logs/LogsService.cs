@@ -23,11 +23,5 @@ namespace TerraScale.TerraBase.Rpc.Logs
             return RestApi.Read(answer, Json.TerraBaseRequestLogPage);
         }
 
-        /// <inheritdoc />
-        public async UnaryResult<TerraBaseQueryShapePage> ListQueryShapesAsync(string projectId, string database)
-        {
-            var answer = await api.SendAsync(Context, "GET", RestPaths.Database(projectId, database) + "/query-shapes");
-            return RestApi.Read(answer, Json.TerraBaseQueryShapePage);
-        }
     }
 }

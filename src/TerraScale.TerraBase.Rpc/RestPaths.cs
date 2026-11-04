@@ -18,18 +18,6 @@ namespace TerraScale.TerraBase.Rpc
             return Project(projectId) + "/databases/" + Uri.EscapeDataString(database);
         }
 
-        /// <summary><c>…/collections/{collection}</c>.</summary>
-        public static string Collection(string projectId, string database, string collection)
-        {
-            return Database(projectId, database) + "/collections/" + Uri.EscapeDataString(collection);
-        }
-
-        /// <summary><c>…/documents/by-key?id=</c>.</summary>
-        public static string Document(string projectId, string database, string collection, string id)
-        {
-            return Collection(projectId, database, collection) + "/documents/by-key" + Query(("id", id));
-        }
-
         /// <summary>An invariant number, or null.</summary>
         public static string? Number(long? value)
         {
