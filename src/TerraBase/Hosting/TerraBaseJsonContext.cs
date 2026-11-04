@@ -137,6 +137,8 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaStatusReport))]
 [JsonSerializable(typeof(TerraBase.Features.HomeApply.RegionTransaction))]
 [JsonSerializable(typeof(TerraBase.Features.HomeApply.HomeApplyResult))]
+[JsonSerializable(typeof(TerraBase.Features.LocalAck.HeldTransaction))]
+[JsonSerializable(typeof(TerraBase.Features.LocalAck.HoldRelease))]
 [JsonSerializable(typeof(HlcState))]
 [JsonSerializable(typeof(ClockReport))]
 internal sealed partial class TerraBaseJsonContext : JsonSerializerContext;

@@ -9,6 +9,7 @@ using TerraBase.Features.Health;
 using TerraBase.Features.Clock;
 using TerraBase.Features.HomeApply;
 using TerraBase.Features.HomePush;
+using TerraBase.Features.LocalAck;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
@@ -107,6 +108,7 @@ builder.Services.AddSingleton<TerraBase.Features.Postgres.PostgresConnectionHand
 builder.Services.AddSingleton<TerraBase.Features.Postgres.PostgresRelay>();
 builder.Services.AddTerraBaseRegionReplicas();
 builder.Services.AddTerraBaseHomeApply();
+builder.Services.AddTerraBaseLocalAck();
 builder.Services.AddTerraBaseHomePush();
 builder.Services.AddTerraBasePlatform();
 builder.Services.AddTerraBasePlatformExplore();

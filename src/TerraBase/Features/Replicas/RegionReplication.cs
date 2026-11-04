@@ -71,7 +71,10 @@ internal sealed class RegionReplication(
 
     public override async Task StartAsync(CancellationToken cancellationToken)
     {
-        _peers = await peers.ListAsync(cancellationToken).ConfigureAwait(false);
+        // A holder stores no customer data, so it follows no replica and answers no notice.
+        _peers = await new PeersFile(options).IsHolderAsync(cancellationToken).ConfigureAwait(false)
+            ? []
+            : await peers.ListAsync(cancellationToken).ConfigureAwait(false);
         if (_peers.Count > 0)
         {
             _lag = _meter.CreateHistogram<double>("terrabase.replica.lag", "ms",

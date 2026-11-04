@@ -33,8 +33,9 @@ unconfirmed local write lives outside it, in the push stream.
 4. The home applies the transaction (R6) and answers with an `applied` notice. With `durability=home` the client's
    acknowledgement waits for that notice instead of step 3.
 
-The push stream is the outbox: it is durable before the acknowledgement and never held only in memory. Once R10
-lands, the stream message is stored on two nodes of the region before the acknowledgement (D16).
+The push stream is the outbox: it is durable before the acknowledgement and never held only in memory. The region's
+second node also holds the transaction before the acknowledgement, so it is on two nodes ([in-region ack](in-region-ack.md),
+D16).
 
 ## Push stream
 

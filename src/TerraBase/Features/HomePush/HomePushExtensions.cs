@@ -6,6 +6,7 @@ public static class HomePushExtensions
     {
         services.AddSingleton<HomePush>();
         services.AddSingleton<ILocalWrites>(provider => provider.GetRequiredService<HomePush>());
+        services.AddSingleton<LocalAck.ILocalWritesAvailability>(provider => provider.GetRequiredService<HomePush>());
         return services.AddHostedService(provider => provider.GetRequiredService<HomePush>());
     }
 }

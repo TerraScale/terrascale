@@ -1,4 +1,5 @@
-// Command region-sim runs a two-region TerraBase cluster on one host (gru-1 home, sjc-1 replica) and drives it with
+// Command region-sim runs a two-region TerraBase cluster on one host (gru-1 home, sjc-1 replica, and each region's
+// second node gru-2 and sjc-2) and drives it with
 // the real ts CLI through an HTTPS_PROXY that maps the CLI's fixed origins to the selected region and a test-only
 // ts-auth stand-in. It reports pass/fail and replica lag per scenario as a Markdown table. See
 // benchmark/region-sim/README.md.
@@ -129,10 +130,8 @@ func (s *sim) execute(terrabase, logDir string) (string, int) {
 	if err := s.setup(terrabase, logDir); err != nil {
 		s.record("setup", false, "", err.Error())
 		if s.c != nil {
-			for _, n := range []*node{s.c.a, s.c.b} {
-				if n != nil {
-					fmt.Fprintf(os.Stderr, "--- %s log tail ---\n%s\n", n.name, tail(n.logPath, 60))
-				}
+			for _, n := range s.c.nodes() {
+				fmt.Fprintf(os.Stderr, "--- %s log tail ---\n%s\n", n.name, tail(n.logPath, 60))
 			}
 		}
 		return s.table(), 1
@@ -144,6 +143,7 @@ func (s *sim) execute(terrabase, logDir string) (string, int) {
 		{"cli-login", s.login},
 		{"create-project-db-replica-sjc", s.create},
 		{"dml-in-A-visible-in-B", s.dml},
+		{"second-nodes-hold-no-customer-data", s.holders},
 		{"restart-B-catches-up", s.restartB},
 	}
 	prerequisite := map[string]bool{"cli-login": true, "create-project-db-replica-sjc": true}
@@ -175,7 +175,7 @@ func (s *sim) execute(terrabase, logDir string) (string, int) {
 		}
 	}
 	if failed > 0 {
-		for _, n := range []*node{s.c.a, s.c.b} {
+		for _, n := range s.c.nodes() {
 			fmt.Fprintf(os.Stderr, "--- %s log tail ---\n%s\n", n.name, tail(n.logPath, 40))
 		}
 	}
@@ -274,7 +274,7 @@ func (s *sim) ts(region string, args ...string) (string, string, error) {
 	return stdout.String(), stderr.String(), nil
 }
 
-// exec runs relational SQL through `ts exec` in region and returns the CLI's printed rows.
+// exec runs relational SQL through `ts sql` in region and returns the CLI's printed rows.
 func (s *sim) exec(region, sql string) (string, error) {
 	out, _, err := s.ts(region, "sql", "-project", s.project, s.db, sql)
 	return out, err
@@ -354,7 +354,45 @@ func (s *sim) dml() (string, string, error) {
 	if lines := strings.Count(strings.TrimSpace(out), "\n") + 1; lines != 4 || !strings.Contains(out, "TWO") || strings.Contains(out, "three") {
 		return ms(lag), "", fmt.Errorf("CLI read on sjc printed %q", truncate(out, 200))
 	}
-	return ms(lag), "DDL+insert/update/delete via ts exec on gru; lag = last write ack to visible on sjc", nil
+	return ms(lag), "DDL+insert/update/delete via ts sql on gru; lag = last write ack to visible on sjc", nil
+}
+
+// holders checks the R10 holder role: gru-2 and sjc-2 come after their region's founder in the peers file, so they
+// keep no region replica (data/.replicas), while sjc-1 replicates the database.
+func (s *sim) holders() (string, string, error) {
+	replicas := func(n *node) (int, error) {
+		count := 0
+		err := filepath.WalkDir(filepath.Join(n.dir, "data", ".replicas"), func(path string, entry os.DirEntry, err error) error {
+			if errors.Is(err, os.ErrNotExist) {
+				return filepath.SkipDir
+			}
+			if err != nil {
+				return err
+			}
+			if !entry.IsDir() && strings.HasSuffix(path, ".db") {
+				count++
+			}
+			return nil
+		})
+		return count, err
+	}
+	followed, err := replicas(s.c.b)
+	if err != nil {
+		return "", "", err
+	}
+	if followed == 0 {
+		return "", "", errors.New("sjc-1 holds no replica")
+	}
+	for _, n := range []*node{s.c.a2, s.c.b2} {
+		held, err := replicas(n)
+		if err != nil {
+			return "", "", err
+		}
+		if held > 0 {
+			return "", "", fmt.Errorf("%s stores %d region replicas", n.name, held)
+		}
+	}
+	return "", fmt.Sprintf("gru-2 and sjc-2 run and store no region replica; sjc-1 follows %d", followed), nil
 }
 
 func (s *sim) restartB() (string, string, error) {

@@ -17,5 +17,7 @@
     <!-- ts-auth's own stand-in for GitHub's OIDC issuer, for the GitHub Actions workload token; TSAUTH_ALIAS makes it name
          ts-auth's types through the alias. -->
     <Compile Include="../TerraScale.Authentication.TestHarness/FakeGitHubActions.cs" Link="Management/FakeGitHubActions.cs" />
+    <!-- The local-write world of the Fast push tests, for the in-region ack drill (Sync/InRegionAckDrillTests.cs). -->
+    <Compile Include="../TerraBase.Fast/Sync/LocalWriteWorld.cs" Link="Sync/LocalWriteWorld.cs" />
   </ItemGroup>
 </Project>

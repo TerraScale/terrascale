@@ -10,6 +10,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Clock;
 using TerraBase.Features.HomeApply;
+using TerraBase.Features.LocalAck;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
@@ -27,6 +28,11 @@ internal interface ILocalTransaction : IAsyncDisposable
 {
     ValueTask<SqlStatementResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Publishes the transaction to the push stream, holds it on the region's second node and commits it. With
+    /// <paramref name="homeDurable"/>, or when the second node did not hold it, it answers after the home applied it, with the
+    /// home's result: a local acknowledgement is never on one node (D16).
+    /// </summary>
     ValueTask<LocalCommit> CommitAsync(bool homeDurable, CancellationToken cancellationToken);
 }
 
@@ -37,7 +43,8 @@ internal sealed class LocalOutcomeUnknownException(Exception inner)
 
 internal sealed class HomePush(
     TerraBaseOptions options, IRegionPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas, IHomeApply apply, IHlcClock clock,
-    IServiceProvider services, IMeterFactory meters, TimeProvider time, ILogger<HomePush> logger) : BackgroundService, ILocalWrites
+    IInRegionAck partner, IServiceProvider services, IMeterFactory meters, TimeProvider time, ILogger<HomePush> logger)
+    : BackgroundService, ILocalWrites, ILocalWritesAvailability
 {
     internal const int MaxPayloadBytes = 8 << 20;
     private const int MaxParallelDatabases = 16;
@@ -66,9 +73,16 @@ internal sealed class HomePush(
 
     internal bool Ready => _ready;
 
+    public bool Available => _ready && _js is not null && partner.PartnerHealthy && services.GetService<ILocalWriteClock>() is not { Allowed: false };
+
+    private IInRegionAck Partner => partner;
+
     public override async Task StartAsync(CancellationToken cancellationToken)
     {
-        _peers = await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false);
+        // A holder runs no push: it commits no local write and the region's data owner consumes for the home.
+        _peers = await new PeersFile(options).IsHolderAsync(cancellationToken).ConfigureAwait(false)
+            ? []
+            : await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false);
         if (_peers.Count > 0 && options is { NatsUrl: { } natsUrl, NatsToken: { } natsToken })
         {
             _nats = new NatsConnection(new NatsOpts
@@ -85,8 +99,14 @@ internal sealed class HomePush(
             _applies = _meter.CreateCounter<long>("terrabase.push.applies", "{transaction}", "Home applies of pushed transactions by state.");
             _reverts = _meter.CreateCounter<long>("terrabase.push.reverts", "{transaction}", "Local transactions the home reverted.");
             _ = _meter.CreateObservableGauge("terrabase.push.pending", () => _overlay.Count, "{transaction}", "Local transactions the home has not confirmed.");
+            _ = _meter.CreateObservableGauge("terrabase.localwrites.available", () => Available ? 1 : 0, "{node}",
+                "1 while this node commits writes for databases homed in other regions.");
             replicas.Overlay = _overlay.RestoreAsync;
-            _overlay.Held += (database, through) => _purges.Writer.TryWrite((database, through));
+            _overlay.Held += (database, through) =>
+            {
+                _ = _purges.Writer.TryWrite((database, through));
+                partner.Release(database, through);
+            };
             _overlay.Reverted += OnReverted;
         }
         else if (_peers.Count > 0)
@@ -133,7 +153,7 @@ internal sealed class HomePush(
 
     public async ValueTask<ILocalTransaction?> BeginAsync(TenantContext database, CancellationToken cancellationToken)
     {
-        if (!_ready || _js is null || services.GetService<ILocalWriteClock>() is { Allowed: false })
+        if (!Available)
         {
             return null;
         }
@@ -560,6 +580,7 @@ internal sealed class HomePush(
             }
 
             var homeApplied = push._overlay.Add(database, acknowledged.Seq, transaction);
+            var held = await push.Partner.HoldAsync(database, home, acknowledged.Seq, transaction, cancellationToken).ConfigureAwait(false);
             try
             {
                 await writer.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -570,7 +591,7 @@ internal sealed class HomePush(
             }
 
             await writer.DisposeAsync().ConfigureAwait(false);
-            return homeDurable
+            return homeDurable || !held
                 ? new LocalCommit(transaction.Id, await homeApplied.WaitAsync(cancellationToken).ConfigureAwait(false))
                 : new LocalCommit(transaction.Id, null);
         }
