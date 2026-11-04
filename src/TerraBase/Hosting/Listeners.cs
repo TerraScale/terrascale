@@ -10,6 +10,7 @@ using TerraBase.Features.Management;
 using TerraBase.Features.Postgres;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Pressure;
+using TerraBase.Features.UserAuth;
 
 namespace TerraBase.Hosting;
 
@@ -218,6 +219,13 @@ public static class Listeners
 
             if (arrivedOn == TerraBaseListener.Client)
             {
+                if (!IpAllowlists.IsEdge(context.Connection.RemoteIpAddress)
+                    && !ReferenceEquals(context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>(), ListenerMetadata.Probe))
+                {
+                    await BadRequests.WriteAsync(context, StatusCodes.Status403Forbidden, "tls_required", "TLS is required: use https://api.terrascale.tech", op: null);
+                    return;
+                }
+
                 var region = RegionOf(context);
                 var machine = context.RequestServices.GetRequiredService<TerraBaseOptions>().MachineId;
                 context.Response.OnStarting(() =>

@@ -54,8 +54,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             {
                 handshake.CancelAfter(HandshakeTimeout);
                 var peer = (connection.RemoteEndPoint as IPEndPoint)?.Address;
-                var client = IpAllowlists.IsTrustedPeer(peer) ? await ReadProxyHeaderAsync(input, peer, handshake.Token).ConfigureAwait(false) : peer;
-                session = await StartAsync(input, output, client, handshake.Token).ConfigureAwait(false);
+                var edge = IpAllowlists.IsEdge(peer);
+                var client = edge ? await ReadProxyHeaderAsync(input, peer, handshake.Token).ConfigureAwait(false) : peer;
+                session = await StartAsync(input, output, client, edge, handshake.Token).ConfigureAwait(false);
             }
 
             if (session is not null)
@@ -111,7 +112,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         };
     }
 
-    private async ValueTask<Session?> StartAsync(PipeReader input, PgWriter output, IPAddress? client, CancellationToken cancellationToken)
+    private async ValueTask<Session?> StartAsync(PipeReader input, PgWriter output, IPAddress? client, bool edge, CancellationToken cancellationToken)
     {
         for (var negotiated = 0; ; negotiated++)
         {
@@ -138,6 +139,13 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     target.Cancel();
                 }
 
+                return null;
+            }
+
+            if (!edge)
+            {
+                output.Error("28000", "TLS is required: use sslmode=require", fatal: true);
+                await output.FlushAsync(cancellationToken).ConfigureAwait(false);
                 return null;
             }
 

@@ -14,14 +14,6 @@ internal static class IpAllowlists
 
     private const int MaxEntries = 32;
 
-    // Socket peers that only the platform edge (loopback, the host's container networks, the NetBird mesh) can be: their
-    // forwarded client address is believed. The client listener is reachable from the internet only through the edge.
-    private static readonly IPNetwork[] TrustedPeers =
-    [
-        IPNetwork.Parse("127.0.0.0/8"), IPNetwork.Parse("10.0.0.0/8"), IPNetwork.Parse("172.16.0.0/12"), IPNetwork.Parse("192.168.0.0/16"),
-        IPNetwork.Parse("100.64.0.0/10"), IPNetwork.Parse("::1/128"), IPNetwork.Parse("fc00::/7"),
-    ];
-
     /// <summary>One claim's networks; null when the claim is not a list of at most 32 CIDRs.</summary>
     public static IPNetwork[]? Parse(string claim)
     {
@@ -60,14 +52,12 @@ internal static class IpAllowlists
         return allowlists.All(list => list.Any(network => network.Contains(address)));
     }
 
-    /// <summary>Whether a connection from <paramref name="peer"/> may name the real client (forwarded header, PROXY protocol).</summary>
-    public static bool IsTrustedPeer(IPAddress? peer) => peer is not null && TrustedPeers.Any(network => network.Contains(Canonical(peer)));
+    public static bool IsEdge(IPAddress? peer) => peer is not null && IPAddress.IsLoopback(Canonical(peer));
 
-    /// <summary>The client's address: the edge's rightmost <c>X-Forwarded-For</c> hop from a trusted peer, else the socket peer.</summary>
     public static IPAddress? ClientOf(HttpContext context)
     {
         var peer = context.Connection.RemoteIpAddress;
-        if (IsTrustedPeer(peer) && context.Request.Headers["X-Forwarded-For"].ToString() is { Length: > 0 } forwarded)
+        if (IsEdge(peer) && context.Request.Headers["X-Forwarded-For"].ToString() is { Length: > 0 } forwarded)
         {
             var last = forwarded[(forwarded.LastIndexOf(',') + 1)..].Trim();
             return IPAddress.TryParse(last, out var client) ? Canonical(client) : null;
