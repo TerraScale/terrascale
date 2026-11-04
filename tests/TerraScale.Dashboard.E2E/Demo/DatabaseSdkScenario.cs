@@ -184,6 +184,7 @@ namespace TerraScale.Dashboard.E2E
             if (first is not null) { await first.StopAsync(); await first.DisposeAsync(); first = null; }
             if (producer is not null) { await producer.StopAsync(); await producer.DisposeAsync(); producer = null; }
             transport?.Dispose();
+            protocol.DisposeSqlEngines();
             File.Delete(peersFile);
         }
 
@@ -424,6 +425,7 @@ namespace TerraScale.Dashboard.E2E
             private int projectDeletes;
             private int projectDeleteNotFound;
             private readonly Dictionary<string, Dictionary<string, TerraBaseDocument>> collections = [];
+            private readonly ConcurrentDictionary<string, TestSqlEngine> sqlEngines = new(StringComparer.Ordinal);
             private readonly ConcurrentQueue<RequestObservation> requests = new();
             private readonly ConcurrentQueue<string> failures = new();
             private TaskCompletionSource? createGate;
@@ -486,6 +488,22 @@ namespace TerraScale.Dashboard.E2E
             public string[]? Catalog { get; set; }
 
             public void Release() { ApiKeys?.ReleaseLists(); createGate?.TrySetResult(); State?.ReleaseQuotaCommits(); }
+
+            // Each database's relational tables live in its own SQL engine for the scenario's lifetime.
+            private TestSqlEngine SqlEngine(string databaseId)
+            {
+                return sqlEngines.GetOrAdd(databaseId, _ => new TestSqlEngine());
+            }
+
+            public void DisposeSqlEngines()
+            {
+                foreach (var engine in sqlEngines.Values)
+                {
+                    engine.Dispose();
+                }
+
+                sqlEngines.Clear();
+            }
 
             public async Task<IResult> DispatchAsync(HttpContext http)
             {
@@ -1230,29 +1248,38 @@ namespace TerraScale.Dashboard.E2E
                             return Results.Json(new { collection = parts[6], documents = inferredRows.Count, sampledDocuments = sampled.Length, fields = inferredFields, uniqueConstraints = Array.Empty<object>() });
                         }
                     case (7, "POST", "sql") when parts[6] == "execute":
-                        // TerraBase's relational SQL API, reduced to SELECT * over a document collection and acknowledged writes.
-                        var statements = (await JsonAsync(http)).GetProperty("statements");
-                        Require(statements.GetArrayLength() == 1, "The dashboard runs one statement per request");
-                        var sql = statements[0].GetProperty("sql").GetString()!;
-                        if (sql == "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name LIMIT 10000")
+                        // TerraBase's relational SQL API: statements run in one transaction on the database's own SQL engine;
+                        // SELECT * over a document collection still reads its documents.
+                        var statements = (await JsonAsync(http)).GetProperty("statements").EnumerateArray().Select(item => item.GetProperty("sql").GetString()!).ToArray();
+                        var engine = SqlEngine(current.Id);
+                        var tables = (await engine.ExecuteAsync([new("SELECT name FROM sqlite_master WHERE type = 'table'", [])], http.RequestAborted))[0].Rows.Select(row => (string)row[0]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                        var match = System.Text.RegularExpressions.Regex.Match(statements[0], @"^\s*SELECT\s+\*\s+FROM\s+([A-Za-z0-9_-]+)(?:\s+LIMIT\s+(\d+))?\s*;?\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                        if (statements.Length > 1 || !match.Success || tables.Contains(match.Groups[1].Value))
                         {
-                            return Results.Json(new { results = new[] { new { columns = new[] { new { name = "name", decltype = (string?)null } }, rows = Array.Empty<object>(), rows_affected = 0 } } });
-                        }
-
-                        var match = System.Text.RegularExpressions.Regex.Match(sql, @"^\s*SELECT\s+\*\s+FROM\s+([A-Za-z0-9_-]+)(?:\s+LIMIT\s+(\d+))?\s*;?\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-                        if (!match.Success)
-                        {
-                            if (!System.Text.RegularExpressions.Regex.IsMatch(sql, @"^\s*(INSERT|UPDATE|DELETE|CREATE|DROP)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
-                            {
-                                return SqlError(400, "sql_error", "SQL syntax error at line 1, column 1", "SQLITE_ERROR");
-                            }
-
-                            if (Authorize(http, project, "documents:write") is not null)
+                            if (statements.Any(sql => System.Text.RegularExpressions.Regex.IsMatch(sql, @"^\s*(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) &&
+                                Authorize(http, project, "documents:write") is not null)
                             {
                                 return SqlError(403, "forbidden_scope", "not authorized", "SQLITE_AUTH");
                             }
 
-                            return Results.Json(new { results = new[] { new { columns = Array.Empty<object>(), rows = Array.Empty<object>(), rows_affected = 1, last_insert_rowid = (long?)null } } });
+                            try
+                            {
+                                var ran = await engine.ExecuteAsync([.. statements.Select(sql => new TestSqlStatement(sql, []))], http.RequestAborted);
+                                return Results.Json(new
+                                {
+                                    results = ran.Select(result => new
+                                    {
+                                        columns = result.Columns.Select(name => new { name, decltype = (string?)null }).ToArray(),
+                                        rows = result.Rows,
+                                        rows_affected = result.RowsAffected,
+                                        last_insert_rowid = (long?)null
+                                    }).ToArray()
+                                });
+                            }
+                            catch (TestSqlFailure failure)
+                            {
+                                return Results.Json(new { error = new { code = failure.Code, message = failure.Message, statement = failure.Statement, sqlite_code = failure.SqliteCode } }, statusCode: 400);
+                            }
                         }
                         var take = match.Groups[2].Success ? int.Parse(match.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture) : 100;
                         lock (gate)
