@@ -28,7 +28,7 @@ internal sealed class GetShapeKeyEndpoint(
         Get(ShapeRoute.Shape + "/keys");
         Name("getShapeKey");
         Summary("Gets a shape epoch key");
-        Description("Requires documents:read. Releases the AES-256 epoch key for the current handle and a served epoch/key_id pair. The key opens only that handle and epoch. Epochs last 10 minutes. Future epochs are refused; stale handles and unretained pairs answer 409 must_refetch. Responses are private, no-store. API key revocation prevents further key release; offline JWT acceptance lasts until expiry plus clock skew. A catalog whose local restore anchor is unverified answers 503 catalog_stale and releases nothing. The API key is revalidated against the local catalog immediately before key release. Previously released keys and read data remain usable.");
+        Description("Requires sql:read. Releases the AES-256 epoch key for the current handle and a served epoch/key_id pair. The key opens only that handle and epoch. Epochs last 10 minutes. Future epochs are refused; stale handles and unretained pairs answer 409 must_refetch. Responses are private, no-store. API key revocation prevents further key release; offline JWT acceptance lasts until expiry plus clock skew. A catalog whose local restore anchor is unverified answers 503 catalog_stale and releases nothing. The API key is revalidated against the local catalog immediately before key release. Previously released keys and read data remain usable.");
         Tags("Live");
         Produces<ShapeKeyResponse>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -40,7 +40,7 @@ internal sealed class GetShapeKeyEndpoint(
         Metadata(Query("handle", "The current shape handle: h1- and 16 lowercase hex characters."),
             Query("epoch", "Canonical unsigned decimal epoch, floor(unix_seconds / 600)."),
             Query("key_id", "Canonical uppercase ULID of the database data key named by the TBS1 header."));
-        RequireAuthorization(ApiKeyScopes.DocumentsRead);
+        RequireAuthorization(ApiKeyScopes.SqlRead);
         Metadata(new ListenerMetadata(TerraBaseListener.Client), OriginNoStore.Instance);
     }
 

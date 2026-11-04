@@ -32,7 +32,7 @@ public sealed class TigrisBackupTests
                     new PrefixedStore(provider.GetRequiredService<S3ObjectStore>(), prefix)),
                 cancellationToken: cancellationToken, failedStartCleanup: cleanup => failedStartCleanup = cleanup);
             var database = await api.CreateManagedDatabaseAsync("main");
-            using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+            using var data = await api.CreateClientAsync(database.Organization, "sql:read", "sql:write");
             (await ManagementApi.SqlAsync(data, database, "CREATE TABLE people (id TEXT PRIMARY KEY, text TEXT NOT NULL)", cancellationToken)).EnsureSuccessStatusCode();
             await ShippedAsync(api, database, null, cancellationToken);
             var written = Enumerable.Range(0, 50).ToDictionary(i => $"p{i:D3}", _ => faker.Lorem.Paragraph(4));

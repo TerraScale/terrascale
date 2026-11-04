@@ -47,7 +47,7 @@ with open(output, "x") as stream:
             database = body["id"]
             databases.append(database)
             if key_id is None:
-                _, key = live.http(region, "POST", "/admin/api-keys", {"name": "rt6 coldopen", "scopes": ["documents:read"],
+                _, key = live.http(region, "POST", "/admin/api-keys", {"name": "rt6 coldopen", "scopes": ["sql:read"],
                                    "organizationId": organization, "projectId": project}, expect={201})
                 key_id, secret = key["id"], key["secret"]
             reads = []

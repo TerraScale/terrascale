@@ -161,7 +161,7 @@ type ProjectAPIKey struct {
 }
 
 // ProjectAPIKeyRequest describes a key to issue: Name is 1-128 characters and
-// Scopes a non-empty subset of documents:read and documents:write. An empty
+// Scopes a non-empty subset of sql:read and sql:write. An empty
 // DatabaseID reaches every database of the project.
 type ProjectAPIKeyRequest struct {
 	Name       string   `json:"name"`

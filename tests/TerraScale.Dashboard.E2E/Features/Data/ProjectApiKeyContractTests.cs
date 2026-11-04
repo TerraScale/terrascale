@@ -24,14 +24,14 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             var context = Context();
             var service = new ApiKeyService(wire, TimeProvider.System, new TsAuthClient(wire.CreateClient("platform")));
             var created = await service.CreateAsync(context, "api-key", "Synthetic", DatabaseId,
-                ["documents:read", "documents:write"], 0, [], CancellationToken.None, "synthetic-proof");
+                ["sql:read", "sql:write"], 0, [], CancellationToken.None, "synthetic-proof");
             using var request = JsonDocument.Parse(wire.Body!);
             await Assert.That(request.RootElement.TryGetProperty("expires_at", out var noExpiry) && noExpiry.ValueKind != JsonValueKind.Null).IsFalse();
             await Assert.That(request.RootElement.GetProperty("allowed_cidrs").GetArrayLength()).IsEqualTo(0);
             await Assert.That(created.Key.AllowedCidrs).IsEquivalentTo(Array.Empty<string>());
             await Assert.That(request.RootElement.GetProperty("database").GetString()).IsEqualTo(DatabaseId);
             await Assert.That(request.RootElement.GetProperty("scopes").EnumerateArray().Select(item => item.GetString()!))
-                .IsEquivalentTo(new[] { "documents:read", "documents:write" });
+                .IsEquivalentTo(new[] { "sql:read", "sql:write" });
             await Assert.That(created.Secret).IsEqualTo(KeyId + "_synthetic-secret");
             await Assert.That(created.Key.LastFour).IsEqualTo("");
             await Assert.That(ApiKeyService.Metadata(created.Key).DatabaseName).IsEqualTo("app");
@@ -103,7 +103,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             var csrf = await HttpJourney.CsrfAsync(client, "/api-keys");
             string keyId;
             using (var created = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/key", new()
-            { ["_csrf"] = csrf, ["name"] = "Grace " + Guid.NewGuid().ToString("N")[..8], ["scopes"] = "documents:read" }))
+            { ["_csrf"] = csrf, ["name"] = "Grace " + Guid.NewGuid().ToString("N")[..8], ["scopes"] = "sql:read" }))
             {
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
                 using var json = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
@@ -170,7 +170,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         {
             using var wire = new Wire();
             var created = await new ApiKeyService(wire, TimeProvider.System, new TsAuthClient(wire.CreateClient("platform"))).CreateAsync(Context(), "api-key", "Synthetic", DatabaseId,
-                ["documents:read", "documents:write"], 0, ApiKeyService.ParseCidrs("203.0.113.0/24\n198.51.100.7, 2001:db8::/48"), CancellationToken.None, "synthetic-proof");
+                ["sql:read", "sql:write"], 0, ApiKeyService.ParseCidrs("203.0.113.0/24\n198.51.100.7, 2001:db8::/48"), CancellationToken.None, "synthetic-proof");
             using var request = JsonDocument.Parse(wire.Body!);
             await Assert.That(request.RootElement.GetProperty("allowed_cidrs").EnumerateArray().Select(item => item.GetString()!))
                 .IsEquivalentTo(new[] { "203.0.113.0/24", "198.51.100.7", "2001:db8::/48" }, CollectionOrdering.Matching);
@@ -264,7 +264,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                     organization_id = OrganizationId,
                     project_id = Failure == "foreign" ? "01JA0000000000000000000005" : ProjectId,
                     database = Database,
-                    scopes = new[] { "documents:read", "documents:write" },
+                    scopes = new[] { "sql:read", "sql:write" },
                     created_by = CreatedBy,
                     created_at = "2026-01-01T00:00:00+00:00",
                     expires_at = (string?)null,
@@ -346,7 +346,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                     organization_id = OrganizationId,
                     project_id = Failure == "foreign" ? "01JA0000000000000000000005" : ProjectId,
                     database = Database,
-                    scopes = new[] { "documents:read", "documents:write" },
+                    scopes = new[] { "sql:read", "sql:write" },
                     created_by = CreatedBy,
                     created_at = "2026-01-01T00:00:00+00:00",
                     expires_at = expiresAt,

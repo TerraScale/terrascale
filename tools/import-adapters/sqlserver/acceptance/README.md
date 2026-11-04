@@ -36,7 +36,7 @@ The next real run requires all five prerequisites:
    and OpenAPI readiness evidence privately before the run. There is intentionally
    no invented server launch command in this procedure.
 4. A fresh synthetic TerraBase project, a scoped **test-only project JWT** with
-   `databases:read/write` and `documents:read/write`, and a private curl config
+   `databases:read/write` and `sql:read/write`, and a private curl config
    containing its Authorization header and trusted local CA. The origin must be
    `https://127.0.0.1:<port>` with a matching certificate and no proxy/redirects.
    No production token or source credential belongs in logs, argv or this repo.

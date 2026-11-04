@@ -49,7 +49,7 @@ binding, secret value, customer data or credential was read during this review.
 | Reusable workflow | No reusable workflow; absent `job_workflow_ref` only |
 | Job and dispatch input | Only job `prod` with `target=prod`; enforce in the reviewed workflow, since GitHub has no standard job/input identity claim |
 | Target organization and project | **Pending user selection of exact isolated E2E organization/project ids; no default, lookup by name, or production project substitution** |
-| Output scopes | `documents:read` only; no database creation, writes, management, API-key, organization or customer access |
+| Output scopes | `sql:read` only; no database creation, writes, management, API-key, organization or customer access |
 | Output audience | Exact TerraBase API audience to be recorded and approved with its project-scoped verifier; general issuer trust is insufficient |
 | Token lifetime | At most 15 minutes; no refresh/identity token; GitHub assertion live with required expiry and at most 30 seconds of skew |
 | Replay | Required non-empty scalar-string `jti` and `run_id`; consume `jti` once across replicas |
@@ -88,7 +88,7 @@ proposal's read-only scopes, consumer pins or grant deadline.
 ## Approval, audit and revocation
 
 1. User action: MarioGK approves the exact isolated organization/project ids,
-   grant, output audience, owner, `documents:read`, token lifetime (15 minutes
+   grant, output audience, owner, `sql:read`, token lifetime (15 minutes
    maximum), and grant lifetime (24 hours maximum) before policy implementation
    or activation. Record
    the approval link, policy/workflow source SHAs, UTC start/deadline, verifier

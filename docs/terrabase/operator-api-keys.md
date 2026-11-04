@@ -1,7 +1,7 @@
 # Operator API keys
 
 `POST /admin/api-keys` issues a `tb_` key on the internal administrative listener.
-It accepts only `documents:read` and `documents:write`, with a required
+It accepts only `sql:read` and `sql:write`, with a required
 `organizationId`, optional `projectId`, and optional `databaseId` requiring the
 project. Its response includes the key's `id` and one-time `secret` at the top level.
 

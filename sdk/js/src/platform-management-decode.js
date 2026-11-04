@@ -12,7 +12,7 @@ function oneOf(values) {
 }
 export const organizationRole = oneOf(/** @type {const} */ (["viewer", "member", "admin", "owner"]));
 export const projectRole = oneOf(/** @type {const} */ (["viewer", "member", "admin"]));
-export const scope = oneOf(/** @type {const} */ (["documents:read", "documents:write", "databases:read", "databases:write"]));
+export const scope = oneOf(/** @type {const} */ (["sql:read", "sql:write", "databases:read", "databases:write"]));
 /** @param {JsonValue | undefined} value */
 export function instant(value) {
   const result = text(value);

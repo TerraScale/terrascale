@@ -31,7 +31,7 @@ internal static class PostgresSql
     internal static async Task<NpgsqlDataSource> SourceAsync(ManagementApi api)
     {
         var database = await api.CreateManagedDatabaseAsync();
-        var key = await api.Server.IssueNarrowedAsync(database.Organization, database.Project, null, "documents:read", "documents:write");
+        var key = await api.Server.IssueNarrowedAsync(database.Organization, database.Project, null, "sql:read", "sql:write");
         return Source(api, key, database.Name);
     }
 

@@ -24,7 +24,7 @@ internal sealed class SqlExecuteEndpoint(
         Name("executeSql");
         Summary("Runs relational SQL statements");
         Description("""
-            {"statements":[{"sql":…,"args":[…],"named":{…}}]} with 1 to 256 statements of at most 16 KiB each, in a body of at most 1 MiB. Statements use the SQLite dialect over the database's own tables: CREATE, ALTER and DROP TABLE, indexes (unique, partial, expression), views and triggers pass through, foreign keys are always enforced, and JSON columns are TEXT read with json_extract, -> and ->>. Arguments are null, numbers, booleans (1 or 0), strings, or blobs written {"base64":"…"} (standard base64). Results: one per statement, {"columns","rows","rows_affected","last_insert_rowid"}; row values are null, numbers, strings, or blobs as {"base64":"…"}. All statements run as one transaction: all or nothing; BEGIN, COMMIT and ROLLBACK are refused, SAVEPOINT, RELEASE and ROLLBACK TO are accepted. Internal tables (names starting with _tb_, _ts_ or turso_) do not exist for SQL and are left out of sqlite_schema and PRAGMA table_list. ATTACH, DETACH, VACUUM (INTO included), ANALYZE, temporary and virtual tables, load_extension, file functions, sqlite_dbpage and PRAGMAs other than the schema-reading ones are refused with 403 sql_sandbox. The same statements run over the SQL WebSocket and the Postgres wire with the same results and errors. A refused statement rolls everything back and answers {"error":{"code","message","statement","sqlstate"}} with a TerraScale code and its PostgreSQL SQLSTATE: 400 for SQL errors (syntax_error, undefined_table, undefined_column, duplicate_object, primary_key_violation, unique_violation, not_null_violation, check_violation, foreign_key_violation, constraint_violation, query_canceled, read_only_transaction, transaction_state, invalid_request, sql_error), 403 forbidden_scope (writes and DDL need documents:write) or sql_sandbox, 409 serialization_conflict (retry the request), 413 too_large or 429 quota_exceeded (the plan's monthly write cap or SQL read fair use is used up; shape reads stay available).
+            {"statements":[{"sql":…,"args":[…],"named":{…}}]} with 1 to 256 statements of at most 16 KiB each, in a body of at most 1 MiB. Statements use the SQLite dialect over the database's own tables: CREATE, ALTER and DROP TABLE, indexes (unique, partial, expression), views and triggers pass through, foreign keys are always enforced, and JSON columns are TEXT read with json_extract, -> and ->>. Arguments are null, numbers, booleans (1 or 0), strings, or blobs written {"base64":"…"} (standard base64). Results: one per statement, {"columns","rows","rows_affected","last_insert_rowid"}; row values are null, numbers, strings, or blobs as {"base64":"…"}. All statements run as one transaction: all or nothing; BEGIN, COMMIT and ROLLBACK are refused, SAVEPOINT, RELEASE and ROLLBACK TO are accepted. Internal tables (names starting with _tb_, _ts_ or turso_) do not exist for SQL and are left out of sqlite_schema and PRAGMA table_list. ATTACH, DETACH, VACUUM (INTO included), ANALYZE, temporary and virtual tables, load_extension, file functions, sqlite_dbpage and PRAGMAs other than the schema-reading ones are refused with 403 sql_sandbox. The same statements run over the SQL WebSocket and the Postgres wire with the same results and errors. A refused statement rolls everything back and answers {"error":{"code","message","statement","sqlstate"}} with a TerraScale code and its PostgreSQL SQLSTATE: 400 for SQL errors (syntax_error, undefined_table, undefined_column, duplicate_object, primary_key_violation, unique_violation, not_null_violation, check_violation, foreign_key_violation, constraint_violation, query_canceled, read_only_transaction, transaction_state, invalid_request, sql_error), 403 forbidden_scope (writes and DDL need sql:write) or sql_sandbox, 409 serialization_conflict (retry the request), 413 too_large or 429 quota_exceeded (the plan's monthly write cap or SQL read fair use is used up; shape reads stay available).
             """);
         Tags("Queries");
         Metadata(new RequestBodyMetadata(typeof(SqlExecuteRequest), DatabaseRoute.JsonMediaType));
@@ -36,7 +36,7 @@ internal sealed class SqlExecuteEndpoint(
         Produces<SqlErrorBody>(StatusCodes.Status413PayloadTooLarge);
         Produces<SqlErrorBody>(StatusCodes.Status429TooManyRequests);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(ApiKeyScopes.DocumentsRead);
+        RequireAuthorization(ApiKeyScopes.SqlRead);
         Metadata(ListenerMetadata.Client, new DatabaseRegions.ReplicaReads());
     }
 
@@ -80,7 +80,7 @@ internal sealed class SqlExecuteEndpoint(
             return await ReadReplicaAsync(database, placement, commands, cancellationToken);
         }
 
-        var canWrite = (await authorization.AuthorizeAsync(HttpContext.User, ApiKeyScopes.DocumentsWrite)).Succeeded;
+        var canWrite = (await authorization.AuthorizeAsync(HttpContext.User, ApiKeyScopes.SqlWrite)).Succeeded;
         var session = sql.Open(database, canWrite);
         await using (session.ConfigureAwait(false))
         {

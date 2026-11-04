@@ -214,7 +214,7 @@
     "request": {
       "name": "Synthetic project",
       "scopes": [
-        "documents:read"
+        "sql:read"
       ],
       "database": null,
       "expires_at": null,
@@ -228,7 +228,7 @@
         "project_id": null,
         "database": null,
         "scopes": [
-          "documents:read"
+          "sql:read"
         ],
         "created_by": "{user}",
         "created_at": "2026-10-13T00:00:00+00:00",
@@ -251,7 +251,7 @@
           "project_id": null,
           "database": null,
           "scopes": [
-            "documents:read"
+            "sql:read"
           ],
           "created_by": "{user}",
           "created_at": "2026-10-13T00:00:00+00:00",
@@ -273,7 +273,7 @@
       "project_id": null,
       "database": null,
       "scopes": [
-        "documents:read"
+        "sql:read"
       ],
       "created_by": "{user}",
       "created_at": "2026-10-13T00:00:00+00:00",
@@ -299,7 +299,7 @@
         "project_id": null,
         "database": null,
         "scopes": [
-          "documents:read"
+          "sql:read"
         ],
         "created_by": "{user}",
         "created_at": "2026-10-13T00:00:00+00:00",
@@ -315,7 +315,7 @@
     "request": {
       "name": "Synthetic project",
       "scopes": [
-        "documents:read"
+        "sql:read"
       ],
       "database": "example-db",
       "expires_at": null,
@@ -329,7 +329,7 @@
         "project_id": "{project}",
         "database": "example-db",
         "scopes": [
-          "documents:read"
+          "sql:read"
         ],
         "created_by": "{user}",
         "created_at": "2026-10-13T00:00:00+00:00",
@@ -352,7 +352,7 @@
           "project_id": "{project}",
           "database": "example-db",
           "scopes": [
-            "documents:read"
+            "sql:read"
           ],
           "created_by": "{user}",
           "created_at": "2026-10-13T00:00:00+00:00",
@@ -374,7 +374,7 @@
       "project_id": "{project}",
       "database": "example-db",
       "scopes": [
-        "documents:read"
+        "sql:read"
       ],
       "created_by": "{user}",
       "created_at": "2026-10-13T00:00:00+00:00",
@@ -400,7 +400,7 @@
         "project_id": "{project}",
         "database": "example-db",
         "scopes": [
-          "documents:read"
+          "sql:read"
         ],
         "created_by": "{user}",
         "created_at": "2026-10-13T00:00:00+00:00",
@@ -527,7 +527,7 @@
           "actor": "{user}",
           "action": "api_key.created",
           "target": "{key}",
-          "detail": "documents:read",
+          "detail": "sql:read",
           "occurred_at": "2026-10-13T00:00:00+00:00"
         }
       ],
@@ -535,6 +535,6 @@
     }
   },
   "set_project_allowed_cidrs": {"request": {"allowed_cidrs": ["192.0.2.0/24", "2001:db8::/32"]}, "response": {"id": "{project}", "organization_id": "{organization}", "name": "Synthetic project", "issuer": "https://auth.example.test/{project}", "created_by": "{user}", "created_at": "2026-10-13T00:00:00+00:00", "role": "admin", "allowed_cidrs": ["192.0.2.0/24", "2001:db8::/32"]}},
-  "set_project_api_key_allowed_cidrs": {"request": {"allowed_cidrs": ["192.0.2.0/24", "2001:db8::/32"]}, "response": {"id": "{key}", "name": "Synthetic project", "organization_id": "{organization}", "project_id": "{project}", "database": "example-db", "scopes": ["documents:read"], "created_by": "{user}", "created_at": "2026-10-13T00:00:00+00:00", "expires_at": null, "previous_secret_expires_at": null, "last_used_at": "2026-10-13T00:00:30+00:00", "allowed_cidrs": ["192.0.2.0/24", "2001:db8::/32"]}},
-  "set_organization_api_key_allowed_cidrs": {"request": {"allowed_cidrs": []}, "response": {"id": "{key}", "name": "Synthetic project", "organization_id": "{organization}", "project_id": null, "database": null, "scopes": ["documents:read"], "created_by": "{user}", "created_at": "2026-10-13T00:00:00+00:00", "expires_at": null, "previous_secret_expires_at": null, "last_used_at": "2026-10-13T00:00:30+00:00", "allowed_cidrs": []}}
+  "set_project_api_key_allowed_cidrs": {"request": {"allowed_cidrs": ["192.0.2.0/24", "2001:db8::/32"]}, "response": {"id": "{key}", "name": "Synthetic project", "organization_id": "{organization}", "project_id": "{project}", "database": "example-db", "scopes": ["sql:read"], "created_by": "{user}", "created_at": "2026-10-13T00:00:00+00:00", "expires_at": null, "previous_secret_expires_at": null, "last_used_at": "2026-10-13T00:00:30+00:00", "allowed_cidrs": ["192.0.2.0/24", "2001:db8::/32"]}},
+  "set_organization_api_key_allowed_cidrs": {"request": {"allowed_cidrs": []}, "response": {"id": "{key}", "name": "Synthetic project", "organization_id": "{organization}", "project_id": null, "database": null, "scopes": ["sql:read"], "created_by": "{user}", "created_at": "2026-10-13T00:00:00+00:00", "expires_at": null, "previous_secret_expires_at": null, "last_used_at": "2026-10-13T00:00:30+00:00", "allowed_cidrs": []}}
 }

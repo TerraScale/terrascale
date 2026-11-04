@@ -13,8 +13,8 @@ public sealed class ScopedKeyTests(TerraBaseFixture fixture)
 {
     private const string Audience = "https://api.terrascale.tech";
     private const string Mint = "/v1/terrascale/api-keys/self/scoped-keys";
-    private static readonly string[] Orchestrator = ["databases:write", "documents:read", "documents:write"];
-    private static readonly string[] ReadOnly = ["documents:read"];
+    private static readonly string[] Orchestrator = ["databases:write", "sql:read", "sql:write"];
+    private static readonly string[] ReadOnly = ["sql:read"];
 
     [Test]
     public async Task A_project_key_mints_a_read_only_key_for_one_database_whose_token_reaches_only_it()
@@ -37,7 +37,7 @@ public sealed class ScopedKeyTests(TerraBaseFixture fixture)
         var access = await oidc.ValidateAsync((await OidcHarness.JsonAsync(exchanged)).GetProperty("access_token").GetString()!, Audience);
         await Assert.That(access.GetClaim("project_id").Value).IsEqualTo(project);
         await Assert.That(access.GetClaim("database").Value).IsEqualTo(database);
-        await Assert.That(access.GetClaim("scope").Value).IsEqualTo("documents:read");
+        await Assert.That(access.GetClaim("scope").Value).IsEqualTo("sql:read");
     }
 
     [Test]

@@ -25,7 +25,7 @@ and no quota is raised. Existing full-snapshot restore remains a separate flow.
 
 The dashboard calls the project-scoped `point-in-time/recovery-preview` and
 `point-in-time/recover` endpoints with current-user `databases:write` plus
-`documents:read` for preview or `documents:write` for apply and the existing
+`sql:read` for preview or `sql:write` for apply and the existing
 home-region pin. Platform sources are read-only. Capacity failures show the
 service's Retry-After delay. Apply carries only the opaque approval and
 explicit collection/record identities; JSON and version claims stay server-side.

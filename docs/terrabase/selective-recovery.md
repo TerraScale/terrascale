@@ -2,7 +2,7 @@
 
 Selective recovery restores approved historical **document contents** into the original database. It does not create a customer database or consume another database slot. The temporary restored file stays in isolated service scratch, outside tenant database discovery and backup shipping, and closes and is removed on completion, failure or cancellation. Restored document writes still consume the ordinary storage and operation allowances; TS-980 and TS-995 admission remain unchanged.
 
-Both routes require ordinary project authorization with `databases:write` and current writable access to the source. Preview additionally requires `documents:read`; apply requires `documents:write`. `{database}` is its name. Choose a retained timestamp from `GET /v1/projects/{project}/databases/{database}/point-in-time`. The PITR completeness, retention and backup authentication rules also apply here.
+Both routes require ordinary project authorization with `databases:write` and current writable access to the source. Preview additionally requires `sql:read`; apply requires `sql:write`. `{database}` is its name. Choose a retained timestamp from `GET /v1/projects/{project}/databases/{database}/point-in-time`. The PITR completeness, retention and backup authentication rules also apply here.
 
 ```http
 POST /v1/projects/{project}/databases/{database}/point-in-time/recovery-preview

@@ -47,7 +47,7 @@ No license was installed or accepted by this work.
 A ready core must be an **already built, exclusively owned local integration fixture** running the real
 TerraBase Program with import support. The source `tests/TerraBase.TestHarness/ImportClient.cs` shows the
 supported fixture pattern: `ManagementApi.StartAsync()`, its ephemeral issuer, and project JWT scopes
-`databases:read databases:write documents:read documents:write`. This package does not add or build that
+`databases:read databases:write sql:read sql:write`. This package does not add or build that
 fixture. A Debug apphost's existence is insufficient. Require local fixture ownership, binary/DLL hashes,
 build revision matching the pin, its actual authenticated **Client** listener address, home region, fresh project
 ULID, verified synthetic catalog, short-lived local JWT, and its teardown handle. Have the fixture owner

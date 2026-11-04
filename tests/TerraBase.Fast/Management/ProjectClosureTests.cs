@@ -10,7 +10,7 @@ namespace TerraBase.Fast.Management;
 /// <summary>ts-auth's project closure handoff (docs/terrabase/project-closure.md) on one machine.</summary>
 public sealed class ProjectClosureTests
 {
-    private static readonly string[] ReadScope = ["documents:read"];
+    private static readonly string[] ReadScope = ["sql:read"];
 
     // Review R1: a receipt binds to its fence by closure id, not by comparing two machines' clocks. A fence recorded by a
     // machine whose clock ran ahead is still accepted once every holder confirmed it.

@@ -3,7 +3,7 @@
 ts-auth is the sole customer API key issuer. Create and manage keys through its
 `/v1/terrascale/organizations/{organization}/projects/{project}/api-keys` API,
 then exchange the client credentials for a short-lived access token.
-The shared scope vocabulary is exactly `documents:read`, `documents:write`,
+The shared scope vocabulary is exactly `sql:read`, `sql:write`,
 `databases:read`, and `databases:write`. ts-auth rejects unknown scopes when
 creating a key and rejects a token request whose scopes exceed the key's grants.
 TerraBase checks the granted scopes and project/database boundaries on requests.

@@ -4,7 +4,7 @@ End-user access tokens authenticate a user in one ts-auth project. Project token
 
 ## Rules API
 
-A project credential with `documents:write` sets a policy using:
+A project credential with `sql:write` sets a policy using:
 
 ```http
 PUT /v1/projects/{project}/databases/{database}/collections/{collection}/rules
@@ -17,7 +17,7 @@ Content-Type: application/json
 }
 ```
 
-`GET` at the same route requires `documents:read`. Both operations return `{ "rules": <policy> }`. A collection without rules returns `{ "rules": null }`; it denies every end-user operation. To revoke every grant, PUT policies with `owner:false`, `public:false`, and empty roles arrays. There is no executable rule language.
+`GET` at the same route requires `sql:read`. Both operations return `{ "rules": <policy> }`. A collection without rules returns `{ "rules": null }`; it denies every end-user operation. To revoke every grant, PUT policies with `owner:false`, `public:false`, and empty roles arrays. There is no executable rule language.
 
 The body is at most 16 KiB. Both `read` and `write`, and each policy's `roles` array, are required. Omitted grant booleans default to false. Unknown members, duplicate JSON members, null roles, duplicate roles and malformed pointers fail with `400 invalid_rules`. Each roles array has at most 32 distinct strings, each 1–128 characters without controls. Role comparison is ordinal and case-sensitive. The trusted roles come only from the signed ts-auth token.
 

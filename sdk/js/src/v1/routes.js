@@ -8,7 +8,7 @@ import { managementV1Routes } from "./management-routes.js";
  * @property {V1Operation} operation
  * @property {"GET" | "PUT" | "POST" | "PATCH" | "DELETE"} method
  * @property {string} pathTemplate
- * @property {"documents:read" | "documents:write" | "databases:read" | "databases:write" | "anonymous" | "platform-admin"} permission
+ * @property {"sql:read" | "sql:write" | "databases:read" | "databases:write" | "anonymous" | "platform-admin"} permission
  * @property {readonly string[]} [additionalPermissions]
  * @property {readonly string[]} requestMediaTypes
  * @property {string} responseMediaType

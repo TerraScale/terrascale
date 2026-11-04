@@ -149,8 +149,8 @@ internal sealed class UserAuthenticationHandler(
             claims.Add(new Claim("token_kind", "end_user"));
             claims.AddRange(roles.EnumerateArray().Select(role => role.GetString()!).Distinct(StringComparer.Ordinal).Select(role => new Claim("roles", role)));
             // These admit only the document pipeline; collection rules decide every data operation.
-            claims.Add(new Claim("scope", "documents:read"));
-            claims.Add(new Claim("scope", "documents:write"));
+            claims.Add(new Claim("scope", "sql:read"));
+            claims.Add(new Claim("scope", "sql:write"));
         }
 
         if (jwt.TryGetPayloadValue<string>("database", out var database))
@@ -209,7 +209,7 @@ internal sealed class UserAuthenticationHandler(
         }
 
         // Exactly the list the signature was checked against: a later refresh replaces it and so retires the entry.
-        scope = endUser ? "documents:read documents:write" : scope;
+        scope = endUser ? "sql:read sql:write" : scope;
         accepted = new ValidatedTokens.Accepted(
             checkedWith, jwt.ValidTo, [.. claims.Select(claim => (claim.Type, claim.Value))], project, database, scope, allowlists, key);
         validated.Add(cacheKey, accepted);

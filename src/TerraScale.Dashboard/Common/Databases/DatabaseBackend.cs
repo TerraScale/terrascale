@@ -269,7 +269,7 @@ namespace TerraScale.Dashboard.Common.Databases
 
             var name = await NameAsync(scope, home, databaseId, cancellationToken);
             var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
-            var token = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, write ? ["documents:read", "documents:write"] : ["documents:read"], cancellationToken);
+            var token = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, write ? ["sql:read", "sql:write"] : ["sql:read"], cancellationToken);
             if (!write)
             {
                 return await ExecuteSqlAsync(home, scope.ProjectId, name, token, statements, cancellationToken);

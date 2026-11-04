@@ -41,7 +41,7 @@ clients receive by path. It deletes the dir when it exits. It fails with an erro
 naming `TS_BENCH_KEY_FILE` if the variable is unset or the file is unreadable.
 
 The key must be a project API key with `databases:read databases:write
-documents:read documents:write` for a dedicated benchmark project. It never
+sql:read sql:write` for a dedicated benchmark project. It never
 appears on a command line, in an environment variable, log or result file.
 
 ## Scenarios

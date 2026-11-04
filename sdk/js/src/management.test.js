@@ -31,19 +31,19 @@ test("management entrypoints construct the existing project-scoped named clients
 test("project API key creation sends a stable database ULID and listing preserves it", async () => {
   const database = "01ARZ3NDEKTSV4RRFFQ69G5FA2";
   const key = { id: config.project, name: "test", organization_id: config.project, project_id: config.project,
-    database, scopes: ["documents:read"], created_by: config.project, created_at: "2026-10-26T00:00:00Z",
+    database, scopes: ["sql:read"], created_by: config.project, created_at: "2026-10-26T00:00:00Z",
     expires_at: null, previous_secret_expires_at: null, last_used_at: null, allowed_cidrs: [] };
   const client = createTerraScaleIdentityManagementClient({ ...identityConfig, fetch: async input => {
     const request = /** @type {Request} */ (input);
     expect(new URL(request.url).pathname).toBe(`/v1/terrascale/organizations/${config.project}/projects/${config.project}/api-keys`);
     if (request.method === "POST") {
-      expect(await request.json()).toEqual({ name: "test", scopes: ["documents:read"], database });
+      expect(await request.json()).toEqual({ name: "test", scopes: ["sql:read"], database });
       return Response.json({ api_key: key, key: `${config.project}_${"a".repeat(52)}` }, { status: 201 });
     }
     expect(request.method).toBe("GET");
     return Response.json({ items: [key], next: null });
   } });
-  expect(await client.createProjectApiKey(config.project, config.project, { name: "test", scopes: ["documents:read"], database }))
+  expect(await client.createProjectApiKey(config.project, config.project, { name: "test", scopes: ["sql:read"], database }))
     .toMatchObject({ ok: true, value: { api_key: { database } } });
   expect(await client.listProjectApiKeys(config.project, config.project))
     .toMatchObject({ ok: true, value: { items: [{ database }] } });

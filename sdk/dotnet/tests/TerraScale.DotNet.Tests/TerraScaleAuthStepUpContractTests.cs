@@ -86,9 +86,9 @@ public sealed class TerraScaleAuthStepUpContractTests
         "consume" => client.Platform.ConsumeStepUpAsync("fixture-sign-in", new(proof, "create_pat", "ts-dashboard"), cancellationToken),
         "consume_delete" => client.Platform.ConsumeStepUpAsync("fixture-sign-in", new(proof, "delete_account", "ts-dashboard", Receipt), cancellationToken),
         "delete" => client.Platform.DeleteAccountWithProofAsync("fixture-sign-in", proof, cancellationToken: cancellationToken),
-        "create_org_key" => client.Platform.CreateOrganizationApiKeyAsync("fixture-sign-in", Id, new("Synthetic", ["documents:read"]), proof, cancellationToken: cancellationToken),
+        "create_org_key" => client.Platform.CreateOrganizationApiKeyAsync("fixture-sign-in", Id, new("Synthetic", ["sql:read"]), proof, cancellationToken: cancellationToken),
         "rotate_org_key" => client.Platform.RotateOrganizationApiKeyAsync("fixture-sign-in", Id, Id, proof, cancellationToken: cancellationToken),
-        "create_project_key" => client.Platform.CreateProjectApiKeyAsync("fixture-sign-in", Id, Id, new("Synthetic", ["documents:read"]), proof, cancellationToken: cancellationToken),
+        "create_project_key" => client.Platform.CreateProjectApiKeyAsync("fixture-sign-in", Id, Id, new("Synthetic", ["sql:read"]), proof, cancellationToken: cancellationToken),
         "rotate_project_key" => client.Platform.RotateProjectApiKeyAsync("fixture-sign-in", Id, Id, Id, proof, cancellationToken: cancellationToken),
         "create_client" => client.Projects.CreateClientAsync("fixture-sign-in", Id, new("Synthetic", "confidential", ["https://example.test/cb"]), proof, cancellationToken: cancellationToken),
         _ => throw new ArgumentException("Unknown operation.", nameof(operation))

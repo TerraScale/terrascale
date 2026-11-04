@@ -29,7 +29,7 @@ internal sealed class InvokeFunctionEndpoint(IManagementService management, IFun
         Produces<ErrorBody>(StatusCodes.Status413PayloadTooLarge);
         Produces<ErrorBody>(StatusCodes.Status500InternalServerError);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(ApiKeyScopes.DocumentsRead);
+        RequireAuthorization(ApiKeyScopes.SqlRead);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Client);
     }
 
