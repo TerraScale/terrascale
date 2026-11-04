@@ -12,6 +12,8 @@
     <NoWarn>$(NoWarn);CA1515;CA1707;CA2007</NoWarn>
     <!-- Tiered PGO instrumentation costs the suite about 36% of its CPU: 4m43s to 3m02s of user time on the same binary. -->
     <TieredPGO>false</TieredPGO>
+    <!-- The parallel suite owns many application hosts in one process, like TerraBase Fast. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/TerraScale.Authentication/TerraScale.Authentication.csproj" />
