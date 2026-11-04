@@ -38,23 +38,27 @@ def outputs(path):
 
 def check(case):
     filename, status, expected = case
+    filenames = [filename] if isinstance(filename, str) else filename
     with tempfile.TemporaryDirectory(prefix="terrascale-path-filter-") as directory:
         root = Path(directory)
         repo = root / "repo"
         repo.mkdir()
         git(repo, "init", "--quiet", "--initial-branch=fixture")
-        path = repo / filename
-        path.parent.mkdir(parents=True, exist_ok=True)
         (repo / "baseline.txt").write_text("fixture\n")
-        if status != "added":
-            path.write_text("before\n")
+        for name in filenames:
+            path = repo / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if status != "added":
+                path.write_text("before\n")
         git(repo, "add", ".")
         git(repo, "-c", "user.name=Path filter fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "fixture")
-        if status == "deleted":
-            path.unlink()
-        else:
-            path.write_text("after\n")
-            git(repo, "add", filename)
+        for name in filenames:
+            path = repo / name
+            if status == "deleted":
+                path.unlink()
+            else:
+                path.write_text("after\n")
+                git(repo, "add", name)
         output = root / "output"
         output.touch()
         event = root / "event.json"
@@ -86,6 +90,12 @@ cases += [("src/vendor/Turso.Data.Sqlite/.editorconfig", "modified", all_areas),
           ("docs/auth/platform-api.openapi.yaml", "modified", {"auth"}),
           ("src/TerraBase/Program.cs", "modified", {"auth-server", "terrabase"}),
           ("src/TerraScale.Authentication/Program.cs", "modified", {"auth"})]
+instructions = ["AGENTS.md", "CLAUDE.md", "sdk/dotnet/AGENTS.md",
+                "src/TerraBase/CLAUDE.md", "src/TerraScale.Authentication/AGENTS.md",
+                "src/TerraScale.Endpoints/AGENTS.md", "scripts/terrabase/CLAUDE.md",
+                "docs/dev/testing.md", ".cos/brief.md"]
+cases += [(instructions, "modified", set()),
+          (instructions + ["src/TerraBase/Program.cs"], "modified", {"auth-server", "terrabase"})]
 errors = []
 with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
     futures = [pool.submit(check, case) for case in cases]

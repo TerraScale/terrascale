@@ -17,6 +17,9 @@ on:
       - '.github/workflows/dashboard-ci.yml'
       - '.github/workflows/images-ghcr.yml'
       - 'scripts/dashboard/check-proof.py'
+      - '!**/AGENTS.md'
+      - '!**/CLAUDE.md'
+      - '!.cos/**'
   pull_request:
     branches: [main]
     paths: *dashboard-paths
