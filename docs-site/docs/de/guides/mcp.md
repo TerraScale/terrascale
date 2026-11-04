@@ -90,8 +90,8 @@ Supplying only `projectId` requires that project to belong to your saved organiz
 Use your client's tool discovery (`tools/list`) for the current names, parameters and descriptions. A listed tool is not a grant of permission: calls still enforce membership, roles, resource access and availability. Current tools include:
 
 `execute_sql` runs reads, writes and schema changes; `run_sql` accepts reads only.
-`get_database_schema` lists SQL tables and their declared columns. `create_database` and `branch_database`
-accept `ttlSeconds`. Backup and restore tools preserve the source database. See the complete
+`get_database_schema` lists SQL tables and their declared columns. `create_database` and `fork_database`
+accept `ttlHours`. Backup and restore tools preserve the source database. See the complete
 [agent database workflow](/de/guides/agent-databases#agent-workflow), including scoped-key minting over an API key connection.
 
 </div>
