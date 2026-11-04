@@ -41,7 +41,7 @@ set whose final encoded token exceeds this cap returns `400 invalid_request`;
 reduce the roles. The cap applies after JSON/Unicode encoding and signing.
 
 The key must belong to the exact route project, have no database restriction,
-and include both `documents:read` and `documents:write`. Read-only, write-only,
+and include both `sql:read` and `sql:write`. Read-only, write-only,
 database-narrowed and organization keys are refused, as are platform JWTs and
 cookies. ts-auth reads the current stored key and constant-time digest, expiry,
 project and organization linkage before minting, rechecking immediately before

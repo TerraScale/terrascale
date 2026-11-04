@@ -25,7 +25,7 @@ public sealed class IpAllowlistTests
             using var client = api.WithToken(api.Issuer.Mint(EntityIds.New().ToString(), token =>
             {
                 token.Claims["project_id"] = database.Project;
-                token.Claims["scope"] = "databases:read documents:read";
+                token.Claims["scope"] = "databases:read sql:read";
                 if (keyCidrs is not null)
                 {
                     token.Claims["key_cidrs"] = keyCidrs;

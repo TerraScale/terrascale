@@ -19,8 +19,8 @@ carry their own pins; deployment, scope, plan and live-method qualification rema
 
 `TerraBaseSqlClient` is the SQL surface: SQL over REST (`POST …/sql/execute`,
 [contract](contracts/terrabase/sql-execute.md)) and SQL over WebSocket (`GET …/sql/ws`, subprotocol
-`terrascale.sql.v1`, [contract](contracts/terrabase/sql-websocket.md)). Reads need `documents:read`; writes and
-schema changes need `documents:write`. The other SDKs copy this shape ([API shape](../SQL-API.md)).
+`terrascale.sql.v1`, [contract](contracts/terrabase/sql-websocket.md)). Reads need `sql:read`; writes and
+schema changes need `sql:write`. The other SDKs copy this shape ([API shape](../SQL-API.md)).
 
 ```csharp
 using var http = new HttpClient(TerraBaseHttp.CreateHandler());

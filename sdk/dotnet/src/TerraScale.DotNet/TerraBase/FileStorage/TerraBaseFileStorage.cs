@@ -24,7 +24,7 @@ internal sealed record TerraBaseFileRulesRequest(TerraBaseFileRules Rules);
 
 public sealed partial class TerraBaseProjectClient
 {
-    /// <summary>Creates a bucket. Requires project credentials and documents:write. Sent once.</summary>
+    /// <summary>Creates a bucket. Requires project credentials and sql:write. Sent once.</summary>
     public async Task<TerraBaseFileBucket> CreateFileBucketAsync(string name, TerraBaseFileRules rules, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(rules);
@@ -32,7 +32,7 @@ public sealed partial class TerraBaseProjectClient
         return (await connection.SendAsync(HttpMethod.Post, path + "/buckets", body, Json.TerraBaseFileBucket, null, cancellationToken).ConfigureAwait(false)).Value;
     }
 
-    /// <summary>Lists up to 50 buckets. Requires project credentials and documents:read.</summary>
+    /// <summary>Lists up to 50 buckets. Requires project credentials and sql:read.</summary>
     public async Task<TerraBasePage<TerraBaseFileBucket>> ListFileBucketsAsync(string? after = null, CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Get, path + "/buckets" + FileAfter(after), null,
             Json.TerraBasePageTerraBaseFileBucket, null, cancellationToken).ConfigureAwait(false)).Value;

@@ -12,8 +12,8 @@
 and the server selects it. A request without an upgrade answers 400 `websocket_required`; a database homed elsewhere
 answers 421 like every other data route.
 
-The credential is the same bearer API key or project token as `sql/execute`, with `documents:read` (writes need
-`documents:write`). It never goes in the URL: the server reads no query parameter for it. Send it one of two ways:
+The credential is the same bearer API key or project token as `sql/execute`, with `sql:read` (writes need
+`sql:write`). It never goes in the URL: the server reads no query parameter for it. Send it one of two ways:
 
 | Client | How | Refusal |
 |---|---|---|

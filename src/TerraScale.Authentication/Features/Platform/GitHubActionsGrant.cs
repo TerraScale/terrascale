@@ -47,7 +47,7 @@ public static class GitHubActionsGrant
     public const string WorkflowRef = "TerraScale/ts-orchestrator/.github/workflows/e2e.yml@refs/heads/main";
 
     /// <summary>The only scope this read-only workload may carry.</summary>
-    public static IReadOnlyList<string> Scopes { get; } = [TerraBaseScopes.DocumentsRead];
+    public static IReadOnlyList<string> Scopes { get; } = [TerraBaseScopes.SqlRead];
 
     /// <summary>The exact audience GitHub must attest.</summary>
     public const string Audience = "https://auth.terrascale.tech/terrascale";
@@ -71,7 +71,7 @@ public static class GitHubActionsGrant
     public const string TimestampFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'";
 
     internal static bool HasExactPermissions(IEnumerable<string>? permissions) => permissions is not null && permissions.ToHashSet(StringComparer.Ordinal).SetEquals(
-        [Permissions.Endpoints.Token, Permissions.Prefixes.GrantType + GrantType, Permissions.Prefixes.Scope + TerraBaseScopes.DocumentsRead]);
+        [Permissions.Endpoints.Token, Permissions.Prefixes.GrantType + GrantType, Permissions.Prefixes.Scope + TerraBaseScopes.SqlRead]);
 
     internal static bool TryReadBinding(IReadOnlyDictionary<string, JsonElement>? properties, DateTimeOffset now,
         out string organization, out string project, out string database, out DateTimeOffset expires)

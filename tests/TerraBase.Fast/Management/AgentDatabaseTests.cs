@@ -48,7 +48,7 @@ public sealed class AgentDatabaseTests
         var source = await api.CreateManagedDatabaseAsync();
         using var owner = ProjectClient(api, source.Project);
         var other = await CreatedAsync(await owner.PostAsJsonAsync(ManagementApi.Uri($"/v1/projects/{source.Project}/databases"), new { name = "other", ttlSeconds = 600 }));
-        using var agent = ProjectClient(api, source.Project, database: source.Id, scope: "documents:read documents:write");
+        using var agent = ProjectClient(api, source.Project, database: source.Id, scope: "sql:read sql:write");
 
         using var own = await agent.PostAsJsonAsync(ManagementApi.Uri(source.Data + "/sql/execute"), new { statements = new[] { new { sql = "SELECT 1" } } });
         using var elsewhere = await agent.PostAsJsonAsync(ManagementApi.Uri($"/v1/projects/{source.Project}/databases/{other.GetProperty("id").GetString()}/sql/execute"),
@@ -61,7 +61,7 @@ public sealed class AgentDatabaseTests
     }
 
     private static HttpClient ProjectClient(ManagementApi api, string project, string? database = null,
-        string scope = "databases:read databases:write documents:read documents:write") =>
+        string scope = "databases:read databases:write sql:read sql:write") =>
         api.WithToken(api.Issuer.Mint(api.User, token =>
         {
             token.Claims["project_id"] = project;

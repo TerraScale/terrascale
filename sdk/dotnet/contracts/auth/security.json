@@ -35,8 +35,8 @@
   "action_scopes": [
     "databases:read",
     "databases:write",
-    "documents:read",
-    "documents:write"
+    "sql:read",
+    "sql:write"
   ],
   "step_up": {
     "provenance": "step-up-provenance.json",

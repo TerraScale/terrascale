@@ -61,8 +61,8 @@ service ownership decided by the user on 2026-10-06
    | --- | --- |
    | `databases:read` | Read databases, backups, the backup policy, indexes, index recommendations, the schema, usage and saved queries; read-only SQL |
    | `databases:write` | Create, branch and delete databases; create and restore backups; set the backup policy; create and drop indexes; apply recommendations; change saved queries |
-   | `documents:read` | Read collections and documents; document queries |
-   | `documents:write` | Create and drop collections; write documents; transactions |
+   | `sql:read` | Read collections and documents; document queries |
+   | `sql:write` | Create and drop collections; write documents; transactions |
 
    The public contract advertises only project JWTs. Hidden compatibility paths still accept existing `tb_`
    document keys and membership tokens. `/admin/api-keys`, the internal listener's platform operator and
@@ -144,13 +144,13 @@ region (`421 wrong_region` elsewhere).
 
 | Method | Route | operationId | Scope | Old route |
 | --- | --- | --- | --- | --- |
-| POST | `D/import` | `createImport` | `databases:write`, `documents:write` | - |
+| POST | `D/import` | `createImport` | `databases:write`, `sql:write` | - |
 | GET | `D/import` | `getImport` | `databases:read` | - |
-| PUT | `D/import/source?offset={n}` | `uploadImportSource` | `databases:write`, `documents:write` | - |
-| PATCH | `D/import` | `updateImport` | `databases:write`, `documents:write` | - |
-| POST | `D/import/start` | `startImport` | `databases:write`, `documents:write` | - |
+| PUT | `D/import/source?offset={n}` | `uploadImportSource` | `databases:write`, `sql:write` | - |
+| PATCH | `D/import` | `updateImport` | `databases:write`, `sql:write` | - |
+| POST | `D/import/start` | `startImport` | `databases:write`, `sql:write` | - |
 | POST | `D/import/cancel` | `cancelImport` | `databases:write` | - |
-| POST | `D/import/resume` | `resumeImport` | `databases:write`, `documents:write` | - |
+| POST | `D/import/resume` | `resumeImport` | `databases:write`, `sql:write` | - |
 
 ### Indexes
 
@@ -196,10 +196,10 @@ Ranges, regional ownership, response fields, wire-byte accounting and limits:
 
 | Method | Route | operationId | Scope |
 | --- | --- | --- | --- |
-| POST | `D/collections` | `createCollection` | `documents:write` |
-| GET | `D/collections` | `listCollections` | `documents:read` |
-| GET | `C` | `getCollection` | `documents:read` |
-| DELETE | `C` | `dropCollection` | `documents:write` |
+| POST | `D/collections` | `createCollection` | `sql:write` |
+| GET | `D/collections` | `listCollections` | `sql:read` |
+| GET | `C` | `getCollection` | `sql:read` |
+| DELETE | `C` | `dropCollection` | `sql:write` |
 
 ### Documents
 
@@ -210,12 +210,12 @@ UTF-8 or percent escapes return `400 invalid_request`. See [the key contract](id
 
 | Method | Route | operationId | Scope |
 | --- | --- | --- | --- |
-| POST | `C/documents` | `createDocument` | `documents:write` |
-| GET | `C/documents` | `listDocuments` | `documents:read` |
-| GET | `C/documents/by-key?id={id}` | `getDocument` | `documents:read` |
-| PUT | `C/documents/by-key?id={id}` | `putDocument` | `documents:write` |
-| PATCH | `C/documents/by-key?id={id}` | `patchDocument` | `documents:write` |
-| DELETE | `C/documents/by-key?id={id}` | `deleteDocument` | `documents:write` |
+| POST | `C/documents` | `createDocument` | `sql:write` |
+| GET | `C/documents` | `listDocuments` | `sql:read` |
+| GET | `C/documents/by-key?id={id}` | `getDocument` | `sql:read` |
+| PUT | `C/documents/by-key?id={id}` | `putDocument` | `sql:write` |
+| PATCH | `C/documents/by-key?id={id}` | `patchDocument` | `sql:write` |
+| DELETE | `C/documents/by-key?id={id}` | `deleteDocument` | `sql:write` |
 
 A successful write (`createDocument`, `putDocument`, `patchDocument`, `deleteDocument`, `runTransaction`) answers
 `"durability"` according to the accepting machine's topology:
@@ -264,7 +264,7 @@ A document write ends in one of three outcomes:
 
 | Method | Route | operationId | Scope | Old route |
 | --- | --- | --- | --- | --- |
-| POST | `C/query` | `queryDocuments` | `documents:read` | unchanged |
+| POST | `C/query` | `queryDocuments` | `sql:read` | unchanged |
 | POST | `D/sql` | `runSql` | `databases:read` | `MD/sql` |
 | POST | `D/sql/check` | `checkSql` | `databases:read` | `MD/sql/check` |
 | GET | `D/query-shapes` | `listQueryShapes` | `databases:read` | `/management/organizations/{organization}/projects/{project}/databases/{database-id}/query-shapes` |
@@ -283,14 +283,14 @@ rejects invalid SQL with `400 invalid_request`. It does not execute or meter the
 
 | Method | Route | operationId | Scope |
 | --- | --- | --- | --- |
-| POST | `D/transactions` | `runTransaction` (was `transaction`) | `documents:write` |
+| POST | `D/transactions` | `runTransaction` (was `transaction`) | `sql:write` |
 
 ### Live
 
 | Method | Route | operationId | Scope |
 | --- | --- | --- | --- |
-| GET | `D/changes` | `streamDatabaseChanges` | `documents:read` |
-| GET | `C/shape?where=&handle=&offset=&live=&cursor=` | `getShape` | `documents:read` |
+| GET | `D/changes` | `streamDatabaseChanges` | `sql:read` |
+| GET | `C/shape?where=&handle=&offset=&live=&cursor=` | `getShape` | `sql:read` |
 
 Shape reads use the [v1 protocol](shape-reads.md).
 `offset` is required. Bootstrap (`offset=-1`, without a handle) redirects with `307` to the newest sealed

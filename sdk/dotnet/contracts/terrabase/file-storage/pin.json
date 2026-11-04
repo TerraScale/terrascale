@@ -5,27 +5,27 @@
   "inputs": {
     "CompleteFileUploadEndpoint.cs.txt": {
       "sourcePath": "src/TerraBase/Features/FileStorage/CompleteFileUploadEndpoint.cs",
-      "sha256": "22af6f1c866dbabe0301e22cb55526754e73b39f83c3d7498d66c939eae053ac"
+      "sha256": "356e53ee790129ff648cae2698cbef47b6da76c32b1cd9884e3b106bf4dd22d1"
     },
     "CreateFileBucketEndpoint.cs.txt": {
       "sourcePath": "src/TerraBase/Features/FileStorage/CreateFileBucketEndpoint.cs",
-      "sha256": "d3fbd3d32a99aad9d878a21b854bc45151b6cac2545085a27f1dc3b82083f111"
+      "sha256": "526ac8a74ae37ac54887506babf1dd056d6171a84d2ff819517c576ea8e0ada1"
     },
     "CreateFileDownloadEndpoint.cs.txt": {
       "sourcePath": "src/TerraBase/Features/FileStorage/CreateFileDownloadEndpoint.cs",
-      "sha256": "b823b002ad22b229893a30f6dbe5ab5e4562295a51f48bf46d926586e5c243ba"
+      "sha256": "12c0e7922be60b3dc0998c279d8ab874e9322fb59a853b389fbed7ca27574d30"
     },
     "CreateFileUploadEndpoint.cs.txt": {
       "sourcePath": "src/TerraBase/Features/FileStorage/CreateFileUploadEndpoint.cs",
-      "sha256": "7a9e1474bcec3d2d542ae21a45582cdab2354cf2b85e23283742bdb9570da4f4"
+      "sha256": "568739d1a73acfc68e10538b73a767ff2acb3963333dc82c7f35d88cbc2020dc"
     },
     "DeleteBucketFileEndpoint.cs.txt": {
       "sourcePath": "src/TerraBase/Features/FileStorage/DeleteBucketFileEndpoint.cs",
-      "sha256": "bbcd2f8de750a9656f1a4b329b736b5d891db186f247ee5bc0de3bcdbc00c834"
+      "sha256": "b9266220ca6d1187fea22f1621f578fccffb6bf6f0440b2c95edec63653f5124"
     },
     "DeleteFileBucketEndpoint.cs.txt": {
       "sourcePath": "src/TerraBase/Features/FileStorage/DeleteFileBucketEndpoint.cs",
-      "sha256": "02f70942800044527ac2da84f39028bde8195213993eeccfa70ccb169e376efb"
+      "sha256": "d35a6b92a039e4e7e84080012fc9aaad4d0678a53f2ea23c1861b292d9aa6ec8"
     },
     "FileStorageContracts.cs.txt": {
       "sourcePath": "src/TerraBase/Features/FileStorage/FileStorageContracts.cs",
@@ -33,19 +33,19 @@
     },
     "FileStorageRoute.cs.txt": {
       "sourcePath": "src/TerraBase/Features/FileStorage/FileStorageRoute.cs",
-      "sha256": "23ec04a8b260896a77a33652163d28694ef04c61f768d385dc7120f168929aa9"
+      "sha256": "dbf67d5097ae9628abf5534db2358bd10bacfc56a3a7cd3df92bcb189a83e15c"
     },
     "ListBucketFilesEndpoint.cs.txt": {
       "sourcePath": "src/TerraBase/Features/FileStorage/ListBucketFilesEndpoint.cs",
-      "sha256": "0fcee6384af2123b748e4a5a3b06bd7aa7e4472b5a61f2418d2611121b82d787"
+      "sha256": "bcc15f2092718fe93cd933785b9d759902e6c0f0c76518a3bcb5c09a6a487ad0"
     },
     "ListFileBucketsEndpoint.cs.txt": {
       "sourcePath": "src/TerraBase/Features/FileStorage/ListFileBucketsEndpoint.cs",
-      "sha256": "712042a24d3391f85f8be9a2b38fa2b632b5f88a7cdfa65ebbf530511285dc03"
+      "sha256": "a80686ceba69afc3d1be99207448d9f6dd79cacbd6264af834e7ec7f2767b284"
     },
     "SetFileBucketRulesEndpoint.cs.txt": {
       "sourcePath": "src/TerraBase/Features/FileStorage/SetFileBucketRulesEndpoint.cs",
-      "sha256": "c7a1a570bbefa5a599f3f99f59741dbb294f78c9ebaba1224a831a1a38050109"
+      "sha256": "97694f819694a0dd20a9332a2800abcec5313498a14e56f99a5dc1e52f59918f"
     }
   }
 }

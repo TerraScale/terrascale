@@ -11,7 +11,7 @@ internal static class FileStorageRoute
     public const string Bucket = Buckets + "/{bucket}";
     public const string Files = Bucket + "/files";
     public const string File = Files + "/{file}";
-    public const string Description = "Project file buckets. Bearer ts-auth project or end-user token; documents:read/write scopes. "
+    public const string Description = "Project file buckets. Bearer ts-auth project or end-user token; sql:read/write scopes. "
         + "Bucket creation, listing, rules and deletion require project credentials; database-restricted credentials cannot access files. "
         + "Rules use the owner JSON Pointer, read/write owner/public/roles policies, evaluated against immutable file metadata. "
         + "Missing grants deny access. File IDs are server-generated ULIDs. Upload: name, contentType, size (1–100 MiB), base64 sha256, metadata; "

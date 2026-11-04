@@ -73,8 +73,8 @@ fn constants_equal_the_contract() {
         [
             "databases:read",
             "databases:write",
-            "documents:read",
-            "documents:write"
+            "sql:read",
+            "sql:write"
         ]
     );
 }
@@ -89,7 +89,7 @@ async fn discovery_and_token_go_straight_to_the_global_issuer() {
     ]);
     let oidc = sdk.auth_idp("terrascale").unwrap().oidc();
     let _ = oidc.discovery().await;
-    oidc.token_client_credentials(form(), TERRABASE_AUDIENCE, "documents:read")
+    oidc.token_client_credentials(form(), TERRABASE_AUDIENCE, "sql:read")
         .await
         .unwrap();
     let urls: Vec<_> = mock
@@ -118,13 +118,13 @@ async fn token_401_and_403_stay_distinct_and_are_never_replayed() {
     ] {
         let (mock, sdk) = platform(vec![
             Response::json(status, &json!({"error": "denied"})),
-            token("documents:read"),
+            token("sql:read"),
         ]);
         let error = sdk
             .auth_idp("terrascale")
             .unwrap()
             .oidc()
-            .token_client_credentials(form(), TERRABASE_AUDIENCE, "documents:read")
+            .token_client_credentials(form(), TERRABASE_AUDIENCE, "sql:read")
             .await
             .unwrap_err();
         assert_eq!((error.status, error.kind), (Some(status), kind));

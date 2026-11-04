@@ -19,7 +19,7 @@ the contract; a QA expectation of "wrong project → 403" is not met by relabell
 | --- | --- | --- | --- |
 | No credential, malformed, expired or revoked credential | `401` | `invalid_key` or the key status code | per [key-revocation.md](key-revocation.md) |
 | Database of another organization or project, outside the key's `database` restriction, or absent; unknown or unbound project | `404` | `unknown_database` | `the database does not exist` |
-| Database reached, scope missing (for example a write with a `documents:read` key) | `403` | `forbidden_scope` | names the missing scope |
+| Database reached, scope missing (for example a write with a `sql:read` key) | `403` | `forbidden_scope` | names the missing scope |
 | The key's IP allowlist refuses the client | `403` | `ip_not_allowed` | names the client address |
 
 - The `404` holds for every route under `/v1/projects/{project}/databases/{database}`: documents,
@@ -37,7 +37,7 @@ PostgreSQL has no HTTP status; the startup error is the contract.
 
 | Case | SQLSTATE | Message |
 | --- | --- | --- |
-| Wrong or unknown key; database of another organization or project, outside the key's restriction, or absent; key without `documents:read` | `28P01` (fatal) | `password authentication failed` |
+| Wrong or unknown key; database of another organization or project, outside the key's restriction, or absent; key without `sql:read` | `28P01` (fatal) | `password authentication failed` |
 | Revoked or expired ts-auth key | `28000` (fatal) | `<status code>: …` per [key-revocation.md](key-revocation.md) |
 | The key's IP allowlist refuses the client | `28000` | `ip_not_allowed: …` |
 | Database reached, write statement with a read-only key | `42501` (`insufficient_privilege`) | names the missing scope |

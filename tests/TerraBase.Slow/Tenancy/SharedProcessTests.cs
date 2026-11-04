@@ -21,7 +21,7 @@ public sealed class SharedProcessTests
         var organization = await api.CreateOrganizationAsync("Org " + Faker.Random.AlphaNumeric(8));
         var project = await api.CreateProjectAsync(organization, "Project");
         await api.SetPlanAsync(api.User, organization, "enterprise");
-        using var client = api.DataClient(await api.Server.IssueNarrowedAsync(organization, project, null, "documents:read", "documents:write"));
+        using var client = api.DataClient(await api.Server.IssueNarrowedAsync(organization, project, null, "sql:read", "sql:write"));
         var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         var notes = Enumerable.Range(0, Databases).ToDictionary(i => $"db{i:D4}", _ => Faker.Lorem.Sentence());
 

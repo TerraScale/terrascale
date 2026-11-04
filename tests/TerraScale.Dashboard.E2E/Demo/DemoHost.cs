@@ -214,7 +214,7 @@ namespace TerraScale.Dashboard.E2E.Demo
         private readonly ConcurrentDictionary<string, byte> revokedFamilies = new();
         private readonly ConcurrentDictionary<string, byte> revoked = new();
         private readonly ConcurrentDictionary<string, (string SessionToken, string OrganizationId, string ProjectId, string[] Scopes)> projectTokens = new();
-        private static readonly string[] ProjectScopes = ["databases:read", "databases:write", "documents:read", "documents:write"];
+        private static readonly string[] ProjectScopes = ["databases:read", "databases:write", "sql:read", "sql:write"];
         public ConcurrentQueue<TestProjectExchange> ProjectExchanges { get; } = new();
         public bool Active { get; set; } = true;
         public Exception? RevokeError { get; set; }

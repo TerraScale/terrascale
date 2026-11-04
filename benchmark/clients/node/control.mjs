@@ -40,7 +40,7 @@ try {
           request.resume();
           if (stallAuth) return;
           response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
-            access_token: 'fixture.payload.signature', token_type: 'Bearer', expires_in: 3600, scope: 'documents:read' }));
+            access_token: 'fixture.payload.signature', token_type: 'Bearer', expires_in: 3600, scope: 'sql:read' }));
           return;
         }
         dataCalls++;

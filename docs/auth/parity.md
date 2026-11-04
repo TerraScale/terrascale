@@ -86,7 +86,7 @@ Runtime selects `<ts-auth-project-uuid>/auth`, with the production project
 labelled `ts-auth` in organization `terrascale` (logical dataset
 `ts-auth/auth`). An operator resolves that UUID through Management before
 deployment; runtime uses only a `tb_…` Documents credential scoped for
-`documents:read` and `documents:write`. The required HTTPS endpoint is an
+`sql:read` and `sql:write`. The required HTTPS endpoint is an
 explicit static override via `ITerraBaseEndpointResolver`; Atlas SDK discovery
 belongs to TS-507. ts-auth creates its collections at startup in the seeded `platform-auth`
 database; production activation remains gated by TS-470.

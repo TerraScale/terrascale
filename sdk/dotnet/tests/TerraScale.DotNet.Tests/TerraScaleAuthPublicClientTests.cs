@@ -44,7 +44,7 @@ public sealed class TerraScaleAuthPublicClientTests
             case "device": await oidc.ExchangeDeviceCodeAsync(id, "device +&é"); break;
             case "refresh": await oidc.RefreshTokenAsync(id, "refresh +&é"); break;
             case "revoke": await oidc.RevokeTokenAsync(id, "refresh +&é"); break;
-            case "exchange": await oidc.ExchangePublicClientTokenAsync(id, "subject +&é", Organization, Project, "documents:read"); break;
+            case "exchange": await oidc.ExchangePublicClientTokenAsync(id, "subject +&é", Organization, Project, "sql:read"); break;
         }
         await Assert.That(handler.Calls).IsEqualTo(1);
         await Assert.That(sent!["client_id"]).IsEqualTo(id);
@@ -56,7 +56,7 @@ public sealed class TerraScaleAuthPublicClientTests
             "device" => new() { ["grant_type"] = "urn:ietf:params:oauth:grant-type:device_code", ["device_code"] = "device +&é" },
             "refresh" => new() { ["grant_type"] = "refresh_token", ["refresh_token"] = "refresh +&é" },
             "revoke" => new() { ["token"] = "refresh +&é" },
-            _ => new() { ["grant_type"] = "urn:ietf:params:oauth:grant-type:token-exchange", ["subject_token"] = "subject +&é", ["subject_token_type"] = "urn:ietf:params:oauth:token-type:access_token", ["organization"] = Organization, ["project"] = Project, ["scope"] = "documents:read" }
+            _ => new() { ["grant_type"] = "urn:ietf:params:oauth:grant-type:token-exchange", ["subject_token"] = "subject +&é", ["subject_token_type"] = "urn:ietf:params:oauth:token-type:access_token", ["organization"] = Organization, ["project"] = Project, ["scope"] = "sql:read" }
         };
         await Assert.That(sent.Count).IsEqualTo(expected.Count + 1);
         foreach (var pair in expected) await Assert.That(sent[pair.Key]).IsEqualTo(pair.Value);

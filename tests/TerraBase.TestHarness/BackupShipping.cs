@@ -36,7 +36,7 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
 
             var database = await api.CreateManagedDatabaseAsync("main");
             await api.SetPlanAsync(api.User, database.Organization, "enterprise");
-            var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+            var data = await api.CreateClientAsync(database.Organization, "sql:read", "sql:write");
             foreach (var table in new[] { "people", "load" })
             {
                 (await ManagementApi.SqlAsync(data, database, $"CREATE TABLE {table} (id TEXT PRIMARY KEY, text TEXT NOT NULL)")).EnsureSuccessStatusCode();

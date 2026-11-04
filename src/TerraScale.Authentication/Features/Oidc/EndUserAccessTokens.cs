@@ -27,8 +27,8 @@ public sealed class EndUserAccessTokens(ApiKeys apiKeys, PlatformDirectory proje
     {
         if (!TerraScaleIds.IsValid(project) || await apiKeys.AuthenticateAsync(secret, cancellationToken).ConfigureAwait(false) is not { } key
             || key.ProjectId != project || key.Database is not null
-            || !key.Scopes.Contains(TerraBaseScopes.DocumentsRead, StringComparer.Ordinal)
-            || !key.Scopes.Contains(TerraBaseScopes.DocumentsWrite, StringComparer.Ordinal)
+            || !key.Scopes.Contains(TerraBaseScopes.SqlRead, StringComparer.Ordinal)
+            || !key.Scopes.Contains(TerraBaseScopes.SqlWrite, StringComparer.Ordinal)
             || await projects.ProjectAsync(project, cancellationToken).ConfigureAwait(false) is not { } linked
             || linked.Value.OrganizationId != key.OrganizationId
             || await projects.OrganizationAsync(key.OrganizationId, cancellationToken).ConfigureAwait(false) is null)

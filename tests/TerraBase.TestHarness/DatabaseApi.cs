@@ -87,7 +87,7 @@ internal sealed class DatabaseApi : IAsyncDisposable
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            tenant = await management.CreateTenantAsync("documents:read", "documents:write");
+            tenant = await management.CreateTenantAsync("sql:read", "sql:write");
             using var owner = management.As(tenant.User);
             var id = await management.CreateDatabaseAsync(tenant.OrganizationId, tenant.ProjectId, Database, owner);
             return new DatabaseApi(management, tenant, ownsServer, id);

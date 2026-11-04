@@ -37,8 +37,8 @@ const DefaultIssuer = "https://auth.terrascale.tech/terrascale"
 const (
 	ScopeDatabasesRead  = "databases:read"
 	ScopeDatabasesWrite = "databases:write"
-	ScopeDocumentsRead  = "documents:read"
-	ScopeDocumentsWrite = "documents:write"
+	ScopeSQLRead        = "sql:read"
+	ScopeSQLWrite       = "sql:write"
 )
 
 // APIKeyConfig configures an API key token source (contract section 6.1).
@@ -87,7 +87,7 @@ var keyPattern = regexp.MustCompile(`^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-t
 // checkScopes accepts only the four TerraBase scopes: ts-auth issues no other.
 func checkScopes(scopes []string) error {
 	for _, scope := range scopes {
-		if !slices.Contains([]string{ScopeDatabasesRead, ScopeDatabasesWrite, ScopeDocumentsRead, ScopeDocumentsWrite}, scope) {
+		if !slices.Contains([]string{ScopeDatabasesRead, ScopeDatabasesWrite, ScopeSQLRead, ScopeSQLWrite}, scope) {
 			return fmt.Errorf("tsauth: Scopes: %q is not a TerraBase scope", scope)
 		}
 	}
