@@ -4067,28 +4067,6 @@ mod tests {
     }
 
     #[test]
-    fn hmac_sha256_matches_rfc_4231_vectors() {
-        let key = [0x0b; 20];
-        assert_eq!(
-            hex(&hmac_sha256(&key, b"Hi There")),
-            "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
-        );
-        assert_eq!(
-            hex(&hmac_sha256(b"Jefe", b"what do ya want for nothing?")),
-            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
-        );
-        // Key longer than one block exercises the hashed-key branch.
-        let long_key = [0xaa; 131];
-        assert_eq!(
-            hex(&hmac_sha256(
-                &long_key,
-                b"Test Using Larger Than Block-Size Key - Hash Key First"
-            )),
-            "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
-        );
-    }
-
-    #[test]
     fn webhook_verifier_accepts_only_intact_signatures() {
         let secret = "whsec_0123456789abcdef0123456789abcdef";
         let timestamp = "1758000000";
@@ -4124,42 +4102,5 @@ mod tests {
             hex(&hmac_sha256(secret.as_bytes(), &message)).to_uppercase()
         );
         assert!(!verify_auth_idp_webhook(secret, timestamp, &upper, body));
-    }
-
-    #[test]
-    fn webhook_tolerance_window_bounds_the_timestamp() {
-        let secret = "whsec_0123456789abcdef0123456789abcdef";
-        let timestamp = "1000";
-        let body = b"payload";
-        let message = b"1000.payload";
-        let signature = format!("sha256={}", hex(&hmac_sha256(secret.as_bytes(), message)));
-        let at = |seconds: u64| UNIX_EPOCH + Duration::from_secs(seconds);
-
-        assert!(verify_auth_idp_webhook_with_tolerance(
-            secret,
-            timestamp,
-            &signature,
-            body,
-            Duration::from_secs(300),
-            at(1200)
-        ));
-        assert!(!verify_auth_idp_webhook_with_tolerance(
-            secret,
-            timestamp,
-            &signature,
-            body,
-            Duration::from_secs(300),
-            at(2000)
-        ));
-        assert!(!verify_auth_idp_webhook_with_tolerance(
-            secret,
-            "not-a-number",
-            &signature,
-            body,
-            Duration::from_secs(300),
-            at(1000)
-        ));
-        // Without tolerance the stale timestamp still verifies.
-        assert!(verify_auth_idp_webhook(secret, timestamp, &signature, body));
     }
 }

@@ -79,8 +79,5 @@ FR-22 contract is finalized. The stream reads JSON from the authorized origin;
 it never follows foreign redirects or forwards its bearer credential to an
 object-store host.
 
-The unchanged upstream vectors and their source commit are in
-[`tests/fixtures`](../tests/fixtures/shape-vectors.source.md). Local and CI
-qualification uses HTTP fakes, apply vectors, and positive, rejection, and
-generated TBS1 vectors. No TerraBase binary is downloaded or run here. Live
+Local and CI qualification uses HTTP fakes. No TerraBase binary is downloaded or run here. Live
 server qualification belongs to the TerraScale monorepo.

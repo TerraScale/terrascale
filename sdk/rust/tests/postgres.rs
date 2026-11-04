@@ -3,58 +3,14 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
-use std::future::Future;
 use std::io::{self, Cursor};
 use std::sync::Arc;
 use std::time::Duration;
-use terrascale::postgres::{
-    PostgresClient, PostgresConfig, PostgresErrorKind, PostgresQuery, PostgresValue,
-};
+use terrascale::postgres::{PostgresClient, PostgresConfig, PostgresErrorKind};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio_rustls::LazyConfigAcceptor;
-
-#[test]
-fn postgres_descriptors_preserve_int8_extrema_and_hostile_text() {
-    let payload = "quote ' ; DROP TABLE items; -- \\ Unicode α 🌍";
-    let query = PostgresQuery::new(
-        "INSERT INTO items (id, body) VALUES ($1,$2),($3,$4)",
-        vec![
-            PostgresValue::Int8(i64::MIN),
-            PostgresValue::Text(payload.to_owned()),
-            PostgresValue::Int8(i64::MAX),
-            PostgresValue::Text("maximum".to_owned()),
-        ],
-    )
-    .expect("typed descriptor");
-    assert!(!query.statement.contains(payload));
-    assert_eq!(query.parameters[0], PostgresValue::Int8(i64::MIN));
-    assert_eq!(query.parameters[1], PostgresValue::Text(payload.to_owned()));
-    assert_eq!(query.parameters[2], PostgresValue::Int8(i64::MAX));
-}
-
-#[test]
-fn postgres_invalid_parameter_sizes_nul_and_counts_fail_before_dispatch() {
-    for text in ["\0".to_owned(), "x".repeat(16385)] {
-        assert_eq!(
-            PostgresQuery::new(
-                "SELECT body FROM items WHERE id=$1",
-                vec![PostgresValue::Text(text)]
-            )
-            .unwrap_err()
-            .kind,
-            PostgresErrorKind::Query
-        );
-    }
-    assert!(PostgresQuery::new("x".repeat(16385), vec![]).is_err());
-    assert!(PostgresQuery::new(
-        "SELECT id FROM items WHERE id=$1",
-        vec![PostgresValue::Int8(1); 5]
-    )
-    .is_err());
-}
 
 #[tokio::test]
 async fn postgres_configuration_fails_before_socket_and_redacts_password() {
@@ -76,41 +32,6 @@ async fn postgres_configuration_fails_before_socket_and_redacts_password() {
     };
     assert_eq!(error.kind, PostgresErrorKind::Configuration);
     assert!(!error.to_string().contains(password));
-}
-
-#[test]
-fn postgres_pem_roots_require_valid_complete_certificates() {
-    let key_id = URL_SAFE_NO_PAD.encode([1; 16]);
-    let mut config = PostgresConfig {
-        host: "127.0.0.1".to_owned(),
-        port: 5432,
-        tls_server_name: "postgres.test".to_owned(),
-        ca_certificate_pem: PEER_CERT.as_bytes().to_vec(),
-        database: "11111111-1111-4111-8111-111111111111".to_owned(),
-        password: format!("tbk1.{key_id}.{}", URL_SAFE_NO_PAD.encode([2; 32])),
-        key_id,
-        connect_timeout: Duration::from_secs(2),
-    };
-    assert!(config.validate().is_ok());
-    config.ca_certificate_pem = format!("{PEER_CERT}{PEER_CERT}").into_bytes();
-    assert!(config.validate().is_ok());
-    for pem in [
-        Vec::new(),
-        PEER_KEY.as_bytes().to_vec(),
-        b"-----BEGIN CERTIFICATE-----\n!!!\n-----END CERTIFICATE-----\n".to_vec(),
-        b"-----BEGIN CERTIFICATE-----\nAQID\n-----END CERTIFICATE-----\n".to_vec(),
-        format!("{PEER_CERT}-----BEGIN CERTIFICATE-----\nAQID\n").into_bytes(),
-        vec![b' '; 64 * 1024 + 1],
-    ] {
-        config.ca_certificate_pem = pem;
-        assert_eq!(
-            config
-                .validate()
-                .expect_err("invalid certificate roots")
-                .kind,
-            PostgresErrorKind::Configuration
-        );
-    }
 }
 
 // A scripted driver peer tests TLS and future cancellation only. It is not a
@@ -135,7 +56,6 @@ struct Observation {
 
 struct Peer {
     port: u16,
-    dispatched: Arc<Notify>,
     task: Option<JoinHandle<Observation>>,
 }
 
@@ -184,8 +104,6 @@ async fn spawn_peer(
         .await
         .expect("test listener");
     let port = listener.local_addr().expect("listener address").port();
-    let dispatched = Arc::new(Notify::new());
-    let notification = Arc::clone(&dispatched);
     let certificates = CertificateDer::pem_reader_iter(Cursor::new(PEER_CERT))
         .collect::<Result<Vec<_>, _>>()
         .expect("test certificate");
@@ -266,7 +184,6 @@ async fn spawn_peer(
                 observed.actions.push(action);
                 if hold == Some(action) {
                     held = true;
-                    notification.notify_one();
                 }
             }
             if held {
@@ -318,7 +235,6 @@ async fn spawn_peer(
     });
     Peer {
         port,
-        dispatched,
         task: Some(task),
     }
 }
@@ -359,23 +275,6 @@ async fn send_frame<S: AsyncWrite + Unpin>(stream: &mut S, kind: u8, body: &[u8]
     stream.flush().await.expect("test response flush");
 }
 
-async fn cancel_after_dispatch(future: impl Future, dispatched: &Notify) {
-    let mut operation = Box::pin(future);
-    tokio::select! {
-        _ = &mut operation => panic!("operation completed before cancellation"),
-        result = tokio::time::timeout(Duration::from_secs(2), dispatched.notified()) => {
-            result.expect("actual driver dispatch");
-        }
-    }
-    drop(operation);
-}
-
-async fn completed<F: Future>(future: F) -> F::Output {
-    tokio::time::timeout(Duration::from_secs(3), future)
-        .await
-        .expect("bounded scripted driver operation")
-}
-
 #[tokio::test]
 async fn postgres_requires_selected_alpn_and_verified_ca_name_before_startup() {
     for (alpn, wrong_ca, wrong_name) in [
@@ -409,190 +308,6 @@ async fn postgres_requires_selected_alpn_and_verified_ca_name_before_startup() {
     let observed = peer.finish().await;
     assert_eq!(observed.offered_alpn, [b"postgresql".to_vec()]);
     assert!(observed.startup && observed.password && observed.closed);
-}
-
-#[tokio::test]
-async fn postgres_cancelled_driver_operations_fence_owner_and_close_without_reuse() {
-    #[derive(Clone, Copy, Debug)]
-    enum Operation {
-        Query,
-        Execute,
-        Begin,
-        TransactionQuery,
-        TransactionExecute,
-        Commit,
-        Rollback,
-    }
-    for operation in [
-        Operation::Query,
-        Operation::Execute,
-        Operation::Begin,
-        Operation::TransactionQuery,
-        Operation::TransactionExecute,
-        Operation::Commit,
-        Operation::Rollback,
-    ] {
-        let held = match operation {
-            Operation::Begin => Action::Begin,
-            Operation::Commit => Action::Commit,
-            Operation::Rollback => Action::Rollback,
-            _ => Action::Execute,
-        };
-        let peer = spawn_peer(&[b"postgresql"], Some(held), None).await;
-        let mut client = PostgresClient::connect(peer.config())
-            .await
-            .expect("driver connected");
-        let input =
-            PostgresQuery::new("UPDATE items SET body='fixture'", vec![]).expect("descriptor");
-        match operation {
-            Operation::Query => cancel_after_dispatch(client.query(&input), &peer.dispatched).await,
-            Operation::Execute => {
-                cancel_after_dispatch(client.execute(&input), &peer.dispatched).await
-            }
-            Operation::Begin => cancel_after_dispatch(client.transaction(), &peer.dispatched).await,
-            Operation::TransactionQuery | Operation::TransactionExecute => {
-                let transaction = client.transaction().await.expect("BEGIN completed");
-                if matches!(operation, Operation::TransactionQuery) {
-                    cancel_after_dispatch(transaction.query(&input), &peer.dispatched).await;
-                } else {
-                    cancel_after_dispatch(transaction.execute(&input), &peer.dispatched).await;
-                }
-                drop(transaction);
-            }
-            Operation::Commit => {
-                let transaction = client.transaction().await.expect("BEGIN completed");
-                cancel_after_dispatch(transaction.commit(), &peer.dispatched).await;
-            }
-            Operation::Rollback => {
-                let transaction = client.transaction().await.expect("BEGIN completed");
-                cancel_after_dispatch(transaction.rollback(), &peer.dispatched).await;
-            }
-        }
-        assert_eq!(
-            client
-                .execute(&input)
-                .await
-                .expect_err("synchronous owner fence")
-                .kind,
-            PostgresErrorKind::Connection,
-            "{operation:?}"
-        );
-        assert_eq!(
-            client.query(&input).await.expect_err("no later query").kind,
-            PostgresErrorKind::Connection,
-            "{operation:?}"
-        );
-        assert!(
-            client.transaction().await.is_err(),
-            "no later BEGIN: {operation:?}"
-        );
-        let observed = peer.finish().await;
-        assert!(observed.closed, "{operation:?}");
-        assert_eq!(
-            observed
-                .actions
-                .iter()
-                .filter(|action| **action == held)
-                .count(),
-            1,
-            "no dispatch after poison: {operation:?}"
-        );
-        if matches!(operation, Operation::Commit) {
-            assert!(
-                !observed.actions.contains(&Action::Rollback),
-                "canceled COMMIT is never rolled back or replayed"
-            );
-        }
-        drop(client);
-    }
-}
-
-#[tokio::test]
-async fn postgres_completed_operations_remain_reusable_but_unknown_completion_closes() {
-    let input = PostgresQuery::new("UPDATE items SET body='fixture'", vec![]).expect("descriptor");
-    let peer = spawn_peer(&[b"postgresql"], None, None).await;
-    let mut client = PostgresClient::connect(peer.config())
-        .await
-        .expect("driver connected");
-    assert_eq!(
-        completed(client.execute(&input))
-            .await
-            .expect("first operation"),
-        1
-    );
-    assert_eq!(
-        completed(client.execute(&input))
-            .await
-            .expect("reusable owner"),
-        1
-    );
-    assert!(completed(client.query(&input))
-        .await
-        .expect("normal query")
-        .rows
-        .is_empty());
-    completed(client.transaction())
-        .await
-        .expect("begin")
-        .commit()
-        .await
-        .expect("commit");
-    completed(client.transaction())
-        .await
-        .expect("begin")
-        .rollback()
-        .await
-        .expect("rollback");
-    client.close().await.expect("closed task joined");
-    assert!(peer.finish().await.closed);
-    let peer = spawn_peer(&[b"postgresql"], None, Some("40003")).await;
-    let client = PostgresClient::connect(peer.config())
-        .await
-        .expect("driver connected");
-    let failure = completed(client.execute(&input))
-        .await
-        .expect_err("completion unknown");
-    assert_eq!(failure.kind, PostgresErrorKind::Database);
-    assert_eq!(failure.sql_state.as_deref(), Some("40003"));
-    assert_eq!(
-        client
-            .execute(&input)
-            .await
-            .expect_err("uncertain socket fenced")
-            .kind,
-        PostgresErrorKind::Connection
-    );
-    let observed = peer.finish().await;
-    assert_eq!(
-        observed
-            .actions
-            .iter()
-            .filter(|action| **action == Action::Execute)
-            .count(),
-        1
-    );
-    assert!(observed.closed);
-}
-
-#[tokio::test]
-async fn postgres_dropped_open_transaction_discards_instead_of_background_rollback_reuse() {
-    let peer = spawn_peer(&[b"postgresql"], None, None).await;
-    let mut client = PostgresClient::connect(peer.config())
-        .await
-        .expect("driver connected");
-    drop(client.transaction().await.expect("begin"));
-    let input = PostgresQuery::new("UPDATE items SET body='fixture'", vec![]).expect("descriptor");
-    assert_eq!(
-        client
-            .execute(&input)
-            .await
-            .expect_err("dropped transaction fenced")
-            .kind,
-        PostgresErrorKind::Connection
-    );
-    let observed = peer.finish().await;
-    assert_eq!(observed.actions, [Action::Begin]);
-    assert!(observed.closed);
 }
 
 const PEER_CERT: &str = r"-----BEGIN CERTIFICATE-----

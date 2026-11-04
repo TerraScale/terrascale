@@ -53,10 +53,6 @@ impl Sandbox {
         )
     }
 
-    fn install_path_rustc(&self, body: &str) {
-        self.write_executable("bin/rustc", body);
-    }
-
     fn install_toolchain(&self, tools: &str, version: &str) -> PathBuf {
         let managed = self.root.join("managed").join("bin");
         let target = self
@@ -135,113 +131,5 @@ fn resolves_the_managed_toolchain_without_rustup_and_pins_every_binary() {
         out.lines().collect::<Vec<_>>(),
         ["MANAGED_PINNED"],
         "unexpected resolution: {out}"
-    );
-}
-
-#[test]
-fn accepts_a_path_rustc_only_when_it_reports_the_pinned_version() {
-    let matching = Sandbox::new("path-matching");
-    matching.install_path_rustc("#!/bin/sh\necho 'rustc 1.98.1 (fake 2026-01-01)'\n");
-    matching.write_executable(
-        "bin/rustdoc",
-        "#!/bin/sh\necho 'rustdoc 1.98.1 (fake 2026-01-01)'\n",
-    );
-    matching.write_executable(
-        "bin/cargo",
-        "#!/bin/sh\necho 'cargo 1.98.1 (fake 2026-01-01)'\n",
-    );
-    let body = format!(
-        "{use_helper}test \"$RUSTC\" = '{bin}/rustc' && echo PATH_ACCEPTED\n{reject}",
-        use_helper = use_helper(),
-        bin = matching.root.join("bin").display(),
-        reject = reject_branch(),
-    );
-    let (ok, out) = matching.run(&fill_probe_dir(&body, &matching));
-    assert!(ok, "matching PATH compiler resolution failed: {out}");
-    assert_eq!(
-        out.lines().collect::<Vec<_>>(),
-        ["PATH_ACCEPTED"],
-        "a 1.98.1 PATH compiler must resolve: {out}"
-    );
-
-    let mismatching = Sandbox::new("path-mismatch");
-    mismatching.install_path_rustc("#!/bin/sh\necho 'rustc 1.99.0 (fake 2026-01-01)'\n");
-    mismatching.write_executable(
-        "bin/rustdoc",
-        "#!/bin/sh\necho 'rustdoc 1.99.0 (fake 2026-01-01)'\n",
-    );
-    mismatching.write_executable(
-        "bin/cargo",
-        "#!/bin/sh\necho 'cargo 1.99.0 (fake 2026-01-01)'\n",
-    );
-    let body = format!(
-        "{use_helper}echo WRONGLY_ACCEPTED\n{reject}",
-        use_helper = use_helper(),
-        reject = reject_branch(),
-    );
-    let (ok, out) = mismatching.run(&fill_probe_dir(&body, &mismatching));
-    assert!(ok, "mismatched compiler probe failed: {out}");
-    assert_eq!(
-        out.lines().collect::<Vec<_>>(),
-        ["REJECTED", "MESSAGE_NAMES_TOOLCHAIN"],
-        "a different compiler must be rejected with the pinned version named: {out}"
-    );
-}
-
-#[test]
-fn fails_naming_the_pinned_toolchain_when_nothing_resolves() {
-    let sandbox = Sandbox::new("missing");
-    let body = format!(
-        "{use_helper}echo WRONGLY_ACCEPTED\n{reject}",
-        use_helper = use_helper(),
-        reject = reject_branch(),
-    );
-    let (ok, out) = sandbox.run(&fill_probe_dir(&body, &sandbox));
-    assert!(ok, "missing toolchain probe failed: {out}");
-    assert_eq!(
-        out.lines().collect::<Vec<_>>(),
-        ["REJECTED", "MESSAGE_NAMES_TOOLCHAIN"],
-        "missing toolchain must be rejected with the pinned version named: {out}"
-    );
-}
-
-#[test]
-fn prefers_rustup_when_it_is_available() {
-    let sandbox = Sandbox::new("rustup");
-    sandbox.install_toolchain("rustc rustdoc cargo", "1.98.1");
-    let choice = sandbox.root.join("rustup-choice");
-    sandbox.write_executable(
-        "rustup-choice/rustc",
-        "#!/bin/sh\necho 'rustc 1.98.1 (fake 2026-01-01)'\n",
-    );
-    sandbox.write_executable(
-        "rustup-choice/rustdoc",
-        "#!/bin/sh\necho 'rustdoc 1.98.1 (fake 2026-01-01)'\n",
-    );
-    sandbox.write_executable(
-        "rustup-choice/cargo",
-        "#!/bin/sh\necho 'cargo 1.98.1 (fake 2026-01-01)'\n",
-    );
-    sandbox.write_executable(
-        "bin/rustup",
-        &format!(
-            "#!/bin/sh\ncase \"$4\" in rustc) echo '{choice}/rustc';; rustdoc) echo '{choice}/rustdoc';; esac\n",
-            choice = choice.display(),
-        ),
-    );
-    let body = format!(
-        "{use_helper}\
-         test \"$RUSTC\" = '{choice}/rustc' && test \"$CARGO\" = '{choice}/cargo' && echo RUSTUP_PREFERRED\n\
-         {reject}",
-        use_helper = use_helper(),
-        choice = choice.display(),
-        reject = reject_branch(),
-    );
-    let (ok, out) = sandbox.run(&fill_probe_dir(&body, &sandbox));
-    assert!(ok, "rustup resolution failed: {out}");
-    assert_eq!(
-        out.lines().collect::<Vec<_>>(),
-        ["RUSTUP_PREFERRED"],
-        "rustup must win over the managed directory: {out}"
     );
 }

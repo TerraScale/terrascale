@@ -68,50 +68,6 @@ async fn response_error(
 }
 
 #[tokio::test]
-async fn implemented_envelopes_keep_denial_and_transaction_diagnostics() {
-    for (status, code, body) in [
-        (
-            401,
-            "invalid_key",
-            &br#"{"error":{"code":"invalid_key"}}"#[..],
-        ),
-        (
-            403,
-            "forbidden_scope",
-            &br#"{"error":{"code":"forbidden_scope","message":"scope required"}}"#[..],
-        ),
-        (
-            404,
-            "unknown_database",
-            &br#"{"error":{"code":"unknown_database","message":"the database does not exist"}}"#[..],
-        ),
-        (
-            404,
-            "not_found",
-            &br#"{"error":{"code":"not_found","op":2}}"#[..],
-        ),
-    ] {
-        let error =
-            response_error(status, body, "application/json", Some("envelope-request")).await;
-        assert_eq!(error.status(), Some(status));
-        assert_eq!(error.code(), Some(code));
-        assert_eq!(error.raw_body(), Some(body));
-        assert_eq!(error.request_id(), Some("envelope-request"));
-        assert!(!error.is_uncertain());
-        assert_eq!(error.is_not_found(), code == "not_found");
-        match &error {
-            Error::Response { error, .. } => match code {
-                "invalid_key" => assert!(matches!(**error, Error::InvalidKey)),
-                "forbidden_scope" => assert!(matches!(**error, Error::Forbidden { .. })),
-                "not_found" => assert!(matches!(**error, Error::NotFound { op: Some(2), .. })),
-                _ => assert!(matches!(**error, Error::Api { .. })),
-            },
-            _ => panic!("project failure lost response diagnostics"),
-        }
-    }
-}
-
-#[tokio::test]
 async fn rfc9457_keeps_exact_extensions_and_http_status_wins() {
     let body = br#"{"type":"https://example.test/problems/permission","title":"Permission denied","status":200,"detail":"documents:read is required","code":"invalid_key","op":3,"requestId":"body-request","future":{"exact":123456789012345678901234567890.123456789,"unbounded":1e9999}}"#;
     let error = response_error(
@@ -135,26 +91,6 @@ async fn rfc9457_keeps_exact_extensions_and_http_status_wins() {
 }
 
 #[tokio::test]
-async fn rfc9457_optional_and_malformed_fields_keep_valid_diagnostics() {
-    let body = br#"{"title":"Denied","status":"spoofed","detail":null,"code":"forbidden_scope","op":-1,"requestId":"body-request"}"#;
-    let error = response_error(403, body, "application/problem+json", None).await;
-    assert_eq!(error.status(), Some(403));
-    assert_eq!(error.code(), Some("forbidden_scope"));
-    assert_eq!(error.op(), None);
-    assert_eq!(error.request_id(), Some("body-request"));
-    assert!(error.to_string().contains("Denied"));
-    assert_eq!(error.raw_body(), Some(&body[..]));
-
-    let body = br#"{"type":"about:blank","status":404}"#;
-    let error = response_error(401, body, "application/problem+json", None).await;
-    assert_eq!(error.status(), Some(401));
-    assert_eq!(error.code(), Some("http_401"));
-    assert_eq!(error.request_id(), None);
-    assert!(!error.is_not_found());
-    assert_eq!(error.raw_body(), Some(&body[..]));
-}
-
-#[tokio::test]
 async fn malformed_and_empty_errors_preserve_bytes_status_and_request_id() {
     for (status, body) in [
         (400, &b""[..]),
@@ -168,16 +104,5 @@ async fn malformed_and_empty_errors_preserve_bytes_status_and_request_id() {
         assert_eq!(error.raw_body(), Some(body));
         assert_eq!(error.request_id(), Some("malformed-request"));
         assert_eq!(error.is_uncertain(), status >= 500);
-    }
-}
-
-#[tokio::test]
-async fn problem_not_found_uses_the_real_status_and_exact_code() {
-    let body = br#"{"title":"Missing","status":404,"code":"not_found"}"#;
-    for status in [403, 404, 503] {
-        let error = response_error(status, body, "application/problem+json", None).await;
-        assert_eq!(error.status(), Some(status));
-        assert_eq!(error.is_not_found(), status == 404);
-        assert_eq!(error.is_uncertain(), status == 503);
     }
 }

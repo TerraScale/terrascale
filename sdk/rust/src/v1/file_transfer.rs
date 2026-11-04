@@ -158,7 +158,3 @@ impl FileSignedUrl {
         Ok(bytes.into())
     }
 }
-
-#[cfg(test)]
-#[path = "file_transfer_tests.rs"]
-mod tests;

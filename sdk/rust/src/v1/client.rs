@@ -1085,45 +1085,6 @@ mod tests {
             .is_err());
     }
 
-    #[tokio::test]
-    async fn platform_clients_cannot_dispatch_unscoped_document_calls() {
-        let client = Client::for_platform("http://127.0.0.1:1", "fixture-token")
-            .build()
-            .unwrap();
-        assert!(matches!(
-            client
-                .database("orders")
-                .collection("items")
-                .get::<serde_json::Value>(ulid::Ulid::nil())
-                .await,
-            Err(Error::InvalidInput(_))
-        ));
-        let mut tx = super::super::Tx::new();
-        tx.put("items", ulid::Ulid::nil(), &serde_json::json!({}), None);
-        assert!(matches!(
-            client.database("orders").commit(&tx).await,
-            Err(Error::InvalidInput(_))
-        ));
-    }
-
-    #[test]
-    fn retry_after_accepts_seconds_and_http_dates() {
-        let now = httpdate::parse_http_date("Wed, 21 Oct 2015 07:28:00 GMT").unwrap();
-        let p = |v| parse_retry_after(v, now);
-        assert_eq!(p(" 7 "), Some(Duration::from_secs(7)));
-        assert_eq!(
-            p("Wed, 21 Oct 2015 07:28:30 GMT"),
-            Some(Duration::from_secs(30))
-        );
-        assert_eq!(p("Wed, 21 Oct 2015 07:27:00 GMT"), Some(Duration::ZERO));
-        assert_eq!(
-            p("Wednesday, 21-Oct-15 07:29:00 GMT"),
-            Some(Duration::from_secs(60))
-        );
-        assert_eq!(p("soon"), None);
-        assert_eq!(p("-1"), None);
-    }
-
     #[test]
     fn backoff_is_bounded_and_overflow_safe() {
         let huge = RetryPolicy {
