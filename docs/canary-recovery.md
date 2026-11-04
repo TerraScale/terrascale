@@ -12,7 +12,8 @@ nice -n 19 python3 scripts/recover-canaries.py
 ```
 
 The first run of an account asks, once, for a password reset code mailed to
-the owner's address; the password is generated and kept only in the private
+the owner's address (`scripts/mailcode.py` reads it from the shared mailbox, password in
+`~/.config/terrascale/mailbox-password`); the password is generated and kept only in the private
 state file. Every later step signs in with that password: session-approved
 device grants and password-approved step-up proofs consume no email codes.
 Keys are one per regional database, narrowed by the database's ULID (ts-auth

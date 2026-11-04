@@ -150,8 +150,10 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual([body['name'] for body in bodies], ['DATA_API_CANARY'])
         self.assertEqual(json.loads(bodies[0]['text'])['endpoint']['key'], CONFIG['key'])
         with patch.object(r, 'private', return_value=b'private-token\n') as private, \
-                patch.object(r.urllib.request, 'urlopen', handler):
-            self.assertEqual(r.cloudflare_token(), 'private-token')
+                patch.object(r.urllib.request, 'urlopen', handler), patch.dict(r.os.environ):
+            r.os.environ.pop('CLOUDFLARE_API_TOKEN', None)
+            # Compare without assertEqual: a mismatch must never echo a real token.
+            self.assertTrue(r.cloudflare_token() == 'private-token', 'token not read from ts-dev-secret')
             self.assertEqual(private.call_args.args[0], ['ts-dev-secret', 'get', 'dev-cloudflare-api-token'])
 
     def test_failed_query_still_deletes_and_never_prints_key(self):
