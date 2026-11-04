@@ -9,6 +9,7 @@ using static OpenIddict.Abstractions.OpenIddictConstants;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Store;
@@ -25,8 +26,8 @@ public sealed class OidcTokenReplicaTests(TerraBaseFixture fixture)
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);
         await using var replica = await oidc.StartReplicaAsync();
-        await oidc.CreateUserAsync();
-        var session = await oidc.SignInAsync("alice@example.test");
+        var user = await oidc.CreateUserAsync();
+        var session = (await oidc.Server.App.Services.GetRequiredService<Sessions>().CreateAsync(user)).Token;
         var (verifier, challenge) = OidcHarness.Pkce();
         var code = await oidc.CodeAsync(session, challenge);
         var parent = await CurrentTokenAsync(oidc, TokenTypeIdentifiers.Private.AuthorizationCode);
@@ -62,7 +63,8 @@ public sealed class OidcTokenReplicaTests(TerraBaseFixture fixture)
     {
         await using var oidc = await OidcHarness.StartAsync(fixture, services: services => services.AddSingleton(new KeyRingRefresh(TimeSpan.Zero)));
         await using var replica = await oidc.StartReplicaAsync(services: services => services.AddSingleton(new KeyRingRefresh(TimeSpan.Zero)));
-        var (_, _, tokens) = await oidc.SignInAndRedeemAsync();
+        var user = await oidc.CreateUserAsync();
+        var (_, tokens) = await oidc.CreateSessionAndRedeemAsync(user);
         var oldIdToken = tokens.GetProperty("id_token").GetString()!;
         var oldKid = new JsonWebToken(oldIdToken).Kid;
 
