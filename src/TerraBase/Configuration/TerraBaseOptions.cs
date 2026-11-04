@@ -39,7 +39,7 @@ public sealed record TerraBaseOptions
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["port", "internal-port", "metrics-port", "postgres-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys, .. FileStorageSettings.Keys, .. ShapeStorageSettings.Keys]);
+        ["port", "internal-port", "metrics-port", "postgres-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", "nats-token", .. BackupSettings.Keys, .. FileStorageSettings.Keys, .. ShapeStorageSettings.Keys]);
 
     public static IReadOnlySet<string> SettingNames => Keys;
 
@@ -115,6 +115,12 @@ public sealed record TerraBaseOptions
 
     internal ShapeStorageSettings? ShapeStorage { get; init; }
     public byte[]? DatabaseMasterKey { get; init; }
+
+    /// <summary>The NATS server that carries revision notifications between regions, from <c>TS_NATS_URL</c>.</summary>
+    public Uri? NatsUrl { get; init; }
+
+    /// <summary>Its client token, from <c>TERRABASE_NATS_TOKEN_FILE</c>.</summary>
+    public string? NatsToken { get; init; }
 
     public static string EnvironmentName(IReadOnlyList<string> args)
     {
@@ -261,6 +267,8 @@ public sealed record TerraBaseOptions
             FileStorage = FileStorageSettings.Parse(values),
             ShapeStorage = ShapeStorageSettings.Parse(values),
             DatabaseMasterKey = values.TryGetValue("master-key", out var masterKey) ? BackupSettings.ParseMasterKey(masterKey) : null,
+            NatsUrl = NatsAddress(),
+            NatsToken = values.TryGetValue("nats-token", out var natsToken) ? ParseNatsToken(natsToken) : null,
         };
     }
 
@@ -352,6 +360,25 @@ public sealed record TerraBaseOptions
             ? throw new TerraBaseConfigurationException("auth-audience must be a comma-separated list of non-empty audiences without control characters")
             : (issuer, audiences);
     }
+
+    private static Uri? NatsAddress()
+    {
+        var value = Environment.GetEnvironmentVariable("TS_NATS_URL");
+        if (string.IsNullOrEmpty(value))
+        {
+            return null;
+        }
+
+        return Uri.TryCreate(value, UriKind.Absolute, out var address) && address.Scheme is "nats" or "tls" && address.Port > 0
+            && address.UserInfo.Length == 0 && address.PathAndQuery == "/" && address.Fragment.Length == 0
+            ? address
+            : throw new TerraBaseConfigurationException("TS_NATS_URL must be a nats:// or tls:// address with a port and no credentials or path");
+    }
+
+    private static string ParseNatsToken(string value) =>
+        value.Length is >= 16 and <= 512 && value.All(character => character is > ' ' and < (char)127)
+            ? value
+            : throw new TerraBaseConfigurationException("nats-token must be 16 to 512 printable ASCII characters");
 
     private static (string Region, string MachineId, string? PeersFile) ClusterIdentity()
     {
