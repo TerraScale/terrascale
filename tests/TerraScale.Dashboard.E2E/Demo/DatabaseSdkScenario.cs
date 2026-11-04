@@ -446,7 +446,6 @@ namespace TerraScale.Dashboard.E2E
             private int pausedCreates;
             private int creates;
             // As production TerraBase's 503 catalog_anchor_unavailable: this many next placement and delete writes commit and still answer 503.
-            private int anchorPatchFailures;
             private int anchorDeleteFailures;
             private int branchCreates;
             private int branchConflicts;
@@ -666,7 +665,6 @@ namespace TerraScale.Dashboard.E2E
                     case "api-region": ApiRegion = body.GetProperty("value").GetString()!; break;
                     case "catalog": Catalog = [.. body.GetProperty("value").EnumerateArray().Select(value => value.GetString()!)]; break;
                     case "anchor-unavailable":
-                        Volatile.Write(ref anchorPatchFailures, body.GetProperty("patch").GetInt32());
                         Volatile.Write(ref anchorDeleteFailures, body.GetProperty("delete").GetInt32());
                         break;
                     // Another TerraBase client (the CLI's ts db create, an SDK) created or deleted a database in a project.
@@ -689,11 +687,13 @@ namespace TerraScale.Dashboard.E2E
                         }
 
                         break;
+                    // Another TerraBase client placed a replica: on every database, or on the named one.
                     case "add-replica":
                         var added = body.GetProperty("value").GetString()!;
+                        var only = body.TryGetProperty("name", out var named) ? named.GetString() : null;
                         lock (gate)
                         {
-                            foreach (var placed in databases.Values.ToArray())
+                            foreach (var placed in databases.Values.Where(value => only is null || value.Name == only).ToArray())
                             {
                                 databases[placed.Id] = placed with { ReplicaRegions = [.. (placed.ReplicaRegions ?? []).Where(region => region != added), added] };
                             }
@@ -1063,22 +1063,15 @@ namespace TerraScale.Dashboard.E2E
                     Require(method == "POST", "Canonical database create");
                     var body = await JsonAsync(http);
                     Require(body.EnumerateObject().All(field => field.Name is "name" or "homeRegion" or "replicaRegions" or "allRegions"), "Create sends only name and placement");
-                    var name = body.GetProperty("name").GetString()!;
-                    var home = body.TryGetProperty("homeRegion", out var named) ? named.GetString()! : answering;
-                    var all = body.TryGetProperty("allRegions", out var every) && every.GetBoolean();
-                    if (all && body.TryGetProperty("replicaRegions", out _))
+                    // As production TerraBase until replicas are available: a database serves only its home region.
+                    if (body.TryGetProperty("replicaRegions", out _) || body.TryGetProperty("allRegions", out var every) && every.GetBoolean())
                     {
-                        return Error(400, "placement_conflict");
-                    }
-                    // As production TerraBase: without replicaRegions (and not allRegions) it places the database in every other serving region.
-                    var replicas = body.TryGetProperty("replicaRegions", out var listed) ? listed.EnumerateArray().Select(value => value.GetString()!).ToArray()
-                        : all ? [] : (Catalog ?? ["gru", "sfo"]).Where(region => region != home).ToArray();
-                    // As production TerraBase on a cell: explicit placement requires at least two regions.
-                    if (listed.ValueKind == JsonValueKind.Array && replicas.Length == 0)
-                    {
-                        return Error(400, "placement_needs_two_regions");
+                        return Error(400, "replicas_unavailable");
                     }
 
+                    var name = body.GetProperty("name").GetString()!;
+                    var home = body.TryGetProperty("homeRegion", out var named) ? named.GetString()! : answering;
+                    string[] replicas = [];
                     if (home != answering)
                     {
                         return WrongRegion(http, new(ids.NewId(), project, name, DateTimeOffset.UtcNow, HomeRegion: home, ReplicaRegions: replicas));
@@ -1097,7 +1090,7 @@ namespace TerraScale.Dashboard.E2E
                             return Error(409, createConflict);
                         }
 
-                        var database = new ManagedDatabase(ids.NewId(), project, name, DateTimeOffset.UtcNow, HomeRegion: home, ReplicaRegions: replicas, AllRegions: all);
+                        var database = new ManagedDatabase(ids.NewId(), project, name, DateTimeOffset.UtcNow, HomeRegion: home, ReplicaRegions: replicas);
                         databases[database.Id] = database;
                         Interlocked.Increment(ref creates);
                         return Results.Json(Wire(database, answering), statusCode: 201);
@@ -1159,17 +1152,8 @@ namespace TerraScale.Dashboard.E2E
                                 return Results.Json(Wire(renamed, answering));
                             }
                         }
-                        if (body.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "allRegions" }) && body.GetProperty("allRegions").GetBoolean())
-                        {
-                            lock (gate) { var everywhere = current with { ReplicaRegions = [], AllRegions = true }; databases[current.Id] = everywhere; return Results.Json(Wire(everywhere, answering)); }
-                        }
-
-                        Require(body.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "replicaRegions" }),
-                            "Placement updates send only the complete producer replicaRegions list or allRegions");
-                        var replicas = body.GetProperty("replicaRegions").EnumerateArray().Select(value => value.GetString()!).ToArray();
-                        Require(replicas.All(value => value is "sfo" or "gru" || Catalog?.Contains(value) == true) && !replicas.Contains(current.HomeRegion, StringComparer.Ordinal) &&
-                            replicas.Distinct(StringComparer.Ordinal).Count() == replicas.Length, "Placement preserves its home and unique discovered replicas");
-                        lock (gate) { var changed = current with { ReplicaRegions = replicas, AllRegions = false }; databases[current.Id] = changed; return Interlocked.Decrement(ref anchorPatchFailures) >= 0 ? AnchorUnavailable() : Results.Json(Wire(changed, answering)); }
+                        // As production TerraBase until replicas are available: placement updates are refused.
+                        return Error(400, "replicas_unavailable");
                     case (5, "DELETE", _):
                         if (!atHome)
                         {

@@ -41,7 +41,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             var shared = scenario.AddOrganization("Shared company", owner: "other-user", member: UserId);
             var csrf = await HttpJourney.CsrfAsync(scenario.Client, "/databases");
             using var database = await HttpJourney.PostFormAsync(scenario.Client, "/api/v1/dashboard/databases", new()
-            { ["_csrf"] = csrf, ["name"] = "account-data", ["region"] = "GRU" });
+            { ["_csrf"] = csrf, ["name"] = "account-data", ["homeRegion"] = "GRU" });
             await Assert.That(database.StatusCode).IsEqualTo(HttpStatusCode.Created);
             using var created = JsonDocument.Parse(await database.Content.ReadAsStringAsync());
             var databaseId = created.RootElement.GetProperty("id").GetString()!;

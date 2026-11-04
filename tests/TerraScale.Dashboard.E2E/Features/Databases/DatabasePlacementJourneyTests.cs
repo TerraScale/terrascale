@@ -72,11 +72,13 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             // The protocol fixture reports SFO, so SFO is the one region the dashboard can choose.
             await Control(new { command = "api-region", value = "sfo" });
             using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
-            { ["_csrf"] = csrf, ["name"] = "native-placement", ["region"] = "sfo" }))
+            { ["_csrf"] = csrf, ["name"] = "native-placement", ["homeRegion"] = "sfo" }))
             {
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
                 databaseId = (await BodyAsync(created)).GetProperty("id").GetString()!;
             }
+            // Another TerraBase client placed a GRU replica; the dashboard shows the producer's placement.
+            await Control(new { command = "add-replica", value = "gru" });
             var path = "/databases/" + databaseId;
             var initial = await PageAsync(client, "/replication");
             await Assert.That(initial).Contains("<dt>Home region</dt><dd>sfo · San Francisco</dd>");
@@ -84,34 +86,17 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await Assert.That(initial).Contains("id=\"replication-title\"");
             await Assert.That(initial).Contains("/analytics?database=" + databaseId + "&project=" + projectId + "&range=24h");
             await Assert.That(initial.Contains("0 ms", StringComparison.Ordinal)).IsFalse();
-            var home = Regex.Match(initial, "<input[^>]+type=\"checkbox\"[^>]+value=\"SFO\"[^>]*>").Value;
-            await Assert.That(home).Contains("required");
-            await Assert.That(home).Contains("checked");
-            await Assert.That(home.Contains("disabled", StringComparison.Ordinal)).IsFalse();
+            await Assert.That(initial.Contains("Save regions", StringComparison.Ordinal)).IsFalse();
             using (var credentials = await client.GetAsync("/api-keys"))
             {
                 await Assert.That(credentials.StatusCode).IsEqualTo(HttpStatusCode.OK)
                     .Because(await FailureEvidenceAsync(credentials));
             }
 
-            foreach (var regions in new[] { new[] { "GRU" }, new[] { "SFO", "sfo" }, new[] { "SFO", "unknown" } })
-            {
-                using var refused = await ChangeRegionsAsync(regions);
-                await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
-                await Assert.That(await RegionsAsync()).IsEqualTo("SFO,GRU");
-            }
-            await Assert.That(Volatile.Read(ref placementWrites)).IsEqualTo(0);
-            // Later GRU answers instead. The SFO home is outside the catalog now and must stay selected and addressable.
+            await Assert.That(await RegionsAsync()).IsEqualTo("SFO,GRU");
+            // Later GRU answers instead. The SFO home is outside the catalog now and must stay addressable.
             await Control(new { command = "api-region", value = "gru" });
-            var moved = Regex.Match(await PageAsync(client, "/replication"), "<input[^>]+type=\"checkbox\"[^>]+value=\"SFO\"[^>]*>").Value;
-            await Assert.That(moved).Contains("required");
-            await Assert.That(moved).Contains("checked");
-            using (var changed = await ChangeRegionsAsync(["gru", "sfo"]))
-            {
-                await Assert.That(changed.StatusCode).IsEqualTo(HttpStatusCode.SeeOther)
-                    .Because(await FailureEvidenceAsync(changed));
-                await Assert.That(changed.Headers.Location?.OriginalString).IsEqualTo(path + "/replication?placement=saved#placement");
-            }
+            await Assert.That(await PageAsync(client, "/replication")).Contains("<dt>Home region</dt><dd>sfo · San Francisco</dd>");
             await Assert.That(await RegionsAsync()).IsEqualTo("SFO,GRU");
             using (var credentials = await replica.GetAsync("/api-keys"))
             {
@@ -147,23 +132,12 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await Assert.That(unknown.Contains("aria-label=\"Replication totals\"", StringComparison.Ordinal)).IsFalse();
             await Assert.That(unknown.Contains("111 B", StringComparison.Ordinal)).IsFalse();
             Volatile.Write(ref report, "");
-            using (var removed = await ChangeRegionsAsync(["SFO"]))
-            {
-                await Assert.That(removed.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
-            }
-
             await Assert.That(await RegionsAsync()).IsEqualTo("SFO,GRU");
             using (var revoked = await producer.PostAsJsonAsync("/__test/control", new { command = "role", value = "member", organizationId }))
             {
                 await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
             }
 
-            using (var refused = await ChangeRegionsAsync(["SFO", "GRU"]))
-            {
-                await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-            }
-
-            await Assert.That(await RegionsAsync()).IsEqualTo("SFO,GRU");
             var memberDanger = await PageAsync(client, "/danger?delete=1");
             await Assert.That(memberDanger).Contains("Only organization members who can manage databases can delete this database.");
             await Assert.That(memberDanger.Contains("id=\"delete-database\"", StringComparison.Ordinal)).IsFalse();
@@ -189,6 +163,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
                 await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
             }
 
+            await Assert.That(Volatile.Read(ref placementWrites)).IsEqualTo(0);
             await Assert.That((await ReadAsync(producer, "/__test/observations")).GetProperty("failures").GetArrayLength()).IsEqualTo(0);
 
             async Task Control(object command)
@@ -197,14 +172,6 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
                 await Assert.That(response.IsSuccessStatusCode).IsTrue();
             }
 
-            async Task<HttpResponseMessage> ChangeRegionsAsync(string[] regions)
-            {
-                using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/databases/regions");
-                request.Headers.Accept.ParseAdd("text/html");
-                request.Content = new FormUrlEncodedContent(new[] { new KeyValuePair<string, string>("_csrf", csrf), new("databaseId", databaseId) }
-                    .Concat(regions.Select(region => new KeyValuePair<string, string>("region", region))));
-                return await client.SendAsync(request);
-            }
             async Task<string> RegionsAsync()
             {
                 var databases = await ManagementListJourney.ReadListAllAsync(replica, "/api/v1/dashboard/databases");

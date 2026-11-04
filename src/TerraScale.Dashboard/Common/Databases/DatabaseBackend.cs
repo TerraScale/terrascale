@@ -76,11 +76,10 @@ namespace TerraScale.Dashboard.Common.Databases
         Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken cancellationToken);
         Task<IReadOnlyList<DatabaseRegion>> CatalogAsync(CancellationToken cancellationToken);
         Task<IReadOnlyList<ManagedDatabase>> ListAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken);
-        Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken);
+        Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, CancellationToken cancellationToken);
         Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken);
         Task<ManagedDatabase> RenameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken);
         Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
-        Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken);
         Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
         Task<DatabaseSqlCatalog> SqlTablesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
         Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, bool write, CancellationToken cancellationToken);
@@ -183,13 +182,11 @@ namespace TerraScale.Dashboard.Common.Databases
             return result;
         }
 
-        public async Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken)
+        public async Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, CancellationToken cancellationToken)
         {
-            var client = await ClientAsync(scope, placement[0], "databases:write", cancellationToken);
-            // TerraBase refuses allRegions together with any replicaRegions list, even an empty one, and refuses an empty list on
-            // a cell (decision 0013a: two regions or more). With only the home chosen, it places the database in every other serving region.
-            return Map(await RunAsync(() => client.CreateDatabaseAsync(scope.ProjectId, new(Name: name, HomeRegion: placement[0].Id, ReplicaRegions:
-                allRegions || placement.Count == 1 ? null : placement.Skip(1).Select(region => region.Id).ToArray(), allRegions ? true : null)).ResponseAsync));
+            var client = await ClientAsync(scope, home, "databases:write", cancellationToken);
+            // TerraBase refuses replicaRegions and allRegions until replicas are available (replicas_unavailable).
+            return Map(await RunAsync(() => client.CreateDatabaseAsync(scope.ProjectId, new(Name: name, HomeRegion: home.Id)).ResponseAsync));
         }
 
         public async Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
@@ -230,14 +227,6 @@ namespace TerraScale.Dashboard.Common.Databases
         {
             var project = await ClientAsync(scope, home, "databases:write", cancellationToken);
             return Map(await RunAsync(() => project.SetDatabaseAsync(scope.ProjectId, databaseId, new(Name: name)).ResponseAsync));
-        }
-
-        public async Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken)
-        {
-            var name = await NameAsync(scope, home, databaseId, cancellationToken);
-            var project = await ClientAsync(scope, home, "databases:write", cancellationToken);
-            return Map(await RunAsync(() => project.SetDatabaseAsync(scope.ProjectId, name,
-                new(ReplicaRegions: allRegions ? null : [.. placement.Skip(1).Select(region => region.Id)], AllRegions: allRegions ? true : null)).ResponseAsync));
         }
 
         public async Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)

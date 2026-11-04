@@ -94,41 +94,23 @@ namespace TerraScale.Dashboard.Features.Databases
 
                 try
                 {
-                    var regions = form["region"].Select(value => value ?? "").ToArray();
-                    if (form.ContainsKey("homeRegion"))
+                    // TerraBase serves each database only in its home region until replicas are available, so a
+                    // create names the home region alone. API callers that omit it get the project's region.
+                    var home = form.ContainsKey("homeRegion") ? form["homeRegion"].ToString().Trim() : context.Project?.Region ?? "";
+                    if (home.Length == 0)
                     {
-                        var home = form["homeRegion"].ToString().Trim();
-                        if (home.Length == 0)
-                        {
-                            throw new AccountAccessException("Choose a home region.", 422);
-                        }
-
-                        // Home alone is valid: TerraBase places the database in every serving region
-                        // when no replica regions are sent. Explicit replicas still need at least two
-                        // regions including home.
-                        var replicas = regions.Where(region => !region.Equals(home, StringComparison.OrdinalIgnoreCase)).ToArray();
-                        if (form["allRegions"] != "true" && replicas.Length > 0)
-                        {
-                            DatabaseService.RequireReplicas(regions);
-                        }
-
-                        var index = Array.FindIndex(regions, region => region.Equals(home, StringComparison.OrdinalIgnoreCase));
-                        if (index < 0 && form["allRegions"] != "true" && replicas.Length > 0)
-                        {
-                            throw new AccountAccessException(DatabaseService.HomePlacementMessage, 422);
-                        }
-
-                        regions = index < 0 ? [home, .. regions] : [home, .. regions[..index], .. regions[(index + 1)..]];
+                        throw new AccountAccessException("Choose a home region.", 422);
                     }
-                    var database = await databases.CreateAsync(context, form["name"].ToString(), regions, form["allRegions"] == "true", http.RequestAborted);
+
+                    var database = await databases.CreateAsync(context, form["name"].ToString(), home, http.RequestAborted);
                     return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : Results.Json(DatabaseOutput(database), statusCode: 201);
                 }
                 catch (Exception error) when (KnownFailure(error))
                 {
-                    return WantsHtml(http) ? await ListPageAsync(http, context, backend, databases, error: Message(error), openCreate: true, name: form["name"].ToString(), regions: [.. form["region"].Select(value => value ?? "")], status: Status(error), homeRegion: form.ContainsKey("homeRegion") ? form["homeRegion"].ToString() : null, allRegions: form["allRegions"] == "true") : Failure(error);
+                    return WantsHtml(http) ? await ListPageAsync(http, context, backend, databases, error: Message(error), openCreate: true, name: form["name"].ToString(), status: Status(error), homeRegion: form.ContainsKey("homeRegion") ? form["homeRegion"].ToString() : null) : Failure(error);
                 }
             });
-            foreach (var operation in new[] { "branch", "regions", "delete" })
+            foreach (var operation in new[] { "branch", "delete" })
             {
                 var action = operation;
                 endpoints.MapPost("/api/v1/dashboard/databases/" + operation,
@@ -154,16 +136,8 @@ namespace TerraScale.Dashboard.Features.Databases
                                 var branch = await databases.BranchAsync(context, id, form["name"].ToString(), http.RequestAborted);
                                 return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(branch.Id)) : Results.Json(DatabaseOutput(branch), statusCode: 201);
                             }
-                            if (action == "regions")
-                            {
-                                await databases.SetRegionsAsync(context, id, form["region"].Select(value => value ?? ""), form["allRegions"] == "true", http.RequestAborted);
-                            }
-                            else
-                            {
-                                await databases.DeleteAsync(context, id, form.ContainsKey("confirmName") ? form["confirmName"].ToString() : form["confirm"].ToString(), http.RequestAborted);
-                            }
-
-                            return WantsHtml(http) ? HttpRedirects.SeeOther(action == "delete" ? "/databases" : DatabaseService.Path(id, "replication") + "?placement=saved#placement") : Results.NoContent();
+                            await databases.DeleteAsync(context, id, form.ContainsKey("confirmName") ? form["confirmName"].ToString() : form["confirm"].ToString(), http.RequestAborted);
+                            return WantsHtml(http) ? HttpRedirects.SeeOther("/databases") : Results.NoContent();
                         }
                         catch (Exception error) when (KnownFailure(error))
                         {
@@ -172,8 +146,7 @@ namespace TerraScale.Dashboard.Features.Databases
                                 return DatabaseResults.PageFailure(http, context, error);
                             }
 
-                            var draft = action == "regions" ? new DatabasePlacementDraft([.. form["region"].Select(value => value ?? "")], form["allRegions"] == "true") : null;
-                            return await DetailPageAsync(http, context, id, action switch { "branch" => "branches", "delete" => "danger", _ => "replication" }, backend, databases, Message(error), action == "delete", Status(error), draft, branchName: action == "branch" ? form["name"].ToString() : null);
+                            return await DetailPageAsync(http, context, id, action == "branch" ? "branches" : "danger", backend, databases, Message(error), action == "delete", Status(error), branchName: action == "branch" ? form["name"].ToString() : null);
                         }
                     });
             }
@@ -209,7 +182,7 @@ namespace TerraScale.Dashboard.Features.Databases
         }
 
         internal static async Task<IResult> ListPageAsync(HttpContext http, AccountContext context, IDatabaseBackend backend, DatabaseService databases,
-            string error = "", bool openCreate = false, string name = "", IReadOnlyList<string>? regions = null, int status = 200, string? homeRegion = null, bool allRegions = false)
+            string error = "", bool openCreate = false, string name = "", int status = 200, string? homeRegion = null)
         {
             await databases.SyncAsync(context, http.RequestAborted);
             // Regions, each database's collection counts and the project metrics are independent reads; they run together.
@@ -271,12 +244,12 @@ namespace TerraScale.Dashboard.Features.Databases
             var all = context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
             var filtered = all.Where(database => search.Length == 0 || database.Name.Contains(search, StringComparison.OrdinalIgnoreCase)).ToArray();
             var metrics = await metricsRead;
-            var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, contents, search, error, openCreate || http.Request.Query["create"] == "1", name, regions, regionsError) { ContentsAvailable = contentsAvailable, Metrics = metrics, Range = range, HomeSelection = homeRegion, AllRegions = allRegions });
+            var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, contents, search, error, openCreate || http.Request.Query["create"] == "1", name, regionsError) { ContentsAvailable = contentsAvailable, Metrics = metrics, Range = range, HomeSelection = homeRegion });
             result.StatusCode = status;
             return result;
         }
 
-        internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, DatabasePlacementDraft? placementDraft = null, string? branchName = null)
+        internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, string? branchName = null)
         {
             DatabaseRecord database;
             try
@@ -296,7 +269,6 @@ namespace TerraScale.Dashboard.Features.Databases
             IReadOnlyList<DatabaseRegion> choices = [];
             IReadOnlyList<CollectionStats> contents = [];
             var contentsAvailable = false;
-            var regionError = "";
             var range = HomePage.NormalizeRange(http.Request.Query["range"]);
             // Each tab's reads are independent of one another, so they all start before any is awaited.
             var measurementsRead = tab == "replication"
@@ -317,11 +289,11 @@ namespace TerraScale.Dashboard.Features.Databases
                 try
                 {
                     choices = await choicesRead;
-                    // The database's own regions stay listed, so saving never drops a replica the catalog does not name.
+                    // The database's own regions stay listed even when the catalog does not name them.
                     var listed = choices;
                     choices = [.. listed, .. DatabaseService.Regions(database).Select(code => DatabaseRegion.Resolve(listed, code)).OfType<DatabaseRegion>().Where(region => !listed.Contains(region)).Distinct()];
                 }
-                catch (HttpRequestException) { regionError = "Region discovery is unavailable. Try again shortly."; }
+                catch (HttpRequestException) { }
             }
             if (contentsRead is not null)
             {
@@ -350,11 +322,9 @@ namespace TerraScale.Dashboard.Features.Databases
             var activity = activityRead is null ? null : await activityRead;
             // The backups section shows the same page error, which the counts read above may have just set.
             var backups = backupsRead is null ? null : (await backupsRead) with { Error = error };
-            var result = DatabaseDetailView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, contents, error, regionError, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, contentsAvailable, measurements, range, activity)
+            var result = DatabaseDetailView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, contents, error, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, contentsAvailable, measurements, range, activity)
             {
-                BranchName = branchName,
-                PlacementDraft = placementDraft,
-                PlacementSaved = tab == "replication" && error.Length == 0 && placementDraft is null && http.Request.Query["placement"] == "saved"
+                BranchName = branchName
             });
             result.StatusCode = status;
             return result;

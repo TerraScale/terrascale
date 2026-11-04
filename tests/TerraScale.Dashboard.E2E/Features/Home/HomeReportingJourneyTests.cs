@@ -140,7 +140,7 @@ namespace TerraScale.Dashboard.E2E.Features.Home
             var projectId = identity.RootElement.GetProperty("projectId").GetString()!;
             string databaseId;
             using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
-            { ["_csrf"] = await HttpJourney.CsrfAsync(client, "/databases"), ["name"] = "starting", ["region"] = "GRU" }))
+            { ["_csrf"] = await HttpJourney.CsrfAsync(client, "/databases"), ["name"] = "starting", ["homeRegion"] = "GRU" }))
             {
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
                 using var database = JsonDocument.Parse(await created.Content.ReadAsStringAsync());

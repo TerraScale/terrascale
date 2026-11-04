@@ -33,7 +33,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             using var producer = host.CreateProviderClient();
             await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
-            using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "exported", ["region"] = "GRU" });
+            using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "exported", ["homeRegion"] = "GRU" });
             var databaseId = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetString()!;
             var page = "/databases/" + databaseId + "/backups";
             await Assert.That(await client.GetStringAsync(page)).Contains("No bucket saved for this project.");

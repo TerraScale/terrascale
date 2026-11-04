@@ -86,7 +86,6 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var organizationId = "";
             var projectId = "";
             var mode = "";
-            var bearer = "";
             var calls = 0;
             var lists = 0;
             const string sourceName = "snapshot-source";
@@ -105,7 +104,6 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
                 {
                     DatabaseSdkJourneyTests.DemandProjectToken(auth, http, organizationId, projectId, "databases:write");
                     Interlocked.Increment(ref calls);
-                    bearer = http.Request.Headers.Authorization.ToString();
                     if (Volatile.Read(ref mode) == "unsupported-conflict")
                     {
                         return Results.Json(new { error = new { code = "database_busy", message = "Unsupported scoped conflict", fix = "retry" } }, statusCode: 409);
@@ -197,16 +195,8 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
                 .GetProperty("id").GetString()!;
             // No listing runs before the retries: a listing would record the branch TerraBase has, as the recovery below does.
 
-            // A real provider placement change between the interrupted 201 and the retry must survive recovery. Another
-            // client places it with the same exchanged databases:write project bearer, at the canonical route by name.
-            using (var request = new HttpRequestMessage(HttpMethod.Patch, "/v1/projects/" + projectId + "/databases/" + retryName))
-            {
-                request.Headers.Host = "gru.api.terrascale.tech";
-                request.Headers.Add("Authorization", bearer);
-                request.Content = JsonContent.Create(new { replicaRegions = new[] { "sfo" } });
-                using var placed = await producer.SendAsync(request);
-                await Assert.That(placed.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await EvidenceAsync(placed, producer));
-            }
+            // A real provider placement change between the interrupted 201 and the retry must survive recovery.
+            await ControlAsync(producer, new { command = "add-replica", value = "sfo", name = retryName });
             var previousCalls = Volatile.Read(ref calls);
             await ControlAsync(producer, new { command = "role", organizationId, value = "member" });
             using (var refused = await BranchAsync(replica, replicaCsrf, sourceId, retryName))
@@ -421,7 +411,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
 
         private static async Task<string> CreateAsync(HttpClient client, string csrf, string name)
         {
-            using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = name, ["region"] = "GRU" });
+            using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = name, ["homeRegion"] = "GRU" });
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await response.Content.ReadAsStringAsync());
             return (await BodyAsync(response)).GetProperty("id").GetString()!;
         }

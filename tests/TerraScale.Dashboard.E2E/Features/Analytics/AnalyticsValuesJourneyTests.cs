@@ -78,7 +78,7 @@ namespace TerraScale.Dashboard.E2E.Features.Analytics
             {
                 var name = "metrics-" + faker.Random.AlphaNumeric(10).ToLowerInvariant();
                 using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
-                { ["_csrf"] = await HttpJourney.CsrfAsync(client, "/databases"), ["name"] = name, ["region"] = "GRU" });
+                { ["_csrf"] = await HttpJourney.CsrfAsync(client, "/databases"), ["name"] = name, ["homeRegion"] = "GRU" });
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
                 using var body = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
                 databases.Add((body.RootElement.GetProperty("id").GetString()!, name, scale));

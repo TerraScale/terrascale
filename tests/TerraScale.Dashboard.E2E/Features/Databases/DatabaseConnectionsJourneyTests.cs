@@ -24,7 +24,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             const string name = "connect-overview";
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
-            { ["_csrf"] = csrf, ["name"] = name, ["region"] = "GRU" });
+            { ["_csrf"] = csrf, ["name"] = name, ["homeRegion"] = "GRU" });
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
             using var database = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
             var id = database.RootElement.GetProperty("id").GetString()!;
@@ -87,7 +87,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
         }
 
         [Test]
-        public async Task CreateAndSettingsBlockOneRegionAndAllowValidSubmissions()
+        public async Task CreateDialogCreatesInTheChosenHomeRegionOnly()
         {
             await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
             using var client = scenario.CreateClient();
@@ -106,27 +106,16 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await page.Locator("#database-name").FillAsync("browser-placement");
             var create = page.Locator("#create-database");
             await Assert.That(await page.Locator("#database-home").InputValueAsync()).IsEqualTo("GRU");
-            await Assert.That(await create.Locator("input[name=region]:checked").CountAsync()).IsEqualTo(2);
-            await create.Locator("input[value=SFO]").UncheckAsync();
-            await create.GetByRole(AriaRole.Button, new() { Name = "Create database", Exact = true }).ClickAsync();
-            await Expect(page.Locator("#database-region-error")).ToBeVisibleAsync();
-            await Assert.That(posts).IsEqualTo(0);
-            await Assert.That(await page.Locator("#database-home").EvaluateAsync<bool>("el => el.validity.customError")).IsTrue();
-            await create.Locator("input[name=allRegions]").CheckAsync();
-            await Expect(page.Locator("#database-region-error")).ToBeHiddenAsync();
+            await Assert.That(await create.Locator("input[name=region], input[name=allRegions]").CountAsync()).IsEqualTo(0);
+            // The map picks the home region.
+            await create.Locator(".ts-region-node[data-region=SFO]").ClickAsync();
+            await Assert.That(await page.Locator("#database-home").InputValueAsync()).IsEqualTo("SFO");
             await create.GetByRole(AriaRole.Button, new() { Name = "Create database", Exact = true }).ClickAsync();
             await page.WaitForURLAsync(url => url.Contains("created=1", StringComparison.Ordinal));
-            await page.GotoAsync(page.Url.Split('?')[0] + "/replication");
-            var settings = page.GetByRole(AriaRole.Form, new() { Name = "Change regions" });
-            await settings.Locator("input[name=allRegions]").UncheckAsync();
-            await settings.Locator("input[value=SFO]").UncheckAsync();
-            await settings.GetByRole(AriaRole.Button, new() { Name = "Save regions" }).ClickAsync();
-            await Expect(page.Locator("#database-placement-error")).ToBeVisibleAsync();
             await Assert.That(posts).IsEqualTo(1);
-            await settings.Locator("input[value=SFO]").CheckAsync();
-            await settings.GetByRole(AriaRole.Button, new() { Name = "Save regions" }).ClickAsync();
-            await page.WaitForURLAsync(url => url.EndsWith("#placement", StringComparison.Ordinal));
-            await Assert.That(posts).IsEqualTo(2);
+            await page.GotoAsync(page.Url.Split('?')[0] + "/replication");
+            await Assert.That(await page.GetByRole(AriaRole.Form, new() { Name = "Change regions" }).CountAsync()).IsEqualTo(0);
+            await Expect(page.Locator("#placement")).ToContainTextAsync("sfo · San Francisco");
             await Assert.That(errors).IsEmpty();
         }
 

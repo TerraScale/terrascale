@@ -61,7 +61,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var secret = await HttpJourney.CreatePatAsync(client, "Functions MCP", account.Password);
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             using (var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
-            { ["_csrf"] = csrf, ["name"] = "fn-app", ["region"] = "GRU" }))
+            { ["_csrf"] = csrf, ["name"] = "fn-app", ["homeRegion"] = "GRU" }))
             {
                 await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
                 using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());

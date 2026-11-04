@@ -6,7 +6,7 @@ using TerraScale.Dashboard.Common.UI;
 namespace TerraScale.Dashboard.Features.Databases
 {
     public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecord> Databases, IReadOnlyList<DatabaseRegion> Choices,
-        IReadOnlyList<CollectionStats> Contents, string Search = "", string Error = "", bool OpenCreate = false, string Name = "", IReadOnlyList<string>? Selection = null, string RegionsError = "")
+        IReadOnlyList<CollectionStats> Contents, string Search = "", string Error = "", bool OpenCreate = false, string Name = "", string RegionsError = "")
     {
         public bool ContentsAvailable { get; init; }
         public AccountContext Context => Shell.Context;
@@ -20,9 +20,7 @@ namespace TerraScale.Dashboard.Features.Databases
         }
 
         public IReadOnlyList<string> Regions => [.. All.SelectMany(Serving).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(TerraScale.Dashboard.Common.UI.Regions.Rank).ThenBy(code => code, StringComparer.OrdinalIgnoreCase)];
-        public IReadOnlyList<string> Selected => Selection ?? (Choices.Count > 1 ? [HomeRegion] : [.. Choices.Select(region => region.Code)]);
         public string? HomeSelection { get; init; }
-        public bool AllRegions { get; init; }
         public string HomeRegion => HomeSelection ?? Choices.FirstOrDefault(region => region.Code.Equals(Context.Project?.Region, StringComparison.OrdinalIgnoreCase))?.Code ?? (Choices is [var firstRegion, ..] ? firstRegion?.Code ?? "" : "");
         public bool CanProvision => Context.Organization?.CanProvision(Context.UserId) ?? false;
         public static string Tone(string status)
@@ -133,17 +131,10 @@ namespace TerraScale.Dashboard.Features.Databases
         }
     }
 
-    public sealed record DatabasePlacementDraft(IReadOnlyList<string> Regions, bool AllRegions);
-
     public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Database, string Tab, IReadOnlyList<DatabaseRegion> Choices,
-        IReadOnlyList<CollectionStats> Contents, string Error = "", string RegionsError = "", bool OpenDelete = false, bool Created = false, TerraScale.Dashboard.Features.Backups.BackupPage? Backups = null,
+        IReadOnlyList<CollectionStats> Contents, string Error = "", bool OpenDelete = false, bool Created = false, TerraScale.Dashboard.Features.Backups.BackupPage? Backups = null,
         bool ContentsAvailable = false, TerraScale.Dashboard.Features.Usage.UsageReplication? Measurements = null, string Range = "24h", DatabaseActivity? Activity = null)
     {
-        // A rejected form keeps its draft without changing the saved placement shown elsewhere.
-        public DatabasePlacementDraft? PlacementDraft { get; init; }
-        public IReadOnlyList<string> SelectedRegions => PlacementDraft?.Regions ?? Serving;
-        public bool SelectedAllRegions => PlacementDraft?.AllRegions ?? Database.AllRegions;
-        public bool PlacementSaved { get; init; }
         public string? BranchName { get; init; }
         public bool OpenBranch => Tab == "branches" && BranchName is not null && Error.Length > 0 && Context.CanManage && Database.Status == "ready";
         // Each activity card keeps its own range; changing one keeps the others as they are.

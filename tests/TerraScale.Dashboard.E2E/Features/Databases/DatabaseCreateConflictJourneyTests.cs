@@ -21,7 +21,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
                 await Assert.That(control.IsSuccessStatusCode).IsTrue();
             }
 
-            using (var refused = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "fresh", ["allRegions"] = "true" }))
+            using (var refused = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "fresh", ["homeRegion"] = "GRU" }))
             {
                 var text = await refused.Content.ReadAsStringAsync();
                 await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because(text);
@@ -35,12 +35,12 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
                 await Assert.That(control.IsSuccessStatusCode).IsTrue();
             }
 
-            using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "fresh", ["allRegions"] = "true" }))
+            using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "fresh", ["homeRegion"] = "GRU" }))
             {
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
             }
 
-            using (var duplicate = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "fresh", ["allRegions"] = "true" }))
+            using (var duplicate = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "fresh", ["homeRegion"] = "GRU" }))
             {
                 await Assert.That(duplicate.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
                 await Assert.That(await duplicate.Content.ReadAsStringAsync()).Contains("already exists");

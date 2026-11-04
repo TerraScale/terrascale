@@ -59,7 +59,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("text/html"));
 
             using (var created = await client.PostAsync("/api/v1/dashboard/databases", new FormUrlEncodedContent(
-                new[] { new KeyValuePair<string, string>("_csrf", csrf), new("name", "orders"), new("homeRegion", "GRU"), new("region", "GRU"), new("region", "SJC") })))
+                new[] { new KeyValuePair<string, string>("_csrf", csrf), new("name", "orders"), new("homeRegion", "GRU") })))
             {
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.SeeOther).Because(await created.Content.ReadAsStringAsync());
                 await Assert.That(created.Headers.Location?.ToString()).EndsWith("?created=1");
@@ -72,7 +72,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             }
 
             using (var refused = await client.PostAsync("/api/v1/dashboard/databases", new FormUrlEncodedContent(
-                new Dictionary<string, string> { ["_csrf"] = csrf, ["name"] = "second", ["allRegions"] = "true" })))
+                new Dictionary<string, string> { ["_csrf"] = csrf, ["name"] = "second", ["homeRegion"] = "GRU" })))
             {
                 await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
                 var page = WebUtility.HtmlDecode(await refused.Content.ReadAsStringAsync());
@@ -83,9 +83,10 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             }
         }
 
-        // The form explicitly selects all serving regions today; future-region tracking remains a separate choice.
+        // TerraBase serves a database only in its home region until replicas are available: the dialog asks for a name and
+        // a home region, and the create sends no replica placement.
         [Test]
-        public async Task DefaultCreateSucceedsAndTheDatabaseCanBeDeleted()
+        public async Task DefaultCreateSucceedsWithOnlyAHomeRegionAndTheDatabaseCanBeDeleted()
         {
             await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
             using var client = scenario.CreateClient();
@@ -100,22 +101,22 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var html = WebUtility.HtmlDecode(await client.GetStringAsync("/databases"));
             await Assert.That(html).Contains("pattern=\"" + DatabaseService.NameInputPattern + "\"");
             await Assert.That(html).Contains(DatabaseService.NameHint);
-            var selected = Regex.Matches(html, "<input[^>]+type=\"checkbox\"[^>]+name=\"region\"[^>]+value=\"([^\"]+)\"[^>]*checked[^>]*>")
-                .Select(match => match.Groups[1].Value).ToArray();
-            // The dialog defaults to the workspace's home region alone: explicit replicas are a
-            // deliberate choice, and TerraBase places home-only databases in every serving region.
-            await Assert.That(selected).IsEquivalentTo(new[] { "GRU" });
             await Assert.That(Regex.Match(html, "<option value=\"GRU\"[^>]*>").Value).Contains("selected");
-            var allRegionsInput = Regex.Match(html, "<input[^>]+name=\"allRegions\"[^>]*>").Value;
-            await Assert.That(allRegionsInput.Length > 0).IsTrue();
-            await Assert.That(Regex.IsMatch(allRegionsInput, "\\schecked(?:\\s|=|/?>)")).IsFalse();
-            await Assert.That(html.Contains("One region keeps the data only there", StringComparison.Ordinal)).IsFalse();
+            await Assert.That(html.Contains("name=\"region\"", StringComparison.Ordinal)).IsFalse();
+            await Assert.That(html.Contains("name=\"allRegions\"", StringComparison.Ordinal)).IsFalse();
+            await Assert.That(html.Contains("Choose at least two regions", StringComparison.Ordinal)).IsFalse();
             foreach (var name in new[] { "1database", "con", "com0", "lpt9" })
             {
                 using var rejected = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
-                { ["_csrf"] = csrf, ["name"] = name, ["region"] = "SFO" });
+                { ["_csrf"] = csrf, ["name"] = name, ["homeRegion"] = "SFO" });
                 await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
                 await Assert.That(await rejected.Content.ReadAsStringAsync()).Contains("must start with a lowercase letter");
+            }
+            using (var noHome = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
+            { ["_csrf"] = csrf, ["name"] = "orders", ["homeRegion"] = "" }))
+            {
+                await Assert.That(noHome.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+                await Assert.That(await noHome.Content.ReadAsStringAsync()).Contains("Choose a home region.");
             }
             using (var beforeCreate = JsonDocument.Parse(await producer.GetStringAsync("/__test/observations")))
             {
@@ -123,21 +124,26 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             }
 
             string databaseId;
-            using (var created = await client.PostAsync("/api/v1/dashboard/databases", new FormUrlEncodedContent(
-                new[] { new KeyValuePair<string, string>("_csrf", csrf), new("name", "orders"), new("homeRegion", "GRU") }
-                    .Concat(selected.Select(region => new KeyValuePair<string, string>("region", region))))))
+            using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
+            { ["_csrf"] = csrf, ["name"] = "orders", ["homeRegion"] = "GRU" }))
             {
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
                 using var body = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
                 databaseId = body.RootElement.GetProperty("id").GetString()!;
+                await Assert.That(body.RootElement.GetProperty("region").GetString()).IsEqualTo("GRU");
                 await Assert.That(body.RootElement.GetProperty("allRegions").GetBoolean()).IsFalse();
-                await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(new[] { "GRU", "FRA", "SFO" });
+                await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(new[] { "GRU" });
             }
 
+            // Placement is fixed at create: the replication tab shows it without a form, and the old route is gone.
             var replication = WebUtility.HtmlDecode(await client.GetStringAsync("/databases/" + databaseId + "/replication"));
-            await Assert.That(replication).Contains("<span class=\"ts-badge ts-badge-neutral\">Home</span>");
-            await Assert.That(replication).Contains(DatabaseService.MinimumRegionsMessage);
-            await Assert.That(replication.Contains("adding replica regions is unavailable here", StringComparison.Ordinal)).IsFalse();
+            await Assert.That(replication).Contains("<dt>Home region</dt><dd>gru · São Paulo</dd>");
+            await Assert.That(replication.Contains("/api/v1/dashboard/databases/regions", StringComparison.Ordinal)).IsFalse();
+            await Assert.That(replication.Contains("Save regions", StringComparison.Ordinal)).IsFalse();
+            using (var removed = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/regions", new() { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["allRegions"] = "true" }))
+            {
+                await Assert.That(removed.IsSuccessStatusCode).IsFalse();
+            }
 
             using (var deleted = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/delete", new() { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["confirmName"] = "orders" }))
             {
@@ -146,17 +152,12 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
 
             await Assert.That((await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
             using var observations = JsonDocument.Parse(await producer.GetStringAsync("/__test/observations"));
+            await Assert.That(observations.RootElement.GetProperty("creates").GetInt32()).IsEqualTo(1);
             await Assert.That(observations.RootElement.GetProperty("failures").GetArrayLength()).IsEqualTo(0);
         }
 
         [Test]
-        [Arguments("GRU,SJC", false)]
-        [Arguments("GRU,FRA,SJC", false)]
-        [Arguments("GRU,FRA", false)]
-        [Arguments("SJC", false)]
-        [Arguments("", false)]
-        [Arguments("", true)]
-        public async Task ChosenHomeIsUsedWithoutAddingUnselectedRegions(string placement, bool allRegions)
+        public async Task ChosenHomeIsTheOnlyRegion()
         {
             await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
             using var client = scenario.CreateClient();
@@ -165,29 +166,40 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             using var catalog = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = new[] { "gru", "fra", "sjc" } });
             using var answering = await producer.PostAsJsonAsync("/__test/control", new { command = "api-region", value = "sjc" });
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
-            var selected = placement.Split(',', StringSplitOptions.RemoveEmptyEntries);
-            using var response = await client.PostAsync("/api/v1/dashboard/databases", new FormUrlEncodedContent(
-                new[] { new KeyValuePair<string, string>("_csrf", csrf), new("name", "chosen-home"), new("homeRegion", "SJC"), new("allRegions", allRegions ? "true" : "false") }
-                    .Concat(selected.Select(region => new KeyValuePair<string, string>("region", region)))));
-            var explicitReplicas = selected.Where(region => !region.Equals("SJC", StringComparison.OrdinalIgnoreCase)).ToArray();
-            if (!allRegions && explicitReplicas.Length > 0 && !selected.Contains("SJC", StringComparer.OrdinalIgnoreCase))
-            {
-                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
-                await Assert.That(await response.Content.ReadAsStringAsync()).Contains(DatabaseService.HomePlacementMessage);
-                using var observations = JsonDocument.Parse(await producer.GetStringAsync("/__test/observations"));
-                await Assert.That(observations.RootElement.GetProperty("creates").GetInt32()).IsEqualTo(0);
-                return;
-            }
+            using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "chosen-home", ["homeRegion"] = "SJC" });
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await response.Content.ReadAsStringAsync());
             using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             await Assert.That(body.RootElement.GetProperty("region").GetString()).IsEqualTo("SJC");
-            await Assert.That(body.RootElement.GetProperty("allRegions").GetBoolean()).IsEqualTo(allRegions);
-            if (!allRegions)
-            {
-                // Home alone sends no replicaRegions: the data plane places the database in every other serving region.
-                var expected = explicitReplicas.Length > 0 ? selected : new[] { "SJC", "GRU", "FRA" };
-                await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(expected);
-            }
+            await Assert.That(body.RootElement.GetProperty("allRegions").GetBoolean()).IsFalse();
+            await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(new[] { "SJC" });
+        }
+
+        [Test]
+        public async Task McpCreatesInTheHomeRegionOnly()
+        {
+            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            using var client = scenario.CreateClient();
+            using var producer = scenario.CreateProviderClient();
+            var account = await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+            using var catalog = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = new[] { "gru", "sfo" } });
+            using var answering = await producer.PostAsJsonAsync("/__test/control", new { command = "api-region", value = "sfo" });
+            using var me = JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me"));
+            var organizationId = me.RootElement.GetProperty("organizationId").GetString()!;
+            var projectId = me.RootElement.GetProperty("projectId").GetString()!;
+            var secret = await HttpJourney.CreatePatAsync(client, "Home only MCP", account.Password);
+            var tools = (await HttpJourney.McpAsync(client, secret, "tools/list", new { })).GetProperty("result").GetProperty("tools").EnumerateArray()
+                .ToDictionary(tool => tool.GetProperty("name").GetString()!);
+            await Assert.That(tools.ContainsKey("set_database_regions")).IsFalse();
+            var properties = tools["create_database"].GetProperty("inputSchema").GetProperty("properties");
+            await Assert.That(properties.TryGetProperty("regions", out _) || properties.TryGetProperty("allRegions", out _)).IsFalse();
+            var result = (await HttpJourney.McpAsync(client, secret, "tools/call", new { name = "create_database", arguments = new { name = "mcp-home", region = "SFO", organizationId, projectId } })).GetProperty("result");
+            await Assert.That(result.TryGetProperty("isError", out var error) && error.GetBoolean()).IsFalse().Because(result.GetRawText());
+            var database = result.GetProperty("structuredContent");
+            await Assert.That(database.GetProperty("region").GetString()).IsEqualTo("SFO");
+            await Assert.That(database.GetProperty("allRegions").GetBoolean()).IsFalse();
+            await Assert.That(database.GetProperty("placement").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(new[] { "SFO" });
+            using var observations = JsonDocument.Parse(await producer.GetStringAsync("/__test/observations"));
+            await Assert.That(observations.RootElement.GetProperty("failures").GetArrayLength()).IsEqualTo(0);
         }
     }
 }

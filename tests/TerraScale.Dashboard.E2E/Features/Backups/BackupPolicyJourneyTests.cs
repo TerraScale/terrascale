@@ -73,7 +73,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
 
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
-            { ["_csrf"] = csrf, ["name"] = "policy-source", ["region"] = "GRU" });
+            { ["_csrf"] = csrf, ["name"] = "policy-source", ["homeRegion"] = "GRU" });
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
             var databaseId = (await BodyAsync(created)).GetProperty("id").GetString()!;
             using var snapshot = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/backups", new()

@@ -82,7 +82,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             foreach (var name in new[] { "measured-list", "quiet-list", "current-list" })
             {
-                using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = name, ["region"] = "GRU" });
+                using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = name, ["homeRegion"] = "GRU" });
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
                 using var body = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
                 if (name == "measured-list")

@@ -31,7 +31,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             string databaseId;
             using (var database = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
-            { ["_csrf"] = csrf, ["name"] = "customer-sdk", ["region"] = "GRU" }))
+            { ["_csrf"] = csrf, ["name"] = "customer-sdk", ["homeRegion"] = "GRU" }))
             {
                 Check(database.StatusCode == HttpStatusCode.Created, "Native database creation reaches the real production adapter");
                 using var json = JsonDocument.Parse(await database.Content.ReadAsStringAsync()); databaseId = json.RootElement.GetProperty("id").GetString()!;
