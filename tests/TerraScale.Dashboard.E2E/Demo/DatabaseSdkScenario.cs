@@ -148,7 +148,7 @@ namespace TerraScale.Dashboard.E2E
                 application.Services.Replace(ServiceDescriptor.Singleton(protocol.Platform));
                 var auth = (TestAuth)application.Services.Last(item => item.ServiceType == typeof(IAuthGateway)).ImplementationInstance!;
                 protocol.ResolveAccessToken = auth.ResolveAccessToken;
-                protocol.ResolveProjectToken = auth.ResolveProjectToken;
+                protocol.ResolveProjectToken = token => auth.ResolveProjectToken(token) ?? protocol.ApiKeys?.ResolveMachineToken(token);
                 protocol.ApiKeys ??= new TestAuthApiKeys(auth.ResolveAccessToken, protocol.KeyRole);
                 transport!.ApiKeys = protocol.ApiKeys;
                 application.Services.Replace(ServiceDescriptor.Singleton<IDashboardState>(state));
@@ -1279,6 +1279,9 @@ namespace TerraScale.Dashboard.E2E
                     return Error(404, "not_found");
                 }
 
+                var only = text.StartsWith("Bearer ", StringComparison.Ordinal) ? ApiKeys?.MachineDatabase(text[7..]) : null;
+                var parts = http.Request.Path.Value!.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                if (only is not null && (parts.Length < 5 || parts[4] != only)) return Error(404, "not_found");
                 if (!admitted.Scopes.Contains(scope, StringComparer.Ordinal))
                 {
                     return Error(403, "forbidden_scope");
@@ -1307,6 +1310,7 @@ namespace TerraScale.Dashboard.E2E
                     name = database.Name,
                     branchedFrom = database.BranchedFrom,
                     createdAt = database.CreatedAt,
+                    expiresAt = database.ExpiresAt,
                     region,
                     homeRegion = database.HomeRegion,
                     replicaRegions = database.ReplicaRegions ?? Array.Empty<string>(),
