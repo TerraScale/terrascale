@@ -157,9 +157,22 @@ with TerraScale() as ts:
 
 ### C# / .NET
 
-The .NET SDK on `main` does not yet expose the agent-database methods. Until it does, use the HTTP requests above. The
-shared names for these operations are `CreateDatabaseAsync`, `ForkDatabaseAsync`, `SetDatabaseTtlAsync`,
-`ClearDatabaseTtlAsync`, `DeleteDatabaseAsync` and `CreateScopedKeyAsync`.
+```csharp
+var sql = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { Region = "gru", ApiKey = apiKey });
+
+TerraBaseManagedDatabase run = await sql.CreateDatabaseAsync(projectId, "agent_run", ttlSeconds: 3600);
+TerraBaseManagedDatabase fork = await sql.ForkDatabaseAsync(projectId, run.Id, "agent_fork", ttlSeconds: 600);
+TerraBaseScopedKey key = await sql.CreateScopedKeyAsync(fork.Id, "read_write", projectId, ttlSeconds: 600);
+
+var agent = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { Region = "gru", ApiKey = key.Key });
+await agent.Database(projectId, fork.Id).ExecuteAsync("CREATE TABLE results (id TEXT PRIMARY KEY, value TEXT)");
+
+await sql.SetDatabaseTtlAsync(projectId, run.Id, 7200);
+await sql.ClearDatabaseTtlAsync(projectId, run.Id);
+await sql.DeleteDatabaseAsync(projectId, run.Id);
+```
+
+`ForkDatabaseAsync` also takes `pointInTime` to fork from an instant inside the source's restore window.
 
 ### Go
 
