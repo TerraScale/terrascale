@@ -86,8 +86,10 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         {
             using var response = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/key", new()
             {
-                ["_csrf"] = await HttpJourney.CsrfAsync(client, "/api-keys"), ["name"] = "Agent MCP",
-                ["scopes"] = "databases:read,databases:write,documents:read,documents:write", ["expiresInDays"] = "0"
+                ["_csrf"] = await HttpJourney.CsrfAsync(client, "/api-keys"),
+                ["name"] = "Agent MCP",
+                ["scopes"] = "databases:read,databases:write,documents:read,documents:write",
+                ["expiresInDays"] = "0"
             });
             response.EnsureSuccessStatusCode();
             using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
