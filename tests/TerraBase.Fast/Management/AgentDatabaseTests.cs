@@ -20,7 +20,7 @@ public sealed class AgentDatabaseTests
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         await using var api = await ManagementApi.StartAsync(services: services =>
         {
-            var convergence = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService) && descriptor.ImplementationType == typeof(CatalogConvergence));
+            var convergence = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService) && descriptor.ImplementationType == typeof(CatalogMaintenance));
             services.Remove(convergence);
         }, time: clock);
         var source = await api.CreateManagedDatabaseAsync();
@@ -41,7 +41,7 @@ public sealed class AgentDatabaseTests
         await Assert.That(forkRows).IsEquivalentTo(names);
 
         clock.Advance(TimeSpan.FromSeconds(61));
-        await api.Server.Services.GetRequiredService<EngineManagementService>().ConvergeAsync(CancellationToken.None);
+        await api.Server.Services.GetRequiredService<EngineManagementService>().RunMaintenanceAsync(CancellationToken.None);
         using var expired = await client.GetAsync(ManagementApi.Uri($"/v1/projects/{source.Project}/databases/agent"));
         await Assert.That(expired.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         using var kept = await client.GetAsync(ManagementApi.Uri($"/v1/projects/{source.Project}/databases/fork"));
