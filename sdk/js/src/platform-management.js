@@ -22,7 +22,7 @@ import { platformIdentityRoutes } from "./platform-management-routes.js";
 /** @typedef {IdentityTransportConfig & {readonly project: string; readonly projectApiKey: string | (() => string | Promise<string>)}} TerraScaleProjectIdentityClientConfig */
 /** @typedef {{readonly receipt: string; readonly organization?: string}} IdentityDeletionStatusRequest */
 /** @typedef {{readonly token: string}} IdentityInvitationTokenRequest */
-/** @typedef {{readonly user_id: string; readonly claims?: {readonly roles?: readonly string[] | null} | null}} IdentityEndUserTokenRequest */
+/** @typedef {{readonly user_id: string; readonly database?: string | null; readonly tables?: readonly string[] | null; readonly claims?: {readonly roles?: readonly string[] | null} | null}} IdentityEndUserTokenRequest */
 /** @typedef {{readonly limit?: number; readonly after?: string}} IdentityPageRequest */
 /** @typedef {{readonly name: string}} IdentityNameRequest */
 /** @typedef {"viewer" | "member" | "admin" | "owner"} IdentityOrganizationRole */
@@ -415,8 +415,13 @@ export function createTerraScaleProjectIdentityClient(config) {
   return Object.freeze({
     /** @param {IdentityEndUserTokenRequest} request @param {IdentityRequestOptions} [options] */
     mintEndUserToken: (request, options = {}) => {
-      members(request, ["user_id", "claims"]);
+      members(request, ["user_id", "database", "tables", "claims"]);
       requireId(request.user_id, "user_id");
+      if (request.database !== undefined && request.database !== null) requireId(request.database, "database");
+      const tables = request.tables;
+      if (tables !== undefined && tables !== null && (!Array.isArray(tables) || tables.length > 32 ||
+          tables.some(table => typeof table !== "string" || !/^[A-Za-z_][A-Za-z0-9_]{0,62}$/u.test(table))))
+        throw new TypeError("tables must contain at most 32 table names.");
       if (request.claims !== undefined && request.claims !== null) {
         members(request.claims, ["roles"]);
         const roles = request.claims.roles;
