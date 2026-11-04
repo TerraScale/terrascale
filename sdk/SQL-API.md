@@ -40,7 +40,7 @@ only that database. Server contract: `docs/terrabase/agent-databases.md`; record
   2,592,000 (30 days), default 3600; the key never outlives the parent key. `project` is required for an organization
   key and must equal the key's project for a project key. The parent must reach the database and hold the scopes.
   A scoped key cannot mint keys, manage databases or reach another database (404). Revoking or rotating the parent
-  revokes its scoped keys. `ScopedKey` is `{ key, id, projectId, database, access, expiresAt }`; `key` is shown once and
+  revokes its scoped keys. `ScopedKey` is ts-auth JSON in snake_case: `{"key","id","project_id","database","access","expires_at"}`, surfaced in each SDK's casing; `key` is shown once and
   is a normal API key string, so it goes straight into another client's `ApiKey` option.
 - Errors keep each SDK's HTTP error types; ts-auth refusals are 400 `invalid_request`, 401 `invalid_client`, 403
   `forbidden` (scope or database beyond the parent's) and 429 with Retry-After.
