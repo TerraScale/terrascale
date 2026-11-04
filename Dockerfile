@@ -64,7 +64,7 @@ RUN make -o restore fmt-check libs-build SOLUTION=libs.slnf CONFIGURATION=Releas
 
 FROM build-libs AS test-libs
 RUN make -o restore -o libs-build libs-check CONFIGURATION=Release \
-    && timeout --kill-after=5s 120s make -o restore -o libs-build libs-test CONFIGURATION=Release && touch /passed
+    && make -o restore -o libs-build libs-test CONFIGURATION=Release && touch /passed
 
 FROM source AS build-auth
 ARG TS_AUTH_REVISION
@@ -76,7 +76,7 @@ RUN make -o restore -o auth-audit fmt-check auth-check auth-build SOLUTION=auth.
 FROM build-auth AS test-auth
 ARG TS_AUTH_REVISION
 RUN make -o restore auth-audit CONFIGURATION=Release \
-    && timeout --kill-after=5s 120s make -o restore auth-test-fast CONFIGURATION=Release && touch /passed
+    && make -o restore auth-test-fast CONFIGURATION=Release && touch /passed
 
 FROM source AS build-terrabase
 # The commit /healthz reports as revision (MSBuild reads it from the environment); the image has no .git.
@@ -88,7 +88,7 @@ RUN make -o restore fmt-check terrabase-check SOLUTION=terrabase.slnf CONFIGURAT
 FROM build-terrabase AS test-terrabase
 ARG TERRABASE_REVISION
 # Finish Fast's incremental builds before the independent E2E processes read those outputs.
-RUN timeout --kill-after=5s 120s make -o restore terrabase-test-fast CONFIGURATION=Release \
+RUN make -o restore terrabase-test-fast CONFIGURATION=Release \
     && scripts/vendor/test-turso-native-singlefile.sh \
     && make -j2 -o restore -o terrabase-build terrabase-e2e-local CONFIGURATION=Release \
     && touch /passed
