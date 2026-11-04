@@ -1,3 +1,4 @@
+using TerraScale.Endpoints;
 using TerraScale.Dashboard.Platform.Observability;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -93,6 +94,7 @@ namespace TerraScale.Dashboard
             builder.Services.AddSingleton<IProfileTokens>(services => services.GetRequiredService<AccessTokens>());
             builder.Services.AddDashboardMcp();
             builder.Services.AddDashboardContracts();
+            builder.Services.AddTerraScaleEndpoints([EndpointRegistration.Create<DatabaseTtlEndpoint>()]);
             builder.Services.AddTransient<ServerTiming.Handler>();
             builder.Services.AddTransient<RequestIdentity.Handler>();
             builder.Services.AddTransient<PlatformTransport.PreferHttp2>();
@@ -294,6 +296,7 @@ namespace TerraScale.Dashboard
             app.MapDashboardMcp();
             app.MapDevelopmentUpdates();
             app.MapDashboardContracts();
+            app.MapTerraScaleEndpoints();
             app.MapFallback(async (HttpContext context, DashboardSessions sessions, AccountService accounts) =>
             {
                 context.Response.StatusCode = StatusCodes.Status404NotFound;

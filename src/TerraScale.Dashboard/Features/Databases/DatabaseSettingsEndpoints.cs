@@ -48,7 +48,7 @@ namespace TerraScale.Dashboard.Features.Databases
             return endpoints;
         }
 
-        private static IResult Page(HttpContext http, AccountContext context, string id, string error = "", string name = "", string confirmation = "", int status = 200)
+        internal static IResult Page(HttpContext http, AccountContext context, string id, string error = "", string name = "", string confirmation = "", int status = 200)
         {
             try
             {
