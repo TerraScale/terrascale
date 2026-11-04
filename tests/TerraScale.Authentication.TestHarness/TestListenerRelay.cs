@@ -127,11 +127,14 @@ internal sealed class TestListenerRelay : IAsyncDisposable
     private static async Task RelayAsync(TcpClient client, IPEndPoint backend, CancellationToken cancellationToken)
     {
         using (client)
-        using (var upstream = new TcpClient())
+        using (var upstream = new TcpClient { NoDelay = true })
         using (var connection = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         {
             try
             {
+                // Forward HTTP/2 frames immediately, as Kestrel and HttpClient do.
+                // Nagle plus delayed ACKs otherwise adds a pause to small writes.
+                client.NoDelay = true;
                 await upstream.ConnectAsync(backend, connection.Token);
                 await Task.WhenAll(CopyAsync(client, upstream, connection), CopyAsync(upstream, client, connection));
             }
