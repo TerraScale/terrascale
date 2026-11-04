@@ -274,7 +274,7 @@ jobs:
 
   # ts-ship retains the checked build and uncached Fast proof for this exact commit.
   libs:
-    needs: [changes, native]
+    needs: changes
     if: contains(fromJSON(needs.changes.outputs.fast), 'libs')
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -292,7 +292,7 @@ jobs:
         run: python3 scripts/ci/qualified-build.py verify libs
 
   auth:
-    needs: [changes, native]
+    needs: changes
     if: contains(fromJSON(needs.changes.outputs.fast), 'auth')
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -305,7 +305,7 @@ jobs:
         run: python3 scripts/ci/qualified-build.py verify auth
 
   terrabase:
-    needs: [changes, native]
+    needs: changes
     if: contains(fromJSON(needs.changes.outputs.fast), 'terrabase')
     runs-on: ubuntu-latest
     timeout-minutes: 2
