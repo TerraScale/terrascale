@@ -46,7 +46,7 @@ internal static class SqlScript
         "foreign_key_check",
     ];
 
-    private static readonly SqlError Reserved = SqlErrors.Error("names starting with _tb_ or turso_, and the engine's own tables, are reserved");
+    private static readonly SqlError Reserved = SqlErrors.Error("names starting with _tb_, and internal table names, are reserved");
 
     public static bool IsReservedName(string name) => TerraBaseSqlNames.IsInternalTable(name);
 
@@ -272,21 +272,4 @@ internal static class SqlScript
 
         return slots;
     }
-}
-
-internal static class SqlErrors
-{
-    public static SqlError Error(string message) => new("SQLITE_ERROR", message);
-
-    public static SqlError NonFinite { get; } = Error("nonfinite numbers are not supported");
-
-    public static SqlError Auth { get; } = new("SQLITE_AUTH", "writes and schema changes need the documents:write scope");
-
-    public static SqlError Busy(string message) => new("SQLITE_BUSY", message);
-
-    public static SqlError TooBig(string message) => new("SQLITE_TOOBIG", message);
-
-    public static SqlError Interrupt { get; } = new("SQLITE_INTERRUPT", "query too expensive: it exceeds the work budget");
-
-    public static SqlError Constraint(string kind, string message) => new("SQLITE_CONSTRAINT_" + kind, message);
 }

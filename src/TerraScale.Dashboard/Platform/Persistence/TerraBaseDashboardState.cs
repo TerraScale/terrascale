@@ -85,7 +85,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
                 {
                     await ExecuteAsync([new($"INSERT INTO {Table(table)} (id, version, body) VALUES (?, ?, ?)", [id, version, body.GetRawText()])], cancellationToken);
                 }
-                catch (TerraBaseException error) when (error.Fault.SqliteCode?.StartsWith("SQLITE_CONSTRAINT", StringComparison.Ordinal) == true)
+                catch (TerraBaseException error) when (error.Fault.Sqlstate?.StartsWith("23", StringComparison.Ordinal) == true)
                 {
                     throw new StateConflictException();
                 }
