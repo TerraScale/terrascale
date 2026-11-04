@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using Bogus;
+using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Features.Management;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Testing;
 
@@ -15,7 +17,11 @@ public sealed class AgentDatabaseTests
     public async Task An_agent_database_is_created_fast_forked_equal_to_its_source_and_deleted_at_the_end_of_its_ttl()
     {
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        await using var api = await ManagementApi.StartAsync(time: clock);
+        await using var api = await ManagementApi.StartAsync(services: services =>
+        {
+            var convergence = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService) && descriptor.ImplementationType == typeof(CatalogConvergence));
+            services.Remove(convergence);
+        }, time: clock);
         var source = await api.CreateManagedDatabaseAsync();
         using var client = ProjectClient(api, source.Project);
         var names = Enumerable.Range(0, 5).Select(_ => Faker.Name.FullName()).ToList();
@@ -33,12 +39,10 @@ public sealed class AgentDatabaseTests
         await Assert.That(fork.GetProperty("branchedFrom").GetString()).IsEqualTo(source.Id);
         await Assert.That(forkRows).IsEquivalentTo(names);
 
-        await TerraBaseTestServer.EventuallyAsync(async token =>
-        {
-            clock.Advance(TimeSpan.FromSeconds(5));
-            using var read = await client.GetAsync(ManagementApi.Uri($"/v1/projects/{source.Project}/databases/agent"), token);
-            return read.StatusCode == HttpStatusCode.NotFound;
-        }, TimeSpan.FromSeconds(60));
+        clock.Advance(TimeSpan.FromSeconds(61));
+        await api.Server.Services.GetRequiredService<EngineManagementService>().ConvergeAsync(CancellationToken.None);
+        using var expired = await client.GetAsync(ManagementApi.Uri($"/v1/projects/{source.Project}/databases/agent"));
+        await Assert.That(expired.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         using var kept = await client.GetAsync(ManagementApi.Uri($"/v1/projects/{source.Project}/databases/fork"));
         await Assert.That(kept.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var cleared = await (await client.DeleteAsync(ManagementApi.Uri($"/v1/projects/{source.Project}/databases/fork/ttl"))).Content.ReadFromJsonAsync<JsonElement>();
