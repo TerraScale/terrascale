@@ -40,7 +40,7 @@ internal sealed class RemoteDatabases(IHttpClientFactory http, InternalCredentia
             request.Headers.Add(InternalCredential.HeaderName, secret);
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
             return response.StatusCode == HttpStatusCode.OK
-                ? await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.ManagementPageOfManagedDatabaseBody, timeout.Token).ConfigureAwait(false)
+                ? await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.ManagementPageManagedDatabaseBody, timeout.Token).ConfigureAwait(false)
                 : null;
         }
         catch (Exception error) when (error is HttpRequestException or JsonException
