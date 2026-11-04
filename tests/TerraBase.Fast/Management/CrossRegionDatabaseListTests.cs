@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Features.Management;
 using TerraBase.Primitives;
 using TerraBase.Testing;
@@ -39,7 +40,7 @@ public sealed class CrossRegionDatabaseListTests
         using var listed = await local.GetAsync(ManagementApi.Uri(path));
         await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var page = await listed.Content.ReadFromJsonAsync<JsonElement>();
-        await Assert.That(page.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("name").GetString()))
+        await Assert.That(page.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("name").GetString()!))
             .IsEquivalentTo(["athome", "away"]);
 
         using var paged = await local.GetAsync(ManagementApi.Uri(path + "?limit=1"));
