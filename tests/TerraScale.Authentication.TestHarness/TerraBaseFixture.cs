@@ -21,11 +21,11 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
         this.server = running ?? throw new InvalidOperationException($"Real TerraBase integration tests need TerraBase: {unavailable}");
     }
 
-    public async Task<(TerraBaseTestTenant Tenant, TerraBaseDatabase Database)> CreateDatabaseAsync(bool provision = true)
+    public async Task<(TerraBaseTestTenant Tenant, TerraBaseSqlDatabase Database)> CreateDatabaseAsync(bool provision = true)
     {
         var tenant = await this.Server.CreateTenantAsync();
-        var database = this.Server.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth");
-        await database.CreateAsync();
+        await this.Server.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth").CreateAsync();
+        var database = this.Server.Sql(tenant.ApiKey).Database(tenant.Project.Id, "auth");
         if (provision)
         {
             await new AuthStore(database, TimeProvider.System).ProvisionAsync();
@@ -43,9 +43,9 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     public void UseStorage(IServiceCollection services, TerraBaseTestTenant tenant, string databaseName = "auth", string? apiKey = null)
     {
         services.AddSingleton(apiKey is null ? this.Server.Http : this.Server.PublicHttp);
-        services.AddSingleton(provider => new TerraBaseDocumentsClient(provider.GetRequiredService<HttpClient>(), apiKey is null
-            ? new TerraBaseDocumentsClientOptions { BaseAddress = this.Server.InternalAddress }
-            : new TerraBaseDocumentsClientOptions { BaseAddress = this.Server.ClientAddress, ApiKey = apiKey }).Database(tenant.Project.Id, databaseName));
+        services.AddSingleton(provider => new TerraBaseSqlClient(provider.GetRequiredService<HttpClient>(), apiKey is null
+            ? new TerraBaseSqlClientOptions { BaseAddress = this.Server.InternalAddress }
+            : new TerraBaseSqlClientOptions { BaseAddress = this.Server.ClientAddress, ApiKey = apiKey }).Database(tenant.Project.Id, databaseName));
         // Project closures reach this same regional TerraBase: its internal listener, with the peer credential.
         services.AddKeyedSingleton(App.StorageAuthority, (_, _) => this.Server.Management());
     }
@@ -56,17 +56,17 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     {
         services.AddSingleton(new HttpClient(TerraBaseTransport.CreateHandler([], NullLogger.Instance, resolve,
             peerSecret: TerraBaseTestServer.PeerSecret)));
-        services.AddSingleton(provider => new TerraBaseDocumentsClient(provider.GetRequiredService<HttpClient>(),
-            new TerraBaseDocumentsClientOptions { BaseAddress = ownRegion }).Database(tenant.Project.Id, localDatabase));
+        services.AddSingleton(provider => new TerraBaseSqlClient(provider.GetRequiredService<HttpClient>(),
+            new TerraBaseSqlClientOptions { BaseAddress = ownRegion }).Database(tenant.Project.Id, localDatabase));
         services.AddKeyedSingleton(App.StorageAuthority, (provider, _) => new TerraBaseManagementClient(provider.GetRequiredService<HttpClient>(),
             new TerraBaseManagementClientOptions { BaseAddress = ownRegion }));
     }
 
     /// <summary>Creates and provisions another copy of the tenant's storage, <paramref name="name"/>: another region's.</summary>
-    public async Task<TerraBaseDatabase> CreateCopyAsync(TerraBaseTestTenant tenant, string name)
+    public async Task<TerraBaseSqlDatabase> CreateCopyAsync(TerraBaseTestTenant tenant, string name)
     {
-        var copy = this.Server.Documents(tenant.ApiKey).Database(tenant.Project.Id, name);
-        await copy.CreateAsync();
+        await this.Server.Documents(tenant.ApiKey).Database(tenant.Project.Id, name).CreateAsync();
+        var copy = this.Server.Sql(tenant.ApiKey).Database(tenant.Project.Id, name);
         await new AuthStore(copy, TimeProvider.System).ProvisionAsync();
         return copy;
     }

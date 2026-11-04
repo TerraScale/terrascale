@@ -62,7 +62,7 @@ public sealed class StorageRecoveryTests
             await Assert.That((terrabase.ClientAddress, terrabase.InternalAddress)).IsEqualTo(front);
             await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, Recovery)).IsTrue();
             await Assert.That(await KeyIdAsync(auth)).IsEqualTo(before);
-            var keys = await terrabase.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth").RowsAsync(AuthStore.SigningKeyCollection);
+            var keys = await terrabase.Sql(tenant.ApiKey).Database(tenant.Project.Id, "auth").RowsAsync(AuthStore.SigningKeyCollection);
             await Assert.That(keys.Count).IsEqualTo(1);
         }
         finally
@@ -80,8 +80,8 @@ public sealed class StorageRecoveryTests
         var (running, unavailable) = await TerraBaseTestServer.StartAsync();
         await using var terrabase = running ?? throw new InvalidOperationException(unavailable);
         var tenant = await terrabase.CreateTenantAsync();
-        var database = terrabase.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth");
-        var created = await database.CreateAsync();
+        var created = await terrabase.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth").CreateAsync();
+        var database = terrabase.Sql(tenant.ApiKey).Database(tenant.Project.Id, "auth");
         await using var auth = await StartAuthAsync(terrabase, tenant, provision: true);
         await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, Recovery)).IsTrue();
         var keys = await database.RowsAsync(AuthStore.SigningKeyCollection);
@@ -161,6 +161,6 @@ public sealed class StorageRecoveryTests
         }, services: services =>
         {
             services.AddSingleton(terrabase.Http);
-            services.AddSingleton(_ => terrabase.InternalDocuments().Database(tenant.Project.Id, "auth"));
+            services.AddSingleton(_ => terrabase.InternalSql().Database(tenant.Project.Id, "auth"));
         }, beforeStart: provision ? services => SigningKeyProvisioning.ProvisionAsync(services, CancellationToken.None) : null);
 }

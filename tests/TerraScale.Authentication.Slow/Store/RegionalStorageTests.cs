@@ -60,10 +60,10 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
 
     private static readonly JsonElement Record = TerraBaseFixture.Json($$"""{"instanceId":"{{Instance}}"}""");
 
-    private static Users UsersIn(TerraBaseDatabase copy) => new(new AuthStore(copy, TimeProvider.System), TimeProvider.System);
+    private static Users UsersIn(TerraBaseSqlDatabase copy) => new(new AuthStore(copy, TimeProvider.System), TimeProvider.System);
 
     // A project of the issuer's instance in the copy: its tenant's discovery document is served while it exists.
-    private static async Task<string> ProjectAsync(TerraBaseDatabase copy)
+    private static async Task<string> ProjectAsync(TerraBaseSqlDatabase copy)
     {
         var id = AuthStore.NewId();
         await new AuthStore(copy, TimeProvider.System).CreateAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, id, Record);
@@ -71,7 +71,7 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
     }
 
     // Provisions a signing key in the copy, under the server's master key; returns its key id.
-    private static async Task<string> KeyAsync(AuthTestServer auth, TerraBaseDatabase copy)
+    private static async Task<string> KeyAsync(AuthTestServer auth, TerraBaseSqlDatabase copy)
     {
         await new KeyRing(new AuthStore(copy, TimeProvider.System), auth.App.Services.GetRequiredService<AuthOptions>(), TimeProvider.System)
             .ProvisionAsync(OidcIssuer.InstanceId, CancellationToken.None);

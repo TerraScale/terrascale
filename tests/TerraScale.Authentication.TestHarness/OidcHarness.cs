@@ -121,7 +121,7 @@ public sealed partial class OidcHarness : IAsyncDisposable
     private readonly TerraBaseFixture? fixture;
     private readonly string masterKey;
 
-    private OidcHarness(TerraBaseFixture? fixture, TerraBaseTestTenant tenant, string masterKey, AuthTestServer server, TerraBaseDatabase database, CapturingEmailSender email)
+    private OidcHarness(TerraBaseFixture? fixture, TerraBaseTestTenant tenant, string masterKey, AuthTestServer server, TerraBaseSqlDatabase database, CapturingEmailSender email)
     {
         this.fixture = fixture;
         this.Tenant = tenant;
@@ -135,7 +135,7 @@ public sealed partial class OidcHarness : IAsyncDisposable
 
     public AuthTestServer Server { get; }
 
-    public TerraBaseDatabase Database { get; }
+    public TerraBaseSqlDatabase Database { get; }
 
     public CapturingEmailSender Email { get; }
 

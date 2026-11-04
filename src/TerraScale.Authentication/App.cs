@@ -81,11 +81,11 @@ public static class App
             services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>(),
             peerSecret: services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable]),
             services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable]))));
-        builder.Services.AddSingleton(services => new TerraBaseDocumentsClient(services.GetRequiredService<HttpClient>(), new TerraBaseDocumentsClientOptions
+        builder.Services.AddSingleton(services => new TerraBaseSqlClient(services.GetRequiredService<HttpClient>(), new TerraBaseSqlClientOptions
         {
             BaseAddress = TerraBaseOrigin(options),
         }).Database(StorageProject, StorageDatabase));
-        builder.Services.AddSingleton(services => new AuthStore(services.GetRequiredService<TerraBaseDatabase>(), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddSingleton(services => new AuthStore(services.GetRequiredService<TerraBaseSqlDatabase>(), services.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton<Users>();
         builder.Services.AddSingleton<Sessions>();
         builder.Services.AddSingleton<Passcodes>();
@@ -94,7 +94,7 @@ public static class App
         builder.Services.AddSingleton<TotpCredentials>();
         builder.Services.AddSingleton<PlatformDirectory>();
         builder.Services.AddSingleton<AccountDeletion>();
-        // Shared-history erasure and project closure reach TerraBase through the regional peer transport, acting as no user.
+        // Project closure reaches TerraBase through the regional peer transport, acting as no user.
         builder.Services.AddKeyedSingleton(StorageAuthority, (services, _) => new TerraBaseManagementClient(services.GetRequiredService<HttpClient>(),
             new TerraBaseManagementClientOptions { BaseAddress = TerraBaseOrigin(options) }));
         builder.Services.AddSingleton<Closures>();
@@ -139,7 +139,7 @@ public static class App
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, PooledConnectionLifetime = PublicAddresses.ConnectionLifetime });
         builder.Services.AddHostedService<SessionPruner>();
         // Ready means this regional copy takes writes.
-        builder.Services.AddSingleton(services => new TerraBaseStorageHealth(services.GetRequiredService<TerraBaseDatabase>()));
+        builder.Services.AddSingleton(services => new TerraBaseStorageHealth(services.GetRequiredService<TerraBaseSqlDatabase>()));
         builder.Services.AddSingleton<IStorageHealth, SigningKeyReadiness>();
         builder.Services.AddSingleton<ReadinessProbe>();
         builder.Services.AddHostedService(services => services.GetRequiredService<ReadinessProbe>());
@@ -227,7 +227,7 @@ public static class App
         var app = builder.Build();
         app.UseTerraScaleRequestIdentity(AuthStore.NewId, builder.Configuration[TerraBaseTransport.PeerSecretVariable]);
         // Resolved now, so a ts-auth without storage refuses to start (see TerraBaseOrigin); tests may register their own.
-        app.Services.GetRequiredService<TerraBaseDatabase>();
+        app.Services.GetRequiredService<TerraBaseSqlDatabase>();
         // Hashes its timing equalizer now, so the first password check of an unknown account costs no more than any other.
         app.Services.GetRequiredService<PasswordHasher>();
         app.Use((HttpContext context, RequestDelegate next) =>

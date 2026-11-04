@@ -43,7 +43,7 @@ public sealed class PlatformRoleTests(TerraBaseFixture fixture)
     }
 
     // What an operator does through TerraBase's internal listener: edits the stored user.
-    private static async Task SetRoleAsync(TerraBaseDatabase database, string userId, string? role)
+    private static async Task SetRoleAsync(TerraBaseSqlDatabase database, string userId, string? role)
     {
         var id = AuthStore.NaturalKeyId(OidcIssuer.InstanceId, AuthStore.UserCollection, userId);
         var stored = (await database.RowAsync(AuthStore.UserCollection, id))!;

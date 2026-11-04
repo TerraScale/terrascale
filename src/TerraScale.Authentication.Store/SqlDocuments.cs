@@ -44,11 +44,11 @@ internal sealed record CursorPosition(
 [JsonSerializable(typeof(CursorPosition))]
 internal sealed partial class SqlDocumentsJson : JsonSerializerContext;
 
-internal sealed class SqlDocuments(TerraBaseDatabase database)
+internal sealed class SqlDocuments(TerraBaseSqlDatabase database)
 {
     public const string ChecksTable = "store_checks";
 
-    private const int MaxStatements = TerraBaseDatabase.MaxSqlStatements;
+    private const int MaxStatements = TerraBaseSqlStatement.MaxPerRequest;
 
     private sealed record Statement(TerraBaseSqlStatement Sql, int Operation, string Kind);
 
@@ -65,16 +65,16 @@ internal sealed class SqlDocuments(TerraBaseDatabase database)
 
     public async Task<IReadOnlySet<string>> TablesAsync(CancellationToken cancellationToken)
     {
-        var rows = await database.QuerySqlAsync("SELECT name FROM sqlite_schema WHERE type = 'table'", cancellationToken: cancellationToken).ConfigureAwait(false);
+        var rows = await database.QueryAsync("SELECT name FROM sqlite_schema WHERE type = 'table'", cancellationToken: cancellationToken).ConfigureAwait(false);
         return rows.Select(row => row.GetString(0)).ToHashSet(StringComparer.Ordinal);
     }
 
     public Task ProvisionAsync(IEnumerable<string> collections, CancellationToken cancellationToken) =>
-        database.ExecuteSqlBatchAsync([.. Schema(collections)], cancellationToken);
+        database.BatchAsync([.. Schema(collections)], cancellationToken);
 
     public async Task<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken)
     {
-        var rows = await database.QuerySqlAsync($"SELECT id, body, version FROM {Table(collection)} WHERE id = ?", [id], cancellationToken).ConfigureAwait(false);
+        var rows = await database.QueryAsync($"SELECT id, body, version FROM {Table(collection)} WHERE id = ?", [id], cancellationToken).ConfigureAwait(false);
         return rows.Count == 0 ? null : Read(rows[0]);
     }
 
@@ -116,7 +116,7 @@ internal sealed class SqlDocuments(TerraBaseDatabase database)
         long? total = null;
         if (count)
         {
-            var counted = await database.QuerySqlAsync($"SELECT count(*) FROM {Table(collection)} WHERE {where}", args, cancellationToken).ConfigureAwait(false);
+            var counted = await database.QueryAsync($"SELECT count(*) FROM {Table(collection)} WHERE {where}", args, cancellationToken).ConfigureAwait(false);
             total = counted[0].GetInt64(0);
         }
 
@@ -137,7 +137,7 @@ internal sealed class SqlDocuments(TerraBaseDatabase database)
         var direction = descending ? "DESC" : "ASC";
         var order = sortPath is null ? $"id {direction}" : $"s {direction}, id {direction}";
         pageArgs.Add(limit + 1);
-        var rows = await database.QuerySqlAsync(
+        var rows = await database.QueryAsync(
             $"SELECT id, body, version, {sortExpression} AS s FROM {Table(collection)} WHERE {page} ORDER BY {order} LIMIT ?", pageArgs, cancellationToken).ConfigureAwait(false);
         var items = rows.Take(limit).Select(Read).ToList();
         string? next = null;
@@ -203,13 +203,13 @@ internal sealed class SqlDocuments(TerraBaseDatabase database)
 
         try
         {
-            await database.ExecuteSqlBatchAsync([.. statements.Select(statement => statement.Sql)], cancellationToken).ConfigureAwait(false);
+            await database.BatchAsync([.. statements.Select(statement => statement.Sql)], cancellationToken).ConfigureAwait(false);
             return versions;
         }
         catch (TerraBaseSqlException error) when (error.Statement >= 0 && error.Statement < statements.Count
             && statements[error.Statement] is var statement
-            && (statement.Kind == "guard" && error.SqliteCode == "SQLITE_CONSTRAINT_CHECK"
-                || statement.Kind == "insert" && error.SqliteCode is "SQLITE_CONSTRAINT_PRIMARYKEY" or "SQLITE_CONSTRAINT_UNIQUE"))
+            && (statement.Kind == "guard" && error.Code == TerraBaseSqlErrorCodes.CheckViolation
+                || statement.Kind == "insert" && error.Code is TerraBaseSqlErrorCodes.PrimaryKeyViolation or TerraBaseSqlErrorCodes.UniqueViolation))
         {
             failed?.Invoke(statement.Operation);
             return null;

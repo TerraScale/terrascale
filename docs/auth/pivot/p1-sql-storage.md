@@ -1,7 +1,7 @@
 # ts-auth storage on SQL tables (pivot P1)
 
 ts-auth keeps all of its state in its TerraBase database as SQL tables. It reaches them only through the .NET SDK's SQL route
-(`TerraBaseDatabase.ExecuteSqlBatchAsync`, `POST /v1/projects/{project}/databases/{database}/sql/execute`). It makes no
+(`TerraBaseSqlClient` / `TerraBaseSqlDatabase.BatchAsync`, `POST /v1/projects/{project}/databases/{database}/sql/execute`). It makes no
 Documents API calls.
 
 ## Schema
@@ -35,11 +35,11 @@ request is all or nothing. A request is built in two parts:
 
 1. **Guards**, which see the state before any write in the request. Each guard is
    `INSERT INTO store_checks (ok) SELECT 0 WHERE NOT (<condition>)`. When the condition is false, the CHECK constraint fails,
-   the whole request rolls back, and `SQLITE_CONSTRAINT_CHECK` names the guard's statement index.
+   the whole request rolls back, and the `check_violation` error names the guard's statement index.
    - replace or delete at a version: `EXISTS (... WHERE id = ? AND version = ?)`
    - absent: `NOT EXISTS (... WHERE id = ?)`
    - assertion: `EXISTS (... WHERE id = ? AND <filter>)`
-2. **Writes**: `INSERT` (create only; a taken key fails with `SQLITE_CONSTRAINT_PRIMARYKEY`), `UPDATE` or `DELETE` by id.
+2. **Writes**: `INSERT` (create only; a taken key fails with `primary_key_violation`), `UPDATE` or `DELETE` by id.
 
 The statement that fails maps back to the caller's operation index. The failure is a `StorePreconditionFailedException`, or
 the `int?` index from `AuthStore.TransactAsync`. Any other SQL error propagates. A missing table fails closed.

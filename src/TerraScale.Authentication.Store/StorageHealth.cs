@@ -10,7 +10,7 @@ public interface IStorageHealth
     Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken);
 }
 
-public sealed class TerraBaseStorageHealth(TerraBaseDatabase database) : IStorageHealth
+public sealed class TerraBaseStorageHealth(TerraBaseSqlDatabase database) : IStorageHealth
 {
     private static readonly JsonElement ProbeDocument = JsonSerializer.SerializeToElement(new Dictionary<string, bool> { ["probe"] = true });
     private readonly SqlDocuments sql = new(database);

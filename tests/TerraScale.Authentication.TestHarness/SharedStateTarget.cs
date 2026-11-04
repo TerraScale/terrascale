@@ -15,7 +15,7 @@ public sealed class SharedStateTarget
     private readonly TerraBaseFixture fixture;
     private readonly TerraBaseTestTenant tenant;
 
-    private SharedStateTarget(TerraBaseFixture fixture, TerraBaseTestTenant tenant, TerraBaseDatabase database)
+    private SharedStateTarget(TerraBaseFixture fixture, TerraBaseTestTenant tenant, TerraBaseSqlDatabase database)
     {
         this.fixture = fixture;
         this.tenant = tenant;
@@ -23,7 +23,7 @@ public sealed class SharedStateTarget
     }
 
     /// <summary>The database every bound server stores in.</summary>
-    public TerraBaseDatabase Database { get; }
+    public TerraBaseSqlDatabase Database { get; }
 
     /// <summary>Creates and provisions a database for one test.</summary>
     public static async Task<SharedStateTarget> CreateAsync(TerraBaseFixture fixture)
@@ -37,7 +37,7 @@ public sealed class SharedStateTarget
 
     public async Task<JsonElement?> ReadAsync(string collection, string instanceId, string key)
     {
-        var rows = await this.Database.QuerySqlAsync($"SELECT body FROM \"{collection}\" WHERE id = ?", [AuthStore.NaturalKeyId(instanceId, collection, key)]);
+        var rows = await this.Database.QueryAsync($"SELECT body FROM \"{collection}\" WHERE id = ?", [AuthStore.NaturalKeyId(instanceId, collection, key)]);
         if (rows.Count == 0)
         {
             return null;
@@ -48,7 +48,7 @@ public sealed class SharedStateTarget
     }
 
     public async Task<int> CountAsync(string collection) =>
-        (int)(await this.Database.QuerySqlAsync($"SELECT count(*) FROM \"{collection}\""))[0].GetInt64(0);
+        (int)(await this.Database.QueryAsync($"SELECT count(*) FROM \"{collection}\""))[0].GetInt64(0);
 }
 
 /// <summary>A wall clock the test moves by hand.</summary>

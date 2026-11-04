@@ -123,6 +123,10 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     /// <summary>A Documents API client on the internal listener with the peer credential: how ts-auth reaches TerraBase.</summary>
     public TerraBaseDocumentsClient InternalDocuments() => new(this.Http, new TerraBaseDocumentsClientOptions { BaseAddress = this.InternalAddress });
 
+    public TerraBaseSqlClient Sql(string apiKey) => new(this.PublicHttp, new TerraBaseSqlClientOptions { BaseAddress = this.ClientAddress, ApiKey = apiKey });
+
+    public TerraBaseSqlClient InternalSql() => new(this.Http, new TerraBaseSqlClientOptions { BaseAddress = this.InternalAddress });
+
     /// <summary>Issues an API key for <paramref name="organizationId"/> (<c>POST /admin/api-keys</c>, internal listener).</summary>
     public async Task<string> CreateApiKeyAsync(
         string organizationId, IReadOnlyList<string>? scopes = null, string? projectId = null, CancellationToken cancellationToken = default)

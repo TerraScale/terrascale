@@ -17,7 +17,7 @@ internal sealed record UniqueClaim(string InstanceId, string Kind, string OwnerI
 
 internal sealed record ClosureMark(string Generation, DateTimeOffset? CommittedAt = null);
 
-public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
+public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
 {
     private readonly SqlDocuments sql = new(local);
 

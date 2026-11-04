@@ -51,7 +51,7 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorE
             Diagnose(context, error, () => logger.ZLogWarning(error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error);
         }
-        catch (TerraBaseSqlException busy) when (!context.Response.HasStarted && busy.Code == "sql_conflict")
+        catch (TerraBaseSqlException busy) when (!context.Response.HasStarted && busy.Code is TerraBaseSqlErrorCodes.SerializationConflict or TerraBaseSqlErrorCodes.TenantBusy or TerraBaseSqlErrorCodes.Unavailable)
         {
             var error = ApiException.Unavailable(busy);
             Diagnose(context, error, () => logger.ZLogError(error, $"Request failed with {error.Code:@Code}"));
