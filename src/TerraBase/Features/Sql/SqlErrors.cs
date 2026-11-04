@@ -87,6 +87,10 @@ internal static class SqlErrors
 
     public static SqlError Busy(string message) => new(SerializationConflict, message);
 
+    public static SqlError Moved(Engine.DatabaseMovedException moved) => moved.Home is { } home
+        ? new(WrongRegion, moved.Message, home)
+        : Busy(moved.Message);
+
     public static SqlError TooBig(string message) => new(TooLarge, message);
 
     public static SqlError Quota(string message) => new(QuotaExceeded, message);
