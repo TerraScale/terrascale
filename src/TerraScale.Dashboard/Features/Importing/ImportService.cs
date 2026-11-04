@@ -117,7 +117,7 @@ namespace TerraScale.Dashboard.Features.Importing
 
             var options = new TerraBaseImportOptions([], target);
             var destination = context.Project!.Databases.Values.FirstOrDefault(item => item.Name == database)
-                ?? await databases.CreateAsync(context, database, [context.Project.Region], false, ct);
+                ?? await databases.CreateAsync(context, database, context.Project.Region, ct);
             var scope = DatabaseService.Scope(context);
             var job = await (await Import(context, await databases.HomeAsync(context, destination, ct), Write, ct))
                 .CreateImportAsync(scope.ProjectId, database, Formats.First(item => Wire(item.Key) == format).Key, bytes, sha256, options);

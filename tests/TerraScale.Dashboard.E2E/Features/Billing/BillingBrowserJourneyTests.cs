@@ -119,7 +119,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             var branchId = "";
             try
             {
-                var source = await ToolAsync("create_database", new { name, regions = new[] { "GRU", "SJC" } });
+                var source = await ToolAsync("create_database", new { name, region = "GRU" });
                 sourceId = source.GetProperty("id").GetString()!;
                 var csrf = await HttpJourney.CsrfAsync(client, "/databases/" + sourceId + "/documents");
                 using var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()
