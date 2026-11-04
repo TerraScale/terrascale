@@ -8,6 +8,11 @@ public readonly record struct HlcTimestamp(long PhysicalMilliseconds, uint Logic
         var logical = Logical.CompareTo(other.Logical);
         return physical != 0 ? physical : logical != 0 ? logical : StringComparer.Ordinal.Compare(NodeId, other.NodeId);
     }
+
+    public static bool operator <(HlcTimestamp left, HlcTimestamp right) => left.CompareTo(right) < 0;
+    public static bool operator >(HlcTimestamp left, HlcTimestamp right) => left.CompareTo(right) > 0;
+    public static bool operator <=(HlcTimestamp left, HlcTimestamp right) => left.CompareTo(right) <= 0;
+    public static bool operator >=(HlcTimestamp left, HlcTimestamp right) => left.CompareTo(right) >= 0;
 }
 
 public interface IHlcClock
