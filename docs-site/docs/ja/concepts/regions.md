@@ -38,11 +38,13 @@ regions (`allRegions`) is coming; name each replica region today.
 ## Connect from any region
 
 REST requests and Postgres sessions can reach the database's home from any serving region. The home commits writes.
-A REST request containing only reads can use a ready replica in the region receiving the request. Reads before the
-replica is ready go to the home. Local replica reads over psql and SQL WebSocket are coming.
+REST requests containing only reads, psql reads outside a transaction or in a read-only transaction, and read-only
+SQL WebSocket frames can use a ready replica in the region receiving the connection. Writes and other transactions
+run at the home. Reads before the replica is ready go to the home.
 
-A replica can lag behind the home. Send reads that must see a previous write to the home region. Replicas are read-only;
-they do not make writes available when the home is unavailable. See [replication](/ja/concepts/replication).
+A replica can lag behind the home. Postgres and WebSocket sessions preserve read-your-writes by using the home until
+the replica catches up. REST reads are eventually consistent; send them to the home when they must see a previous write.
+Replicas are read-only; they do not make writes available when the home is unavailable. See [replication](/ja/concepts/replication).
 
 ## Storage and billing
 
