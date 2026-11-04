@@ -54,6 +54,9 @@ IReadOnlyList<Person> people = await db.QueryAsync("SELECT id, name FROM people"
   A REST request refused with `serialization_conflict` is resent at most twice; nothing else is resent.
 - Primary keys are ULIDs from `TerraScaleIdGenerator`; tables that take local writes avoid `AUTOINCREMENT`.
 
+[`samples/sql-quickstart.cs`](samples/sql-quickstart.cs) runs this flow against a live region with a ts CLI sign-in:
+`dotnet run samples/sql-quickstart.cs -- <refresh-token-file> <organization> <project> <database> <region>`.
+
 ## Database request observations
 
 Read recent authorized request observations with `await database.ListRequestLogsAsync(status: "2xx", cancellationToken: ct)`.
