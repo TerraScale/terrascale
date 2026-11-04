@@ -8,8 +8,8 @@ Hosting: [OCI and ts-orch](../oci.md). Local processes: [ts-auth local host](loc
 
 A hosted identity provider in the Clerk / Auth0 / WorkOS category, built on
 TerraBase. The service is written in C# on .NET 10: ASP.NET Core with every
-API declared through `TerraScale.Endpoints` (NuGet), TerraBase Documents v1
-storage through `ts-dotnet`, RazorSlices and Datastar for hosted pages, and
+API declared through `TerraScale.Endpoints` (NuGet), TerraBase SQL tables
+through `ts-dotnet`, RazorSlices and Datastar for hosted pages, and
 TUnit and Playwright integration tests.
 
 > **Port status (epic TS-424).** ts-auth was rewritten from Rust to C#, and the
@@ -124,7 +124,7 @@ Both are generated from the endpoints the running service actually maps.
 src/TerraScale.Authentication/                # ASP.NET Core host; Features/<Area>/ endpoints, services and Razor slices; Assets/
 src/TerraScale.Authentication.Contracts/      # persisted models and the {"error":{…}} envelope
 src/TerraScale.Authentication.Security/       # Argon2id passwords, the master-key secret box, ES256 keys and JWTs, tokens and digests
-src/TerraScale.Authentication.Store/          # Documents v1 persistence/readiness on ts-dotnet (TS-489)
+src/TerraScale.Authentication.Store/          # SQL-table persistence/readiness on ts-dotnet (pivot P1)
 tests/TerraScale.Authentication.Fast/         # blocking integration suite
 tests/TerraScale.Authentication.Slow/         # non-blocking integration suite
 tests/TerraScale.Authentication.TestHarness/  # harness source linked into both suites
@@ -273,15 +273,13 @@ default. A custom
 OIDC scope list must contain `openid` and `email`; valid configured scopes are
 stored on the connection and sent to the provider.
 
-The TS-489 storage boundary provides create-only uniqueness claims and
-owner-checked CAS release. Addresses are deterministic UUIDv8 values from
-SHA-256 over length-framed instance/kind/key inputs; new document IDs must be
-UUIDs. Email keys use trim and invariant lowercase. Generic feature writes
-are create-only or version-conditional and reject infrastructure collection
-names. Single-use challenges persist only hashes, check instance/purpose/
-subject/expiry, and retain their CAS-consumed record to reject replay and
-reissue. These primitives do not implement the identity flows above. See
-`docs/auth/parity.md` for capability status.
+The storage boundary keeps every entity in its own SQL table
+([pivot/p1-sql-storage.md](pivot/p1-sql-storage.md)). Keys are ULIDs: the first 16 bytes of
+SHA-256 over length-framed instance/kind/key inputs. Uniqueness claims are create-only, and
+release is owner-checked and conditional on the version that was read. Email keys use trim and
+invariant lowercase. Generic feature writes are create-only or version-conditional and reject the
+infrastructure tables. Single-use challenges persist only hashes, check instance, purpose, subject
+and expiry, and keep their consumed record to reject replay and reissue.
 
 An ambiguous TerraBase write can leave a uniqueness claim reserved. A timeout
 or failed immediate read does not prove that a delayed write did not commit.
@@ -382,34 +380,25 @@ domain; this repo does not prescribe account-specific DNS values.
 Use the integration-test fixture for isolated local storage and credentials.
 Its fakes and environment overrides are test inputs, never production setup.
 The application does not start or embed TerraBase; the integration-test fixture starts the
-SDK-pinned binary. `/readyz` checks the existing `uniques`,
-`verification_tokens`, `storage_health`, `users`, `sessions`, `passcodes`,
-`signing_keys`, `oidc_applications`, `oidc_authorizations`,
-`oidc_tokens`, `rate_limits`, `email_configs`, `email_config_versions`,
-`organizations`, `memberships`, `projects`, `project_members`, `api_keys`,
-`invitations`, `audit_events` and `mfa_credentials` collections, then creates, reads
-and conditionally deletes a synthetic document in `storage_health`. It returns
-200 only on success, otherwise 503, without provisioning, repair or in-memory
-fallback. A background check runs five seconds after the previous one ends,
-with an eight-second deadline, and `/readyz` answers its latest result; a result older than fifteen
-seconds is not ready. Collection checks use the paginated catalog (one request
-for the normal 21 collections), rather than a concurrent request per collection
-against the shared gru authority. The synthetic conditional write/read/delete
-and signing metadata checks still run on every pass; the independent signing
-read runs concurrently with storage checks. Authority connections are reused
+SDK-pinned binary. `/readyz` reads `sqlite_schema` and requires every table in
+`AuthStore.RequiredCollections`. It then creates, reads and conditionally deletes a synthetic row
+in `storage_health`. It returns 200 only on success, otherwise 503, without provisioning, repair or
+in-memory fallback. A background check runs five seconds after the previous one ends, with an
+eight-second deadline, and `/readyz` answers its latest result; a result older than fifteen seconds
+is not ready. The signing metadata check runs on every pass, concurrently with the storage checks.
+Authority connections are reused
 without the 30-second regional failback lifetime (keepalive still detects a
 lost machine); regional fallback clients retain that lifetime. Unknown `region` is omitted.
 
 ## The global auth dataset
 
 Zero-config: TerraBase seeds the platform project `00000000000000000000000002` with database `ts-auth` on every
-start, and ts-auth stores everything there through TerraBase's internal listener (every write `remote_durable` except rate-limit buckets and the readiness probe, see
-[rate-limit-durability.md](rate-limit-durability.md) and [readiness-local-durability.md](readiness-local-durability.md))
-(every write and every read but discovery's and the JWKS's at gru's (port 8081 on gru's NetBird address), failing closed when it does not answer; discovery and the JWKS at its own region's; the shared peer credential from `TERRABASE_PEER_SECRET`; see [csharp-port.md](csharp-port.md), "Storage endpoints"). At startup every replica creates
+start, and ts-auth stores everything there as SQL tables through TerraBase's internal listener
+(every write and every read but discovery's and the JWKS's at gru's (port 8081 on gru's NetBird address), failing closed when it does not answer; discovery and the JWKS at its own region's; the shared peer credential from `TERRABASE_PEER_SECRET`; see [csharp-port.md](csharp-port.md), "Storage endpoints"). At startup every replica creates the tables in
 `AuthStore.RequiredCollections`, seeds the TerraScale owner and both projects, and provisions the first encrypted
 signing key when absent (all idempotent), retrying after five seconds and backing off
 ([signing-keys.md](signing-keys.md), [platform-bootstrap.md](platform-bootstrap.md)). `/readyz` answers 503 until startup
-bootstrap and key verification succeed. The readiness probe itself never repairs state, so a collection lost later fails closed until
+bootstrap and key verification succeed. The readiness probe itself never repairs state, so a table lost later fails closed until
 the next start.
 
 **Live production activation remains gated.** The pinned server uses SQLite
@@ -515,8 +504,8 @@ authenticity seals so downstream retention systems can verify them; keep active
 and retained rotation keys available to verify historical exports after key
 rotation.
 - Liveness/readiness: `GET /healthz` is process liveness; `GET /readyz`
-  checks the configured database, required collections and synthetic
-  create/read/conditional-delete access through Documents v1, this
+  checks the configured database, required tables and synthetic
+  create/read/conditional-delete access through SQL, this
   replica's startup signing-ring bootstrap and the ring's public metadata. Results are
   answered from a background check per process, run five seconds after the previous one ends,
   with an eight-second deadline. Both JSON bodies include the .NET service `version`;
@@ -544,6 +533,6 @@ A user of the `terrascale` instance whose stored user document has `"platformRol
 TerraBase's explore API over the platform databases requires it (`docs/terrabase/platform-databases.md`). Any other value,
 or another instance, grants nothing.
 
-No API grants the role. An operator sets or clears the field on the user's document in `ts-auth`
-(collection `users`) through TerraBase's internal listener, which only the private service network reaches. Clearing it takes
+No API grants the role. An operator sets or clears the field on the user's row in `ts-auth`
+(table `users`, JSON column `body`) through TerraBase's internal listener, which only the private service network reaches. Clearing it takes
 effect at the user's next refresh; access tokens already issued keep it until they expire.

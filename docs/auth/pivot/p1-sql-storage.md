@@ -98,5 +98,10 @@ recovery retention of SQL databases belongs to TerraBase's backups (pivot E8).
 
 ## Reset
 
-This is a new schema with no migration. Production uses a fresh ts-auth database: reset it, then run the startup provisioning
-and the platform bootstrap again.
+This is a new schema with no migration. ts-auth on SQL tables does not read records the Documents API wrote, so deploying
+it to an existing database is equivalent to wiping ts-auth's data: accounts, organizations, projects and API keys are gone,
+and users sign up again. Startup provisioning creates the empty tables, then the platform bootstrap seeds the TerraScale
+owner, its projects and the first signing key. After the deploy:
+
+1. Re-seed the mariogk@ Demo organization.
+2. Run the ts-status canary recovery, and confirm `status.terrascale.tech` reports operational.
