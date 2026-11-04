@@ -39,8 +39,8 @@ internal sealed class SqlNativeDatabase : IAsyncDisposable
         try
         {
             var database = await api.CreateManagedDatabaseAsync();
-            var writer = await api.Server.IssueNarrowedAsync(database.Organization, database.Project, null, "documents:read", "documents:write");
-            var reader = await api.Server.IssueNarrowedAsync(database.Organization, database.Project, null, "documents:read");
+            var writer = await api.Server.IssueNarrowedAsync(database.Organization, database.Project, null, "sql:read", "sql:write");
+            var reader = await api.Server.IssueNarrowedAsync(database.Organization, database.Project, null, "sql:read");
             return new SqlNativeDatabase(api, database, writer, reader);
         }
         catch

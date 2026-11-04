@@ -6,7 +6,7 @@ that backend. Send the returned `AccessToken` to the authorized end user through
 never relay browser-supplied identity or roles to the mint method without authorization.
 
 The shipped route is `POST /v1/terrascale/projects/{project}/end-user-tokens` with project-key Bearer authentication.
-It requires both `documents:read` and `documents:write`, an exact project match and no database restriction.
+It requires both `sql:read` and `sql:write`, an exact project match and no database restriction.
 Organization keys, platform JWTs and cookies are refused. The SDK validates key shape, canonical project/user
 ULIDs, and producer role bounds. It cannot determine a key's stored scopes or project binding; the server checks
 fresh authority before signing. Only roles can be asserted, with no arbitrary JWT or reserved authority claims.

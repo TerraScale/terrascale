@@ -23,7 +23,7 @@ public sealed class ManagementRpcTests
     {
         await using var api = await DatabaseApi.StartAsync();
         using var channel = Channel(api);
-        var token = Token(api, "databases:read databases:write documents:read documents:write");
+        var token = Token(api, "databases:read databases:write sql:read sql:write");
         var management = Client<IManagementService>(channel, token);
         var backups = Client<IBackupsService>(channel, token);
         var usage = Client<IUsageService>(channel, token);

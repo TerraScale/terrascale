@@ -22,8 +22,8 @@ public sealed record TerraBaseSqlClientOptions
     public string? Region { get; init; }
 
     /// <summary>
-    /// A TerraScale API key from the dashboard with <c>documents:read</c>; writes and schema changes also need
-    /// <c>documents:write</c>. Database lifecycle mutations need <c>databases:write</c>. The client exchanges the key
+    /// A TerraScale API key from the dashboard with <c>sql:read</c>; writes and schema changes also need
+    /// <c>sql:write</c>. Database lifecycle mutations need <c>databases:write</c>. The client exchanges the key
     /// at ts-auth for an access token to each operation's project, caches the token and renews it before it expires.
     /// The key is sent only to ts-auth.
     /// </summary>

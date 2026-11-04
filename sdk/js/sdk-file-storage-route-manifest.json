@@ -5,7 +5,7 @@
       "operation": "createFileBucket",
       "method": "POST",
       "pathTemplate": "/v1/projects/{project}/buckets",
-      "permission": "documents:write",
+      "permission": "sql:write",
       "requestMediaTypes": [
         "application/json"
       ],
@@ -22,7 +22,7 @@
       "operation": "listFileBuckets",
       "method": "GET",
       "pathTemplate": "/v1/projects/{project}/buckets",
-      "permission": "documents:read",
+      "permission": "sql:read",
       "requestMediaTypes": [],
       "successStatuses": [
         200
@@ -37,7 +37,7 @@
       "operation": "setFileBucketRules",
       "method": "PUT",
       "pathTemplate": "/v1/projects/{project}/buckets/{bucket}/rules",
-      "permission": "documents:write",
+      "permission": "sql:write",
       "requestMediaTypes": [
         "application/json"
       ],
@@ -54,7 +54,7 @@
       "operation": "deleteFileBucket",
       "method": "DELETE",
       "pathTemplate": "/v1/projects/{project}/buckets/{bucket}",
-      "permission": "documents:write",
+      "permission": "sql:write",
       "requestMediaTypes": [],
       "successStatuses": [
         204
@@ -69,7 +69,7 @@
       "operation": "createFileUpload",
       "method": "POST",
       "pathTemplate": "/v1/projects/{project}/buckets/{bucket}/files/upload",
-      "permission": "documents:write",
+      "permission": "sql:write",
       "requestMediaTypes": [
         "application/json"
       ],
@@ -86,7 +86,7 @@
       "operation": "completeFileUpload",
       "method": "POST",
       "pathTemplate": "/v1/projects/{project}/buckets/{bucket}/files/{file}/complete",
-      "permission": "documents:write",
+      "permission": "sql:write",
       "requestMediaTypes": [],
       "successStatuses": [
         200
@@ -101,7 +101,7 @@
       "operation": "listBucketFiles",
       "method": "GET",
       "pathTemplate": "/v1/projects/{project}/buckets/{bucket}/files",
-      "permission": "documents:read",
+      "permission": "sql:read",
       "requestMediaTypes": [],
       "successStatuses": [
         200
@@ -116,7 +116,7 @@
       "operation": "createFileDownload",
       "method": "POST",
       "pathTemplate": "/v1/projects/{project}/buckets/{bucket}/files/{file}/download",
-      "permission": "documents:read",
+      "permission": "sql:read",
       "requestMediaTypes": [],
       "successStatuses": [
         200
@@ -131,7 +131,7 @@
       "operation": "deleteBucketFile",
       "method": "DELETE",
       "pathTemplate": "/v1/projects/{project}/buckets/{bucket}/files/{file}",
-      "permission": "documents:write",
+      "permission": "sql:write",
       "requestMediaTypes": [],
       "successStatuses": [
         204

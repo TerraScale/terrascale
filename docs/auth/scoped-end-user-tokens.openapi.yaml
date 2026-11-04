@@ -21,7 +21,7 @@ paths:
       summary: Assert an end-user identity for one project
       description: |
         Requires a live whole project API key for the exact route project, without a database restriction,
-        with both documents:read and documents:write. Organization keys, platform JWTs and cookies do not authenticate.
+        with both sql:read and sql:write. Organization keys, platform JWTs and cookies do not authenticate.
         Authentication precedes body parsing. No browser CORS allowlist is added; keep the key on the backend.
         The backend must verify the user's identity and authorize its asserted roles.
         Accepts only UTF-8 JSON, at most 16384 bytes and four levels deep. Unknown members are rejected.

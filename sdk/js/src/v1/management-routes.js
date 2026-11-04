@@ -34,10 +34,10 @@ export const managementV1Routes = Object.freeze([
 /** @param {ManagementOperation} operation @param {import("./routes.js").V1Route["method"]} method @param {string} pathTemplate @param {number} [status] @returns {import("./routes.js").V1Route} */
 function route(operation, method, pathTemplate, status = 200) {
   const write = method !== "GET" && operation !== "planPointInTime";
-  // SQL reads need documents:read; writes and DDL also need documents:write, checked per statement.
+  // SQL reads need sql:read; writes and DDL also need sql:write, checked per statement.
   const sql = operation === "executeSql" || operation === "readTableShape" || operation === "connectSql";
   return Object.freeze({ operation, method, pathTemplate,
-    permission: sql ? "documents:read" : pathTemplate.startsWith("/v1/platform/") ? "platform-admin" : !pathTemplate.startsWith("/v1/") ? "anonymous" : write ? "databases:write" : "databases:read",
+    permission: sql ? "sql:read" : pathTemplate.startsWith("/v1/platform/") ? "platform-admin" : !pathTemplate.startsWith("/v1/") ? "anonymous" : write ? "databases:write" : "databases:read",
     additionalPermissions: Object.freeze([]),
     requestMediaTypes: Object.freeze(operation === "createBackup" ? [] : method === "POST" || method === "PUT" || method === "PATCH" ? ["application/json"] : []),
     responseMediaType: status === 204 || status === 101 ? "" : "application/json", successStatuses: Object.freeze(operation === "readyz" || operation === "backupz" ? [200, 503] : [status]),

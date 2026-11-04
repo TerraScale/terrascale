@@ -124,7 +124,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
 
             var project = context.Project!;
             var accessToken = await tokens.GetAsync(context.Session, context.Organization!.Id, project.Id,
-                write ? ["documents:read", "documents:write"] : ["documents:read"], token);
+                write ? ["sql:read", "sql:write"] : ["sql:read"], token);
             return (rpc.User<IFileStorageService>(accessToken).WithCancellationToken(token), project.Id);
         }
     }

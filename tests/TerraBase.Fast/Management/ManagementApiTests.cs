@@ -73,7 +73,7 @@ public sealed class ManagementApiTests
         await using var api = await ManagementApi.StartAsync();
         var organization = await api.CreateOrganizationAsync("Acme");
         var project = await api.CreateProjectAsync(organization, "Shop");
-        using var data = api.DataClient(await api.Server.IssueAsync(organization, "documents:read", "documents:write"));
+        using var data = api.DataClient(await api.Server.IssueAsync(organization, "sql:read", "sql:write"));
         var databases = $"/v1/management/organizations/{organization}/projects/{project}/databases";
         var dataApi = $"/v1/projects/{project}/databases";
         var person = new { name = Faker.Name.FullName() };
@@ -142,7 +142,7 @@ public sealed class ManagementApiTests
         await using var api = await ManagementApi.StartAsync();
         using var anonymous = api.WithToken(null);
         using var garbage = api.WithToken(Faker.Random.AlphaNumeric(40));
-        using var apiKey = api.DataClient(await api.Server.IssueAsync(await api.CreateOrganizationAsync("Acme"), "documents:read", "documents:write"));
+        using var apiKey = api.DataClient(await api.Server.IssueAsync(await api.CreateOrganizationAsync("Acme"), "sql:read", "sql:write"));
         using var adminRequest = new HttpRequestMessage(HttpMethod.Get, Uri("/v1/management/organizations"));
         adminRequest.Headers.Authorization = new("Bearer", api.Issuer.Mint(api.User));
 

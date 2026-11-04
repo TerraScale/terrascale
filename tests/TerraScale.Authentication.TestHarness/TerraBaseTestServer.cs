@@ -138,7 +138,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             Content = JsonContent.Create(new
             {
                 name = "integration test",
-                scopes = scopes ?? ["documents:read", "documents:write"],
+                scopes = scopes ?? ["sql:read", "sql:write"],
                 organizationId,
                 projectId,
             }),

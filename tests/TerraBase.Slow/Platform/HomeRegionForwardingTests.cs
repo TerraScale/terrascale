@@ -26,7 +26,7 @@ public sealed class HomeRegionForwardingTests
         var token = issuer.Mint(gru.User, descriptor =>
         {
             descriptor.Claims["project_id"] = database.Project;
-            descriptor.Claims["scope"] = "databases:read documents:read documents:write";
+            descriptor.Claims["scope"] = "databases:read sql:read sql:write";
         });
         var note = Faker.Lorem.Sentence();
 
@@ -88,7 +88,7 @@ public sealed class HomeRegionForwardingTests
             token.Claims["key_id"] = id;
             token.Claims["key_gen"] = TestIssuer.KeyGeneration(key);
             token.Claims["project_id"] = project;
-            token.Claims["scope"] = "documents:read documents:write";
+            token.Claims["scope"] = "sql:read sql:write";
         }));
         return key;
     }

@@ -5,7 +5,7 @@
       "operation": "completeFileUpload",
       "method": "POST",
       "path": "/v1/projects/{project}/buckets/{bucket}/files/{file}/complete",
-      "scope": "documents:write",
+      "scope": "sql:write",
       "successStatus": 200,
       "source": "CompleteFileUploadEndpoint.cs.txt"
     },
@@ -13,7 +13,7 @@
       "operation": "createFileBucket",
       "method": "POST",
       "path": "/v1/projects/{project}/buckets",
-      "scope": "documents:write",
+      "scope": "sql:write",
       "successStatus": 201,
       "source": "CreateFileBucketEndpoint.cs.txt"
     },
@@ -21,7 +21,7 @@
       "operation": "createFileDownload",
       "method": "POST",
       "path": "/v1/projects/{project}/buckets/{bucket}/files/{file}/download",
-      "scope": "documents:read",
+      "scope": "sql:read",
       "successStatus": 200,
       "source": "CreateFileDownloadEndpoint.cs.txt"
     },
@@ -29,7 +29,7 @@
       "operation": "createFileUpload",
       "method": "POST",
       "path": "/v1/projects/{project}/buckets/{bucket}/files/upload",
-      "scope": "documents:write",
+      "scope": "sql:write",
       "successStatus": 201,
       "source": "CreateFileUploadEndpoint.cs.txt"
     },
@@ -37,7 +37,7 @@
       "operation": "deleteBucketFile",
       "method": "DELETE",
       "path": "/v1/projects/{project}/buckets/{bucket}/files/{file}",
-      "scope": "documents:write",
+      "scope": "sql:write",
       "successStatus": 204,
       "source": "DeleteBucketFileEndpoint.cs.txt"
     },
@@ -45,7 +45,7 @@
       "operation": "deleteFileBucket",
       "method": "DELETE",
       "path": "/v1/projects/{project}/buckets/{bucket}",
-      "scope": "documents:write",
+      "scope": "sql:write",
       "successStatus": 204,
       "source": "DeleteFileBucketEndpoint.cs.txt"
     },
@@ -53,7 +53,7 @@
       "operation": "listBucketFiles",
       "method": "GET",
       "path": "/v1/projects/{project}/buckets/{bucket}/files",
-      "scope": "documents:read",
+      "scope": "sql:read",
       "successStatus": 200,
       "source": "ListBucketFilesEndpoint.cs.txt"
     },
@@ -61,7 +61,7 @@
       "operation": "listFileBuckets",
       "method": "GET",
       "path": "/v1/projects/{project}/buckets",
-      "scope": "documents:read",
+      "scope": "sql:read",
       "successStatus": 200,
       "source": "ListFileBucketsEndpoint.cs.txt"
     },
@@ -69,7 +69,7 @@
       "operation": "setFileBucketRules",
       "method": "PUT",
       "path": "/v1/projects/{project}/buckets/{bucket}/rules",
-      "scope": "documents:write",
+      "scope": "sql:write",
       "successStatus": 200,
       "source": "SetFileBucketRulesEndpoint.cs.txt"
     }

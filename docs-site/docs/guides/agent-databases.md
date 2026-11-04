@@ -55,8 +55,8 @@ Content-Type: application/json
 
 ## Hand the agent a scoped key
 
-Mint a key from your own API key. It reaches one database, with `read` (`documents:read`) or `read_write`
-(`documents:read documents:write`) access:
+Mint a key from your own API key. It reaches one database, with `read` (`sql:read`) or `read_write`
+(`sql:read sql:write`) access:
 
 ```http
 POST https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys

@@ -121,9 +121,9 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
             var database = databaseId.Length > 0 ? DatabaseService.Database(context, databaseId) : null;
             var permissions = scopes.Distinct(StringComparer.Ordinal).ToArray();
-            if (permissions.Length == 0 || permissions.Any(scope => scope is not ("documents:read" or "documents:write" or "databases:read" or "databases:write")))
+            if (permissions.Length == 0 || permissions.Any(scope => scope is not ("sql:read" or "sql:write" or "databases:read" or "databases:write")))
             {
-                throw new AccountAccessException("Choose one or more of documents:read, documents:write, databases:read, databases:write.", 422);
+                throw new AccountAccessException("Choose one or more of sql:read, sql:write, databases:read, databases:write.", 422);
             }
 
             if (!ExpiryChoices.Contains(expiresInDays))
@@ -269,7 +269,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return new(key, result.Key);
         }
 
-        public const string ScopeDescription = "Choose a non-empty subset of exactly documents:read, documents:write, databases:read, databases:write. Document scopes cover documents, collections, queries, SQL over the Postgres wire protocol, file storage, functions, and change feeds. Database scopes cover databases, backups/restores, indexes, imports, read-only HTTP SQL (run, check, explain), saved queries, usage, and metrics. Read scopes grant reads; write scopes grant changes. Some operations require both: function management needs documents:read and documents:write; writing imports also needs documents:write; selective recovery also needs the corresponding document scope. No aliases, wildcards, or unknown scopes are accepted.";
+        public const string ScopeDescription = "Choose a non-empty subset of exactly sql:read, sql:write, databases:read, databases:write. Document scopes cover documents, collections, queries, SQL over the Postgres wire protocol, file storage, functions, and change feeds. Database scopes cover databases, backups/restores, indexes, imports, read-only HTTP SQL (run, check, explain), saved queries, usage, and metrics. Read scopes grant reads; write scopes grant changes. Some operations require both: function management needs sql:read and sql:write; writing imports also needs sql:write; selective recovery also needs the corresponding document scope. No aliases, wildcards, or unknown scopes are accepted.";
 
         public const int MaxPreviousSecretTtl = 86400;
         public const int MaxAllowedCidrs = 32;
@@ -474,7 +474,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
     public sealed record ApiKeysPage(TerraScale.Dashboard.Common.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "", string DraftExpiresInDays = "", string DraftAllowedCidrs = "", IReadOnlyList<string>? ProjectCidrs = null, DateTimeOffset Now = default, string Cursor = "", bool HasMore = false)
     {
-        private static readonly string[] FullAccessScopes = ["documents:read", "documents:write", "databases:read", "databases:write"];
+        private static readonly string[] FullAccessScopes = ["sql:read", "sql:write", "databases:read", "databases:write"];
         public string Warning { get; init; } = "";
         public static string Lines(IReadOnlyList<string>? cidrs)
         {
@@ -500,7 +500,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         {
             if (Create != kind || DraftScopes.Length == 0 && Error.Length == 0)
             {
-                return "documents:read";
+                return "sql:read";
             }
 
             var scopes = DraftScopes.Split([',', ' ', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries)
@@ -511,10 +511,10 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             }
 
             var value = string.Join(',', scopes);
-            return value is "documents:read" or "documents:write" or "documents:read,documents:write" or Full ? value : "";
+            return value is "sql:read" or "sql:write" or "sql:read,sql:write" or Full ? value : "";
         }
         // Documents plus database management: create and delete databases, indexes and saved queries (a seed or migration script).
-        public const string Full = "documents:read,documents:write,databases:read,databases:write";
+        public const string Full = "sql:read,sql:write,databases:read,databases:write";
         public static (string Label, string Tone, string Icon) CredentialType(ProjectCredential key)
         {
             if (FullAccessScopes.All(key.Scopes.Contains))
@@ -522,9 +522,9 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 return ("Full-access key", "rose", "ShieldAlert");
             }
 
-            if (key.Scopes.Any(scope => scope is "documents:write" or "databases:write"))
+            if (key.Scopes.Any(scope => scope is "sql:write" or "databases:write"))
             {
-                return key.Scopes.Any(scope => scope is "documents:read" or "databases:read") ? ("Read-write key", "amber", "KeyRound") : ("Write-only key", "amber", "Pencil");
+                return key.Scopes.Any(scope => scope is "sql:read" or "databases:read") ? ("Read-write key", "amber", "KeyRound") : ("Write-only key", "amber", "Pencil");
             }
 
             return ("Read-only key", "sky", "Eye");

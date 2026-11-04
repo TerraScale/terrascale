@@ -25,8 +25,8 @@ public sealed class TerraScaleAuthOidcTokenTests
         TerraScaleAuthTokenResponse? tokens = null;
         switch (operation)
         {
-            case "exchange": tokens = await client.Oidc.ExchangeTokenAsync("id: é+", "secret+= é", "subject+&=é", organization, project, "documents:read documents:write"); break;
-            case "client-credentials": tokens = await client.Oidc.RequestClientCredentialsTokenAsync("id: é+", "secret+= é", "documents:read", project); break;
+            case "exchange": tokens = await client.Oidc.ExchangeTokenAsync("id: é+", "secret+= é", "subject+&=é", organization, project, "sql:read sql:write"); break;
+            case "client-credentials": tokens = await client.Oidc.RequestClientCredentialsTokenAsync("id: é+", "secret+= é", "sql:read", project); break;
             case "refresh": tokens = await client.Oidc.RefreshTokenAsync("id: é+", "secret+= é", "refresh+&=é"); break;
             case "revoke": await client.Oidc.RevokeTokenAsync("id: é+", "secret+= é", "refresh+&=é"); break;
             case "userinfo":
@@ -68,13 +68,13 @@ public sealed class TerraScaleAuthOidcTokenTests
                 await Assert.That(form["subject_token"]).IsEqualTo("subject+&=é");
                 await Assert.That(form["organization"]).IsEqualTo(organization);
                 await Assert.That(form["project"]).IsEqualTo(project);
-                await Assert.That(form["scope"]).IsEqualTo("documents:read documents:write");
+                await Assert.That(form["scope"]).IsEqualTo("sql:read sql:write");
                 await Assert.That(form.ContainsKey("database")).IsFalse();
                 await Assert.That(form.Count).IsEqualTo(6); break;
             case "client-credentials":
                 await Assert.That(form["grant_type"]).IsEqualTo("client_credentials");
                 await Assert.That(form["project"]).IsEqualTo(project);
-                await Assert.That(form["scope"]).IsEqualTo("documents:read");
+                await Assert.That(form["scope"]).IsEqualTo("sql:read");
                 await Assert.That(form.Count).IsEqualTo(5); break;
             case "refresh":
                 await Assert.That(form["grant_type"]).IsEqualTo("refresh_token");

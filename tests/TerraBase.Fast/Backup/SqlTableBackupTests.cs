@@ -142,7 +142,7 @@ public sealed class SqlTableBackupTests
                 Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
                 var database = await api.CreateManagedDatabaseAsync("main");
                 await api.SetPlanAsync(api.User, database.Organization, "pro", cancellationToken);
-                var key = await api.Server.IssueNarrowedAsync(database.Organization, database.Project, null, "documents:read", "documents:write");
+                var key = await api.Server.IssueNarrowedAsync(database.Organization, database.Project, null, "sql:read", "sql:write");
                 return new SqlBackupHost(api, time, database, api.DataClient(key));
             }
             catch

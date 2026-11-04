@@ -14,7 +14,7 @@ namespace TerraBase.Fast.Tenancy;
 public sealed class TenantIsolationTests
 {
     // Client routes that address no organization, project or database: they act only for the caller.
-    private static readonly string[] ReadScope = ["documents:read"];
+    private static readonly string[] ReadScope = ["sql:read"];
 
     // The id route parameters are filled with.
     private const string Id = "01K6G00000E008000000000001";
@@ -40,8 +40,8 @@ public sealed class TenantIsolationTests
     {
         await using var api = await ManagementApi.StartAsync();
         // Every client scope, so each route answers past its scope check.
-        using var a = await api.CreateTenantAsync("documents:read", "documents:write");
-        using var b = await api.CreateTenantAsync("documents:read", "documents:write");
+        using var a = await api.CreateTenantAsync("sql:read", "sql:write");
+        using var b = await api.CreateTenantAsync("sql:read", "sql:write");
         using var aDashboard = api.As(a.User);
         using var bDashboard = api.As(b.User);
         HttpClient ProjectClient(Tenant tenant)
@@ -49,7 +49,7 @@ public sealed class TenantIsolationTests
             return api.WithToken(api.Issuer.Mint(tenant.User, token =>
             {
                 token.Claims["project_id"] = tenant.ProjectId;
-                token.Claims["scope"] = "databases:read databases:write documents:read documents:write";
+                token.Claims["scope"] = "databases:read databases:write sql:read sql:write";
             }));
         }
 
@@ -106,15 +106,15 @@ public sealed class TenantIsolationTests
     public async Task Keys_reach_only_their_organization_and_the_project_and_database_they_are_narrowed_to()
     {
         await using var api = await ManagementApi.StartAsync();
-        using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
-        using var other = await api.CreateTenantAsync("documents:read");
+        using var tenant = await api.CreateTenantAsync("sql:read", "sql:write");
+        using var other = await api.CreateTenantAsync("sql:read");
         using var owner = api.As(tenant.User);
         var second = await api.CreateProjectAsync(tenant.OrganizationId, "Second", owner);
         var app = await CreateDatabaseAsync(api, tenant, owner, "app");
         await CreateDatabaseAsync(api, tenant, owner, "other");
         var secondAppId = await api.CreateDatabaseAsync(tenant.OrganizationId, second, "app", owner);
-        using var project = api.DataClient(await api.Server.IssueNarrowedAsync(tenant.OrganizationId, tenant.ProjectId, null, "documents:read", "documents:write"));
-        using var database = api.DataClient(await api.Server.IssueNarrowedAsync(tenant.OrganizationId, tenant.ProjectId, app, "documents:read", "documents:write"));
+        using var project = api.DataClient(await api.Server.IssueNarrowedAsync(tenant.OrganizationId, tenant.ProjectId, null, "sql:read", "sql:write"));
+        using var database = api.DataClient(await api.Server.IssueNarrowedAsync(tenant.OrganizationId, tenant.ProjectId, app, "sql:read", "sql:write"));
         const string Write = "INSERT INTO c (value) VALUES (1)";
 
         List<(string Request, HttpStatusCode Expected, HttpStatusCode Actual)> checks =

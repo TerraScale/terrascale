@@ -6,9 +6,9 @@ no cron job. These routes are on the client TLS listener:
 
 | Method | Route | Scope | Behavior |
 | --- | --- | --- | --- |
-| PUT | `/v1/projects/{project}/databases/{database}/collections/{collection}/ttl` | `documents:write` | Declare or replace; body `{"path":"/expiresAt"}` |
-| GET | Same route | `documents:read` | `200 {"path":"/expiresAt"}`, or `{"path":null}` when none |
-| DELETE | Same route | `documents:write` | Clear; documents stop expiring |
+| PUT | `/v1/projects/{project}/databases/{database}/collections/{collection}/ttl` | `sql:write` | Declare or replace; body `{"path":"/expiresAt"}` |
+| GET | Same route | `sql:read` | `200 {"path":"/expiresAt"}`, or `{"path":null}` when none |
+| DELETE | Same route | `sql:write` | Clear; documents stop expiring |
 
 `path` is an RFC 6901 JSON Pointer of 1 to 16 object members; anything else is
 `400 invalid_ttl`. An unknown collection is `404 unknown_collection`.
