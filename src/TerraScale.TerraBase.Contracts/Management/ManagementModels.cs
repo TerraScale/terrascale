@@ -18,6 +18,10 @@ namespace TerraScale.TerraBase.Contracts.Management
     [MessagePackObject(true)]
     public sealed record TerraBaseDatabaseTtl(long TtlSeconds);
 
+    /// <summary>A move of a database's home to one of its replica regions.</summary>
+    [MessagePackObject(true)]
+    public sealed record TerraBaseMoveHome(string HomeRegion);
+
     /// <summary>A secondary index.</summary>
     [MessagePackObject(true)]
     public sealed record TerraBaseIndex(string Name, string Collection, IReadOnlyList<string> Fields, string State);
