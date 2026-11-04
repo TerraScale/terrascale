@@ -40,7 +40,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var replicaCsrf = await HttpJourney.CsrfAsync(replica, "/databases");
             const string name = "interrupted-home";
             Volatile.Write(ref rejectCreate, true);
-            using (var unavailable = await PostAsync(client, "/api/v1/dashboard/databases", csrf, new() { ["name"] = name }, ["GRU", "FRA"]))
+            using (var unavailable = await PostAsync(client, "/api/v1/dashboard/databases", csrf, new() { ["name"] = name, ["homeRegion"] = "GRU" }))
             {
                 await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable).Because(await EvidenceAsync(unavailable, producer));
                 await Assert.That(unavailable.Headers.Location is null).IsTrue();
@@ -49,7 +49,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await Assert.That((await JsonAsync(producer, "/__test/observations")).GetProperty("creates").GetInt32()).IsEqualTo(0);
             await Assert.That((await ManagementListJourney.ReadListAllAsync(replica, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
             // A region the catalog does not list cannot be chosen as a new home.
-            using (var wrongHome = await PostAsync(replica, "/api/v1/dashboard/databases", replicaCsrf, new() { ["name"] = name }, ["SFO", "FRA"]))
+            using (var wrongHome = await PostAsync(replica, "/api/v1/dashboard/databases", replicaCsrf, new() { ["name"] = name, ["homeRegion"] = "SFO" }))
             {
                 await Assert.That(wrongHome.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity).Because(await EvidenceAsync(wrongHome, producer));
             }
@@ -57,8 +57,8 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             Volatile.Write(ref rejectCreate, false);
             await ControlAsync(producer, new { command = "fail-database-metadata", organizationId, projectId, name });
             await ControlAsync(producer, new { command = "pause-database-creates" });
-            // SFO joins below through the producer, outside the discovered GRU/FRA placement.
-            var pending = PostAsync(client, "/api/v1/dashboard/databases", csrf, new() { ["name"] = name }, ["GRU", "FRA"]);
+            // SFO joins below through the producer, outside the GRU home this request names.
+            var pending = PostAsync(client, "/api/v1/dashboard/databases", csrf, new() { ["name"] = name, ["homeRegion"] = "GRU" });
             try
             {
                 await WaitAsync(producer, "pausedCreates");
@@ -78,7 +78,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             // No listing runs before the retry: it would record the database TerraBase has, as the retry does.
             // The retry omits SFO. Recovery must retain the producer's actual SFO
             // replica rather than claim this new request changed placement.
-            using (var recovered = await PostAsync(replica, "/api/v1/dashboard/databases", replicaCsrf, new() { ["name"] = name }, ["GRU", "FRA"]))
+            using (var recovered = await PostAsync(replica, "/api/v1/dashboard/databases", replicaCsrf, new() { ["name"] = name, ["homeRegion"] = "GRU" }))
             {
                 await Assert.That(recovered.StatusCode).IsEqualTo(HttpStatusCode.SeeOther).Because(await EvidenceAsync(recovered, producer));
                 await Assert.That(recovered.Headers.Location?.OriginalString).IsEqualTo("/databases/" + actualId + "?created=1");
@@ -88,11 +88,11 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await Assert.That(rows[0].GetProperty("id").GetString()).IsEqualTo(actualId);
             await Assert.That(rows[0].GetProperty("status").GetString()).IsEqualTo("ready");
             await Assert.That(rows[0].GetProperty("region").GetString()).IsEqualTo("GRU");
-            await Assert.That(Regions(rows[0])).IsEqualTo("GRU,FRA,SFO");
+            await Assert.That(Regions(rows[0])).IsEqualTo("GRU,SFO");
             var page = await PageAsync(client, "/databases/" + actualId + "?created=1");
             await Assert.That(page).Contains(name + " is ready</p>");
             await Assert.That(page).Contains("Its home region is ready. Replica progress is shown in Replication.");
-            await Assert.That(await PageAsync(client, "/databases/" + actualId + "/replication")).Contains("<dt>Configured regions</dt><dd>gru · São Paulo, fra · Frankfurt, sfo · San Francisco</dd>");
+            await Assert.That(await PageAsync(client, "/databases/" + actualId + "/replication")).Contains("<dt>Configured regions</dt><dd>gru · São Paulo, sfo · San Francisco</dd>");
             using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()
             { ["_csrf"] = csrf, ["databaseId"] = actualId, ["name"] = "users" }))
             {
@@ -114,73 +114,6 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await Assert.That(observed.GetProperty("failures").GetArrayLength()).IsEqualTo(0);
         }
 
-        [Test]
-        [Arguments("id")]
-        [Arguments("project")]
-        [Arguments("name")]
-        [Arguments("home")]
-        [Arguments("replicas")]
-        [Arguments("missing-replicas")]
-        public async Task NativePlacementRefusesAnUnconfirmedProducerResponse(string mismatch)
-        {
-            var invalid = false;
-            var organizationId = "";
-            var projectId = "";
-            var id = "";
-            var name = "confirmed-placement";
-            TestAuth auth = null!;
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, DatabaseSdkJourneyTests.CaptureAuth(value => auth = value), http =>
-            {
-                if (!Volatile.Read(ref invalid) || http.Request.Method != "PATCH" || http.Request.Path != "/v1/projects/" + projectId + "/databases/" + name)
-                {
-                    return Task.FromResult<IResult?>(null);
-                }
-
-                DatabaseSdkJourneyTests.DemandProjectToken(auth, http, organizationId, projectId, "databases:write");
-                http.Response.Headers["X-TerraBase-Region"] = "gru";
-                var value = new Dictionary<string, object?>
-                {
-                    ["id"] = mismatch == "id" ? "01K78000000000000000000000" : id,
-                    ["projectId"] = mismatch == "project" ? "01K78000000000000000000001" : projectId,
-                    ["name"] = mismatch == "name" ? "another-database" : name,
-                    ["createdAt"] = DateTimeOffset.UtcNow,
-                    ["region"] = "gru",
-                    ["homeRegion"] = mismatch == "home" ? "sfo" : "gru",
-                    ["replicaRegions"] = mismatch == "replicas" ? new[] { "sfo" } : new[] { "fra" }
-                };
-                if (mismatch == "missing-replicas")
-                {
-                    value.Remove("replicaRegions");
-                }
-
-                return Task.FromResult<IResult?>(Results.Json(value));
-            });
-            using var client = scenario.CreateClient();
-            using var producer = scenario.CreateProviderClient();
-            await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
-            var identity = await JsonAsync(client, "/api/v1/auth/me");
-            organizationId = identity.GetProperty("organizationId").GetString()!;
-            projectId = identity.GetProperty("projectId").GetString()!;
-            var csrf = await HttpJourney.CsrfAsync(client, "/databases");
-            id = await CreateAsync(client, csrf, name);
-            await ControlAsync(producer, new { command = "catalog", value = new[] { "gru", "sfo", "fra" } });
-            Volatile.Write(ref invalid, true);
-            // A valid two-region request reaches the producer; only the chosen response field is incorrect.
-            using (var response = await PostAsync(client, "/api/v1/dashboard/databases/regions", csrf, new() { ["databaseId"] = id }, ["GRU", "FRA"]))
-            {
-                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable).Because(await EvidenceAsync(response, producer));
-            }
-
-            var database = (await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases"))[0];
-            await Assert.That(database.GetProperty("id").GetString()).IsEqualTo(id);
-            await Assert.That(database.GetProperty("name").GetString()).IsEqualTo(name);
-            await Assert.That(database.GetProperty("region").GetString()).IsEqualTo("GRU");
-            await Assert.That(Regions(database)).IsEqualTo("GRU,SFO");
-            Volatile.Write(ref invalid, false);
-            await DeleteAsync(client, csrf, id, name);
-            await Assert.That((await JsonAsync(producer, "/__test/observations")).GetProperty("failures").GetArrayLength()).IsEqualTo(0);
-        }
-
         // TerraBase DatabaseRegions.Misdirected (terrascale e30ffdc2): a region that does not manage the database answers
         // 421 wrong_region with X-TerraBase-Database-Home/-Regions. The dashboard pins its request, reports the home, and
         // neither retries nor redirects nor changes its record.
@@ -196,7 +129,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             TestAuth auth = null!;
             await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, DatabaseSdkJourneyTests.CaptureAuth(value => auth = value), http =>
             {
-                if (!Volatile.Read(ref misdirect) || http.Request.Method != "PATCH" || http.Request.Path != "/v1/projects/" + projectId + "/databases/" + name)
+                if (!Volatile.Read(ref misdirect) || http.Request.Method != "PATCH" || (http.Request.Path != "/v1/projects/" + projectId + "/databases/" + name && http.Request.Path != "/v1/projects/" + projectId + "/databases/" + id))
                 {
                     return Task.FromResult<IResult?>(null);
                 }
@@ -219,7 +152,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             id = await CreateAsync(client, csrf, name);
             await ControlAsync(producer, new { command = "catalog", value = new[] { "gru", "sfo" } });
             Volatile.Write(ref misdirect, true);
-            using (var response = await PostAsync(client, "/api/v1/dashboard/databases/regions", csrf, new() { ["databaseId"] = id }, ["GRU", "SFO"]))
+            using (var response = await PostAsync(client, "/api/v1/dashboard/databases/rename", csrf, new() { ["databaseId"] = id, ["name"] = "wrong-region-renamed", ["confirmName"] = name }))
             {
                 await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because(await EvidenceAsync(response, producer));
                 var html = System.Net.WebUtility.HtmlDecode(await response.Content.ReadAsStringAsync());
@@ -227,8 +160,9 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             }
             await Assert.That(string.Join(";", attempts)).IsEqualTo("gru.api.terrascale.tech peer=True").Because("one credentialed request to the home region, no retry or redirect");
             var database = (await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases"))[0];
+            await Assert.That(database.GetProperty("name").GetString()).IsEqualTo(name);
             await Assert.That(database.GetProperty("region").GetString()).IsEqualTo("GRU");
-            await Assert.That(Regions(database)).IsEqualTo("GRU,SFO");
+            await Assert.That(Regions(database)).IsEqualTo("GRU");
             Volatile.Write(ref misdirect, false);
             await DeleteAsync(client, csrf, id, name);
             await Assert.That((await JsonAsync(producer, "/__test/observations")).GetProperty("failures").GetArrayLength()).IsEqualTo(0);
@@ -288,7 +222,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             Volatile.Write(ref invalid, true);
-            using (var response = await PostAsync(client, "/api/v1/dashboard/databases", csrf, new() { ["name"] = "catalog-refused" }, ["GRU"]))
+            using (var response = await PostAsync(client, "/api/v1/dashboard/databases", csrf, new() { ["name"] = "catalog-refused", ["homeRegion"] = "GRU" }))
             {
                 await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable).Because(await EvidenceAsync(response, producer));
             }
@@ -340,7 +274,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
 
         private static async Task<string> CreateAsync(HttpClient client, string csrf, string name)
         {
-            using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = name, ["region"] = "GRU" });
+            using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = name, ["homeRegion"] = "GRU" });
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await response.Content.ReadAsStringAsync());
             using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync()); return json.RootElement.GetProperty("id").GetString()!;
         }
@@ -351,11 +285,11 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await deleted.Content.ReadAsStringAsync());
             await Assert.That((await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
         }
-        private static async Task<HttpResponseMessage> PostAsync(HttpClient client, string path, string csrf, Dictionary<string, string> fields, string[] regions)
+        private static async Task<HttpResponseMessage> PostAsync(HttpClient client, string path, string csrf, Dictionary<string, string> fields)
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, path);
             request.Headers.Accept.ParseAdd("text/html");
-            request.Content = new FormUrlEncodedContent(fields.Append(new("_csrf", csrf)).Concat(regions.Select(region => new KeyValuePair<string, string>("region", region))));
+            request.Content = new FormUrlEncodedContent(fields.Append(new("_csrf", csrf)));
             return await client.SendAsync(request);
         }
         private static async Task<JsonElement> JsonAsync(HttpClient client, string path)

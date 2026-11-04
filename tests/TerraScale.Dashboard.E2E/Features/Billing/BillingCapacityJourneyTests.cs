@@ -30,7 +30,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await BillingPlanJourneyTests.SignUpPaidAsync(client, "capacity-" + suffix + "@example.test", "E2E-capacity-" + suffix, suffix);
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             using var first = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
-            { ["_csrf"] = csrf, ["name"] = "capacity-first", ["region"] = "GRU" });
+            { ["_csrf"] = csrf, ["name"] = "capacity-first", ["homeRegion"] = "GRU" });
             await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.Created);
             using var database = JsonDocument.Parse(await first.Content.ReadAsStringAsync());
             var databaseId = database.RootElement.GetProperty("id").GetString()!;
@@ -53,7 +53,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await Assert.That(organization.GetProperty("planId").GetString()).IsEqualTo(OrganizationRecord.FreePlanId);
             await Assert.That(organization.GetProperty("billingStatus").GetString()).IsEqualTo("billing_required");
             using var second = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
-            { ["_csrf"] = csrf, ["name"] = "capacity-second", ["region"] = "GRU" });
+            { ["_csrf"] = csrf, ["name"] = "capacity-second", ["homeRegion"] = "GRU" });
             await Assert.That(second.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
             using var existing = await client.GetAsync("/databases/" + databaseId);
             await Assert.That(existing.StatusCode).IsEqualTo(HttpStatusCode.OK);

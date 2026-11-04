@@ -11,7 +11,7 @@ namespace TerraScale.Dashboard.E2E.Features.Usage
     public sealed class UsagePlacementJourneyTests(DashboardRootFixture fixture)
     {
         [Test]
-        public async Task PageAndMcpCountExplicitReplicasAndKeepAllRegionsUnknown()
+        public async Task PageAndMcpCountTheUnionOfHomeRegions()
         {
             await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, builder =>
             {
@@ -36,14 +36,11 @@ namespace TerraScale.Dashboard.E2E.Features.Usage
 
             var secret = await HttpJourney.CreatePatAsync(client, "Usage placement", account.Password);
             await AssertSummaryAsync(0, "0");
-            var first = await CallAsync("create_database", new() { ["name"] = "usage-three", ["regions"] = new[] { "gru", "sfo", "fra" } });
-            await AssertSummaryAsync(3, "3");
-            await CallAsync("create_database", new() { ["name"] = "usage-overlap", ["regions"] = new[] { "sfo", "gru" } });
-            await AssertSummaryAsync(3, "3");
-            await CallAsync("set_database_regions", new() { ["databaseId"] = first.GetProperty("id").GetString(), ["allRegions"] = true });
-            await AssertSummaryAsync(null, "All serving regions (count unavailable)");
-            // Removing the all-regions policy restores the explicit union, not home-only counts.
-            await CallAsync("set_database_regions", new() { ["databaseId"] = first.GetProperty("id").GetString(), ["regions"] = new[] { "GRU", "SFO" } });
+            await CallAsync("create_database", new() { ["name"] = "usage-gru", ["region"] = "GRU" });
+            await AssertSummaryAsync(1, "1");
+            await CallAsync("create_database", new() { ["name"] = "usage-sfo", ["region"] = "SFO" });
+            await AssertSummaryAsync(2, "2");
+            await CallAsync("create_database", new() { ["name"] = "usage-overlap", ["region"] = "GRU" });
             await AssertSummaryAsync(2, "2");
 
             async Task<JsonElement> CallAsync(string name, Dictionary<string, object?> arguments)

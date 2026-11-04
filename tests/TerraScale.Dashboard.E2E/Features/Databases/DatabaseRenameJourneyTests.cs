@@ -18,7 +18,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             using var client = scenario.CreateClient();
             await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
-            using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "rename-source", ["region"] = "GRU" });
+            using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "rename-source", ["homeRegion"] = "GRU" });
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
             var id = (await BodyAsync(created)).GetProperty("id").GetString()!;
             client.DefaultRequestHeaders.Accept.ParseAdd("text/html");
@@ -64,7 +64,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             projectId = (await ReadAsync(client, "/api/v1/auth/me")).GetProperty("projectId").GetString()!;
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases",
-                new() { ["_csrf"] = csrf, ["name"] = "conflict-source", ["region"] = "GRU" }))
+                new() { ["_csrf"] = csrf, ["name"] = "conflict-source", ["homeRegion"] = "GRU" }))
             {
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
                 var body = await BodyAsync(created);
@@ -122,7 +122,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             projectId = identity.GetProperty("projectId").GetString()!;
             organizationId = identity.GetProperty("organizationId").GetString()!;
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
-            using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "rename-source", ["region"] = "GRU" }))
+            using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "rename-source", ["homeRegion"] = "GRU" }))
             { await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created); databaseId = (await BodyAsync(created)).GetProperty("id").GetString()!; }
             var before = (await ReadAsync(client, "/api/v1/dashboard/databases")).GetProperty("items")[0];
             using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new() { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["name"] = "users" }))

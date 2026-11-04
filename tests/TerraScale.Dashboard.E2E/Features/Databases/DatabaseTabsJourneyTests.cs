@@ -27,7 +27,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
-            { ["_csrf"] = csrf, ["name"] = "tab-journey", ["region"] = "GRU" }))
+            { ["_csrf"] = csrf, ["name"] = "tab-journey", ["homeRegion"] = "GRU" }))
             {
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
                 using var body = JsonDocument.Parse(await created.Content.ReadAsStringAsync());

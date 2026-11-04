@@ -38,8 +38,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             {
                 ["_csrf"] = await HttpJourney.CsrfAsync(client, "/databases"),
                 ["name"] = "limit-refusal",
-                ["region"] = "GRU",
-                ["allRegions"] = "true"
+                ["homeRegion"] = "GRU"
             });
             await Assert.That(refusals).IsGreaterThan(0);
             await Assert.That((int)response.StatusCode).IsEqualTo(status);

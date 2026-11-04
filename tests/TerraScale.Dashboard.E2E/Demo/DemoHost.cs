@@ -1074,8 +1074,8 @@ namespace TerraScale.Dashboard.E2E.Demo
             return Task.FromResult<IReadOnlyList<ManagedDatabase>>(databases.Values.Where(item => item.ProjectId == scope.ProjectId).ToArray());
         }
 
-        public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken)
-        { var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, HomeRegion: placement[0].Id, ReplicaRegions: allRegions ? [] : placement.Skip(1).Select(item => item.Id).ToArray(), AllRegions: allRegions); databases[value.Id] = value; return Task.FromResult(value); }
+        public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, CancellationToken cancellationToken)
+        { var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, HomeRegion: home.Id, ReplicaRegions: []); databases[value.Id] = value; return Task.FromResult(value); }
         public Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
         {
             var source = Database(scope, databaseId);
@@ -1101,7 +1101,6 @@ namespace TerraScale.Dashboard.E2E.Demo
 
             return Task.CompletedTask;
         }
-        public Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken) { var changed = databases[databaseId] with { ReplicaRegions = allRegions ? [] : placement.Skip(1).Select(item => item.Id).ToArray(), AllRegions = allRegions }; databases[databaseId] = changed; return Task.FromResult(changed); }
         public Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
             return Task.FromResult(documents.Statistics(scope, Database(scope, databaseId).Name));

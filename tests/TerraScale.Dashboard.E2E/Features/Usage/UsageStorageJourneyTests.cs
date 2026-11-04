@@ -87,7 +87,7 @@ namespace TerraScale.Dashboard.E2E.Features.Usage
 
             var csrf = await HttpJourney.CsrfAsync(first, "/databases");
             using var created = await HttpJourney.PostFormAsync(first, "/api/v1/dashboard/databases", new()
-            { ["_csrf"] = csrf, ["name"] = "independent-storage", ["region"] = "GRU" });
+            { ["_csrf"] = csrf, ["name"] = "independent-storage", ["homeRegion"] = "GRU" });
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
             using var database = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
             var databaseId = database.RootElement.GetProperty("id").GetString()!;

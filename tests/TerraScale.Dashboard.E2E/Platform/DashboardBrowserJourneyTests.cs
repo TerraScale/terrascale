@@ -48,17 +48,14 @@ namespace TerraScale.Dashboard.E2E.Platform
                     }
                     await page.Locator("#database-name").FillAsync(name);
                     await Assert.That(await page.Locator("#database-name").EvaluateAsync<bool>("el => el.checkValidity()")).IsTrue().Because("Native database names accept inner hyphens");
-                    var map = page.Locator("#create-database [data-select-id=\"database-region\"]");
-                    var sjc = page.Locator("#database-region input[value=\"SJC\"]");
-                    var sjcInitially = await sjc.IsCheckedAsync();
+                    var map = page.Locator("#create-database [data-select-id=\"database-home\"]");
+                    var home = page.Locator("#database-home");
                     await map.GetByRole(AriaRole.Button, new() { Name = "San Francisco Bay Area (SJC)", Exact = true }).ClickAsync();
-                    await Assert.That(await sjc.IsCheckedAsync()).IsEqualTo(!sjcInitially).Because("Map picks change the canonical native region checkbox");
+                    await Assert.That(await home.InputValueAsync()).IsEqualTo("SJC").Because("Map picks change the home region select");
                     const string pressed = "expected => document.querySelector('#create-database button[data-region=\"SJC\"]').getAttribute('aria-pressed') === String(expected)";
-                    await page.WaitForFunctionAsync(pressed, !sjcInitially);
-                    await sjc.SetCheckedAsync(sjcInitially);
-                    await page.WaitForFunctionAsync(pressed, sjcInitially);
-                    await page.Locator("#create-database input[name=\"region\"][value=\"GRU\"]").CheckAsync();
-                    await sjc.CheckAsync();
+                    await page.WaitForFunctionAsync(pressed, true);
+                    await home.SelectOptionAsync("GRU");
+                    await page.WaitForFunctionAsync(pressed, false);
                     await SubmitAsync("#create-database form", "Create database");
                     var databaseId = new Uri(page.Url).AbsolutePath.Split('/').ElementAtOrDefault(2);
                     await Assert.That(databaseId).IsNotNullOrEmpty().Because("Created database opens its details");

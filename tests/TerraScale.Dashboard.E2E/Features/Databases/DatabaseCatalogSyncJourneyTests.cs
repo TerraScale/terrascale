@@ -59,17 +59,17 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var (organizationId, projectId) = await IdentityAsync(client);
             var secret = await HttpJourney.CreatePatAsync(client, "Catalog delete MCP", account.Password);
 
-            var everywhere = await CallAsync(client, secret, organizationId, projectId, "create_database", new() { ["name"] = "everywhere", ["allRegions"] = true });
+            var everywhere = await CallAsync(client, secret, organizationId, projectId, "create_database", new() { ["name"] = "everywhere" });
             var everywhereId = everywhere.GetProperty("id").GetString()!;
             // The delete answers 503 after committing; its retry finds it gone without rewriting placement.
-            await Control(producer, new { command = "anchor-unavailable", patch = 0, delete = 1 });
+            await Control(producer, new { command = "anchor-unavailable", delete = 1 });
             var deleted = await CallAsync(client, secret, organizationId, projectId, "delete_database", new() { ["databaseId"] = everywhereId, ["confirmName"] = "everywhere" });
             await Assert.That(deleted.GetProperty("deleted").GetBoolean()).IsTrue();
             await Assert.That(await RemoteAsync(producer, "everywhere")).IsFalse();
             await Assert.That(Volatile.Read(ref placementPatches)).IsEqualTo(0).Because("Deleting a replicated database sends DELETE directly, without a placement PATCH.");
 
             // A record whose database TerraBase already deleted is removed by the delete, which reports success.
-            var stale = await CallAsync(client, secret, organizationId, projectId, "create_database", new() { ["name"] = "stale", ["allRegions"] = true });
+            var stale = await CallAsync(client, secret, organizationId, projectId, "create_database", new() { ["name"] = "stale" });
             await Control(producer, new { command = "external-delete", projectId, value = "stale" });
             deleted = await CallAsync(client, secret, organizationId, projectId, "delete_database", new() { ["databaseId"] = stale.GetProperty("id").GetString(), ["confirmName"] = "stale" });
             await Assert.That(deleted.GetProperty("deleted").GetBoolean()).IsTrue();

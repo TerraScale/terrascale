@@ -265,9 +265,9 @@ namespace TerraScale.Dashboard.E2E
             return inner.ListAsync(scope, home, ct);
         }
 
-        public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken ct)
+        public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, CancellationToken ct)
         {
-            return inner.CreateAsync(scope, name, placement, allRegions, ct);
+            return inner.CreateAsync(scope, name, home, ct);
         }
 
         public Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string id, string name, CancellationToken ct)
@@ -283,11 +283,6 @@ namespace TerraScale.Dashboard.E2E
         public Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string id, CancellationToken ct)
         {
             return inner.DeleteAsync(scope, home, id, ct);
-        }
-
-        public Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string id, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken ct)
-        {
-            return inner.SetRegionsAsync(scope, home, id, placement, allRegions, ct);
         }
 
         public Task<DatabaseSqlCatalog> SqlTablesAsync(DatabaseScope scope, DatabaseRegion home, string id, CancellationToken ct)
