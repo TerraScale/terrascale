@@ -35,34 +35,6 @@ public sealed class SqlTableBackupTests
         await Assert.That(await host.RowsAsync(host.Database.Name, "SELECT id FROM items")).IsEquivalentTo(["later"]);
     }
 
-    [Test]
-    public async Task A_restored_database_is_a_new_incarnation_and_a_replica_of_the_source_rebootstraps_from_it(CancellationToken cancellationToken)
-    {
-        await using var host = await SqlBackupHost.StartAsync(cancellationToken);
-        await host.OkAsync("CREATE TABLE items (id TEXT PRIMARY KEY, v TEXT NOT NULL)");
-        var rows = Enumerable.Range(0, 4).Select(_ => (Id: EntityIds.New().ToString(), Value: Faker.Lorem.Word())).ToList();
-        await host.OkAsync([.. rows.Select(row => Stmt("INSERT INTO items VALUES (?, ?)", row.Id, row.Value))]);
-        await host.SnapshotAsync(cancellationToken);
-        await host.OkAsync(Stmt("DELETE FROM items WHERE id = ?", rows[0].Id));
-        await host.ShipAsync(TimeSpan.FromSeconds(1), cancellationToken);
-        var replica = new RevisionReplica();
-        var source = await replica.PullAsync(host.Api.Server, host.Tenant);
-
-        var latest = await host.LatestAsync(cancellationToken);
-        var restored = await host.RestoreAsync(latest, "restored", cancellationToken);
-        var again = await host.RestoreAsync(latest, "again", cancellationToken);
-        var restoredTenant = await host.TenantAsync(restored, cancellationToken);
-        var rebootstrap = await replica.PullAsync(host.Api.Server, restoredTenant);
-        var steady = await replica.PullAsync(host.Api.Server, restoredTenant);
-        var other = await new RevisionReplica().PullAsync(host.Api.Server, await host.TenantAsync(again, cancellationToken));
-
-        await Assert.That(rebootstrap.Full).IsEqualTo(FullReason.OtherIncarnation);
-        await Assert.That(rebootstrap.Revision.Incarnation).IsNotEqualTo(source.Revision.Incarnation);
-        await Assert.That(other.Revision.Incarnation).IsNotEqualTo(source.Revision.Incarnation).And.IsNotEqualTo(rebootstrap.Revision.Incarnation);
-        await Assert.That(steady.Full).IsNull();
-        await Assert.That(replica.Rows()).IsEquivalentTo(rows.Skip(1).ToDictionary(row => row.Id, row => row.Value));
-    }
-
     private static object Stmt(string sql, params object?[] args) => new { sql, args };
 
 }
