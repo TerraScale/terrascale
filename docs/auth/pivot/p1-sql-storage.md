@@ -17,7 +17,7 @@ CREATE TABLE "<entity>" (
   body        TEXT NOT NULL CHECK (json_valid(body))
 );
 CREATE INDEX "<entity>_instance" ON "<entity>" (instance_id, id);
-CREATE TABLE store_checks (ok INTEGER NOT NULL CHECK (ok = 1));
+CREATE TABLE store_checks (id TEXT PRIMARY KEY NOT NULL, failed INTEGER NOT NULL);
 ```
 
 - `id` is the record's ULID key. For entity records it is the natural-key ULID `AuthStore.NaturalKeyId(instance, entity, key)`:
@@ -26,23 +26,27 @@ CREATE TABLE store_checks (ok INTEGER NOT NULL CHECK (ok = 1));
 - `instance_id` is the tenant (`terrascale` or a project id). Every listing filters on it.
 - `version` is a fresh ULID on every write. It is the opaque version that conditional writes name.
 - `body` is the record as JSON. Filters and sorts read fields with `json_extract`.
-- `store_checks` stays empty. Guards insert into it only to fail its CHECK constraint.
+- `store_checks` holds one row per write request while that request runs, and none outside it.
 
 ## Writes
 
 Each write is one SQL request. TerraBase runs the request as one transaction and serializes writers per database, so every
-request is all or nothing. A request is built in two parts:
+request is all or nothing. A request runs in this order:
 
-1. **Guards**, which see the state before any write in the request. Each guard is
-   `INSERT INTO store_checks (ok) SELECT 0 WHERE NOT (<condition>)`. When the condition is false, the CHECK constraint fails,
-   the whole request rolls back, and the `check_violation` error names the guard's statement index.
+1. `INSERT INTO store_checks (id, failed) VALUES (<request ULID>, -1)`.
+2. **Guards**, which see the state before any write in the request. Each guard is
+   `UPDATE store_checks SET failed = <operation> WHERE id = <request> AND failed = -1 AND NOT (<condition>)`, so the first
+   failing guard names its operation:
+   - create, or assert absent: `NOT EXISTS (... WHERE id = ?)`
    - replace or delete at a version: `EXISTS (... WHERE id = ? AND version = ?)`
-   - absent: `NOT EXISTS (... WHERE id = ?)`
    - assertion: `EXISTS (... WHERE id = ? AND <filter>)`
-2. **Writes**: `INSERT` (create only; a taken key fails with `primary_key_violation`), `UPDATE` or `DELETE` by id.
+3. **Writes**: `INSERT ... SELECT`, `UPDATE` or `DELETE` by id. Each applies only while `failed = -1`, so a failed guard
+   writes nothing.
+4. `SELECT failed` reads the outcome, then `DELETE` removes the row.
 
-The statement that fails maps back to the caller's operation index. The failure is a `StorePreconditionFailedException`, or
-the `int?` index from `AuthStore.TransactAsync`. Any other SQL error propagates. A missing table fails closed.
+A lost race is a returned value, not a SQL error, so it does not depend on error codes. It surfaces as a
+`StorePreconditionFailedException`, or as the `int?` index from `AuthStore.TransactAsync`. Any SQL error fails the request
+closed. A missing table is one example.
 
 ### Unique keys
 

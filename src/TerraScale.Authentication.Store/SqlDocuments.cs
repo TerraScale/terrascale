@@ -50,11 +50,9 @@ internal sealed class SqlDocuments(TerraBaseSqlDatabase database)
 
     private const int MaxStatements = TerraBaseSqlStatement.MaxPerRequest;
 
-    private sealed record Statement(TerraBaseSqlStatement Sql, int Operation, string Kind);
-
     public static IEnumerable<TerraBaseSqlStatement> Schema(IEnumerable<string> collections)
     {
-        yield return new($"CREATE TABLE IF NOT EXISTS {ChecksTable} (ok INTEGER NOT NULL CHECK (ok = 1))");
+        yield return new($"CREATE TABLE IF NOT EXISTS {ChecksTable} (id TEXT PRIMARY KEY NOT NULL, failed INTEGER NOT NULL)");
         foreach (var collection in collections)
         {
             var table = Table(collection);
@@ -153,8 +151,9 @@ internal sealed class SqlDocuments(TerraBaseSqlDatabase database)
     public async Task<IReadOnlyList<string>?> WriteAsync(IReadOnlyList<SqlWrite> operations, Action<int>? failed, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(operations);
-        var guards = new List<Statement>();
-        var writes = new List<Statement>();
+        var request = AuthStore.NewId();
+        var guards = new List<TerraBaseSqlStatement>();
+        var writes = new List<TerraBaseSqlStatement>();
         var versions = new string[operations.Count];
         for (var index = 0; index < operations.Count; index++)
         {
@@ -164,57 +163,66 @@ internal sealed class SqlDocuments(TerraBaseSqlDatabase database)
             {
                 case "create":
                     versions[index] = AuthStore.NewId();
-                    writes.Add(new(new($"INSERT INTO {table} (id, instance_id, version, body) VALUES (?, ?, ?, ?)",
-                        [operation.Id, InstanceOf(operation.Document!.Value), versions[index], operation.Document!.Value.GetRawText()]), index, "insert"));
+                    guards.Add(Guard(request, index, $"NOT EXISTS (SELECT 1 FROM {table} WHERE id = ?)", [operation.Id]));
+                    writes.Add(new($"INSERT INTO {table} (id, instance_id, version, body) SELECT ?, ?, ?, ? WHERE {Passed}",
+                        [operation.Id, InstanceOf(operation.Document!.Value), versions[index], operation.Document!.Value.GetRawText(), request]));
                     break;
                 case "put":
                     versions[index] = AuthStore.NewId();
-                    guards.Add(Guard($"EXISTS (SELECT 1 FROM {table} WHERE id = ? AND version = ?)", [operation.Id, operation.IfMatch], index));
-                    writes.Add(new(new($"UPDATE {table} SET instance_id = ?, version = ?, body = ? WHERE id = ?",
-                        [InstanceOf(operation.Document!.Value), versions[index], operation.Document!.Value.GetRawText(), operation.Id]), index, "write"));
+                    guards.Add(Guard(request, index, $"EXISTS (SELECT 1 FROM {table} WHERE id = ? AND version = ?)", [operation.Id, operation.IfMatch]));
+                    writes.Add(new($"UPDATE {table} SET instance_id = ?, version = ?, body = ? WHERE id = ? AND {Passed}",
+                        [InstanceOf(operation.Document!.Value), versions[index], operation.Document!.Value.GetRawText(), operation.Id, request]));
                     break;
                 case "delete":
-                    guards.Add(Guard($"EXISTS (SELECT 1 FROM {table} WHERE id = ? AND version = ?)", [operation.Id, operation.IfMatch], index));
-                    writes.Add(new(new($"DELETE FROM {table} WHERE id = ?", [operation.Id]), index, "write"));
+                    guards.Add(Guard(request, index, $"EXISTS (SELECT 1 FROM {table} WHERE id = ? AND version = ?)", [operation.Id, operation.IfMatch]));
+                    writes.Add(new($"DELETE FROM {table} WHERE id = ? AND {Passed}", [operation.Id, request]));
                     break;
                 case "absent":
-                    guards.Add(Guard($"NOT EXISTS (SELECT 1 FROM {table} WHERE id = ?)", [operation.Id], index));
+                    guards.Add(Guard(request, index, $"NOT EXISTS (SELECT 1 FROM {table} WHERE id = ?)", [operation.Id]));
                     break;
                 case "assert":
                     var args = new List<TerraBaseSqlValue> { operation.Id };
                     var condition = Condition(operation.Filter!.Value, args);
-                    guards.Add(Guard($"EXISTS (SELECT 1 FROM {table} WHERE id = ? AND {condition})", args, index));
+                    guards.Add(Guard(request, index, $"EXISTS (SELECT 1 FROM {table} WHERE id = ? AND {condition})", args));
                     break;
                 default:
                     throw new ArgumentException($"Unknown operation {operation.Op}.", nameof(operations));
             }
         }
 
-        var statements = guards.Concat(writes).ToList();
-        if (statements.Count == 0)
+        if (guards.Count == 0 && writes.Count == 0)
         {
             return versions;
         }
 
+        List<TerraBaseSqlStatement> statements =
+        [
+            new($"INSERT INTO {ChecksTable} (id, failed) VALUES (?, -1)", [request]),
+            .. guards,
+            .. writes,
+            new($"SELECT failed FROM {ChecksTable} WHERE id = ?", [request]),
+            new($"DELETE FROM {ChecksTable} WHERE id = ?", [request]),
+        ];
         if (statements.Count > MaxStatements)
         {
             throw new InvalidOperationException("A store transaction exceeds TerraBase's statement limit.");
         }
 
-        try
+        var results = await database.BatchAsync(statements, cancellationToken).ConfigureAwait(false);
+        var outcome = results[^2].Rows is [var row] ? row.GetInt64(0) : throw new InvalidOperationException("TerraBase returned no write outcome.");
+        if (outcome < 0)
         {
-            await database.BatchAsync([.. statements.Select(statement => statement.Sql)], cancellationToken).ConfigureAwait(false);
             return versions;
         }
-        catch (TerraBaseSqlException error) when (error.Statement >= 0 && error.Statement < statements.Count
-            && statements[error.Statement] is var statement
-            && (statement.Kind == "guard" && error.Code == TerraBaseSqlErrorCodes.CheckViolation
-                || statement.Kind == "insert" && error.Code is TerraBaseSqlErrorCodes.PrimaryKeyViolation or TerraBaseSqlErrorCodes.UniqueViolation))
-        {
-            failed?.Invoke(statement.Operation);
-            return null;
-        }
+
+        failed?.Invoke((int)outcome);
+        return null;
     }
+
+    private const string Passed = "EXISTS (SELECT 1 FROM " + ChecksTable + " WHERE id = ? AND failed = -1)";
+
+    private static TerraBaseSqlStatement Guard(string request, int operation, string condition, IReadOnlyList<TerraBaseSqlValue> args) =>
+        new($"UPDATE {ChecksTable} SET failed = ? WHERE id = ? AND failed = -1 AND NOT ({condition})", [operation, request, .. args]);
 
     public static string Table(string name)
     {
@@ -226,9 +234,6 @@ internal sealed class SqlDocuments(TerraBaseSqlDatabase database)
 
         return "\"" + name + "\"";
     }
-
-    private static Statement Guard(string condition, IReadOnlyList<TerraBaseSqlValue> args, int operation) =>
-        new(new($"INSERT INTO {ChecksTable} (ok) SELECT 0 WHERE NOT ({condition})", args), operation, "guard");
 
     private static StoredDocument Read(TerraBaseSqlRecord row)
     {
