@@ -110,14 +110,6 @@ namespace TerraScale.Dashboard.E2E
                     throw new InvalidDataException("The source database date or placement disagrees.");
                 }
 
-                var collections = detail.GetProperty("collections").GetInt32();
-                var documents = detail.GetProperty("documents").GetInt64();
-                var bytes = detail.GetProperty("bytes").GetInt64();
-                if (collections < 0 || documents < 0 || bytes < 0)
-                {
-                    throw new InvalidDataException("The source database measurements are invalid.");
-                }
-
                 var backups = entry.GetProperty("backups");
                 // The captured public backup view omits provider trigger and scope
                 // fields. An empty observed list needs neither invented field.
@@ -138,7 +130,7 @@ namespace TerraScale.Dashboard.E2E
                         saved.GetProperty("disabled").GetBoolean(), saved.TryGetProperty("updatedAt", out var updated) ? updated.GetDateTimeOffset() : null);
                 }
                 var captured = new CapturedDatabase(listed.OrganizationId, listed.ProjectId, id, detail.GetProperty("region").GetString()!,
-                    collections, documents, bytes, policy, new HashSet<string>(StringComparer.Ordinal) { principal.Subject });
+                    policy, new HashSet<string>(StringComparer.Ordinal) { principal.Subject });
                 if (databases.TryGetValue(id, out var prior))
                 {
                     var comparable = prior with { Subjects = captured.Subjects };
@@ -157,16 +149,6 @@ namespace TerraScale.Dashboard.E2E
             if (!seenDatabases.SetEquals(inventory.Keys))
             {
                 throw new InvalidDataException("The source database details omit an inventory identity.");
-            }
-        }
-
-        public void ValidateMeasurements(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<CollectionStats> contents)
-        {
-            var captured = Database(scope, home, databaseId);
-            if (contents.Count != captured.Collections || contents.Sum(item => item.Documents) != captured.Documents ||
-                contents.Sum(item => item.Bytes) != captured.Bytes)
-            {
-                throw new HttpRequestException("The document fixture does not match the authenticated source measurements.");
             }
         }
 
@@ -195,13 +177,6 @@ namespace TerraScale.Dashboard.E2E
         }
 
         public Task RemoveDestinationAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken ct)
-        {
-            throw ReadOnly();
-        }
-
-        public Task<ExportScheduleView> ExportScheduleAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken ct)
-        { ct.ThrowIfCancellationRequested(); _ = Database(scope, home, databaseId); return Task.FromResult(new ExportScheduleView(null, null, null)); }
-        public Task<ExportScheduleView> SetExportScheduleAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? cron, CancellationToken ct)
         {
             throw ReadOnly();
         }
@@ -243,71 +218,6 @@ namespace TerraScale.Dashboard.E2E
         }
 
         private sealed record CapturedDatabase(string OrganizationId, string ProjectId, string Id, string Region,
-            int Collections, long Documents, long Bytes, ProducerBackupPolicy? Policy, HashSet<string> Subjects);
-    }
-
-    internal sealed class ReferenceDatabaseBackend(IDatabaseBackend inner, ReferenceDatabaseFacts facts) : IDatabaseBackend
-    {
-        public async Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string id, CancellationToken ct)
-        { var contents = await inner.CollectionsAsync(scope, home, id, ct); facts.ValidateMeasurements(scope, home, id, contents); return contents; }
-        public Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken ct)
-        {
-            return inner.RegionsAsync(ct);
-        }
-
-        public Task<IReadOnlyList<DatabaseRegion>> CatalogAsync(CancellationToken ct)
-        {
-            return inner.CatalogAsync(ct);
-        }
-
-        public Task<IReadOnlyList<ManagedDatabase>> ListAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken ct)
-        {
-            return inner.ListAsync(scope, home, ct);
-        }
-
-        public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, CancellationToken ct)
-        {
-            return inner.CreateAsync(scope, name, home, ct);
-        }
-
-        public Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string id, string name, CancellationToken ct)
-        {
-            return inner.BranchAsync(scope, home, id, name, ct);
-        }
-
-        public Task<ManagedDatabase> RenameAsync(DatabaseScope scope, DatabaseRegion home, string id, string name, CancellationToken ct)
-        {
-            return inner.RenameAsync(scope, home, id, name, ct);
-        }
-
-        public Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string id, CancellationToken ct)
-        {
-            return inner.DeleteAsync(scope, home, id, ct);
-        }
-
-        public Task<DatabaseSqlCatalog> SqlTablesAsync(DatabaseScope scope, DatabaseRegion home, string id, CancellationToken ct)
-        {
-            return inner.SqlTablesAsync(scope, home, id, ct);
-        }
-
-        public Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string id, string statement, bool write, CancellationToken ct)
-        {
-            return inner.SqlAsync(scope, home, id, statement, write, ct);
-        }
-
-        public Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(DatabaseScope scope, DatabaseRegion home, string id, CancellationToken ct)
-        {
-            return inner.IndexesAsync(scope, home, id, ct);
-        }
-
-        public Task<DatabaseIndex> CreateIndexAsync(DatabaseScope scope, DatabaseRegion home, string id, string collection, IReadOnlyList<string> fields, CancellationToken ct)
-        {
-            return inner.CreateIndexAsync(scope, home, id, collection, fields, ct);
-        }
-
-        public Task DropIndexAsync(DatabaseScope scope, DatabaseRegion home, string id, string name, CancellationToken ct)
-        {
-            return inner.DropIndexAsync(scope, home, id, name, ct);
-        }
+            ProducerBackupPolicy? Policy, HashSet<string> Subjects);
     }
 }

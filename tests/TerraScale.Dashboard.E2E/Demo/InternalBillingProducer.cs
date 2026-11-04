@@ -19,13 +19,13 @@ namespace TerraScale.Dashboard.E2E
         private readonly ConcurrentQueue<object> writes = new();
         private string usageMode = "coherent";
         private TaskCompletionSource? writeGate;
-        private string pauseCollection = "";
+        private string pauseTable = "";
         private string pauseId = "";
         private string pauseKind = "";
         private bool pauseAfter;
         private int pauseRemaining;
         private int pausedWrites;
-        private string failCollection = "";
+        private string failTable = "";
         private bool failAfter;
         private int failRemaining;
         private int failStatus;
@@ -47,55 +47,55 @@ namespace TerraScale.Dashboard.E2E
             return state.CheckReadyAsync(cancellationToken);
         }
 
-        public async Task<StateRecord?> GetAsync(string collection, string id, CancellationToken cancellationToken)
+        public async Task<StateRecord?> GetAsync(string table, string id, CancellationToken cancellationToken)
         {
-            var document = await state.GetAsync(collection, id, cancellationToken);
-            if (document is not null && collection == AccountService.OrganizationsCollection && id == misboundOrganization)
+            var row = await state.GetAsync(table, id, cancellationToken);
+            if (row is not null && table == AccountService.OrganizationsTable && id == misboundOrganization)
             {
                 Interlocked.Increment(ref misboundOrganizationReads);
-                return document with { Id = "foreign-producer-document-key" };
+                return row with { Id = "foreign-producer-row-key" };
             }
-            return document;
+            return row;
         }
-        public Task<IReadOnlyList<StateRecord>> ListAsync(string collection, CancellationToken cancellationToken)
+        public Task<IReadOnlyList<StateRecord>> ListAsync(string table, CancellationToken cancellationToken)
         {
-            return state.ListAsync(collection, cancellationToken);
-        }
-
-        public Task<StatePage> PageAsync(string collection, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken cancellationToken)
-        {
-            return state.PageAsync(collection, scope, fields, limit, cursor, cancellationToken);
+            return state.ListAsync(table, cancellationToken);
         }
 
-        public Task DeleteAsync(string collection, string id, string version, CancellationToken cancellationToken)
+        public Task<StatePage> PageAsync(string table, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken cancellationToken)
         {
-            return state.DeleteAsync(collection, id, version, cancellationToken);
+            return state.PageAsync(table, scope, fields, limit, cursor, cancellationToken);
         }
 
-        public async Task PutAsync(string collection, string id, JsonElement document, StatePrecondition precondition, CancellationToken cancellationToken)
+        public Task DeleteAsync(string table, string id, string version, CancellationToken cancellationToken)
         {
-            var kind = document.TryGetProperty("Kind", out var discriminator) ? discriminator.GetString() ?? "" : "";
+            return state.DeleteAsync(table, id, version, cancellationToken);
+        }
+
+        public async Task PutAsync(string table, string id, JsonElement row, StatePrecondition precondition, CancellationToken cancellationToken)
+        {
+            var kind = row.TryGetProperty("Kind", out var discriminator) ? discriminator.GetString() ?? "" : "";
             await PauseAsync(false);
             if (!failAfter)
             {
-                MaybeFail(collection);
+                MaybeFail(table);
             }
 
-            await state.PutAsync(collection, id, document, precondition, cancellationToken);
-            if (collection is "dashboard_billing" or "dashboard_internal_billing" or "dashboard_organizations" or "dashboard_accounts")
+            await state.PutAsync(table, id, row, precondition, cancellationToken);
+            if (table is "dashboard_billing" or "dashboard_internal_billing" or "dashboard_organizations" or "dashboard_accounts")
             {
-                writes.Enqueue(new { collection, id, kind });
+                writes.Enqueue(new { table, id, kind });
             }
 
             await PauseAsync(true);
             if (failAfter)
             {
-                MaybeFail(collection);
+                MaybeFail(table);
             }
 
             async Task PauseAsync(bool after)
             {
-                if (after != pauseAfter || collection != pauseCollection || (pauseId.Length != 0 && id != pauseId) || (pauseKind.Length != 0 && kind != pauseKind))
+                if (after != pauseAfter || table != pauseTable || (pauseId.Length != 0 && id != pauseId) || (pauseKind.Length != 0 && kind != pauseKind))
                 {
                     return;
                 }
@@ -108,9 +108,9 @@ namespace TerraScale.Dashboard.E2E
             }
         }
 
-        private void MaybeFail(string collection)
+        private void MaybeFail(string table)
         {
-            if (collection == failCollection && Interlocked.Decrement(ref failRemaining) >= 0)
+            if (table == failTable && Interlocked.Decrement(ref failRemaining) >= 0)
             {
                 Interlocked.Increment(ref injectedFailures);
                 if (failStatus != 0)
@@ -155,14 +155,14 @@ namespace TerraScale.Dashboard.E2E
                     misboundOrganization = organizationId;
                     break;
                 case "internal-pause-put":
-                    var collection = command.GetProperty("collection").GetString()!;
-                    if (!Allowed(collection))
+                    var table = command.GetProperty("table").GetString()!;
+                    if (!Allowed(table))
                     {
                         return Results.BadRequest();
                     }
 
                     Release();
-                    pauseCollection = collection;
+                    pauseTable = table;
                     pauseId = command.TryGetProperty("id", out var id) ? id.GetString()! : "";
                     pauseKind = command.TryGetProperty("kind", out var kind) ? kind.GetString()! : "";
                     pauseAfter = command.TryGetProperty("after", out var committed) && committed.GetBoolean();
@@ -177,8 +177,8 @@ namespace TerraScale.Dashboard.E2E
                     break;
                 case "internal-release-put": Release(); break;
                 case "internal-fail-put-once":
-                    failCollection = command.GetProperty("collection").GetString()!;
-                    if (!Allowed(failCollection))
+                    failTable = command.GetProperty("table").GetString()!;
+                    if (!Allowed(failTable))
                     {
                         return Results.BadRequest();
                     }
@@ -188,7 +188,7 @@ namespace TerraScale.Dashboard.E2E
                     failRemaining = 1;
                     break;
                 case "internal-clear-faults":
-                    Release(); failCollection = ""; failRemaining = 0; misboundOrganization = "";
+                    Release(); failTable = ""; failRemaining = 0; misboundOrganization = "";
                     break;
                 default: return Results.BadRequest();
             }
@@ -200,36 +200,36 @@ namespace TerraScale.Dashboard.E2E
             writeGate?.TrySetResult();
             usageGate?.TrySetResult();
             usageGate = null;
-            pauseCollection = "";
+            pauseTable = "";
             pauseRemaining = 0;
         }
 
-        private static bool Allowed(string collection)
+        private static bool Allowed(string table)
         {
-            return collection is "dashboard_billing" or "dashboard_internal_billing" or "dashboard_organizations" or "dashboard_accounts" or "sessions";
+            return table is "dashboard_billing" or "dashboard_internal_billing" or "dashboard_organizations" or "dashboard_accounts" or "sessions";
         }
 
         // Gives the signed-in account's active project one saved database, so reporting reads have something to report.
         private async Task<IResult> AddDatabaseAsync(string name, CancellationToken cancellationToken)
         {
-            var accountDocument = await state.GetAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(subject()), cancellationToken);
-            if (accountDocument is null)
+            var accountRow = await state.GetAsync(AccountService.AccountsTable, AccountService.AccountStorageKey(subject()), cancellationToken);
+            if (accountRow is null)
             {
                 return Results.BadRequest();
             }
 
-            var account = AccountService.Read<AccountRecord>(accountDocument);
-            var organizationDocument = await state.GetAsync(AccountService.OrganizationsCollection, account.ActiveOrganizationId, cancellationToken);
-            if (organizationDocument is null)
+            var account = AccountService.Read<AccountRecord>(accountRow);
+            var organizationRow = await state.GetAsync(AccountService.OrganizationsTable, account.ActiveOrganizationId, cancellationToken);
+            if (organizationRow is null)
             {
                 return Results.BadRequest();
             }
 
-            var organization = AccountService.Read<OrganizationRecord>(organizationDocument);
+            var organization = AccountService.Read<OrganizationRecord>(organizationRow);
             var project = organization.Projects[account.ActiveProjectId];
             var database = new DatabaseRecord { Id = new TerraScaleIdGenerator().NewId(), ProjectId = project.Id, Name = name, Region = "GRU", Regions = ["GRU", "FRA", "SJC"], CreatedAt = now() };
             project.Databases[database.Id] = database;
-            await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization), StatePrecondition.Matches(organizationDocument.Version), cancellationToken);
+            await state.PutAsync(AccountService.OrganizationsTable, organization.Id, JsonSerializer.SerializeToElement(organization), StatePrecondition.Matches(organizationRow.Version), cancellationToken);
             return Results.NoContent();
         }
 
@@ -242,13 +242,13 @@ namespace TerraScale.Dashboard.E2E
 
             var owner = subject();
             var key = AccountService.AccountStorageKey(owner);
-            var accountDocument = await state.GetAsync(AccountService.AccountsCollection, key, cancellationToken);
-            if (accountDocument is null)
+            var accountRow = await state.GetAsync(AccountService.AccountsTable, key, cancellationToken);
+            if (accountRow is null)
             {
                 return Results.BadRequest(new { error = "Sign in natively before preparing the pre-existing provider target." });
             }
 
-            var account = AccountService.Read<AccountRecord>(accountDocument);
+            var account = AccountService.Read<AccountRecord>(accountRow);
             var ids = new TerraScaleIdGenerator();
             var targets = new List<object>();
             for (var index = 0; index < count; index++)
@@ -276,13 +276,13 @@ namespace TerraScale.Dashboard.E2E
                     workspace.Organizations[organization.Id] = TestWorkspace.Clone(organization);
                 }
 
-                await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization), StatePrecondition.Absent, cancellationToken);
+                await state.PutAsync(AccountService.OrganizationsTable, organization.Id, JsonSerializer.SerializeToElement(organization), StatePrecondition.Absent, cancellationToken);
                 seedOrganization?.Invoke(organization);
                 account.OrganizationIds.Add(organization.Id);
                 if (index == 0) { account.ActiveOrganizationId = organization.Id; account.ActiveProjectId = organization.Projects.Keys.First(); }
                 targets.Add(new { organizationId = organization.Id, projects = organization.Projects.Values.Select(project => new { project.Id, project.Name }).ToArray() });
             }
-            await state.PutAsync(AccountService.AccountsCollection, key, JsonSerializer.SerializeToElement(account), StatePrecondition.Matches(accountDocument.Version), cancellationToken);
+            await state.PutAsync(AccountService.AccountsTable, key, JsonSerializer.SerializeToElement(account), StatePrecondition.Matches(accountRow.Version), cancellationToken);
             return Results.Json(new { targets });
         }
 
@@ -316,7 +316,7 @@ namespace TerraScale.Dashboard.E2E
                 return Error(HttpStatusCode.Forbidden, "forbidden", "Not a member of the organization.");
             }
 
-            var settings = state.Items.GetValueOrDefault(AccountService.OrganizationsCollection + "/" + organizationId)?.Body.Deserialize<OrganizationRecord>();
+            var settings = state.Items.GetValueOrDefault(AccountService.OrganizationsTable + "/" + organizationId)?.Body.Deserialize<OrganizationRecord>();
             var databases = settings?.Projects.GetValueOrDefault(projectId)?.Databases.Values.Where(database => database.ProjectId == projectId).OrderBy(database => database.CreatedAt).ToArray() ?? [];
             if (!Window(http.Request.Query, now(), out var granularity, out var from, out var to))
             {
@@ -357,8 +357,8 @@ namespace TerraScale.Dashboard.E2E
                     databaseId = database.Id,
                     storageBytes = bytes,
                     logicalBytes = bytes,
-                    collections = bytes > 0 ? 1 : 0,
-                    documents = bytes > 0 ? 17 : 0,
+                    tables = bytes > 0 ? 1 : 0,
+                    rows = bytes > 0 ? 17 : 0,
                     reads,
                     writes,
                     period = new { period.from, period.to, period.granularity, reads, writes },
@@ -373,7 +373,7 @@ namespace TerraScale.Dashboard.E2E
                 databases = items.Length,
                 storageBytes = totalBytes,
                 logicalBytes = totalBytes,
-                documents = items.Sum(item => item.documents),
+                rows = items.Sum(item => item.rows),
                 reads = totalReads,
                 writes = totalWrites,
                 period = new { period.from, period.to, period.granularity, reads = totalReads, writes = totalWrites },
@@ -452,11 +452,11 @@ namespace TerraScale.Dashboard.E2E
                 misboundOrganizationReads,
                 injectedFailures,
                 writes = writes.ToArray(),
-                organizations = state.Items.Where(pair => pair.Key.StartsWith(AccountService.OrganizationsCollection + "/", StringComparison.Ordinal))
-                .Select(pair => new { id = pair.Value.Id, document = pair.Value.Body }).ToArray(),
+                organizations = state.Items.Where(pair => pair.Key.StartsWith(AccountService.OrganizationsTable + "/", StringComparison.Ordinal))
+                .Select(pair => new { id = pair.Value.Id, row = pair.Value.Body }).ToArray(),
                 bindings = state.Items.Where(pair => pair.Key.StartsWith("dashboard_billing/", StringComparison.Ordinal)).Select(pair => pair.Value.Body).ToArray(),
                 singleton = state.Items.GetValueOrDefault("dashboard_internal_billing/organization")?.Body,
-                notifications = state.Items.Where(pair => pair.Key.StartsWith(AccountService.AccountsCollection + "/", StringComparison.Ordinal))
+                notifications = state.Items.Where(pair => pair.Key.StartsWith(AccountService.AccountsTable + "/", StringComparison.Ordinal))
                 .SelectMany(pair => pair.Value.Body.GetProperty("Notifications").EnumerateArray()).ToArray()
             };
         }

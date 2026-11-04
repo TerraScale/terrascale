@@ -50,7 +50,7 @@ namespace TerraScale.Dashboard.Features.Auth
                 return null;
             }
 
-            try { await state.DeleteAsync(Collection, stored.Id, stored.Version, http.RequestAborted); }
+            try { await state.DeleteAsync(Table, stored.Id, stored.Version, http.RequestAborted); }
             catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict or System.Net.HttpStatusCode.NotFound)
             { return null; }
             return stored.Value.Challenge.ExpiresAt > time.GetUtcNow() ? stored.Value : null;

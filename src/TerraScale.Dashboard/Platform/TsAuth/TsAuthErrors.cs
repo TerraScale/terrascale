@@ -57,8 +57,8 @@ namespace TerraScale.Dashboard.Platform.TsAuth
 
             try
             {
-                using var document = JsonDocument.Parse(buffer);
-                var root = document.RootElement;
+                using var json = JsonDocument.Parse(buffer);
+                var root = json.RootElement;
                 if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("error", out var error)) return null;
                 var code = error.ValueKind == JsonValueKind.String ? error.GetString()
                     : error.ValueKind == JsonValueKind.Object && error.TryGetProperty("code", out var nested) && nested.ValueKind == JsonValueKind.String

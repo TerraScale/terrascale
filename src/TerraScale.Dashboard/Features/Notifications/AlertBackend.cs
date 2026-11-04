@@ -12,7 +12,7 @@ namespace TerraScale.Dashboard.Features.Notifications
     {
         private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-        // The same document as the public /v1/projects/{project}/analytics, read over the dashboard's private TerraBase listener.
+        // The same response as the public /v1/projects/{project}/analytics, read over the dashboard's private TerraBase listener.
         public async Task<AlertAnalytics> ReadAnalyticsAsync(string projectId, CancellationToken cancellationToken)
         {
             JsonElement root;

@@ -43,7 +43,7 @@ namespace TerraScale.Dashboard.E2E
         public int Conflicts { get; private set; }
         public async Task<int> RecordCountAsync()
         {
-            return (await wire!.ListAsync(SqlWorkspace.Collection, default)).Count;
+            return (await wire!.ListAsync(SqlWorkspace.Table, default)).Count;
         }
 
         public void Configure(WebApplicationBuilder builder)
@@ -58,22 +58,22 @@ namespace TerraScale.Dashboard.E2E
             {
                 var context = (await AccountRequest.RequireAsync(http, sessions, accounts))!;
                 var scope = DatabaseService.Scope(context);
-                var document = (await wire!.GetAsync(AccountService.OrganizationsCollection, scope.OrganizationId, default))!;
-                return Results.Json(AccountService.Read<OrganizationRecord>(document).Projects[scope.ProjectId].Databases.Keys);
+                var row = (await wire!.GetAsync(AccountService.OrganizationsTable, scope.OrganizationId, default))!;
+                return Results.Json(AccountService.Read<OrganizationRecord>(row).Projects[scope.ProjectId].Databases.Keys);
             });
             app.MapPost("/__test/sql-marker-capacity", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
             {
                 var context = (await AccountRequest.RequireAsync(http, sessions, accounts))!;
                 var scope = DatabaseService.Scope(context);
-                var before = (await wire!.GetAsync(AccountService.OrganizationsCollection, scope.OrganizationId, default))!.Body.GetRawText();
+                var before = (await wire!.GetAsync(AccountService.OrganizationsTable, scope.OrganizationId, default))!.Body.GetRawText();
                 for (var index = 0; index < 4100; index++)
                 {
                     var marker = new DatabaseWorkspaceDeletion(scope.OrganizationId, scope.ProjectId, AccountService.NewId());
                     await DatabaseWorkspaceCleanup.RememberAsync(wire, marker, default);
                     await DatabaseWorkspaceCleanup.RememberAsync(wire, marker, default);
                 }
-                var markers = await wire.ListAsync(DatabaseWorkspaceCleanup.Collection, default);
-                var after = (await wire.GetAsync(AccountService.OrganizationsCollection, scope.OrganizationId, default))!.Body.GetRawText();
+                var markers = await wire.ListAsync(DatabaseWorkspaceCleanup.Table, default);
+                var after = (await wire.GetAsync(AccountService.OrganizationsTable, scope.OrganizationId, default))!.Body.GetRawText();
                 return Results.Json(new
                 {
                     count = markers.Count,
@@ -125,9 +125,9 @@ namespace TerraScale.Dashboard.E2E
                 return inner.CheckReadyAsync(ct);
             }
 
-            public async Task<StateRecord?> GetAsync(string collection, string id, CancellationToken ct)
+            public async Task<StateRecord?> GetAsync(string table, string id, CancellationToken ct)
             {
-                if (collection == AccountService.OrganizationsCollection && id == control.importOrganization && !control.pauseImportCommit &&
+                if (table == AccountService.OrganizationsTable && id == control.importOrganization && !control.pauseImportCommit &&
                     Interlocked.CompareExchange(ref control.importPause, 0, 2) == 2)
                 {
                     // After the absent preflight check and placement read, but before the CAS
@@ -135,37 +135,37 @@ namespace TerraScale.Dashboard.E2E
                     control.ImportPaused.TrySetResult();
                     await control.ResumeImport.Task.WaitAsync(ct);
                 }
-                var document = await inner.GetAsync(collection, id, ct);
-                if (collection == DatabaseWorkspaceCleanup.Collection && id == control.importMarker && document is null && !control.pauseImportCommit)
+                var row = await inner.GetAsync(table, id, ct);
+                if (table == DatabaseWorkspaceCleanup.Table && id == control.importMarker && row is null && !control.pauseImportCommit)
                 {
                     Interlocked.CompareExchange(ref control.importPause, 2, 1);
                 }
 
-                return document;
+                return row;
             }
-            public Task<IReadOnlyList<StateRecord>> ListAsync(string collection, CancellationToken ct)
+            public Task<IReadOnlyList<StateRecord>> ListAsync(string table, CancellationToken ct)
             {
-                return inner.ListAsync(collection, ct);
-            }
-
-            public Task<StatePage> PageAsync(string collection, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken ct)
-            {
-                return inner.PageAsync(collection, scope, fields, limit, cursor, ct);
+                return inner.ListAsync(table, ct);
             }
 
-            public Task DeleteAsync(string collection, string id, string version, CancellationToken ct)
+            public Task<StatePage> PageAsync(string table, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken ct)
             {
-                return inner.DeleteAsync(collection, id, version, ct);
+                return inner.PageAsync(table, scope, fields, limit, cursor, ct);
             }
 
-            public async Task PutAsync(string collection, string id, JsonElement document, StatePrecondition condition, CancellationToken ct)
+            public Task DeleteAsync(string table, string id, string version, CancellationToken ct)
             {
-                if (collection == DatabaseWorkspaceCleanup.Collection && control.FailNextMarkerWrite)
+                return inner.DeleteAsync(table, id, version, ct);
+            }
+
+            public async Task PutAsync(string table, string id, JsonElement row, StatePrecondition condition, CancellationToken ct)
+            {
+                if (table == DatabaseWorkspaceCleanup.Table && control.FailNextMarkerWrite)
                 {
                     control.FailNextMarkerWrite = false;
                     throw new IOException("Synthetic deletion marker failure after remote delete.");
                 }
-                if (collection == SqlWorkspace.Collection)
+                if (table == SqlWorkspace.Table)
                 {
                     if (control.FailWrites)
                     {
@@ -183,11 +183,11 @@ namespace TerraScale.Dashboard.E2E
                         control.ConflictNextWrite = false;
                         control.Conflicts++;
                         // Advance the same record so the original CAS fails naturally in the provider.
-                        await inner.PutAsync(collection, id, document, condition, ct);
+                        await inner.PutAsync(table, id, row, condition, ct);
                     }
                 }
-                var pausedImport = collection == AccountService.OrganizationsCollection && control.pauseImportCommit &&
-                    document.TryGetProperty("Projects", out var projects) && projects.EnumerateObject().Any(project =>
+                var pausedImport = table == AccountService.OrganizationsTable && control.pauseImportCommit &&
+                    row.TryGetProperty("Projects", out var projects) && projects.EnumerateObject().Any(project =>
                         project.Value.GetProperty("Databases").TryGetProperty(control.importDatabase, out _)) &&
                     Interlocked.CompareExchange(ref control.importPause, 0, 1) == 1;
                 if (pausedImport)
@@ -195,7 +195,7 @@ namespace TerraScale.Dashboard.E2E
                     control.ImportPaused.TrySetResult();
                     await control.ResumeImport.Task.WaitAsync(ct);
                 }
-                try { await inner.PutAsync(collection, id, document, condition, ct); }
+                try { await inner.PutAsync(table, id, row, condition, ct); }
                 catch (StateConflictException) when (pausedImport) { control.ImportCasConflicts++; throw; }
             }
         }

@@ -10,10 +10,10 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
         [Arguments("sessions")]
         [Arguments("auth_credentials")]
         [Arguments("session_indexes")]
-        [Arguments(AccessTokens.IndexCollection)]
-        [Arguments(AccessTokens.Collection)]
-        [Arguments(AccountService.OrganizationsCollection)]
-        public async Task SubstitutedReferencesCannotEraseAnotherSubjectOrAnOrganization(string collection)
+        [Arguments(AccessTokens.IndexTable)]
+        [Arguments(AccessTokens.Table)]
+        [Arguments(AccountService.OrganizationsTable)]
+        public async Task SubstitutedReferencesCannotEraseAnotherSubjectOrAnOrganization(string table)
         {
             await using var scenario = await AccountEnrollmentScenario.StartAsync(fixture.Root);
             using var other = await scenario.SignInAsync(scenario.Other);
@@ -21,7 +21,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             var references = await scenario.ReferencesAsync(scenario.Other);
             var organization = await scenario.OrganizationAsync(scenario.Other);
             using var control = scenario.Client();
-            using (var substitute = await control.PostAsync("/__test/enrollment/substitute?collection=" + collection, null))
+            using (var substitute = await control.PostAsync("/__test/enrollment/substitute?table=" + table, null))
             {
                 await Assert.That(substitute.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
             }
@@ -30,10 +30,10 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             await Assert.That((int)replay.StatusCode).IsGreaterThanOrEqualTo(500);
             foreach (var reference in references)
             {
-                await Assert.That(await scenario.GetAsync(reference.Collection, reference.RecordId)).IsNotNull();
+                await Assert.That(await scenario.GetAsync(reference.Table, reference.RecordId)).IsNotNull();
             }
 
-            await Assert.That((await scenario.GetAsync(AccountService.OrganizationsCollection, organization.Id))!.Body.GetRawText())
+            await Assert.That((await scenario.GetAsync(AccountService.OrganizationsTable, organization.Id))!.Body.GetRawText())
                 .IsEqualTo(organization.Body.GetRawText());
             using var retained = await other.GetAsync("/api/v1/auth/me");
             await Assert.That(retained.StatusCode).IsEqualTo(HttpStatusCode.OK);

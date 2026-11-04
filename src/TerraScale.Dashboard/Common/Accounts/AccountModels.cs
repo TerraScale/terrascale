@@ -24,7 +24,7 @@ namespace TerraScale.Dashboard.Common.Accounts
         public DateTimeOffset CreatedAt { get; set; }
     }
 
-    // Canonical, create-only subject ownership. The private document key is the
+    // Canonical, create-only subject ownership. The private row key is the
     // subject digest; this public identity survives source-state migration.
     public sealed record AccountIdentityBinding(string UserId, string AccountId);
 
@@ -64,7 +64,7 @@ namespace TerraScale.Dashboard.Common.Accounts
         public int? AuditRetentionDays { get; set; }
         [JsonIgnore] public Dictionary<string, InvitationRecord> Invitations { get; set; } = [];
         // Plan member allowance: invitations this dashboard is creating at ts-auth, by operation id,
-        // until ts-auth lists them. Every change goes through the document's compare-and-set.
+        // until ts-auth lists them. Every change goes through the row's compare-and-set.
         public Dictionary<string, InvitationReservation> InvitationReservations { get; set; } = [];
         public Dictionary<string, string> PendingProjectDeletions { get; set; } = [];
         // Terminal project IDs contain no names or settings and must survive stale auth snapshots.
@@ -129,19 +129,7 @@ namespace TerraScale.Dashboard.Common.Accounts
         public long SpendCapCents { get; set; }
         public OperationLimits OperationLimits { get; set; } = new();
         public Dictionary<string, DatabaseRecord> Databases { get; set; } = [];
-        public Dictionary<string, SharedResultConfiguration> SharedResultConfigs { get; set; } = [];
         [JsonIgnore] public DateTimeOffset CreatedAt { get; set; }
-    }
-
-    public sealed class SharedResultConfiguration
-    {
-        public string Id { get; set; } = "";
-        public string DatabaseId { get; set; } = "";
-        public string Name { get; set; } = "";
-        public string Query { get; set; } = "";
-        public string Transport { get; set; } = "";
-        public string Status { get; set; } = "saved";
-        public DateTimeOffset CreatedAt { get; set; }
     }
 
     public sealed class DatabaseRecord

@@ -15,7 +15,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 return [];
             }
 
-            var customer = await state.GetAsync(CustomersCollection, binding.CustomerId, cancellationToken);
+            var customer = await state.GetAsync(CustomersTable, binding.CustomerId, cancellationToken);
             if (customer is null || AccountService.Read<CustomerBinding>(customer).OrganizationId != context.Organization.Id)
             {
                 throw new IOException("Billing customer ownership changed.");

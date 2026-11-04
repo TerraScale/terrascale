@@ -97,15 +97,11 @@
             foreach (var (key, label) in OrganizationPages)
                 yield return new(label, "/organization?tab=" + key, "building2", organization);
         if (Model.Context.Project is null) yield break;
-        yield return new("Imports", "/imports", "database", project);
         yield return new("Connect", "/?tab=connect", "database", project);
-        yield return new("Query subscriptions", "/subscriptions", "database", project);
         var parts = Model.ReturnUrl.Split('?')[0].Split('/');
         if (parts.Length < 3 || parts[1] != "databases" || !Model.Context.Project.Databases.TryGetValue(Uri.UnescapeDataString(parts[2]), out var database)) yield break;
-        var queryAt = Model.ReturnUrl.IndexOf('?');
-        var collection = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(queryAt < 0 ? "" : Model.ReturnUrl[queryAt..]).GetValueOrDefault("collection").ToString();
         foreach (var tab in DatabaseFrameModel.Tabs)
-            yield return new(tab.Key is "overview" or "danger" ? "Database " + tab.Label.ToLowerInvariant() : tab.Label, DatabaseService.Path(database.Id, tab.Key, tab.Key == "sql" ? collection : ""), "database", "Database · " + database.Name + " · " + project);
+            yield return new(tab.Key is "overview" or "danger" ? "Database " + tab.Label.ToLowerInvariant() : tab.Label, DatabaseService.Path(database.Id, tab.Key), "database", "Database · " + database.Name + " · " + project);
     }
     private static readonly (string Key, string Label)[] OrganizationPages = [("members", "Members"), ("invitations", "Invitations"), ("projects", "Projects"), ("billing", "Billing"), ("audit", "Audit"), ("sso", "Single sign-on"), ("danger", "Danger zone")];
 }

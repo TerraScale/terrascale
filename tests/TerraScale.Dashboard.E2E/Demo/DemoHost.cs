@@ -20,9 +20,6 @@ using TerraScale.Dashboard.Features.Home;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
-using TerraScale.TerraBase.Contracts.Changes;
-using TerraScale.TerraBase.Contracts.Schema;
 
 namespace TerraScale.Dashboard.E2E.Demo
 {
@@ -34,24 +31,21 @@ namespace TerraScale.Dashboard.E2E.Demo
         private readonly TestClock clock = new();
         private readonly TestWorkspace workspace = new();
         private readonly TestAuthentication authentication = new();
-        private readonly TestDocuments documents = new();
         private readonly TestDatabases databases;
         private readonly TestStripeTransport stripe = new();
         private readonly TestBillingPlanTransport billingPlans;
         private readonly TestBillingCheckoutPersistence checkoutPersistence;
         private readonly TestReportingTransport reporting;
         private readonly TestAuthApiKeys apiKeys;
-        private readonly TestImports imports;
 
         public DemoEnvironment()
         {
             auth = new(workspace.ProjectRole);
-            databases = new TestDatabases(documents);
+            databases = new TestDatabases();
             billingPlans = new TestBillingPlanTransport(stripe);
             checkoutPersistence = new TestBillingCheckoutPersistence(state);
             apiKeys = new TestAuthApiKeys(auth.ResolveAccessToken, workspace.ProjectRole);
-            reporting = new TestReportingTransport(state, workspace, auth.ResolveAccessToken, billingPlans, auth.ResolveProjectToken, apiKeys, documents);
-            imports = new TestImports(reporting, databases, documents, auth.ResolveProjectToken);
+            reporting = new TestReportingTransport(state, workspace, auth.ResolveAccessToken, billingPlans, auth.ResolveProjectToken, apiKeys);
         }
 
         internal TestWorkspace Workspace => workspace;
@@ -62,12 +56,11 @@ namespace TerraScale.Dashboard.E2E.Demo
         internal TestState State => state;
         internal TestAuth Auth => auth;
         internal TestDatabases Databases => databases;
-        internal TestDocuments Documents => documents;
 
         public async Task InitializeAsync()
         {
             var personal = workspace.SeedPersonal(new("test-user", "Test User", "user@example.com", "", null, clock.GetUtcNow().AddHours(1)));
-            await state.PutAsync(AccountService.OrganizationsCollection, personal.Id, JsonSerializer.SerializeToElement(personal), StatePrecondition.Absent, default);
+            await state.PutAsync(AccountService.OrganizationsTable, personal.Id, JsonSerializer.SerializeToElement(personal), StatePrecondition.Absent, default);
             var account = new AccountRecord
             {
                 Id = AccountService.AccountId("test-user"),
@@ -82,7 +75,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                 ActiveProjectId = personal.Projects.Keys.First(),
                 CreatedAt = clock.GetUtcNow()
             };
-            await state.PutAsync(AccountService.AccountsCollection, account.Id, JsonSerializer.SerializeToElement(account), StatePrecondition.Absent, default);
+            await state.PutAsync(AccountService.AccountsTable, account.Id, JsonSerializer.SerializeToElement(account), StatePrecondition.Absent, default);
         }
 
         // contentRoot holds web/static: the project directory, or the published application directory.
@@ -105,13 +98,12 @@ namespace TerraScale.Dashboard.E2E.Demo
                 builder.Services.AddSingleton(workspace);
                 builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthProjects>(authentication));
                 builder.Services.Replace(ServiceDescriptor.Singleton<IDatabaseBackend>(databases));
-                builder.Services.Replace(ServiceDescriptor.Singleton<IDocumentBackend>(documents));
                 builder.Services.Replace(ServiceDescriptor.Singleton<IHomeMeasurements>(new TestMeasurements()));
                 builder.Services.Replace(ServiceDescriptor.Singleton<TerraScale.Dashboard.Features.Notifications.IAllowanceNotificationBackend, TestAllowanceNotifications>());
                 builder.Services.Replace(ServiceDescriptor.Singleton<TerraScale.Dashboard.Features.Support.ISupportMail, TestSupportMail>());
                 // Test hosts report overage through UsageOverageReporter directly; the hourly worker would share the allowance feed.
                 builder.Services.Remove(builder.Services.Single(service => service.ImplementationType == typeof(TerraScale.Dashboard.Features.Billing.UsageOverageWorker)));
-                builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TestHttpFactory(imports)));
+                builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TestHttpFactory(reporting)));
                 builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(identity));
                 builder.Services.Replace(ServiceDescriptor.Singleton<TimeProvider>(TimeProvider.System));
                 // Scenarios run plan reconciliation on demand, so its timer never races their billing assertions.
@@ -122,7 +114,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                 builder.Services.Remove(builder.Services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == typeof(TerraScale.Dashboard.Features.Profile.DeletionReconciler)));
                 builder.Logging.ClearProviders();
                 builder.Logging.AddConsole().SetMinimumLevel(LogLevel.Warning);
-                // Reporting and imports use the production MagicOnion services over the scenario's REST handlers.
+                // Reporting uses the production MagicOnion services over the scenario's REST handlers.
                 builder.Services.AddSingleton(services => TestRestRpcHost.StartAsync(services.GetRequiredService<IHttpClientFactory>(), "https://gru.api.terrascale.tech/").GetAwaiter().GetResult());
                 builder.Services.Replace(ServiceDescriptor.Singleton<TerraScale.Dashboard.Platform.Rpc.TerraBaseRpcClient>(services => services.GetRequiredService<TestRestRpcHost>().Client));
                 configureScenario?.Invoke(builder);
@@ -179,7 +171,6 @@ namespace TerraScale.Dashboard.E2E.Demo
                     : Results.Redirect("/login/callback?state=" + Uri.EscapeDataString(state) + "&" + auth.Authorize(email, password, signup == "1")));
             app.MapGet("/__test/portal", () => Results.Content("<h1>Test-only Stripe customer portal</h1><p>The official Stripe SDK issued this portal session.</p><a href='/organization?tab=billing'>Return to billing</a>", "text/html"));
             reporting.MapRoutes(app);
-            imports.MapRoutes(app);
             billingPlans.MapRoutes(app);
             checkoutPersistence.MapRoutes(app);
             return app;
@@ -1024,24 +1015,12 @@ namespace TerraScale.Dashboard.E2E.Demo
             return Task.FromResult(new HomeMeasurement { ActivityNote = "Reads and writes metered by TerraBase.", Regions = [new("GRU", "Operational", "12.00 ms", context.Project?.Databases.Count ?? 0)] });
         }
     }
-    sealed class TestDatabases(TestDocuments documents) : IDatabaseBackend
+    // Each database is a real SQL engine, so SQL editor and table pages run the statements they show.
+    sealed class TestDatabases : IDatabaseBackend
     {
-        public Task<ManagedDatabase> RenameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
-        {
-            var current = Database(scope, databaseId);
-            if (databases.Values.Any(database => database.Id != databaseId && database.ProjectId == scope.ProjectId && database.Name == name))
-            {
-                throw new DatabaseProviderException(HttpStatusCode.Conflict);
-            }
-
-            var renamed = current with { Name = name, PreviousName = null, ConflictOf = null };
-            documents.RenameDatabase(scope, current.Name, name);
-            databases[databaseId] = renamed;
-            return Task.FromResult(renamed);
-        }
         private readonly ConcurrentDictionary<string, ManagedDatabase> databases = new();
+        private readonly ConcurrentDictionary<string, TestSqlEngine> engines = new(StringComparer.Ordinal);
         private readonly TerraScale.Dashboard.Common.Accounts.TerraScaleIdGenerator ids = new();
-        private readonly ConcurrentDictionary<string, DatabaseIndex> indexes = new();
         private static readonly IReadOnlyList<DatabaseRegion> regions = [new("GRU", "gru", "São Paulo", "br", new("https://gru.api.terrascale.tech"), true), new("SJC", "sjc", "San Francisco Bay Area", "us", new("https://sjc.api.terrascale.tech"), true)];
         public void SeedFixtureDatabase(ManagedDatabase database)
         {
@@ -1052,6 +1031,12 @@ namespace TerraScale.Dashboard.E2E.Demo
                 throw new InvalidDataException("Invalid or duplicate fixture database.");
             }
         }
+
+        public Task SeedSqlAsync(DatabaseScope scope, string databaseId, string statement)
+        {
+            return Engine(scope, databaseId).ExecuteAsync([new(statement, [])], default);
+        }
+
         public Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken cancellationToken)
         {
             return Task.FromResult(regions);
@@ -1068,335 +1053,87 @@ namespace TerraScale.Dashboard.E2E.Demo
         }
 
         public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, CancellationToken cancellationToken)
-        { var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, HomeRegion: home.Id, ReplicaRegions: []); databases[value.Id] = value; return Task.FromResult(value); }
-        public Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
         {
-            var source = Database(scope, databaseId);
-            var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, databaseId, home.Id, []);
-            documents.CopyDatabase(scope, source.Name, value.Name);
-            foreach (var index in indexes.Where(item => item.Key.StartsWith(databaseId + "/", StringComparison.Ordinal)).Select(item => item.Value).ToArray())
-            {
-                indexes[value.Id + "/" + index.Name] = index;
-            }
-
+            var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, HomeRegion: home.Id, ReplicaRegions: []);
             databases[value.Id] = value;
             return Task.FromResult(value);
         }
+
+        // A branch starts as a copy of its source's tables and rows.
+        public async Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
+        {
+            var copy = Engine(scope, databaseId).Snapshot();
+            var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, databaseId, home.Id, []);
+            databases[value.Id] = value;
+            if (copy.Count > 0)
+            {
+                await Engine(scope, value.Id).ExecuteAsync(copy, cancellationToken);
+            }
+
+            return value;
+        }
+
+        public Task<ManagedDatabase> RenameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
+        {
+            var current = Database(scope, databaseId);
+            if (databases.Values.Any(database => database.Id != databaseId && database.ProjectId == scope.ProjectId && database.Name == name))
+            {
+                throw new DatabaseProviderException(HttpStatusCode.Conflict);
+            }
+
+            var renamed = current with { Name = name, PreviousName = null, ConflictOf = null };
+            databases[databaseId] = renamed;
+            return Task.FromResult(renamed);
+        }
+
         public Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
-            var database = Database(scope, databaseId);
+            Database(scope, databaseId);
             databases.TryRemove(databaseId, out _);
-            documents.DropDatabase(scope, database.Name);
-            foreach (var key in indexes.Keys.Where(key => key.StartsWith(databaseId + "/", StringComparison.Ordinal)))
+            if (engines.TryRemove(databaseId, out var engine))
             {
-                indexes.TryRemove(key, out _);
+                engine.Dispose();
             }
 
             return Task.CompletedTask;
         }
-        public Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
+
+        public async Task<DatabaseSqlCatalog> SqlTablesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
-            return Task.FromResult(documents.Statistics(scope, Database(scope, databaseId).Name));
+            var engine = Engine(scope, databaseId);
+            var tables = new List<DatabaseSqlTable>();
+            foreach (var (name, _) in await engine.TablesAsync())
+            {
+                var columns = (await engine.ExecuteAsync([new("SELECT name, type FROM pragma_table_info(?)", [name])], cancellationToken))[0];
+                tables.Add(new(name, [.. columns.Rows.Select(row => new DatabaseSqlColumn((string)row[0]!, row[1] as string))]));
+            }
+
+            return new(tables, false);
         }
 
-        public Task<DatabaseSqlCatalog> SqlTablesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
-        { Database(scope, databaseId); return Task.FromResult(new DatabaseSqlCatalog([], false)); }
-        public Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, bool write, CancellationToken cancellationToken)
+        public async Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, bool write, CancellationToken cancellationToken)
         {
-            return Task.FromResult(documents.Query(scope, databases[databaseId].Name, statement));
+            try
+            {
+                var result = (await Engine(scope, databaseId).ExecuteAsync([new(statement, [])], cancellationToken))[0];
+                return new([.. result.Columns.Select(name => new DatabaseSqlColumn(name, null))],
+                    [.. result.Rows.Select(row => (IReadOnlyList<JsonElement>)[.. row.Select(value => JsonSerializer.SerializeToElement(value))])], result.RowsAffected, null);
+            }
+            catch (TestSqlFailure failure)
+            {
+                throw new DatabaseSqlException(HttpStatusCode.BadRequest, failure.Message, failure.Code, failure.Sqlstate);
+            }
         }
 
-        public Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
-        { Database(scope, databaseId); return Task.FromResult<IReadOnlyList<DatabaseIndex>>(indexes.Where(item => item.Key.StartsWith(databaseId + "/", StringComparison.Ordinal)).Select(item => item.Value).OrderBy(item => item.Name, StringComparer.Ordinal).ToArray()); }
-        public Task<DatabaseIndex> CreateIndexAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string collection, IReadOnlyList<string> fields, CancellationToken cancellationToken)
+        private TestSqlEngine Engine(DatabaseScope scope, string databaseId)
         {
             Database(scope, databaseId);
-            var name = collection + "-" + Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(string.Join('\0', fields))))[..12];
-            return Task.FromResult(indexes.GetOrAdd(databaseId + "/" + name, _ => new(name, collection, fields.ToArray(), "ready")));
+            return engines.GetOrAdd(databaseId, _ => new TestSqlEngine());
         }
-        public Task DropIndexAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
-        { Database(scope, databaseId); indexes.TryRemove(databaseId + "/" + name, out _); return Task.CompletedTask; }
+
         private ManagedDatabase Database(DatabaseScope scope, string id)
         {
             return databases.TryGetValue(id, out var database) && database.ProjectId == scope.ProjectId ? database : throw new HttpRequestException("Test database missing.", null, HttpStatusCode.NotFound);
-        }
-    }
-
-    sealed partial class TestDocuments : IDocumentBackend
-    {
-        private readonly Dictionary<string, Dictionary<string, TerraBaseDocument>> collections = [];
-        private long offset;
-        private static string Key(DatabaseScope scope, string database, string collection)
-        {
-            return scope.ProjectId + "/" + database + "/" + collection;
-        }
-
-        public IReadOnlyList<CollectionStats> Statistics(DatabaseScope scope, string database)
-        {
-            var prefix = scope.ProjectId + "/" + database + "/";
-            lock (collections)
-            {
-                return collections.Where(item => item.Key.StartsWith(prefix, StringComparison.Ordinal)).Select(item => new CollectionStats(item.Key[prefix.Length..], item.Value.Count, item.Value.Values.Sum(document => (long)System.Text.Encoding.UTF8.GetByteCount(document.Document.GetRawText())))).OrderBy(item => item.Name, StringComparer.Ordinal).ToArray();
-            }
-        }
-        public void CopyDatabase(DatabaseScope scope, string source, string target)
-        {
-            var prefix = scope.ProjectId + "/" + source + "/";
-            lock (collections)
-            {
-                foreach (var (key, rows) in collections.Where(item => item.Key.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
-                {
-                    collections[Key(scope, target, key[prefix.Length..])] = rows.ToDictionary(item => item.Key, item => item.Value with { Document = item.Value.Document.Clone() }, StringComparer.Ordinal);
-                }
-            }
-        }
-        public void RenameDatabase(DatabaseScope scope, string source, string target)
-        {
-            if (source == target)
-            {
-                return;
-            }
-
-            var prefix = scope.ProjectId + "/" + source + "/";
-            lock (collections)
-            {
-                foreach (var key in collections.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
-                {
-                    collections[Key(scope, target, key[prefix.Length..])] = collections[key];
-                    collections.Remove(key);
-                }
-                if (logs.Remove(scope.ProjectId + "/" + source, out var log))
-                {
-                    logs[scope.ProjectId + "/" + target] = log;
-                }
-
-                changed.TrySetResult();
-                changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            }
-        }
-        public void DropDatabase(DatabaseScope scope, string database)
-        {
-            var prefix = scope.ProjectId + "/" + database + "/";
-            lock (collections)
-            {
-                foreach (var key in collections.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
-                {
-                    collections.Remove(key);
-                }
-
-                logs.Remove(scope.ProjectId + "/" + database);
-                changed.TrySetResult();
-                changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            }
-        }
-        public Task<IReadOnlyList<TerraBaseCollectionInfo>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, CancellationToken cancellationToken)
-        {
-            var prefix = scope.ProjectId + "/" + databaseName + "/";
-            lock (collections)
-            {
-                return Task.FromResult<IReadOnlyList<TerraBaseCollectionInfo>>(collections.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).Select(key => new TerraBaseCollectionInfo(key[prefix.Length..], DateTimeOffset.UtcNow, "")).OrderBy(item => item.Name).ToArray());
-            }
-        }
-        public Task CreateCollectionAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, CancellationToken cancellationToken)
-        { lock (collections) { collections.TryAdd(Key(scope, databaseName, collection), []); } return Task.CompletedTask; }
-        public Task DropCollectionAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, CancellationToken cancellationToken)
-        {
-            lock (collections)
-            {
-                if (!collections.Remove(Key(scope, databaseName, collection)))
-                {
-                    throw new DatabaseProviderException(HttpStatusCode.NotFound);
-                }
-            }
-
-            return Task.CompletedTask;
-        }
-        public Task<TerraBaseDocumentPage> DocumentsAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, TerraBaseQuery query, CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (query.Filter is not null || query.Project is not null)
-            {
-                throw new InvalidOperationException("The demo document query fixture does not implement filters or projections.");
-            }
-
-            lock (collections)
-            {
-                var rows = collections.GetValueOrDefault(Key(scope, databaseName, collection))?.Values.ToArray() ?? [];
-                Array.Sort(rows, (left, right) =>
-                {
-                    foreach (var key in query.Sort ?? [])
-                    {
-                        if (key.Path is null)
-                        {
-                            throw new InvalidOperationException("The demo document query fixture does not implement vector sorting.");
-                        }
-
-                        var compared = key.Path == "$id" ? StringComparer.Ordinal.Compare(left.Id, right.Id) : CompareValue(QueryValue(left.Document, key.Path), QueryValue(right.Document, key.Path));
-                        if (compared != 0)
-                        {
-                            return key.Order == "desc" ? -compared : compared;
-                        }
-                    }
-                    return StringComparer.Ordinal.Compare(left.Id, right.Id);
-                });
-                var offset = query.Cursor is null ? 0 : int.Parse(query.Cursor, System.Globalization.CultureInfo.InvariantCulture);
-                var page = rows.Skip(offset).Take(query.Limit ?? 50).ToArray();
-                return Task.FromResult(new TerraBaseDocumentPage(page, offset + page.Length < rows.Length ? (offset + page.Length).ToString(System.Globalization.CultureInfo.InvariantCulture) : null,
-                    query.Count == true ? new(rows.Length, true) : null));
-            }
-        }
-        private static JsonElement QueryValue(JsonElement document, string path)
-        {
-            if (!path.StartsWith('/'))
-            {
-                throw new InvalidOperationException("The demo query sort path must be a JSON Pointer or $id.");
-            }
-
-            foreach (var segment in path[1..].Split('/'))
-            {
-                if (document.ValueKind != JsonValueKind.Object || !document.TryGetProperty(segment.Replace("~1", "/", StringComparison.Ordinal).Replace("~0", "~", StringComparison.Ordinal), out document))
-                {
-                    return default;
-                }
-            }
-
-            return document;
-        }
-        private static int CompareValue(JsonElement left, JsonElement right)
-        {
-            static int Rank(JsonElement value) => value.ValueKind switch
-            { JsonValueKind.Undefined => 0, JsonValueKind.Null => 1, JsonValueKind.False => 2, JsonValueKind.True => 3, JsonValueKind.Number => 4, JsonValueKind.String => 5, _ => 6 };
-            var ranked = Rank(left).CompareTo(Rank(right));
-            if (ranked != 0)
-            {
-                return ranked;
-            }
-
-            return left.ValueKind switch
-            {
-                JsonValueKind.Number => left.GetDecimal().CompareTo(right.GetDecimal()),
-                JsonValueKind.String => StringComparer.Ordinal.Compare(left.GetString(), right.GetString()),
-                JsonValueKind.Array or JsonValueKind.Object => StringComparer.Ordinal.Compare(left.GetRawText(), right.GetRawText()),
-                _ => 0
-            };
-        }
-        public Task<TerraBaseDocumentPage> ListAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, int limit, string? cursor, CancellationToken cancellationToken)
-        {
-            lock (collections)
-            {
-                var rows = collections.GetValueOrDefault(Key(scope, databaseName, collection))?.Values.OrderBy(item => item.Id, StringComparer.Ordinal).ToArray() ?? [];
-                var offset = cursor is null ? 0 : int.Parse(cursor, System.Globalization.CultureInfo.InvariantCulture);
-                var page = rows.Skip(offset).Take(limit).ToArray();
-                return Task.FromResult(new TerraBaseDocumentPage(page, offset + page.Length < rows.Length ? (offset + page.Length).ToString(System.Globalization.CultureInfo.InvariantCulture) : null));
-            }
-        }
-        public Task<TerraBaseDocument?> GetAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, string id, CancellationToken cancellationToken)
-        {
-            lock (collections)
-            {
-                return Task.FromResult(collections.GetValueOrDefault(Key(scope, databaseName, collection))?.GetValueOrDefault(id));
-            }
-        }
-        public Task<TerraBaseWriteResult> WriteAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, string operation, string id, JsonElement document, string version, CancellationToken cancellationToken)
-        {
-            lock (collections)
-            {
-                if (!collections.TryGetValue(Key(scope, databaseName, collection), out var items))
-                {
-                    throw new HttpRequestException("Test collection missing.", null, HttpStatusCode.NotFound);
-                }
-
-                if (id.Length == 0)
-                {
-                    id = Guid.CreateVersion7().ToString();
-                }
-
-                var previous = items.GetValueOrDefault(id);
-                if (operation == "create" && previous is not null)
-                {
-                    throw ProviderError(HttpStatusCode.Conflict, "Test document exists.");
-                }
-
-                if (version.Length != 0 && previous?.Version != version)
-                {
-                    throw ProviderError(HttpStatusCode.PreconditionFailed, "Test document version changed.");
-                }
-
-                var nextVersion = "tbv1-" + Guid.NewGuid().ToString("N");
-                if (operation == "delete")
-                {
-                    items.Remove(id);
-                }
-                else
-                {
-                    items[id] = new(id, nextVersion, "value", operation == "patch" ? JsonSerializer.SerializeToElement(Merge(JsonNode.Parse(previous?.Document.GetRawText() ?? "{}"), JsonNode.Parse(document.GetRawText()))) : document.Clone());
-                }
-
-                if (operation != "delete" || previous is not null)
-                {
-                    RecordChange(scope, databaseName, collection, id, operation == "delete" ? "delete" : "upsert");
-                }
-
-                return Task.FromResult(new TerraBaseWriteResult(id, nextVersion, ++offset, "local_durable"));
-            }
-        }
-        public async IAsyncEnumerable<TerraBaseExportLine> ExportAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
-        {
-            var prefix = scope.ProjectId + "/" + databaseName + "/";
-            TerraBaseExportLine[] lines;
-            lock (collections)
-            {
-                lines = collections.Where(item => item.Key.StartsWith(prefix, StringComparison.Ordinal)).OrderBy(item => item.Key, StringComparer.Ordinal)
-                .SelectMany(item => item.Value.Values.OrderBy(document => document.Id, StringComparer.Ordinal).Select(document => new TerraBaseExportLine(item.Key[prefix.Length..], document.Id, document.Document.Clone()))).ToArray();
-            }
-
-            foreach (var line in lines) { cancellationToken.ThrowIfCancellationRequested(); await Task.Yield(); yield return line; }
-        }
-        public Task<TerraBaseCollectionSchema> SchemaAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, CancellationToken cancellationToken)
-        { lock (collections) { var documents = collections.GetValueOrDefault(Key(scope, databaseName, collection))?.Values.ToArray() ?? []; var fields = documents.SelectMany(document => document.Document.EnumerateObject()).GroupBy(property => property.Name).Select(field => new TerraBaseSchemaField(field.Key, field.Count(), field.GroupBy(property => property.Value.ValueKind.ToString().ToLowerInvariant()).ToDictionary(group => group.Key, group => group.Count()))).ToArray(); return Task.FromResult(new TerraBaseCollectionSchema(collection, documents.Length, documents.Length, fields)); } }
-        public DatabaseSqlResult Query(DatabaseScope scope, string databaseName, string statement)
-        {
-            var match = Regex.Match(statement, "^SELECT \\* FROM ([a-z][a-z0-9_-]*) LIMIT ([0-9]+)$", RegexOptions.IgnoreCase);
-            if (!match.Success)
-            {
-                throw ProviderError(HttpStatusCode.BadRequest, "Demo SQL fixture supports SELECT * FROM collection LIMIT n.");
-            }
-
-            lock (collections)
-            {
-                // Rows of a document collection, as TerraBase's relational API returns them: an id column, then top-level fields.
-                var documents = collections.GetValueOrDefault(Key(scope, databaseName, match.Groups[1].Value))?.Values.OrderBy(item => item.Id).Take(int.Parse(match.Groups[2].Value)).ToArray() ?? [];
-                var names = documents.SelectMany(item => item.Document.ValueKind == JsonValueKind.Object ? item.Document.EnumerateObject().Select(field => field.Name) : []).Where(name => name != "id").Distinct().ToArray();
-                var missing = JsonSerializer.SerializeToElement<string?>(null);
-                var rows = documents.Select(item => (IReadOnlyList<JsonElement>)[JsonSerializer.SerializeToElement(item.Id), .. names.Select(name => item.Document.ValueKind == JsonValueKind.Object && item.Document.TryGetProperty(name, out var value) ? value.Clone() : missing)]).ToArray();
-                return new([new("id", "TEXT"), .. names.Select(name => new DatabaseSqlColumn(name, null))], rows, 0, null);
-            }
-        }
-        private static JsonNode? Merge(JsonNode? target, JsonNode? patch)
-        {
-            if (patch is not JsonObject changes)
-            {
-                return patch?.DeepClone();
-            }
-
-            var value = target as JsonObject ?? new JsonObject();
-            foreach (var (key, change) in changes)
-            {
-                if (change is null)
-                {
-                    value.Remove(key);
-                }
-                else
-                {
-                    value[key] = Merge(value[key], change);
-                }
-            }
-            return value;
-        }
-        private static Exception ProviderError(HttpStatusCode status, string message)
-        {
-            return TerraBaseException.From(new TerraBaseFault((int)status,
-                status == HttpStatusCode.PreconditionFailed ? "precondition_failed" : "name_taken", message));
         }
     }
 

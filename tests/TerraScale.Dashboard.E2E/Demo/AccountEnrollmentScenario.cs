@@ -16,7 +16,7 @@ namespace TerraScale.Dashboard.E2E
         private StateSdkScenario stateServer = null!;
         private WebApplication app = null!;
         private IDashboardState State => app.Services.GetRequiredService<IDashboardState>();
-        private string? pausedCollection;
+        private string? pausedTable;
         private int paused;
         public string User { get; } = AccountService.NewId();
         public string Other { get; } = AccountService.NewId();
@@ -62,12 +62,12 @@ namespace TerraScale.Dashboard.E2E
             });
             scenario.app.MapPost("/__test/enrollment/substitute", async (HttpContext http) =>
             {
-                var collection = http.Request.Query["collection"].ToString();
-                var target = collection == AccountService.OrganizationsCollection
+                var table = http.Request.Query["table"].ToString();
+                var target = table == AccountService.OrganizationsTable
                     ? (await scenario.OrganizationAsync(scenario.Other)).Id
-                    : (await scenario.ReferencesAsync(scenario.Other)).First(reference => reference.Collection == collection).RecordId;
-                await scenario.State.PutAsync(AccountEnrollment.Collection, AccountService.NewId(),
-                    JsonSerializer.SerializeToElement(new AccountEnrollment.Reference(scenario.User, collection, target)), StatePrecondition.Absent, default);
+                    : (await scenario.ReferencesAsync(scenario.Other)).First(reference => reference.Table == table).RecordId;
+                await scenario.State.PutAsync(AccountEnrollment.Table, AccountService.NewId(),
+                    JsonSerializer.SerializeToElement(new AccountEnrollment.Reference(scenario.User, table, target)), StatePrecondition.Absent, default);
                 return Results.NoContent();
             });
             await scenario.app.StartAsync();
@@ -93,14 +93,14 @@ namespace TerraScale.Dashboard.E2E
             return client;
         }
 
-        public void Pause(string collection)
+        public void Pause(string table)
         {
-            pausedCollection = collection;
+            pausedTable = table;
         }
 
-        public Task<StateRecord?> GetAsync(string collection, string id)
+        public Task<StateRecord?> GetAsync(string table, string id)
         {
-            return State.GetAsync(collection, id, default);
+            return State.GetAsync(table, id, default);
         }
 
         public Task<IReadOnlyList<AccountEnrollment.Reference>> ReferencesAsync(string user)
@@ -108,15 +108,15 @@ namespace TerraScale.Dashboard.E2E
             return AccountEnrollment.ListAsync(State, user, default);
         }
 
-        public Task<IReadOnlyList<StateRecord>> ReferenceDocumentsAsync()
+        public Task<IReadOnlyList<StateRecord>> ReferenceRowsAsync()
         {
-            return State.ListAsync(AccountEnrollment.Collection, default);
+            return State.ListAsync(AccountEnrollment.Table, default);
         }
 
         public async Task<StateRecord> OrganizationAsync(string user)
         {
-            var account = AccountService.Read<AccountRecord>((await GetAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(user)))!);
-            return (await GetAsync(AccountService.OrganizationsCollection, account.PersonalOrganizationId))!;
+            var account = AccountService.Read<AccountRecord>((await GetAsync(AccountService.AccountsTable, AccountService.AccountStorageKey(user)))!);
+            return (await GetAsync(AccountService.OrganizationsTable, account.PersonalOrganizationId))!;
         }
 
         public async ValueTask DisposeAsync()
@@ -139,35 +139,35 @@ namespace TerraScale.Dashboard.E2E
                 return inner.CheckReadyAsync(ct);
             }
 
-            public Task<StateRecord?> GetAsync(string collection, string id, CancellationToken ct)
+            public Task<StateRecord?> GetAsync(string table, string id, CancellationToken ct)
             {
-                return inner.GetAsync(collection, id, ct);
+                return inner.GetAsync(table, id, ct);
             }
 
-            public Task<IReadOnlyList<StateRecord>> ListAsync(string collection, CancellationToken ct)
+            public Task<IReadOnlyList<StateRecord>> ListAsync(string table, CancellationToken ct)
             {
-                return inner.ListAsync(collection, ct);
+                return inner.ListAsync(table, ct);
             }
 
-            public Task<StatePage> PageAsync(string collection, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken ct)
+            public Task<StatePage> PageAsync(string table, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken ct)
             {
-                return inner.PageAsync(collection, scope, fields, limit, cursor, ct);
+                return inner.PageAsync(table, scope, fields, limit, cursor, ct);
             }
 
-            public Task DeleteAsync(string collection, string id, string version, CancellationToken ct)
+            public Task DeleteAsync(string table, string id, string version, CancellationToken ct)
             {
-                return inner.DeleteAsync(collection, id, version, ct);
+                return inner.DeleteAsync(table, id, version, ct);
             }
 
-            public async Task PutAsync(string collection, string id, JsonElement document, StatePrecondition precondition, CancellationToken ct)
+            public async Task PutAsync(string table, string id, JsonElement row, StatePrecondition precondition, CancellationToken ct)
             {
-                if (collection == scenario.pausedCollection && Interlocked.CompareExchange(ref scenario.paused, 1, 0) == 0)
+                if (table == scenario.pausedTable && Interlocked.CompareExchange(ref scenario.paused, 1, 0) == 0)
                 {
                     scenario.PausedId = id;
                     scenario.Paused.TrySetResult();
                     await scenario.Resume.Task.WaitAsync(ct);
                 }
-                await inner.PutAsync(collection, id, document, precondition, ct);
+                await inner.PutAsync(table, id, row, precondition, ct);
             }
         }
     }

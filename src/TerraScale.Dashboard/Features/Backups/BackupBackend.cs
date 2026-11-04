@@ -72,18 +72,7 @@ namespace TerraScale.Dashboard.Features.Backups
             catch (TerraBaseException error) { throw Failure(error, ""); }
         }
 
-        public async Task<ExportScheduleView> ExportScheduleAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
-        {
-            var database = await NameAsync(scope, home, databaseId, cancellationToken);
-            return await CallAsync(scope, home, "databases:read", client => client.GetExportScheduleAsync(scope.ProjectId, database).ResponseAsync, BackupBackendJson.Default.ExportScheduleView, cancellationToken);
-        }
 
-        public async Task<ExportScheduleView> SetExportScheduleAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? cron, CancellationToken cancellationToken)
-        {
-            var database = await NameAsync(scope, home, databaseId, cancellationToken);
-            var request = JsonSerializer.SerializeToElement(new ExportScheduleRequest(cron), BackupBackendJson.Default.ExportScheduleRequest);
-            return await CallAsync(scope, home, "databases:write", client => client.SetExportScheduleAsync(scope.ProjectId, database, request).ResponseAsync, BackupBackendJson.Default.ExportScheduleView, cancellationToken);
-        }
 
         public async Task<ManagedDatabase> RestoreAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string backupId, string? name, CancellationToken cancellationToken)
         {
@@ -165,7 +154,6 @@ namespace TerraScale.Dashboard.Features.Backups
 
     internal sealed record BackupResponse(IReadOnlyList<ProducerBackup> Items, string? Next);
     internal sealed record BackupPolicyRequest(string? FullBackupCron, int RetentionDays, bool Disabled);
-    internal sealed record ExportScheduleRequest(string? Cron);
     internal sealed record BackupRestoreRequest(string? Name);
     internal sealed record BackupDestinationRequest(string Endpoint, string Region, string Bucket, string AccessKeyId, string SecretKey, string Mode)
     {
@@ -180,10 +168,8 @@ namespace TerraScale.Dashboard.Features.Backups
     [JsonSerializable(typeof(ProducerBackup))]
     [JsonSerializable(typeof(ProducerBackupPolicy))]
     [JsonSerializable(typeof(BackupDestinationView))]
-    [JsonSerializable(typeof(ExportScheduleView))]
     [JsonSerializable(typeof(ManagedDatabase))]
     [JsonSerializable(typeof(BackupPolicyRequest))]
-    [JsonSerializable(typeof(ExportScheduleRequest))]
     [JsonSerializable(typeof(BackupRestoreRequest))]
     [JsonSerializable(typeof(BackupDestinationRequest))]
     internal sealed partial class BackupBackendJson : JsonSerializerContext;

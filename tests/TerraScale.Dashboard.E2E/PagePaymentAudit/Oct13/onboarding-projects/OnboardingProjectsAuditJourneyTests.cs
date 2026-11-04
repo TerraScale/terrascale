@@ -46,8 +46,8 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.OnboardingProjects
             using var owner = scenario.CreateClient();
             using var outsider = scenario.CreateClient();
             using var producer = scenario.CreateProviderClient();
-            await DatabaseSdkJourneyTests.NativeWorkspaceAsync(owner);
-            await DatabaseSdkJourneyTests.NativeWorkspaceAsync(outsider);
+            await DatabaseJourney.NativeWorkspaceAsync(owner);
+            await DatabaseJourney.NativeWorkspaceAsync(outsider);
             var before = await JsonAsync(owner, "/api/v1/dashboard/context");
             var projectId = before.GetProperty("selection").GetProperty("projectId").GetString()!;
             var foreignId = (await JsonAsync(outsider, "/api/v1/dashboard/context")).GetProperty("selection").GetProperty("projectId").GetString()!;
@@ -133,8 +133,8 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.OnboardingProjects
         {
             using var response = await client.GetAsync(path);
             response.EnsureSuccessStatusCode();
-            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            return document.RootElement.Clone();
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            return json.RootElement.Clone();
         }
     }
 }

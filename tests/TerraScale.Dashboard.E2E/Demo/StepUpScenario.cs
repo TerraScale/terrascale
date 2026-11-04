@@ -89,14 +89,14 @@ namespace TerraScale.Dashboard.E2E
         public async Task AssertNoEffectsAsync()
         {
             await Assert.That(Effects()).IsEqualTo(effects);
-            foreach (var collection in new[] { "account_deletions", "dashboard_access_tokens", "auth_credentials", McpOAuth.CodeCollection })
+            foreach (var table in new[] { "account_deletions", "dashboard_access_tokens", "auth_credentials", McpOAuth.CodeTable })
             {
-                await Assert.That((await Environment.State.ListAsync(collection, default)).Count).IsEqualTo(0);
+                await Assert.That((await Environment.State.ListAsync(table, default)).Count).IsEqualTo(0);
             }
 
-            var accounts = await Environment.State.ListAsync(AccountService.AccountsCollection, default);
+            var accounts = await Environment.State.ListAsync(AccountService.AccountsTable, default);
             await Assert.That(accounts.Count).IsGreaterThan(0);
-            await Assert.That(accounts.All(document => !AccountService.IsDeletionFence(document))).IsTrue();
+            await Assert.That(accounts.All(row => !AccountService.IsDeletionFence(row))).IsTrue();
         }
 
         public async Task SwitchAccountCookieAsync()

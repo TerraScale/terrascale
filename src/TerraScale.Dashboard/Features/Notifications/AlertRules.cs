@@ -36,14 +36,14 @@ namespace TerraScale.Dashboard.Features.Notifications
 
     public sealed class AlertRules(IDashboardState state, IAlertSource source, ICustomerDelivery delivery, IDashboardIdentity identity, TimeProvider clock, ILogger<AlertRules> logger)
     {
-        public const string Collection = "dashboard_alert_rules";
-        // A single document lists every project that has (or had) rules, so the worker needs no collection scan.
-        public const string IndexCollection = "dashboard_alert_projects";
+        public const string Table = "dashboard_alert_rules";
+        // A single row lists every project that has (or had) rules, so the worker needs no table scan.
+        public const string IndexTable = "dashboard_alert_projects";
         public static readonly string[] Metrics = ["p95_latency_ms", "error_rate_percent", "storage_gb", "operation_units_percent"];
 
         public async Task<IReadOnlyList<AlertRule>> ListAsync(string projectId, CancellationToken cancellationToken)
         {
-            return await state.GetAsync(Collection, projectId, cancellationToken) is { } document ? Read(document, projectId).Rules : [];
+            return await state.GetAsync(Table, projectId, cancellationToken) is { } row ? Read(row, projectId).Rules : [];
         }
 
         public async Task<(AlertRule Rule, string? Secret)> CreateAsync(AccountContext context, IFormCollection form, CancellationToken cancellationToken)
@@ -74,7 +74,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             var key = (await identity.ReadAsync(cancellationToken)).SessionEncryptionKey;
             var rule = new AlertRule(id, name, metric, threshold, databaseId, form["email"] == "on", url,
                 secret is null ? null : SealedSecret.Seal(secret, key, Purpose(project.Id, id)), clock.GetUtcNow());
-            await state.UpdateAsync(Collection, project.Id, () => new AlertRuleSet(project.Id, organization.Id, []), document => Read(document, project.Id), set =>
+            await state.UpdateAsync(Table, project.Id, () => new AlertRuleSet(project.Id, organization.Id, []), row => Read(row, project.Id), set =>
             {
                 if (set.Rules.Count >= 20)
                 {
@@ -84,7 +84,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                 set.Rules.Add(rule);
                 return set;
             }, cancellationToken);
-            await state.UpdateAsync(IndexCollection, "all", () => new AlertProjectIndex([]), AccountService.Read<AlertProjectIndex>,
+            await state.UpdateAsync(IndexTable, "all", () => new AlertProjectIndex([]), AccountService.Read<AlertProjectIndex>,
                 index => index.Projects.TryAdd(project.Id, organization.Id) ? index : null, cancellationToken);
             return (rule, secret);
         }
@@ -92,7 +92,7 @@ namespace TerraScale.Dashboard.Features.Notifications
         public async Task DeleteAsync(AccountContext context, string id, CancellationToken cancellationToken)
         {
             var (organization, project) = Owner(context);
-            await state.UpdateAsync(Collection, project.Id, () => new AlertRuleSet(project.Id, organization.Id, []), document => Read(document, project.Id),
+            await state.UpdateAsync(Table, project.Id, () => new AlertRuleSet(project.Id, organization.Id, []), row => Read(row, project.Id),
                 set => set.Rules.RemoveAll(rule => rule.Id == id) > 0 ? set : throw new AccountAccessException("Alert rule is unavailable.", 404), cancellationToken);
         }
 
@@ -101,7 +101,7 @@ namespace TerraScale.Dashboard.Features.Notifications
         {
             var (organization, project) = Owner(context);
             var threshold = Threshold(value);
-            await state.UpdateAsync(Collection, project.Id, () => new AlertRuleSet(project.Id, organization.Id, []), document => Read(document, project.Id), set =>
+            await state.UpdateAsync(Table, project.Id, () => new AlertRuleSet(project.Id, organization.Id, []), row => Read(row, project.Id), set =>
             {
                 var index = set.Rules.FindIndex(rule => rule.Id == id);
                 if (index < 0)
@@ -122,7 +122,7 @@ namespace TerraScale.Dashboard.Features.Notifications
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
-            if (await state.GetAsync(IndexCollection, "all", cancellationToken) is not { } index)
+            if (await state.GetAsync(IndexTable, "all", cancellationToken) is not { } index)
             {
                 return;
             }
@@ -141,23 +141,23 @@ namespace TerraScale.Dashboard.Features.Notifications
 
         private async Task ObserveAsync(string projectId, string organizationId, Func<Task<IReadOnlyDictionary<string, long>>> units, CancellationToken cancellationToken)
         {
-            if (await state.GetAsync(Collection, projectId, cancellationToken) is not { } document || Read(document, projectId).Rules.Count == 0)
+            if (await state.GetAsync(Table, projectId, cancellationToken) is not { } row || Read(row, projectId).Rules.Count == 0)
             {
                 return;
             }
 
-            if (await state.GetAsync(AccountService.OrganizationsCollection, organizationId, cancellationToken) is not { } organizationDocument)
+            if (await state.GetAsync(AccountService.OrganizationsTable, organizationId, cancellationToken) is not { } organizationRow)
             {
                 return;
             }
 
-            var organization = AccountService.Read<OrganizationRecord>(organizationDocument);
+            var organization = AccountService.Read<OrganizationRecord>(organizationRow);
             if (organization.Id != organizationId || !organization.Projects.TryGetValue(projectId, out var project))
             {
                 return;
             }
 
-            var rules = Read(document, projectId).Rules;
+            var rules = Read(row, projectId).Rules;
             var analytics = await source.ReadAnalyticsAsync(projectId, cancellationToken);
             double? percent = null;
             if (rules.Any(rule => rule.Metric == "operation_units_percent") && PlanCatalog.Limits(organization).MonthlyOperations is > 0 and var allowance &&
@@ -167,7 +167,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             }
 
             var now = clock.GetUtcNow();
-            var saved = await state.UpdateAsync(Collection, projectId, () => throw new IOException("Alert rules disappeared."), current => Read(current, projectId), set =>
+            var saved = await state.UpdateAsync(Table, projectId, () => throw new IOException("Alert rules disappeared."), current => Read(current, projectId), set =>
             {
                 var changed = false;
                 for (var index = 0; index < set.Rules.Count; index++)
@@ -207,7 +207,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                 return;
             }
 
-            await state.UpdateAsync(Collection, projectId, () => throw new IOException("Alert rules disappeared."), current => Read(current, projectId), set =>
+            await state.UpdateAsync(Table, projectId, () => throw new IOException("Alert rules disappeared."), current => Read(current, projectId), set =>
             {
                 for (var index = 0; index < set.Rules.Count; index++)
                 {
@@ -304,10 +304,10 @@ namespace TerraScale.Dashboard.Features.Notifications
             return "alert-webhook/" + projectId + "/" + ruleId;
         }
 
-        public static AlertRuleSet Read(StateRecord document, string projectId)
+        public static AlertRuleSet Read(StateRecord row, string projectId)
         {
-            var saved = AccountService.Read<AlertRuleSet>(document);
-            if (document.Id != projectId || saved.ProjectId != projectId || saved.Rules is null || saved.Rules.Count > 20 ||
+            var saved = AccountService.Read<AlertRuleSet>(row);
+            if (row.Id != projectId || saved.ProjectId != projectId || saved.Rules is null || saved.Rules.Count > 20 ||
                 saved.Rules.Any(rule => !TerraScaleIds.IsValid(rule.Id) || !Metrics.Contains(rule.Metric) || rule.Events is null))
             {
                 throw new IOException("Alert rule identity is invalid.");

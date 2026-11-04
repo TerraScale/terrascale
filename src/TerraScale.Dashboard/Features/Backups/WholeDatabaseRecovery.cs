@@ -9,6 +9,15 @@ using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Backups
 {
+    // The datetime-local value of a UTC recovery point.
+    public static class RecoveryPoint
+    {
+        public static string Input(DateTimeOffset point)
+        {
+            return point.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff", System.Globalization.CultureInfo.InvariantCulture);
+        }
+    }
+
     public sealed record WholeDatabaseWindow(string Destination, TerraBaseRestoreWindow? Window, int DatabasesInUse, int DatabaseLimit);
     public sealed record WholeDatabaseRecoveryPage(ShellModel Shell, DatabaseRecord Database, string Destination = "platform", string Point = "",
         string Name = "", string ConfirmName = "", WholeDatabaseWindow? Available = null, TerraBasePointInTimePlan? Plan = null, string Error = "");
@@ -190,7 +199,7 @@ namespace TerraScale.Dashboard.Features.Backups
                         page = page with { Available = await recovery.WindowAsync(context, databaseId, page.Destination, http.RequestAborted) };
                         if (form is null && page.Available.Window is { } window)
                         {
-                            page = page with { Point = RecoveryWindow.Input(window.Latest) };
+                            page = page with { Point = RecoveryPoint.Input(window.Latest) };
                         }
 
                         if (form?["operation"].ToString() == "plan")

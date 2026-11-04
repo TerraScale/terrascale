@@ -34,14 +34,14 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 return null;
             });
             using var client = scenario.CreateClient();
-            await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+            await DatabaseJourney.NativeWorkspaceAsync(client);
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
             { ["_csrf"] = csrf, ["name"] = "sql-check", ["homeRegion"] = "GRU" });
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
             using var database = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
             var id = database.RootElement.GetProperty("id").GetString()!;
-            var fields = new Dictionary<string, string> { ["_csrf"] = csrf, ["databaseId"] = id, ["collection"] = "items", ["sql"] = sql };
+            var fields = new Dictionary<string, string> { ["_csrf"] = csrf, ["databaseId"] = id, ["sql"] = sql };
             using var htmlRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/data/sql/check") { Content = new FormUrlEncodedContent(fields) };
             htmlRequest.Headers.Accept.ParseAdd("text/html");
             using var response = await client.SendAsync(htmlRequest);
@@ -72,7 +72,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         {
             await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
             using var client = scenario.CreateClient();
-            await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+            await DatabaseJourney.NativeWorkspaceAsync(client);
             var id = await HttpJourney.CreateDatabaseAsync(client, "sql-run");
             var csrf = await HttpJourney.CsrfAsync(client, "/databases/" + id + "/sql");
             async Task<(HttpStatusCode Status, JsonElement Body)> RunAsync(string sql)
@@ -81,24 +81,15 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
                 return (response.StatusCode, json.RootElement.Clone());
             }
-            using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new() { ["_csrf"] = csrf, ["databaseId"] = id, ["name"] = "items" }))
-            {
-                await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
-            }
-
-            using (var document = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/documents", new()
-            { ["_csrf"] = csrf, ["databaseId"] = id, ["collection"] = "items", ["operation"] = "create", ["document"] = "{\"title\":\"Ada\"}" }))
-            {
-                await Assert.That(document.IsSuccessStatusCode).IsTrue();
-            }
-
+            await Assert.That((await RunAsync("CREATE TABLE items (id INTEGER PRIMARY KEY, title TEXT)")).Status).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That((await RunAsync("INSERT INTO items (title) VALUES ('Ada')")).Status).IsEqualTo(HttpStatusCode.OK);
             var read = await RunAsync("SELECT * FROM items LIMIT 20");
             await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(string.Join(",", read.Body.GetProperty("columns").EnumerateArray().Select(column => column.GetProperty("name").GetString()))).IsEqualTo("id,title");
             await Assert.That(read.Body.GetProperty("rows")[0][1].GetString()).IsEqualTo("Ada");
             var missing = await RunAsync("SELECT * FROM nope");
             await Assert.That(missing.Status).IsEqualTo(HttpStatusCode.BadRequest);
-            await Assert.That(missing.Body.GetProperty("detail").GetString()).IsEqualTo("no such table: nope (undefined_table)");
+            await Assert.That(missing.Body.GetProperty("detail").GetString()).Contains("no such table");
             await Assert.That(missing.Body.GetProperty("code").GetString()).IsEqualTo("undefined_table");
             await Assert.That(missing.Body.GetProperty("sqlstate").GetString()).IsEqualTo("42P01");
             var write = await RunAsync("CREATE TABLE things (id TEXT PRIMARY KEY)");

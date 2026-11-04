@@ -2,11 +2,11 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Home
 {
-    // Copy-ready connect snippets for the Connect tab. Each SDK lists the first page of one collection with an access
-    // token exchanged from a dashboard API key (ts-docs docs/getting-started; sending the raw key as a bearer answers 401).
+    // Copy-ready connect snippets for the Connect tab: an access token exchanged from a dashboard API key
+    // (ts-docs docs/getting-started; sending the raw key as a bearer answers 401), one table, then SQL from each SDK.
     public static class HomeConnectSnippets
     {
-        public const string Collection = "posts";
+        public const string Table = "posts";
         public static string ApiUrl => TerraBaseDiscovery.Origin.ToString().TrimEnd('/');
 
         public const string TokenExchange = """
@@ -31,80 +31,32 @@ namespace TerraScale.Dashboard.Features.Home
         """;
         }
 
-        public static string CreateCollection(string projectId, string database)
+        public static string CreateTable(string projectId, string database)
         {
             return $$"""
         curl -sS --fail-with-body --header @/dev/fd/3 \
-          -H 'Content-Type: application/json' -d '{"name":"{{Collection}}"}' \
-          "{{ApiUrl}}/v1/projects/{{projectId}}/databases/{{database}}/collections" \
+          -H 'Content-Type: application/json' -d '{"statements":[{"sql":"CREATE TABLE {{Table}} (id INTEGER PRIMARY KEY, title TEXT)"}]}' \
+          "{{ApiUrl}}/v1/projects/{{projectId}}/databases/{{database}}/sql/execute" \
           3< <(printf 'Authorization: Bearer %s\n' "$TERRASCALE_ACCESS_TOKEN")
         """;
         }
 
+        // Each SDK runs one query through the shared SQL shape (sdk/SQL-API.md).
         public static IReadOnlyList<(string Id, string Label, string Install, string Code)> For(string projectId, string database)
         {
-            return [
-            ("curl", "curl", "", $"""
-            curl -sS --fail-with-body --header @/dev/fd/3 \
-              "{ApiUrl}/v1/projects/{projectId}/databases/{database}/collections/{Collection}/documents?limit=10" \
-              3< <(printf 'Authorization: Bearer %s\n' "$TERRASCALE_ACCESS_TOKEN")
-            """),
-            ("js", "JavaScript", $"npm install @terrascale/sdk@{SdkVersions.JavaScript}", $$"""
-            import { createTerraBaseV1Client } from "@terrascale/sdk";
+            return [.. TerraScale.Dashboard.Features.Databases.DatabaseConnections.Sdks(projectId, database).Select(sdk => (sdk.Id, sdk.Label, Install(sdk.Id), sdk.Code))];
+        }
 
-            const client = createTerraBaseV1Client({
-              baseUrl: "{{ApiUrl}}",
-              project: "{{projectId}}",
-              token: process.env.TERRASCALE_ACCESS_TOKEN,
-            });
-            const page = await client.database("{{database}}").collection("{{Collection}}").list({ limit: 10 });
-            console.log(page.items);
-            """),
-            ("go", "Go", $"go get terrascale.tech/sdk@{SdkVersions.Go}", $$"""
-            package main
-
-            import (
-            	"context"
-            	"fmt"
-            	"os"
-
-            	v1 "terrascale.tech/sdk/v1"
-            )
-
-            func main() {
-            	c, err := v1.New(v1.Config{BaseURL: "{{ApiUrl}}", Token: os.Getenv("TERRASCALE_ACCESS_TOKEN")})
-            	if err != nil {
-            		panic(err)
-            	}
-            	page, err := c.Database("{{projectId}}", "{{database}}").Collection("{{Collection}}").List(context.Background(), v1.ListOptions{Limit: 10})
-            	if err != nil {
-            		panic(err)
-            	}
-            	fmt.Println(len(page.Items))
-            }
-            """),
-            ("python", "Python", $"pip install \"terrascale @ git+https://github.com/TerraScale/terrascale@history/ts-python/{SdkVersions.Python}\"", $$"""
-            import os
-
-            from terrascale import TerraScale
-
-            with TerraScale(project="{{projectId}}", token=os.environ["TERRASCALE_ACCESS_TOKEN"], base_url="{{ApiUrl}}") as ts:
-                page = ts.database("{{database}}").collection("{{Collection}}").list(limit=10)
-                print(len(page.items))
-            """),
-            ("rust", "Rust", $"cargo add terrascale --git https://github.com/TerraScale/terrascale --tag history/ts-rust/{SdkVersions.Rust}\ncargo add serde_json\ncargo add tokio --features full", $$"""
-            use terrascale::v1::Client;
-
-            #[tokio::main]
-            async fn main() -> terrascale::v1::Result<()> {
-                let token = std::env::var("TERRASCALE_ACCESS_TOKEN").expect("TERRASCALE_ACCESS_TOKEN");
-                let client = Client::for_project("{{projectId}}", token).build()?;
-                let page = client.database("{{database}}").collection("{{Collection}}").list::<serde_json::Value>(Some(10), None).await?;
-                println!("{}", page.items.len());
-                Ok(())
-            }
-            """),
-        ];
+        private static string Install(string sdk)
+        {
+            return sdk switch
+            {
+                "js" => $"npm install @terrascale/sdk@{SdkVersions.JavaScript}",
+                "go" => $"go get terrascale.tech/sdk@{SdkVersions.Go}",
+                "python" => $"pip install \"terrascale @ git+https://github.com/TerraScale/terrascale@history/ts-python/{SdkVersions.Python}\"",
+                "rust" => $"cargo add terrascale --git https://github.com/TerraScale/terrascale --tag history/ts-rust/{SdkVersions.Rust}",
+                _ => ""
+            };
         }
     }
 }

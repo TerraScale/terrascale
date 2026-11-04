@@ -37,7 +37,7 @@ namespace TerraScale.Dashboard.Features.Notifications
 
     public sealed class AllowanceNotifications(IDashboardState state, IAllowanceNotificationBackend backend, TimeProvider clock, ILogger<AllowanceNotifications> logger)
     {
-        public const string Collection = "dashboard_allowance_alerts";
+        public const string Table = "dashboard_allowance_alerts";
         public const string OperationsContract = "write-units-4kib-global-v2";
         public const string StorageContract = "stored-byte-hours-global-v1";
 
@@ -85,15 +85,15 @@ namespace TerraScale.Dashboard.Features.Notifications
 
         private async Task ObserveAsync(AllowanceUsageObservation item, DateTimeOffset month, CancellationToken cancellationToken)
         {
-            var organizationDocument = await state.GetAsync(AccountService.OrganizationsCollection, item.OrganizationId, cancellationToken);
+            var organizationRow = await state.GetAsync(AccountService.OrganizationsTable, item.OrganizationId, cancellationToken);
             // A deleted organization stays in the usage feed for the month; it has no owners to notify.
-            if (organizationDocument is null || AccountService.IsDeletionFence(organizationDocument))
+            if (organizationRow is null || AccountService.IsDeletionFence(organizationRow))
             {
                 return;
             }
 
-            var organization = AccountService.Read<OrganizationRecord>(organizationDocument);
-            if (organizationDocument.Id != item.OrganizationId || organization.Id != item.OrganizationId)
+            var organization = AccountService.Read<OrganizationRecord>(organizationRow);
+            if (organizationRow.Id != item.OrganizationId || organization.Id != item.OrganizationId)
             {
                 throw new IOException("Allowance organization identity is invalid.");
             }
@@ -108,8 +108,8 @@ namespace TerraScale.Dashboard.Features.Notifications
             AllowanceNotificationState? saved = null;
             for (var attempt = 0; attempt < 8; attempt++)
             {
-                var document = await state.GetAsync(Collection, item.OrganizationId, cancellationToken);
-                var current = document is null ? new AllowanceNotificationState(item.OrganizationId, []) : Read(document, item.OrganizationId);
+                var row = await state.GetAsync(Table, item.OrganizationId, cancellationToken);
+                var current = row is null ? new AllowanceNotificationState(item.OrganizationId, []) : Read(row, item.OrganizationId);
                 current.Alerts.RemoveAll(alert => string.CompareOrdinal(alert.BillingMonth, billingMonth) < 0);
                 if (item.Operations is { } used && limits.MonthlyOperations is > 0 and < long.MaxValue)
                 {
@@ -125,8 +125,8 @@ namespace TerraScale.Dashboard.Features.Notifications
                 }
                 try
                 {
-                    await state.PutAsync(Collection, item.OrganizationId, JsonSerializer.SerializeToElement(current),
-                        document is null ? StatePrecondition.Absent : StatePrecondition.Matches(document.Version), cancellationToken);
+                    await state.PutAsync(Table, item.OrganizationId, JsonSerializer.SerializeToElement(current),
+                        row is null ? StatePrecondition.Absent : StatePrecondition.Matches(row.Version), cancellationToken);
                     saved = current;
                     break;
                 }
@@ -149,8 +149,8 @@ namespace TerraScale.Dashboard.Features.Notifications
 
                 for (var attempt = 0; attempt < 8; attempt++)
                 {
-                    var document = await state.GetAsync(Collection, item.OrganizationId, cancellationToken) ?? throw new IOException("Allowance alert disappeared.");
-                    var current = Read(document, item.OrganizationId);
+                    var row = await state.GetAsync(Table, item.OrganizationId, cancellationToken) ?? throw new IOException("Allowance alert disappeared.");
+                    var current = Read(row, item.OrganizationId);
                     var index = current.Alerts.FindIndex(item => item.Id == alert.Id);
                     if (index < 0 || current.Alerts[index].EmailStatus != "pending")
                     {
@@ -158,16 +158,16 @@ namespace TerraScale.Dashboard.Features.Notifications
                     }
 
                     current.Alerts[index] = current.Alerts[index] with { EmailStatus = outcome };
-                    try { await state.PutAsync(Collection, item.OrganizationId, JsonSerializer.SerializeToElement(current), StatePrecondition.Matches(document.Version), cancellationToken); break; }
+                    try { await state.PutAsync(Table, item.OrganizationId, JsonSerializer.SerializeToElement(current), StatePrecondition.Matches(row.Version), cancellationToken); break; }
                     catch (StateConflictException) when (attempt < 7) { }
                 }
             }
         }
 
-        public static AllowanceNotificationState Read(StateRecord document, string organizationId)
+        public static AllowanceNotificationState Read(StateRecord row, string organizationId)
         {
-            var saved = AccountService.Read<AllowanceNotificationState>(document);
-            if (document.Id != organizationId || saved.OrganizationId != organizationId || saved.Alerts is null || saved.Alerts.Count > 4 ||
+            var saved = AccountService.Read<AllowanceNotificationState>(row);
+            if (row.Id != organizationId || saved.OrganizationId != organizationId || saved.Alerts is null || saved.Alerts.Count > 4 ||
                 saved.Alerts.Any(alert => !TerraScaleIds.IsValid(alert.Id) || alert.OrganizationId != organizationId || alert.Metric is not ("operations" or "storage") || alert.Threshold is not (80 or 100)))
             {
                 throw new IOException("Allowance alert identity is invalid.");
@@ -187,7 +187,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                 return;
             }
 
-            var ledger = await state.GetAsync(AllowanceNotifications.Collection, organization.Id, cancellationToken);
+            var ledger = await state.GetAsync(AllowanceNotifications.Table, organization.Id, cancellationToken);
             if (ledger is null)
             {
                 return;
@@ -197,11 +197,11 @@ namespace TerraScale.Dashboard.Features.Notifications
             var key = AccountService.AccountStorageKey(context.UserId);
             for (var attempt = 0; attempt < 8; attempt++)
             {
-                var document = await state.GetAsync(AccountService.AccountsCollection, key, cancellationToken) ?? throw new IOException("Allowance owner inbox is unavailable.");
-                var account = AccountService.Read<AccountRecord>(document);
-                var identityDocument = await state.GetAsync(AccountService.IdentitiesCollection, key, cancellationToken) ?? throw new IOException("Allowance owner identity is unavailable.");
-                var identity = AccountService.Read<AccountIdentityBinding>(identityDocument);
-                if (document.Id != key || identityDocument.Id != key || account.Id != context.Account.Id || account.UserId != context.UserId || identity.UserId != context.UserId || identity.AccountId != account.Id)
+                var row = await state.GetAsync(AccountService.AccountsTable, key, cancellationToken) ?? throw new IOException("Allowance owner inbox is unavailable.");
+                var account = AccountService.Read<AccountRecord>(row);
+                var identityRow = await state.GetAsync(AccountService.IdentitiesTable, key, cancellationToken) ?? throw new IOException("Allowance owner identity is unavailable.");
+                var identity = AccountService.Read<AccountIdentityBinding>(identityRow);
+                if (row.Id != key || identityRow.Id != key || account.Id != context.Account.Id || account.UserId != context.UserId || identity.UserId != context.UserId || identity.AccountId != account.Id)
                 {
                     throw new IOException("Allowance owner identity is invalid.");
                 }
@@ -211,7 +211,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                 account.Notifications.AddRange(missing.Select(alert => alert.Notification()));
                 try
                 {
-                    await state.PutAsync(AccountService.AccountsCollection, key, JsonSerializer.SerializeToElement(account), StatePrecondition.Matches(document.Version), cancellationToken);
+                    await state.PutAsync(AccountService.AccountsTable, key, JsonSerializer.SerializeToElement(account), StatePrecondition.Matches(row.Version), cancellationToken);
                     context.Account.Notifications = account.Notifications;
                     return;
                 }

@@ -25,7 +25,7 @@ namespace TerraScale.Dashboard.E2E
         internal const string PrimaryId = "0Z793APJ2ECFW2F7P6J9F2RKVY";
 
         public static async Task<ReferencePersonas> InitializeAsync(string root, TestState state, TestWorkspace workspace,
-            Action<ReferencePrincipal> registerPrincipal, Action<ManagedDatabase> registerDatabase, TestDocuments documents)
+            Action<ReferencePrincipal> registerPrincipal, Action<ManagedDatabase> registerDatabase, Func<DatabaseScope, string, string, Task> runSql)
         {
             using var manifest = await ReadManifestAsync(root);
             var routes = ReadPersona(manifest.RootElement.GetProperty("routes"));
@@ -57,7 +57,7 @@ namespace TerraScale.Dashboard.E2E
             ApplyCapturedInvitations(labs, seeded.Invitations[labs.Id]);
             await PersistOrganizationAsync(state, workspace, labs);
             await PersistAccountAsync(state, personas.Seeded, seeded.OrganizationIds, seeded.ActiveOrganizationId, seeded.ActiveProjectId, Notifications());
-            await state.PutAsync(StripeBilling.Collection, LabsId, JsonSerializer.SerializeToElement(new BillingBinding
+            await state.PutAsync(StripeBilling.Table, LabsId, JsonSerializer.SerializeToElement(new BillingBinding
             {
                 OrganizationId = LabsId,
                 CustomerId = ReferenceStripeTransport.CustomerId,
@@ -71,7 +71,7 @@ namespace TerraScale.Dashboard.E2E
                 ReturnPath = "/organization?tab=billing",
                 StartedAt = At(2026, 1, 12, 9, 24)
             }), StatePrecondition.Absent, default);
-            await state.PutAsync(StripeBilling.CustomersCollection, ReferenceStripeTransport.CustomerId,
+            await state.PutAsync(StripeBilling.CustomersTable, ReferenceStripeTransport.CustomerId,
                 JsonSerializer.SerializeToElement(new CustomerBinding(LabsId)), StatePrecondition.Absent, default);
 
             foreach (var project in labs.Projects.Values)
@@ -82,18 +82,18 @@ namespace TerraScale.Dashboard.E2E
                 }
             }
 
-            await SeedDocumentsAsync(documents, CoreId, PrimaryId, "core-primary", "SJC", "orders",
+            await SeedTableAsync(runSql, CoreId, PrimaryId, "orders",
             [
                 ("01K78000000000000000001001", "{\"customerId\":\"cus_1001\",\"createdAt\":\"2026-09-17T07:02:00Z\",\"status\":\"paid\",\"total\":725.5}"),
                 ("01K78000000000000000001002", "{\"customerId\":\"cus_1002\",\"createdAt\":\"2026-09-16T12:15:00Z\",\"status\":\"paid\",\"total\":980.0}"),
                 ("01K78000000000000000001003", "{\"customerId\":\"cus_1003\",\"createdAt\":\"2026-09-15T15:44:00Z\",\"status\":\"open\",\"total\":140.0}")
             ]);
-            await SeedDocumentsAsync(documents, CoreId, "3S7V1R9W8CKJM87P94PBACW79D", "core-sessions", "SJC", "sessions",
+            await SeedTableAsync(runSql, CoreId, "3S7V1R9W8CKJM87P94PBACW79D", "sessions",
             [
                 ("488YCSAW1HEH6XFB1KYKT1YQB4", "{\"userId\":\"2RXDD6A70VYXH8M0SDAKFWAQT1\",\"startedAt\":\"2026-09-17T10:24:00Z\",\"status\":\"active\"}"),
                 ("7KM4NDWC9RDSEHJQ64DRBNMK69", "{\"userId\":\"5KPC8W3N5TA88HVG4S068X0MD7\",\"startedAt\":\"2026-09-12T08:10:00Z\",\"status\":\"expired\"}")
             ]);
-            await SeedDocumentsAsync(documents, EdgeId, "185JTBEGC768240CCVHG6TGQH4", "edge-events", "GRU", "events",
+            await SeedTableAsync(runSql, EdgeId, "185JTBEGC768240CCVHG6TGQH4", "events",
             [
                 ("12K95R3TTQBAV0C4VSQ4H3H1D1", "{\"type\":\"checkout.completed\",\"occurredAt\":\"2026-09-17T14:10:00Z\"}"),
                 ("133XABR9K9YRWKZ26JVK0K7R3R", "{\"type\":\"session.started\",\"occurredAt\":\"2026-09-17T14:12:00Z\"}")
@@ -391,8 +391,8 @@ namespace TerraScale.Dashboard.E2E
                 ActiveProjectId = activeProject,
                 Notifications = notifications ?? []
             };
-            await state.PutAsync(AccountService.IdentitiesCollection, storageKey, JsonSerializer.SerializeToElement(new AccountIdentityBinding(principal.Subject, account.Id)), StatePrecondition.Absent, default);
-            await state.PutAsync(AccountService.AccountsCollection, storageKey, JsonSerializer.SerializeToElement(account), StatePrecondition.Absent, default);
+            await state.PutAsync(AccountService.IdentitiesTable, storageKey, JsonSerializer.SerializeToElement(new AccountIdentityBinding(principal.Subject, account.Id)), StatePrecondition.Absent, default);
+            await state.PutAsync(AccountService.AccountsTable, storageKey, JsonSerializer.SerializeToElement(account), StatePrecondition.Absent, default);
         }
 
         private static async Task PersistOrganizationAsync(TestState state, TestWorkspace workspace, OrganizationRecord organization)
@@ -407,7 +407,7 @@ namespace TerraScale.Dashboard.E2E
                 workspace.Organizations[organization.Id] = TestWorkspace.Clone(organization);
                 workspace.SeedInvitationMetadata(organization);
             }
-            await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization), StatePrecondition.Absent, default);
+            await state.PutAsync(AccountService.OrganizationsTable, organization.Id, JsonSerializer.SerializeToElement(organization), StatePrecondition.Absent, default);
         }
 
         private static OrganizationRecord Personal(ReferencePrincipal principal, JsonElement detail)
@@ -504,7 +504,7 @@ namespace TerraScale.Dashboard.E2E
                 [
                     new("0S3WH091P8NPAFZ2Y5HVHTE8JQ", "mario@terrascale.tech", "api_key.created", "ci-deploy", "api_key", At(2026, 9, 18, 7, 5), "dashboard", "low"),
                     new("611MYHE1QDJXYERR85EY869Z5B", "ana@terrascale.tech", "member.role_changed", "ravi@terrascale.tech", "member", At(2026, 9, 17, 14, 22), "dashboard", "medium"),
-                    new("5XXTNQMZNMDGT8DZ986C7XZYEC", "ci-deploy (api key)", "document.batch_upsert", "core-primary/orders", "database", At(2026, 9, 17, 6, 41), "api", "low"),
+                    new("5XXTNQMZNMDGT8DZ986C7XZYEC", "ci-deploy (api key)", "database.created", "core-primary", "database", At(2026, 9, 17, 6, 41), "api", "low"),
                     new("7T7392ARW2ZDPAX02X93X92S81", "mario@terrascale.tech", "database.deleted", "old-reporting", "database", At(2026, 9, 12, 11, 4), "dashboard", "high"),
                     new("0AMW61HE983N01PBS2240P39Q8", "system", "backup.restore_completed", "core-sessions", "database", At(2026, 9, 10, 2, 48), "scheduled", "medium")
                 ]
@@ -539,15 +539,18 @@ namespace TerraScale.Dashboard.E2E
             { Id = id, OrganizationId = LabsId, ProjectId = project, Type = type, Title = title, Body = body, Status = status, Severity = severity, Url = url, CreatedAt = createdAt };
         }
 
-        private static async Task SeedDocumentsAsync(TestDocuments documents, string project, string databaseId, string databaseName, string region, string collection, (string Id, string Json)[] rows)
+        // One SQL table per fixture dataset: an id column, then the row object's fields in order.
+        private static async Task SeedTableAsync(Func<DatabaseScope, string, string, Task> runSql, string project, string databaseId, string table, (string Id, string Json)[] rows)
         {
             var scope = new DatabaseScope(MarioSubject, "", LabsId, "TerraScale Labs", project, project == CoreId ? "core-platform" : "edge-analytics");
-            var home = new DatabaseRegion(region, region.ToLowerInvariant() + "-1", region == "SJC" ? "San Francisco Bay Area" : "São Paulo", region == "SJC" ? "us" : "br", new("https://" + region.ToLowerInvariant() + ".api.terrascale.tech"), true);
-            await documents.CreateCollectionAsync(scope, home, databaseName, collection, default);
+            using var first = JsonDocument.Parse(rows[0].Json);
+            var columns = first.RootElement.EnumerateObject().Select(field => field.Name).ToArray();
+            await runSql(scope, databaseId, "CREATE TABLE " + table + " (id TEXT PRIMARY KEY, " + string.Join(", ", columns.Select(name => "\"" + name + "\"")) + ")");
             foreach (var (id, json) in rows)
             {
-                using var document = JsonDocument.Parse(json);
-                await documents.WriteAsync(scope, home, databaseName, collection, "create", id, document.RootElement, "", default);
+                using var row = JsonDocument.Parse(json);
+                var values = columns.Select(name => row.RootElement.GetProperty(name) is var value && value.ValueKind == JsonValueKind.Number ? value.GetRawText() : "'" + value.GetString()!.Replace("'", "''", StringComparison.Ordinal) + "'");
+                await runSql(scope, databaseId, "INSERT INTO " + table + " VALUES ('" + id + "', " + string.Join(", ", values) + ")");
             }
         }
 
@@ -572,9 +575,7 @@ namespace TerraScale.Dashboard.E2E
             {
                 ActiveCredentials = 0,
                 AnalyticsError = "",
-                ReplicationError = "",
-                AnalyticsEmpty = "Analytics measurements are unavailable.",
-                ReplicationEmpty = "Replication measurements are unavailable."
+                AnalyticsEmpty = "Analytics measurements are unavailable."
             };
             if (context.UserId != ReferenceFixtures.MarioSubject || context.Organization?.Id != ReferenceFixtures.LabsId)
             {

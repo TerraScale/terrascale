@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.Features.Data
     // Ownership-only erasure; SqlRuns keeps each user's latest run receipt here.
     public sealed class SqlWorkspace
     {
-        public const string Collection = "dashboard_sql_workspaces";
+        public const string Table = "dashboard_sql_workspaces";
         public const int SqlBytes = 16 * 1024;
         public const int HistoryBytes = 128 * 1024;
         public const int HistoryCount = 20;
@@ -27,18 +27,18 @@ namespace TerraScale.Dashboard.Features.Data
                 throw new IOException("SQL workspace erasure requires an owner scope.");
             }
 
-            await foreach (var document in DashboardStatePages.ReadAsync(state, Collection, scope,
+            await foreach (var row in DashboardStatePages.ReadAsync(state, Table, scope,
                 ["OrganizationId", "ProjectId", "DatabaseId", "UserId"], cancellationToken))
             {
-                var owner = AccountService.Read<WorkspaceOwner>(document);
+                var owner = AccountService.Read<WorkspaceOwner>(row);
                 var ids = new[] { owner.OrganizationId, owner.ProjectId, owner.DatabaseId, owner.UserId };
                 var key = string.Join("/", ids);
-                if (ids.Any(id => !TerraScaleIds.IsValid(id)) || document.Id != key)
+                if (ids.Any(id => !TerraScaleIds.IsValid(id)) || row.Id != key)
                 {
                     throw new IOException("SQL workspace deletion identity is invalid.");
                 }
 
-                await state.DeleteAsync(Collection, document.Id, document.Version, cancellationToken);
+                await state.DeleteAsync(Table, row.Id, row.Version, cancellationToken);
             }
         }
         private sealed record WorkspaceOwner(string OrganizationId, string ProjectId, string DatabaseId, string UserId);

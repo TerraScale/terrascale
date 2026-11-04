@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.Features.Data
 
     public sealed class SavedQueryService(IDashboardState state, TimeProvider time, AccountService accounts)
     {
-        private const string Collection = "dashboard_saved_queries";
+        private const string Table = "dashboard_saved_queries";
         public async Task<IReadOnlyList<SavedQuery>> ListAsync(AccountContext context, string databaseId, CancellationToken cancellationToken)
         {
             context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
@@ -31,13 +31,13 @@ namespace TerraScale.Dashboard.Features.Data
 
         private async Task<IReadOnlyList<SavedQuery>> ReadAsync(AccountContext context, CancellationToken cancellationToken)
         {
-            var document = await state.GetAsync(Collection, Key(context), cancellationToken);
-            if (document is null)
+            var row = await state.GetAsync(Table, Key(context), cancellationToken);
+            if (row is null)
             {
                 return [];
             }
 
-            var record = Read(context, document);
+            var record = Read(context, row);
             return [.. record.Queries.OrderBy(query => query.Name, StringComparer.Ordinal)];
         }
 
@@ -109,20 +109,20 @@ namespace TerraScale.Dashboard.Features.Data
             for (var attempt = 0; attempt < 4; attempt++)
             {
                 var key = Key(context);
-                var current = await state.GetAsync(Collection, key, cancellationToken);
+                var current = await state.GetAsync(Table, key, cancellationToken);
                 var queries = current is null ? [] : Read(context, current).Queries.ToList();
                 mutate(queries);
                 try
                 {
-                    await state.PutAsync(Collection, key, JsonSerializer.SerializeToElement(new SavedQueryRecord(context.Organization!.Id, context.Project!.Id, queries)), current is null ? StatePrecondition.Absent : StatePrecondition.Matches(current.Version), cancellationToken);
+                    await state.PutAsync(Table, key, JsonSerializer.SerializeToElement(new SavedQueryRecord(context.Organization!.Id, context.Project!.Id, queries)), current is null ? StatePrecondition.Absent : StatePrecondition.Matches(current.Version), cancellationToken);
                     return;
                 }
                 catch (StateConflictException) when (attempt < 3) { }
             }
         }
-        private static SavedQueryRecord Read(AccountContext context, StateRecord document)
+        private static SavedQueryRecord Read(AccountContext context, StateRecord row)
         {
-            var record = AccountService.Read<SavedQueryRecord>(document);
+            var record = AccountService.Read<SavedQueryRecord>(row);
             if (record.OrganizationId != context.Organization!.Id || record.ProjectId != context.Project!.Id)
             {
                 throw new AccountAccessException("Saved query scope is invalid.");

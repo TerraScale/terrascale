@@ -47,18 +47,18 @@ namespace TerraScale.Dashboard.Platform.Mcp
             for (var attempt = 0; attempt < 8; attempt++)
             {
                 // Natural key goes to the provider exactly once; never hash it here.
-                var document = await state.GetAsync(McpOAuth.ClientCollection, clientId, cancellationToken);
-                if (document is null)
+                var row = await state.GetAsync(McpOAuth.ClientTable, clientId, cancellationToken);
+                if (row is null)
                 {
                     return null;
                 }
 
-                if (document.Id != clientId || string.IsNullOrWhiteSpace(document.Version))
+                if (row.Id != clientId || string.IsNullOrWhiteSpace(row.Version))
                 {
                     throw new IOException("MCP registration state identity is invalid.");
                 }
 
-                var current = document.Body.Deserialize<McpRegistration>() ?? throw new JsonException("Invalid MCP registration.");
+                var current = row.Body.Deserialize<McpRegistration>() ?? throw new JsonException("Invalid MCP registration.");
                 Validate(current, clientId);
                 if (current.ClosedAt is not null)
                 {
@@ -92,8 +92,8 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 };
                 try
                 {
-                    await state.PutAsync(McpOAuth.ClientCollection, clientId, JsonSerializer.SerializeToElement(next),
-                        StatePrecondition.Matches(document.Version), cancellationToken);
+                    await state.PutAsync(McpOAuth.ClientTable, clientId, JsonSerializer.SerializeToElement(next),
+                        StatePrecondition.Matches(row.Version), cancellationToken);
                     return expired ? null : next;
                 }
                 catch (StateConflictException) { }
@@ -116,7 +116,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 throw new IOException("MCP registration listing identity is invalid.");
             }
 
-            var fresh = await state.GetAsync(McpOAuth.ClientCollection, candidate.ClientId, cancellationToken);
+            var fresh = await state.GetAsync(McpOAuth.ClientTable, candidate.ClientId, cancellationToken);
             if (fresh is null)
             {
                 return;
@@ -140,7 +140,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 return;
             }
 
-            try { await state.DeleteAsync(McpOAuth.ClientCollection, current.ClientId, fresh.Version, cancellationToken); }
+            try { await state.DeleteAsync(McpOAuth.ClientTable, current.ClientId, fresh.Version, cancellationToken); }
             catch (StateConflictException) { } // A newer lifecycle transition must survive.
         }
 

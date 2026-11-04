@@ -1,5 +1,4 @@
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.Rpc;
 using TerraScale.TerraBase.Contracts.FileStorage;
@@ -16,7 +15,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
             var (client, project) = await ProjectAsync(context, false, token);
             if (!string.IsNullOrEmpty(bucket))
             {
-                DataService.ValidDocumentId(bucket);
+                ValidBucket(bucket);
             }
 
             TerraBaseFileBucketPage buckets;
@@ -28,6 +27,14 @@ namespace TerraScale.Dashboard.Features.FileStorage
             var selected = string.IsNullOrEmpty(bucket) ? (buckets.Items is [var firstBucket, ..] ? firstBucket?.Id : null) : bucket;
             var files = selected is null ? null : await client.ListBucketFilesAsync(project, selected, after);
             return new(buckets, files, selected, bucketAfter);
+        }
+
+        private static void ValidBucket(string bucket)
+        {
+            if (!TerraScaleIds.IsValid(bucket))
+            {
+                throw new AccountAccessException("Bucket IDs are 26-character uppercase ULIDs.", 422);
+            }
         }
 
         public async Task CreateBucketAsync(AccountContext context, string name, TerraBaseFileRules rules, CancellationToken token)
@@ -45,7 +52,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
         public async Task DeleteBucketAsync(AccountContext context, string bucket, string confirmation, CancellationToken token)
         {
             var (client, project) = await ProjectAsync(context, true, token);
-            DataService.ValidDocumentId(bucket);
+            ValidBucket(bucket);
             string? after = null;
             do
             {

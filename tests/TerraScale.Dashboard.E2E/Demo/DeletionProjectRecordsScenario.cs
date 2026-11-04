@@ -15,8 +15,8 @@ namespace TerraScale.Dashboard.E2E
     // Owns the isolated HTTP host and synthetic state controls; journeys invoke cleanup through HTTP.
     internal sealed class DeletionProjectRecordsScenario : IAsyncDisposable
     {
-        public static readonly string[] Records = ["dashboard_saved_queries", SqlWorkspace.Collection, AlertRules.Collection, LogDrains.Collection];
-        public static readonly string[] Indexes = [AlertRules.IndexCollection, LogDrains.IndexCollection];
+        public static readonly string[] Records = ["dashboard_saved_queries", SqlWorkspace.Table, AlertRules.Table, LogDrains.Table];
+        public static readonly string[] Indexes = [AlertRules.IndexTable, LogDrains.IndexTable];
         private readonly DemoEnvironment environment = new();
         public string Organization { get; } = AccountService.NewId();
         public string Project { get; } = AccountService.NewId();
@@ -59,89 +59,89 @@ namespace TerraScale.Dashboard.E2E
 
         public async Task SeedAsync()
         {
-            foreach (var collection in Records)
+            foreach (var table in Records)
             {
                 foreach (var project in new[] { Project, Retained })
                 {
-                    await State.PutAsync(collection, Key(collection, project), JsonSerializer.SerializeToElement(Record(collection, Organization, project)), StatePrecondition.Absent, default);
+                    await State.PutAsync(table, Key(table, project), JsonSerializer.SerializeToElement(Record(table, Organization, project)), StatePrecondition.Absent, default);
                 }
             }
 
-            foreach (var collection in Indexes)
+            foreach (var table in Indexes)
             {
-                await State.PutAsync(collection, "all", JsonSerializer.SerializeToElement(new AlertProjectIndex(new()
+                await State.PutAsync(table, "all", JsonSerializer.SerializeToElement(new AlertProjectIndex(new()
                 { [Project] = Organization, [Retained] = Organization, [ForeignProject] = ForeignOrganization })), StatePrecondition.Absent, default);
             }
         }
 
-        public async Task SeedMismatchAsync(string collection, bool wrongDocumentId)
+        public async Task SeedMismatchAsync(string table, bool wrongRowId)
         {
-            var project = Indexes.Contains(collection) ? "all" : Project;
-            var key = Key(collection, project);
-            var document = (await GetAsync(collection, project))!;
-            if (wrongDocumentId)
+            var project = Indexes.Contains(table) ? "all" : Project;
+            var key = Key(table, project);
+            var row = (await GetAsync(table, project))!;
+            if (wrongRowId)
             {
-                environment.State.Items[collection + "/" + key] = document with { Id = ForeignProject };
+                environment.State.Items[table + "/" + key] = row with { Id = ForeignProject };
             }
             else
             {
-                object body = Indexes.Contains(collection)
+                object body = Indexes.Contains(table)
                     ? new AlertProjectIndex(new() { [Project] = ForeignOrganization, [Retained] = Organization })
-                    : collection == SqlWorkspace.Collection
+                    : table == SqlWorkspace.Table
                         // Keep the queried organization/project but corrupt the remaining key identity.
                         ? new SqlWorkspaceRecord(Organization, Project, ForeignProject, User, "private draft", ["SELECT 1"])
-                        : Record(collection, ForeignOrganization, Project);
-                await State.PutAsync(collection, key, JsonSerializer.SerializeToElement(body), StatePrecondition.Matches(document.Version), default);
+                        : Record(table, ForeignOrganization, Project);
+                await State.PutAsync(table, key, JsonSerializer.SerializeToElement(body), StatePrecondition.Matches(row.Version), default);
             }
         }
 
         public string ArrangeConcurrentIndexUpdate()
         {
             var concurrentProject = AccountService.NewId();
-            environment.State.BeforeWriteAsync = async (collection, key) =>
+            environment.State.BeforeWriteAsync = async (table, key) =>
             {
-                if (collection != AlertRules.IndexCollection || key != "all")
+                if (table != AlertRules.IndexTable || key != "all")
                 {
                     return;
                 }
 
                 environment.State.BeforeWriteAsync = null;
-                var document = (await GetAsync(collection, key))!;
-                var index = AccountService.Read<AlertProjectIndex>(document);
+                var row = (await GetAsync(table, key))!;
+                var index = AccountService.Read<AlertProjectIndex>(row);
                 index.Projects[concurrentProject] = ForeignOrganization;
-                await State.PutAsync(collection, key, JsonSerializer.SerializeToElement(index), StatePrecondition.Matches(document.Version), default);
+                await State.PutAsync(table, key, JsonSerializer.SerializeToElement(index), StatePrecondition.Matches(row.Version), default);
             };
             return concurrentProject;
         }
 
-        public async Task<IReadOnlyDictionary<string, string>> IndexAsync(string collection)
+        public async Task<IReadOnlyDictionary<string, string>> IndexAsync(string table)
         {
-            return AccountService.Read<AlertProjectIndex>((await GetAsync(collection, "all"))!).Projects;
+            return AccountService.Read<AlertProjectIndex>((await GetAsync(table, "all"))!).Projects;
         }
 
-        private object Record(string collection, string organization, string project)
+        private object Record(string table, string organization, string project)
         {
-            return collection switch
+            return table switch
             {
                 "dashboard_saved_queries" => new SavedQueryRecord(organization, project,
                     [new(Guid.CreateVersion7().ToString(), new Bogus.Faker().Lorem.Word(), "SELECT * FROM orders", "", DateTimeOffset.UtcNow)]),
-                SqlWorkspace.Collection => new SqlWorkspaceRecord(organization, project, database, User, "private draft", ["SELECT 1"]),
-                AlertRules.Collection => new AlertRuleSet(project, organization,
+                SqlWorkspace.Table => new SqlWorkspaceRecord(organization, project, database, User, "private draft", ["SELECT 1"]),
+                AlertRules.Table => new AlertRuleSet(project, organization,
                     [new(AccountService.NewId(), new Bogus.Faker().Lorem.Word(), "p95_latency_ms", 10, null, false, null, null, DateTimeOffset.UtcNow)]),
-                LogDrains.Collection => new LogDrain(project, organization, AccountService.NewId(), "https://logs.example.test/v1/logs", null, null, DateTimeOffset.UtcNow),
-                _ => throw new InvalidOperationException("Unknown project record collection.")
+                LogDrains.Table => new LogDrain(project, organization, AccountService.NewId(), "https://logs.example.test/v1/logs", null, null, DateTimeOffset.UtcNow),
+                _ => throw new InvalidOperationException("Unknown project record table.")
             };
         }
 
-        private string Key(string collection, string project)
+        private string Key(string table, string project)
         {
-            return collection == SqlWorkspace.Collection ? Organization + "/" + project + "/" + database + "/" + User : collection == "dashboard_saved_queries"
+            return table == SqlWorkspace.Table ? Organization + "/" + project + "/" + database + "/" + User : table == "dashboard_saved_queries"
             ? Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Organization + "/" + project))) : project;
         }
 
-        public Task<StateRecord?> GetAsync(string collection, string project)
+        public Task<StateRecord?> GetAsync(string table, string project)
         {
-            return State.GetAsync(collection, Key(collection, project), default);
+            return State.GetAsync(table, Key(table, project), default);
         }
 
         public async ValueTask DisposeAsync()
