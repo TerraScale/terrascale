@@ -152,8 +152,8 @@ with TerraScale() as ts:
 
 ### C# / .NET
 
-The .NET SDK on `main` does not yet expose the agent-database methods. Until it does, use the HTTP requests above. The
-shared names for these operations are `CreateDatabaseAsync`, `ForkDatabaseAsync`, `SetDatabaseTtlAsync`,
+The .NET SQL client on `main` exposes the agent-database operations. See the
+[.NET SDK README](https://github.com/TerraScale/terrascale/tree/main/sdk/dotnet#databases-for-agents) for examples. The methods are `CreateDatabaseAsync`, `ForkDatabaseAsync`, `SetDatabaseTtlAsync`,
 `ClearDatabaseTtlAsync`, `DeleteDatabaseAsync` and `CreateScopedKeyAsync`.
 
 ### Go

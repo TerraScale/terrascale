@@ -20,14 +20,33 @@ Prices and limits come from the [published catalog](https://terrascale.tech/pric
 ## What is billed
 
 - **Writes.** One operation unit is each started 4 KiB (4,096 bytes) of data successfully written; every changed row counts at least one unit. Only writes are billed.
-- **Storage.** Stored bytes in the database's home region, sampled hourly. One GB-month is 1 GB (10^9 bytes) stored for a whole month.
+- **Storage.** Stored bytes in the database's home region, sampled hourly. Replica storage is not billed separately. One GB-month is 1 GB (10^9 bytes) stored for a whole month.
 - **Reads.** SQL reads are not billed; they count toward the plan's monthly fair use. Shape reads served from the edge are free and not counted.
 
 Free includes small allowances without a card; new writes stop at its operation allowance and there are no overage charges. Paid plans include monthly allowances; operation units over the allowance are added to the next subscription invoice at the overage rate, up to the plan's hard cap (operationUnitCapPerMonth), where new writes stop until the next UTC month or an upgrade. SQL reads stop at the plan's fair use (sqlReadUnitsPerMonth); shape reads stay available. Storage over the allowance is added to the next invoice at the storage overage rate per GB-month of average stored bytes above it. Client egress over the allowance is not billed yet.
 
 Overage rates on paid plans: $5 per million write units and $0.5 per GB-month of storage.
 
-When a plan's write cap or SQL read fair use is reached, the statement answers `429 quota_exceeded` (Postgres SQLSTATE `53400`) until the next UTC month or an upgrade.
+When a plan's write cap or SQL read fair use is reached, the statement answers `429 quota_exceeded` (Postgres SQLSTATE `53100`) until the next UTC month or an upgrade.
+
+## Regions per database
+
+| Plan | Home regions per database |
+| --- | --- |
+| Free | 1 |
+| Starter | 1 |
+| Pro | 1 |
+| Team | 1 |
+| Enterprise | 1 |
+
+Each database has one home region for writes and can have encrypted read replicas in other serving regions.
+The catalog's regionsPerDatabase counts home regions. Replica storage is not billed separately; writes and stored
+bytes are metered at home. See [regions](/zh-cn/concepts/regions) and [replication](/zh-cn/concepts/replication).
+
+## Spending caps
+
+Plan write caps are enforced. Customer-set hard dollar spending caps are coming. Internal report-only spending
+thresholds do not stop services or cap a customer's bill.
 
 See [support](/zh-cn/legal/support) for support targets.
 

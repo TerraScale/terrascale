@@ -227,7 +227,7 @@ export const ptBr: Messages = {
     triad: [
       { title: 'Armazenamento na região principal' },
       { title: 'Escritas contadas em unidades de 4 KiB' },
-      { title: 'Tetos de escrita em todos os planos' },
+      { title: 'Tetos de escrita por plano' },
     ],
     compare: {
       title: 'Franquias por plano.',

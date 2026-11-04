@@ -9,7 +9,7 @@ title: SQL
 
 # SQL
 
-Each TerraScale database is a SQL database in the SQLite dialect. It is stored and served in one home region, chosen when you create it: São Paulo (`gru`), the San Francisco Bay Area (`sjc`) or Frankfurt (`fra`). Its tables are not copied to other regions.
+Each TerraScale database is a SQL database in the SQLite dialect. It commits writes in one home region: São Paulo (`gru`), the San Francisco Bay Area (`sjc`) or Frankfurt (`fra`). Encrypted read replicas can serve REST reads in other regions. See [regions](/es/concepts/regions) and [replication](/es/concepts/replication).
 
 ## Quickstart
 
@@ -91,8 +91,41 @@ The C#, TypeScript, Go, Python and Rust SDKs call the same endpoint; see [SDKs](
 
 ## Errors
 
-Errors keep SQLite codes such as `SQLITE_CONSTRAINT_UNIQUE`, `SQLITE_CONSTRAINT_FOREIGNKEY`, `SQLITE_BUSY` and `SQLITE_TOOBIG`. Over HTTP a refused statement rolls back the request and answers `{"error":{"code","message","statement","sqlite_code"}}`. The Postgres wire maps them to SQLSTATE `23505`, `23503`, `40001`, `54000` and similar. A write with a read-only key answers `403 forbidden_scope` over HTTP and `42501` over the Postgres wire.
+Errors use TerraScale codes and PostgreSQL SQLSTATEs across REST, WebSocket and the Postgres wire. For example, `unique_violation` carries `23505`, `foreign_key_violation` carries `23503`, and a retryable `serialization_conflict` carries `40001`. A refused HTTP statement rolls back the request and returns an `error` with `code`, `message`, `statement` and `sqlstate`. Writes with a read-only key answer `403 forbidden_scope` over HTTP and `42501` over the Postgres wire.
 
 Reads need the `documents:read` scope; writes and schema changes also need `documents:write`. A **Read and write** key from the dashboard has both.
+
+## Live shapes and table grants
+
+Live shapes send a table snapshot followed by committed changes. Select rows with `where` and select columns with
+`columns`; rows enter or leave the shape as they start or stop matching. In the JavaScript SDK:
+
+```js
+const open = db.shape("todos", { where: "done = 0", columns: ["id", "title"] })
+  .subscribe(({ rows }) => render(rows));
+// When the view closes:
+open.close();
+```
+
+End-user tokens can read live shapes for tables with a table read grant. A filter limits the shape result; authorization comes from
+the grant, not the filter. Keep privileged API keys on your server. See the
+[JavaScript SDK](https://github.com/TerraScale/terrascale/tree/main/sdk/js#live-sql-table-shapes).
+
+## Agent databases
+
+Create databases with a TTL, fork an existing database or a point in time, and issue a key scoped to one database
+with read or read-write access. The database is deleted on expiry. See [agent databases](/es/guides/agent-databases).
+
+## Recovery and deletion
+
+Point-in-time recovery restores into a new database within the source's recovery window and needs a free database slot. In-place point-in-time
+restore is coming. Database deletion destroys backup data keys, making retained encrypted backups unreadable;
+physical cleanup is separate. This does not apply to deleting individual SQL rows. Independent forks remain available.
+
+## Usage caps
+
+Plans enforce a monthly write cap and SQL read fair use. Reaching the write cap stops new writes; reaching SQL read
+fair use stops SQL reads, while shape reads stay available. Customer-set hard dollar spending caps are coming.
+See [pricing](/es/pricing).
 
 </div>
