@@ -1,3 +1,5 @@
+using System.Net;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraScale.DotNet.TerraBase;
@@ -17,10 +19,15 @@ public sealed class TerraBasePublicInventoryTests
         var expected = inventory.RootElement.GetProperty("operations").EnumerateArray().ToDictionary(r => r.GetProperty("operation").GetString()!, r => r);
         await Assert.That(expected.Count).IsEqualTo(38);
         (string Method, string Path)? sent = null;
+        var requests = 0;
         using var handler = new TerraBaseTestHandler((request, _) =>
         {
             sent = (request.Method.Method, request.RequestUri!.AbsolutePath);
-            throw new HttpRequestException("recorded");
+            requests++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent("""{"error":{"code":"recorded","message":"recorded"}}""", Encoding.UTF8, "application/json"),
+            });
         });
         using var http = new HttpClient(handler);
         var origin = new Uri("https://api.example.test");
@@ -75,7 +82,10 @@ public sealed class TerraBasePublicInventoryTests
         foreach (var (operation, call) in calls)
         {
             sent = null;
-            await Assert.ThrowsAsync<HttpRequestException>(call);
+            requests = 0;
+            var refusal = await Assert.ThrowsAsync<TerraBaseException>(call);
+            await Assert.That(refusal!.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            await Assert.That(requests).IsEqualTo(1);
             if (sent is not { } wire) throw new InvalidOperationException(operation + " sent no request");
             var route = expected[operation];
             await Assert.That(wire.Method).IsEqualTo(route.GetProperty("method").GetString());
