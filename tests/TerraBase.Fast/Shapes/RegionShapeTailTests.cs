@@ -28,7 +28,7 @@ public sealed class RegionShapeTailTests
             ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"), new { name = "main", replicaRegions = new List<string> { "sjc" } }, token);
         created.EnsureSuccessStatusCode();
         var database = new ManagedDatabaseRef(organization, project, (await created.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!, "main");
-        var bearer = gru.ProjectToken(project, "databases:read documents:read documents:write");
+        var bearer = gru.ProjectToken(project, "databases:read sql:read sql:write");
         using var home = gru.DataClient(bearer);
         using var local = sjc.DataClient(bearer);
         using var seeded = await home.PostAsJsonAsync(ManagementApi.Uri(database.Data + "/sql/execute"),

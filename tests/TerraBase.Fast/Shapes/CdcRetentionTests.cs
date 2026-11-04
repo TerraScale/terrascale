@@ -16,7 +16,7 @@ public sealed class CdcRetentionTests
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var host = await BackupShippingHost.StartAsync();
         host.Time.SetUtcNow(DateTimeOffset.UtcNow);
-        using var data = await host.Api.CreateClientAsync(host.Database.Organization, "documents:read", "documents:write");
+        using var data = await host.Api.CreateClientAsync(host.Database.Organization, "sql:read", "sql:write");
         var slow = new TableShapeClient(data, ManagementApi.Uri(host.Database.Data).ToString(), "people");
         var synced = await slow.SyncAsync();
         var slowOffset = long.Parse(synced.NextOffset!, CultureInfo.InvariantCulture);
