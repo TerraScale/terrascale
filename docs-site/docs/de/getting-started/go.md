@@ -1,6 +1,6 @@
 ---
 title: Go quickstart
-description: Create, read, update and query TerraBase documents with the Go SDK.
+description: Create tables, insert rows and query typed rows with the Go SDK.
 ---
 
 <!-- i18n:fallback:de -->
@@ -10,11 +10,11 @@ description: Create, read, update and query TerraBase documents with the Go SDK.
 
 # Go quickstart
 
-Run a complete document workflow against your TerraScale database in about five minutes: create a collection, write a document, read it back, update it, query it and delete it.
+Run a complete SQL workflow against your TerraScale database in about five minutes: create a table, insert rows with parameters, read typed rows back, run a multi-statement batch and handle a refused statement.
 
 ## Prerequisites
 
-- Go 1.24 or newer
+- Go 1.25 or newer
 - A TerraScale account, a project with a database, and an API key. Follow steps 1–4 of [Getting started](/de/getting-started/): the key needs **Read and write** access to that database.
 - The **Current project** ID (a ULID) from the dashboard's **Organization** page, and the API key. Export both:
 
@@ -26,10 +26,12 @@ export TERRASCALE_DATABASE_NAME=main                       # your database's nam
 
 ## Install the SDK
 
+The SQL methods live on `Database` in the module on `main`; published tags predate them, so install from the monorepo tip for now:
+
 ```bash
 mkdir quickstart && cd quickstart
 go mod init example.com/quickstart
-go get terrascale.tech/sdk@v0.0.8
+go get terrascale.tech/sdk@main
 ```
 
 ## Run the quickstart
@@ -68,61 +70,52 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	database := client.Database(project, databaseName)
+	db := client.Database(project, databaseName)
 
-	// A new database has no collections; name_taken means the collection already exists.
-	if _, err := database.CreateCollection(ctx, "todos"); err != nil && !errors.Is(err, tb.ErrNameTaken) {
+	// One statement, one transaction. IF NOT EXISTS makes the quickstart safe to run twice.
+	if _, err := db.Execute(ctx, "CREATE TABLE IF NOT EXISTS people (id TEXT PRIMARY KEY, name TEXT NOT NULL)"); err != nil {
 		log.Fatal(err)
 	}
-	todos := database.Collection("todos")
 
-	// Write a document under a server-generated id.
-	created, err := todos.Create(ctx, map[string]any{"title": "Ship the quickstart", "done": false})
+	// Insert with parameters; v1.NewID() mints a ULID primary key.
+	ada := tb.NewID()
+	if _, err := db.Execute(ctx, "INSERT INTO people (id, name) VALUES (?, ?)", ada, "Ada"); err != nil {
+		log.Fatal(err)
+	}
+
+	// Select into typed rows: QueryAs maps each row as a JSON object keyed by column name.
+	type person struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	people, err := tb.QueryAs[person](ctx, db, "SELECT id, name FROM people WHERE id = ?", ada)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("created", created.ID, "at version", created.Version)
+	fmt.Println("query matched", people[0].ID, people[0].Name)
 
-	// Read it back.
-	doc, err := todos.Get(ctx, created.ID)
+	// A batch of 1 to 256 statements runs as one transaction: all commit or none do.
+	grace := tb.NewID()
+	results, err := db.Batch(ctx, []tb.Statement{
+		{SQL: "INSERT INTO people (id, name) VALUES (:id, :name)", Named: map[string]any{"id": grace, "name": "Grace"}},
+		{SQL: "SELECT count(*) AS n FROM people"},
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	var body struct {
-		Title string `json:"title"`
-	}
-	if err := doc.Decode(&body); err != nil {
+	var n int64
+	if err := results[1].Rows[0].Scan(&n); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("read", doc.ID, body.Title)
+	fmt.Println("batch inserted, people count:", n)
 
-	// Update it conditionally: IfMatch rejects the write when another writer moved the document on.
-	updated, err := todos.Patch(ctx, created.ID, tb.MergePatch(map[string]any{"done": true}), tb.IfMatch(doc.Version))
-	if err != nil {
+	// A refused statement returns *tb.SQLError; the whole request rolled back.
+	_, err = db.Execute(ctx, "INSERT INTO people (id, name) VALUES (?, 'dup')", ada)
+	var sqlErr *tb.SQLError
+	if !errors.As(err, &sqlErr) {
 		log.Fatal(err)
 	}
-	fmt.Println("patched at version", updated.Version)
-
-	// Query for the change just written.
-	page, err := todos.Query(ctx, tb.Query{Filter: tb.Eq("/done", true), Limit: 10})
-	if err != nil {
-		log.Fatal(err)
-	}
-	for _, item := range page.Items {
-		var result struct {
-			Title string `json:"title"`
-		}
-		if err := item.Decode(&result); err != nil {
-			log.Fatal(err)
-		}
-		fmt.Println("query matched", item.ID, result.Title)
-	}
-
-	// Delete it.
-	if _, err := todos.Delete(ctx, created.ID, tb.IfMatch(updated.Version)); err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println("deleted", created.ID)
+	fmt.Println("refused:", sqlErr.Code, "statement", sqlErr.Statement, "sqlstate", sqlErr.SQLState)
 }
 
 func required(name string) string {
@@ -140,27 +133,25 @@ Run it with the key exported in your shell:
 go run .
 ```
 
-Expected output (ids and versions vary):
+Expected output (ids vary):
 
 ```text
-created 01JDV7QZGK0DMB3W3QV2AB5CDM at version tbv1-22c40936cb275b5fd9e31f293a3883e8
-read 01JDV7QZGK0DMB3W3QV2AB5CDM Ship the quickstart
-patched at version tbv1-11c4ca9f65a4729652a1e907835fd792
-query matched 01JDV7QZGK0DMB3W3QV2AB5CDM Ship the quickstart
-deleted 01JDV7QZGK0DMB3W3QV2AB5CDM
+query matched 01JDV7QZGK0DMB3W3QV2AB5CDM Ada
+batch inserted, people count: 2
+refused: unique_violation statement 0 sqlstate "23505"
 ```
 
 ## How it works
 
 - **The key never reaches TerraBase.** `tsauth.NewAPIKeySource` exchanges it with ts-auth for a short-lived project access token; the client refreshes it automatically. Keep the key on your server; see [authentication](/de/guides/authentication).
-- **Collections are created explicitly.** `CreateCollection` answers `ErrNameTaken` when the name exists, which makes the quickstart safe to run twice.
-- **Versions are opaque concurrency tokens.** Pass the version from a read into `tb.IfMatch` on the next write; TerraBase answers `412` when the document changed in between. See [errors and safe retries](/de/guides/errors).
-- **Documents are JSON.** Document ids are canonical ULIDs; filter paths are JSON Pointers such as `/done`. `Decode` keeps numbers as `json.Number`.
+- **Every call is one request and one transaction.** `Execute`, `Query` and `Batch` each post to `/sql/execute`; a batch commits all of its statements or none, and `BEGIN`/`COMMIT`/`ROLLBACK` are refused. See [SQL over HTTP](/de/guides/sql-http).
+- **Arguments are parameters, not string interpolation.** Positional `?` values and named (`:name`) values are sent as typed JSON; blobs (`[]byte`) travel as base64. `QueryAs[T]` maps rows by column name into your struct.
+- **Refused statements are `*tb.SQLError`.** It carries `Code`, `Statement` (zero-based), `SQLState` and `Status`, and wraps the API error so `errors.Is` matches every code constant. A `serialization_conflict` is resent at most twice; nothing else is.
 
 ## Next steps
 
 - [SDK reference](/de/guides/sdks) — the five SDKs and their install commands
 - [JavaScript](/de/getting-started/javascript), [C#](/de/getting-started/csharp) and [Python](/de/getting-started/python) quickstarts
-- [SQL over HTTP](/de/guides/sql-http) for the SQL interface
+- [SQL over HTTP](/de/guides/sql-http) for the raw HTTP interface and [concepts](/de/concepts/sql) for the SQL dialect
 
 </div>

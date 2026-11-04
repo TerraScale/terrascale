@@ -1,11 +1,11 @@
 ---
 title: C# quickstart
-description: Create, read, update and query TerraBase documents with the .NET SDK.
+description: Create tables, insert rows and query typed rows with the .NET SDK.
 ---
 
 # C# quickstart
 
-Run a complete document workflow against your TerraScale database in about ten minutes: create a collection, write a document, read it back, update it, query it and delete it.
+Run a complete SQL workflow against your TerraScale database in about ten minutes: create a table, insert rows with parameters, read typed rows back, run a multi-statement batch and handle a refused statement.
 
 ## Prerequisites
 
@@ -39,10 +39,11 @@ dotnet add package TerraScale.DotNet --source ~/.nuget/packages-terrascale
 
 ## Run the quickstart
 
-Replace `Program.cs` with this. The program exchanges the key for a short-lived access token itself; every other operation goes through the SDK client.
+Replace `Program.cs` with this. `TerraBaseSqlClient` exchanges the dashboard key for short-lived project access tokens itself; every operation goes through the SQL client.
 
 ```csharp
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 
@@ -54,80 +55,53 @@ public static class Program
         string apiKey = Required("TERRASCALE_API_KEY");
         string databaseName = Required("TERRASCALE_DATABASE_NAME");
 
-        // The SDK ships no key exchange: exchange the dashboard key for a
-        // short-lived project access token (60 seconds) here and hand the
-        // client a token provider.
-        string separator = "_";
-        int cut = apiKey.IndexOf(separator, StringComparison.Ordinal);
-        if (cut < 1) throw new InvalidOperationException("Expected a dashboard API key.");
-        using var auth = new HttpClient();
-        var authClient = new TerraScaleAuthClient(auth, new TerraScaleAuthClientOptions
-        {
-            BaseAddress = new Uri("https://auth.terrascale.tech"),
-            InstanceSlug = "terrascale",
-        });
-        TerraScaleAuthTokenResponse token = await authClient.Oidc.RequestClientCredentialsTokenAsync(
-            apiKey[..cut], apiKey,
-            scope: "documents:read documents:write", project: project);
-        string accessToken = token.AccessToken
-            ?? throw new InvalidOperationException("Token exchange returned no access token.");
-
         using var http = new HttpClient(TerraBaseHttp.CreateHandler());
-        var documents = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
-        {
-            BaseAddress = new Uri("https://api.terrascale.tech"),
-            AccessTokenProvider = _ => ValueTask.FromResult(accessToken),
-        });
-        var database = documents.Database(project, databaseName);
-        string todos = "todos";
+        var sql = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { ApiKey = apiKey });
+        TerraBaseSqlDatabase db = sql.Database(project, databaseName);
+        var ids = new TerraScaleIdGenerator();
+        string ada = ids.NewId();
+        string grace = ids.NewId();
 
-        // A new database has no collections; 409 means the collection already exists.
+        // One statement, one transaction. IF NOT EXISTS makes the quickstart safe to run twice.
+        await db.ExecuteAsync("CREATE TABLE IF NOT EXISTS people (id TEXT PRIMARY KEY, name TEXT NOT NULL)");
+
+        // Insert with parameters; NewId() mints a ULID primary key.
+        await db.ExecuteAsync("INSERT INTO people (id, name) VALUES (?, ?)", [ada, "Ada"]);
+
+        // Select into typed rows: QueryAsync<T> maps each row through source-generated JSON metadata.
+        IReadOnlyList<Person> people = await db.QueryAsync(
+            "SELECT id, name FROM people WHERE id = ?", [ada], AppJson.Default.Person);
+        Console.WriteLine($"query matched {people[0].Id} {people[0].Name}");
+
+        // A batch of 1 to 256 statements runs as one transaction: all commit or none do.
+        var batch = await db.BatchAsync([
+            new("INSERT INTO people (id, name) VALUES (:id, :name)",
+                Named: new Dictionary<string, TerraBaseSqlValue> { ["id"] = grace, ["name"] = "Grace" }),
+            new("SELECT count(*) AS n FROM people"),
+        ]);
+        Console.WriteLine($"batch inserted, people count: {batch[1].Rows[0].GetInt64("n")}");
+
+        // A refused statement throws TerraBaseSqlException; the whole request rolled back.
         try
         {
-            await database.CreateCollectionAsync(todos);
+            await db.ExecuteAsync("INSERT INTO people (id, name) VALUES (?, 'dup')", [ada]);
         }
-        catch (TerraBaseConflictException)
+        catch (TerraBaseSqlException refused)
         {
+            Console.WriteLine($"refused: {refused.Code} statement {refused.Statement} sqlstate {refused.Sqlstate}");
         }
-
-        // Write a document under a server-generated id.
-        TerraBaseWriteResult created = await database.CreateDocumentAsync(todos,
-            JsonSerializer.SerializeToElement(new { title = "Ship the quickstart", done = false }));
-        Console.WriteLine($"created {created.Id} at version {created.Version}");
-
-        // Read it back.
-        TerraBaseDocument? doc = await database.GetDocumentAsync(todos, created.Id)
-            ?? throw new InvalidOperationException("Created document is missing.");
-        Console.WriteLine($"read {doc.Id} {doc.Document.GetProperty("title").GetString()}");
-
-        // Update it conditionally: IfMatch rejects the write when another writer moved the document on.
-        TerraBaseWriteResult updated = await database.PatchDocumentAsync(todos, created.Id,
-            JsonSerializer.SerializeToElement(new { done = true }),
-            TerraBasePrecondition.Matches(doc.Version));
-        Console.WriteLine($"patched at version {updated.Version}");
-
-        // Query for the change just written.
-        TerraBaseDocumentPage page = await database.QueryAsync(todos, new TerraBaseQuery
-        {
-            Filter = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
-            {
-                ["eq"] = new object[] { "/done", true },
-            }),
-            Limit = 10,
-        });
-        foreach (TerraBaseDocument item in page.Items)
-            Console.WriteLine($"query matched {item.Id} {item.Document.GetProperty("title").GetString()}");
-
-        // Delete it.
-        await database.DeleteDocumentAsync(todos, created.Id,
-            TerraBasePrecondition.Matches(updated.Version));
-        Console.WriteLine($"deleted {created.Id}");
         return 0;
     }
 
     private static string Required(string name) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value
         ? value : throw new InvalidOperationException($"Missing {name}.");
 }
+
+public sealed record Person(string Id, string Name);
+
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
+[JsonSerializable(typeof(Person))]
+public sealed partial class AppJson : JsonSerializerContext;
 ```
 
 Run it with the key exported in your shell:
@@ -136,25 +110,23 @@ Run it with the key exported in your shell:
 dotnet run
 ```
 
-Expected output (ids and versions vary):
+Expected output (ids vary):
 
 ```text
-created 01JDV7QZGK0DMB3W3QV2AB5CDM at version tbv1-22c40936cb275b5fd9e31f293a3883e8
-read 01JDV7QZGK0DMB3W3QV2AB5CDM Ship the quickstart
-patched at version tbv1-11c4ca9f65a4729652a1e907835fd792
-query matched 01JDV7QZGK0DMB3W3QV2AB5CDM Ship the quickstart
-deleted 01JDV7QZGK0DMB3W3QV2AB5CDM
+query matched 01JDV7QZGK0DMB3W3QV2AB5CDM Ada
+batch inserted, people count: 2
+refused: unique_violation statement 0 sqlstate 23505
 ```
 
 ## How it works
 
-- **The key never reaches TerraBase.** The program exchanges it with ts-auth for a 60-second project access token; `AccessTokenProvider` hands the client a current one for each request. Keep the key on your server; see [authentication](/guides/authentication).
-- **Collections are created explicitly.** `CreateCollectionAsync` answers `409` when the name exists, which makes the quickstart safe to run twice.
-- **Versions are opaque concurrency tokens.** Pass the version from a read into `TerraBasePrecondition.Matches` on the next write; TerraBase answers `412` when the document changed in between. See [errors and safe retries](/guides/errors).
-- **Documents are JSON.** Document ids are canonical ULIDs; filter paths are JSON Pointers such as `/done`.
+- **The key never reaches TerraBase.** `TerraBaseSqlClient` exchanges it at ts-auth (`client_credentials`) for a short-lived access token to the project, caches it and renews it before it expires; concurrent calls share one exchange. Keep the key on your server; see [authentication](/guides/authentication).
+- **Every call is one request and one transaction.** `ExecuteAsync`, `QueryAsync` and `BatchAsync` each post to `/sql/execute`; a batch commits all of its statements or none, and `BEGIN`/`COMMIT`/`ROLLBACK` are refused. See [SQL over HTTP](/guides/sql-http).
+- **Arguments are parameters, not string interpolation.** Positional (`?`) and named values are sent as typed JSON; blobs (`TerraBaseSqlValue.FromBytes`) travel as base64. `TerraBaseSqlRecord` reads by ordinal or column name, and `QueryAsync<T>` maps rows through source-generated JSON metadata.
+- **Refused statements throw `TerraBaseSqlException`.** It carries `Code` (one of `TerraBaseSqlErrorCodes`), `Statement` (zero-based) and `Sqlstate`; the request rolled back. A `serialization_conflict` is resent at most twice; nothing else is.
 
 ## Next steps
 
 - [SDK reference](/guides/sdks) — the five SDKs and their install commands
 - [JavaScript](/getting-started/javascript), [Go](/getting-started/go) and [Python](/getting-started/python) quickstarts
-- [SQL over HTTP](/guides/sql-http) for the SQL interface
+- [SQL over HTTP](/guides/sql-http) for the raw HTTP interface and [concepts](/concepts/sql) for the SQL dialect

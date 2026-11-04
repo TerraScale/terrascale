@@ -1,6 +1,6 @@
 ---
 title: JavaScript quickstart
-description: Create, read, update and query TerraBase documents with the JavaScript SDK.
+description: Create tables, insert rows and query rows with the JavaScript SDK.
 ---
 
 <!-- i18n:fallback:ja -->
@@ -10,7 +10,7 @@ description: Create, read, update and query TerraBase documents with the JavaScr
 
 # JavaScript quickstart
 
-Run a complete document workflow against your TerraScale database in about five minutes: create a collection, write a document, read it back, update it, query it and delete it.
+Run a complete SQL workflow against your TerraScale database in about five minutes: create a table, insert rows with parameters, read rows back, run a multi-statement batch and handle a refused statement.
 
 ## Prerequisites
 
@@ -26,18 +26,24 @@ export TERRASCALE_DATABASE_NAME=main                       # your database's nam
 
 ## Install the SDK
 
+The SQL methods on the database handle are newer than the latest npm release (`0.0.17` lacks blobs, `shape(table)` and later fixes), so install the package from a monorepo checkout for now:
+
 ```bash
+git clone --depth 1 https://github.com/TerraScale/terrascale.git
+cd terrascale/sdk/js && npm ci --ignore-scripts && npm run build && npm pack
 mkdir quickstart && cd quickstart
 npm init -y
-npm install @terrascale/sdk
+npm install ../path/to/terrascale/sdk/js/terrascale-sdk-0.0.19.tgz
 ```
+
+`npm pack` writes a tarball (`terrascale-sdk-<version>.tgz`) you can install from anywhere; it carries the SDK's `ulid` dependency with it. Plain `npm install @terrascale/sdk` still works for the published document-API surface.
 
 ## Run the quickstart
 
 Save this as `quickstart.mjs`. The program exchanges the key for a short-lived access token itself; every other operation goes through the client.
 
 ```js
-import { createTerraBaseV1Client, TerraBaseV1Error, v1Filter } from "@terrascale/sdk";
+import { createTerraBaseV1Client, generateId, SqlError } from "@terrascale/sdk";
 import { createTsAuthClient } from "@terrascale/sdk/ts-auth";
 
 const required = (name) => {
@@ -79,36 +85,34 @@ const client = createTerraBaseV1Client({
   project,
   token: getAccessToken,
 });
-const database = client.database(databaseName);
+const db = client.database(databaseName);
 
-// A new database has no collections; 409 name_taken means the collection already exists.
+// One statement, one transaction. IF NOT EXISTS makes the quickstart safe to run twice.
+await db.execute("CREATE TABLE IF NOT EXISTS people (id TEXT PRIMARY KEY, name TEXT NOT NULL)");
+
+// Insert with parameters; generateId() mints a ULID primary key.
+const ada = generateId();
+await db.execute("INSERT INTO people (id, name) VALUES (?, ?)", [ada, "Ada"]);
+
+// query returns rows as objects keyed by column name.
+const people = await db.query("SELECT id, name FROM people WHERE id = ?", [ada]);
+console.log("query matched", people[0].id, people[0].name);
+
+// A batch of 1 to 256 statements runs as one transaction: all commit or none do.
+const { rowsAffected } = await db.batch([
+  { sql: "INSERT INTO people (id, name) VALUES (:id, :name)", named: { id: generateId(), name: "Grace" } },
+  "SELECT count(*) AS n FROM people",
+]);
+const counted = await db.query("SELECT count(*) AS n FROM people");
+console.log("batch inserted, people count:", Number(counted[0].n));
+
+// A refused statement throws SqlError; the whole request rolled back.
 try {
-  await database.collections.create("todos");
+  await db.execute("INSERT INTO people (id, name) VALUES (?, 'dup')", [ada]);
 } catch (error) {
-  if (!(error instanceof TerraBaseV1Error && error.status === 409)) throw error;
+  if (!(error instanceof SqlError)) throw error;
+  console.log("refused:", error.sqliteCode, "statement", error.statement);
 }
-const todos = database.collection("todos");
-
-// Write a document under a server-generated id.
-const created = await todos.create({ title: "Ship the quickstart", done: false });
-console.log("created", created.id, "at version", created.version);
-
-// Read it back.
-const doc = await todos.get(created.id);
-console.log("read", doc.id, doc.document.title);
-
-// Update it conditionally: ifMatch rejects the write when another writer moved the document on.
-const updated = await todos.patch(created.id, { merge: { done: true } }, { ifMatch: doc.version });
-console.log("patched at version", updated.version);
-
-// Query for the change just written.
-for await (const item of todos.items({ filter: v1Filter.eq("/done", true), limit: 10 })) {
-  console.log("query matched", item.id, item.document.title);
-}
-
-// Delete it.
-await todos.delete(created.id, { ifMatch: updated.version });
-console.log("deleted", created.id);
 ```
 
 Run it with the key exported in your shell:
@@ -117,27 +121,25 @@ Run it with the key exported in your shell:
 node quickstart.mjs
 ```
 
-Expected output (ids and versions vary):
+Expected output (ids vary):
 
 ```text
-created 01JDV7QZGK0DMB3W3QV2AB5CDM at version tbv1-22c40936cb275b5fd9e31f293a3883e8
-read 01JDV7QZGK0DMB3W3QV2AB5CDM Ship the quickstart
-patched at version tbv1-11c4ca9f65a4729652a1e907835fd792
-query matched 01JDV7QZGK0DMB3W3QV2AB5CDM Ship the quickstart
-deleted 01JDV7QZGK0DMB3W3QV2AB5CDM
+query matched 01JDV7QZGK0DMB3W3QV2AB5CDM Ada
+batch inserted, people count: 2
+refused: SQLITE_CONSTRAINT_PRIMARYKEY statement 0
 ```
 
 ## How it works
 
 - **The key never reaches TerraBase.** The program exchanges it with ts-auth for a 60-second project access token; `token: getAccessToken` hands the client a fresh one whenever it needs it. Keep the key on your server; see [authentication](/ja/guides/authentication).
-- **Collections are created explicitly.** `collections.create` answers `409` when the name exists, which makes the quickstart safe to run twice.
-- **Versions are opaque concurrency tokens.** Pass the version from a read into `ifMatch` on the next write; TerraBase answers `412` when the document changed in between. See [errors and safe retries](/ja/guides/errors).
-- **Documents are JSON.** Document ids are canonical ULIDs; `v1Filter` paths are JSON Pointers such as `/done`.
+- **Every call is one request and one transaction.** `execute`, `query` and `batch` each post to `/sql/execute`; a batch commits all of its statements or none, and `BEGIN`/`COMMIT`/`ROLLBACK` are refused. See [SQL over HTTP](/ja/guides/sql-http).
+- **Arguments are parameters, not string interpolation.** Positional (`?`) arrays and named objects are sent as typed JSON; `Uint8Array` blobs travel as base64 and come back as `Uint8Array`. Integers above 2^53 decode as an `ExactDecimal`; pass large integers as `bigint`.
+- **Refused statements throw `SqlError`.** It carries the failing `statement` (zero-based) and `sqliteCode` (such as `SQLITE_CONSTRAINT_PRIMARYKEY`) beside the usual `code` and `status`; the whole request rolled back and nothing is retried automatically.
 
 ## Next steps
 
 - [SDK reference](/ja/guides/sdks) — the five SDKs and their install commands
 - [C#](/ja/getting-started/csharp), [Go](/ja/getting-started/go) and [Python](/ja/getting-started/python) quickstarts
-- [SQL over HTTP](/ja/guides/sql-http) for the SQL interface
+- [SQL over HTTP](/ja/guides/sql-http) for the raw HTTP interface and [concepts](/ja/concepts/sql) for the SQL dialect
 
 </div>

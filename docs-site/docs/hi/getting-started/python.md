@@ -1,6 +1,6 @@
 ---
 title: Python quickstart
-description: Create, read, update and query TerraBase documents with the Python SDK.
+description: Create tables, insert rows and query typed rows with the Python SDK.
 ---
 
 <!-- i18n:fallback:hi -->
@@ -10,7 +10,7 @@ description: Create, read, update and query TerraBase documents with the Python 
 
 # Python quickstart
 
-Run a complete document workflow against your TerraScale database in about five minutes: create a collection, write a document, read it back, update it, query it and delete it.
+Run a complete SQL workflow against your TerraScale database in about five minutes: create a table, insert rows with parameters, read typed rows back, run a multi-statement batch and handle a refused statement.
 
 ## Prerequisites
 
@@ -38,39 +38,42 @@ Save this as `quickstart.py`. The client reads the key and project from the envi
 
 ```python
 import os
+from dataclasses import dataclass
 
-from terrascale import ConflictError, TerraScale, query as q
+from terrascale import SqlError, TerraScale, new_id
 
 with TerraScale() as ts:                    # reads TERRASCALE_API_KEY / TERRASCALE_PROJECT_ID
     db = ts.database(os.environ["TERRASCALE_DATABASE_NAME"])
 
-    # A new database has no collections; name_taken means the collection already exists.
+    # One statement, one transaction. IF NOT EXISTS makes the quickstart safe to run twice.
+    db.execute("CREATE TABLE IF NOT EXISTS people (id TEXT PRIMARY KEY, name TEXT NOT NULL)")
+
+    # Insert with parameters; new_id() mints a ULID primary key.
+    ada = new_id()
+    db.execute("INSERT INTO people (id, name) VALUES (?, ?)", [ada, "Ada"])
+
+    # Select into typed rows: the mapper is called with each row's columns as keyword arguments.
+    @dataclass
+    class Person:
+        id: str
+        name: str
+
+    people = db.query("SELECT id, name FROM people WHERE id = ?", [ada], Person)
+    print("query matched", people[0].id, people[0].name)
+
+    # A batch of 1 to 256 statements runs as one transaction: all commit or none do.
+    db.batch([
+        ("INSERT INTO people (id, name) VALUES (:id, :name)", {"id": new_id(), "name": "Grace"}),
+        ("SELECT count(*) AS n FROM people", None),
+    ])
+    rows = db.query("SELECT count(*) AS n FROM people")
+    print("batch inserted, people count:", rows[0].get_int64("n"))
+
+    # A refused statement raises SqlError; the whole request rolled back.
     try:
-        db.create_collection("todos")
-    except ConflictError as exc:
-        if exc.code != "name_taken":
-            raise
-    todos = db.collection("todos")
-
-    # Write a document under a server-generated id.
-    created = todos.create({"title": "Ship the quickstart", "done": False})
-    print("created", created.id, "at version", created.version)
-
-    # Read it back.
-    doc = todos.get(created.id)
-    print("read", doc.id, doc.data["title"])
-
-    # Update it conditionally: if_match rejects the write when another writer moved the document on.
-    updated = todos.patch(doc.id, merge={"done": True}, if_match=doc.version)
-    print("patched at version", updated.version)
-
-    # Query for the change just written.
-    for d in todos.items(q.eq("/done", True), limit=10):
-        print("query matched", d.id, d.data["title"])
-
-    # Delete it.
-    todos.delete(doc.id, if_match=updated.version)
-    print("deleted", doc.id)
+        db.execute("INSERT INTO people (id, name) VALUES (?, 'dup')", [ada])
+    except SqlError as err:
+        print("refused:", err.code, "statement", err.statement, "sqlstate", err.sqlstate)
 ```
 
 Run it with the key exported in your shell:
@@ -79,27 +82,25 @@ Run it with the key exported in your shell:
 python quickstart.py
 ```
 
-Expected output (ids and versions vary):
+Expected output (ids vary):
 
 ```text
-created 01JDV7QZGK0DMB3W3QV2AB5CDM at version tbv1-22c40936cb275b5fd9e31f293a3883e8
-read 01JDV7QZGK0DMB3W3QV2AB5CDM Ship the quickstart
-patched at version tbv1-11c4ca9f65a4729652a1e907835fd792
-query matched 01JDV7QZGK0DMB3W3QV2AB5CDM Ship the quickstart
-deleted 01JDV7QZGK0DMB3W3QV2AB5CDM
+query matched 01JDV7QZGK0DMB3W3QV2AB5CDM Ada
+batch inserted, people count: 2
+refused: primary_key_violation statement 0 sqlstate 23505
 ```
 
 ## How it works
 
 - **The key never reaches TerraBase.** The client exchanges it with ts-auth for a short-lived access token, caches it and refreshes it automatically. Keep the key on your server; see [authentication](/hi/guides/authentication).
-- **Collections are created explicitly.** `create_collection` answers `409 name_taken` when the name exists, which makes the quickstart safe to run twice.
-- **Versions are opaque concurrency tokens.** Pass the version from a read into `if_match` on the next write; TerraBase answers `412` when the document changed in between. See [errors and safe retries](/hi/guides/errors).
-- **Documents are JSON.** Document ids are canonical ULIDs; filter paths are JSON Pointers such as `/done`.
+- **Every call is one request and one transaction.** `execute`, `query` and `batch` each post to `/sql/execute`; a batch commits all of its statements or none, and `BEGIN`/`COMMIT`/`ROLLBACK` are refused. See [SQL over HTTP](/hi/guides/sql-http).
+- **Arguments are parameters, not string interpolation.** Positional `?` lists and named (`:name`) dicts are sent as typed JSON; `bytes` travel as base64 and integers stay exact. `Row` reads by ordinal or column name (`get_int64`, `get_string`, …).
+- **Refused statements raise `SqlError`.** It carries `code` (a `SqlErrorCodes` constant), `statement` (zero-based) and `sqlstate`; the request rolled back. A `serialization_conflict` is resent at most twice; nothing else is.
 
 ## Next steps
 
 - [SDK reference](/hi/guides/sdks) — the five SDKs and their install commands
 - [JavaScript](/hi/getting-started/javascript), [C#](/hi/getting-started/csharp) and [Go](/hi/getting-started/go) quickstarts
-- [SQL over HTTP](/hi/guides/sql-http) for the SQL interface
+- [SQL over HTTP](/hi/guides/sql-http) for the raw HTTP interface and [concepts](/hi/concepts/sql) for the SQL dialect
 
 </div>
