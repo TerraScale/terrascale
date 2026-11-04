@@ -17,26 +17,4 @@ namespace TerraScale.TerraBase.Contracts.Management
     /// <summary><c>PUT /v1/projects/{project}/databases/{database}/ttl</c> request.</summary>
     [MessagePackObject(true)]
     public sealed record TerraBaseDatabaseTtl(long TtlSeconds);
-
-    /// <summary>A secondary index.</summary>
-    [MessagePackObject(true)]
-    public sealed record TerraBaseIndex(string Name, string Collection, IReadOnlyList<string> Fields, string State);
-
-    /// <summary>The indexes in a database.</summary>
-    [MessagePackObject(true)]
-    public sealed record TerraBaseIndexPage(IReadOnlyList<TerraBaseIndex> Items);
-
-    /// <summary>A secondary index definition.</summary>
-    [MessagePackObject(true)]
-    public sealed record TerraBaseCreateIndex(string Collection, IReadOnlyList<string> Fields);
-
-    /// <summary>Live collection counts and logical bytes.</summary>
-    [MessagePackObject(true)]
-    public sealed record TerraBaseCollectionStats(string Name, long Documents, long Bytes);
-
-    /// <summary>Collection statistics for a database.</summary>
-    [MessagePackObject(true)]
-    public sealed record TerraBaseCollectionStatsPage(IReadOnlyList<TerraBaseCollectionStats> Items);
-
-
 }

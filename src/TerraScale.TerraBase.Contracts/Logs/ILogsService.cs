@@ -11,7 +11,5 @@ namespace TerraScale.TerraBase.Contracts.Logs
         /// <summary><c>GET /v1/usage/projects/{project}/databases/{databaseId}/logs</c>: operator cursor read for log drains.</summary>
         UnaryResult<TerraBaseRequestLogPage> ReadDrainAsync(string projectId, string databaseId, string after);
 
-        /// <summary><c>GET …/query-shapes</c>.</summary>
-        UnaryResult<TerraBaseQueryShapePage> ListQueryShapesAsync(string projectId, string database);
     }
 }

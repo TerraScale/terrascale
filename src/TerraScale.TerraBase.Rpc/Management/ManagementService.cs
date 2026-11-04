@@ -73,35 +73,6 @@ namespace TerraScale.TerraBase.Rpc.Management
         }
 
         /// <inheritdoc />
-        public async UnaryResult<TerraBaseCollectionStatsPage> ListCollectionStatsAsync(string projectId, string database)
-        {
-            var answer = await api.SendAsync(Context, "GET", RestPaths.Database(projectId, database) + "/schema");
-            return RestApi.Read(answer, ManagementJson.Default.TerraBaseCollectionStatsPage);
-        }
-
-        /// <inheritdoc />
-        public async UnaryResult<TerraBaseIndexPage> ListIndexesAsync(string projectId, string database)
-        {
-            var answer = await api.SendAsync(Context, "GET", RestPaths.Database(projectId, database) + "/indexes");
-            return RestApi.Read(answer, ManagementJson.Default.TerraBaseIndexPage);
-        }
-
-        /// <inheritdoc />
-        public async UnaryResult<TerraBaseIndex> CreateIndexAsync(string projectId, string database, TerraBaseCreateIndex request)
-        {
-            var answer = await api.SendAsync(Context, "POST", RestPaths.Database(projectId, database) + "/indexes", RestApi.Json(request, ManagementJson.Default.TerraBaseCreateIndex));
-            return RestApi.Read(answer, ManagementJson.Default.TerraBaseIndex);
-        }
-
-        /// <inheritdoc />
-        public async UnaryResult<bool> DropIndexAsync(string projectId, string database, string name)
-        {
-            var answer = await api.SendAsync(Context, "DELETE", RestPaths.Database(projectId, database) + "/indexes/" + Uri.EscapeDataString(name));
-            RestApi.Ensure(answer);
-            return true;
-        }
-
-        /// <inheritdoc />
         public async UnaryResult<JsonElement> ExecuteSqlAsync(string projectId, string database, JsonElement request)
         {
             var answer = await api.SendAsync(Context, "POST", RestPaths.Database(projectId, database) + "/sql/execute", RestApi.Json(request, ManagementJson.Default.JsonElement));

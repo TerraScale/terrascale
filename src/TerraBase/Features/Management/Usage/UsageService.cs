@@ -84,7 +84,7 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
         var (lifetime, buckets) = saved;
         var series = buckets.Select((counts, index) => new UsagePoint(window.Granularity.Start(window.First + index), counts.Reads, counts.Writes)).ToArray();
         return new DatabaseUsage(
-            database.DatabaseId!, size,
+            database.DatabaseId!, size, 0,
             lifetime.Reads, lifetime.Writes, Period(window, series), series);
     }
 
@@ -192,7 +192,7 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
         var series = Sum(window, items.Select(item => item.Series));
         var fileBytes = await files.BytesAsync(organizationId, projectId, cancellationToken).ConfigureAwait(false);
         return new ProjectUsage(
-            projectId, items.Count, checked(items.Sum(item => item.StorageBytes) + fileBytes),
+            projectId, items.Count, checked(items.Sum(item => item.StorageBytes) + fileBytes), checked(items.Sum(item => item.LogicalBytes) + fileBytes),
             items.Sum(item => item.Reads), items.Sum(item => item.Writes), Period(window, series), series, [.. items.Select(item => item with { Series = [] })],
             new UsageMonth(month, project.Reads, project.Writes, project.Writes, organization.Writes, organization.Reads))
         { FileBytes = fileBytes };

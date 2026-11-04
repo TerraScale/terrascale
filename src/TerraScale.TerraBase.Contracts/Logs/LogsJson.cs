@@ -7,6 +7,5 @@ namespace TerraScale.TerraBase.Contracts.Logs
     [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, MaxDepth = 256,
         RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true)]
     [JsonSerializable(typeof(TerraBaseRequestLogPage))]
-    [JsonSerializable(typeof(TerraBaseQueryShapePage))]
     public sealed partial class LogsJson : JsonSerializerContext;
 }

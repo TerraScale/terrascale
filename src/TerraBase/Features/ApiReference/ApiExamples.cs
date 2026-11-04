@@ -24,7 +24,7 @@ internal static class ApiExamples
     private const string Period = """{"from":"2026-10-07T00:00:00Z","to":"2026-10-08T00:00:00Z","granularity":"day","reads":0,"writes":0}""";
     private const string Series = """[{"start":"2026-10-07T00:00:00Z","reads":0,"writes":0}]""";
     private const string Function = """{"name":"hello","source":"function handler(event) { return event.body; }","cron":"*/5 * * * *","createdAt":"2026-10-07T12:00:00Z","updatedAt":"2026-10-07T12:00:00Z"}""";
-    private const string Usage = """{"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FA1","storageBytes":40960,"reads":0,"writes":0,"period":PERIOD,"series":SERIES}""";
+    private const string Usage = """{"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FA1","storageBytes":40960,"logicalBytes":0,"reads":0,"writes":0,"period":PERIOD,"series":SERIES}""";
 
     public static void Apply(OpenApiOperation operation)
     {
@@ -121,7 +121,7 @@ internal static class ApiExamples
         "planPointInTime" => """{"window":{"earliest":"2026-10-07T12:00:00Z","latest":"2026-10-07T12:00:16Z"},"pointInTime":"2026-10-07T12:00:13Z","snapshotAt":"2026-10-07T12:00:10Z","latestSegmentAt":null,"segmentCount":0}""",
         "setBackupPolicy" => Policy.Replace("\"updatedAt\":null", "\"updatedAt\":\"2026-10-07T12:00:00Z\"", StringComparison.Ordinal),
         "getDatabaseUsage" => Usage.Replace("PERIOD", Period, StringComparison.Ordinal).Replace("SERIES", Series, StringComparison.Ordinal),
-        "getProjectUsage" => "{\"projectId\":\"01ARZ3NDEKTSV4RRFFQ69G5FA2\",\"databases\":0,\"storageBytes\":0,\"reads\":0,\"writes\":0,\"period\":" + Period + ",\"series\":" + Series + ",\"items\":[]}",
+        "getProjectUsage" => "{\"projectId\":\"01ARZ3NDEKTSV4RRFFQ69G5FA2\",\"databases\":0,\"storageBytes\":0,\"logicalBytes\":0,\"reads\":0,\"writes\":0,\"period\":" + Period + ",\"series\":" + Series + ",\"items\":[]}",
         "deployFunction" or "getFunction" => Function,
         "listFunctions" => "[" + Function.Replace("\"source\":\"function handler(event) { return event.body; }\"", "\"source\":null", StringComparison.Ordinal) + "]",
         "listFunctionLogs" => """[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAC","at":"2026-10-07T12:00:00Z","trigger":"http","status":"ok","durationMs":3,"lines":["hello Ada"],"error":null}]""",
