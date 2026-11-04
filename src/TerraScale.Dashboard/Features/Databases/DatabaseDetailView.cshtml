@@ -56,6 +56,8 @@ else{<div class="ts-table-wrap ts-data-result-wrap" role="region" tabindex="0" a
 </div></section>}
 </div></div>}
 }
+}else if(Model.Tab == "conflicts"){
+@(await RenderPartialAsync<DatabaseConflictsView, DatabaseDetailPage>(Model))
 }else if(Model.Tab == "replication"){
 @(await RenderPartialAsync<DatabaseReplicationView, DatabaseDetailPage>(Model))
 }else if(Model.Tab == "danger"){

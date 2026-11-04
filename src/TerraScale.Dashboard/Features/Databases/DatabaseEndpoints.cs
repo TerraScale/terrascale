@@ -19,7 +19,7 @@ namespace TerraScale.Dashboard.Features.Databases
         {
             return services
             .AddSingleton<IDatabaseBackend, DatabaseBackend>().AddSingleton<DatabaseService>()
-            .AddSingleton<DataService>().AddSingleton<SavedQueryService>().AddSingleton<SqlRuns>()
+            .AddSingleton<DatabaseConflicts>().AddSingleton<DataService>().AddSingleton<SavedQueryService>().AddSingleton<SqlRuns>()
             .AddSingleton<ApiKeyService>().AddSingleton<IWorkspacePlacement, WorkspacePlacement>()
             .AddSingleton<IOnboardingProjectProvisioner, OnboardingProjectProvisioner>()
             .AddSingleton<IBackupBackend, BackupBackend>().AddSingleton<BackupService>().AddSingleton<WholeDatabaseRecovery>().AddDatabaseLogs().AddDatabaseFunctions();
@@ -52,7 +52,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 }
                 catch (Exception error) when (KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException) { return Failure(error); }
             });
-            foreach (var tab in new[] { "overview", "tables", "replication", "backups", "branches", "danger" })
+            foreach (var tab in new[] { "overview", "tables", "replication", "conflicts", "backups", "branches", "danger" })
             {
                 var section = tab;
                 endpoints.MapGet(tab == "overview" ? "/databases/{databaseId}" : "/databases/{databaseId}/" + tab,
@@ -239,6 +239,25 @@ namespace TerraScale.Dashboard.Features.Databases
             }
 
             var replicationRead = tab == "replication" ? DatabaseReplication.LoadAsync(http, context, database, databases) : null;
+            async Task<DatabaseConflictsPage> ConflictsAsync()
+            {
+                var table = http.Request.Query["table"].ToString();
+                var since = http.Request.Query["since"].ToString();
+                var until = http.Request.Query["until"].ToString();
+                var before = http.Request.Query["before"].ToString();
+                try
+                {
+                    var listing = await http.RequestServices.GetRequiredService<DatabaseConflicts>()
+                        .ListAsync(context, database.Id, table, since, until, 50, before, http.RequestAborted);
+                    return new(listing, table, since, until, before);
+                }
+                catch (Exception failure) when (failure is HttpRequestException or IOException or System.Text.Json.JsonException or InvalidOperationException
+                    || KnownFailure(failure) || failure is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
+                {
+                    return new(null, table, since, until, before, failure is AccountAccessException { StatusCode: 422 } ? failure.Message : "Conflicts are unavailable. Try again.");
+                }
+            }
+            var conflictsRead = tab == "conflicts" ? ConflictsAsync() : null;
             var tablesRead = tab is "overview" or "tables" ? TablesAsync() : null;
             // An all-regions database serves every catalog region; without the catalog it shows its recorded regions.
             if (tab == "overview" && database.AllRegions)
@@ -267,6 +286,7 @@ namespace TerraScale.Dashboard.Features.Databases
             var backups = backupsRead is null ? null : (await backupsRead) with { Error = error };
             var page = new DatabaseDetailPage(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, error, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, range, activity)
             {
+                Conflicts = conflictsRead is null ? null : await conflictsRead,
                 Replication = replicationRead is null ? null : await replicationRead,
                 BranchName = branchName,
                 ShowFork = http.Request.Query["fork"] == "1",
