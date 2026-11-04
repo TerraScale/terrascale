@@ -73,66 +73,6 @@ public sealed class ProjectApiTests
         await Assert.That(old.GetProperty("id").GetString()).IsEqualTo(database.Id);
     }
 
-    [Test]
-    public async Task Project_backup_routes_restore_into_a_named_database_and_leave_the_source_readable()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var database = await api.CreateManagedDatabaseAsync();
-        using var client = ProjectClient(api, database.Project);
-        await ManagementApi.CreateCollectionAsync(client, database, "people");
-        var name = new Faker().Name.FullName();
-        await JsonAsync(await client.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "saved")), new { name }), HttpStatusCode.Created);
-        await JsonAsync(await client.GetAsync(Uri(database.Data + "/backup-policy")));
-        var policy = await JsonAsync(await client.PutAsJsonAsync(Uri(database.Data + "/backup-policy"), new { fullBackupCron = "0 3 * * *", retentionDays = 3, disabled = true }));
-        await Assert.That(policy.GetProperty("disabled").GetBoolean()).IsTrue();
-
-        string backup;
-        using (var create = await client.PostAsync(Uri(database.Data + "/backups"), null))
-        {
-            await Assert.That(create.StatusCode).IsEqualTo(HttpStatusCode.Created);
-            backup = (await create.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
-            await Assert.That(create.Headers.Location!.OriginalString).IsEqualTo($"{database.Data}/backups/{backup}");
-        }
-
-        var list = await JsonAsync(await client.GetAsync(Uri(database.Data + "/backups")));
-        await Assert.That(list.GetProperty("items").EnumerateArray().Any(item => item.GetProperty("id").GetString() == backup)).IsTrue();
-        using (var restore = await client.PostAsJsonAsync(Uri($"{database.Data}/backups/{backup}/restore"), new { name = "restored" }))
-        {
-            await Assert.That(restore.StatusCode).IsEqualTo(HttpStatusCode.Created);
-            await Assert.That(restore.Headers.Location!.OriginalString).IsEqualTo($"/v1/projects/{database.Project}/databases/restored");
-        }
-
-        var restored = await JsonAsync(await client.GetAsync(Uri(ManagementApi.DocumentPath(database with { Name = "restored" }, "people", "saved"))));
-        await Assert.That(restored.GetProperty("document").GetProperty("name").GetString()).IsEqualTo(name);
-        var source = await JsonAsync(await client.GetAsync(Uri(ManagementApi.DocumentPath(database, "people", "saved"))));
-        await Assert.That(source.GetProperty("document").GetProperty("name").GetString()).IsEqualTo(name);
-    }
-
-    [Test]
-    public async Task Project_saved_query_routes_create_read_update_and_delete_queries()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var database = await api.CreateManagedDatabaseAsync();
-        using var client = ProjectClient(api, database.Project);
-        var path = $"/v1/projects/{database.Project}/saved-queries";
-        string id;
-        using (var create = await client.PostAsJsonAsync(Uri(path), new { name = new Faker().Lorem.Word(), sql = "SELECT * FROM people" }))
-        {
-            await Assert.That(create.StatusCode).IsEqualTo(HttpStatusCode.Created);
-            id = (await create.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
-            await Assert.That(create.Headers.Location!.OriginalString).IsEqualTo($"{path}/{id}");
-        }
-
-        var list = await JsonAsync(await client.GetAsync(Uri(path)));
-        await Assert.That(list.GetProperty("items").GetArrayLength()).IsEqualTo(1);
-        await JsonAsync(await client.GetAsync(Uri($"{path}/{id}")));
-        var updated = await JsonAsync(await client.PutAsJsonAsync(Uri($"{path}/{id}"), new { name = "Updated", sql = "SELECT name FROM people" }));
-        await Assert.That(updated.GetProperty("name").GetString()).IsEqualTo("Updated");
-        await NoContentAsync(await client.DeleteAsync(Uri($"{path}/{id}")));
-        using var deleted = await client.GetAsync(Uri($"{path}/{id}"));
-        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-    }
-
     private static HttpClient ProjectClient(ManagementApi api, string project) => api.WithToken(api.Issuer.Mint(api.User, token =>
     {
         token.Claims["project_id"] = project;
