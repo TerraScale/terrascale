@@ -84,7 +84,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     await sessions.RevokeUserAsync(proof.SubjectId, cancellationToken);
                     await sessions.CleanEnrollmentsAsync(proof.SubjectId, cancellationToken);
                     await related.CleanAccountAsync(proof.SubjectId, cancellationToken);
-                    await AccountDeletion.CleanOperationsAsync(state, identity, proof.SubjectId, cancellationToken);
+                    await AccountDeletion.CleanOperationsAsync(state, identity, proof.SubjectId, clock, cancellationToken);
                     var key = AccountService.AccountStorageKey(proof.SubjectId);
                     foreach (var table in new[] { AccountService.AccountsTable, AccountService.IdentitiesTable })
                     {
