@@ -12,6 +12,23 @@ internal sealed partial class TursoStorageTransaction
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
+        command.CommandText = """
+            WITH handles AS (
+                SELECT handle FROM _tb_shape_chunk WHERE handle >= 'h1-' AND handle < 'h2'
+                UNION SELECT handle FROM _tb_shape_snapshot WHERE handle >= 'h1-' AND handle < 'h2'
+            )
+            SELECT min(max(
+                coalesce((SELECT end_offset FROM _tb_shape_chunk WHERE handle = '~floor:' || h.handle AND offset = 0), 0),
+                coalesce((SELECT min(offset) FROM (
+                    SELECT offset FROM _tb_shape_snapshot WHERE handle = h.handle
+                    UNION ALL SELECT offset FROM _tb_shape_chunk WHERE handle = h.handle
+                )), 0))) FROM handles h;
+            """;
+        if (command.ExecuteScalar() is long shapeFloor)
+        {
+            below = Math.Min(below, shapeFloor);
+        }
+
         command.CommandText = RetentionCut;
         command.Parameters.AddWithValue("$below", below);
         if (command.ExecuteScalar() is not long cut || cut == 0)
@@ -21,7 +38,7 @@ internal sealed partial class TursoStorageTransaction
 
         command.Parameters.Clear();
         command.CommandText = """
-            SELECT change_id, coalesce(octet_length(after), 0) FROM turso_cdc
+            SELECT change_id, coalesce(octet_length(before), 0) + coalesce(octet_length(after), 0) FROM turso_cdc
             WHERE change_id < $cut ORDER BY change_id LIMIT $rows;
             """;
         command.Parameters.AddWithValue("$cut", cut);

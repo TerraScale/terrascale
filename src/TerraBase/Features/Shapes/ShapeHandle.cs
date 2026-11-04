@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using TerraBase.Engine;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Shapes;
 
@@ -11,10 +12,15 @@ internal readonly record struct ShapeHandle(string Handle, string ShapeId)
         ArgumentNullException.ThrowIfNull(store);
         ObjectDisposedException.ThrowIf(store.IsClosed, store);
         var tenant = store.Tenant ?? throw new InvalidOperationException("a shape requires a tenant database");
+        return Compute(tenant, store.Incarnation, table, generation, filter);
+    }
+
+    internal static ShapeHandle Compute(TenantContext tenant, Ulid incarnation, string table, string generation, ShapeFilter? filter)
+    {
         ArgumentException.ThrowIfNullOrEmpty(tenant.OrganizationId);
         ArgumentException.ThrowIfNullOrEmpty(tenant.ProjectId);
         ArgumentException.ThrowIfNullOrEmpty(tenant.DatabaseId);
-        var fields = string.Join('\0', tenant.OrganizationId, tenant.ProjectId, tenant.DatabaseId, store.Incarnation.ToString(), table, generation, "2", filter?.Key ?? "");
+        var fields = string.Join('\0', tenant.OrganizationId, tenant.ProjectId, tenant.DatabaseId, incarnation.ToString(), table, generation, "2", filter?.Key ?? "");
         return new ShapeHandle("h1-" + Digest("TB-SHAPE-HANDLE-V2", fields, 8), Digest("TB-SHAPE-V2", fields, 16));
     }
 

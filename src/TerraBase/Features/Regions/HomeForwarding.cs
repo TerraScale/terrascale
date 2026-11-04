@@ -1,6 +1,10 @@
 using System.Net;
 using Microsoft.AspNetCore.Http.Features;
 using TerraBase.Errors;
+using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Features.Shapes;
+using TerraBase.Tenancy;
 using TerraBase.Features.Management;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
@@ -61,6 +65,23 @@ internal static class HomeForwarding
         var organization = await services.GetRequiredService<IProjectCatalog>().ProjectOrganizationAsync(project, context.RequestAborted).ConfigureAwait(false);
         if (organization is string found)
         {
+            if (database is not null && context.GetEndpoint()?.Metadata.GetMetadata<OriginNoStore>() is not null
+                && context.Request.RouteValues.ContainsKey("table")
+                && await services.GetRequiredService<IManagementService>().FindDatabaseRecordAsync(found, project, database, context.RequestAborted).ConfigureAwait(false) is ManagedDatabase shapeDatabase
+                && shapeDatabase.Home(services.GetRequiredService<TerraBaseOptions>().Region) is { } shapeHome
+                && shapeHome != services.GetRequiredService<TerraBaseOptions>().Region)
+            {
+                var tenant = new TenantContext(found, PlanTier.Hobby, project, shapeDatabase.Id);
+                if (context.Request.Query["live"] == "true" && services.GetRequiredService<IDatabaseReplicas>().Holds(tenant))
+                {
+                    return null;
+                }
+
+                var peer = (await services.GetRequiredService<IRegionPeers>().OtherRegionsAsync(context.RequestAborted).ConfigureAwait(false))
+                    .FirstOrDefault(candidate => candidate.Region == shapeHome);
+                return peer is null ? null : new HomeNode(shapeHome, peer.Address);
+            }
+
             if (database is null
                 || await services.GetRequiredService<IManagementService>().FindDatabaseRecordAsync(found, project, database, context.RequestAborted).ConfigureAwait(false) is not NotFound)
             {

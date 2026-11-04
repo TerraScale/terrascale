@@ -98,6 +98,7 @@ public static class ShapesExtensions
             .AddSingleton<IShapeFlights<ShapeRead>>(provider => new ShapeFlights<ShapeRead>(provider.GetRequiredService<IStorageEngine>(),
                 provider.GetRequiredService<IShapeFlightSealer>(), provider.GetRequiredService<IMemoryBudget>(),
                 provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<IHostApplicationLifetime>(), provider.GetRequiredService<IShapeMetrics>()))
+            .AddSingleton<ReplicaShapeTails>()
             .AddSingleton<ShapeService>()
             .AddSingleton<IShapeLineages>(provider => provider.GetRequiredService<ShapeService>())
             .AddSingleton<IShapeSnapshots>(provider => provider.GetRequiredService<ShapeService>())
