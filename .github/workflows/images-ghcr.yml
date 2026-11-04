@@ -30,14 +30,15 @@ permissions:
 
 jobs:
   # The release token's sha claim must equal the image's revision label, so each
-  # qualified commit is released by its own push run even after main moves on:
+  # qualified commit is released by its own push run even after main moves on,
+  # or by a recovery dispatch while it remains the real main head:
   # pushes outside the dashboard never block it. ts-orch orders signed runs, and
   # the gate only admits the newest qualified, not-failed main commit.
   ready:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
-      # The CI completion heal reruns a missed push run.
+      # The CI completion heal reruns Images or dispatches a missing main-head run.
       actions: write
       contents: read
       statuses: read
@@ -55,7 +56,8 @@ jobs:
         run: |
           set -euo pipefail
           # The regions' verifier accepts only push and dispatch tokens; after CI
-          # completes, the heal reruns a qualified commit's push run that missed.
+          # completes, heal recovers a qualified push/dispatch run, creating a
+          # main-head dispatch when GitHub never emitted the push event.
           if [ "$EVENT_NAME" = workflow_run ]; then
             python3 scripts/dashboard/ci/release-gate.py heal
             echo deploy=false >> "$GITHUB_OUTPUT"
@@ -180,6 +182,7 @@ jobs:
           gh release download "$tag" --repo TerraScale/ts-orchestrator --dir "${RUNNER_TEMP}/ts-orch" --pattern terrascale-orchestrator-linux-amd64
           curl -fsSL https://raw.githubusercontent.com/TerraScale/ts-orchestrator/main/deploy/m1/regions.json -o "${RUNNER_TEMP}/regions.json"
           chmod +x "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64"
+          test "$(python3 scripts/dashboard/ci/release-gate.py release "$GITHUB_SHA")" = true
           bash scripts/dashboard/ci/release-result.sh "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64" \
             release app --service "$SERVICE" --image "${image}@${arm64}" --regions "${RUNNER_TEMP}/regions.json"
       - name: Verify live readiness and deployed source revision

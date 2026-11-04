@@ -24,6 +24,7 @@ image="localhost/terrascale-dashboard-qualified:$revision-$(basename "$workspace
     python3 scripts/dashboard/verify-e2e.py
     python3 scripts/dashboard/report-slow-failure.py --self-check
     python3 scripts/dashboard/ci/tree-proof.py --self-check
+    python3 scripts/dashboard/ci/release-gate-test.py
     bash scripts/dashboard/ci/check-release-result.sh
     # Preserve the checksum-qualified scanner and all dependency/runtime audits from the source CI.
     scanner_cache="$HOME/.cache/osv-scanner-bin/osv-scanner"
