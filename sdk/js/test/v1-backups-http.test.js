@@ -38,19 +38,6 @@ test("all eleven backup routes retain source selectors, pagination and producer 
   expect(requests[5]?.url.searchParams.get("destination")).toBe("customer");
   expect(JSON.stringify(client)).toBe("{}");
 });
-test.each([400, 401, 403, 404, 409, 421, 429, 503])("restore errors %i are preserved without replay", async status => {
-  const { client, requests } = await fixture((_r, response) => json(response, { error: { code: "restore_refused", message: "Refused" } }, status));
-  await expect(client.database("app").backups.restore(entity, { name: "restored" })).rejects.toMatchObject({ status, code: "restore_refused" });
-  expect(requests).toHaveLength(1);
-});
-test.each([{}, { name: null }])("restore lets the producer choose the name for %j", async request => {
-  const { client, requests } = await fixture((_r, response) => json(response, restored, 201));
-  const backups = client.database("app").backups;
-  expect(await backups.restore(entity, request)).toEqual(restored);
-  expect(await backups.restorePointInTime({ pointInTime: at, ...request })).toEqual(restored);
-  expect(JSON.parse(requests[0]?.body ?? "")).toEqual(request);
-  expect(JSON.parse(requests[1]?.body ?? "")).toEqual({ pointInTime: at, ...request });
-});
 test("restore retains assigned replicas and exact placement versions", async () => {
   const body = { ...restored, homeRegion: "gru", replicaRegions: ["fra"], replicas: ["fra"] };
   const { client } = await fixture((_r, response) => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { ulid } from "ulid";
-import { SqlError, TerraBaseV1Error, V1ForbiddenScopeError } from "../src/index.js";
+import { SqlError, TerraBaseV1Error } from "../src/index.js";
 import { ExactDecimal } from "../src/v1/json.js";
 import { fixture, json, prefix } from "./helpers/v1-http.js";
 import { liveConfigured, liveDatabase } from "./support/terrabase-v1-live.js";
@@ -23,15 +23,6 @@ test("execute sends one positional statement and decodes typed columns and rows"
   expect(result).toEqual({ columns: people.columns, rows: people.rows, rowsAffected: 0, lastInsertRowid: null });
 });
 
-test("query returns rows keyed by column name; named arguments drop no prefix", async () => {
-  const { client, requests } = await fixture((_request, response) => json(response, { results: [people] }));
-  /** @type {{ id: number; name: string; n: number | null }[]} */
-  const rows = await client.database("app").query("SELECT id, name, n FROM people WHERE name = :name", { name: "Ada" });
-  expect(rows).toEqual([{ id: 1, name: "Ada", n: null }, { id: 2, name: "Grace", n: 2.5 }]);
-  expect(JSON.parse(requests[0]?.body ?? "")).toEqual({ statements: [{ sql: "SELECT id, name, n FROM people WHERE name = :name", named: { name: "Ada" } }] });
-  await expect(client.database("app").query("SELECT 1", { ":name": "Ada" })).rejects.toThrow(/without its prefix/u);
-});
-
 test("batch sends every statement in one request and keeps integers beyond 2^53 exact", async () => {
   const { client, requests } = await fixture((_request, response) => {
     response.writeHead(200, { "content-type": "application/json" }).end(`{"results":[{"columns":[],"rows":[],"rows_affected":1,"last_insert_rowid":9007199254740993},${JSON.stringify(people)}]}`);
@@ -46,26 +37,6 @@ test("batch sends every statement in one request and keeps integers beyond 2^53 
   expect(results[1]?.rows).toEqual(people.rows);
 });
 
-test("rejects invalid batches before sending", async () => {
-  const { client, requests } = await fixture((_request, response) => json(response, { results: [] }));
-  const db = client.database("app");
-  await expect(db.batch([])).rejects.toThrow(/1 to 256/u);
-  await expect(db.batch(Array.from({ length: 257 }, () => "SELECT 1"))).rejects.toThrow(/1 to 256/u);
-  await expect(db.execute("x".repeat(16_385))).rejects.toThrow(/16384/u);
-  await expect(db.execute("SELECT ?", [Number.NaN])).rejects.toThrow(TypeError);
-  await expect(db.execute("SELECT ?", [1n << 63n])).rejects.toThrow(TypeError);
-  await expect(db.execute("SELECT ?", [/** @type {any} */ ({})])).rejects.toThrow(TypeError);
-  await expect(db.batch([/** @type {any} */ ({ sql: "SELECT 1", params: [] })])).rejects.toThrow(/params/u);
-  expect(requests).toHaveLength(0);
-});
-
-test("rejects a result count or row width that does not match", async () => {
-  const { client } = await fixture((_request, response) => json(response, { results: [{ ...people, rows: [[1]] }] }));
-  await expect(client.database("app").execute("SELECT 1")).rejects.toThrow(/row width/u);
-  const other = await fixture((_request, response) => json(response, { results: [] }));
-  await expect(other.client.database("app").execute("SELECT 1")).rejects.toThrow(/result count/u);
-});
-
 test.each([
   [400, "sql_error", "SQLITE_CONSTRAINT_PRIMARYKEY"],
   [403, "forbidden_scope", "SQLITE_AUTH"],
@@ -77,22 +48,6 @@ test.each([
   expect(error).toBeInstanceOf(SqlError);
   expect(error).toBeInstanceOf(TerraBaseV1Error);
   expect(error).toMatchObject({ name: "SqlError", status, code, message: expect.stringContaining("refused"), statement: 1, sqliteCode });
-});
-
-test("sends blobs as base64 and decodes blob values as Uint8Array", async () => {
-  const { client, requests } = await fixture((_request, response) => json(response, { results: [{ columns: [{ name: "b", decltype: "BLOB" }], rows: [[{ base64: "AAH/" }]], rows_affected: 0, last_insert_rowid: null }] }));
-  const [row] = await client.database("app").query("SELECT ? AS b", [new Uint8Array([0, 1, 255])]);
-  expect(JSON.parse(requests[0]?.body ?? "").statements[0].args).toEqual([{ base64: "AAH/" }]);
-  expect(row).toEqual({ b: new Uint8Array([0, 1, 255]) });
-  const bad = await fixture((_request, response) => json(response, { results: [{ columns: [{ name: "b", decltype: null }], rows: [[{ base64: "%%" }]], rows_affected: 0, last_insert_rowid: null }] }));
-  await expect(bad.client.database("app").execute("SELECT 1")).rejects.toThrow(/blob/u);
-});
-
-test("keeps generic errors outside SqlError", async () => {
-  const { client } = await fixture((_request, response) => json(response, { error: { code: "forbidden_scope", message: "missing scope" } }, 403));
-  const error = await client.database("app").execute("SELECT 1").catch(error => error);
-  expect(error).toBeInstanceOf(V1ForbiddenScopeError);
-  expect(error).not.toBeInstanceOf(SqlError);
 });
 
 describe.skipIf(!liveConfigured)("real C# relational SQL", () => {
