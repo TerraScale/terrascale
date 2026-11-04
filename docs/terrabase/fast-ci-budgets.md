@@ -1,8 +1,8 @@
 # Fast CI budgets
 
-`ts-ship` builds and runs the affected Fast suites on delta, mariogk-dev or beta before pushing main. Each suite has a separate 120-second test deadline after compilation. Each .NET Fast test must finish within 10 seconds. The runner retains TRX results and prints the ten slowest tests. An over-budget result fails shipping and publishes a failure status; it cannot qualify CI.
+`ts-ship` builds and runs the affected Fast suites on delta, mariogk-dev or beta before pushing main. Each area has a separate 30-second test budget after compilation, and each Fast test has a 10-second budget. Both currently produce named warnings until issue #1084 brings the suites within policy. The runner retains TRX results and prints the ten slowest tests. Functional failures and missing timing reports still reject shipping.
 
-The core Makefile targets use `scripts/ci/fast-budget.py`, so direct Fast runs and Docker test stages enforce the same test-duration limits. Docker test stages also have a 120-second deadline. Tests retain their existing cases and use TUnit default parallelism and automatic CPU/GC discovery. Compiler CPU limits apply only during compilation.
+The core Makefile targets use `scripts/ci/fast-budget.py`, so direct Fast runs and Docker test stages report the same test-duration budgets. JavaScript, Python, Go and Rust SDK runs also retain individual timings and print their ten slowest tests. Tests retain their existing cases and use TUnit default parallelism and automatic CPU/GC discovery. Compiler CPU limits apply only during compilation.
 
 For Libraries, Auth and TerraBase, shipping also runs the checked Release build, formatting and static checks. Auth retains its audit and OpenAPI checks. TerraBase retains its analyzer-negative check, native single-file execution and local integration proof. These checks run on the existing Fast outputs before packaging, on a dev host, with a separate build deadline. The existing Cloudflare token and CI bucket handle artifact transport; registry publication keeps the existing Actions package permission.
 
@@ -12,6 +12,6 @@ CI requires both the latest successful `ts-ship/<area>` status within the curren
 
 The three Fast verification jobs have two-minute job deadlines. Four TerraBase shards and the duplicate hosted builds and packaging jobs are removed. Deployment publishes the checked runtime payload and keeps the existing regional release safeguards. `CI timing budget` fails a normal run exceeding six minutes, including setup and deployment, or any Fast job exceeding two minutes. Slow and explicit native maintenance remain independent.
 
-To reproduce a budget rejection, use a disposable branch, add an 11-second delay to a retained Fast test, commit and run `ts-ship`. It must report `RED` for the test budget and leave main unchanged. Restore the test before shipping the actual change.
+To reproduce a budget rejection, use a disposable branch, add an 11-second delay to a retained Fast test, commit and run `ts-ship`. With rejection enabled, it must report `RED` for the test budget and leave main unchanged. During the temporary warning rollout it reports the named overrun while still rejecting functional failures. Restore the test before shipping the actual change.
 
-The 120-second suite budget rejects overruns. Individual tests over 10 seconds currently emit named warnings until the fixture fixes in issue #1084 land; then the per-test check returns to rejection.
+The 30-second suite and 10-second test budgets currently emit named warnings until the fixture fixes in issue #1084 make every suite comply; both then return to rejection.
