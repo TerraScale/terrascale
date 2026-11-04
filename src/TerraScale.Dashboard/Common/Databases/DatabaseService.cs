@@ -61,8 +61,9 @@ namespace TerraScale.Dashboard.Common.Databases
         }
 
         // TerraBase serves a database only in its home region until replicas are available, so a create names only that region.
-        public async Task<DatabaseRecord> CreateAsync(AccountContext context, string name, string homeRegion, CancellationToken cancellationToken)
+        public async Task<DatabaseRecord> CreateAsync(AccountContext context, string name, string homeRegion, CancellationToken cancellationToken, long? ttlSeconds = null)
         {
+            ValidateTtl(ttlSeconds);
             name = ValidName(name);
             context = await CurrentAsync(context, cancellationToken);
             var scope = Scope(context);
@@ -72,7 +73,7 @@ namespace TerraScale.Dashboard.Common.Databases
             var home = ResolveRegion(await backend.RegionsAsync(cancellationToken), homeRegion);
             ManagedDatabase remote;
             var recovered = false;
-            try { remote = await backend.CreateAsync(scope, name, home, cancellationToken); }
+            try { remote = await backend.CreateAsync(scope, name, home, cancellationToken, ttlSeconds); }
             catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken")
             {
                 // A prior provision whose dashboard commit failed is recovered by name. Other conflicts (database_limit, a
@@ -115,9 +116,10 @@ namespace TerraScale.Dashboard.Common.Databases
             return record;
         }
 
-        public async Task<DatabaseRecord> BranchAsync(AccountContext context, string id, string name, CancellationToken cancellationToken)
+        public async Task<DatabaseRecord> BranchAsync(AccountContext context, string id, string name, CancellationToken cancellationToken, long? ttlSeconds = null)
         {
             context = await CurrentAsync(context, cancellationToken);
+            ValidateTtl(ttlSeconds);
             var source = Database(context, id);
             DemandProvision(context.Organization!, context.UserId);
             if (source.Status != "ready")
@@ -131,7 +133,7 @@ namespace TerraScale.Dashboard.Common.Databases
             var scope = Scope(context);
             var home = await HomeAsync(context, source, cancellationToken);
             ManagedDatabase remote;
-            try { remote = await backend.BranchAsync(scope, home, id, name, cancellationToken); }
+            try { remote = await backend.BranchAsync(scope, home, id, name, cancellationToken, ttlSeconds); }
             catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken")
             {
                 remote = (await backend.ListAsync(scope, home, cancellationToken)).FirstOrDefault(database => database.Name == name && database.BranchedFrom == source.Id)
@@ -465,6 +467,14 @@ namespace TerraScale.Dashboard.Common.Databases
                 throw new AccountAccessException("Your organization has reached its plan's database limit. Upgrade the plan or delete a database.", 409);
             }
         }
+        internal static void ValidateTtl(long? ttlSeconds)
+        {
+            if (ttlSeconds is < 60 or > 31_536_000)
+            {
+                throw new AccountAccessException("ttlSeconds must be between 60 and 31,536,000.", 422);
+            }
+        }
+
         internal Task<AccountContext> CurrentAsync(AccountContext context, CancellationToken cancellationToken)
         {
             return AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
@@ -480,6 +490,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 PreviousName = remote.PreviousName,
                 ConflictOf = remote.ConflictOf,
                 CreatedAt = remote.CreatedAt,
+                ExpiresAt = remote.ExpiresAt,
                 BranchedFrom = remote.BranchedFrom,
                 Region = placement[0].Code,
                 Regions = [.. placement.Select(region => region.Code)],

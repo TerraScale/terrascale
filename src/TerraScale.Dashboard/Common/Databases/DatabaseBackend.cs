@@ -12,6 +12,7 @@ namespace TerraScale.Dashboard.Common.Databases
     public sealed record DatabaseScope(string UserId, string AccessToken, string OrganizationId, string OrganizationName, string ProjectId, string ProjectName)
     {
         public SessionRecord? Session { get; init; }
+        internal bool IsApiKey { get; init; }
         public override string ToString()
         {
             return $"Database scope {OrganizationId}/{ProjectId} [REDACTED]";
@@ -40,6 +41,7 @@ namespace TerraScale.Dashboard.Common.Databases
     }
     public sealed record ManagedDatabase(string Id, string ProjectId, string Name, DateTimeOffset CreatedAt, string? BranchedFrom = null, string HomeRegion = "", IReadOnlyList<string>? ReplicaRegions = null, bool AllRegions = false)
     {
+        public DateTimeOffset? ExpiresAt { get; init; }
         public string? PreviousName { get; init; }
         public string? ConflictOf { get; init; }
     }
@@ -74,8 +76,8 @@ namespace TerraScale.Dashboard.Common.Databases
         Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken cancellationToken);
         Task<IReadOnlyList<DatabaseRegion>> CatalogAsync(CancellationToken cancellationToken);
         Task<IReadOnlyList<ManagedDatabase>> ListAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken);
-        Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, CancellationToken cancellationToken);
-        Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken);
+        Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, CancellationToken cancellationToken, long? ttlSeconds = null);
+        Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken, long? ttlSeconds = null);
         Task<ManagedDatabase> RenameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken);
         Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
         Task<DatabaseSqlCatalog> SqlTablesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
@@ -176,18 +178,18 @@ namespace TerraScale.Dashboard.Common.Databases
             return result;
         }
 
-        public async Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, CancellationToken cancellationToken)
+        public async Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, CancellationToken cancellationToken, long? ttlSeconds = null)
         {
             var client = await ClientAsync(scope, home, "databases:write", cancellationToken);
             // TerraBase refuses replicaRegions and allRegions until replicas are available (replicas_unavailable).
-            return Map(await RunAsync(() => client.CreateDatabaseAsync(scope.ProjectId, new(Name: name, HomeRegion: home.Id)).ResponseAsync));
+            return Map(await RunAsync(() => client.CreateDatabaseAsync(scope.ProjectId, new(Name: name, HomeRegion: home.Id, TtlSeconds: ttlSeconds)).ResponseAsync));
         }
 
-        public async Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
+        public async Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken, long? ttlSeconds = null)
         {
             var source = await NameAsync(scope, home, databaseId, cancellationToken);
             var client = await ClientAsync(scope, home, "databases:write", cancellationToken);
-            return Map(await RunAsync(() => client.BranchAsync(scope.ProjectId, source, name).ResponseAsync));
+            return Map(await RunAsync(() => client.BranchWithTtlAsync(scope.ProjectId, source, name, ttlSeconds).ResponseAsync));
         }
 
         public async Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
@@ -239,8 +241,9 @@ namespace TerraScale.Dashboard.Common.Databases
             }
 
             var name = await NameAsync(scope, home, databaseId, cancellationToken);
-            var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
-            var token = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, write ? ["documents:read", "documents:write"] : ["documents:read"], cancellationToken);
+            var token = scope.IsApiKey ? scope.AccessToken : await tokens.GetAsync(
+                scope.Session ?? throw new HttpRequestException("Current user authorization is required."),
+                scope.OrganizationId, scope.ProjectId, write ? ["documents:read", "documents:write"] : ["documents:read"], cancellationToken);
             if (!write)
             {
                 return await ExecuteSqlAsync(home, scope.ProjectId, name, token, statements, cancellationToken);
@@ -333,6 +336,11 @@ namespace TerraScale.Dashboard.Common.Databases
                 throw PlatformDatabases.ReadOnly();
             }
 
+            if (scope.IsApiKey)
+            {
+                return rpc.User<IManagementService>(scope.AccessToken, home.Id).WithCancellationToken(cancellationToken);
+            }
+
             var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
             var token = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, [permission], cancellationToken);
             return rpc.User<IManagementService>(token, home.Id).WithCancellationToken(cancellationToken);
@@ -341,6 +349,7 @@ namespace TerraScale.Dashboard.Common.Databases
         // UI URLs use database IDs; the authoritative database list resolves those IDs to canonical route names.
         private async Task<string> NameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
+            if (scope.IsApiKey) return databaseId;
             return (await ListAsync(scope, home, cancellationToken)).SingleOrDefault(item => item.Id == databaseId)?.Name
                 ?? throw new DatabaseProviderException(HttpStatusCode.NotFound);
         }
@@ -349,7 +358,7 @@ namespace TerraScale.Dashboard.Common.Databases
         {
             return new(item.Id, item.ProjectId, item.Name, item.CreatedAt,
             item.BranchedFrom, item.HomeRegion, item.ReplicaRegions, item.AllRegions)
-            { PreviousName = item.PreviousName, ConflictOf = item.ConflictOf };
+            { PreviousName = item.PreviousName, ConflictOf = item.ConflictOf, ExpiresAt = item.ExpiresAt };
         }
 
         private static async Task<T> RunAsync<T>(Func<Task<T>> operation)
