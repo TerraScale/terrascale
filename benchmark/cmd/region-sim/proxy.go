@@ -257,16 +257,6 @@ func (f *forwarder) open() <-chan struct{} {
 	return f.gate
 }
 
-func (f *forwarder) pause() {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	select {
-	case <-f.gate:
-		f.gate = make(chan struct{})
-	default:
-	}
-}
-
 func (f *forwarder) resume() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
