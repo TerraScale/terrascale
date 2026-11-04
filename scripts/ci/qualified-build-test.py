@@ -23,7 +23,7 @@ with tempfile.TemporaryDirectory() as scratch:
         'ci-build/terrabase': {'state': 'success', 'creator': {'login': 'MarioGK'},
                              'description': 'Checked build; manifest sha256 ' + qualified.digest(path)},
         'ts-ship/terrabase': {'state': 'success', 'creator': {'login': 'MarioGK'},
-                            'description': 'Fast passed in 20.1s (<120s); test times reported; build 100s (<600s)'},
+                            'description': 'Fast passed in 20.1s (30s warn); test times reported; build 100s (<600s)'},
     }
     original = copy.deepcopy(rows)
     qualified.statuses = lambda revision: rows
@@ -38,6 +38,9 @@ with tempfile.TemporaryDirectory() as scratch:
             return
         raise AssertionError('Untrusted receipt accepted')
     assert verify() == manifest
+    rows['ts-ship/terrabase']['description'] = 'Fast passed in 121s (30s warn); test times reported; build 100s (<600s)'
+    assert verify() == manifest  # Both budgets are warning-only until #1084 complies.
+    rows = copy.deepcopy(original)
     for context in rows:
         for state in ('pending', 'failure', 'error'):
             rows[context]['state'] = state

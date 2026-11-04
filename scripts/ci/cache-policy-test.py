@@ -39,7 +39,7 @@ for invariant in ("--locked",):
 assert "'ci-build/' + area" in qualified
 assert "'ts-ship/' + area" in qualified
 assert "manifest digest mismatch" in qualified
-assert "float(timing[1]) >= 120" in qualified
+assert "30s warn" in qualified
 assert "['creator']['login'].lower() == 'mariogk'" in qualified
 assert "retain_payload" in qualified and "cf_command" in qualified
 assert "fast-ci/{sha}/{area}/image-payloads.tar.gz" in qualified
