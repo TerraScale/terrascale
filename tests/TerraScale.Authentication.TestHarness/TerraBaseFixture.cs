@@ -20,7 +20,16 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     {
         var (running, unavailable) = await TerraBaseTestServer.StartAsync();
         this.server = running ?? throw new InvalidOperationException($"Real TerraBase integration tests need TerraBase: {unavailable}");
-        this.owner = await this.Server.CreateTenantAsync();
+        try
+        {
+            this.owner = await this.Server.CreateTenantAsync();
+        }
+        catch
+        {
+            await this.Server.DisposeAsync();
+            this.server = null;
+            throw;
+        }
     }
 
     public async Task<(TerraBaseTestTenant Tenant, TerraBaseSqlDatabase Database)> CreateDatabaseAsync(bool provision = true)
