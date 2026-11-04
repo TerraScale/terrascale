@@ -18,7 +18,7 @@ internal interface IReplicaPeers
 
 /// <summary>
 /// The ts-orch peers file (<c>TS_PEERS_FILE</c>): every node listens on the same internal port on its private address.
-/// A region of several nodes is reached at its first node in the file.
+/// A region of several nodes is reached at its first line, the founder and data owner.
 /// </summary>
 internal sealed class PeersFileReplicaPeers(TerraBaseOptions options) : IReplicaPeers
 {
