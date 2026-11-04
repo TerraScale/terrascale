@@ -96,6 +96,7 @@ func TestSummaryMustMatchFullWorkload(t *testing.T) {
 		{"ramp absent", func(w *Workload) { w.Ramp = nil }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
 			var summary Summary
 			if err := json.Unmarshal(lines[len(lines)-1], &summary); err != nil {
