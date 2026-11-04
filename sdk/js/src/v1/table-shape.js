@@ -2,6 +2,7 @@ import { array, boolean, malformed, object, string } from "./decode.js";
 import { isTerraBaseV1Error } from "./errors.js";
 import { decodeSqlValue } from "./sql-execute.js";
 import { ShapeCdn } from "./shape-cdn.js";
+import { subscribeShape } from "./shape-subscriptions.js";
 import { OpaqueRedirectError } from "./transport.js";
 /**
  * @import { JsonObject } from "./json.js"
@@ -85,15 +86,9 @@ export class V1TableShape {
    */
   subscribe(listener, options = {}) {
     if (typeof listener !== "function") throw new TypeError("subscribe takes a listener function.");
-    const controller = new AbortController();
-    const external = options.signal;
-    const close = () => controller.abort(new DOMException("The shape subscription was closed.", "AbortError"));
-    external?.addEventListener("abort", close, { once: true });
-    if (external?.aborted) close();
-    const done = this.#run(/** @type {(state: V1TableShapeState) => void} */ (listener), controller.signal)
-      .catch(error => { if (!controller.signal.aborted) throw error; })
-      .finally(() => external?.removeEventListener("abort", close));
-    return { close, done };
+    return subscribeShape(this.#transport, JSON.stringify([this.#params, this.#filter]),
+      (publish, signal) => this.#run(publish, signal),
+      /** @type {(state: V1TableShapeState) => void} */ (listener), options.signal);
   }
 
   /** @param {(state: V1TableShapeState) => void} listener @param {AbortSignal} signal */
@@ -106,7 +101,37 @@ export class V1TableShape {
     let cdn = new ShapeCdn(this.#transport, this.#params, this.#filter);
     /** @type {string | undefined} */
     let cursor;
+    let hintProtocol;
+    let hintRetryAt = 0;
+    let hintedOffset = "";
+    /** @type {import("./shape-hints.js").ShapeHints | undefined} */
+    let hints;
+    try {
     for (let attempt = 0; !signal.aborted;) {
+      if (upToDate && hintProtocol === "terrascale.shape.v1" && Date.now() >= hintRetryAt) {
+        try {
+          hints ??= await this.#transport.openShapeHints(this.#params, new URLSearchParams({ ...this.#filter, handle, offset }), signal);
+          if (hints !== undefined) {
+            const hint = await hints.wait(handle, offset, signal);
+            cdn.offer(handle, hint.manifest);
+            hintedOffset = hint.next_offset;
+            upToDate = false;
+          }
+        } catch (error) {
+          hints?.close();
+          hints = undefined;
+          if (signal.aborted) return;
+          if (isTerraBaseV1Error(error) && error.code === "must_refetch") {
+            rows = new Map(); handle = ""; offset = "-1"; upToDate = false; cursor = undefined;
+            cdn = new ShapeCdn(this.#transport, this.#params, this.#filter);
+            continue;
+          }
+          if (isTerraBaseV1Error(error) && terminal.has(error.code)) throw error;
+          const pause = delay(attempt++, isTerraBaseV1Error(error) ? error.retryAfter : undefined);
+          hintRetryAt = Date.now() + Math.max(1000, pause);
+          await sleep(pause, signal);
+        }
+      }
       const query = new URLSearchParams({ ...this.#filter, ...(handle === "" ? { offset } : { handle, offset }) });
       if (upToDate && !offset.startsWith("snap.")) {
         query.set("live", "true");
@@ -151,6 +176,7 @@ export class V1TableShape {
         continue;
       }
       attempt = 0;
+      hintProtocol = response.headers.get("tb-shape-hints") ?? hintProtocol;
       const page = object(response.value, "shape page");
       const pageHandle = string(page.handle, "shape handle");
       if (handle !== "" && pageHandle !== handle) malformed("shape handle");
@@ -165,11 +191,14 @@ export class V1TableShape {
           else malformed("shape op");
         }
       }
+      const previousOffset = offset;
       offset = string(page.next_offset, "shape next_offset");
-      upToDate = boolean(page.up_to_date, "shape up_to_date");
+      upToDate = boolean(page.up_to_date, "shape up_to_date") || offset === hintedOffset;
       cursor = response.headers.get("tb-shape-cursor") ?? cursor;
       if (!offset.startsWith("snap.")) listener(Object.freeze({ rows, upToDate, offset }));
+      if (query.has("live") && offset === previousOffset) await sleep(1000 + Math.random() * 250, signal);
     }
+    } finally { hints?.close(); }
   }
 }
 

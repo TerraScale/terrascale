@@ -95,3 +95,80 @@ test("shape reads authenticated sealed snapshot and catch-up objects without cre
     expect(states.at(-1)).toEqual({ offset: "6", rows: { 3: { id: 3, title: "Renamed", data: null }, 7: { id: 7, title: "Live", data: null } } });
   }
 });
+
+const hints = JSON.parse(readFileSync(new URL("./fixtures/table-shape/hints.json", import.meta.url), "utf8"));
+
+test("identical subscriptions share one hint socket and fetch hinted changes from the CDN", async () => {
+  let sockets = 0;
+  let origin = 0;
+  let objects = 0;
+  class HintSocket extends EventTarget {
+    protocol = hints.protocol;
+    readyState = 0;
+    constructor() {
+      super(); sockets++;
+      queueMicrotask(() => {
+        this.readyState = 1;
+        this.dispatchEvent(new Event("open"));
+        this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(hints.ready) }));
+        this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ ...hints.changed, manifest: { handle: cdn.handle, objects: [cdn.objects[1].manifest] } }) }));
+      });
+    }
+    send() {}
+    close() { this.readyState = 3; this.dispatchEvent(new Event("close")); }
+  }
+  const client = createTerraBaseClient({ project: "01ARZ3NDEKTSV4RRFFQ69G5FA1", token, baseUrl: "https://api.terrascale.tech", WebSocket: HintSocket,
+    fetch: async (input, init) => {
+      const url = new URL(String(input));
+      if (url.hostname.startsWith("shapes-")) {
+        objects++;
+        expect(new Headers(init?.headers).has("authorization")).toBe(false);
+        const entry = cdn.objects.find((/** @type {{ manifest: { url: string } }} */ item) => item.manifest.url === url.href);
+        return new Response(Buffer.from(entry.base64, "base64"));
+      }
+      origin++;
+      if (url.pathname.endsWith("/keys")) return Response.json(cdn);
+      const offset = url.searchParams.get("offset");
+      if (url.pathname.endsWith("/manifest")) return Response.json({ handle: cdn.handle, objects: offset === "snap.2.0" ? [cdn.objects[0].manifest] : [] });
+      if (offset === "-1") return new Response(null, { status: 307, headers: { location: `${url.pathname}?handle=${cdn.handle}&offset=snap.2.0` } });
+      expect(offset).toBe("2");
+      expect(url.searchParams.has("live")).toBe(false);
+      return Response.json({ ...cdn.objects[0].page, offset: "2", next_offset: "2", changes: [], up_to_date: true }, { headers: { "tb-shape-hints": hints.protocol } });
+    },
+  });
+  /** @type {string[][]} */
+  const seen = [[], []];
+  const subscriptions = seen.map((states, index) => client.database("app").shape("todos").subscribe(state => {
+    states.push(state.offset);
+    if (state.offset === "2" && state.upToDate && index === 0) subscriptions[0]?.close();
+    if (state.offset === "4") subscriptions[index]?.close();
+  }));
+  await Promise.all(subscriptions.map(subscription => subscription.done));
+  expect(seen).toEqual([["2", "2"], ["2", "2", "4"]]);
+  expect(sockets).toBe(1);
+  expect(origin).toBe(5);
+  expect(objects).toBe(2);
+});
+
+test("a hint authentication refusal ends the subscription without a payload fallback", async () => {
+  let calls = 0;
+  class RefusedSocket extends EventTarget {
+    protocol = hints.protocol;
+    readyState = 0;
+    constructor() {
+      super();
+      queueMicrotask(() => {
+        this.dispatchEvent(new Event("open"));
+        this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(hints.refused) }));
+      });
+    }
+    send() {}
+    close() { this.readyState = 3; this.dispatchEvent(new Event("close")); }
+  }
+  const client = createTerraBaseClient({ project: "01ARZ3NDEKTSV4RRFFQ69G5FA1", token, baseUrl: "https://api.terrascale.tech", WebSocket: RefusedSocket,
+    fetch: async () => { calls++; return Response.json({ ...recorded.exchanges[2].body, up_to_date: true }, { headers: { "tb-shape-hints": hints.protocol } }); },
+  });
+  const subscription = client.database("app").shape("todos").subscribe(() => {});
+  await expect(subscription.done).rejects.toMatchObject({ status: 401, code: "invalid_key" });
+  expect(calls).toBe(1);
+});

@@ -20,6 +20,17 @@ export class ShapeCdn {
     this.filter = filter;
   }
 
+  /** @param {string} handle @param {import("./json.js").JsonObject} manifest */
+  offer(handle, manifest) {
+    if (manifest.handle !== handle) throw new TypeError("The shape hint changed handle.");
+    const entries = array(manifest.objects, "shape hint objects");
+    if (entries.length > 8) throw new TypeError("Too many shape hint objects.");
+    this.#objects = entries.map(value => object(value, "shape hint object"));
+    const epoch = Math.floor(Date.now() / 600_000);
+    if (epoch !== this.#epoch) this.#keys.clear();
+    this.#epoch = epoch;
+  }
+
   /** @param {string} handle @param {string} offset @param {AbortSignal} signal */
   async read(handle, offset, signal) {
     try {

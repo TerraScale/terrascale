@@ -6,6 +6,7 @@ import { object } from "./decode.js";
 import { parseExactJson } from "./json.js";
 import { v1Route, v1RoutePath } from "./routes.js";
 import { V1SqlSocket, sqlSocketProtocol } from "./sql-socket.js";
+import { ShapeHints, shapeHintProtocol } from "./shape-hints.js";
 /**
  * @import { FetchLike } from "../config.js"
  * @import { TerraBaseV1Error } from "./errors.js"
@@ -230,6 +231,18 @@ export class V1Transport {
     const token = await this.#accessToken(signal);
     if (sendsUpgradeHeaders()) return V1SqlSocket.open(new WebSocketClass(url.href, { protocols: [sqlSocketProtocol], headers: { authorization: `Bearer ${token}` } }), signal);
     return V1SqlSocket.open(new WebSocketClass(url.href, [sqlSocketProtocol]), signal, token);
+  }
+
+  /** @param {Readonly<Record<string, string>>} params @param {URLSearchParams} query @param {AbortSignal} signal */
+  async openShapeHints(params, query, signal) {
+    const WebSocketClass = this.#webSocket;
+    if (WebSocketClass === undefined) return undefined;
+    const url = new URL(await this.url("connectShapeHints", params, signal));
+    url.search = query.toString();
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    const token = await this.#accessToken(signal);
+    if (sendsUpgradeHeaders()) return ShapeHints.open(new WebSocketClass(url.href, { protocols: [shapeHintProtocol], headers: { authorization: `Bearer ${token}` } }), signal, undefined);
+    return ShapeHints.open(new WebSocketClass(url.href, [shapeHintProtocol]), signal, token);
   }
 
   /** Internal credential lifetime metadata; never exposes the bearer value. */
