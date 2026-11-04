@@ -8,6 +8,7 @@ namespace TerraScale.Dashboard.Features.Databases
     public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecord> Databases, IReadOnlyList<DatabaseRegion> Choices,
         IReadOnlyList<CollectionStats> Contents, string Search = "", string Error = "", bool OpenCreate = false, string Name = "", string RegionsError = "")
     {
+        public string TtlHours { get; init; } = "";
         public bool ContentsAvailable { get; init; }
         public AccountContext Context => Shell.Context;
         public IReadOnlyList<DatabaseRecord> All => Context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
@@ -136,12 +137,15 @@ namespace TerraScale.Dashboard.Features.Databases
         string Range = "24h", DatabaseActivity? Activity = null)
     {
         public string? BranchName { get; init; }
+        public string TtlHours { get; init; } = "";
+        public string PointInTime { get; init; } = "";
         public DatabaseTables? Tables { get; init; }
         // The table shown on the Tables tab and its first rows.
         public string Table { get; init; } = "";
         public DatabaseSqlResult? Preview { get; init; }
         public long? StorageBytes { get; init; }
-        public bool OpenBranch => Tab == "branches" && BranchName is not null && Error.Length > 0 && Context.CanManage && Database.Status == "ready";
+        public bool ShowFork { get; init; }
+        public bool OpenBranch => Tab == "branches" && (ShowFork || BranchName is not null && Error.Length > 0) && Context.CanManage && Database.Status == "ready";
         // Each activity card keeps its own range; changing one keeps the others as they are.
         public string RangePath(string key, string range)
         {
