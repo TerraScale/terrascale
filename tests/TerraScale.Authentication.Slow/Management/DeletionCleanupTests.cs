@@ -103,6 +103,7 @@ public sealed class DeletionCleanupTests(TerraBaseFixture fixture)
         await Assert.ThrowsAsync<StorePreconditionFailedException>(() => restartedStore.CreateAsync(AuthStore.SessionCollection, alice.InstanceId, hash,
             TerraBaseFixture.Json($$"""{"instanceId":"{{alice.InstanceId}}","userId":"{{alice.Id}}","tokenHash":"{{hash}}"}""")));
 
+        clock.UtcNow = (await JobAsync(restartedStore, alice.InstanceId, "account", alice.Id)).NextAttemptAt;
         await restarted.App.Services.GetRequiredService<DeletionCleanup>().RunHistoryOnceAsync();
         var erased = await JobAsync(restartedStore, alice.InstanceId, "account", alice.Id);
         await Assert.That(erased.HistoryStatus).IsEqualTo("complete");
