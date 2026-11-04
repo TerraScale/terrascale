@@ -23,6 +23,8 @@ internal interface IDatabaseReplicas
 
     ValueTask<bool> DeleteAsync(TenantContext database, CancellationToken cancellationToken);
 
+    ValueTask<string?> DetachAsync(TenantContext database, CancellationToken cancellationToken);
+
     bool Holds(TenantContext database);
 
     IReadOnlyList<TenantContext> List();
