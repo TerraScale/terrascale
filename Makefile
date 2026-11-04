@@ -9,7 +9,6 @@ PUBLISH_DIR ?= artifacts/publish
 TEST_ARGS ?=
 # Match Fast concurrency to the available CPUs on dev hosts and CI runners.
 AUTH_TEST_PARALLEL ?= $(shell nproc)
-TERRABASE_TEST_PARALLEL ?= $(shell nproc)
 # Build revision shown by ts-auth /healthz (CI passes the commit SHA).
 TS_AUTH_REVISION ?=
 export TS_AUTH_REVISION
@@ -166,7 +165,7 @@ terrabase-test-fast: restore turso-native
 	dotnet build tests/Turso.Data.Sqlite.Tests/Turso.Data.Sqlite.Tests.csproj --configuration $(CONFIGURATION) --no-restore
 	# The vendored Turso driver's regression tests (src/vendor/Turso.Data.Sqlite/UPSTREAM.md), then the Fast suite.
 	dotnet run --project tests/Turso.Data.Sqlite.Tests --configuration $(CONFIGURATION) --no-build -- $(TEST_ARGS)
-	dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(TERRABASE_TEST_PARALLEL) $(TEST_ARGS)
+	dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- $(TEST_ARGS)
 
 terrabase-test-slow: terrabase-build
 	dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
