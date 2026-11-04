@@ -142,7 +142,7 @@ public sealed partial class SocialSignInTests(TerraBaseFixture fixture)
 
     private async Task<(string Project, string Token)> ProjectAsync(OidcHarness oidc)
     {
-        var (_, token) = await oidc.SignInUserAsync(this.faker.Internet.Email(provider: "example.test").ToLowerInvariant());
+        var (_, token) = await oidc.CreateUserTokenAsync(this.faker.Internet.Email(provider: "example.test").ToLowerInvariant());
         var organization = await oidc.CreateOrganizationAsync(token, this.faker.Company.CompanyName());
         return (await oidc.CreateProjectAsync(token, organization, this.faker.Commerce.ProductName()), token);
     }
