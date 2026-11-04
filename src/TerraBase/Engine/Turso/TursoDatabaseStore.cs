@@ -212,6 +212,20 @@ internal sealed partial class TursoDatabaseStore(
         return await BeginOperationAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    internal HomeLeaseGate? Leases { get; init; }
+
+    private string? LeasedId => !IsSystem && Leases is not null ? Tenant?.DatabaseId : null;
+
+    internal void ThrowIfUnleased(string database) => Leases?.ThrowIfUnleased(database);
+
+    private void ThrowIfUnleased(bool maintenance)
+    {
+        if (!maintenance && LeasedId is { } database)
+        {
+            Leases!.ThrowIfUnleased(database);
+        }
+    }
+
     private void ThrowIfRefused(bool maintenance)
     {
         if (Ledger is { } ledger && (maintenance ? ledger.FailedClosed : ledger.Refusal(this)) is { } refusal)
@@ -274,6 +288,7 @@ internal sealed partial class TursoDatabaseStore(
             }
 
             ThrowIfRefused(maintenance);
+            ThrowIfUnleased(maintenance);
         }
 
         durable |= write && !maintenance;
@@ -298,6 +313,7 @@ internal sealed partial class TursoDatabaseStore(
                 writing = true;
 
                 ThrowIfRefused(maintenance);
+                ThrowIfUnleased(maintenance);
             }
 
             session = write ? await WriterSessionAsync(cancellationToken).ConfigureAwait(false) : await RentAsync(runner, cancellationToken).ConfigureAwait(false);
@@ -314,6 +330,7 @@ internal sealed partial class TursoDatabaseStore(
                 this, session, transaction, runner, write, write ? Committed : null, ownsAdmission)
             {
                 Operation = operation,
+                Leased = write && !maintenance ? LeasedId : null,
             };
         }
         catch (Exception error)

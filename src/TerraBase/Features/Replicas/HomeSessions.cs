@@ -13,8 +13,11 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Replicas;
 
-/// <summary>The first frame of a home session: the database, the replica region asking, and whether the session may write.</summary>
-internal sealed record HomeSessionOpen(string Organization, string Project, string Database, string Region, bool CanWrite);
+/// <summary>
+/// The first frame of a home session: the database, the replica region asking, whether the session may write, and the placement
+/// epoch the replica region holds; a home holding an older epoch refuses the session.
+/// </summary>
+internal sealed record HomeSessionOpen(string Organization, string Project, string Database, string Region, bool CanWrite, long Epoch = 0);
 
 /// <summary>One call on a home session: <c>execute</c> or <c>describe</c> one statement.</summary>
 internal sealed record HomeSessionCall(string Op, string Sql, IReadOnlyList<SqlValue> Args, IReadOnlyDictionary<string, SqlValue> Named);
@@ -114,7 +117,7 @@ internal sealed class HomeSessions(TerraBaseOptions options, IReplicaPeers peers
     private readonly HttpClient _http = CreateClient(credential);
 
     /// <summary>A session at <paramref name="home"/>, or the error a statement answers when the home cannot be reached.</summary>
-    public async ValueTask<HomeSessionOutcome> OpenAsync(TenantContext database, string home, bool canWrite, CancellationToken cancellationToken)
+    public async ValueTask<HomeSessionOutcome> OpenAsync(TenantContext database, string home, long epoch, bool canWrite, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         var unreachable = Unreachable(home);
@@ -129,7 +132,7 @@ internal sealed class HomeSessions(TerraBaseOptions options, IReplicaPeers peers
         try
         {
             await HomeSessionFrames.WriteAsync(upstream.Writer,
-                new HomeSessionOpen(database.OrganizationId, database.ProjectId!, database.DatabaseId!, options.Region, canWrite),
+                new HomeSessionOpen(database.OrganizationId, database.ProjectId!, database.DatabaseId!, options.Region, canWrite, epoch),
                 TerraBaseJsonContext.Default.HomeSessionOpen, cancellationToken).ConfigureAwait(false);
             var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, stop.Token).WaitAsync(cancellationToken).ConfigureAwait(false);
             if (response.StatusCode != HttpStatusCode.OK)
