@@ -91,7 +91,7 @@ libs-build: restore
 	dotnet build libs.slnf --configuration $(CONFIGURATION) --no-restore
 
 libs-test: libs-build
-	set -e; for p in $(LIBS_TEST_PROJECTS); do dotnet run --project $$p --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 1 $(TEST_ARGS); done
+	set -e; for p in $(LIBS_TEST_PROJECTS); do python3 scripts/ci/fast-budget.py $$(basename $$(dirname $$p)) -- dotnet run --project $$p --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 1 $(TEST_ARGS); done
 
 libs-check: libs-build
 	set -e; for p in $(LIBS_PROJECTS); do dotnet format style $$p --verify-no-changes --no-restore; done
@@ -118,7 +118,7 @@ auth-openapi-check: auth-build
 auth-test-fast: restore turso-native
 	dotnet build src/TerraBase/TerraBase.csproj --configuration $(CONFIGURATION) --no-restore --nologo
 	dotnet build tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj --configuration $(CONFIGURATION) --no-restore --nologo
-	TERRABASE_BINARY=$(TERRABASE_BINARY) dotnet run --project tests/TerraScale.Authentication.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(AUTH_TEST_PARALLEL) $(TEST_ARGS)
+	TERRABASE_BINARY=$(TERRABASE_BINARY) python3 scripts/ci/fast-budget.py auth -- dotnet run --project tests/TerraScale.Authentication.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(AUTH_TEST_PARALLEL) $(TEST_ARGS)
 
 auth-test-slow: auth-build turso-native
 	dotnet build src/TerraBase/TerraBase.csproj --configuration $(CONFIGURATION) --no-restore --nologo
@@ -165,8 +165,8 @@ terrabase-test-fast: restore turso-native
 	dotnet build tests/TerraBase.Fast/TerraBase.Fast.csproj --configuration $(CONFIGURATION) --no-restore
 	dotnet build tests/Turso.Data.Sqlite.Tests/Turso.Data.Sqlite.Tests.csproj --configuration $(CONFIGURATION) --no-restore
 	# The vendored Turso driver's regression tests (src/vendor/Turso.Data.Sqlite/UPSTREAM.md), then the Fast suite.
-	dotnet run --project tests/Turso.Data.Sqlite.Tests --configuration $(CONFIGURATION) --no-build -- $(TEST_ARGS)
-	dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(TERRABASE_TEST_PARALLEL) $(TEST_ARGS)
+	python3 scripts/ci/fast-budget.py turso -- dotnet run --project tests/Turso.Data.Sqlite.Tests --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 3 $(TEST_ARGS)
+	python3 scripts/ci/fast-budget.py terrabase -- dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 1 --maximum-parallel-tests $(TERRABASE_TEST_PARALLEL) $(TEST_ARGS)
 
 terrabase-test-slow: terrabase-build
 	dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
@@ -218,9 +218,6 @@ region-sim: terrabase-build
 	cd benchmark && go build -trimpath -o bin/region-sim ./cmd/region-sim
 	benchmark/bin/region-sim -terrabase $(TERRABASE_BINARY) -ts benchmark/bin/ts -out $(REGION_SIM_OUT) $(REGION_SIM_ARGS)
 
-.PHONY: terrabase-test-shard
-terrabase-test-shard:
-	python3 scripts/ci/terrabase-shard.py $(SHARD)
 
 # Landing Fast covers tests and the complete prerendered production output.
 .PHONY: landing-test-fast
