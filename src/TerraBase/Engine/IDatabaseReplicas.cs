@@ -25,6 +25,9 @@ internal interface IDatabaseReplicas
     /// <summary>Closes and deletes a replica's files; <see langword="false"/> when none existed.</summary>
     ValueTask<bool> DeleteAsync(TenantContext database, CancellationToken cancellationToken);
 
+    /// <summary>Whether this node holds or is opening a replica of <paramref name="database"/>; an in-memory check.</summary>
+    bool Holds(TenantContext database);
+
     /// <summary>The open replicas.</summary>
     IReadOnlyList<TenantContext> List();
 
