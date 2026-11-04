@@ -92,6 +92,8 @@ namespace TerraScale.Dashboard.Common.Databases
                 throw new AccountAccessException("A database with this name already exists in another home region.", 409);
             }
 
+            if (ttlSeconds is not null && remote.ExpiresAt is null)
+                throw new HttpRequestException("Database provisioning did not confirm the requested TTL.");
             var placement = await RemotePlacementAsync(remote, cancellationToken);
             if (!recovered && placement[0].Id != home.Id)
             {
@@ -150,6 +152,8 @@ namespace TerraScale.Dashboard.Common.Databases
                 throw new AccountAccessException("A branch with this name has a different home region.", 409);
             }
 
+            if (ttlSeconds is not null && remote.ExpiresAt is null)
+                throw new HttpRequestException("Database provisioning did not confirm the requested TTL.");
             var placement = await RemotePlacementAsync(remote, cancellationToken);
             var record = Record(remote, placement, "ready");
             await accounts.UpdateOrganizationAsync(context, org =>
