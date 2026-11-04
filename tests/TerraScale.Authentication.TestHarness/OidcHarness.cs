@@ -313,6 +313,16 @@ public sealed partial class OidcHarness : IAsyncDisposable
             : throw new InvalidOperationException($"The token endpoint answered {response.StatusCode}: {body}");
     }
 
+    /// <summary>Seeds a stored session for setup, then issues tokens through real HTTP authorization and PKCE redemption.</summary>
+    public async Task<(string Session, JsonElement Tokens)> CreateSessionAndRedeemAsync(UserRecord user)
+    {
+        var session = await this.Server.App.Services.GetRequiredService<TerraScale.Authentication.Features.Identity.Sessions>().CreateAsync(user);
+        var (verifier, challenge) = Pkce();
+        using var response = await this.RedeemCodeAsync(await this.CodeAsync(session.Token, challenge), verifier);
+        response.EnsureSuccessStatusCode();
+        return (session.Token, await JsonAsync(response));
+    }
+
     /// <summary>Revokes a token at the RFC 7009 endpoint.</summary>
     public Task<HttpResponseMessage> RevokeAsync(string token, string hint = "refresh_token")
     {

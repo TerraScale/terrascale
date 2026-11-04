@@ -20,7 +20,7 @@ public sealed class ScopedKeyTests(TerraBaseFixture fixture)
     public async Task A_project_key_mints_a_read_only_key_for_one_database_whose_token_reaches_only_it()
     {
         await using var oidc = await StartAsync();
-        var (_, token) = await oidc.SignInUserAsync("alice@example.test");
+        var (_, token) = await oidc.CreateUserTokenAsync("alice@example.test");
         var organization = await oidc.CreateOrganizationAsync(token);
         var project = await oidc.CreateProjectAsync(token, organization, "Agents");
         var parent = (await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{organization}/projects/{project}/api-keys", token,
@@ -44,7 +44,7 @@ public sealed class ScopedKeyTests(TerraBaseFixture fixture)
     public async Task A_scoped_key_mints_nothing_cannot_widen_its_parent_and_dies_with_it()
     {
         await using var oidc = await StartAsync();
-        var (_, token) = await oidc.SignInUserAsync("bob@example.test");
+        var (_, token) = await oidc.CreateUserTokenAsync("bob@example.test");
         var organization = await oidc.CreateOrganizationAsync(token);
         var project = await oidc.CreateProjectAsync(token, organization, "Agents");
         var keys = $"{Organizations}/{organization}/projects/{project}/api-keys";

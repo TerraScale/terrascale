@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Tests;
@@ -19,6 +20,14 @@ public static class PlatformCalls
     public static async Task<(UserRecord User, string Token)> SignInUserAsync(this OidcHarness oidc, string email)
     {
         var (user, _, tokens) = await oidc.SignInAndRedeemAsync(email);
+        return (user, tokens.GetProperty("access_token").GetString()!);
+    }
+
+    /// <summary>Seeds a real session for management setup, then obtains a token through HTTP authorization and PKCE redemption.</summary>
+    public static async Task<(UserRecord User, string Token)> CreateUserTokenAsync(this OidcHarness oidc, string email)
+    {
+        var user = await oidc.CreateUserAsync(email);
+        var (_, tokens) = await oidc.CreateSessionAndRedeemAsync(user);
         return (user, tokens.GetProperty("access_token").GetString()!);
     }
 
