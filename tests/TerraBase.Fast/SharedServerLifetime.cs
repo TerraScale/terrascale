@@ -6,5 +6,9 @@ namespace TerraBase.Fast;
 public static class SharedServerLifetime
 {
     [Before(HookType.Assembly)]
-    public static Task InitializeAsync() => SharedServer.InitializeAsync();
+    public static async Task InitializeAsync()
+    {
+        await SharedServer.InitializeAsync();
+        _ = await SqlTenantFixture.GetAsync();
+    }
 }
