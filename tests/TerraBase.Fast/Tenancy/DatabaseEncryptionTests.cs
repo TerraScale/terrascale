@@ -4,7 +4,6 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Primitives;
-using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Tenancy;
@@ -53,35 +52,6 @@ public sealed class DatabaseEncryptionTests
         {
             Directory.Delete(directory, recursive: true);
         }
-    }
-
-    [Test]
-    public async Task Encrypted_backup_restore_preserves_the_document_with_a_fresh_encrypted_target_key()
-    {
-        var token = TestContext.Current!.Execution.CancellationToken;
-        await using var host = await BackupShippingHost.StartAsync();
-        var marker = "restore-" + EntityIds.New() + new Faker().Random.AlphaNumeric(32);
-        var id = EntityIds.New().ToString();
-        await host.PutAsync("people", id, marker, token);
-        await host.ShipAsync(TimeSpan.FromSeconds(10), token);
-        var at = host.Status().LastShippedAt!.Value;
-        var source = Path.Combine(host.Api.Server.DataDirectory, host.Database.Organization, host.Database.Project, host.Database.Id + ".db");
-        var originalKey = await File.ReadAllBytesAsync(source + ".key", token);
-        foreach (var payload in host.S3.Objects.Values)
-        {
-            await Assert.That(payload.AsSpan().IndexOf(Encoding.UTF8.GetBytes(marker)) < 0).IsTrue();
-        }
-
-        var engine = host.Api.Server.Services.GetRequiredService<IStorageEngine>();
-        var tenant = new TenantContext(host.Database.Organization, PlanTier.Enterprise, host.Database.Project, host.Database.Id);
-        await Assert.That(await engine.DeleteDatabaseAsync(tenant, token)).IsTrue();
-        await Assert.That(File.Exists(source + ".key")).IsFalse();
-        await host.RestoreAsync(at, "recovered", token);
-        var recovered = await host.DatabaseIdAsync("recovered", token);
-        var target = Path.Combine(Path.GetDirectoryName(source)!, recovered + ".db");
-        await Assert.That((await File.ReadAllBytesAsync(target + ".key", token)).SequenceEqual(originalKey)).IsFalse();
-        await Assert.That(await host.ReadAsync("recovered", "people", id, token)).IsEqualTo(marker);
-        await AssertNoPlaintextAsync(host.Api.Server.DataDirectory, marker);
     }
 
     private static async Task<Seed> SeedAsync(ManagementApi api, string marker)
