@@ -3,7 +3,7 @@ namespace TerraScale.Dashboard.Features.Data
     public sealed class DataService(DatabaseService databases, IDatabaseBackend backend)
     {
         // One statement through TerraBase's relational SQL API, as its own transaction. Reads need read access; writes and DDL
-        // need project write access, and callers that promise read-only (MCP) refuse them outright.
+        // need project write access, and callers that promise read-only refuse them outright.
         public async Task<DatabaseSqlResult> SqlAsync(AccountContext context, string databaseId, string statement, bool allowWrites, CancellationToken cancellationToken)
         {
             context = await databases.CurrentAsync(context, cancellationToken);

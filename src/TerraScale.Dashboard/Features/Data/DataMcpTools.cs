@@ -9,10 +9,16 @@ namespace TerraScale.Dashboard.Features.Data
     [McpServerToolType]
     public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, SavedQueryService saved)
     {
-        [McpServerTool(Name = "execute_sql", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Execute one read-only SQL statement against the database's tables. SQL is limited to 16 KiB; bound parameters are unsupported.")]
+        [McpServerTool(Name = "execute_sql", ReadOnly = false, Destructive = true, OpenWorld = false, Idempotent = false, UseStructuredContent = true), Description("Execute one SQL statement, including writes and schema changes. Writes require project write access. SQL is limited to 16 KiB; bound parameters are unsupported. Use run_sql for read-only queries.")]
         public Task<DatabaseSqlResult> Sql(string databaseId, string sql, string? organizationId = null, string? projectId = null)
         {
-            return data.SqlAsync(Scope(organizationId, projectId), databaseId, sql, false, Cancellation);
+            return data.SqlAsync(Scope(organizationId, projectId), databaseId, sql, true, Cancellation);
+        }
+
+        [McpServerTool(Name = "get_database_schema", Title = "Get database schema", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List SQL tables and their declared columns and types, including empty tables. Returns at most 100 tables; truncated indicates more tables exist. Requires read access.")]
+        public Task<SqlCatalog> Schema(string databaseId, string? organizationId = null, string? projectId = null)
+        {
+            return data.CatalogAsync(Scope(organizationId, projectId), databaseId, Cancellation);
         }
 
         [McpServerTool(Name = "check_sql", Title = "Check SQL", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Check SQL input limits without running it: blank input, size, statement boundaries, parameters and transaction commands. Does not validate SQL syntax, tables or permissions.")]
