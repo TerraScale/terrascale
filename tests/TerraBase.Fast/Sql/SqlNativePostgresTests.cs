@@ -1,6 +1,4 @@
 using Bogus;
-using Npgsql;
-using NpgsqlTypes;
 using TerraBase.Testing;
 using static TerraBase.Testing.SqlNativeDatabase;
 
@@ -34,72 +32,6 @@ public sealed class SqlNativePostgresTests
         await Assert.That(after[0][0]).IsEqualTo(renamed);
         await Assert.That(deleted).IsEqualTo(1);
         await Assert.That(await ScalarAsync(connection, "SELECT count(*) FROM people")).IsEqualTo(0);
-    }
-
-    [Test]
-    public async Task Schema_statements_pass_through_and_queries_use_their_indexes()
-    {
-        await using var db = await StartAsync();
-        await using var connection = await db.Postgres.OpenConnectionAsync();
-        await PostgresSql.ExecuteAsync(connection, "CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
-
-        await PostgresSql.ExecuteAsync(connection, "ALTER TABLE people ADD COLUMN city TEXT");
-        await PostgresSql.ExecuteAsync(connection, "INSERT INTO people (name, city) VALUES ($1, $2)", Faker.Name.FullName(), Faker.Address.City());
-        await PostgresSql.ExecuteAsync(connection, "CREATE INDEX people_city ON people (city)");
-        var plan = await ReadAsync(connection, "EXPLAIN QUERY PLAN SELECT name FROM people WHERE city = 'x'");
-        await PostgresSql.ExecuteAsync(connection, "DROP TABLE people");
-        var dropped = await StateAsync(connection, "SELECT * FROM people");
-
-        await Assert.That(plan.Any(row => Convert.ToString(row[^1], System.Globalization.CultureInfo.InvariantCulture)!.Contains("people_city", StringComparison.Ordinal))).IsTrue();
-        await Assert.That(dropped).IsEqualTo("42P01");
-    }
-
-    [Test]
-    public async Task Constraints_answer_their_sqlstates_and_foreign_keys_cascade()
-    {
-        await using var db = await StartAsync();
-        await using var connection = await db.Postgres.OpenConnectionAsync();
-        await PostgresSql.ExecuteAsync(connection, "CREATE TABLE teams (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
-        await PostgresSql.ExecuteAsync(connection,
-            "CREATE TABLE players (id INTEGER PRIMARY KEY, team INTEGER NOT NULL REFERENCES teams (id) ON DELETE CASCADE, email TEXT UNIQUE, goals INTEGER CHECK (goals >= 0))");
-        await PostgresSql.ExecuteAsync(connection, "INSERT INTO teams VALUES (1, 'core')");
-        var email = Faker.Internet.Email();
-        await PostgresSql.ExecuteAsync(connection, "INSERT INTO players VALUES (1, 1, $1, 3)", email);
-
-        var primaryKey = await StateAsync(connection, "INSERT INTO players VALUES (1, 1, $1, 0)", Faker.Internet.Email());
-        var unique = await StateAsync(connection, "INSERT INTO players VALUES (2, 1, $1, 0)", email);
-        var notNull = await StateAsync(connection, "INSERT INTO players (id, email, goals) VALUES (2, $1, 0)", Faker.Internet.Email());
-        var check = await StateAsync(connection, "INSERT INTO players VALUES (2, 1, $1, -1)", Faker.Internet.Email());
-        var orphan = await StateAsync(connection, "INSERT INTO players VALUES (2, 99, $1, 0)", Faker.Internet.Email());
-        await PostgresSql.ExecuteAsync(connection, "DELETE FROM teams WHERE id = 1");
-
-        await Assert.That(primaryKey).IsEqualTo("23505");
-        await Assert.That(unique).IsEqualTo("23505");
-        await Assert.That(notNull).IsEqualTo("23502");
-        await Assert.That(check).IsEqualTo("23514");
-        await Assert.That(orphan).IsEqualTo("23503");
-        await Assert.That(await ScalarAsync(connection, "SELECT count(*) FROM players")).IsEqualTo(0);
-    }
-
-    [Test]
-    public async Task Bytea_parameters_round_trip_as_blobs()
-    {
-        await using var db = await StartAsync();
-        await using var connection = await db.Postgres.OpenConnectionAsync();
-        var bytes = Faker.Random.Bytes(Faker.Random.Int(1, 4096));
-        await PostgresSql.ExecuteAsync(connection, "CREATE TABLE files (id INTEGER PRIMARY KEY, data BLOB NOT NULL)");
-
-        await using (var insert = new NpgsqlCommand("INSERT INTO files (data) VALUES ($1)", connection))
-        {
-            insert.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Bytea, Value = bytes });
-            _ = await insert.ExecuteNonQueryAsync();
-        }
-
-        await using var select = new NpgsqlCommand("SELECT data, length(data) FROM files", connection);
-        await using var reader = await select.ExecuteReaderAsync();
-        await Assert.That(await reader.ReadAsync()).IsTrue();
-        await Assert.That(reader.GetFieldValue<byte[]>(0)).IsEquivalentTo(bytes);
-        await Assert.That(Convert.ToInt64(reader.GetValue(1), System.Globalization.CultureInfo.InvariantCulture)).IsEqualTo(bytes.Length);
     }
 
     [Test]

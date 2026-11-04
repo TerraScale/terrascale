@@ -8,10 +8,6 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
-    <!-- Genuine pg_dump and sqlite3 outputs (scripts/terrabase/import-fixtures.sh). -->
-    <None Include="Import/Fixtures/**" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
-  <ItemGroup>
     <PackageReference Include="Npgsql" />
     <PackageReference Include="MagicOnion.Client" />
   </ItemGroup>
