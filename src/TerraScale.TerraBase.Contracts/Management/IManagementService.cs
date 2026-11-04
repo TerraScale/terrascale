@@ -22,7 +22,13 @@ namespace TerraScale.TerraBase.Contracts.Management
         UnaryResult<bool> DeleteDatabaseAsync(string projectId, string database);
 
         /// <summary><c>POST /v1/projects/{project}/databases/{database}/branches</c>.</summary>
-        UnaryResult<TerraBaseManagedDatabase> BranchAsync(string projectId, string database, string name);
+        UnaryResult<TerraBaseManagedDatabase> BranchAsync(string projectId, string database, string name, long? ttlSeconds = null);
+
+        /// <summary><c>PUT /v1/projects/{project}/databases/{database}/ttl</c>.</summary>
+        UnaryResult<TerraBaseManagedDatabase> SetDatabaseTtlAsync(string projectId, string database, TerraBaseDatabaseTtl request);
+
+        /// <summary><c>DELETE /v1/projects/{project}/databases/{database}/ttl</c>.</summary>
+        UnaryResult<TerraBaseManagedDatabase> ClearDatabaseTtlAsync(string projectId, string database);
 
         /// <summary><c>GET /v1/projects/{project}/databases/{database}/schema</c>.</summary>
         UnaryResult<TerraBaseCollectionStatsPage> ListCollectionStatsAsync(string projectId, string database);

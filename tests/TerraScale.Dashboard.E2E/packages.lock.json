@@ -238,6 +238,7 @@
           "RazorSlices": "[0.12.1, )",
           "Scalar.AspNetCore": "[2.18.0, )",
           "Stripe.net": "[53.0.0, )",
+          "TerraScale.Endpoints": "[1.0.0, )",
           "TerraScale.TerraBase.Contracts": "[1.0.0, )"
         }
       },
@@ -245,6 +246,13 @@
         "type": "Project",
         "dependencies": {
           "NUlid": "[1.7.3, )"
+        }
+      },
+      "terrascale.endpoints": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.AspNetCore.OpenApi": "[11.0.0-rc.3.26522.148, )",
+          "Scalar.AspNetCore": "[2.17.13, )"
         }
       },
       "terrascale.terrabase.contracts": {

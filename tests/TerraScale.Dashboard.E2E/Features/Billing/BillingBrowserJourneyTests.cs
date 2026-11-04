@@ -126,7 +126,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
                 { ["_csrf"] = csrf, ["databaseId"] = sourceId, ["name"] = "customers" });
                 await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
                 await ToolAsync("create_document", new { databaseId = sourceId, collection = "customers", documentId = "01K78D0C000000000000000012", document = new { name = "Before branch" } });
-                var branch = await ToolAsync("branch_database", new { databaseId = sourceId, name = name + "-copy" });
+                var branch = await ToolAsync("fork_database", new { databaseId = sourceId, name = name + "-copy" });
                 branchId = branch.GetProperty("id").GetString()!;
                 await ToolAsync("replace_document", new { databaseId = sourceId, collection = "customers", documentId = "01K78D0C000000000000000012", document = new { name = "After branch" } });
                 var branchDocument = await ToolAsync("get_document", new { databaseId = branchId, collection = "customers", documentId = "01K78D0C000000000000000012" });
