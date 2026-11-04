@@ -83,24 +83,42 @@ async function main() {
   const input = [];
   for await (const part of process.stdin) input.push(part);
   const credentials = JSON.parse(Buffer.concat(input).toString("utf8"));
-  const auth = await fetch("https://auth.terrascale.tech/terrascale/oauth/token", {
-    method: "POST", headers: { authorization: `Basic ${Buffer.from(`${credentials.apiKey.slice(0, 26)}:${credentials.apiKey}`).toString("base64")}`, "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ grant_type: "client_credentials", project: credentials.project }), signal: AbortSignal.timeout(30_000),
-  });
-  if (auth.status !== 200) throw new Error("TOKEN_EXCHANGE_FAILED");
-  const token = (await auth.json()).access_token;
-  const config = { project: credentials.project, token, baseUrl: api };
+  let currentToken;
+  let refreshAt = 0;
+  let refreshing;
+  const accessToken = async () => {
+    if (currentToken && performance.now() < refreshAt) return currentToken;
+    if (!refreshing) refreshing = (async () => {
+      const auth = await fetch("https://auth.terrascale.tech/terrascale/oauth/token", {
+        method: "POST", headers: { authorization: `Basic ${Buffer.from(`${credentials.apiKey.slice(0, 26)}:${credentials.apiKey}`).toString("base64")}`, "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "client_credentials", project: credentials.project }), signal: AbortSignal.timeout(30_000),
+      });
+      if (auth.status !== 200) throw new Error("TOKEN_EXCHANGE_FAILED");
+      const result = await auth.json();
+      if (!Number.isSafeInteger(result.expires_in) || result.expires_in <= 0) throw new Error("TOKEN_LIFETIME_INVALID");
+      currentToken = result.access_token;
+      refreshAt = performance.now() + result.expires_in * 1000 - Math.min(30_000, result.expires_in * 250);
+      return currentToken;
+    })().finally(() => { refreshing = undefined; });
+    return refreshing;
+  };
+  const config = { project: credentials.project, token: accessToken, baseUrl: api };
   const writer = createTerraBaseClient(config);
   emit({ type: "method", sha: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), host: hostname(), node: process.version,
     rows: 16, body_bytes: 128, repeats: 3, readers: [1, 10, 100, 1000], cpu_limit_percent: 70,
     latency: "Dev-host SDK through regional SSH CONNECT egress; includes tunnel and write request latency; nearest-rank percentiles per repeat" });
   await monitor();
+  for (const previous of (await writer.databases.list({ limit: 100 }, { signal: signal() })).items) {
+    if (!previous.name.startsWith("f10-")) throw new Error("OWNED_CLEANUP_REFUSED");
+    await writer.deleteDatabase(credentials.project, previous.id, { signal: signal() });
+    emit({ type: "cleanup", previous_database_deleted: true });
+  }
   phase = "create_database";
   const catalog = await writer.createDatabase(credentials.project, `f10-${Date.now().toString(36)}`, { homeRegion: "gru", ttlSeconds: 3600, signal: signal() });
   const db = writer.database(catalog.id);
   const path = `${api}/v1/projects/${credentials.project}/databases/${catalog.id}`;
   const origin = async (url, mode = "follow") => {
-    const response = await fetch(url, { headers: { authorization: `Bearer ${token}` }, redirect: mode, signal: signal() });
+    const response = await fetch(url, { headers: { authorization: `Bearer ${await accessToken()}` }, redirect: mode, signal: signal() });
     if (![200, 307].includes(response.status)) throw new Error(`SETUP_HTTP_${response.status}`);
     return response;
   };
@@ -145,6 +163,7 @@ async function main() {
           const started = Date.now();
           const requests = { bootstrap: 0, manifest: 0, keys: 0, snapshot_payload: 0, catchup_payload: 0, head: 0, tail: 0, cdn: 0 };
           const statuses = {};
+          const originStatuses = {};
           const colos = {};
           const snapshot = [];
           const caughtUp = [];
@@ -169,7 +188,7 @@ async function main() {
               const colo = response.headers.get("cf-ray")?.split("-").at(-1) ?? "absent";
               statuses[status] = (statuses[status] ?? 0) + 1;
               colos[colo] = (colos[colo] ?? 0) + 1;
-            }
+            } else originStatuses[response.status] = (originStatuses[response.status] ?? 0) + 1;
             return response;
           };
           const reader = createTerraBaseClient({ ...config, fetch: measuredFetch }).database(catalog.id);
@@ -209,7 +228,7 @@ async function main() {
           const monthAfter = (await writer.metrics.usage({}, { signal: signal() })).month;
           const samples = cpu.filter(sample => sample.at * 1000 >= started && sample.at * 1000 <= ended);
           emit({ type: "cell", region, shape, readers, repeat, start: new Date(started).toISOString(), end: new Date(ended).toISOString(),
-            snapshot: stats(snapshot), catchup: stats(caughtUp), tail: stats(tail), requests, statuses, colos,
+            snapshot: stats(snapshot), catchup: stats(caughtUp), tail: stats(tail), requests, statuses, origin_statuses: originStatuses, colos,
             cdn_hit_ratio: (statuses.HIT ?? 0) / requests.cdn,
             cpu_samples: samples.length, cpu_max_percent: samples.length ? Math.max(...samples.map(sample => sample.cpu_percent)) : null,
             usage_reads_before: before.reads, usage_reads_after: after.reads,
