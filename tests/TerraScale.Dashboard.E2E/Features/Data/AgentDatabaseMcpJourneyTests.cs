@@ -76,7 +76,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             var refused = (await HttpJourney.McpAsync(client, key, "tools/call", new
             { name = "execute_sql", arguments = new { databaseId = id, sql = "INSERT INTO results VALUES ('two')" } })).GetProperty("result");
             await Assert.That(refused.GetProperty("isError").GetBoolean()).IsTrue();
-            await Assert.That(refused.GetProperty("content")[0].GetProperty("text").GetString()).Contains("documents:write");
+            await Assert.That(refused.GetProperty("content")[0].GetProperty("text").GetString()).Contains("sql:write");
             await Assert.That((await CallAsync(token, "execute_sql", new { databaseId = id, sql = "SELECT count(*) FROM results" })).GetProperty("rows")[0][0].GetInt32()).IsEqualTo(1);
             await CallAsync(token, "delete_database", new { databaseId = id, confirmName = "read-key-source" });
 
@@ -90,7 +90,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             {
                 ["_csrf"] = await HttpJourney.CsrfAsync(client, "/api-keys"),
                 ["name"] = "Agent MCP",
-                ["scopes"] = "databases:read,databases:write,documents:read,documents:write",
+                ["scopes"] = "databases:read,databases:write,sql:read,sql:write",
                 ["expiresInDays"] = "0"
             });
             response.EnsureSuccessStatusCode();
