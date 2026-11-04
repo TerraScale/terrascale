@@ -14,6 +14,8 @@ namespace TerraBase.Slow.Backup;
 
 public sealed class SqlPointInTimeRestoreTests
 {
+    private static readonly Faker Faker = new();
+
     [Test]
     public async Task Sql_tables_restore_to_a_point_in_time_with_their_rows_schema_constraints_and_triggers(CancellationToken cancellationToken)
     {
