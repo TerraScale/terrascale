@@ -20,7 +20,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             var environment = new DemoEnvironment();
             await environment.InitializeAsync();
             InvoiceWire wire = null!;
-            await using var app = environment.CreateTestHost(new DashboardE2EFixture().Root, 0, "http://127.0.0.1", builder =>
+            await using var app = await environment.CreateTestHostAsync(new DashboardE2EFixture().Root, 0, "http://127.0.0.1", builder =>
             {
                 var original = (IHttpClientFactory)builder.Services.Last(item => item.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
                 wire = new(original, currency, amount, remaining);

@@ -20,7 +20,7 @@ namespace TerraScale.Dashboard.E2E.Demo
         {
             var environment = new DemoEnvironment();
             await environment.InitializeAsync();
-            await using var app = environment.CreateHost(contentRoot, port, StripeBilling.Origin, Configure);
+            await using var app = await environment.CreateHostAsync(contentRoot, port, StripeBilling.Origin, Configure);
             await app.StartAsync();
             // Port 0 is resolved at bind time, so the announced origin is the one the server actually listens on.
             var origin = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First();
