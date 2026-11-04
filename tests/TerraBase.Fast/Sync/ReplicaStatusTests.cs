@@ -1,9 +1,13 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
 using TerraBase.Features.Management;
+using TerraBase.Features.Replicas;
+using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 using TerraScale.TerraBase.Contracts.Management;
@@ -62,6 +66,17 @@ public sealed class ReplicaStatusTests
             await Assert.That(final.LagMs).IsEqualTo(0);
             await Assert.That(final.Revision).IsNotEqualTo(caughtUp.Revision);
             await Assert.That(final.LastVerified).IsNull();
+
+            var verifiedAt = DateTimeOffset.UtcNow.AddSeconds(-1);
+            var report = new ReplicaStatusReport("replica-region", ReplicaStates.Following, 999, null, verifiedAt);
+            using var content = new StringContent(JsonSerializer.Serialize(report, TerraBaseJsonContext.Default.ReplicaStatusReport), Encoding.UTF8, "application/json");
+            using var reported = await api.Server.Client.PostAsync(new Uri(api.Server.BaseAddress,
+                $"/v1/sync/organizations/{managed.Organization}/projects/{managed.Project}/databases/{managed.Id}/replica-status"), content, token);
+            await Assert.That(reported.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+            var verified = (await ReadAsync()).Replicas.Single();
+            await Assert.That(verified.LastVerified).IsEqualTo(verifiedAt);
+            await Assert.That(verified.LagMs).IsEqualTo(0);
+            await Assert.That(verified.LastPulledAt).IsEqualTo(final.LastPulledAt);
 
             async Task<TerraBaseDatabaseRegions> ReadAsync()
             {
