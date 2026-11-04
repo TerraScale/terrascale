@@ -6,7 +6,7 @@
 @(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame,DatabaseFrameModel>(new(Model.Database, "functions")))
 @if(Model.Error.Length > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p><a class="ts-link" href="@list">Reload functions</a></div>}
 <section class="ts-card ts-card-flush" aria-labelledby="functions-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="functions-title">Functions</h2></div></header><div class="ts-card-body">
-@if(Model.Functions.Count == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">No functions yet.</p><pre class="ts-code">PUT /v1/projects/{project}/databases/@Model.Database.Name/functions/{name}</pre></div>}else{
+@if(Model.Functions.Count == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">No functions yet.</p><pre class="ts-code">PUT /v1/projects/{project}/databases/@Model.Database.Name/functions/{name}</pre><pre class="ts-code" id="function-example">@Example</pre></div>}else{
 <div class="ts-table-wrap"><table class="ts-table" id="functions"><thead><tr><th scope="col">Name</th><th scope="col">Runs on</th><th scope="col">Updated (UTC)</th><th scope="col">Actions</th></tr></thead><tbody>
 @foreach(var function in Model.Functions){<tr><td class="ts-mono">@function.Name</td><td>@Runs(function)</td><td>@ValueFormat.UtcDate(function.UpdatedAt)</td><td><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@(list + "?function=" + Uri.EscapeDataString(function.Name))" aria-current="@(Model.Selected?.Name == function.Name ? "true" : null)">Details</a></td></tr>}
 </tbody></table></div>}
@@ -29,6 +29,13 @@
 </main>
 @functions {
     public ShellModel LayoutModel => Model.Shell;
+    private const string Example = """
+        async function handler(event) {
+          await sql.execute("CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY, page TEXT NOT NULL)");
+          await sql.execute("INSERT INTO visits (page) VALUES (?)", [event.body.page]);
+          return sql.query("SELECT page, count(*) AS visits FROM visits GROUP BY page");
+        }
+        """;
     private static string Runs(TerraScale.Dashboard.Features.Functions.FunctionRecord function) =>
         function.Cron is { Length: > 0 } cron ? "Cron " + cron + " UTC" : "HTTPS calls";
 }
