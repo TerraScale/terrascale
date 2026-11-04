@@ -108,6 +108,7 @@ internal static class ApiExamples
         "previewSelectiveRecovery" => """{"pointInTime":"2026-10-07T12:00:13Z","selections":[{"collection":"people","ids":["01ARZ3NDEKTSV4RRFFQ69G5FA3"]}]}""",
         "recoverHistoricalRecords" => """{"approval":"opaque-approval-from-preview","records":[{"collection":"people","id":"01ARZ3NDEKTSV4RRFFQ69G5FA3"}]}""",
         "restorePointInTime" => """{"pointInTime":"2026-10-07T12:00:13Z","name":"restored","destination":"customer"}""",
+        "rewindPointInTime" => """{"pointInTime":"2026-10-07T12:00:13Z","destination":"platform"}""",
         "setBackupDestination" => """{"endpoint":"https://s3.example.com","region":"us-east-1","bucket":"customer-backups","accessKeyId":"YOUR_ACCESS_KEY","secretKey":"YOUR_SECRET_KEY","mode":"both"}""",
         "setBackupPolicy" => """{"fullBackupCron":"0 2 * * *","retentionDays":7,"disabled":false}""",
         "setExportSchedule" => """{"cron":"0 3 * * *"}""",

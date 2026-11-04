@@ -68,6 +68,41 @@ public sealed class SqlTableBackupTests
     }
 
     [Test]
+    public async Task A_database_rewinds_in_place_to_a_time_keeping_its_identity_and_backing_up_the_rewind(CancellationToken cancellationToken)
+    {
+        await using var host = await SqlBackupHost.StartAsync(cancellationToken);
+        await host.OkAsync(
+            "CREATE TABLE teams (id TEXT PRIMARY KEY, name TEXT NOT NULL)",
+            "CREATE TABLE players (id TEXT PRIMARY KEY, team TEXT NOT NULL REFERENCES teams (id) ON DELETE CASCADE)",
+            "CREATE TABLE audit (id INTEGER PRIMARY KEY, player TEXT NOT NULL)",
+            "CREATE TRIGGER players_audit AFTER INSERT ON players BEGIN INSERT INTO audit (player) VALUES (new.id); END");
+        await host.OkAsync(Stmt("INSERT INTO teams VALUES ('red', ?)", Faker.Company.CompanyName()), Stmt("INSERT INTO players VALUES ('p1', 'red')"));
+        await host.SnapshotAsync(cancellationToken);
+        var k = host.SnapshotAt.AddSeconds(2);
+        await host.OkAsync(Stmt("INSERT INTO players VALUES ('p2', 'red')"));
+        await host.StampAsync(k.AddSeconds(-1), cancellationToken);
+        await host.OkAsync("DROP TABLE players", "CREATE TABLE later (id TEXT PRIMARY KEY)", "INSERT INTO later VALUES ('x')");
+        await host.StampAsync(k, cancellationToken);
+        await host.ShipAsync(TimeSpan.FromMilliseconds(2500), cancellationToken);
+
+        using var rewound = await host.Api.Client.PostAsJsonAsync(ManagementApi.Uri($"{host.Database.Path}/point-in-time/rewind"), new { pointInTime = k }, cancellationToken);
+        var body = await rewound.Content.ReadAsStringAsync(cancellationToken);
+        await Assert.That(rewound.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(body);
+        await host.OkAsync(Stmt("INSERT INTO players VALUES ('p3', 'red')"));
+        using var databases = JsonDocument.Parse(await host.Api.Client.GetStringAsync(ManagementApi.Uri($"{host.Database.ProjectPath}/databases"), cancellationToken));
+
+        await Assert.That(JsonElement.Parse(body).GetProperty("id").GetString()).IsEqualTo(host.Database.Id);
+        await Assert.That(await host.RowsAsync(host.Database.Name, "SELECT id FROM players ORDER BY id")).IsEquivalentTo(["p1", "p2", "p3"]);
+        await Assert.That(await host.RowsAsync(host.Database.Name, "SELECT player FROM audit ORDER BY id")).IsEquivalentTo(["p1", "p2", "p3"]);
+        await Assert.That(await host.RowsAsync(host.Database.Name, "SELECT name FROM sqlite_schema WHERE name = 'later'")).IsEmpty();
+        await Assert.That(await host.RefusedAsync(host.Database.Name, Stmt("INSERT INTO players VALUES ('p9', 'green')"))).IsEqualTo("foreign_key_violation");
+        await Assert.That(databases.RootElement.GetProperty("items").GetArrayLength()).IsEqualTo(1);
+        await host.ShipAsync(TimeSpan.FromSeconds(1), cancellationToken);
+        var undone = await host.RestoreAsync(await host.LatestAsync(cancellationToken), "after-rewind", cancellationToken);
+        await Assert.That(await host.RowsAsync(undone, "SELECT id FROM players ORDER BY id")).IsEquivalentTo(["p1", "p2", "p3"]);
+    }
+
+    [Test]
     public async Task A_manual_backup_restores_sql_tables_as_they_were_when_it_was_taken(CancellationToken cancellationToken)
     {
         await using var host = await SqlBackupHost.StartAsync(cancellationToken);
@@ -87,27 +122,29 @@ public sealed class SqlTableBackupTests
     }
 
     [Test]
-    public async Task A_restored_database_is_a_new_incarnation_and_a_replica_of_the_source_rebootstraps_from_it(CancellationToken cancellationToken)
+    public async Task A_replica_rebootstraps_after_a_rewind_and_matches_the_rewound_database(CancellationToken cancellationToken)
     {
         await using var host = await SqlBackupHost.StartAsync(cancellationToken);
         await host.OkAsync("CREATE TABLE items (id TEXT PRIMARY KEY, v TEXT NOT NULL)");
         var rows = Enumerable.Range(0, 40).Select(_ => (Id: EntityIds.New().ToString(), Value: Faker.Lorem.Sentence(20))).ToList();
         await host.OkAsync([.. rows.Select(row => Stmt("INSERT INTO items VALUES (?, ?)", row.Id, row.Value))]);
         await host.SnapshotAsync(cancellationToken);
+        var k = host.SnapshotAt.AddSeconds(2);
         await host.OkAsync(Stmt("DELETE FROM items WHERE id = ?", rows[0].Id));
-        await host.ShipAsync(TimeSpan.FromSeconds(1), cancellationToken);
+        await host.StampAsync(k.AddSeconds(-1), cancellationToken);
+        await host.OkAsync("DELETE FROM items");
+        await host.StampAsync(k, cancellationToken);
+        await host.ShipAsync(TimeSpan.FromMilliseconds(2500), cancellationToken);
         var replica = new RevisionReplica();
-        var source = await replica.PullAsync(host.Api.Server, host.Tenant);
+        var before = await replica.PullAsync(host.Api.Server, host.Tenant);
 
-        var restored = await host.RestoreAsync(await host.LatestAsync(cancellationToken), "restored", cancellationToken);
-        var again = await host.RestoreAsync(await host.LatestAsync(cancellationToken), "again", cancellationToken);
-        var rebootstrap = await replica.PullAsync(host.Api.Server, await host.TenantAsync(restored, cancellationToken));
-        var steady = await replica.PullAsync(host.Api.Server, await host.TenantAsync(restored, cancellationToken));
-        var other = await new RevisionReplica().PullAsync(host.Api.Server, await host.TenantAsync(again, cancellationToken));
+        using var rewound = await host.Api.Client.PostAsJsonAsync(ManagementApi.Uri($"{host.Database.Path}/point-in-time/rewind"), new { pointInTime = k }, cancellationToken);
+        var after = await replica.PullAsync(host.Api.Server, host.Tenant);
+        var steady = await replica.PullAsync(host.Api.Server, host.Tenant);
 
-        await Assert.That(rebootstrap.Full).IsEqualTo(FullReason.OtherIncarnation);
-        await Assert.That(rebootstrap.Revision.Incarnation).IsNotEqualTo(source.Revision.Incarnation);
-        await Assert.That(other.Revision.Incarnation).IsNotEqualTo(source.Revision.Incarnation).And.IsNotEqualTo(rebootstrap.Revision.Incarnation);
+        await Assert.That(rewound.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await rewound.Content.ReadAsStringAsync(cancellationToken));
+        await Assert.That(after.Full).IsEqualTo(FullReason.OtherIncarnation);
+        await Assert.That(after.Revision.Incarnation).IsNotEqualTo(before.Revision.Incarnation);
         await Assert.That(steady.Full).IsNull();
         await Assert.That(replica.Rows()).IsEquivalentTo(rows.Skip(1).ToDictionary(row => row.Id, row => row.Value));
     }
@@ -217,13 +254,6 @@ public sealed class SqlTableBackupTests
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(body);
             return name;
-        }
-
-        public async Task<TenantContext> TenantAsync(string name, CancellationToken cancellationToken)
-        {
-            using var list = JsonDocument.Parse(await Api.Client.GetStringAsync(ManagementApi.Uri($"{Database.ProjectPath}/databases"), cancellationToken));
-            var id = list.RootElement.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("name").GetString() == name).GetProperty("id").GetString()!;
-            return new TenantContext(Database.Organization, PlanTier.Pro, Database.Project, id);
         }
 
         public Task<JsonElement[]> OkAsync(params string[] statements) => OkInAsync(Database.Name, [.. statements.Select(sql => Stmt(sql))]);

@@ -30,7 +30,7 @@ namespace TerraBase.Features.Management.Backups;
 /// <see cref="MaxScheduledBackupsPerPass"/> scheduled backups in turn order.
 /// </remarks>
 internal sealed class EngineManagedBackupService(
-    IStorageEngine engine, SystemCatalog catalog, IManagementService management, IPointInTimeRestore pointInTime, TimeProvider time,
+    IStorageEngine engine, SystemCatalog catalog, IManagementService management, IPointInTimeRestore pointInTime, IDatabaseRewind rewind, TimeProvider time,
     ILogger<EngineManagedBackupService> logger, TerraBaseOptions options)
     : IManagedBackupService
 {
@@ -182,8 +182,21 @@ internal sealed class EngineManagedBackupService(
     /// ponytail: the restored state is staged as an engine database of the project and copied like a backup snapshot; a
     /// process that stops between the two leaves the staging file, which startup reports as unknown and keeps.
     /// </remarks>
-    public async ValueTask<RestoreBackupResult> RestorePointInTimeAsync(
-        string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform)
+    public ValueTask<RestoreBackupResult> RestorePointInTimeAsync(
+        string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform) =>
+        FromStagingAsync(userId, organizationId, database, at, destination,
+            (source, staging) => CopyRestoredAsync(userId, organizationId, DatabaseOwner.Of(database), source.Name, staging.DatabaseId!, name, cancellationToken),
+            cancellationToken);
+
+    public ValueTask<RestoreBackupResult> RewindPointInTimeAsync(
+        string userId, string organizationId, TenantContext database, DateTimeOffset at, string destination, CancellationToken cancellationToken) =>
+        FromStagingAsync(userId, organizationId, database, at, destination,
+            async (source, staging) => await rewind.RewindAsync(database, staging, cancellationToken).ConfigureAwait(false) ? source : new NotFound(),
+            cancellationToken);
+
+    private async ValueTask<RestoreBackupResult> FromStagingAsync(
+        string userId, string organizationId, TenantContext database, DateTimeOffset at, string destination,
+        Func<ManagedDatabase, TenantContext, ValueTask<RestoreBackupResult>> restored, CancellationToken cancellationToken)
     {
         if (PlatformDatabases.IsPlatform(database.OrganizationId))
         {
@@ -215,7 +228,7 @@ internal sealed class EngineManagedBackupService(
         {
             return await pointInTime.RestoreAsync(database, at, staging, cancellationToken, destination).ConfigureAwait(false) switch
             {
-                Done => await CopyRestoredAsync(userId, organizationId, owner, source.Name, staging.DatabaseId!, name, cancellationToken).ConfigureAwait(false),
+                Done => await restored(source, staging).ConfigureAwait(false),
                 NotFound error => error,
                 Conflict error => error,
                 Validation error => error,
