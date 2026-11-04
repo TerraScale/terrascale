@@ -27,6 +27,9 @@ with tempfile.TemporaryDirectory() as scratch:
     assert not check('00:00:10.000001', 1)
     assert not check('00:00:01', 30.000001)
     assert not check('00:01:00', 1)
+    assert not check('00:00:01', 119.999)
+    assert check('00:00:01', 120)
+    assert check('00:00:01', 121)
     report.write_text('<TestRun/>')
     try:
         budget.durations(report)
