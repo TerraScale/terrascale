@@ -33,6 +33,9 @@ public sealed record BackupPolicyRequest(string? FullBackupCron, int? RetentionD
 /// <param name="TtlSeconds">Seconds until the new database is deleted, 60 to 31,536,000; null keeps it until deleted.</param>
 public sealed record PointInTimeRestoreRequest(DateTimeOffset? PointInTime, string? Name, string? Destination = null, long? TtlSeconds = null);
 
+/// <summary>Body of <c>POST …/point-in-time/rewind</c>.</summary>
+public sealed record PointInTimeRewindRequest(DateTimeOffset? PointInTime, string? Destination = null);
+
 /// <summary>A page of a database's backups.</summary>
 public readonly union ListBackupsResult(ManagementPage<DatabaseBackup>, Unavailable);
 
@@ -83,6 +86,10 @@ public interface IManagedBackupService
     ValueTask<RestoreBackupResult> RestorePointInTimeAsync(
         string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform,
         long? ttlSeconds = null);
+
+    /// <summary>Replaces the database's own tables with their state as of <paramref name="at"/>, in place.</summary>
+    ValueTask<RestoreBackupResult> RewindPointInTimeAsync(
+        string userId, string organizationId, TenantContext database, DateTimeOffset at, string destination, CancellationToken cancellationToken);
 
     /// <summary>
     /// One scheduler pass: a page of the storage sweep, retention, then the scheduled backups that are due; none while the

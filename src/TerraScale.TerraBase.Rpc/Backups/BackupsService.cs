@@ -87,5 +87,12 @@ namespace TerraScale.TerraBase.Rpc.Backups
             return RestApi.Read(answer, BackupsJson.Default.JsonElement);
         }
 
+        /// <inheritdoc />
+        public async UnaryResult<JsonElement> RewindPointInTimeAsync(string projectId, string database, TerraBasePointInTimeRequest request)
+        {
+            var answer = await api.SendAsync(Context, "POST", RestPaths.Database(projectId, database) + "/point-in-time/rewind", RestApi.Json(request, BackupsJson.Default.TerraBasePointInTimeRequest));
+            return RestApi.Read(answer, BackupsJson.Default.JsonElement);
+        }
+
     }
 }
