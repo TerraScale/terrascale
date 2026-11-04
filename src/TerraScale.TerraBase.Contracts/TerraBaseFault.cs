@@ -15,7 +15,7 @@ namespace TerraScale.TerraBase.Contracts
     /// <param name="OperationIndex">The failing operation of a transaction.</param>
     /// <param name="RetryAfterSeconds">How long to wait before retrying a 429 or 503.</param>
     /// <param name="Details">The schema validation issues of a 400.</param>
-    /// <param name="SqliteCode">The SQLite error code of a refused SQL statement.</param>
+    /// <param name="Sqlstate">The PostgreSQL SQLSTATE of a refused SQL statement.</param>
     [MessagePackObject(true)]
     public sealed record TerraBaseFault(
         int Status,
@@ -27,7 +27,7 @@ namespace TerraScale.TerraBase.Contracts
         int? OperationIndex = null,
         int? RetryAfterSeconds = null,
         IReadOnlyList<TerraBaseFaultDetail>? Details = null,
-        string? SqliteCode = null);
+        string? Sqlstate = null);
 
     /// <summary>One schema validation issue: the failing JSON Pointer and JSON Schema keyword.</summary>
     /// <param name="Path">The JSON Pointer of the failing value.</param>

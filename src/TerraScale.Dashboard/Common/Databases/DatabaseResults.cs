@@ -65,7 +65,7 @@ namespace TerraScale.Dashboard.Common.Databases
                     ["outcome"] = "unknown"
                 },
                 SqlOutcomeUnknownException unknown => new Dictionary<string, object?> { ["operationId"] = unknown.AttemptId, ["outcome"] = "unknown" },
-                DatabaseSqlException { SqliteCode: { } code } => new Dictionary<string, object?> { ["sqliteCode"] = code },
+                DatabaseSqlException { Code: { } code } sql => new Dictionary<string, object?> { ["code"] = code, ["sqlstate"] = sql.Sqlstate },
                 _ when RetrySeconds(error) is { } seconds => new Dictionary<string, object?> { ["retryAfterSeconds"] = seconds },
                 // TerraBase's stable error code travels with its refusal, so clients can tell one 409 from another.
                 TerraBaseException { ErrorCode: { Length: > 0 } code } => new Dictionary<string, object?> { ["code"] = code },
