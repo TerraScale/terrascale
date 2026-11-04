@@ -1,3 +1,5 @@
+//go:build slow
+
 package pitrbench
 
 import (
@@ -5,9 +7,8 @@ import (
 	"time"
 )
 
-// Fast exercises each main PITR operation once on a small, test-owned database.
-// Slow retains the multi-batch recovery, fault and boundary matrices unchanged.
-func TestPitrLifecycleWritesCutsAndVerifies(t *testing.T) {
+// Retain the complete critical PITR lifecycle, including its real backup-window waits, in Slow.
+func TestSlowPitrLifecycleWritesCutsAndVerifies(t *testing.T) {
 	t.Parallel()
 	r, db := newTestRun(t, fenceDocs, fenceSplit)
 	phases := []string{"load-a", "load-b", "u1", "d1", "r1"}
