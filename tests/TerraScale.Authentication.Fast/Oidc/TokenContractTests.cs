@@ -26,7 +26,7 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
     {
         await using var oidc = await StartAsync();
         var user = await oidc.CreateUserAsync("alice@example.test");
-        var session = await oidc.SignInAsync("alice@example.test");
+        var session = (await oidc.Server.App.Services.GetRequiredService<Sessions>().CreateAsync(user)).Token;
         var (verifier, challenge) = OidcHarness.Pkce();
         // Without the email scope the identity token has no email, but the access token still does.
         using var authorize = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge, scope: "openid offline_access"), session);
