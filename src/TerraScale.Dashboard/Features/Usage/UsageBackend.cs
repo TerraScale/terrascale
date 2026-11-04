@@ -85,7 +85,6 @@ namespace TerraScale.Dashboard.Features.Usage
                     }
 
                     if (Count(totals.StorageBytes) != checked(totals.Items.Sum(item => Count(item.StorageBytes)) + Count(totals.FileBytes)) ||
-                        Count(totals.LogicalBytes) != checked(totals.Items.Sum(item => Count(item.LogicalBytes)) + Count(totals.FileBytes)) ||
                         Count(totals.Reads) != totals.Items.Sum(item => Count(item.Reads)) ||
                         Count(totals.Writes) != totals.Items.Sum(item => Count(item.Writes)) ||
                         totals.Period.Reads != totals.Items.Sum(item => Count(item.Period.Reads)) ||
@@ -94,7 +93,7 @@ namespace TerraScale.Dashboard.Features.Usage
                         throw new JsonException("Project usage totals disagree with database usage.");
                     }
 
-                    return new(UsageSourceState.Measured, new(project.Id, "", Count(totals.LogicalBytes),
+                    return new(UsageSourceState.Measured, new(project.Id, "", Count(totals.StorageBytes),
                         Period(totals.Period, first, now, bucket), Points(totals.Series, totals.Period, bucket),
                         [.. totals.Items.Select(item => DatabaseReading(item, project, first, now, bucket, true))], totals.Month is { } monthUsage ? new UsageMonth(monthUsage.Month is { Length: 7 } monthName ? monthName : throw new JsonException("Usage month is invalid."), Count(monthUsage.ReadUnits), Count(monthUsage.WriteUnits), Count(monthUsage.Units), monthUsage.OrganizationUnits is { } organizationUnits ? Count(organizationUnits) : null, monthUsage.OrganizationReadUnits is { } organizationReads ? Count(organizationReads) : null) : null));
                 }
@@ -119,7 +118,7 @@ namespace TerraScale.Dashboard.Features.Usage
                 throw new JsonException("Usage returned a foreign database.");
             }
 
-            return new(project.Id, row.DatabaseId, Count(row.LogicalBytes), Period(row.Period, from, now, bucket),
+            return new(project.Id, row.DatabaseId, Count(row.StorageBytes), Period(row.Period, from, now, bucket),
                 Points(row.Series, row.Period, bucket, child), []);
         }
 
