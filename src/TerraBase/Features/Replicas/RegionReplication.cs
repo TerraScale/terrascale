@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading.Channels;
 using NATS.Client.Core;
@@ -693,12 +694,17 @@ internal sealed class RegionReplication(
             timeout.CancelAfter(ReportTimeout);
             try
             {
-                using var response = await _owner._http.PostAsJsonAsync(new Uri(_source + "/replica-status"),
-                    new ReplicaStatusReport(_owner.Region, _state, LagMs, _syncedAt, _verifiedAt), TerraBaseJsonContext.Default.ReplicaStatusReport, timeout.Token)
-                    .ConfigureAwait(false);
+                using var content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(
+                    new ReplicaStatusReport(_owner.Region, _state, LagMs, _syncedAt, _verifiedAt), TerraBaseJsonContext.Default.ReplicaStatusReport));
+                content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+                using var response = await _owner._http.PostAsync(new Uri(_source + "/replica-status"), content, timeout.Token).ConfigureAwait(false);
                 if (response.IsSuccessStatusCode)
                 {
                     _reportedState = _state;
+                }
+                else
+                {
+                    _owner.Logger.ZLogInformation($"The home refused a replica status report with {(int)response.StatusCode:@Status}");
                 }
             }
             catch (Exception error) when (error is HttpRequestException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)

@@ -95,9 +95,8 @@ Replicas never silently diverge from their home.
 After each pull (at most every 10 seconds, and on every state change) a replica reports to its home with
 `POST …/databases/{database}/replica-status`: its state (`bootstrapping`, `following`, `healing`), lag, last pull and last
 completed verification. The home keeps the reports in memory; one older than 90 seconds reads as `stale`, and a region
-that has not reported since the home started reads as `unknown`. The per-database regions read API takes each replica's
-last completed verification from these reports; a node that is not the home reads them from the home with a 2-second
-timeout.
+that has not reported since the home started reads as `unknown`. `GET /v1/projects/{project}/databases/{database}/regions` (answered by the home) returns each replica's last completed
+verification from these reports as `lastVerified` ([replica status](replica-status.md)).
 
 Lag is the time since the oldest home commit the replica has been told about and does not hold yet; with NATS notices it
 is 0 once a pull delivered every notice, and without NATS (sweep only) it is the time since the start of the last

@@ -1,4 +1,3 @@
-using System.Text.Json.Serialization;
 using TerraBase.Engine.Revisions;
 
 namespace TerraBase.Features.Replicas;
@@ -7,8 +6,7 @@ internal sealed record ReplicaChecksumPage(string Revision, bool Moved, IReadOnl
 
 internal sealed record ReplicaStatusReport(string Region, string State, long? LagMs, DateTimeOffset? SyncedAt, DateTimeOffset? VerifiedAt);
 
-public sealed record ReplicaStatusBody(
-    string Region, string State, long? LagMs, DateTimeOffset? SyncedAt, DateTimeOffset? VerifiedAt, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? ReportedAt = null);
+internal sealed record ReplicaStatusBody(string Region, string State, long? LagMs, DateTimeOffset? SyncedAt, DateTimeOffset? VerifiedAt, DateTimeOffset? ReportedAt = null);
 
 internal static class ReplicaStates
 {
