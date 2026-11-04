@@ -24,7 +24,10 @@ namespace TerraScale.Dashboard.Features.Profile
                 return "Authorized deletion [REDACTED]";
             }
         }
-        private sealed record Envelope(string Key, string UserId, SealedSession Payload);
+        // A completed operation leaves only its key (the hash of the browser's 256-bit cookie) and an expiry: no user id,
+        // receipt or grant. Only the browser that started the deletion can find it, and it learns nothing but completion.
+        private sealed record Envelope(string Key, string UserId, SealedSession? Payload, DateTimeOffset? DeletedUntil = null);
+        private static readonly TimeSpan CompletionKept = TimeSpan.FromDays(15);
 
         public static async Task<IResult> DeleteAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthPlatform platform, IDashboardState state, AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity)
         {
@@ -132,6 +135,12 @@ namespace TerraScale.Dashboard.Features.Profile
             if (!Csrf.Validate(http, form))
             {
                 return Results.StatusCode(403);
+            }
+
+            if (await CompletedAsync(http, state))
+            {
+                http.Response.Cookies.Delete(Cookie);
+                return HttpRedirects.SeeOther("/account-deleted");
             }
 
             return await ReadOperationAsync(http, state, identity) is { } operation
@@ -262,14 +271,39 @@ namespace TerraScale.Dashboard.Features.Profile
                 throw new IOException("Deletion operation identity is invalid.");
             }
 
-            return await OpenAsync(envelope, identity, http.RequestAborted);
+            return envelope.DeletedUntil is null ? await OpenAsync(envelope, identity, http.RequestAborted) : null;
         }
 
-        public static async Task CleanOperationsAsync(IDashboardState state, IDashboardIdentity identity, string subject, CancellationToken cancellationToken)
+        // Whether the deletion this browser started has completed and its operation was cleaned up (DeletionReconciler).
+        private static async Task<bool> CompletedAsync(HttpContext http, IDashboardState state)
         {
+            var cookie = http.Request.Cookies[Cookie] ?? http.Request.Cookies["ts-dashboard-session"];
+            if (cookie is not { Length: 64 } || !cookie.All(char.IsAsciiHexDigitLower))
+            {
+                return false;
+            }
+
+            var key = Key(http);
+            return await state.GetAsync(Operations, key, http.RequestAborted) is { } row && row.Body.Deserialize<Envelope>() is { } envelope
+                && envelope.Key == key && envelope.DeletedUntil > http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow();
+        }
+
+        public static async Task CleanOperationsAsync(IDashboardState state, IDashboardIdentity identity, string subject, TimeProvider clock, CancellationToken cancellationToken)
+        {
+            var now = clock.GetUtcNow();
             foreach (var row in await state.ListAsync(Operations, cancellationToken))
             {
                 var envelope = AccountService.Read<Envelope>(row);
+                if (envelope.DeletedUntil is { } until)
+                {
+                    if (until <= now)
+                    {
+                        await state.DeleteAsync(Operations, envelope.Key, row.Version, cancellationToken);
+                    }
+
+                    continue;
+                }
+
                 if (envelope.UserId != subject)
                 {
                     continue;
@@ -292,7 +326,9 @@ namespace TerraScale.Dashboard.Features.Profile
                     throw new IOException("Deletion operation changed concurrently.");
                 }
 
-                await state.DeleteAsync(Operations, envelope.Key, current.Version, cancellationToken);
+                // The browser that started this deletion still asks for its status: it now learns completion, nothing else.
+                await state.PutAsync(Operations, envelope.Key, JsonSerializer.SerializeToElement(new Envelope(envelope.Key, "", null, now + CompletionKept)),
+                    StatePrecondition.Matches(current.Version), cancellationToken);
             }
         }
 
