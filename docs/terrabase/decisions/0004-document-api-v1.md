@@ -42,7 +42,7 @@ and aliases escaped slash spellings before route values are exposed. See [the ID
 ## Divergences from the contracts
 
 1. Collections are created, listed, read and dropped on the client listener
-   (`/v1/projects/{project}/databases/{db}/collections…` since [0005](0005-multi-tenancy.md), `documents:read`/`documents:write` scopes). The contract
+   (`/v1/projects/{project}/databases/{db}/collections…` since [0005](0005-multi-tenancy.md), `sql:read`/`sql:write` scopes). The contract
    puts collection management in the control plane (`/v1/dashboard`, control keys) and makes
    `DELETE` return `202` with an operation; here `DELETE` drops synchronously and returns `200`.
    Collections are schemaless; `schema`, `ttl_path`, `unique`, `indexes` and `advisor` fail as

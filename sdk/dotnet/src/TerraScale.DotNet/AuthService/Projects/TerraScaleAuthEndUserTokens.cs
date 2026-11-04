@@ -31,7 +31,7 @@ public sealed partial class TerraScaleAuthProjectsClient
 {
     /// <summary>
     /// mintEndUserToken: POST /v1/terrascale/projects/{project}/end-user-tokens, sent once with the explicit whole
-    /// project API key as Bearer. The key must match the project, have both documents:read and documents:write,
+    /// project API key as Bearer. The key must match the project, have both sql:read and sql:write,
     /// and have no database restriction. Organization keys, platform JWTs and cookies cannot authenticate.
     /// The backend must verify the user and authorize the asserted roles; never relay browser-supplied claims.
     /// Only canonical user/project ULIDs and up to 64 case-sensitive roles (128 UTF-16 code units each, nonblank,

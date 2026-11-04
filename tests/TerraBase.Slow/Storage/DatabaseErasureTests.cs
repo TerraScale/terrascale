@@ -11,7 +11,7 @@ public sealed class DatabaseErasureTests
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var api = await ManagementApi.StartAsync();
-        using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
+        using var tenant = await api.CreateTenantAsync("sql:read", "sql:write");
         var database = await tenant.ContextAsync(api.Server, "main", token);
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         var store = await engine.OpenDatabaseAsync(database, token) ?? throw new InvalidOperationException("database is absent");

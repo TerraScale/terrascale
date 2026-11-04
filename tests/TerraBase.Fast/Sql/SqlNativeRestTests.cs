@@ -100,7 +100,7 @@ public sealed class SqlNativeRestTests
     }
 
     [Test]
-    public async Task Read_only_keys_read_but_cannot_write()
+    public async Task A_sql_read_key_reads_but_is_refused_on_a_write()
     {
         await using var db = await StartAsync();
         await db.OkAsync("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)", "INSERT INTO notes (body) VALUES ('kept')");

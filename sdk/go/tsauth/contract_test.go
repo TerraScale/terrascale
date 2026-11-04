@@ -17,8 +17,8 @@ func TestContractConstants(t *testing.T) {
 	if endpoint, err := tokenEndpoint(""); err != nil || endpoint != "https://auth.terrascale.tech/terrascale/oauth/token" {
 		t.Fatalf("default token endpoint = %q, %v", endpoint, err)
 	}
-	got := []string{ScopeDatabasesRead, ScopeDatabasesWrite, ScopeDocumentsRead, ScopeDocumentsWrite}
-	want := []string{"databases:read", "databases:write", "documents:read", "documents:write"}
+	got := []string{ScopeDatabasesRead, ScopeDatabasesWrite, ScopeSQLRead, ScopeSQLWrite}
+	want := []string{"databases:read", "databases:write", "sql:read", "sql:write"}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("scope %d = %q, want %q", i, got[i], want[i])
@@ -34,14 +34,14 @@ func TestContractConstants(t *testing.T) {
 // widens a request.
 func TestContractScopeParameter(t *testing.T) {
 	t.Parallel()
-	all := []string{ScopeDatabasesRead, ScopeDatabasesWrite, ScopeDocumentsRead, ScopeDocumentsWrite}
+	all := []string{ScopeDatabasesRead, ScopeDatabasesWrite, ScopeSQLRead, ScopeSQLWrite}
 	for name, tc := range map[string]struct {
 		scopes []string
 		want   []string // nil: no scope parameter
 	}{
 		"none": {nil, nil},
-		"one":  {[]string{ScopeDocumentsRead}, []string{"documents:read"}},
-		"all":  {all, []string{"databases:read databases:write documents:read documents:write"}},
+		"one":  {[]string{ScopeSQLRead}, []string{"sql:read"}},
+		"all":  {all, []string{"databases:read databases:write sql:read sql:write"}},
 	} {
 		for _, grant := range []string{"client_credentials", "token-exchange"} {
 			t.Run(name+"/"+grant, func(t *testing.T) {

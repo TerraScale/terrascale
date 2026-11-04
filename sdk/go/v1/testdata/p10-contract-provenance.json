@@ -9,7 +9,7 @@
     "operation": "executeSql",
     "request_media": "application/json",
     "response_media": "application/json",
-    "scope": "documents:read; documents:write for mutations and DDL",
+    "scope": "sql:read; sql:write for mutations and DDL",
     "source": "src/TerraBase/Features/Sql/SqlExecuteEndpoint.cs; SqlModels.cs",
     "success": {
       "results": [

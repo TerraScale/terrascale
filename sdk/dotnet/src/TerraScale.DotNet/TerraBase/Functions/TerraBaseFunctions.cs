@@ -18,7 +18,7 @@ public sealed partial class TerraBaseDatabase
 {
     /// <summary>
     /// Lists functions in name order without source, as one bounded array (at most 32). Requires project
-    /// credentials with both documents:read and documents:write; there is no pagination. Sent once.
+    /// credentials with both sql:read and sql:write; there is no pagination. Sent once.
     /// </summary>
     public async Task<IReadOnlyList<TerraBaseFunction>> ListFunctionsAsync(CancellationToken cancellationToken = default)
     {
@@ -28,14 +28,14 @@ public sealed partial class TerraBaseDatabase
         return functions;
     }
 
-    /// <summary>Reads a function with source. Requires both documents:read and documents:write. Sent once.</summary>
+    /// <summary>Reads a function with source. Requires both sql:read and sql:write. Sent once.</summary>
     public async Task<TerraBaseFunction> GetFunctionAsync(string functionName, CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Get, FunctionPath(functionName), null,
             Json.TerraBaseFunction, null, cancellationToken).ConfigureAwait(false)).Value;
 
     /// <summary>
-    /// Deploys or fully replaces a function, returning its source and timestamps. Both documents:read and
-    /// documents:write are required. The producer validates JavaScript and cron; capacity conflicts
+    /// Deploys or fully replaces a function, returning its source and timestamps. Both sql:read and
+    /// sql:write are required. The producer validates JavaScript and cron; capacity conflicts
     /// include function_limit at 32 functions. Sent once; reconcile an uncertain outcome with GetFunctionAsync.
     /// </summary>
     public async Task<TerraBaseFunction> DeployFunctionAsync(string functionName, TerraBaseDeployFunctionRequest request,
@@ -48,7 +48,7 @@ public sealed partial class TerraBaseDatabase
     }
 
     /// <summary>
-    /// Deletes a function, its schedule and logs (204). Requires both documents:read and documents:write.
+    /// Deletes a function, its schedule and logs (204). Requires both sql:read and sql:write.
     /// Sent once; an absent function answers 404. Cancellation does not establish whether deletion committed.
     /// </summary>
     public Task DeleteFunctionAsync(string functionName, CancellationToken cancellationToken = default) =>

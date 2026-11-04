@@ -35,8 +35,8 @@ pub const TERRABASE_AUDIENCE: &str = "https://api.terrascale.tech";
 pub const TERRABASE_SCOPES: [&str; 4] = [
     "databases:read",
     "databases:write",
-    "documents:read",
-    "documents:write",
+    "sql:read",
+    "sql:write",
 ];
 
 const MAX_USER_PAGE_SIZE: u32 = 100;

@@ -26,8 +26,8 @@ and the returned secret cannot be retrieved later. Inspect state before retrying
 Already-issued access tokens keep their own expiry; rotation does not revoke them.
 
 Creation keeps its explicit `read-write` default: `databases:read`,
-`databases:write`, `documents:read`, `documents:write`. For read-only work use
+`databases:write`, `sql:read`, `sql:write`. For read-only work use
 `ts -scope read -expires 30d keys create reports <database>`, which requests only
-`databases:read` and `documents:read`. The optional database narrows the key;
+`databases:read` and `sql:read`. The optional database narrows the key;
 `-allow-cidr` narrows its networks. Server permissions still limit grants.
 Rotation preserves those restrictions and does not escalate a read-only key.

@@ -14,13 +14,13 @@ POST `https://auth.terrascale.tech/terrascale/oauth/token` with form fields:
 | `grant_type` | `urn:terrascale:params:oauth:grant-type:github-actions` |
 | `client_id` | `01M4GHA0E2E000000000000000` (public; no client secret) |
 | `subject_token` | Fresh GitHub assertion, requested with audience `https://auth.terrascale.tech/terrascale` |
-| `scope` | `documents:read` (also the sole default when omitted) |
+| `scope` | `sql:read` (also the sole default when omitted) |
 | Optional `organization`, `project`, `database` | Must exactly match the server binding if present |
 
 Never log assertions, exchange responses, bearer tokens or authorization headers.
 The output is an ES256 `at+jwt`, audience exactly `https://api.terrascale.tech`,
 subject the client ID, with bound `org_id`, `project_id`, `database` and
-`scope=documents:read`. No refresh or identity token is issued. Its absolute
+`scope=sql:read`. No refresh or identity token is issued. Its absolute
 expiry is the earlier of issuance plus 15 minutes and the binding deadline.
 The database restriction is the canonical database **name**, matching the current
 TerraBase verifier; it is not a database ULID. Organization/project IDs are
@@ -67,7 +67,7 @@ an immutable workflow revision: retain its reviewed source SHA in activation evi
    exact stored properties/permissions through an authorized metadata workflow.
    The client stores `ts_organization`, `ts_project`, `ts_database`,
    `ts_activated_at`, `ts_expires_at`; timestamps use the command's UTC format.
-   Permissions are token endpoint, this custom grant and `documents:read` only.
+   Permissions are token endpoint, this custom grant and `sql:read` only.
 4. At deadline or on failed isolation, revoke with the existing exact command:
    `ts-auth unbind-github-actions-e2e`. Confirm new exchanges fail. No data reset,
    global trust change or broader verifier permission is part of revocation.

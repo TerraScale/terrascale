@@ -13,7 +13,7 @@
     "operationId": "mintEndUserToken",
     "method": "POST",
     "path": "/v1/terrascale/projects/{project}/end-user-tokens",
-    "security": "projectApiKey HTTP Bearer: whole live exact-project key with BOTH documents:read and documents:write and no database restriction; not organization key/JWT/cookie",
+    "security": "projectApiKey HTTP Bearer: whole live exact-project key with BOTH sql:read and sql:write and no database restriction; not organization key/JWT/cookie",
     "requestMedia": "application/json UTF-8; max16384 bytes; depth4",
     "request": "{user_id: canonical uppercase ULID, claims?: {roles?: string[]|null}|null}; no unknown members at either level",
     "roles": "0..64 entries; nonblank; <=128 UTF-16 code units; no char.IsControl; ordinal deduplication by producer",

@@ -9,7 +9,7 @@ namespace TerraBase.Fast.Management;
 
 public sealed class ProjectTokenTests
 {
-    private const string AllScopes = "databases:read databases:write documents:read documents:write";
+    private const string AllScopes = "databases:read databases:write sql:read sql:write";
 
     [Test]
     public async Task A_project_JWT_creates_a_database_and_runs_sql_without_organization_membership()
@@ -85,7 +85,7 @@ public sealed class ProjectTokenTests
         await using var api = await ManagementApi.StartAsync();
         var first = await api.CreateManagedDatabaseAsync("first");
         var second = await api.CreateManagedDatabaseAsync(first.Organization, first.Project, "second");
-        using var legacy = await api.CreateClientAsync(first.Organization, "documents:read", "documents:write");
+        using var legacy = await api.CreateClientAsync(first.Organization, "sql:read", "sql:write");
         foreach (var database in new[] { first, second })
         {
             (await ManagementApi.SqlAsync(legacy, database, "CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT)")).EnsureSuccessStatusCode();

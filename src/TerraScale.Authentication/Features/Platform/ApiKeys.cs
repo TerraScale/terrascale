@@ -21,18 +21,18 @@ public static class TerraBaseScopes
     public const string DatabasesWrite = "databases:write";
 
     /// <summary>Read collections and documents; queries.</summary>
-    public const string DocumentsRead = "documents:read";
+    public const string SqlRead = "sql:read";
 
     /// <summary>Write collections and documents; transactions.</summary>
-    public const string DocumentsWrite = "documents:write";
+    public const string SqlWrite = "sql:write";
 
     /// <summary>Every scope.</summary>
-    public static IReadOnlyList<string> All { get; } = [DatabasesRead, DatabasesWrite, DocumentsRead, DocumentsWrite];
+    public static IReadOnlyList<string> All { get; } = [DatabasesRead, DatabasesWrite, SqlRead, SqlWrite];
 
     /// <summary>The scopes a project role grants (an organization role grants those of the project role it implies).</summary>
     public static IReadOnlyList<string> For(string? projectRole) => projectRole switch
     {
-        Roles.Viewer => [DatabasesRead, DocumentsRead],
+        Roles.Viewer => [DatabasesRead, SqlRead],
         Roles.Member or Roles.Admin => All,
         _ => [],
     };

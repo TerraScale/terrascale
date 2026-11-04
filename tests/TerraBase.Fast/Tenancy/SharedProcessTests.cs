@@ -17,8 +17,8 @@ public sealed class SharedProcessTests
         await using var api = await ManagementApi.StartAsync(settings => settings["storage-threads"] = "4");
         var noisy = await api.CreateManagedDatabaseAsync();
         var quiet = await api.CreateManagedDatabaseAsync();
-        using var noisyClient = api.DataClient(await api.Server.IssueNarrowedAsync(noisy.Organization, noisy.Project, null, "documents:read", "documents:write"));
-        using var quietClient = api.DataClient(await api.Server.IssueNarrowedAsync(quiet.Organization, quiet.Project, null, "documents:read", "documents:write"));
+        using var noisyClient = api.DataClient(await api.Server.IssueNarrowedAsync(noisy.Organization, noisy.Project, null, "sql:read", "sql:write"));
+        using var quietClient = api.DataClient(await api.Server.IssueNarrowedAsync(quiet.Organization, quiet.Project, null, "sql:read", "sql:write"));
         await Ok(SqlAsync(quietClient, quiet.Data, "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)"));
         await Ok(SqlAsync(quietClient, quiet.Data, "INSERT INTO notes (id, body) VALUES (1, ?)", Faker.Lorem.Sentence()));
         var baseline = await ReadsAsync(quietClient, quiet.Data, 20);

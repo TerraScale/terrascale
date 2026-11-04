@@ -14,7 +14,7 @@
     "operation": "invokeFunction",
     "method": "POST",
     "suffix": "/invoke",
-    "scope": "documents:read",
+    "scope": "sql:read",
     "body": "<=1048576 bytes; JSON if parseable, otherwise UTF-8 text, empty => null; query values are strings",
     "success": "every 2xx: owned status/contentType/raw bytes; empty body allowed",
     "failure": "every non-2xx: TerraBaseFunctionInvocationException.Response preserves status/contentType/raw body; inherited ErrorCode parses error.code when available; includes 3xx, 401/403, 400/404/413/500 function_error/503; no redirect or retry",
@@ -23,6 +23,6 @@
   },
   "observationSemantics": "JSON direct arrays; logs newest first, limit 1..100 default 50, last 100 retained; no cursor. Non-2xx use normal TerraBase exceptions.",
   "observations": [
-    {"operation":"listFunctionLogs","method":"GET","suffix":"/logs?limit=2","scopes":["documents:read","documents:write"],"success":200,"fixture":[{"id":"01JA0000000000000000000002","at":"2026-10-26T02:00:00Z","trigger":"cron","status":"ok","durationMs":2147483648,"lines":["ok"]},{"id":"01JA0000000000000000000001","at":"2026-10-26T01:00:00Z","trigger":"change","status":"error","durationMs":2,"lines":[],"error":"failed"}]}
+    {"operation":"listFunctionLogs","method":"GET","suffix":"/logs?limit=2","scopes":["sql:read","sql:write"],"success":200,"fixture":[{"id":"01JA0000000000000000000002","at":"2026-10-26T02:00:00Z","trigger":"cron","status":"ok","durationMs":2147483648,"lines":["ok"]},{"id":"01JA0000000000000000000001","at":"2026-10-26T01:00:00Z","trigger":"change","status":"error","durationMs":2,"lines":[],"error":"failed"}]}
   ]
 }

@@ -42,7 +42,7 @@ namespace TerraBase.E2E
             var token = api.Issuer.Mint(api.User, descriptor =>
             {
                 descriptor.Claims["project_id"] = database.Project;
-                descriptor.Claims["scope"] = "databases:read databases:write documents:read documents:write";
+                descriptor.Claims["scope"] = "databases:read databases:write sql:read sql:write";
                 descriptor.Expires = DateTime.UtcNow.AddHours(6);
             });
             var targets = new JsonObject

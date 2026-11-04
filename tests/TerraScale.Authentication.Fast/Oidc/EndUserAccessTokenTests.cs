@@ -21,7 +21,7 @@ namespace TerraScale.Authentication.Fast.Oidc;
 public sealed class EndUserAccessTokenTests(TerraBaseFixture fixture)
 {
     private const string Audience = "https://api.terrascale.tech";
-    private static readonly string[] ReadWrite = ["documents:read", "documents:write"];
+    private static readonly string[] ReadWrite = ["sql:read", "sql:write"];
     private static readonly string[] ExpectedRoles = ["reader", "Reader"];
     private static readonly string[] AssertedRoles = ["reader", "Reader", "reader"];
     private static readonly string[] SharedTables = ["notes"];

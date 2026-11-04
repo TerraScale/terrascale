@@ -22,7 +22,7 @@ internal sealed class DeployFunctionEndpoint(IManagementService management, IFun
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(ApiKeyScopes.DocumentsRead, ApiKeyScopes.DocumentsWrite);
+        RequireAuthorization(ApiKeyScopes.SqlRead, ApiKeyScopes.SqlWrite);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Client);
     }
     /// <inheritdoc />

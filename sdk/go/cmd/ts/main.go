@@ -576,7 +576,7 @@ var keyLifetimeDays = map[string]int{"30d": 30, "90d": 90, "365d": 365}
 // and its -expires and -allow-cidr flags. A key expires never unless asked.
 func newKeyRequest(operands []string, expires, allowCIDR string) (tsauth.APIKeyRequest, error) {
 	req := tsauth.APIKeyRequest{Name: operands[0], Scopes: []string{tsauth.ScopeDatabasesRead, tsauth.ScopeDatabasesWrite,
-		tsauth.ScopeDocumentsRead, tsauth.ScopeDocumentsWrite}}
+		tsauth.ScopeSQLRead, tsauth.ScopeSQLWrite}}
 	if len(operands) == 2 {
 		if entityid.Check(operands[1]) != nil {
 			return req, fmt.Errorf("database restriction must be a canonical ULID: %w", errUsage)
