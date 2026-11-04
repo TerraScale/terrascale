@@ -1,7 +1,5 @@
 /ar/blog/replication /ar/concepts/sql 301
 /ar/blog/replication.html /ar/concepts/sql 301
-/ar/concepts/replication /ar/concepts/sql 301
-/ar/concepts/replication.html /ar/concepts/sql 301
 /ar/concepts/sync /ar/concepts/sql 301
 /ar/concepts/sync.html /ar/concepts/sql 301
 /ar/guides/change-webhooks /ar/concepts/sql 301
@@ -30,14 +28,10 @@
 /ar/guides/ttl.html /ar/concepts/sql 301
 /blog/replication /concepts/sql 301
 /blog/replication.html /concepts/sql 301
-/concepts/replication /concepts/sql 301
-/concepts/replication.html /concepts/sql 301
 /concepts/sync /concepts/sql 301
 /concepts/sync.html /concepts/sql 301
 /de/blog/replication /de/concepts/sql 301
 /de/blog/replication.html /de/concepts/sql 301
-/de/concepts/replication /de/concepts/sql 301
-/de/concepts/replication.html /de/concepts/sql 301
 /de/concepts/sync /de/concepts/sql 301
 /de/concepts/sync.html /de/concepts/sql 301
 /de/guides/change-webhooks /de/concepts/sql 301
@@ -66,8 +60,6 @@
 /de/guides/ttl.html /de/concepts/sql 301
 /es/blog/replication /es/concepts/sql 301
 /es/blog/replication.html /es/concepts/sql 301
-/es/concepts/replication /es/concepts/sql 301
-/es/concepts/replication.html /es/concepts/sql 301
 /es/concepts/sync /es/concepts/sql 301
 /es/concepts/sync.html /es/concepts/sql 301
 /es/guides/change-webhooks /es/concepts/sql 301
@@ -96,8 +88,6 @@
 /es/guides/ttl.html /es/concepts/sql 301
 /fr/blog/replication /fr/concepts/sql 301
 /fr/blog/replication.html /fr/concepts/sql 301
-/fr/concepts/replication /fr/concepts/sql 301
-/fr/concepts/replication.html /fr/concepts/sql 301
 /fr/concepts/sync /fr/concepts/sql 301
 /fr/concepts/sync.html /fr/concepts/sql 301
 /fr/guides/change-webhooks /fr/concepts/sql 301
@@ -150,8 +140,6 @@
 /guides/ttl.html /concepts/sql 301
 /hi/blog/replication /hi/concepts/sql 301
 /hi/blog/replication.html /hi/concepts/sql 301
-/hi/concepts/replication /hi/concepts/sql 301
-/hi/concepts/replication.html /hi/concepts/sql 301
 /hi/concepts/sync /hi/concepts/sql 301
 /hi/concepts/sync.html /hi/concepts/sql 301
 /hi/guides/change-webhooks /hi/concepts/sql 301
@@ -180,8 +168,6 @@
 /hi/guides/ttl.html /hi/concepts/sql 301
 /ja/blog/replication /ja/concepts/sql 301
 /ja/blog/replication.html /ja/concepts/sql 301
-/ja/concepts/replication /ja/concepts/sql 301
-/ja/concepts/replication.html /ja/concepts/sql 301
 /ja/concepts/sync /ja/concepts/sql 301
 /ja/concepts/sync.html /ja/concepts/sql 301
 /ja/guides/change-webhooks /ja/concepts/sql 301
@@ -210,8 +196,6 @@
 /ja/guides/ttl.html /ja/concepts/sql 301
 /pt-br/blog/replication /pt-br/concepts/sql 301
 /pt-br/blog/replication.html /pt-br/concepts/sql 301
-/pt-br/concepts/replication /pt-br/concepts/sql 301
-/pt-br/concepts/replication.html /pt-br/concepts/sql 301
 /pt-br/concepts/sync /pt-br/concepts/sql 301
 /pt-br/concepts/sync.html /pt-br/concepts/sql 301
 /pt-br/guides/change-webhooks /pt-br/concepts/sql 301
@@ -240,8 +224,6 @@
 /pt-br/guides/ttl.html /pt-br/concepts/sql 301
 /ru/blog/replication /ru/concepts/sql 301
 /ru/blog/replication.html /ru/concepts/sql 301
-/ru/concepts/replication /ru/concepts/sql 301
-/ru/concepts/replication.html /ru/concepts/sql 301
 /ru/concepts/sync /ru/concepts/sql 301
 /ru/concepts/sync.html /ru/concepts/sql 301
 /ru/guides/change-webhooks /ru/concepts/sql 301
@@ -270,8 +252,6 @@
 /ru/guides/ttl.html /ru/concepts/sql 301
 /zh-cn/blog/replication /zh-cn/concepts/sql 301
 /zh-cn/blog/replication.html /zh-cn/concepts/sql 301
-/zh-cn/concepts/replication /zh-cn/concepts/sql 301
-/zh-cn/concepts/replication.html /zh-cn/concepts/sql 301
 /zh-cn/concepts/sync /zh-cn/concepts/sql 301
 /zh-cn/concepts/sync.html /zh-cn/concepts/sql 301
 /zh-cn/guides/change-webhooks /zh-cn/concepts/sql 301
@@ -299,7 +279,6 @@
 /zh-cn/guides/ttl /zh-cn/concepts/sql 301
 /zh-cn/guides/ttl.html /zh-cn/concepts/sql 301
 /ar/blog/replication/ /ar/concepts/sql 301
-/ar/concepts/replication/ /ar/concepts/sql 301
 /ar/concepts/sync/ /ar/concepts/sql 301
 /ar/guides/change-webhooks/ /ar/concepts/sql 301
 /ar/guides/export/ /ar/concepts/sql 301
@@ -314,10 +293,8 @@
 /ar/guides/transactions/ /ar/concepts/sql 301
 /ar/guides/ttl/ /ar/concepts/sql 301
 /blog/replication/ /concepts/sql 301
-/concepts/replication/ /concepts/sql 301
 /concepts/sync/ /concepts/sql 301
 /de/blog/replication/ /de/concepts/sql 301
-/de/concepts/replication/ /de/concepts/sql 301
 /de/concepts/sync/ /de/concepts/sql 301
 /de/guides/change-webhooks/ /de/concepts/sql 301
 /de/guides/export/ /de/concepts/sql 301
@@ -332,7 +309,6 @@
 /de/guides/transactions/ /de/concepts/sql 301
 /de/guides/ttl/ /de/concepts/sql 301
 /es/blog/replication/ /es/concepts/sql 301
-/es/concepts/replication/ /es/concepts/sql 301
 /es/concepts/sync/ /es/concepts/sql 301
 /es/guides/change-webhooks/ /es/concepts/sql 301
 /es/guides/export/ /es/concepts/sql 301
@@ -347,7 +323,6 @@
 /es/guides/transactions/ /es/concepts/sql 301
 /es/guides/ttl/ /es/concepts/sql 301
 /fr/blog/replication/ /fr/concepts/sql 301
-/fr/concepts/replication/ /fr/concepts/sql 301
 /fr/concepts/sync/ /fr/concepts/sql 301
 /fr/guides/change-webhooks/ /fr/concepts/sql 301
 /fr/guides/export/ /fr/concepts/sql 301
@@ -374,7 +349,6 @@
 /guides/transactions/ /concepts/sql 301
 /guides/ttl/ /concepts/sql 301
 /hi/blog/replication/ /hi/concepts/sql 301
-/hi/concepts/replication/ /hi/concepts/sql 301
 /hi/concepts/sync/ /hi/concepts/sql 301
 /hi/guides/change-webhooks/ /hi/concepts/sql 301
 /hi/guides/export/ /hi/concepts/sql 301
@@ -389,7 +363,6 @@
 /hi/guides/transactions/ /hi/concepts/sql 301
 /hi/guides/ttl/ /hi/concepts/sql 301
 /ja/blog/replication/ /ja/concepts/sql 301
-/ja/concepts/replication/ /ja/concepts/sql 301
 /ja/concepts/sync/ /ja/concepts/sql 301
 /ja/guides/change-webhooks/ /ja/concepts/sql 301
 /ja/guides/export/ /ja/concepts/sql 301
@@ -404,7 +377,6 @@
 /ja/guides/transactions/ /ja/concepts/sql 301
 /ja/guides/ttl/ /ja/concepts/sql 301
 /pt-br/blog/replication/ /pt-br/concepts/sql 301
-/pt-br/concepts/replication/ /pt-br/concepts/sql 301
 /pt-br/concepts/sync/ /pt-br/concepts/sql 301
 /pt-br/guides/change-webhooks/ /pt-br/concepts/sql 301
 /pt-br/guides/export/ /pt-br/concepts/sql 301
@@ -419,7 +391,6 @@
 /pt-br/guides/transactions/ /pt-br/concepts/sql 301
 /pt-br/guides/ttl/ /pt-br/concepts/sql 301
 /ru/blog/replication/ /ru/concepts/sql 301
-/ru/concepts/replication/ /ru/concepts/sql 301
 /ru/concepts/sync/ /ru/concepts/sql 301
 /ru/guides/change-webhooks/ /ru/concepts/sql 301
 /ru/guides/export/ /ru/concepts/sql 301
@@ -434,7 +405,6 @@
 /ru/guides/transactions/ /ru/concepts/sql 301
 /ru/guides/ttl/ /ru/concepts/sql 301
 /zh-cn/blog/replication/ /zh-cn/concepts/sql 301
-/zh-cn/concepts/replication/ /zh-cn/concepts/sql 301
 /zh-cn/concepts/sync/ /zh-cn/concepts/sql 301
 /zh-cn/guides/change-webhooks/ /zh-cn/concepts/sql 301
 /zh-cn/guides/export/ /zh-cn/concepts/sql 301
