@@ -191,3 +191,5 @@ a slice needs. See `AGENTS.md` for the full structure and rules.
 Database region observations and dashboard lag: [`replica-status.md`](replica-status.md).
 
 - [Region shape tails and CDC retention](region-shape-tails-and-cdc-retention.md)
+
+CI: [Fast timing budgets and checked builds](fast-ci-budgets.md).
