@@ -4,10 +4,10 @@ using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
-using TerraBase.Features.Documents;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -23,7 +23,7 @@ public static class FunctionsExtensions
             .AddSingleton<FunctionScheduler>().AddHostedService(provider => provider.GetRequiredService<FunctionScheduler>());
 }
 
-internal sealed class FunctionService(SystemCatalog catalog, IDocumentService documents, IUsageMeter usage, IMemoryBudget memory,
+internal sealed class FunctionService(SystemCatalog catalog, ISqlService sql, IUsageMeter usage, IMemoryBudget memory,
     TerraBaseOptions options, TimeProvider time) : IFunctions
 {
     public const string Schedules = "function_schedules";
@@ -143,13 +143,16 @@ internal sealed class FunctionService(SystemCatalog catalog, IDocumentService do
 
         var started = time.GetUtcNow();
         var clock = Stopwatch.StartNew();
-        var run = await Task.Run(() => FunctionRunner.Run(source, eventJson, cancellationToken), cancellationToken).ConfigureAwait(false);
-        var error = run.Error;
-        if (error is null && run.Writes.Count > 0
-            && await documents.WriteAsync(tenant, run.Writes, indexErrors: true, cancellationToken).ConfigureAwait(false) is DocumentRejected rejected)
+        FunctionRun run;
+        var session = sql.Open(tenant, canWrite: true);
+        await using (session.ConfigureAwait(false))
         {
-            error = $"write {rejected.Op} was refused: " + Message(rejected.Error);
+            session.BeginRequest();
+            run = await Task.Run(() => FunctionRunner.RunAsync(source, eventJson, new FunctionSql(session), cancellationToken), cancellationToken)
+                .ConfigureAwait(false);
         }
+
+        var error = run.Error;
 
         usage.RecordOperation(tenant, "invoke", 1);
         var log = new FunctionLogBody(EntityIds.New().ToString(), started, trigger, error is null ? "ok" : "error", clock.ElapsedMilliseconds,
@@ -194,18 +197,6 @@ internal sealed class FunctionService(SystemCatalog catalog, IDocumentService do
 
         return new FunctionResponse(200, "application/json", Encoding.UTF8.GetBytes(json));
     }
-
-    private static string Message(Failure error) => error switch
-    {
-        NotFound e => e.Message ?? "not found",
-        Conflict e => e.Message,
-        Validation e => e.Message,
-        PreconditionFailed e => e.Message,
-        QuotaExceeded e => e.Message,
-        PayloadTooLarge e => e.Message,
-        Unavailable e => e.Message,
-        _ => "the write was refused",
-    };
 
     private static FunctionBody Body(FunctionRecord record, bool withSource) =>
         new(record.Name, withSource ? record.Source : null, record.Cron, record.CreatedAt, record.UpdatedAt);
