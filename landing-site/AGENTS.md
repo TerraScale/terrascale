@@ -50,3 +50,4 @@
 - Cover navigation, calls to action, forms and important interactive states. Check direct navigation and refresh, responsive layouts, links, assets, hydration and console errors. Validate generated output, not just the dev server.
 - Every feature is always on. Do not add feature flags, activation settings, deploy toggles, kill switches or tuning knobs. Keep one correct value in code. CI allowances for unavoidable third-party switch names need a one-line reason. Fakes, demo stores and skip-auth belong only in tests and test binaries.
 - Do not invent product claims, APIs or URLs, or bypass authorization, tenant scope, registered callbacks, payment consent or safety guards. The contract requires automatic public endpoint discovery; README records SDK and qualification gaps and existing switches remain owning implementation work.
+- Changes limited to `AGENTS.md`/`CLAUDE.md` skip area Fast tests and proof gates in CI. Mixed commits keep the gates for the changed code.
