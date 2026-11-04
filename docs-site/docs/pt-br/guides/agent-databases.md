@@ -17,6 +17,78 @@ Shared names and method signatures for every SDK are in [SQL API](https://github
 Requests below use `https://api.terrascale.tech`, with `Authorization: Bearer <token>` from the
 [authentication guide](/pt-br/guides/authentication). Replace `{project}` with your project ID and `{database}` with a database name or ULID.
 
+## Use MCP from Claude Code or Codex
+
+Connect to `https://mcp.terrascale.tech/` using a project API key with
+`databases:read databases:write documents:read documents:write`. Create the parent key in
+[the dashboard](https://dash.terrascale.tech/api-keys) and complete its hosted confirmation once.
+The key stays in your client's environment; never put it in a prompt or commit it in configuration.
+
+Enter it in your terminal without recording its value in shell history:
+
+```bash
+read -rs TERRASCALE_API_KEY && export TERRASCALE_API_KEY
+```
+
+### Claude Code
+
+```bash
+claude mcp add --transport http terrascale https://mcp.terrascale.tech/ \
+  --header 'Authorization: Bearer ${TERRASCALE_API_KEY}'
+claude
+```
+
+Keep the single quotes so Claude Code reads the variable from its environment when connecting.
+
+### Codex
+
+Add this to `~/.codex/config.toml`, then start Codex from the terminal where you exported the key:
+
+```toml
+[mcp_servers.terrascale]
+url = "https://mcp.terrascale.tech/"
+bearer_token_env_var = "TERRASCALE_API_KEY"
+```
+
+See the [Codex MCP configuration documentation](https://developers.openai.com/codex/mcp/).
+For interactive dashboard access, both clients also support [MCP sign-in](/pt-br/guides/mcp).
+OAuth and personal access tokens can manage databases and run SQL using your dashboard permissions;
+scoped-key minting requires the parent API key connection above.
+
+### Agent workflow
+
+Call `tools/list` to discover the current tools, then `get_context` to read the key's project and scopes.
+The following tool calls create a temporary database, fork it, mint a scoped key, query and inspect it,
+restore a backup, and delete the databases. Substitute the IDs returned by earlier calls:
+
+| Tool | Arguments |
+| --- | --- |
+| `create_database` | `{"name":"agent-run","ttlSeconds":3600}` |
+| `execute_sql` | `{"databaseId":"<run-id>","sql":"CREATE TABLE results (id TEXT PRIMARY KEY, value TEXT)"}` |
+| `execute_sql` | `{"databaseId":"<run-id>","sql":"INSERT INTO results VALUES ('one', 'ready')"}` |
+| `branch_database` | `{"databaseId":"<run-id>","name":"agent-fork","ttlSeconds":600}` |
+| `create_scoped_key` | `{"databaseId":"<fork-id>","access":"read_write","ttlSeconds":600}` |
+| `run_sql` | `{"databaseId":"<fork-id>","sql":"SELECT * FROM results"}` |
+| `get_database_schema` | `{"databaseId":"<fork-id>"}` |
+| `delete_database` | `{"databaseId":"<fork-id>","confirmName":"agent-fork"}` |
+| `create_backup` | `{"databaseId":"<run-id>"}` |
+| `restore_backup` | `{"databaseId":"<run-id>","backupId":"<backup-id>","name":"agent-restored"}` |
+| `delete_database` | `{"databaseId":"<restored-id>","confirmName":"agent-restored"}` |
+| `delete_database` | `{"databaseId":"<run-id>","confirmName":"agent-run"}` |
+
+Fork and restore each need room for another database under the organization's plan. Free allows one database;
+use a plan with capacity for the source and its copy.
+
+`execute_sql` runs one read or write statement and returns columns, rows and write counts.
+`run_sql` accepts reads only. `get_database_schema` includes empty tables, declared columns and types;
+it returns at most 100 tables and reports `truncated` when more exist.
+
+To hand work to a restricted agent, save the returned scoped `key` in that agent's protected environment
+and configure a separate MCP connection with it. A `read` key can query and inspect its database but
+`execute_sql` refuses writes. A `read_write` key can also change its tables and data. Neither scoped key
+can create, fork, restore or delete databases, mint keys, or access another database. The parent key
+keeps lifecycle authority. Scoped keys and their secrets are never tool arguments.
+
 ## Create a database that deletes itself
 
 `POST /v1/projects/{project}/databases` with scope `databases:write`:
