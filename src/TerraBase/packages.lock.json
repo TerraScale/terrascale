@@ -107,6 +107,15 @@
           "NATS.Client.Core": "3.3.2"
         }
       },
+      "NATS.Client.KeyValueStore": {
+        "type": "Direct",
+        "requested": "[3.3.2, )",
+        "resolved": "3.3.2",
+        "contentHash": "qnh6AxEJmwl1GZuCMHoxnt1dwCHHSUda+kuOQrWYrP+PliZNWxcn1AIdhEXFqFfqaPgLj0S+/t5fWnRA4rjHPA==",
+        "dependencies": {
+          "NATS.Client.JetStream": "3.3.2"
+        }
+      },
       "NUlid": {
         "type": "Direct",
         "requested": "[1.7.3, )",

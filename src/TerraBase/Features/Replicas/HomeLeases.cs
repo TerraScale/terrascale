@@ -138,10 +138,10 @@ internal sealed class HomeLeases(
             try
             {
                 var lease = JsonSerializer.SerializeToUtf8Bytes(new NodeLease(options.MachineId, options.Region, _session), TerraBaseJsonContext.Default.NodeLease);
-                var fresh = _nodeRevision is not { } revision;
-                _nodeRevision = fresh
-                    ? await TakeNodeAsync(js, kv, lease, cancellationToken).ConfigureAwait(false)
-                    : await PublishNodeAsync(js, lease, revision, cancellationToken).ConfigureAwait(false);
+                var fresh = _nodeRevision is null;
+                _nodeRevision = _nodeRevision is { } revision
+                    ? await PublishNodeAsync(js, lease, revision, cancellationToken).ConfigureAwait(false)
+                    : await TakeNodeAsync(js, kv, lease, cancellationToken).ConfigureAwait(false);
                 fences.Renewed(sent + (long)((Ttl - Margin).TotalSeconds * TimeProvider.System.TimestampFrequency));
                 if (fresh)
                 {
