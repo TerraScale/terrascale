@@ -23,7 +23,22 @@ ${metering.allowances.definition}
 
 Overage rates on paid plans: $${rates.operationUnitsPerMillionUsd} per million write units and $${rates.storageGbRegionMonthUsd} per GB-month of storage.
 
-When a plan's write cap or SQL read fair use is reached, the statement answers \`429 quota_exceeded\` (Postgres SQLSTATE \`53400\`) until the next UTC month or an upgrade.
+When a plan's write cap or SQL read fair use is reached, the statement answers \`429 quota_exceeded\` (Postgres SQLSTATE \`53100\`) until the next UTC month or an upgrade.
+
+## Regions per database
+
+| Plan | Home regions per database |
+| --- | --- |
+${plans.map((plan) => `| ${plan.name} | ${count(plan.entitlements.regionsPerDatabase)} |`).join('\n')}
+
+Each database has one home region for writes and can have encrypted read replicas in other serving regions.
+The catalog's regionsPerDatabase counts home regions. Replica storage is not billed separately; writes and stored
+bytes are metered at home. See [regions](/concepts/regions) and [replication](/concepts/replication).
+
+## Spending caps
+
+Plan write caps are enforced. Customer-set hard dollar spending caps are coming. Internal report-only spending
+thresholds do not stop services or cap a customer's bill.
 
 See [support](/legal/support) for support targets.
 `,

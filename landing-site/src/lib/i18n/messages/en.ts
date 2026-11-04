@@ -225,7 +225,7 @@ export const en = {
     triad: [
       { title: 'Storage in the home region' },
       { title: 'Writes counted in 4 KiB units' },
-      { title: 'Write caps on every plan' },
+      { title: 'Plan write caps' },
     ],
     compare: {
       title: 'Plan allowances.',

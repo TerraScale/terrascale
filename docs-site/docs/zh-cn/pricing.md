@@ -27,7 +27,26 @@ Free includes small allowances without a card; new writes stop at its operation 
 
 Overage rates on paid plans: $5 per million write units and $0.5 per GB-month of storage.
 
-When a plan's write cap or SQL read fair use is reached, the statement answers `429 quota_exceeded` (Postgres SQLSTATE `53400`) until the next UTC month or an upgrade.
+When a plan's write cap or SQL read fair use is reached, the statement answers `429 quota_exceeded` (Postgres SQLSTATE `53100`) until the next UTC month or an upgrade.
+
+## Regions per database
+
+| Plan | Home regions per database |
+| --- | --- |
+| Free | 1 |
+| Starter | 1 |
+| Pro | 1 |
+| Team | 1 |
+| Enterprise | 1 |
+
+Each database has one home region for writes and can have encrypted read replicas in other serving regions.
+The catalog's regionsPerDatabase counts home regions. Replica storage is not billed separately; writes and stored
+bytes are metered at home. See [regions](/zh-cn/concepts/regions) and [replication](/zh-cn/concepts/replication).
+
+## Spending caps
+
+Plan write caps are enforced. Customer-set hard dollar spending caps are coming. Internal report-only spending
+thresholds do not stop services or cap a customer's bill.
 
 See [support](/zh-cn/legal/support) for support targets.
 
