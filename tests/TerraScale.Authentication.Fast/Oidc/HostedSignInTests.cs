@@ -158,7 +158,7 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         using var limited = await oidc.PostFormAsync(SignIn, new() { ["email"] = "alice@example.test", ["next"] = string.Empty });
         var budgetPage = await limited.Content.ReadAsStringAsync();
         await Assert.That(limited.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
-        await Assert.That(budgetPage).Contains("You've requested several codes. Use the latest code you received, or try again in");
+        await Assert.That(budgetPage).Contains("requested several codes. Use the latest code you received, or try again in");
         await Assert.That(budgetPage).Contains("No new code was sent");
         await Assert.That(budgetPage).Contains("disabled>Send a new code in");
         await Assert.That(budgetPage).DoesNotContain(">Send a new code</button>");
@@ -171,7 +171,7 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
             using var neutral = await oidc.PostFormAsync(SignIn, new() { ["email"] = Stranger, ["next"] = string.Empty });
             var neutralPage = await neutral.Content.ReadAsStringAsync();
             await Assert.That(neutral.StatusCode).IsEqualTo(request < Passcodes.MaxIssuesPerWindow ? HttpStatusCode.OK : HttpStatusCode.TooManyRequests);
-            await Assert.That(neutralPage).DoesNotContain("You've requested several codes");
+            await Assert.That(neutralPage).DoesNotContain("requested several codes");
             await Assert.That(neutralPage).DoesNotContain("No new code was sent");
         }
     }
