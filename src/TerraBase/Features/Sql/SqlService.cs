@@ -19,6 +19,56 @@ internal sealed class SqlService(
         return new SqlSession(engine, quota, usage, time, transactionTime, database, canWrite);
     }
 
+    public async ValueTask<ReplicaSqlOutcome> ExecuteOnReplicaAsync(
+        TenantContext database, IReplicaReader reader, IReadOnlyList<(SqlStatementPlan Plan, SqlCommand Command)> statements, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        ArgumentNullException.ThrowIfNull(reader);
+        ArgumentNullException.ThrowIfNull(statements);
+        var results = new List<SqlResult>(statements.Count);
+        long units = 0;
+        for (var i = 0; i < statements.Count; i++)
+        {
+            var (plan, command) = statements[i];
+            SqlStatementResult raw;
+            try
+            {
+                raw = await reader.ExecuteAsync(
+                    new SqlStatement(plan.Sql, [.. command.Args.Select(SqlSession.Bound)],
+                        command.Named.ToDictionary(pair => pair.Key, pair => SqlSession.Bound(pair.Value), StringComparer.Ordinal),
+                        SqlSession.MaxRows, SqlSession.MaxBytes, SqlLimits.MaxRequestTime),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (SqlStatementException error)
+            {
+                return new ReplicaSqlFailure(SqlSession.Map(error, canWrite: false), i);
+            }
+
+            if (raw.Truncated)
+            {
+                return new ReplicaSqlFailure(SqlSession.TooManyRows, i);
+            }
+
+            if (raw.Rows.Any(row => row.Any(value => value is double real && !double.IsFinite(real))))
+            {
+                return new ReplicaSqlFailure(SqlErrors.NonFinite, i);
+            }
+
+            var result = new SqlResult(
+                [.. raw.Columns.Select(column => new SqlColumn(column.Name, column.DeclType))],
+                [.. raw.Rows.Select(row => (IReadOnlyList<SqlValue>)Array.ConvertAll(row, SqlSession.Value))], 0, null);
+            units += plan.ReadsTables ? SqlSession.ReadUnits(result) : 0;
+            results.Add(result);
+        }
+
+        if (units > 0)
+        {
+            usage.RecordRead(database, units);
+        }
+
+        return results;
+    }
+
     public async ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(TenantContext database, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
@@ -66,8 +116,8 @@ internal sealed class SqlSession(
     : ISqlSession
 {
     private const int MaxStatements = 256;
-    private const int MaxRows = 10_000;
-    private const long MaxBytes = 8 * 1024 * 1024;
+    internal const int MaxRows = 10_000;
+    internal const long MaxBytes = 8 * 1024 * 1024;
     private const long MaxChangedRows = 1024;
     private const long MaxGrowthBytes = 8 * 1024 * 1024;
     private const string StatementSavepoint = "_tb_statement";
@@ -76,7 +126,7 @@ internal sealed class SqlSession(
     private static readonly IReadOnlyDictionary<string, object?> NoNamed = new Dictionary<string, object?>();
     private static readonly SqlError UnknownDatabase = SqlErrors.Error("the database does not exist");
     private static readonly SqlError TooManyChanges = SqlErrors.TooBig("a transaction changes at most 1024 rows and grows the database by at most 8 MiB");
-    private static readonly SqlError TooManyRows = SqlErrors.TooBig("a result holds at most 10000 rows and 8 MiB; add a LIMIT");
+    internal static readonly SqlError TooManyRows = SqlErrors.TooBig("a result holds at most 10000 rows and 8 MiB; add a LIMIT");
     private static readonly SqlError Expired = new(SqlErrors.QueryCanceled, "the transaction expired: it was open for more than 5 seconds and was rolled back");
     private static readonly SqlError Aborted = new(SqlErrors.TransactionRolledBack, "the transaction was rolled back after a failed statement; end it with ROLLBACK");
 
@@ -853,17 +903,22 @@ internal sealed class SqlSession(
             return result;
         }
 
-        var units = result.Rows.Sum(row => Math.Max(1, OperationUnits.Of(row.Sum(value => value.Kind switch
+        var units = ReadUnits(result);
+        return result with { ReadCharge = new SqlReadCharge(() => usage.RecordRead(database, units)) };
+    }
+
+    internal static long ReadUnits(SqlResult result) =>
+        result.Rows.Sum(row => Math.Max(1, OperationUnits.Of(row.Sum(value => value.Kind switch
         {
             SqlValueKind.Text => (long)Encoding.UTF8.GetByteCount(value.Text!),
             SqlValueKind.Blob => value.Blob!.LongLength,
             SqlValueKind.Null => 0L,
             _ => 8L,
         }))));
-        return result with { ReadCharge = new SqlReadCharge(() => usage.RecordRead(database, units)) };
-    }
 
-    private SqlError Map(SqlStatementException error) => error.Failure switch
+    private SqlError Map(SqlStatementException error) => Map(error, canWrite);
+
+    internal static SqlError Map(SqlStatementException error, bool canWrite) => error.Failure switch
     {
         SqlFailure.PrimaryKey => new SqlError(SqlErrors.PrimaryKeyViolation, error.Message),
         SqlFailure.Unique => new SqlError(SqlErrors.UniqueViolation, error.Message),
@@ -889,7 +944,7 @@ internal sealed class SqlSession(
         _ => null,
     };
 
-    private static object? Bound(SqlValue value) => value.Kind switch
+    internal static object? Bound(SqlValue value) => value.Kind switch
     {
         SqlValueKind.Integer => value.Integer,
         SqlValueKind.Real => value.Real,
@@ -898,7 +953,7 @@ internal sealed class SqlSession(
         _ => null,
     };
 
-    private static SqlValue Value(object? value) => value switch
+    internal static SqlValue Value(object? value) => value switch
     {
         long integer => SqlValue.Of(integer),
         double real => SqlValue.Of(real),

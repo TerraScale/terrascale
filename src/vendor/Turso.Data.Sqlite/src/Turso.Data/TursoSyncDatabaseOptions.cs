@@ -71,6 +71,22 @@ public sealed class TursoRemoteEncryptionOptions
     }
 }
 
+public sealed class TursoLocalEncryptionOptions
+{
+    public required string HexKey { get; init; }
+    public required TursoRemoteEncryptionCipher Cipher { get; init; }
+
+    internal string NativeName => new TursoRemoteEncryptionOptions { Key = HexKey, Cipher = Cipher }.NativeName;
+
+    internal void Validate()
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(HexKey);
+        if (HexKey.Length % 2 != 0 || !HexKey.All(char.IsAsciiHexDigit))
+            throw new ArgumentException("The local encryption key must be hexadecimal.", nameof(HexKey));
+        _ = NativeName;
+    }
+}
+
 public sealed class TursoPartialSyncOptions
 {
     public int? PrefixLength { get; init; }
@@ -114,6 +130,7 @@ public sealed class TursoSyncDatabaseOptions
     public bool BootstrapIfEmpty { get; init; } = true;
     public TursoPartialSyncOptions? PartialSync { get; init; }
     public TursoRemoteEncryptionOptions? RemoteEncryption { get; init; }
+    public TursoLocalEncryptionOptions? LocalEncryption { get; init; }
     public long? PushOperationsThreshold { get; init; }
     public long? PullBytesThreshold { get; init; }
     public bool ForceLogicalMvccPull { get; init; }
@@ -193,6 +210,9 @@ public sealed class TursoSyncDatabaseOptions
         }
 
         RemoteEncryption?.Validate();
+        LocalEncryption?.Validate();
+        if (LocalEncryption is not null && (RemoteEncryption is not null || PartialSync is not null))
+            throw new InvalidOperationException("Local encryption cannot be combined with remote encryption or partial sync.");
     }
 
     private static void ValidateNativeSize(long? value, string parameterName)

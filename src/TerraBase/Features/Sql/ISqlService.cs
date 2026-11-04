@@ -1,3 +1,4 @@
+using TerraBase.Engine;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Sql;
@@ -76,8 +77,21 @@ internal sealed record SqlTableColumn(string Name, string? DeclType, bool NotNul
 
 internal sealed record SqlTableInfo(string Name, IReadOnlyList<SqlTableColumn> Columns);
 
+/// <summary>The first failed statement of a replica read and its index.</summary>
+internal sealed record ReplicaSqlFailure(SqlError Error, int Statement);
+
+/// <summary>The results of every statement run on a replica, or the first failure.</summary>
+internal readonly union ReplicaSqlOutcome(IReadOnlyList<SqlResult>, ReplicaSqlFailure);
+
 internal interface ISqlService
 {
+    /// <summary>
+    /// Runs read statements on one snapshot of this region's replica of <paramref name="database"/>, under the same limits as
+    /// the home and metered as reads here. The caller refuses writes first; a statement that would write fails read-only.
+    /// </summary>
+    ValueTask<ReplicaSqlOutcome> ExecuteOnReplicaAsync(
+        TenantContext database, IReplicaReader reader, IReadOnlyList<(SqlStatementPlan Plan, SqlCommand Command)> statements, CancellationToken cancellationToken);
+
     ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(TenantContext database, CancellationToken cancellationToken);
 
     ISqlSession Open(TenantContext database, bool canWrite);
