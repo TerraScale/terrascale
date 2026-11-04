@@ -93,12 +93,14 @@ internal sealed partial class TursoStorageTransaction
     {
         var native = session.Native;
         _ranPlain |= write;
-        _sqlChanged |= write;
+        var changed = write;
         _queryBudget!.Charge(statement.Sql);
         CountRead("query");
         try
         {
             var pages = write ? Counter(native, "PRAGMA page_count;") : 0L;
+            var changes = write ? Counter(native, "SELECT total_changes();") : 0L;
+            var schema = write ? Counter(native, "PRAGMA schema_version;") : 0L;
             var (prepared, consumed) = Prepare(native, statement.Sql, statement.First);
             (List<SqlStatementColumn> Columns, List<object?[]> Rows, long Affected, bool Truncated) stepped;
             TursoBindings.SetQueryTimeout(native, statement.Timeout);
@@ -120,11 +122,16 @@ internal sealed partial class TursoStorageTransaction
 
             var rowid = Counter(native, "SELECT last_insert_rowid();");
             var grown = write ? Counter(native, "PRAGMA page_count;") - pages : 0L;
+            changed = write && (grown != 0 || Counter(native, "SELECT total_changes();") != changes || Counter(native, "PRAGMA schema_version;") != schema);
             return new SqlStatementResult(stepped.Columns, stepped.Rows, stepped.Affected, rowid, grown * PageSize(native), stepped.Truncated, consumed);
         }
         catch (TursoException error)
         {
             throw Failure(native, error);
+        }
+        finally
+        {
+            _sqlChanged |= changed;
         }
     }
 
@@ -197,7 +204,7 @@ internal sealed partial class TursoStorageTransaction
                 var held = checked((2 * size) + (16L * columns.Count) + 64);
                 if (held > reserved)
                 {
-                    var block = Math.Max(held, 256 * 1024);
+                    var block = store.IsSystem ? held : Math.Max(held, 256 * 1024);
                     QosContext.ReserveResult(block, store.IsSystem ? null : QosContext.Current);
                     reserved += block;
                 }
