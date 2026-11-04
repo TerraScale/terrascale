@@ -18,8 +18,18 @@ namespace TerraScale.Dashboard.Features.Backups
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor,
         bool HasMore,
         int Limit);
+    // One bounded producer page: items as the dashboard renders them, plus the producer's own continuation.
+    public sealed record BackupPageSlice(
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BackupPolicyView? Policy,
+        IReadOnlyList<BackupView> Items,
+        string? NextCursor)
+    {
+        [JsonIgnore] public string PolicyUnavailable { get; init; } = "";
+        public bool HasMore => NextCursor is not null;
+    }
     public sealed record BackupRestoreResult(string DatabaseId, string Name, string Status);
     public sealed record ProducerBackup(string Id, string DatabaseId, string Status, string Trigger, long SizeBytes, DateTimeOffset CreatedAt);
+    public sealed record BackupBackendPage(IReadOnlyList<ProducerBackup> Items, string? NextCursor);
     public sealed record ProducerBackupPolicy(string? FullBackupCron, int RetentionDays, bool Disabled, DateTimeOffset? UpdatedAt);
     // The project's own bucket at TerraBase (credentials are write-only there) and a database's scheduled NDJSON export into it.
     public sealed record BackupDestinationView(string Endpoint, string Region, string Bucket, string Mode, DateTimeOffset? UpdatedAt);
@@ -34,6 +44,7 @@ namespace TerraScale.Dashboard.Features.Backups
     public interface IBackupBackend
     {
         Task<IReadOnlyList<ProducerBackup>> ListAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
+        Task<BackupBackendPage> ListPageAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? after, int limit, CancellationToken cancellationToken);
         Task<ProducerBackup> CreateAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
         Task<ProducerBackupPolicy> PolicyAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
         Task<ProducerBackupPolicy> SetPolicyAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? fullBackupCron,

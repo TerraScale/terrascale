@@ -4,6 +4,40 @@ namespace TerraScale.Dashboard.Features.Backups
 {
     public sealed class BackupService(AccountService accounts, DatabaseService databases, IBackupBackend backend)
     {
+        // One producer page per call: the dashboard forwards its own cursor and returns exactly that page (TS-1230 pattern).
+        public async Task<BackupPageSlice> ListPageAsync(AccountContext context, string databaseId, string? cursor, int limit, CancellationToken ct)
+        {
+            context = await databases.CurrentAsync(context, ct);
+            var database = DatabaseService.Database(context, databaseId);
+            var scope = DatabaseService.Scope(context);
+            var home = await databases.HomeAsync(context, database, ct);
+            CursorPaging.ValidateLimit(limit);
+            if (cursor is { Length: > 512 } || cursor is not null && cursor.Any(char.IsControl))
+            {
+                throw new AccountAccessException("Use a cursor this list returned.", 422);
+            }
+
+            var page = await backend.ListPageAsync(scope, home, databaseId, cursor, limit, ct);
+            var items = new List<BackupView>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var backup in page.Items)
+            {
+                Validate(backup, databaseId);
+                if (seen.Add(backup.Id))
+                {
+                    items.Add(View(backup));
+                }
+            }
+
+            BackupPolicyView? policy = null;
+            var policyUnavailable = "";
+            try { policy = Policy(await backend.PolicyAsync(scope, home, databaseId, ct)); }
+            catch (Exception error) when (BackupEndpoints.KnownFailure(error) &&
+                (error is not OperationCanceledException || !ct.IsCancellationRequested))
+            { policyUnavailable = "Provider backup scheduling is unavailable."; }
+            return new(policy, [.. items], page.NextCursor) { PolicyUnavailable = policyUnavailable };
+        }
+
         public async Task<BackupListing> ListAsync(AccountContext context, string databaseId, CancellationToken ct)
         {
             context = await databases.CurrentAsync(context, ct);
