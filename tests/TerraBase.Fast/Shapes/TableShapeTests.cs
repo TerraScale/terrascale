@@ -37,7 +37,7 @@ public sealed class TableShapeTests
         await Assert.That(answer.Cursor).IsNotNull();
         await Assert.That(answer.Ops.Single().GetProperty("row").GetProperty("score").GetDouble()).IsEqualTo(1.5);
         await Assert.That(client.Equals(await TableShapeClient.TruthAsync(db, "items"))).IsTrue();
-        await CacheControlAssert.EqualAsync(answer.CacheControl);
+        await CacheControlAssert.EqualAsync(answer.CacheControl, "private, max-age=1, stale-while-revalidate=1");
     }
 
     [Test]

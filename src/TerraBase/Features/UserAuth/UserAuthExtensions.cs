@@ -68,7 +68,13 @@ internal static class UserAuthExtensions
 
     internal sealed record SocketRefusal(string Code, string Message);
 
-    internal static async ValueTask<SocketRefusal?> AdmitSocketAsync(HttpContext context, CancellationTokenSource revoked, Action<IDisposable> keep)
+    internal static ValueTask<SocketRefusal?> AdmitSocketAsync(HttpContext context, CancellationTokenSource revoked, Action<IDisposable> keep) =>
+        AdmitSocketCoreAsync(context, revoked, keep, shape: false);
+
+    internal static ValueTask<SocketRefusal?> AdmitShapeSocketAsync(HttpContext context, CancellationTokenSource revoked, Action<IDisposable> keep) =>
+        AdmitSocketCoreAsync(context, revoked, keep, shape: true);
+
+    private static async ValueTask<SocketRefusal?> AdmitSocketCoreAsync(HttpContext context, CancellationTokenSource revoked, Action<IDisposable> keep, bool shape)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(revoked);
@@ -78,7 +84,7 @@ internal static class UserAuthExtensions
             return null;
         }
 
-        if (jwt.HasClaim("token_kind", "end_user"))
+        if (!shape && jwt.HasClaim("token_kind", "end_user"))
         {
             return new SocketRefusal("forbidden", "end-user tokens cannot run SQL");
         }
@@ -231,7 +237,7 @@ internal static class UserAuthExtensions
 
             if (Identity(context.User, UserAuthenticationHandler.SchemeName)?.HasClaim("token_kind", "end_user") == true
                 && context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName is not
-                    ("getShape" or "getShapeKey" or "getShapeManifest"
+                    ("getShape" or "getShapeKey" or "getShapeManifest" or "connectShapeHints"
                     or "createFileUpload" or "completeFileUpload" or "listBucketFiles" or "createFileDownload" or "deleteBucketFile"))
             {
                 context.Response.StatusCode = StatusCodes.Status403Forbidden;

@@ -14,7 +14,7 @@ namespace TerraBase.Features.Shapes;
 
 internal sealed class GetShapeEndpoint(
     ITenantDirectory tenants, IShapeLineages lineages, IShapeSnapshots snapshots, IShapeChunks chunks, IShapeLiveTail live,
-    IShapeMetrics metrics, IShapeFlights<ShapeRead> flights, IShapeMirror mirror) : EndpointWithoutRequest<IResult>
+    IShapeMetrics metrics, IShapeFlights<ShapeRead> flights, IShapeMirror mirror, ShapeConnections connections) : EndpointWithoutRequest<IResult>
 {
     private static readonly Validation BadOffset = new("offset must be -1, snap.<S>.<P> or a decimal commit boundary");
 
@@ -59,16 +59,16 @@ internal sealed class GetShapeEndpoint(
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        var resolved = await ResolveAsync(HttpContext, tenants, lineages, cancellationToken);
-        if (resolved is not ResolvedShape shape)
-        {
-            return Error(resolved);
-        }
-
         var checkedRequest = CheckRequest();
         if (checkedRequest is not ShapeRequest request)
         {
             return ErrorResponse.From((Validation)checkedRequest);
+        }
+
+        var resolved = await ResolveAsync(HttpContext, tenants, lineages, cancellationToken);
+        if (resolved is not ResolvedShape shape)
+        {
+            return Error(resolved);
         }
 
         var (scope, lineage) = (shape.Scope, shape.Lineage);
@@ -87,6 +87,12 @@ internal sealed class GetShapeEndpoint(
 
         if (request.Live)
         {
+            if (connections.TryEnter(scope.Database) is not { } connection)
+            {
+                return ErrorResponse.From(new QuotaExceeded("shape connections are at capacity; retry later", "shape_busy"));
+            }
+
+            HttpContext.Response.RegisterForDispose(connection);
             HttpContext.Features.Get<QosRequestLease>()?.Lease.Dispose();
         }
 
@@ -135,6 +141,7 @@ internal sealed class GetShapeEndpoint(
 
         headers.Vary = "Authorization";
         headers.ETag = $"\"{tag}\"";
+        headers["TB-Shape-Hints"] = GetShapeHintEndpoint.Protocol;
         headers["TB-Shape-Handle"] = lineage.Handle;
         headers["TB-Shape-Next-Offset"] = body.NextOffset;
         headers["TB-Shape-Up-To-Date"] = body.UpToDate ? "true" : "false";
@@ -174,6 +181,7 @@ internal sealed class GetShapeEndpoint(
     {
         var headers = HttpContext.Response.Headers;
         headers.Vary = "Authorization";
+        headers["TB-Shape-Hints"] = GetShapeHintEndpoint.Protocol;
         headers["TB-Shape-Handle"] = lineage.Handle;
         HttpContext.Response.ContentType = DatabaseRoute.JsonMediaType;
         metrics.RecordRedirect();

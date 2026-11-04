@@ -13,7 +13,7 @@ internal interface IReplicaShapeReader : IAsyncDisposable
     ValueTask<ShapeRead?> ReadAsync(ShapeScope scope, ShapeLineage lineage, long offset, IMemoryBudget memory, CancellationToken cancellationToken);
 }
 
-internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudget memory, TimeProvider time, IShapeFlights<ShapeRead> flights) : IDisposable
+internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudget memory, TimeProvider time, IShapeFlights<ShapeRead> flights, ShapeControls controls) : IDisposable
 {
     private readonly SemaphoreSlim _waiting = new(128, 128);
 
@@ -23,9 +23,19 @@ internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudge
 
     internal async ValueTask<LineageResult> ResolveAsync(TenantContext database, string table, ShapeQuery query, CancellationToken cancellationToken)
     {
-        await using var reader = await replicas.BeginShapeReadAsync(database, cancellationToken).ConfigureAwait(false);
-        return reader is null ? new Unavailable("the region replica is catching up; retry later")
-            : await reader.ResolveAsync(table, query, cancellationToken).ConfigureAwait(false);
+        if (replicas.HeldRevision(database) is not { } revision)
+        {
+            return new Unavailable("the region replica is catching up; retry later");
+        }
+
+        return await controls.ReadAsync(replicas, revision, database, table, query, Read, cancellationToken).ConfigureAwait(false);
+
+        async ValueTask<LineageResult> Read(CancellationToken token)
+        {
+            await using var reader = await replicas.BeginShapeReadAsync(database, token).ConfigureAwait(false);
+            return reader is null ? new Unavailable("the region replica is catching up; retry later")
+                : await reader.ResolveAsync(table, query, token).ConfigureAwait(false);
+        }
     }
 
     internal async ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, CancellationToken cancellationToken)

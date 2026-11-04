@@ -46,9 +46,14 @@ public static class ShapesExtensions
             {
                 context.Response.OnStarting(static state =>
                 {
-                    ((HttpResponse)state).Headers.CacheControl = OriginNoStore.CacheControl;
+                    var current = (HttpContext)state;
+                    current.Response.Headers.CacheControl = current.Response.StatusCode is StatusCodes.Status200OK or StatusCodes.Status304NotModified
+                        && current.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == "getShape"
+                        && current.Request.Query["live"] == "true"
+                            ? "private, max-age=1, stale-while-revalidate=1"
+                            : OriginNoStore.CacheControl;
                     return Task.CompletedTask;
-                }, context.Response);
+                }, context);
             }
 
             return next(context);
@@ -82,6 +87,7 @@ public static class ShapesExtensions
 
                 return Task.CompletedTask;
             }))
+            .AddSingleton<ShapeConnections>()
             .AddSingleton<ShapeControls>()
             .AddSingleton<ShapeRegistry>()
             .AddSingleton<IShapeFlightSealer>(provider => provider.GetRequiredService<ShapeRegistry>())

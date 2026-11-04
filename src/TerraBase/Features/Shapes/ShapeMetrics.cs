@@ -41,6 +41,7 @@ internal sealed class ShapeMetrics : IShapeMetrics
     private readonly Counter<long> _reads;
     private readonly UpDownCounter<long> _waiting;
     private readonly UpDownCounter<long> _flights;
+    private readonly Counter<long> _flightStarts;
     private readonly Counter<long> _seals;
     private readonly Histogram<double> _sealSeconds;
     private readonly Counter<long> _sealedBytes;
@@ -53,6 +54,7 @@ internal sealed class ShapeMetrics : IShapeMetrics
         var meter = meters.Create(Telemetry.MeterName);
         _reads = meter.CreateCounter<long>("terrabase.shape.reads", description: "Shape responses read, including sealed-data hits.");
         _waiting = meter.CreateUpDownCounter<long>("terrabase.shape.requests.waiting", description: "Shape requests currently waiting.");
+        _flightStarts = meter.CreateCounter<long>("terrabase.shape.flights.started", description: "Shared shape computations started.");
         _flights = meter.CreateUpDownCounter<long>("terrabase.shape.flights.active", description: "Shape flights currently running.");
         _seals = meter.CreateCounter<long>("terrabase.shape.seals", description: "Shape seals successfully published.");
         _sealSeconds = meter.CreateHistogram<double>("terrabase.shape.seals.duration", "s", "Time to publish a shape seal.");
@@ -65,7 +67,14 @@ internal sealed class ShapeMetrics : IShapeMetrics
 
     public void ChangeWaiting(long delta) => _waiting.Add(delta);
 
-    public void ChangeFlights(long delta) => _flights.Add(delta);
+    public void ChangeFlights(long delta)
+    {
+        _flights.Add(delta);
+        if (delta > 0)
+        {
+            _flightStarts.Add(delta);
+        }
+    }
 
     public void RecordSeal(long bytes, TimeSpan elapsed)
     {

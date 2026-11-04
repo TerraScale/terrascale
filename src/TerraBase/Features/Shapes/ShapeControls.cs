@@ -14,8 +14,12 @@ internal sealed class ShapeControls(IMemoryBudget memory, IHostApplicationLifeti
 
     internal async ValueTask<LineageResult> ReadAsync(IDatabaseStore store, TenantContext database, string table, ShapeQuery query,
         Func<CancellationToken, ValueTask<LineageResult>> read, CancellationToken cancellationToken)
+        => await ReadAsync(store, store.CommitSequence, database, table, query, read, cancellationToken).ConfigureAwait(false);
+
+    internal async ValueTask<LineageResult> ReadAsync(object source, object revision, TenantContext database, string table, ShapeQuery query,
+        Func<CancellationToken, ValueTask<LineageResult>> read, CancellationToken cancellationToken)
     {
-        var key = new Key(database, store, store.CommitSequence, table, query);
+        var key = new Key(database, source, revision, table, query);
         Entry entry;
         var start = false;
         lock (_gate)
@@ -101,7 +105,7 @@ internal sealed class ShapeControls(IMemoryBudget memory, IHostApplicationLifeti
         }
     }
 
-    private sealed record Key(TenantContext Database, IDatabaseStore Store, long Sequence, string Table, ShapeQuery Query);
+    private sealed record Key(TenantContext Database, object Source, object Revision, string Table, ShapeQuery Query);
     private sealed record Entry(IMemoryReservation Memory)
     {
         internal TaskCompletionSource<LineageResult> Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Net;
+using System.Net.WebSockets;
+using System.Text.Json;
 using TerraBase.Testing;
 using static TerraBase.Testing.SqlNativeDatabase;
 
@@ -14,7 +16,7 @@ public sealed class ShapeFlightTests
         await db.OkAsync("CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT)");
         var shape = new TableShapeClient(db.Reader, db.Database.Data, "items");
         await shape.SyncAsync();
-        using var disconnected = new CancellationTokenSource();
+        using var disconnected = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var target = shape.Uri(shape.NextOffset, live: true);
         var leaving = db.Reader.GetAsync(target, disconnected.Token);
         await WaitingAsync(db, 1);
@@ -25,6 +27,15 @@ public sealed class ShapeFlightTests
             readers.Add(db.Reader.GetAsync(target, deadline.Token));
             await WaitingAsync(db, index + 2);
         }
+        using var socket = new ClientWebSocket();
+        socket.Options.AddSubProtocol("terrascale.shape.v1");
+        var address = new UriBuilder(new Uri(db.Api.Server.ClientAddress!, $"{shape.Path}/ws?handle={shape.Handle}&offset={shape.NextOffset}")) { Scheme = "ws" }.Uri;
+        await socket.ConnectAsync(address, deadline.Token);
+        await socket.SendAsync(JsonSerializer.SerializeToUtf8Bytes(new { type = "auth", token = db.WriterKey }), WebSocketMessageType.Text, true, deadline.Token);
+        var hintBuffer = new byte[16 * 1024];
+        var ready = await socket.ReceiveAsync(hintBuffer, deadline.Token);
+        await Assert.That(JsonElement.Parse(hintBuffer.AsSpan(0, ready.Count)).GetProperty("type").GetString()).IsEqualTo("ready");
+        await WaitingAsync(db, 10);
         var metrics = await db.Api.Server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative));
         await Assert.That(Sum(metrics, "terrabase_shape_flights_active")).IsEqualTo(1);
         disconnected.Cancel();
@@ -37,6 +48,12 @@ public sealed class ShapeFlightTests
         }
 
         await db.OkAsync("INSERT INTO items VALUES (1, 'shared')");
+        var received = await socket.ReceiveAsync(hintBuffer, deadline.Token);
+        var hint = JsonElement.Parse(hintBuffer.AsSpan(0, received.Count));
+        await Assert.That(hint.GetProperty("type").GetString()).IsEqualTo("new_data");
+        await Assert.That(hint.GetProperty("offset").GetString()).IsEqualTo(shape.NextOffset);
+        await Assert.That(hint.TryGetProperty("changes", out _)).IsFalse();
+        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, deadline.Token);
         var answers = await Task.WhenAll(readers);
         try
         {
