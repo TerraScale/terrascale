@@ -106,7 +106,7 @@ export const SqlErrorCode = Object.freeze({
   syntaxError: "syntax_error", undefinedTable: "undefined_table", undefinedColumn: "undefined_column",
   duplicateObject: "duplicate_object", primaryKeyViolation: "primary_key_violation", uniqueViolation: "unique_violation",
   notNullViolation: "not_null_violation", checkViolation: "check_violation", foreignKeyViolation: "foreign_key_violation",
-  constraintViolation: "constraint_violation", forbiddenScope: "forbidden_scope", serializationConflict: "serialization_conflict",
+  constraintViolation: "constraint_violation", forbiddenScope: "forbidden_scope", sqlSandbox: "sql_sandbox", serializationConflict: "serialization_conflict",
   tooLarge: "too_large", queryCanceled: "query_canceled", transactionRolledBack: "transaction_rolled_back",
   transactionAborted: "transaction_aborted", readOnlyTransaction: "read_only_transaction", transactionState: "transaction_state",
   invalidRequest: "invalid_request", quotaExceeded: "quota_exceeded", tenantBusy: "tenant_busy",
