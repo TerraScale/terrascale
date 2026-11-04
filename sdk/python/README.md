@@ -1,8 +1,7 @@
 # TerraScale Python SDK
 
-The Python client for [TerraScale](https://terrascale.tech) TerraBase: documents,
-queries, vector search, TTL, SQL, transactions and database regions. Sync and
-asyncio, built on [httpx](https://www.python-httpx.org/). Python 3.10+.
+The Python client for [TerraScale](https://terrascale.tech): SQL on TerraBase,
+sync and asyncio, built on [httpx](https://www.python-httpx.org/). Python 3.10+.
 
 ```sh
 pip install terrascale
@@ -12,8 +11,8 @@ pip install "git+https://github.com/TerraScale/terrascale@main#subdirectory=sdk/
 
 ## Quickstart
 
-Create a database and an API key in the [dashboard](https://dash.terrascale.tech/)
-(**Full access** if you use SQL or create collections), then:
+Create a database and a **Full access** API key in the
+[dashboard](https://dash.terrascale.tech/), then:
 
 ```sh
 read -rs TERRASCALE_API_KEY && export TERRASCALE_API_KEY   # keeps the key out of history
@@ -21,51 +20,82 @@ export TERRASCALE_PROJECT_ID=YOUR_PROJECT_ULID
 ```
 
 ```python
-from terrascale import ConflictError, TerraScale, query as q
+from terrascale import TerraScale, new_id
 
-with TerraScale() as ts:                       # reads TERRASCALE_API_KEY / TERRASCALE_PROJECT_ID
-    db = ts.database("main")
-    try:
-        db.create_collection("todos")
-    except ConflictError as exc:
-        if exc.code != "name_taken":
-            raise
-    todos = db.collection("todos")
-
-    res = todos.create({"title": "Ship the Python SDK", "done": False})
-    doc = todos.get(res.id)
-    todos.patch(doc.id, merge={"done": True}, if_match=doc.version)
-
-    for d in todos.items(q.eq("/done", True), sort=[q.desc("/title")]):
-        print(d.id, d.data)
+db = TerraScale().database("main")
+db.execute("CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, body TEXT)")
+db.execute("INSERT INTO notes VALUES (?, ?)", [new_id(), "hello"])
+print(db.query("SELECT * FROM notes"))
 ```
 
 The API key is exchanged with ts-auth (`https://auth.terrascale.tech`) for a
 short-lived project access token, cached and refreshed automatically. Keep keys
 on your server and out of git. See [examples/quickstart.py](examples/quickstart.py).
 
-### Async
+## SQL
 
-This snippet reuses the `todos` collection created above.
+Every call is one request and one transaction, all or nothing.
+
+```python
+from dataclasses import dataclass
+from terrascale import SqlError, SqlErrorCodes, Statement
+
+rows = db.query("SELECT id, body FROM notes WHERE body = :body", {"body": "hello"})
+rows[0]["body"], rows[0][0], rows[0].get_string("body"), dict(rows[0])
+
+@dataclass
+class Note:
+    id: str
+    body: str
+
+notes = db.query("SELECT id, body FROM notes", None, Note)   # Note(**row) per row
+
+db.batch([                                                   # 1 to 256 statements, one transaction
+    ("INSERT INTO notes VALUES (?, ?)", [new_id(), "a"]),
+    Statement("UPDATE notes SET body = :b WHERE body = 'a'", {"b": "b"}),
+])
+
+try:
+    db.execute("INSERT INTO notes VALUES (?, ?)", [rows[0]["id"], "dup"])
+except SqlError as err:
+    assert err.code == SqlErrorCodes.PRIMARY_KEY_VIOLATION   # err.statement, err.sqlstate, err.status
+```
+
+| Method | Returns |
+| --- | --- |
+| `execute(sql, args=None)` / `execute(Statement)` | `StatementResult(columns, rows, rows_affected, last_insert_rowid)` |
+| `query(sql, args=None, mapper=None)` | `list[Row]`, or `mapper(**row)` per row |
+| `batch([sql \| (sql, args) \| Statement, ...])` | one `StatementResult` per statement |
+
+Arguments are a list (`?`) or a dict (`:name`, `@name`, `$name`, keys without the
+prefix): `None`, `int` (64-bit), finite `float`, `bool` (stored 1/0), `str` and
+`bytes` (sent as `{"base64": ...}`). A `Row` reads by ordinal or column name, with
+`get_int64`, `get_double`, `get_boolean`, `get_string`, `get_bytes` and `is_null`;
+blobs come back as `bytes` and integers stay exact. `TerraScale(region="gru")`
+pins every request to one region.
+
+A refused statement raises `SqlError` with `code` (a `SqlErrorCodes` constant),
+`message`, `statement` (zero-based), `sqlstate` and `status`; the request rolled
+back. `is_transient` is true for `serialization_conflict` and `tenant_busy`. A
+`409 serialization_conflict` is resent at most twice; nothing else is.
+
+### Async
 
 ```python
 from terrascale import AsyncTerraScale
 
 async with AsyncTerraScale() as ts:
-    todos = ts.database("main").collection("todos")
-    res = await todos.create({"title": "async"})
-    async for d in todos.items(limit=100):
-        ...
+    db = ts.database("main")
+    rows = await db.query("SELECT * FROM notes")
 ```
 
-`AsyncTerraScale` has the same methods as `TerraScale`, awaited; `pages()` and
-`items()` are async iterators.
+`AsyncTerraScale` has the same methods as `TerraScale`, awaited.
 
 ## API
 
 | Surface | Methods |
 | --- | --- |
-| Client | `TerraScale(api_key=, project=, token=, base_url=)`, `database(name)`, `list_databases()`, `create_database(name, home_region=, replica_regions=, all_regions=)` |
+| Client | `TerraScale(api_key=, project=, token=, base_url=, region=)`, `database(name)`, `list_databases()`, `create_database(name, home_region=, replica_regions=, all_regions=)` |
 | Database | `info()`, `update(home_region=, replica_regions=, all_regions=)`, `delete()`, `branch(name)`, `create_collection(name)`, `list_collections()`, `collection(name)` |
 | Documents | `get`, `create`, `put`, `patch(merge=\|ops=)`, `delete`, `list` |
 | Queries | `query(filter, sort=, project=, limit=, cursor=, count=, aggregate=)`, `pages(...)`, `items(...)` |
@@ -73,7 +103,7 @@ async with AsyncTerraScale() as ts:
 | Geo | `q.within_radius(path, lat, lon, meters)`, `q.within_box(path, south, west, north, east)`, `sort=[q.geo_near(path, lat, lon)]` |
 | Aggregates | `query(filter, aggregate=q.aggregate(group_by, sum=, avg=, min=, max=), limit=)` answers `page.groups` |
 | TTL | `get_ttl()`, `set_ttl("/expiresAt")`, `delete_ttl()` |
-| SQL | `sql(select)`, `check_sql`, `explain_sql`, `execute(sql, args)`, `batch([...])` |
+| SQL | `execute`, `query`, `batch` (see [SQL](#sql)) |
 | Transactions | `with db.transaction() as tx: tx.create/put/patch/delete/assert_/assert_absent/assert_count` |
 
 **IDs** are canonical ULIDs (`terrascale.new_id()`); the document key is the ID.
@@ -143,9 +173,6 @@ ambiguous failure: a transport failure after sending, 5xx or malformed
 acknowledgement raises `CommitUncertainError`; reconcile state before retrying. Transactions
 cannot be changed or committed again after submission; context exit sends once.
 Malformed read responses raise `InvalidResponseError`.
-
-SQL `execute`/`batch` columns are `SQLColumn(name, decltype)` objects. SQL errors
-retain `statement` and `sqlite_code` alongside the standard `APIError` fields.
 
 ## Development
 

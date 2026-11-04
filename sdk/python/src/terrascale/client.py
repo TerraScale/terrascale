@@ -6,18 +6,22 @@ import builtins
 import os
 import time
 from collections.abc import Callable, Iterator, Sequence
-from typing import Any
+from typing import Any, TypeVar, overload
 
 import httpx
 
 from . import _spec, models
+from . import sql as _sql
 from ._spec import Call, TransactionBuilder
 from ._version import __version__
 from .auth import APIKeyTokenSource
-from .errors import APIError, CommitUncertainError, InvalidResponseError, error_for
+from .errors import APIError, CommitUncertainError, InvalidResponseError, SqlError, SqlErrorCodes, error_for
 from .ids import validate_id
+from .sql import Args, Row, Statement, StatementResult
 
 __all__ = ["TerraScale", "Database", "Collection", "Transaction"]
+
+T = TypeVar("T")
 
 
 def _settings(api_key: str | None, project: str | None, token: Any, base_url: str | None) -> tuple[str | None, str, str]:
@@ -41,7 +45,8 @@ class TerraScale:
     ``api_key`` is exchanged for short-lived access tokens with ts-auth and
     refreshed automatically. ``token`` instead supplies an access token, or a
     callable returning one. Arguments default to the ``TERRASCALE_API_KEY``
-    and ``TERRASCALE_PROJECT_ID`` environment variables.
+    and ``TERRASCALE_PROJECT_ID`` environment variables. ``region`` pins every
+    request to one region, such as ``"gru"``.
     """
 
     def __init__(
@@ -51,6 +56,7 @@ class TerraScale:
         project: str | None = None,
         token: str | Callable[[], str] | None = None,
         base_url: str | None = None,
+        region: str | None = None,
         issuer: str | None = None,
         scopes: Sequence[str] | None = None,
         timeout: float = 30.0,
@@ -68,6 +74,8 @@ class TerraScale:
             self._source = APIKeyTokenSource(api_key, project=self.project, scopes=scopes, issuer=issuer,
                                              max_attempts=self._max_attempts, http_client=self._http)
         self._headers = {"User-Agent": _spec.USER_AGENT_PREFIX + __version__, "Accept": "application/json"}
+        if region is not None:
+            self._headers[_spec.REGION_PIN] = _spec.region(region)
 
     # Lifecycle -----------------------------------------------------------
 
@@ -93,6 +101,7 @@ class TerraScale:
         content = call.content()
         refreshed = False
         attempt = 0
+        conflicts = 0
         while True:
             token = self._bearer()
             headers = {**self._headers, **call.headers, "Authorization": f"Bearer {token}"}
@@ -123,6 +132,10 @@ class TerraScale:
                 # Refresh an ordinary token refusal once, never a permanent key refusal.
                 self._source.invalidate(token)
                 refreshed = True
+                continue
+            if isinstance(err, SqlError) and err.code == SqlErrorCodes.SERIALIZATION_CONFLICT and conflicts < 2:
+                conflicts += 1
+                time.sleep(_spec.backoff(conflicts, None))
                 continue
             attempt += 1
             if call.replay_safe and attempt < self._max_attempts and _spec.retryable(err.status, err.code):
@@ -231,14 +244,25 @@ class Database:
     def explain_sql(self, statement: str) -> dict[str, Any]:
         return self._c._send(_spec.sql(*self._p, statement, "explain"))
 
-    def execute(self, sql: str, args: Sequence[Any] | dict[str, Any] | None = None) -> models.SQLStatementResult:
-        """Run one SQL statement (reads and writes) with positional or named args."""
-        return self._c._send(_spec.execute(*self._p, [_spec.statement(sql, args)]))[0]
+    @overload
+    def query(self, sql: str, args: Args = None) -> builtins.list[Row]: ...
 
-    def batch(self, statements: Sequence[str | tuple[str, Any]]) -> builtins.list[models.SQLStatementResult]:
-        """Run statements as one all-or-nothing transaction."""
-        stmts = [_spec.statement(s, None) if isinstance(s, str) else _spec.statement(*s) for s in statements]
-        return self._c._send(_spec.execute(*self._p, stmts))
+    @overload
+    def query(self, sql: str, args: Args, mapper: Callable[..., T]) -> builtins.list[T]: ...
+
+    def query(self, sql: str, args: Args = None, mapper: Callable[..., T] | None = None) -> builtins.list[Any]:
+        """Run one statement and return its rows, or ``mapper(**row)`` for each row."""
+        result = self.execute(sql, args)
+        return result.rows if mapper is None else result.as_(mapper)
+
+    def execute(self, sql: str | Statement, args: Args = None) -> StatementResult:
+        """Run one statement, reads and writes, with positional or named arguments."""
+        item = sql if isinstance(sql, Statement) else Statement(sql, args)
+        return (self._c._send(_spec.execute(*self._p, _sql.statements([item]))))[0]
+
+    def batch(self, statements: Sequence[str | tuple[str, Args] | Statement]) -> builtins.list[StatementResult]:
+        """Run 1 to 256 statements as one all-or-nothing transaction; one result per statement."""
+        return self._c._send(_spec.execute(*self._p, _sql.statements(statements)))
 
     def transaction(self) -> Transaction:
         """An atomic group of document ops across collections::

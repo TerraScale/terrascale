@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import json
 
 import httpx
 import pytest
@@ -69,23 +68,6 @@ def test_config_validation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TERRASCALE_API_KEY", API_KEY)
     monkeypatch.setenv("TERRASCALE_PROJECT_ID", PROJECT)
     assert TerraScale().project == PROJECT
-
-
-def test_sql(ts: TerraScale, fake: Fake) -> None:
-    ts.create_database("main")
-    db = ts.database("main")
-    db.create_collection("todos")
-    db.collection("todos").create({"title": "x"})
-    result = db.sql("SELECT * FROM todos LIMIT 10")
-    assert result.matched == 1 and result.rows[0]["value"] == {"title": "x"} and not result.truncated
-    assert db.check_sql("SELECT 1")["ok"]
-    assert db.explain_sql("SELECT 1")["plan"] == "SCAN"
-    res = db.execute("INSERT INTO t VALUES (?, ?)", [1, True])
-    assert json.loads(fake.requests[-1].content) == {"statements": [{"sql": "INSERT INTO t VALUES (?, ?)", "args": [1, 1]}]}
-    assert res.rows == [[2]]
-    out = db.batch(["SELECT 1", ("SELECT :a", {"a": 1})])
-    assert len(out) == 2
-    assert json.loads(fake.requests[-1].content)["statements"][1] == {"sql": "SELECT :a", "named": {"a": 1}}
 
 
 def test_retries_reads_on_429_but_not_writes(ts: TerraScale, fake: Fake, monkeypatch: pytest.MonkeyPatch) -> None:

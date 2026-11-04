@@ -1,12 +1,11 @@
-"""TerraScale Python SDK: the TerraBase document database, sync and async.
+"""TerraScale Python SDK: SQL on TerraBase, sync and async.
 
-    from terrascale import TerraScale, query as q
+    from terrascale import TerraScale, new_id
 
-    with TerraScale() as ts:  # TERRASCALE_API_KEY, TERRASCALE_PROJECT_ID
-        todos = ts.database("main").collection("todos")
-        res = todos.create({"title": "Ship it", "done": False})
-        for doc in todos.items(q.eq("/done", False)):
-            print(doc.id, doc.data)
+    db = TerraScale().database("app")  # TERRASCALE_API_KEY, TERRASCALE_PROJECT_ID
+    db.execute("CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, body TEXT)")
+    db.execute("INSERT INTO notes VALUES (?, ?)", [new_id(), "hello"])
+    print(db.query("SELECT * FROM notes"))
 """
 
 from . import query
@@ -28,12 +27,15 @@ from .errors import (
     PreconditionFailedError,
     RateLimitError,
     ServiceUnavailableError,
+    SqlError,
+    SqlErrorCodes,
     TerraScaleError,
     TokenError,
     UniqueViolationError,
 )
 from .ids import is_valid_id, new_id, validate_id
-from .models import Document, Group, Page, SQLColumn, SQLResult, SQLStatementResult, TransactionResult, WriteResult
+from .models import Document, Group, Page, SQLResult, TransactionResult, WriteResult
+from .sql import Column, Row, Statement, StatementResult
 
 __all__ = [
     "__version__",
@@ -53,8 +55,12 @@ __all__ = [
     "Group",
     "WriteResult",
     "SQLResult",
-    "SQLColumn",
-    "SQLStatementResult",
+    "Statement",
+    "StatementResult",
+    "Column",
+    "Row",
+    "SqlError",
+    "SqlErrorCodes",
     "TransactionResult",
     "new_id",
     "is_valid_id",

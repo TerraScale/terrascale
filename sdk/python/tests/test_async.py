@@ -33,7 +33,7 @@ async def test_async_end_to_end(ats: AsyncTerraScale, fake: Fake) -> None:
 
     rows = await db.sql("SELECT * FROM todos")
     assert rows.matched == 5
-    assert (await db.execute("SELECT ?", [1])).rows == [[1]]
+    assert (await db.query("SELECT ?", [1]))[0]["n"] == 1
 
     async with db.transaction() as tx:
         tx.put("todos", new_id(), {"title": "tx"})

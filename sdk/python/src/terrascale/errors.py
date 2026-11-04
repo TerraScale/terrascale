@@ -24,6 +24,8 @@ __all__ = [
     "RateLimitError",
     "ServiceUnavailableError",
     "CommitUncertainError",
+    "SqlError",
+    "SqlErrorCodes",
     "error_for",
 ]
 
@@ -68,6 +70,7 @@ class APIError(TerraScaleError):
         request_id: str | None = None,
         statement: int | None = None,
         sqlite_code: str | None = None,
+        sqlstate: str | None = None,
     ):
         self.status = status
         self.code = code
@@ -80,6 +83,7 @@ class APIError(TerraScaleError):
         self.request_id: str | None = request_id if is_valid_id(request_id) else None
         self.statement = statement
         self.sqlite_code = sqlite_code
+        self.sqlstate = sqlstate
         text = f"{status} {code}"
         if message:
             text += f": {message}"
@@ -143,6 +147,75 @@ class CommitUncertainError(APIError):
     Re-read the state before deciding what to do; never blindly replay."""
 
 
+class SqlErrorCodes:
+    """TerraScale SQL error codes, the same on REST, the WebSocket and the PostgreSQL wire."""
+
+    SQL_ERROR = "sql_error"
+    SYNTAX_ERROR = "syntax_error"
+    UNDEFINED_TABLE = "undefined_table"
+    UNDEFINED_COLUMN = "undefined_column"
+    DUPLICATE_OBJECT = "duplicate_object"
+    PRIMARY_KEY_VIOLATION = "primary_key_violation"
+    UNIQUE_VIOLATION = "unique_violation"
+    NOT_NULL_VIOLATION = "not_null_violation"
+    CHECK_VIOLATION = "check_violation"
+    FOREIGN_KEY_VIOLATION = "foreign_key_violation"
+    CONSTRAINT_VIOLATION = "constraint_violation"
+    FORBIDDEN_SCOPE = "forbidden_scope"
+    SERIALIZATION_CONFLICT = "serialization_conflict"
+    TOO_LARGE = "too_large"
+    QUERY_CANCELED = "query_canceled"
+    TRANSACTION_ROLLED_BACK = "transaction_rolled_back"
+    TRANSACTION_ABORTED = "transaction_aborted"
+    READ_ONLY_TRANSACTION = "read_only_transaction"
+    QUOTA_EXCEEDED = "quota_exceeded"
+    INVALID_REQUEST = "invalid_request"
+    TRANSACTION_STATE = "transaction_state"
+    TENANT_BUSY = "tenant_busy"
+    UNAVAILABLE = "unavailable"
+    UNAUTHORIZED = "unauthorized"
+    INTERNAL_ERROR = "internal_error"
+
+
+SQLSTATES: dict[str, str] = {
+    "sql_error": "0A000",
+    "syntax_error": "42601",
+    "undefined_table": "42P01",
+    "undefined_column": "42703",
+    "duplicate_object": "42P07",
+    "primary_key_violation": "23505",
+    "unique_violation": "23505",
+    "not_null_violation": "23502",
+    "check_violation": "23514",
+    "foreign_key_violation": "23503",
+    "constraint_violation": "23000",
+    "forbidden_scope": "42501",
+    "serialization_conflict": "40001",
+    "too_large": "54000",
+    "query_canceled": "57014",
+    "transaction_rolled_back": "40000",
+    "transaction_aborted": "25P02",
+    "read_only_transaction": "25006",
+    "quota_exceeded": "53100",
+    "invalid_request": "22023",
+    "transaction_state": "25000",
+    "tenant_busy": "53300",
+    "unavailable": "57P03",
+    "unauthorized": "28000",
+    "internal_error": "XX000",
+}
+
+
+class SqlError(APIError):
+    """A refused SQL statement; the whole request rolled back. ``code`` is one of
+    :class:`SqlErrorCodes`, ``statement`` the zero-based failing statement and
+    ``sqlstate`` its PostgreSQL SQLSTATE."""
+
+    @property
+    def is_transient(self) -> bool:
+        return self.code in (SqlErrorCodes.SERIALIZATION_CONFLICT, SqlErrorCodes.TENANT_BUSY)
+
+
 _BY_CODE: dict[str, type[APIError]] = {
     "key_revoked": KeyRevokedError,
     "key_expired": KeyExpiredError,
@@ -182,9 +255,14 @@ def error_for(status: int, body: Any, headers: Any = None, *, mutation: bool = F
         raw_etag = headers.get("etag")
         if raw_etag:
             etag = raw_etag.removeprefix("W/").strip('"')
+    statement = err.get("statement") if type(err.get("statement")) is int else None
+    raw_state = err.get("sqlstate")
+    sqlstate = raw_state if isinstance(raw_state, str) and raw_state else SQLSTATES.get(code)
     cls = _BY_CODE.get(code) or _BY_STATUS.get(status) or APIError
     if mutation and status >= 500:
         cls = CommitUncertainError
+    if statement is not None and raw_code and (isinstance(raw_state, str) or isinstance(err.get("sqlite_code"), str)):
+        cls = SqlError
     return cls(
         status,
         code,
@@ -195,8 +273,9 @@ def error_for(status: int, body: Any, headers: Any = None, *, mutation: bool = F
         etag=etag,
         region=err.get("region"),
         request_id=response_request_id(headers),
-        statement=err.get("statement") if type(err.get("statement")) is int else None,
+        statement=statement,
         sqlite_code=err.get("sqlite_code") if isinstance(err.get("sqlite_code"), str) else None,
+        sqlstate=sqlstate,
     )
 
 

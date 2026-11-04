@@ -3,7 +3,6 @@ stay compatible."""
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -19,8 +18,6 @@ __all__ = [
     "Database",
     "DatabasePage",
     "SQLResult",
-    "SQLStatementResult",
-    "SQLColumn",
     "TransactionResult",
 ]
 
@@ -220,52 +217,6 @@ class SQLResult:
             matched=int(body.get("matched") or 0),
             truncated=bool(body.get("truncated")),
             rows=list(body.get("rows") or []),
-        )
-
-
-def _sql_integer(value: Any) -> int:
-    if type(value) is not int and (not isinstance(value, str) or not re.fullmatch(r"-?(0|[1-9][0-9]*)", value)):
-        raise ValueError("expected an integer")
-    return int(value)
-
-
-@dataclass(frozen=True)
-class SQLColumn:
-    """SQL column name and declared type (None for an expression)."""
-
-    name: str
-    decltype: str | None
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.name, str) or self.decltype is not None and not isinstance(self.decltype, str):
-            raise ValueError("invalid SQL column")
-
-
-@dataclass(frozen=True)
-class SQLStatementResult:
-    """One statement of :meth:`execute`/:meth:`batch`."""
-
-    columns: list[SQLColumn]
-    rows: list[list[Any]]
-    rows_affected: int
-    last_insert_rowid: int | None
-
-    @classmethod
-    def from_json(cls, body: dict[str, Any]) -> SQLStatementResult:
-        rowid = body["last_insert_rowid"]
-        columns, rows = body["columns"], body["rows"]
-        if not isinstance(columns, list) or not isinstance(rows, list):
-            raise ValueError("expected SQL columns and rows arrays")
-        if any(not isinstance(row, list) or len(row) != len(columns) for row in rows):
-            raise ValueError("invalid SQL row")
-        affected = _sql_integer(body["rows_affected"])
-        if affected < 0:
-            raise ValueError("negative rows affected")
-        return cls(
-            columns=[SQLColumn(c["name"], c["decltype"]) for c in columns],
-            rows=rows,
-            rows_affected=affected,
-            last_insert_rowid=_sql_integer(rowid) if rowid is not None else None,
         )
 
 

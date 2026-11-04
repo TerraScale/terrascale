@@ -16,9 +16,11 @@ import httpx
 from . import models
 from .errors import CommitUncertainError, InvalidResponseError, TerraScaleError, response_request_id
 from .ids import is_valid_id, validate_id
+from .sql import results as sql_results
 
 DEFAULT_BASE_URL = "https://api.terrascale.tech"
 USER_AGENT_PREFIX = "terrascale-python/"
+REGION_PIN = "X-TerraScale-Region-Pin"
 MAX_ATTEMPTS = 4
 MAX_BACKOFF = 30.0
 # 503 codes that mean "try again later". storage_busy and unavailable are the
@@ -100,6 +102,12 @@ def name(value: str, what: str) -> str:
     # The server validates names; the SDK only keeps them one path segment.
     if not isinstance(value, str) or value in ("", ".", "..") or "/" in value:
         raise ValueError(f"{what} {value!r} is not a valid name")
+    return value
+
+
+def region(value: str) -> str:
+    if not isinstance(value, str) or re.fullmatch(r"[a-z][a-z0-9-]{1,31}", value) is None:
+        raise ValueError("region must be a region id such as 'gru'")
     return value
 
 
@@ -335,21 +343,9 @@ def sql(project: str, db: str, statement: str, endpoint: str | None = None) -> C
     return Call("POST", path, parse, body={"sql": statement}, replay_safe=True)
 
 
-def execute(project: str, db: str, statements: Sequence[dict[str, Any]]) -> Call:
-    if not statements:
-        raise ValueError("execute needs at least one statement")
-    return Call("POST", _db(project, db, "sql", "execute"),
-                lambda r: [models.SQLStatementResult.from_json(x) for x in _result_count(r.json(), len(statements))["results"]],
-                body={"statements": list(statements)})
-
-
-def statement(sql_text: str, args: Sequence[Any] | dict[str, Any] | None) -> dict[str, Any]:
-    stmt: dict[str, Any] = {"sql": sql_text}
-    if isinstance(args, dict):
-        stmt["named"] = args
-    elif args is not None:
-        stmt["args"] = [int(a) if isinstance(a, bool) else a for a in args]
-    return stmt
+def execute(project: str, db: str, statements: list[dict[str, Any]]) -> Call:
+    return Call("POST", _db(project, db, "sql", "execute"), lambda r: sql_results(r.json(), len(statements)),
+                body={"statements": statements})
 
 
 # Transactions ------------------------------------------------------------
