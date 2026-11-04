@@ -90,6 +90,7 @@ Each database is served by its home region only ([cross-region.md](cross-region.
 [decision](decisions/2026-10-29-single-region-until-sync.md)). The leaderless replication engine, its peer streams,
 anti-entropy and `GET /replication` status are removed. Superseded designs are kept in [archive/](archive/README.md).
 Region replicas (read-only page-pull copies in replica regions, PIVOT R3): [`region-replicas.md`](region-replicas.md).
+Home apply of transactions committed in other regions, `terrascale.conflicts` and write states (PIVOT R6): [`home-apply.md`](home-apply.md).
 
 Catalog of organizations, projects and databases: [SQL catalog](sql-catalog.md).
 Renaming a database: [database rename](database-rename.md).
