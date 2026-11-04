@@ -167,9 +167,6 @@ func readDesiredSchema(ctx context.Context, source string) (map[string]schemaEnt
 	if err != nil {
 		return nil, err
 	}
-	if len(statements) > v1.MaxSQLStatements-1 {
-		return nil, fmt.Errorf("schema has too many objects (maximum 255)")
-	}
 	conn, closeModel, err := openSchemaModel(ctx)
 	if err != nil {
 		return nil, err
