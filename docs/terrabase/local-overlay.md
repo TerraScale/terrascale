@@ -22,13 +22,14 @@ unconfirmed local write lives outside it, in the push stream.
    capture a pull reverts the local transaction without replaying it.
 2. Before commit, the transaction's captured changes become one `RegionTransaction`
    ([format](home-apply.md#regiontransaction)): a new ULID id, the origin region and a commit stamp from the
-   node's HLC (`IHlcClock`, [HLC](hlc-clock.md)). A node whose clock is not admitted (`ILocalWriteClock.Allowed`
-   false) refuses the local transaction and the router forwards it home.
-3. The node commits the replica transaction and publishes the `RegionTransaction` to its own region's push stream,
-   with the transaction id as `Nats-Msg-Id`. The write is acknowledged to the client only after JetStream
-   acknowledges storing the message. A publish that fails leaves nothing acknowledged: the node pulls the replica,
-   which removes the local copy, and the client gets an error. Commits and publishes of one database are serialized,
-   so stream order is commit order.
+   node's durable HLC (`IHlcClock`, [HLC](hlc-clock.md)). Clock admission is the router's: a node whose
+   `ILocalWriteClock.Allowed` is false also refuses the local transaction here, and the write goes home.
+3. Inside the still-open transaction, the node publishes the `RegionTransaction` to its own region's push stream
+   with the transaction id as `Nats-Msg-Id`, then commits the replica transaction. The write is acknowledged to the
+   client only after JetStream acknowledged storing the message and the commit succeeded. A publish that fails rolls
+   the transaction back and the write goes home. A commit that fails after the publish answers an unknown outcome:
+   the home applies the transaction and the overlay shows it locally. Commits and publishes of one database are
+   serialized, so stream order is commit order.
 4. The home applies the transaction (R6) and answers with an `applied` notice. With `durability=home` the client's
    acknowledgement waits for that notice instead of step 3.
 
@@ -43,7 +44,7 @@ lands, the stream message is stored on two nodes of the region before the acknow
 | Placement | the origin region (`region:<origin>` tag) |
 | Subject | `terrabase.push.<origin>.<home>.<organization>.<project>.<database>` |
 | Message | one `RegionTransaction`, LZ4-compressed JSON (`Content-Encoding: lz4`) |
-| Headers | `Nats-Msg-Id` (transaction id), `Tb-Hlc` (commit stamp) |
+| Headers | `Nats-Msg-Id` (transaction id), `Tb-Hlc` (commit stamp: the 75-byte ordered `HlcTimestamp` encoding, hex) |
 | Retention | limits, discard new; a full stream refuses local writes, which then go home |
 | Deletion | the origin region purges a database's subject up to its oldest message the home has not confirmed |
 
@@ -64,6 +65,19 @@ Each home region has one durable pull consumer `home-<home>` on every other regi
   order holds, and other databases continue.
 - On start, the consumer restarts from its ack floor. A redelivered message can never overtake a later one, and an
   applied one is answered from its recorded state.
+
+## Resuming from an applied position
+
+A home consumer's position is its ack floor: every message at or below it is applied (or answered as already applied)
+and acknowledged. A node that starts consuming, including a new home after a failover (R8), resets the durable
+consumer to the ack floor + 1, so no message is skipped and none overtakes an earlier one.
+
+To replay from a known applied transaction, `HomePush.ReplayFromAsync(origin, database, transactionId)` finds that
+transaction's stream sequence by its `Nats-Msg-Id` on the database's subject and resets the consumer to the message
+after it, but never past the ack floor + 1, because one consumer carries every database of that origin. It returns
+the sequence consumption resumes at, or nothing when the stream no longer holds the transaction. Anything redelivered
+that the home already applied is answered from `_ts_applied` by transaction id and changes nothing, so a replay
+from any earlier position applies each transaction exactly once.
 
 ## Applied notice
 
