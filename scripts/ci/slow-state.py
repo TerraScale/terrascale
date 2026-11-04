@@ -24,8 +24,7 @@ def fingerprint(area, revision="HEAD"):
                   "scripts/auth", "docs/auth/*.yaml"]
     else:
         paths += ["tests/TerraBase*", "tests/Turso.Data.Sqlite.Tests", "scripts/terrabase",
-                  "tests/TerraScale.Authentication.TestHarness/FakeGitHubActions.cs",
-                  "benchmark/dotnet/TerraBase.LiveRestoreDrill/ScratchCleanup.cs"]
+                  "tests/TerraScale.Authentication.TestHarness/FakeGitHubActions.cs"]
     entries = subprocess.check_output(["git", "ls-tree", "-r", "-z", revision]).split(b"\0")
     selected = []
     for entry in entries:
