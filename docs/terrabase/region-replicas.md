@@ -7,12 +7,9 @@ ever pushed, and a replica can always be deleted and pulled again.
 
 ## Placement
 
-- **Not yet open:** `replicaRegions` and `allRegions` answer `400 replicas_unavailable` until replicas are encrypted at
-  rest like their home (Q-ENC, see Known gaps). The replication machinery below is in place and covered by Fast tests on records
-  placed directly in the catalog; `benchmark/cmd/region-sim` (which creates databases through the CLI) passed against
-  it before the refusal and passes again once Q-ENC lifts it.
-- Once open, `POST …/databases` takes `replicaRegions`: distinct regions this cluster serves, other than the home, at
-  most 8, and `PATCH` changes them; the home raises the placement version on every change.
+- `POST …/databases` takes `replicaRegions`: distinct regions this cluster serves, other than the home, at most 8.
+  `PATCH` changes them; the home raises the placement version on every change. `allRegions` stays refused
+  (`replicas_unavailable`).
 - Only the home holds a database file and backs it up. A replica region records the database, with the home's name and
   placement, and keeps its replica under `<data-directory>/.replicas/<organization>/<project>/<database>.db`.
 
@@ -47,8 +44,12 @@ ever pushed, and a replica can always be deleted and pulled again.
 
 ## Encryption
 
-Replica files are **not encrypted at rest** yet (see Known gaps). Page pulls travel over the private mesh to the internal
-listener, as for every peer request. Replicas start empty and take their first full answer as a pull.
+Every replica file is encrypted at rest under the replica's own aegis256 data key, wrapped by the replica node's master key
+in `<replica>.db.key`; a replica never shares key material with its home. The sync client writes the main file, its WAL,
+the revert WAL and each staged pull answer (`<replica>.db-changes`) through that key (native patches
+`src/vendor/Turso.Native/patches/0007-sync-engine-local-encryption.patch` and `0008-upsert-cdc-before-image.patch`). A
+replica whose key does not unwrap is deleted and pulled again. Page pulls travel over the private mesh to the internal
+listener, as for every peer request.
 
 ## Metrics
 
@@ -57,11 +58,6 @@ listener, as for every peer request. Replicas start empty and take their first f
 
 ## Known gaps
 
-- **Plaintext replica files.** The sync client writes pulled pages to the replica's WAL and stages each pull answer in
-  `<replica>.db-changes` without its page transform, even with local encryption configured (the vendored driver's
-  `TursoSyncDatabaseOptions.LocalEncryption`, patch 0014), and a replica reopened over such a WAL fails to decrypt. Replicas
-  therefore run unencrypted until a Turso sync client patch (`src/vendor/Turso.Native/patches`) and a maintenance
-  native build give every sync connection and staging file the codec transform; then replicas turn local encryption on.
 - **NATS in production.** ts-orch does not yet pass `TS_NATS_URL` and the token to TerraBase, so production replicas
   follow on the 30-second sweep until it does.
 - **One node per region.** A replica pulls from the first node the peers file lists for its home region.

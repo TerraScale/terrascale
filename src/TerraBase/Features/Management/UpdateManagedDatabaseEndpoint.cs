@@ -17,7 +17,7 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
         Metadata(AnchoredRevocation.Instance);
         Name("updateDatabase");
         Summary("Renames a database or confirms its home-region placement");
-        Description("Renames a database or confirms its unchanged home-region placement. Replica placement is unavailable until replicas are encrypted at rest. " + ProjectApiRoute.IdentityDescription);
+        Description("Renames a database or sets its replica regions (up to 8 regions other than the home, which pull its pages and serve SQL reads). The home region cannot change and allRegions is unavailable. " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -52,9 +52,9 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
             return DatabaseRegions.HomeRegion(home, database.Regions(options.Region));
         }
 
-        if (DatabaseRegions.Unavailable(request.ReplicaRegions, request.AllRegions) is { } unavailable)
+        if (request.AllRegions == true)
         {
-            return ErrorResponse.From(unavailable);
+            return ErrorResponse.From(new Validation("all-region placement is unavailable: name the replica regions", "replicas_unavailable"));
         }
 
         if (request.Name is not null)
