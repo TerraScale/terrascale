@@ -127,6 +127,30 @@ nice -n 19 make api-bench CLUSTER_STATE=stable   # or CLUSTER_STATE=changing
 
 Reports land in `bench/results/` when a run produces evidence.
 
+## F10 SQL shape free reads
+
+[`scripts/free-reads.mjs`](scripts/free-reads.mjs) uses the JavaScript SDK's
+table-shape subscriptions against the production CDN. It measures table and
+filtered shapes at 1, 10, 100 and 1,000 readers, with three repeats per cell.
+Run it through `ts-heavy-any` after installing the locked `sdk/js` dependencies.
+The admitted host needs its existing regional SSH access and a mode-0600 stdin
+file containing a throwaway account's `project` and `apiKey`. The key needs
+`sql:read`, `sql:write`, `databases:read` and `databases:write`; never pass it
+in arguments. An optional `completed` array contains cohort names already
+proven by retained receipts when resuming a stopped run.
+
+The driver stops on gru TerraBase CPU above 70% or missing telemetry. A
+180-second cohort deadline records incomplete reader delivery without
+reporting percentiles from the successful subset. The origin control plane
+and live tail remain part of request accounting.
+
+[`scripts/free-reads-analytics.py`](scripts/free-reads-analytics.py) reads a
+Cloudflare analytics token from stdin and queries R2 operations for each
+recorded reader window. Feed it cleaned JSON-object records, then pass both
+receipt files to [`scripts/free-reads-report.py`](scripts/free-reads-report.py).
+Unavailable analytics remain unavailable. The method, limits and results are
+in [`bench/2026-11-04-f10-free-reads.md`](bench/2026-11-04-f10-free-reads.md).
+
 ## Cloud benchmark boundary
 
 Production is moving to OCI under `ts-orch`, starting with host `ts-gru-1`. Region codes map to OCI regions: `gru` → `sa-saopaulo-1`, `sjc` → `us-sanjose-1`, `fra` → `eu-frankfurt-1`. CI uses GitHub-hosted runners and GHCR.
