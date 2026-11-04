@@ -83,8 +83,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
     {
         var clock = new ManualClock(DateTimeOffset.UtcNow);
         await using var oidc = await StartAsync(clock);
-        var (alice, _, tokens) = await oidc.SignInAndRedeemAsync("alice@example.test");
-        var aliceToken = tokens.GetProperty("access_token").GetString()!;
+        var (alice, aliceToken) = await oidc.CreateUserTokenAsync("alice@example.test");
         var (bob, bobToken) = await oidc.CreateUserTokenAsync("bob@example.test");
         var (dave, daveToken) = await oidc.CreateUserTokenAsync("dave@example.test");
         var organization = await oidc.CreateOrganizationAsync(aliceToken);

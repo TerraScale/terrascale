@@ -27,11 +27,8 @@ public static class PlatformCalls
     public static async Task<(UserRecord User, string Token)> CreateUserTokenAsync(this OidcHarness oidc, string email)
     {
         var user = await oidc.CreateUserAsync(email);
-        var session = await oidc.Server.App.Services.GetRequiredService<Sessions>().CreateAsync(user);
-        var (verifier, challenge) = OidcHarness.Pkce();
-        using var response = await oidc.RedeemCodeAsync(await oidc.CodeAsync(session.Token, challenge), verifier);
-        response.EnsureSuccessStatusCode();
-        return (user, (await OidcHarness.JsonAsync(response)).GetProperty("access_token").GetString()!);
+        var (_, tokens) = await oidc.CreateSessionAndRedeemAsync(user);
+        return (user, tokens.GetProperty("access_token").GetString()!);
     }
 
     /// <summary>Sends <paramref name="body"/> (as JSON, unless null) with <paramref name="token"/> as the bearer.</summary>

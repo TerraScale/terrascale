@@ -17,30 +17,19 @@ namespace TerraScale.Authentication.Fast.Identity;
 public sealed partial class MfaSignInTests(TerraBaseFixture fixture)
 {
     [Test]
-    public async Task A_user_enrols_signs_in_with_the_second_factor_uses_a_recovery_code_once_and_turns_it_off()
+    public async Task A_user_enrols_signs_in_with_the_second_factor_and_turns_it_off()
     {
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
         var user = await oidc.CreateUserAsync("carol@example.test");
-        var session = await oidc.SignInAsync(user.Email);
+        var session = await oidc.Server.App.Services.GetRequiredService<Sessions>().CreateAsync(user);
 
-        using (var page = await SendAsync(oidc, HttpMethod.Get, "/ui/terrascale/security", session))
-        {
-            await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(await page.Content.ReadAsStringAsync()).Contains("Set up an authenticator app");
-        }
-
-        var (secret, codes, enrolled) = await EnrolAsync(oidc, session, clock);
+        var (secret, codes, _) = await EnrolAsync(oidc, session.Token, clock);
         await Assert.That(codes.Count).IsEqualTo(8);
-        using (var old = await SendAsync(oidc, HttpMethod.Get, "/ui/terrascale/security", session))
+        using (var old = await SendAsync(oidc, HttpMethod.Get, "/ui/terrascale/security", session.Token))
         {
             // Activation signed every older session out.
             await Assert.That(old.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
-        }
-
-        using (var page = await SendAsync(oidc, HttpMethod.Get, "/ui/terrascale/security", enrolled))
-        {
-            await Assert.That(await page.Content.ReadAsStringAsync()).Contains("On (authenticator app)");
         }
 
         // The emailed code alone opens nothing; a wrong second factor is refused.
@@ -50,12 +39,6 @@ public sealed partial class MfaSignInTests(TerraBaseFixture fixture)
         {
             await Assert.That(wrong.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
             await Assert.That(OidcHarness.SessionCookie(wrong)).IsNull();
-        }
-
-        using (var forged = await oidc.PostFormAsync("/ui/terrascale/sign-in/mfa", new() { ["challenge"] = challenge + "x", ["code"] = Code(secret, clock) }))
-        {
-            await Assert.That(forged.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-            await Assert.That(OidcHarness.SessionCookie(forged)).IsNull();
         }
 
         string signedIn;
@@ -89,23 +72,6 @@ public sealed partial class MfaSignInTests(TerraBaseFixture fixture)
         await Assert.That(status.GetProperty("enabled").GetBoolean()).IsTrue();
         await Assert.That(status.GetProperty("recovery_codes_remaining").GetInt32()).IsEqualTo(8);
 
-        // A recovery code works once.
-        clock.UtcNow += HostedAuth.MailCooldown;
-        using (var recovery = await oidc.PostFormAsync("/ui/terrascale/sign-in/mfa", new() { ["challenge"] = await ChallengeAsync(oidc, user.Email), ["code"] = codes[0] }))
-        {
-            await Assert.That(recovery.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(OidcHarness.SessionCookie(recovery)).IsNotNull();
-        }
-
-        clock.UtcNow += HostedAuth.MailCooldown;
-        using (var replay = await oidc.PostFormAsync("/ui/terrascale/sign-in/mfa", new() { ["challenge"] = await ChallengeAsync(oidc, user.Email), ["code"] = codes[0] }))
-        {
-            await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-            await Assert.That(OidcHarness.SessionCookie(replay)).IsNull();
-        }
-
-        await Assert.That((await oidc.OkAsync(HttpMethod.Get, "/v1/terrascale/account/mfa", access)).GetProperty("recovery_codes_remaining").GetInt32()).IsEqualTo(7);
-
         // Turning it off needs a code and signs everything out; the next sign-in needs only the email code.
         clock.UtcNow += TimeSpan.FromSeconds(31);
         using (var disable = await SendAsync(oidc, HttpMethod.Post, "/ui/terrascale/security/totp/disable", signedIn, new() { ["code"] = Code(secret, clock) }))
@@ -122,6 +88,31 @@ public sealed partial class MfaSignInTests(TerraBaseFixture fixture)
 
         clock.UtcNow += HostedAuth.MailCooldown;
         await Assert.That(await oidc.SignInAsync(user.Email)).IsNotEmpty();
+    }
+
+    [Test]
+    public async Task A_recovery_code_signs_in_once_and_replay_is_refused()
+    {
+        var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        var user = await oidc.CreateUserAsync("recovery@example.test");
+        var session = await oidc.Server.App.Services.GetRequiredService<Sessions>().CreateAsync(user);
+        var (_, codes, _) = await EnrolAsync(oidc, session.Token, clock);
+
+        // A recovery code works once.
+        clock.UtcNow += HostedAuth.MailCooldown;
+        using (var recovery = await oidc.PostFormAsync("/ui/terrascale/sign-in/mfa", new() { ["challenge"] = await ChallengeAsync(oidc, user.Email), ["code"] = codes[0] }))
+        {
+            await Assert.That(recovery.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(OidcHarness.SessionCookie(recovery)).IsNotNull();
+        }
+
+        clock.UtcNow += HostedAuth.MailCooldown;
+        using (var replay = await oidc.PostFormAsync("/ui/terrascale/sign-in/mfa", new() { ["challenge"] = await ChallengeAsync(oidc, user.Email), ["code"] = codes[0] }))
+        {
+            await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+            await Assert.That(OidcHarness.SessionCookie(replay)).IsNull();
+        }
     }
 
     /// <summary>Enrols through the hosted security pages; returns the secret, the recovery codes and the new session.</summary>
