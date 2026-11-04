@@ -5,6 +5,7 @@ namespace TerraScale.TerraBase.Contracts.Management
 {
     /// <summary>The REST JSON representation of management contracts.</summary>
     [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonSerializable(typeof(TerraBaseDatabaseRegions))]
     [JsonSerializable(typeof(TerraBaseManagedDatabase))]
     [JsonSerializable(typeof(TerraBaseDatabasePage))]
     [JsonSerializable(typeof(TerraBaseDatabasePlacement))]
