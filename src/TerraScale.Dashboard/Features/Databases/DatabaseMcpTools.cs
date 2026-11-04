@@ -54,18 +54,18 @@ namespace TerraScale.Dashboard.Features.Databases
                 unavailable, backupsEnabled, context.CanManage, db.Status == "ready" && context.CanManage && context.Organization!.CanProvision(context.UserId));
         }
 
-        [McpServerTool(Name = "create_database", Title = "Create database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Provision a new database in a project. It serves only in its home region: region, or the project's region when omitted. Requires an owner or admin role and a plan with database capacity.")]
-        public async Task<McpDatabase> CreateDatabase(string name, string? region = null, string? organizationId = null, string? projectId = null)
+        [McpServerTool(Name = "create_database", Title = "Create database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Provision a new database in a project. It serves only in its home region: region, or the project's region when omitted. ttlSeconds (60 to 31,536,000) deletes the database, backups and data keys after expiresAt. Requires an owner or admin role and a plan with database capacity.")]
+        public async Task<McpDatabase> CreateDatabase(string name, string? region = null, string? organizationId = null, string? projectId = null, long? ttlSeconds = null)
         {
             var context = Scope(organizationId, projectId);
             DatabaseService.Scope(context);
-            return await DatabaseOutput(await databases.CreateAsync(context, name, string.IsNullOrEmpty(region) ? context.Project!.Region : region, Cancellation));
+            return await DatabaseOutput(await databases.CreateAsync(context, name, string.IsNullOrEmpty(region) ? context.Project!.Region : region, Cancellation, ttlSeconds));
         }
 
-        [McpServerTool(Name = "branch_database", Title = "Branch database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a new database that copies a ready database's tables and data.")]
-        public async Task<McpDatabase> BranchDatabase(string databaseId, string name = "", string? organizationId = null, string? projectId = null)
+        [McpServerTool(Name = "branch_database", Title = "Branch database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a new database that copies a ready database's tables and data. Optional ttlSeconds (60 to 31,536,000) is independent of the source TTL.")]
+        public async Task<McpDatabase> BranchDatabase(string databaseId, string name = "", string? organizationId = null, string? projectId = null, long? ttlSeconds = null)
         {
-            return await DatabaseOutput(await databases.BranchAsync(Scope(organizationId, projectId), databaseId, name, Cancellation));
+            return await DatabaseOutput(await databases.BranchAsync(Scope(organizationId, projectId), databaseId, name, Cancellation, ttlSeconds));
         }
 
         [McpServerTool(Name = "delete_database", Title = "Delete database", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Permanently delete a database and all of its data. Requires confirmName to equal the database name.")]
@@ -84,11 +84,11 @@ namespace TerraScale.Dashboard.Features.Databases
 
         private static Task<McpDatabase> DatabaseOutput(DatabaseRecord db)
         {
-            return Task.FromResult(new McpDatabase(db.Id, db.Name, db.Status, db.Region, DatabaseService.ServingRegions(db), db.CreatedAt, db.AllRegions));
+            return Task.FromResult(new McpDatabase(db.Id, db.Name, db.Status, db.Region, DatabaseService.ServingRegions(db), db.CreatedAt, db.AllRegions, db.ExpiresAt));
         }
     }
 
-    public record McpDatabase(string Id, string Name, string Status, string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt, bool AllRegions);
+    public record McpDatabase(string Id, string Name, string Status, string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt, bool AllRegions, DateTimeOffset? ExpiresAt = null);
     public sealed record McpDatabaseList(IReadOnlyList<McpDatabase> Databases, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor, bool HasMore, int Limit);
     public sealed record McpDatabaseDetail(string Id, string Name, string Status, string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt, bool AllRegions,
         string Endpoint, IReadOnlyList<string> Regions,

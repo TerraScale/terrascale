@@ -52,6 +52,22 @@ namespace TerraScale.TerraBase.Rpc.Management
         }
 
         /// <inheritdoc />
+        public async UnaryResult<TerraBaseManagedDatabase> BranchWithTtlAsync(string projectId, string database, string name, long? ttlSeconds)
+        {
+            var answer = await api.SendAsync(Context, "POST", RestPaths.Database(projectId, database) + "/branches",
+                RestApi.Json(new TerraBaseDatabasePlacement(Name: name, TtlSeconds: ttlSeconds), ManagementJson.Default.TerraBaseDatabasePlacement));
+            return RestApi.Read(answer, ManagementJson.Default.TerraBaseManagedDatabase);
+        }
+
+        /// <inheritdoc />
+        public async UnaryResult<TerraBaseManagedDatabase> SetDatabaseTtlAsync(string projectId, string database, long? ttlSeconds)
+        {
+            var answer = await api.SendAsync(Context, ttlSeconds is null ? "DELETE" : "PUT", RestPaths.Database(projectId, database) + "/ttl",
+                ttlSeconds is null ? null : RestApi.Json(new TerraBaseDatabasePlacement(TtlSeconds: ttlSeconds), ManagementJson.Default.TerraBaseDatabasePlacement));
+            return RestApi.Read(answer, ManagementJson.Default.TerraBaseManagedDatabase);
+        }
+
+        /// <inheritdoc />
         public async UnaryResult<TerraBaseCollectionStatsPage> ListCollectionStatsAsync(string projectId, string database)
         {
             var answer = await api.SendAsync(Context, "GET", RestPaths.Database(projectId, database) + "/schema");
