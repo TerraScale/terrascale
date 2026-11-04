@@ -164,8 +164,9 @@ namespace TerraScale.Dashboard.Features.Databases
 
         public AccountContext Context => Shell.Context;
         public IReadOnlyList<DatabaseRecord> Branches => [.. Context.Project!.Databases.Values.Where(database => database.BranchedFrom == Database.Id).OrderBy(database => database.Name, StringComparer.Ordinal)];
-        // An all-regions database serves every region in TerraBase's catalog (Choices); its record names only the home.
         public IReadOnlyList<string> Serving => DatabaseService.ServingRegions(Database);
+        public IReadOnlyList<string> Replicas => [.. DatabaseService.Regions(Database).Skip(1)];
+        public bool CanPlace => Context.CanManage && Database.Status == "ready" && !PlatformDatabases.IsPlatform(Context.Organization?.Id);
         public string Placement => Serving.Count == 0 ? DatabasesPage.RegionDisplay("")
             : string.Join(", ", Serving.Select(DatabasesPage.RegionDisplay));
         public (string Tone, string Title, string Body) CreatedState => DatabasesPage.Tone(Database.Status) switch
