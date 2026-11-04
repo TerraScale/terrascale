@@ -260,9 +260,9 @@ internal sealed partial class EngineManagementService(
             return ManagementErrors.NotFound;
         }
 
-        if (allRegions)
+        if (allRegions || replicaRegions.Count > 0)
         {
-            return new Conflict("all-region placement is unavailable: name the replica regions", "replicas_unavailable");
+            return new Conflict("databases serve only in their home region until replicas are available", "replicas_unavailable");
         }
 
         if (PlatformDatabases.IsPlatform(tenant.OrganizationId))

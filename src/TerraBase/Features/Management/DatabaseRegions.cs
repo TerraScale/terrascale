@@ -25,6 +25,13 @@ internal static class DatabaseRegions
     internal sealed class ReplicaReads;
 
     /// <summary>
+    /// Replica placement waits for replicas encrypted at rest like their home (docs/terrabase/region-replicas.md, Q-ENC):
+    /// until then every requested replica region is refused.
+    /// </summary>
+    internal static Validation? Unavailable(IReadOnlyList<string>? replicas, bool? allRegions) =>
+        allRegions == true || replicas is { Count: > 0 } ? new Validation("databases serve only in their home region until replicas are available", "replicas_unavailable") : null;
+
+    /// <summary>
     /// The replica regions of a database homed in <paramref name="home"/>: distinct regions other than the home, at most
     /// <see cref="MaxReplicas"/>. Replicas pull the home's pages and serve reads (docs/terrabase/region-replicas.md).
     /// </summary>
