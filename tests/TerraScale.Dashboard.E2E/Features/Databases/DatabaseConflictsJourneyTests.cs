@@ -21,7 +21,7 @@ public sealed class DatabaseConflictsJourneyTests(DashboardRootFixture fixture)
             http.Request.Body.Position = 0;
             var sql = body.RootElement.GetProperty("statements")[0].GetProperty("sql").GetString()!;
             if (!sql.Contains("terrascale.conflicts", StringComparison.Ordinal)) { return null; }
-            await Assert.That(auth.ResolveProjectToken(http.Request.Headers.Authorization.ToString()[7..])!.Value.Scopes.SequenceEqual(["documents:read"])).IsTrue();
+            await Assert.That(auth.ResolveProjectToken(http.Request.Headers.Authorization.ToString()[7..])!.Value.Scopes.SequenceEqual(["sql:read"])).IsTrue();
             lock (statements) { statements.Add(sql); }
             var columns = new[] { "id", "kind", "table_name", "row_key", "column_name", "winner_value", "loser_value", "winner_region", "winner_node", "winner_hlc", "winner_transaction_id", "winner_state", "loser_region", "loser_node", "loser_hlc", "loser_transaction_id", "loser_state", "message", "created_at" };
             return Results.Json(new { results = new[] { SqlCatalogJourneyTests.Result(columns,
