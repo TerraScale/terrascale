@@ -124,7 +124,8 @@ internal sealed class TerraBaseConnection
 
     /// <summary>Sends a request and reads its JSON answer.</summary>
     public async Task<(T Value, HttpStatusCode Status)> SendAsync<T>(
-        HttpMethod method, string path, HttpContent? content, JsonTypeInfo<T> typeInfo, Action<HttpRequestHeaders>? headers, CancellationToken cancellationToken)
+        HttpMethod method, string path, HttpContent? content, JsonTypeInfo<T> typeInfo, Action<HttpRequestHeaders>? headers, CancellationToken cancellationToken,
+        TimeSpan? requestTimeout = null)
     {
         T? value = default;
         var status = await SendAsync(method, path, content, headers, async (response, token) =>
@@ -133,7 +134,7 @@ internal sealed class TerraBaseConnection
                 maxResponseBytes, () => new TerraBaseException(response.StatusCode, "TerraBase returned a response larger than the supported response bound.", "invalid_response", null), token);
             await response.Content.CopyToAsync(body, token).ConfigureAwait(false);
             value = ReadResponse(body.Written.Span, typeInfo, response.StatusCode);
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken, requestTimeout).ConfigureAwait(false);
         return (value!, status);
     }
 
@@ -156,9 +157,10 @@ internal sealed class TerraBaseConnection
 
     private async Task<HttpStatusCode> SendAsync(
         HttpMethod method, string path, HttpContent? content, Action<HttpRequestHeaders>? headers,
-        Func<HttpResponseMessage, CancellationToken, Task> read, CancellationToken cancellationToken)
+        Func<HttpResponseMessage, CancellationToken, Task> read, CancellationToken cancellationToken, TimeSpan? requestTimeout = null)
     {
-        using var opened = await OpenAsync(method, path, content, headers, "application/json", streaming: false, cancellationToken).ConfigureAwait(false);
+        using var opened = await OpenAsync(method, path, content, headers, "application/json", streaming: false, cancellationToken,
+            requestTimeout: requestTimeout).ConfigureAwait(false);
         try
         {
             try
@@ -238,8 +240,10 @@ internal sealed class TerraBaseConnection
     }
 
     private async Task<OpenResponse> OpenAsync(HttpMethod method, string path, HttpContent? content,
-        Action<HttpRequestHeaders>? headers, string accept, bool streaming, CancellationToken cancellationToken, Uri? pinnedOrigin = null, bool throwOnError = true)
+        Action<HttpRequestHeaders>? headers, string accept, bool streaming, CancellationToken cancellationToken, Uri? pinnedOrigin = null, bool throwOnError = true,
+        TimeSpan? requestTimeout = null)
     {
+        var timeout = requestTimeout ?? this.timeout;
         var expiry = new CancellationTokenSource(timeout, timeProvider);
         var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, expiry.Token);
         var request = new HttpRequestMessage { Method = method, Content = content };
