@@ -32,7 +32,7 @@ internal sealed partial class TursoDatabaseStore(
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = TursoStatements.ChangeRows;
+        command.CommandText = "SELECT coalesce((SELECT max(change_id) FROM turso_cdc) - (SELECT min(change_id) FROM turso_cdc) + 1, 0);";
         Volatile.Write(ref _retainedCdcRows, (long)command.ExecuteScalar()!);
     }
 
