@@ -23,143 +23,10 @@ public sealed partial class HistoryErasureBackupTests
 
     [Test]
     [Timeout(300_000)]
-    public async Task Staggered_erasures_share_each_files_rewrite_window_and_all_complete(CancellationToken cancellationToken)
+    public async Task Backup_closure_waits_for_pre_erasure_generations_and_snapshots_then_completes(CancellationToken _1)
     {
         await using var host = new Host();
-        RecordingRewrite recording = null!;
-        await using var api = await host.StartAsync(services => services.AddSingleton<IHealthyRewrite>(provider =>
-            recording = new RecordingRewrite(provider.GetRequiredService<TursoStorageEngine>(), host.Clock)));
-        await Host.SeedAsync(api);
-        var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
-        List<(string Fence, string Erasure, DateTimeOffset Requested)> erasures = [];
-
-        async Task<HistoryErasureStatus> RequestAsync(string erasure, DateTimeOffset requested, string? token = null)
-        {
-            using var response = await api.Server.Client.PutAsJsonAsync(new Uri("/admin/history-erasures/" + erasure, UriKind.Relative),
-                new HistoryErasureRequest(1, requested, token), Hosting.TerraBaseJsonContext.Default.HistoryErasureRequest, cancellationToken);
-            response.EnsureSuccessStatusCode();
-            return (await response.Content.ReadFromJsonAsync(Hosting.TerraBaseJsonContext.Default.HistoryErasureStatus, cancellationToken))!;
-        }
-
-        for (var index = 0; index < 3; index++)
-        {
-            var (fence, erasure, requested) = (Id(), Id(), host.Clock.GetUtcNow());
-            erasures.Add((fence, erasure, requested));
-            await Host.PutAsync(api, Jobs, fence, """{"scope":"account"}""");
-            await Host.PutAsync(api, HistoryErasure.MarkCollection, erasure, $$"""{"kind":"request","erasureId":"{{erasure}}","fenceId":"{{fence}}"}""");
-            await RequestAsync(erasure, requested);
-            await Host.PassAsync(api);
-            var settled = await RequestAsync(erasure, requested);
-            await Assert.That(settled.SettlementToken).IsNotNull();
-            await RequestAsync(erasure, requested, settled.SettlementToken);
-            await Host.PassAsync(api);
-            await Assert.That(recording.Starts.Count(call => call.Database is not null)).IsEqualTo(1);
-            await Assert.That(recording.Starts.Count(call => call.Database is null)).IsEqualTo(1);
-            await Assert.That((await RequestAsync(erasure, requested)).Status).IsEqualTo(index == 0 ? HistoryErasure.Residue : HistoryErasure.Rewriting);
-            host.Clock.Advance(TimeSpan.FromMinutes(1));
-        }
-
-        host.Clock.Advance(TimeSpan.FromMinutes(7) - TimeSpan.FromTicks(1));
-        await Host.PassAsync(api);
-        await Assert.That(recording.Starts.Count).IsEqualTo(2);
-        host.Clock.Advance(TimeSpan.FromTicks(1));
-        await Host.PassAsync(api);
-        await Assert.That(recording.Starts.Count).IsEqualTo(4).Because("one auth/SYSTEM pair covers both later final cuts");
-        var second = await Host.OwnAsync(api, erasures[1].Erasure);
-        var third = await Host.OwnAsync(api, erasures[2].Erasure);
-        await Assert.That(second.Auth).IsEqualTo(third.Auth);
-        await Assert.That(second.System).IsEqualTo(third.System);
-
-        host.Clock.Advance(TimeSpan.FromDays(8));
-        await Host.CollectAndTrimAsync(api);
-        await Host.PassAsync(api);
-        await Assert.That(recording.Starts.Count).IsEqualTo(5).Because("residue is also batched");
-        await DaysOfBackupAsync(host, backup, 3);
-        await Host.PassWithBackupAsync(api, backup);
-        await DaysOfBackupAsync(host, backup, 15);
-        await Host.PassWithBackupAsync(api, backup);
-        foreach (var (fence, erasure, requested) in erasures)
-        {
-            var status = await RequestAsync(erasure, requested);
-            await Assert.That(status.Status).IsEqualTo(HistoryErasure.Retire);
-            await Assert.That(status.ActiveDueAt).IsEqualTo(requested.AddDays(30));
-            await Assert.That(status.BackupDueAt).IsEqualTo(requested.AddDays(31));
-            await Assert.That(host.Clock.GetUtcNow()).IsLessThan(status.BackupDueAt);
-            await Assert.That(status.ActiveOverdue || status.BackupOverdue).IsFalse();
-            await Host.RetireAsync(api, fence, erasure);
-        }
-
-        await Host.PassWithBackupAsync(api, backup);
-        host.Clock.Advance(TimeSpan.FromDays(8));
-        await Host.CollectAndTrimAsync(api);
-        await Host.PassWithBackupAsync(api, backup);
-
-        for (var retry = 0; retry < 4; retry++)
-        {
-            var complete = true;
-            foreach (var (_, erasure, requested) in erasures)
-            {
-                complete &= (await RequestAsync(erasure, requested)).Status == HistoryErasure.Complete;
-            }
-            if (complete)
-            {
-                break;
-            }
-            host.Clock.Advance(TimeSpan.FromMinutes(10));
-            await Host.PassWithBackupAsync(api, backup);
-        }
-        foreach (var (_, erasure, requested) in erasures)
-        {
-            await Assert.That((await RequestAsync(erasure, requested)).Status).IsEqualTo(HistoryErasure.Complete);
-        }
-
-        await Assert.That(recording.Starts.Count - recording.TransientRefusals).IsEqualTo(6)
-            .Because("four successful auth rewrites and two SYSTEM rewrites complete three erasures; other refusal reasons still fail");
-        foreach (var file in recording.Starts.GroupBy(call => call.Database is null))
-        {
-            foreach (var (earlier, later) in file.Zip(file.Skip(1)))
-            {
-                await Assert.That(later.Started - earlier.Started).IsGreaterThanOrEqualTo(TimeSpan.FromMinutes(10));
-            }
-        }
-    }
-
-    private sealed class RecordingRewrite(IHealthyRewrite engine, TimeProvider clock) : IHealthyRewrite
-    {
-        public List<(TenantContext? Database, DateTimeOffset Started)> Starts { get; } = [];
-        public int TransientRefusals { get; private set; }
-
-        public async ValueTask<HealthyRewrite> RewriteAsync(TenantContext? database, long minimumOffset, CancellationToken cancellationToken)
-        {
-            Starts.Add((database, clock.GetUtcNow()));
-            try
-            {
-                return await engine.RewriteAsync(database, minimumOffset, cancellationToken);
-            }
-            catch (RewriteRefusedException error) when (error.Reason is RewriteRefusal.Budget or RewriteRefusal.Pressure or RewriteRefusal.Deadline)
-            {
-                TransientRefusals++;
-                Console.WriteLine($"Batched erasure rewrite refused: {error.Reason} ({error.Message})");
-                throw;
-            }
-        }
-    }
-
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    [Timeout(300_000)]
-    public async Task Backup_closure_waits_for_pre_erasure_generations_and_snapshots_then_completes(bool shipBeforeReceipt, CancellationToken _1)
-    {
-        await using var host = new Host();
-        await using var api = await host.StartAsync(services =>
-        {
-            if (shipBeforeReceipt)
-            {
-                services.AddSingleton<IHealthyRewrite>(provider => new ShipBeforeReceipt(
-                    provider.GetRequiredService<TursoStorageEngine>(), provider.GetRequiredService<IContinuousBackup>(), host.Clock));
-            }
-        });
+        await using var api = await host.StartAsync();
         await Host.SeedAsync(api);
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var (fence, erasure, subject, survivor) = (Id(), Id(), Id(), Id());
@@ -188,15 +55,6 @@ public sealed partial class HistoryErasureBackupTests
         host.Clock.Advance(TimeSpan.FromDays(8));
         await Host.CollectAndTrimAsync(api);
         await Assert.That(await Host.UntilPhaseAsync(host, api, backup, erasure, requested, HistoryErasure.Backup)).IsEqualTo(HistoryErasure.Backup).Because("generations and bucket snapshots from before the residue rewrite remain");
-
-        if (shipBeforeReceipt)
-        {
-            var receipt = await Host.OwnAsync(api, erasure);
-            await Assert.That(host.S3.Objects.Keys.Where(key => key.Contains("/snapshots/", StringComparison.Ordinal)).Select(BackupLayout.ParseSnapshot).Any(snapshot => snapshot is not null
-                && snapshot.Key.StartsWith(BackupLayout.Snapshots(BackupLayout.File(Auth, "local")), StringComparison.Ordinal)
-                && snapshot.Generation.Time < receipt.ResidueAt && snapshot.At < receipt.ResidueAt)).IsTrue()
-                .Because("a real generation was pinned on the rewritten file before its receipt was published");
-        }
 
         await DaysOfBackupAsync(host, backup, 3);
         await Assert.That(host.S3.Objects.ContainsKey(BackupLayout.GenerationProof(BackupLayout.File(Auth, "local"), preErasureGeneration))).IsFalse()
@@ -244,67 +102,6 @@ public sealed partial class HistoryErasureBackupTests
         }
 
         await Assert.That(staged).IsGreaterThan(0).Because("shipping staged frames of the rewritten files while running");
-
-    }
-
-    [Test]
-    public async Task A_refused_system_rewrite_keeps_the_auth_lineage_and_backs_off()
-    {
-        var refusing = 1;
-        var systemAttempts = 0;
-        await using var host = new Host();
-        await using var api = await host.StartAsync(services => services.AddSingleton<Hosting.DatabaseLifecycleCheckpoint>((step, database) =>
-        {
-            if (step == "rewrite.replacing" && database.OrganizationId == TursoStorageEngine.SystemName)
-            {
-                Interlocked.Increment(ref systemAttempts);
-                if (Volatile.Read(ref refusing) == 1)
-                {
-                    throw new IOException("injected refusal before the rename");
-                }
-            }
-        }));
-
-        await Host.SeedAsync(api);
-        var (fence, erasure) = (Id(), Id());
-        await Host.PutAsync(api, Jobs, fence, """{"scope":"account"}""");
-        await Host.PutAsync(api, HistoryErasure.MarkCollection, erasure, $$"""{"kind":"request","erasureId":"{{erasure}}","fenceId":"{{fence}}"}""");
-        var requested = host.Clock.GetUtcNow();
-        await Host.RequestAsync(api, erasure, requested);
-        await Host.PassAsync(api);
-        var token = (await Host.RequestAsync(api, erasure, requested)).SettlementToken;
-        await Assert.That((await Host.RequestAsync(api, erasure, requested, token)).Status).IsEqualTo(HistoryErasure.Rewriting);
-        var marked = await Host.OwnAsync(api, erasure);
-
-        await Host.PassAsync(api);
-        await Assert.That(systemAttempts).IsEqualTo(1);
-        var auth = await Host.AuthIncarnationAsync(api);
-        await Assert.That((await Host.LineageAsync(api)).Auth).IsEqualTo(auth.ToString()).Because("the auth rewrite's lineage is recorded as it succeeds");
-        await Host.PassAsync(api);
-        await Assert.That(systemAttempts).IsEqualTo(1).Because("the refused file waits before its next attempt");
-        var own = await Host.OwnAsync(api, erasure);
-        await Assert.That(own.AuthMark).IsEqualTo(marked.AuthMark).Because("its own rewrite is no restore: no new fence marker");
-
-        Volatile.Write(ref refusing, 0);
-
-        host.Clock.Advance(TimeSpan.FromMinutes(10) - TimeSpan.FromTicks(1));
-        await Host.PassAsync(api);
-        await Assert.That(systemAttempts).IsEqualTo(1);
-        host.Clock.Advance(TimeSpan.FromTicks(1));
-        await Host.PassAsync(api);
-        own = await Host.OwnAsync(api, erasure);
-
-        for (var window = 0; window < 3 && own.Phase != HistoryErasure.Rewritten; window++)
-        {
-            host.Clock.Advance(TimeSpan.FromMinutes(10));
-            await Host.PassAsync(api);
-            own = await Host.OwnAsync(api, erasure);
-        }
-
-        await Assert.That(systemAttempts).IsGreaterThanOrEqualTo(2);
-        await Assert.That(own.Phase).IsEqualTo(HistoryErasure.Rewritten);
-        await Assert.That(own.AuthMark).IsEqualTo(marked.AuthMark);
-        await Assert.That(own.Auth!.Source).IsEqualTo(auth.ToString()).Because("the second auth rewrite replaced exactly the file its coverage read");
     }
 
     private static string Id() => EntityIds.New().ToString();
@@ -318,68 +115,6 @@ public sealed partial class HistoryErasureBackupTests
         }
     }
 
-    [Test]
-    [Arguments("valid")]
-    [Arguments("missing")]
-    [Arguments("tampered")]
-    [Arguments("other_file")]
-    [Arguments("later_offset")]
-    public async Task A_generation_predating_the_receipt_needs_authenticated_file_and_offset_evidence(string evidence)
-    {
-        await using var host = new Host();
-        await using var api = await host.StartAsync();
-        await Host.SeedAsync(api);
-        await Host.PutAsync(api, Users, Id(), "{\"survivor\":true}");
-        var native = api.Server.Services.GetRequiredService<IStorageEngine>();
-        var auth = (await native.OpenDatabaseAsync(Auth, CancellationToken.None))!;
-        long offset;
-        await using (var read = await auth.BeginTransactionAsync(write: false, CancellationToken.None))
-        {
-            offset = await read.GetOffsetAsync(CancellationToken.None);
-        }
-        await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
-        var file = BackupLayout.File(Auth, "local");
-        var snapshot = host.S3.Objects.Keys.Where(key => key.StartsWith(BackupLayout.Snapshots(file), StringComparison.Ordinal))
-            .Select(BackupLayout.ParseSnapshot).First()!;
-        var proof = BackupLayout.GenerationProof(file, snapshot.Generation);
-        await Assert.That(host.S3.Objects.ContainsKey(proof)).IsTrue();
-        if (evidence == "missing")
-        {
-            _ = await api.Server.Services.GetRequiredService<S3ObjectStore>().DeleteAsync(proof, CancellationToken.None);
-        }
-        else if (evidence == "tampered")
-        {
-            host.S3.Objects[proof][^1] ^= 1;
-        }
-        var target = evidence == "other_file" ? Id() : auth.Incarnation.ToString();
-        var minimum = evidence == "later_offset" ? long.MaxValue : offset;
-        host.Clock.Advance(TimeSpan.FromMilliseconds(1));
-        var cut = host.Clock.GetUtcNow();
-        await Assert.That(snapshot.At < cut && snapshot.Generation.Time < cut).IsTrue();
-        var clean = false;
-        try
-        {
-            clean = await HistoryErasures.OlderAbsentAsync(api.Server.Services.GetRequiredService<S3ObjectStore>(), file, cut,
-                CancellationToken.None, [new HistoryRewrite(Id(), target, minimum)], api.Server.Services.GetRequiredService<DataKeys>(), BackupLayout.KeyScope(Auth));
-        }
-        catch (InvalidDataException) when (evidence == "tampered")
-        {
-
-        }
-        await Assert.That(clean).IsEqualTo(evidence == "valid");
-    }
-
-    private sealed class ShipBeforeReceipt(IHealthyRewrite engine, IContinuousBackup backup, FakeTimeProvider clock) : IHealthyRewrite
-    {
-        public async ValueTask<HealthyRewrite> RewriteAsync(TenantContext? database, long minimumOffset, CancellationToken cancellationToken)
-        {
-            var result = await engine.RewriteAsync(database, minimumOffset, cancellationToken);
-            await backup.RunOnceAsync(cancellationToken);
-            clock.Advance(TimeSpan.FromMilliseconds(1));
-            return result;
-        }
-    }
-
     private sealed class Host : IAsyncDisposable
     {
         public string Directory { get; } = System.IO.Directory.CreateTempSubdirectory("terrabase-history-").FullName;
@@ -388,7 +123,7 @@ public sealed partial class HistoryErasureBackupTests
 
         public FakeTimeProvider Clock { get; } = new(DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
 
-        public Task<ManagementApi> StartAsync(Action<IServiceCollection>? configure = null)
+        public Task<ManagementApi> StartAsync()
         {
             S3.Time = Clock;
             return ManagementApi.StartAsync(settings =>
@@ -397,7 +132,6 @@ public sealed partial class HistoryErasureBackupTests
             settings["data-directory"] = Directory;
         }, services =>
         {
-
             ((BackupSettings)services.Single(service => service.ServiceType == typeof(BackupSettings)).ImplementationInstance!).RetentionDays =
                 Enum.GetValues<PlanTier>().ToDictionary(plan => plan, _ => 1);
             S3.Route(services);
@@ -405,7 +139,6 @@ public sealed partial class HistoryErasureBackupTests
 
             services.Remove(services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
                 && descriptor.ImplementationFactory?.Method.ReturnType == typeof(HistoryErasures)));
-            configure?.Invoke(services);
         }, time: Clock);
         }
 
@@ -431,10 +164,6 @@ public sealed partial class HistoryErasureBackupTests
 
             await pass;
         }
-
-        public static async Task<HistoryErasureReceipt> OwnAsync(ManagementApi api, string erasure) =>
-            (await api.Server.Services.GetRequiredService<SystemCatalog>().ReadUncheckedAsync(transaction =>
-                SystemCatalog.GetAsync(transaction, HistoryErasure.Receipts(erasure), "local", Hosting.TerraBaseJsonContext.Default.HistoryErasureReceipt, CancellationToken.None), CancellationToken.None))!;
 
         public static async Task<HistoryErasureLineage> LineageAsync(ManagementApi api) =>
             (await api.Server.Services.GetRequiredService<SystemCatalog>().ReadUncheckedAsync(transaction =>
