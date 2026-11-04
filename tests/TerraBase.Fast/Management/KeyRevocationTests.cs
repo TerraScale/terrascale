@@ -35,6 +35,29 @@ public sealed class KeyRevocationTests
         await Assert.That(response.Headers.WwwAuthenticate.ToString()).Contains(code);
     }
 
+    // A region's first question about a new key may pay a cold cross-region connection: one slow answer must not refuse it.
+    [Test]
+    public async Task A_new_key_is_admitted_when_the_first_status_answer_is_slow()
+    {
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var api = await ManagementApi.StartAsync(time: time);
+        var database = await api.CreateManagedDatabaseAsync();
+        var (_, token) = Grant(api, database);
+        var slow = 1;
+        api.Issuer.BeforeStatus = () =>
+        {
+            if (Interlocked.Exchange(ref slow, 0) == 1)
+            {
+                time.AdjustTime(time.GetUtcNow().AddMilliseconds(1200));
+            }
+        };
+        var before = api.Issuer.StatusRequests;
+        using var client = api.WithToken(token);
+        using var response = await ManagementApi.SqlAsync(client, database, "SELECT 1", TestContext.Current!.Execution.CancellationToken);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(api.Issuer.StatusRequests - before).IsEqualTo(2);
+    }
+
     [Test]
     public async Task Revocation_ends_an_open_postgres_session_and_refuses_new_connections()
     {
