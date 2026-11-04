@@ -150,6 +150,7 @@ class SqlErrorCodes:
     FOREIGN_KEY_VIOLATION = "foreign_key_violation"
     CONSTRAINT_VIOLATION = "constraint_violation"
     FORBIDDEN_SCOPE = "forbidden_scope"
+    SQL_SANDBOX = "sql_sandbox"
     SERIALIZATION_CONFLICT = "serialization_conflict"
     TOO_LARGE = "too_large"
     QUERY_CANCELED = "query_canceled"

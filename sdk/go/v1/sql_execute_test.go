@@ -133,7 +133,7 @@ func TestSQLErrorCodesMatchContract(t *testing.T) {
 	}
 	known := []tb.ErrorCode{tb.ErrSQL, tb.ErrSyntax, tb.ErrUndefinedTable, tb.ErrUndefinedColumn, tb.ErrDuplicateObject,
 		tb.ErrPrimaryKeyViolation, tb.ErrUniqueViolation, tb.ErrNotNullViolation, tb.ErrCheckViolation, tb.ErrForeignKeyViolation,
-		tb.ErrConstraintViolation, tb.ErrForbiddenScope, tb.ErrSerializationConflict, tb.ErrTooLarge, tb.ErrQueryCanceled,
+		tb.ErrConstraintViolation, tb.ErrForbiddenScope, tb.ErrSQLSandbox, tb.ErrSerializationConflict, tb.ErrTooLarge, tb.ErrQueryCanceled,
 		tb.ErrTransactionRolledBack, tb.ErrTransactionAborted, tb.ErrReadOnlyTransaction, tb.ErrQuotaExceeded, tb.ErrInvalidRequest,
 		tb.ErrTransactionState, tb.ErrTenantBusy, tb.ErrUnavailable, tb.ErrUnauthorized, tb.ErrInternalError}
 	if len(contract.Codes) != len(known) {
