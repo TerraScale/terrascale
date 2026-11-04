@@ -451,11 +451,11 @@ The sign-up and reset mail starts share a persisted 60-second cooldown per norma
 email, including unknown addresses; earlier repeats answer 429 with
 `Retry-After` for the remaining cooldown. The five-code hourly request budget
 is shared by those pages and applies to unknown emails too. When that hourly
-budget is spent, an address whose account or pending sign-up issued the five
-codes is told so plainly - the page says no new code was sent and when the
-budget resets, the resend control is disabled for the same wait, and the
-answer carries `Retry-After` - while an address with neither keeps the same
-neutral answers as before, so nothing becomes enumerable.
+budget is spent, every refused address - with an account, a pending sign-up or
+neither - gets the same answer: the page says no new code was sent and when
+the budget resets, the resend control is disabled for the same wait, and the
+response carries `Retry-After`, so nothing becomes enumerable. Unknown
+addresses are mailed nothing either way.
 
 All of them appear in `/openapi/v1.json` under the `OAuth` and `Sign-in`
 tags. Introspection is not served. The
