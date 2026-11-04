@@ -21,8 +21,7 @@ public sealed class AlertEmailTests(TerraBaseFixture fixture)
         var captured = new CapturingEmailSender();
         var sender = new Sender(captured);
         await using var oidc = await OidcHarness.StartAsync(fixture, email: captured, services: services => services.AddSingleton<IEmailSender>(sender));
-        var (_, _, tokens) = await oidc.SignInAndRedeemAsync("alert-owner@example.test");
-        var access = tokens.GetProperty("access_token").GetString()!;
+        var (_, access) = await oidc.CreateUserTokenAsync("alert-owner@example.test");
         var organization = (await oidc.OkAsync(HttpMethod.Post, Organizations, access, new { name = "Alert fixture" }, HttpStatusCode.Created)).GetProperty("id").GetString()!;
         var project = (await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{organization}/projects", access, new { name = "Alerted" }, HttpStatusCode.Created))
             .GetProperty("id").GetString()!;
