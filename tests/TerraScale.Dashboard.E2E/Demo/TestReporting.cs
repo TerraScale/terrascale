@@ -140,12 +140,13 @@ namespace TerraScale.Dashboard.E2E.Demo
                 }
             }
             // TerraBase canonical usage (I2 GetUsageAsync) reads with an exchanged databases:read project token.
+            var isRegions = segments is ["v1", "projects", _, "databases", _, "regions"];
             var isCanonicalUsage = segments is ["v1", "projects", _, "usage"] or ["v1", "projects", _, "databases", _, "usage"];
-            if (isCanonicalUsage && scopedActor?.Scopes.Contains("databases:read") != true)
+            if ((isCanonicalUsage || isRegions) && scopedActor?.Scopes.Contains("databases:read") != true)
             {
                 return Json(new { error = new { code = "forbidden_scope", message = "databases:read is required" } }, HttpStatusCode.Forbidden);
             }
-            var isScopedReporting = segments.Last() is "analytics" or "replication" || isCanonicalUsage;
+            var isScopedReporting = segments.Last() is "analytics" or "replication" || isCanonicalUsage || isRegions;
             var actorUserId = sessionActor?.UserId ?? scopedActor!.Value.UserId;
             if (isScopedReporting && (sessionActor is not null || scopedActor is null || scopedActor.Value.ProjectId != id || scopedActor.Value.OrganizationId != org?.Id) ||
                 !isScopedReporting && sessionActor is null)
@@ -212,6 +213,14 @@ namespace TerraScale.Dashboard.E2E.Demo
             }
 
             var query = QueryHelpers.ParseQuery(uri.Query);
+            if (isRegions)
+            {
+                var database = project.Databases.Values.FirstOrDefault(database => database.Id == segments[4] || database.Name == segments[4]);
+                return database is null ? Json(new { error = "not_found" }, HttpStatusCode.NotFound)
+                    : Json(new TerraScale.TerraBase.Contracts.Management.TerraBaseDatabaseRegions(database.Id, RegionId(database.Region), DateTimeOffset.UtcNow,
+                        [.. database.Regions.Where(region => region != database.Region).Select(region => new TerraScale.TerraBase.Contracts.Management.TerraBaseReplicaStatus(RegionId(region)))]));
+            }
+
             if (isCanonicalUsage)
             {
                 return CanonicalUsage(project, segments, query, scenario);

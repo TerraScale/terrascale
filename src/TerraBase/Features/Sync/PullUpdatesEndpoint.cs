@@ -1,4 +1,6 @@
 using System.IO.Pipelines;
+using System.Net;
+using TerraBase.Features.Replicas;
 using Google.Protobuf;
 using TerraBase.Engine;
 using TerraBase.Engine.Revisions;
@@ -9,7 +11,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Sync;
 
-internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRevisions revisions) : EndpointWithoutRequest<IResult>, IRevisionPullSink
+internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRevisions revisions, IReplicaPeers peers) : EndpointWithoutRequest<IResult>, IRevisionPullSink
 {
     private const string MediaType = "application/protobuf";
     private const int MaxBodyBytes = 64 * 1024;
@@ -127,7 +129,17 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
             return ErrorResponse.From(new NotFound("the database is not stored on this node"));
         }
 
-        await HttpContext.Response.BodyWriter.FlushAsync(cancellationToken).ConfigureAwait(false);
+        await FlushAsync(HttpContext.Response.BodyWriter, cancellationToken).ConfigureAwait(false);
+        // Identify the authenticated mesh peer by its source address, never by a caller-supplied region header.
+        var address = HttpContext.Connection.RemoteIpAddress?.MapToIPv4();
+        var peer = (await peers.ListAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(peer =>
+            IPAddress.TryParse(peer.Internal.Host, out var ip) && ip.MapToIPv4().Equals(address));
+        if (peer is not null && await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false)
+            is TenantDatabaseRecord { Placement: var placement } && placement.Replicas.Contains(peer.Region))
+        {
+            await revisions.RecordReplicaPullAsync(database, peer.Region, answer.Revision, cancellationToken).ConfigureAwait(false);
+        }
+
         return Results.Empty;
     }
 
