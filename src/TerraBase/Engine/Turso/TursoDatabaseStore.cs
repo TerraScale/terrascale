@@ -459,6 +459,11 @@ internal sealed partial class TursoDatabaseStore(
             }
         }
 
+        TookWriter(writer, file, line);
+    }
+
+    private void TookWriter(string writer, string? file, int line)
+    {
         var taken = Time.GetTimestamp();
         Volatile.Write(ref _writerTaken, taken);
         Volatile.Write(ref _writerHolder, writer);
@@ -478,6 +483,7 @@ internal sealed partial class TursoDatabaseStore(
             {
                 _writerSession = null;
                 Revisions.Detach();
+                pool.ForgetWriter(this);
                 pool.Discard(stale);
             }
 
@@ -485,6 +491,7 @@ internal sealed partial class TursoDatabaseStore(
             {
                 _writerSession = null;
                 Revisions.Detach();
+                pool.ForgetWriter(this);
                 pool.Discard(session);
             }
         }
@@ -528,10 +535,13 @@ internal sealed partial class TursoDatabaseStore(
 
     internal DatabaseLifecycleCheckpoint? Checkpoint { get; init; }
 
+    private bool Evictable => Tenant is not null && !IsSystem && Captures;
+
     private async Task<TursoSession> WriterSessionAsync(CancellationToken cancellationToken)
     {
         if (_writerSession is { } open)
         {
+            UseWriter();
             return open;
         }
 
@@ -579,8 +589,95 @@ internal sealed partial class TursoDatabaseStore(
             throw;
         }
 
-        return _writerSession = session;
+        _writerSession = session;
+        UseWriter();
+        return session;
     }
+
+    private void UseWriter()
+    {
+        if (!Evictable || pool.UseWriter(this) is not { } evicted)
+        {
+            return;
+        }
+
+        using (ExecutionContext.SuppressFlow())
+        {
+            foreach (var store in evicted)
+            {
+                _ = Task.Run(store.EvictWriterAsync);
+            }
+        }
+    }
+
+    internal async Task EvictWriterAsync()
+    {
+        if (Closed || _writerSession is null || !_writer.Wait(0))
+        {
+            return;
+        }
+
+        TookWriter("a writer eviction", null, 0);
+        var admitted = false;
+        try
+        {
+            io.Admit();
+            admitted = true;
+            if (Closed || CloseRefusal is not null || _writerSession is not { } writer || pool.Paused(this) || pool.BusyOf(this, writer) > 0)
+            {
+                return;
+            }
+
+            await using var operation = await BeginOperationAsync(CancellationToken.None).ConfigureAwait(false);
+            await WriteLane.RunAsync(() =>
+            {
+                try
+                {
+                    if (Revisions.IsAttachedTo(writer.Connection))
+                    {
+                        Revisions.Checkpoint(writer.Connection);
+                    }
+                    else
+                    {
+                        Scalar(writer.Connection, null, "PRAGMA wal_checkpoint(TRUNCATE);");
+                    }
+                }
+                finally
+                {
+                    Discard(writer);
+                    pool.CloseIdleOf(this);
+                }
+
+                return true;
+            }, CancellationToken.None).ConfigureAwait(false);
+            operation?.Complete();
+            WritersEvicted?.Add(1);
+        }
+        catch (Exception error) when (error is StorageBusyException or ObjectDisposedException)
+        {
+        }
+        catch (Exception error) when (error is not OutOfMemoryException)
+        {
+            await RecordOperationDamageAsync(error).ConfigureAwait(false);
+            logger?.ZLogWarning(error, $"Closing the writer of database {name:@Database}, the least recently used, failed");
+        }
+        finally
+        {
+            try
+            {
+                ReleaseWriter();
+            }
+            finally
+            {
+                if (admitted)
+                {
+                    io.Release();
+                }
+            }
+        }
+    }
+
+    internal Counter<long>? WritersEvicted { get; init; }
 
     internal async ValueTask EndAsync(bool write, bool ownsAdmission, CopyOperation? operation, bool indexRevision = true)
     {
@@ -1122,6 +1219,7 @@ internal sealed partial class TursoDatabaseStore(
         {
             _writerSession = null;
             Revisions.Detach();
+            pool.ForgetWriter(this);
         }
 
         pool.Discard(session);
@@ -1133,6 +1231,7 @@ internal sealed partial class TursoDatabaseStore(
     {
         Revisions.Dispose();
         pool.Close(this);
+        pool.ForgetWriter(this);
 
         if (_writer.Wait(0))
         {

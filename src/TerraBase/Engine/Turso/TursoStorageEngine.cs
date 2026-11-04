@@ -66,6 +66,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private readonly Counter<long> _transactions;
     private readonly Histogram<double> _rewriteSteps;
     private readonly Counter<long> _rewriteRefused;
+    private readonly Counter<long> _writersEvicted;
     private readonly ILogger<TursoStorageEngine> _logger;
     private readonly TimeSpan _shutdownGrace;
     private readonly DatabaseLifecycleCheckpoint _checkpoint;
@@ -368,7 +369,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     public TursoStorageEngine(
     string dataDirectory, int threads, int queue, long memoryBudget, Meter meter, ILogger<TursoStorageEngine> logger,
     IMasterKey masterKey,
-    TimeSpan shutdownGrace, int? maxIdle = null, int? maxIdlePerDatabase = null, Func<ThreadStart, Thread>? createWorker = null,
+    TimeSpan shutdownGrace, int? maxIdle = null, int? maxIdlePerDatabase = null, int? maxWriters = null, Func<ThreadStart, Thread>? createWorker = null,
     TimeSpan? readinessCacheTtl = null, DatabaseLifecycleCheckpoint? checkpoint = null, TimeProvider? time = null,
     Action<TursoDatabaseStore>? afterBootstrap = null, TimeSpan? queryBudget = null,
     TimeProvider? backupTime = null, IMemoryBudget? schemaMemory = null, string? replicaOwner = null,
@@ -386,6 +387,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = WriterHeldBuckets });
         _transactions = meter.CreateCounter<long>("terrabase.storage.transactions",
             description: "Storage transactions begun, by kind (read, write) and call site (a bounded set of file:line): which code keeps the I/O threads and writers busy.");
+        _writersEvicted = meter.CreateCounter<long>("terrabase.storage.writers_evicted", description: "Database writers closed because the engine-wide bound on open writers was reached.");
         _rewriteRefused = meter.CreateCounter<long>("terrabase.storage.rewrite_refused", description: "Healthy rewrite refusals by bounded reason.");
         _rewriteSteps = meter.CreateHistogram<double>("terrabase.storage.rewrite_step", "s",
             "Healthy rewrite work by bounded step and database kind.",
@@ -400,7 +402,9 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         QueryBudget = queryBudget ?? TursoDatabaseStore.DefaultQueryBudget;
 
         _pragmas = TursoSession.Pragmas(memoryBudget, threads);
-        Pool = new(maxIdle: maxIdle ?? 4 * Environment.ProcessorCount, maxIdlePerDatabase: maxIdlePerDatabase ?? Environment.ProcessorCount);
+        Pool = new(maxIdle: maxIdle ?? 4 * Environment.ProcessorCount, maxIdlePerDatabase: maxIdlePerDatabase ?? Environment.ProcessorCount,
+            maxWriters: maxWriters ?? Math.Max(64, 8 * threads));
+        meter.CreateObservableGauge("terrabase.storage.open_writers", () => Pool.OpenWriters, description: "Client databases holding an open writer connection.");
         _ownership = Own(dataDirectory);
         try
         {
@@ -1652,6 +1656,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             WriterHeld = _writerHeld,
             Transactions = _transactions,
             RewriteSteps = _rewriteSteps,
+            WritersEvicted = _writersEvicted,
         };
         var published = false;
         var admitted = false;

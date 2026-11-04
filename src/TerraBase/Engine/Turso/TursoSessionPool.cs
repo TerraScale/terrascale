@@ -9,7 +9,7 @@ namespace TerraBase.Engine.Turso;
 /// ponytail: one lock and a linear scan (at most <c>maxIdle</c> entries) per rent, and fixed caps;
 /// index idle sessions by database, or make the caps settings, if profiles show either matters.
 /// </remarks>
-internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase)
+internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int maxWriters)
 {
     // Guards everything below and TursoDatabaseStore.Closed, so a session is always in exactly one
     // place: idle here, rented by one transaction, or closed. Sessions are opened and closed outside
@@ -38,8 +38,80 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase)
     private readonly Dictionary<TursoDatabaseStore, TaskCompletionSource> _drains = [];
     private readonly Dictionary<TursoDatabaseStore, int> _failedCloses = [];
 
+    private readonly LinkedList<TursoDatabaseStore> _writers = new();
+    private readonly Dictionary<TursoDatabaseStore, LinkedListNode<TursoDatabaseStore>> _writerNodes = [];
+
     /// <summary>The engine-wide bound on idle sessions.</summary>
     public int MaxIdle => maxIdle;
+
+    internal int MaxWriters => maxWriters;
+
+    internal int OpenWriters
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _writers.Count;
+            }
+        }
+    }
+
+    internal List<TursoDatabaseStore>? UseWriter(TursoDatabaseStore store)
+    {
+        lock (_gate)
+        {
+            if (_stopped || store.Closed)
+            {
+                return null;
+            }
+
+            if (_writerNodes.TryGetValue(store, out var node))
+            {
+                _writers.Remove(node);
+                _writers.AddLast(node);
+            }
+            else
+            {
+                _writerNodes.Add(store, _writers.AddLast(store));
+            }
+
+            List<TursoDatabaseStore>? evicted = null;
+            while (_writers.Count > maxWriters && _writers.First!.Value != store)
+            {
+                var victim = _writers.First.Value;
+                _writers.RemoveFirst();
+                _writerNodes.Remove(victim);
+                if (!victim.Closed && !_paused.ContainsKey(victim))
+                {
+                    (evicted ??= []).Add(victim);
+                }
+            }
+
+            return evicted;
+        }
+    }
+
+    internal void ForgetWriter(TursoDatabaseStore store)
+    {
+        lock (_gate)
+        {
+            if (_writerNodes.Remove(store, out var node))
+            {
+                _writers.Remove(node);
+            }
+        }
+    }
+
+    internal bool Paused(TursoDatabaseStore store)
+    {
+        lock (_gate)
+        {
+            return _paused.ContainsKey(store) || _readersPaused.ContainsKey(store);
+        }
+    }
+
+    internal void CloseIdleOf(TursoDatabaseStore store) => CloseIdle(store);
 
     /// <summary>Connections not idle in the pool: held by transactions, being opened, or being closed.</summary>
     public int OpenCount
