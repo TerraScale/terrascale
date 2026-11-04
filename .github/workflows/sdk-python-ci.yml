@@ -8,6 +8,9 @@ on:
       - '.github/workflows/sdk-python-*.yml'
       - '.github/workflows/sdk-fast.yml'
       - 'scripts/sdk/**'
+      - '!**/AGENTS.md'
+      - '!**/CLAUDE.md'
+      - '!.cos/**'
   pull_request:
     branches: [main]
     paths:
@@ -15,6 +18,9 @@ on:
       - '.github/workflows/sdk-python-*.yml'
       - '.github/workflows/sdk-fast.yml'
       - 'scripts/sdk/**'
+      - '!**/AGENTS.md'
+      - '!**/CLAUDE.md'
+      - '!.cos/**'
   workflow_dispatch:
 
 permissions:

@@ -71,49 +71,49 @@ jobs:
               - .editorconfig
               - BannedSymbols.txt
               - TerraScale.slnx
-              - src/TerraScale.Endpoints*/**
-              - src/TerraScale.Logging/**
-              - tests/TerraScale.Endpoints.Tests/**
-              - tests/TerraScale.Logging.Tests/**
+              - src/TerraScale.Endpoints*/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.Logging/**/!(AGENTS.md|CLAUDE.md)
+              - tests/TerraScale.Endpoints.Tests/**/!(AGENTS.md|CLAUDE.md)
+              - tests/TerraScale.Logging.Tests/**/!(AGENTS.md|CLAUDE.md)
               # TerraBase's vendored driver also backs auth integration tests and vendor audits.
-              - sdk/dotnet/**
-              - src/vendor/**
-              - tests/Turso.Data.Sqlite.Tests/**
-              - scripts/vendor/**
+              - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
+              - src/vendor/**/!(AGENTS.md|CLAUDE.md)
+              - tests/Turso.Data.Sqlite.Tests/**/!(AGENTS.md|CLAUDE.md)
+              - scripts/vendor/**/!(AGENTS.md|CLAUDE.md)
             libs:
               - *shared
               - libs.slnf
-              - src/TerraScale.CLI/**
-              - benchmark/dotnet/**
+              - src/TerraScale.CLI/**/!(AGENTS.md|CLAUDE.md)
+              - benchmark/dotnet/**/!(AGENTS.md|CLAUDE.md)
               # Self-check changes run in changes; executor changes still qualify both native Fast areas.
               - scripts/ci/image-payloads.sh
               - scripts/ci/test-area.sh
               # The credential entry point and the scripts it runs (make handoff-test).
-              - scripts/handoff/**
-              - scripts/e2e/**
+              - scripts/handoff/**/!(AGENTS.md|CLAUDE.md)
+              - scripts/e2e/**/!(AGENTS.md|CLAUDE.md)
               - benchmark/scripts/repl-*-tenant.sh
             auth:
               - *shared
               - scripts/ci/image-payloads.sh
               - auth.slnf
-              - src/TerraScale.Authentication*/**
-              - tests/TerraScale.Authentication*/**
+              - src/TerraScale.Authentication*/**/!(AGENTS.md|CLAUDE.md)
+              - tests/TerraScale.Authentication*/**/!(AGENTS.md|CLAUDE.md)
               # The published platform contract (OpenApiTests, auth-openapi-check); the Markdown docs are not inputs.
               - docs/auth/*.yaml
-              - scripts/auth/**
+              - scripts/auth/**/!(AGENTS.md|CLAUDE.md)
               - scripts/ci/auth-build.sh
             auth-server:
-              - src/TerraBase/**
+              - src/TerraBase/**/!(AGENTS.md|CLAUDE.md)
             terrabase:
               - *shared
               - scripts/ci/terrabase-*
               - terrabase.slnf
               - scripts/ci/image-payloads.sh
               - scripts/ci/test-area.sh
-              - src/TerraBase*/**
-              - tests/TerraBase*/**
-              - scripts/terrabase/*
-              - scripts/terrabase/**
+              - src/TerraBase*/**/!(AGENTS.md|CLAUDE.md)
+              - tests/TerraBase*/**/!(AGENTS.md|CLAUDE.md)
+              - scripts/terrabase/!(AGENTS.md|CLAUDE.md)
+              - scripts/terrabase/**/!(AGENTS.md|CLAUDE.md)
       - id: areas
         env:
           CHANGES: ${{ github.event_name == 'workflow_dispatch' && (inputs.native_artifacts && '[]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
@@ -144,7 +144,6 @@ jobs:
             legacy-scan.log
 
       - name: Check out the path-filter matcher for regression fixtures
-        if: github.event_name != 'push'
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: dorny/paths-filter
@@ -152,7 +151,6 @@ jobs:
           path: path-filter-action
           persist-credentials: false
       - name: Verify CI path filters
-        if: github.event_name != 'push'
         run: python3 scripts/ci/path-filter-test.py .github/workflows/ci.yml path-filter-action/dist/index.js
       # Production runs on OCI through ts-orch; only Tigris (its endpoint and `fly storage`) stays. The brackets keep
       # these lines from matching themselves.

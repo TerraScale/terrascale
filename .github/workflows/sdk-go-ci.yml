@@ -12,6 +12,9 @@ on:
       - '!sdk/go/docs/**'
       - '!sdk/go/contracts/**'
       - '!**/*.md'
+      - '!**/AGENTS.md'
+      - '!**/CLAUDE.md'
+      - '!.cos/**'
   pull_request:
     branches: [main]
     paths:
@@ -23,6 +26,9 @@ on:
       - '!sdk/go/docs/**'
       - '!sdk/go/contracts/**'
       - '!**/*.md'
+      - '!**/AGENTS.md'
+      - '!**/CLAUDE.md'
+      - '!.cos/**'
   workflow_dispatch:
 
 permissions:
