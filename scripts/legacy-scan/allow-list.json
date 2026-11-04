@@ -1,8 +1,6 @@
 [
   {"path": "(^|/)AGENTS\\.md$", "reason": "Human-owned agent instructions are governance, not product surfaces."},
   {"path": "^scripts/legacy-scan/", "repo": "terrascale", "reason": "Scanner policy and process fixtures necessarily name forbidden terms."},
-  {"path": "^\\.cos/archive/", "reason": "Explicitly archived planning history."},
-  {"path": "^(?:docs/)?archive/", "reason": "Explicitly archived history; active documentation is scanned."},
   {"path": "^benchmark/bench/", "repo": "terrascale", "reason": "Immutable historical measurement reports retained for comparisons."},
   {"path": "(^|/)(?:THIRD[-_]PARTY[-_]NOTICES(?:\\.md|\\.txt)?|NOTICE(?:\\.md|\\.txt)?|LICENSE(?:\\.md|\\.txt)?)$", "terms": ["engine-brand", "libsql"], "reason": "Required upstream license and third-party attribution."},
   {"path": "^src/vendor/", "repo": "terrascale", "terms": ["engine-brand", "libsql"], "reason": "Vendored engine implementation names are internal."},
