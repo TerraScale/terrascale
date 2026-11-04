@@ -9,11 +9,11 @@ namespace TerraScale.Dashboard.E2E.Demo
 
     internal sealed record TestSqlResult(IReadOnlyList<string> Columns, IReadOnlyList<IReadOnlyList<object?>> Rows, long RowsAffected);
 
-    internal sealed class TestSqlFailure(int statement, string code, string sqliteCode, string message) : Exception(message)
+    internal sealed class TestSqlFailure(int statement, string code, string sqlstate, string message) : Exception(message)
     {
         public int Statement { get; } = statement;
         public string Code { get; } = code;
-        public string SqliteCode { get; } = sqliteCode;
+        public string Sqlstate { get; } = sqlstate;
     }
 
     internal sealed class TestSqlEngine : IDisposable
@@ -41,7 +41,8 @@ namespace TerraScale.Dashboard.E2E.Demo
                     catch (SqliteException error)
                     {
                         transaction.Rollback();
-                        throw new TestSqlFailure(index, "sql_error", Code(error), error.Message);
+                        var (code, sqlstate) = Code(error);
+                        throw new TestSqlFailure(index, code, sqlstate, error.Message);
                     }
                 }
 
@@ -106,15 +107,15 @@ namespace TerraScale.Dashboard.E2E.Demo
             return new(columns, rows, Math.Max(0, reader.RecordsAffected));
         }
 
-        private static string Code(SqliteException error)
+        private static (string Code, string Sqlstate) Code(SqliteException error)
         {
             return error.Message switch
             {
-                var message when message.Contains("UNIQUE constraint failed", StringComparison.Ordinal) => "SQLITE_CONSTRAINT_UNIQUE",
-                var message when message.Contains("NOT NULL constraint failed", StringComparison.Ordinal) => "SQLITE_CONSTRAINT_NOTNULL",
-                var message when message.Contains("constraint failed", StringComparison.Ordinal) => "SQLITE_CONSTRAINT",
-                _ when error.SqliteErrorCode == 5 => "SQLITE_BUSY",
-                _ => "SQLITE_ERROR",
+                var message when message.Contains("UNIQUE constraint failed", StringComparison.Ordinal) => ("unique_violation", "23505"),
+                var message when message.Contains("NOT NULL constraint failed", StringComparison.Ordinal) => ("not_null_violation", "23502"),
+                var message when message.Contains("constraint failed", StringComparison.Ordinal) => ("constraint_violation", "23000"),
+                _ when error.SqliteErrorCode == 5 => ("serialization_conflict", "40001"),
+                _ => ("sql_error", "0A000"),
             };
         }
 
