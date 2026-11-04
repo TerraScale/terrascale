@@ -1,6 +1,6 @@
 # Fast CI budgets
 
-`ts-ship` builds and runs the affected Fast suites on delta, mariogk-dev or beta before pushing main. Each area has a separate 30-second test budget after compilation, and each Fast test has a 10-second budget. Both currently produce named warnings until issue #1084 brings the suites within policy. The runner retains TRX results and prints the ten slowest tests. Functional failures and missing timing reports still reject shipping.
+`ts-ship` builds and runs the affected Fast suites on delta, mariogk-dev or beta before pushing main. Each area has a separate 30-second test budget after compilation, and each Fast test has a 10-second budget. Both currently produce named warnings until issue #1084 brings the suites within policy. The runner retains TRX results and prints the ten slowest tests. The existing 120-second suite cap, functional failures and missing timing reports still reject shipping.
 
 The core Makefile targets use `scripts/ci/fast-budget.py`, so direct Fast runs and Docker test stages report the same test-duration budgets. JavaScript, Python, Go and Rust SDK runs also retain individual timings and print their ten slowest tests. Tests retain their existing cases and use TUnit default parallelism and automatic CPU/GC discovery. Compiler CPU limits apply only during compilation.
 
