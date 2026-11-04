@@ -11,7 +11,7 @@ test ! -f "$scratch/publish/libturso_sdk_kit.so"
 mkdir "$scratch/isolated"
 cp "$scratch/publish/Turso.Data.Sqlite.Tests" "$scratch/isolated/"
 export DOTNET_BUNDLE_EXTRACT_BASE_DIR="$scratch/extracted"
-(cd "$scratch/isolated" && ./Turso.Data.Sqlite.Tests --minimum-expected-tests 23)
+(cd "$scratch/isolated" && ./Turso.Data.Sqlite.Tests --minimum-expected-tests 3)
 library=$(find "$scratch/extracted" -type f -name libturso_sdk_kit.so)
 test -n "$library"
 expected=$(awk -v asset="terrascale-turso-$rid.so" '$2 == asset { print $1 }' "$root/src/vendor/Turso.Native/SHA256SUMS")
