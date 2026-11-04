@@ -7,9 +7,6 @@ namespace TerraScale.Authentication.Tests;
 /// <summary>Waits across the readiness loop's passes, which run five seconds after the previous one ends.</summary>
 public static class ReadinessWait
 {
-    /// <summary>Long enough for one full pass after a change to finish.</summary>
-    public static readonly TimeSpan NextPass = TimeSpan.FromSeconds(5.5);
-
     /// <summary>Polls <c>/readyz</c> until it answers 200 or the limit passes.</summary>
     public static async Task<bool> ReadyWithinAsync(HttpClient client, TimeSpan limit)
     {

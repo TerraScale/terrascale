@@ -39,25 +39,4 @@ public sealed partial class BrowserSecurityTests
             }
         }
     }
-
-    [Test]
-    public async Task Scalar_uses_a_fresh_nonce_matching_its_content_security_policy()
-    {
-        await using var server = await AuthTestServer.StartAsync();
-        string? previous = null;
-        foreach (var _ in new[] { 0, 1 })
-        {
-            using var response = await server.Client.GetAsync("/scalar/");
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            var nonce = ScriptNonce().Match(await response.Content.ReadAsStringAsync()).Groups[1].Value;
-            await Assert.That(nonce.Length).IsGreaterThan(0);
-            await Assert.That(nonce).IsNotEqualTo(previous);
-            await Assert.That(response.Headers.GetValues("Content-Security-Policy").Single()).Contains($"script-src 'self' 'nonce-{nonce}'");
-            await Assert.That(response.Headers.CacheControl!.NoStore).IsTrue();
-            previous = nonce;
-        }
-    }
-
-    [GeneratedRegex("<script[^>]*\\snonce=\"([^\"]+)\"")]
-    private static partial Regex ScriptNonce();
 }

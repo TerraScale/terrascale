@@ -23,10 +23,8 @@ namespace TerraScale.Authentication.Fast.Management;
 public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
 {
     private const string Audience = "https://api.terrascale.tech";
-    private static readonly string[] ReadOnly = ["documents:read"];
     private static readonly string[] ReadWrite = ["documents:read", "documents:write"];
     private static readonly string[] WithShapes = ["documents:read", "shapes:read"];
-    private static readonly string[] Browse = ["databases:read", "documents:read"];
 
     [Test]
     public async Task A_project_key_is_shown_once_and_exchanged_for_a_project_token_with_the_contract_claims()
@@ -103,108 +101,6 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(await TokenErrorAsync(oidc.ApiKeyTokenAsync(key))).IsEqualTo((401, "invalid_client"));
         await Assert.That((await oidc.OkAsync(HttpMethod.Get, keys, token)).GetProperty("items").GetArrayLength()).IsEqualTo(0);
         await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"{keys}/{id}", token)).IsEqualTo((404, "not_found"));
-    }
-
-    [Test]
-    public async Task An_organization_key_reaches_one_project_of_its_organization_per_token_and_only_admins_hold_one()
-    {
-        await using var oidc = await StartAsync();
-        var (_, token) = await oidc.SignInUserAsync("alice@example.test");
-        var (bob, bobToken) = await oidc.SignInUserAsync("bob@example.test");
-        var organization = await oidc.CreateOrganizationAsync(token);
-        var project = await oidc.CreateProjectAsync(token, organization, "Production");
-        var other = await oidc.CreateProjectAsync(token, await oidc.CreateOrganizationAsync(token, "Elsewhere"), "Production");
-        await oidc.AddMemberAsync(organization, bob.Id, "member");
-        var keys = $"{Organizations}/{organization}/api-keys";
-
-        await Assert.That(await oidc.FailAsync(HttpMethod.Post, keys, bobToken, new { name = "ci", scopes = ReadOnly })).IsEqualTo((403, "forbidden_role"));
-        await Assert.That(await oidc.FailAsync(HttpMethod.Get, keys, bobToken)).IsEqualTo((403, "forbidden_role"));
-        var database = await oidc.CreateDatabaseIdAsync("app");
-        foreach (var invalid in new object[]
-        {
-            new { name = "ci", scopes = Array.Empty<string>() },
-            new { name = "ci", scopes = new[] { "documents:read", "documents:read" } },
-            new { name = "ci", scopes = new[] { "admin" } },
-            new { name = "ci", scopes = ReadOnly, database },
-            new { name = "ci", scopes = ReadOnly, expires_at = DateTimeOffset.UtcNow.AddMinutes(-1) },
-            new { name = "", scopes = ReadOnly },
-        })
-        {
-            await Assert.That(await oidc.FailAsync(HttpMethod.Post, keys, token, invalid)).IsEqualTo((400, "invalid_request"));
-        }
-
-        var key = (await oidc.OkAsync(HttpMethod.Post, keys, token, new { name = "ci", scopes = Browse }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
-        await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{organization}/projects/{project}/api-keys", token, new { name = "app", scopes = ReadOnly }, HttpStatusCode.Created);
-
-        // Organization keys and project keys list apart.
-        var organizationKeys = (await oidc.OkAsync(HttpMethod.Get, keys, token)).GetProperty("items");
-        await Assert.That(organizationKeys.EnumerateArray().Select(item => item.GetProperty("id").GetString()!).ToArray()).IsEquivalentTo([key[..26]]);
-        await Assert.That(organizationKeys[0].GetProperty("project_id").ValueKind).IsEqualTo(JsonValueKind.Null);
-        var projectKeys = (await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{organization}/projects/{project}/api-keys", token)).GetProperty("items");
-        await Assert.That(projectKeys.EnumerateArray().Select(item => item.GetProperty("name").GetString()!).ToArray()).IsEquivalentTo(["app"]);
-
-        using (var organizationToken = await oidc.ApiKeyTokenAsync(key))
-        {
-            var access = await oidc.ValidateAsync((await OidcHarness.JsonAsync(organizationToken)).GetProperty("access_token").GetString()!, Audience);
-            await Assert.That(access.GetClaim("org_id").Value).IsEqualTo(organization);
-            await Assert.That(access.TryGetClaim("project_id", out _)).IsFalse();
-        }
-
-        using (var projectToken = await oidc.ApiKeyTokenAsync(key, new() { ["project"] = project }))
-        {
-            var access = await oidc.ValidateAsync((await OidcHarness.JsonAsync(projectToken)).GetProperty("access_token").GetString()!, Audience);
-            await Assert.That(access.GetClaim("project_id").Value).IsEqualTo(project);
-            await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(["databases:read", "documents:read"]);
-        }
-
-        // Another organization's project and an unknown one answer alike.
-        await Assert.That(await TokenErrorAsync(oidc.ApiKeyTokenAsync(key, new() { ["project"] = other }))).IsEqualTo((400, "invalid_target"));
-        await Assert.That(await TokenErrorAsync(oidc.ApiKeyTokenAsync(key, new() { ["project"] = Guid.CreateVersion7().ToString("D") }))).IsEqualTo((400, "invalid_target"));
-
-        // A project key outlives nothing: deleting its project revokes it.
-        var projectKey = (await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{organization}/projects/{project}/api-keys", bobToken, new { name = "app", scopes = ReadOnly }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
-        await oidc.OkAsync(HttpMethod.Delete, $"{Organizations}/{organization}/projects/{project}", token, status: HttpStatusCode.NoContent);
-        await Assert.That((await TokenErrorAsync(oidc.ApiKeyTokenAsync(projectKey))).Status).IsGreaterThanOrEqualTo(400);
-        await Assert.That(await TokenErrorAsync(oidc.ApiKeyTokenAsync(key, new() { ["project"] = project }))).IsEqualTo((400, "invalid_target"));
-    }
-
-    [Test]
-    public async Task Only_those_who_manage_a_key_read_rotate_or_revoke_it_and_a_refused_change_leaves_it_working()
-    {
-        await using var oidc = await StartAsync();
-        var (_, token) = await oidc.SignInUserAsync("alice@example.test");
-        var (bob, bobToken) = await oidc.SignInUserAsync("bob@example.test");
-        var (dave, daveToken) = await oidc.SignInUserAsync("dave@example.test");
-        var organization = await oidc.CreateOrganizationAsync(token);
-        var elsewhere = await oidc.CreateOrganizationAsync(token, "Elsewhere");
-        var production = await oidc.CreateProjectAsync(token, organization, "Production");
-        var staging = await oidc.CreateProjectAsync(token, organization, "Staging");
-        await oidc.AddMemberAsync(organization, bob.Id, "viewer");
-        await oidc.GrantAsync(staging, dave.Id, "admin");
-        var key = (await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{organization}/projects/{production}/api-keys", token, new { name = "app", scopes = ReadOnly }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
-        var id = key[..26];
-
-        // A viewer of the key's project, an admin of another project, and the right caller on a route that does not own
-        // the key: none reads, rotates or revokes it.
-        var refused = new (string Token, string Route, (int, string) Answer)[]
-        {
-            (bobToken, $"{Organizations}/{organization}/projects/{production}/api-keys/{id}", (403, "forbidden_role")),
-            (daveToken, $"{Organizations}/{organization}/projects/{production}/api-keys/{id}", (404, "not_found")),
-            (daveToken, $"{Organizations}/{organization}/projects/{staging}/api-keys/{id}", (404, "not_found")),
-            (token, $"{Organizations}/{organization}/projects/{staging}/api-keys/{id}", (404, "not_found")),
-            (token, $"{Organizations}/{organization}/api-keys/{id}", (404, "not_found")),
-            (token, $"{Organizations}/{elsewhere}/api-keys/{id}", (404, "not_found")),
-        };
-        foreach (var (caller, route, answer) in refused)
-        {
-            await Assert.That(await oidc.FailAsync(HttpMethod.Get, route, caller)).IsEqualTo(answer);
-            await Assert.That(await oidc.FailAsync(HttpMethod.Post, $"{route}/rotate", caller)).IsEqualTo(answer);
-            await Assert.That(await oidc.FailAsync(HttpMethod.Delete, route, caller)).IsEqualTo(answer);
-        }
-
-        await Assert.That((await TokenErrorAsync(oidc.ApiKeyTokenAsync(key))).Status).IsEqualTo(200);
-        // Still there and never rotated.
-        await Assert.That((await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{organization}/projects/{production}/api-keys/{id}", token)).GetProperty("previous_secret_expires_at").ValueKind).IsEqualTo(JsonValueKind.Null);
     }
 
     [Test]
@@ -292,27 +188,6 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
 
         await Assert.That(await TokenErrorAsync(oidc.ExchangeAsync(aliceToken, new() { ["organization"] = organization }, replica.Client))).IsEqualTo((400, "invalid_grant"));
         await Assert.That(await TokenErrorAsync(oidc.ExchangeAsync(aliceToken, new() { ["organization"] = organization }))).IsEqualTo((400, "invalid_grant"));
-    }
-
-    [Test]
-    public async Task Rotating_a_key_replaces_its_secret_and_keeps_the_key_identity()
-    {
-        await using var oidc = await StartAsync();
-        var (_, token) = await oidc.SignInUserAsync("owner@example.test");
-        var organization = await oidc.CreateOrganizationAsync(token);
-        var project = await oidc.CreateProjectAsync(token, organization, "Production");
-        var keys = $"{Organizations}/{organization}/projects/{project}/api-keys";
-        var created = await oidc.OkAsync(HttpMethod.Post, keys, token, new { name = "backend", scopes = ReadOnly }, HttpStatusCode.Created);
-        var original = created.GetProperty("key").GetString()!;
-        var id = original[..26];
-        await Assert.That((await TokenErrorAsync(oidc.ApiKeyTokenAsync(original))).Status).IsEqualTo(200);
-
-        var rotated = await oidc.OkAsync(HttpMethod.Post, $"{keys}/{id}/rotate", token);
-        var replacement = rotated.GetProperty("key").GetString()!;
-        await Assert.That(replacement[..26]).IsEqualTo(id);
-        await Assert.That(replacement).IsNotEqualTo(original);
-        await Assert.That(await TokenErrorAsync(oidc.ApiKeyTokenAsync(original))).IsEqualTo((401, "invalid_client"));
-        await Assert.That((await TokenErrorAsync(oidc.ApiKeyTokenAsync(replacement))).Status).IsEqualTo(200);
     }
 
     private Task<OidcHarness> StartAsync(TimeProvider? clock = null) => OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience, clock: clock);

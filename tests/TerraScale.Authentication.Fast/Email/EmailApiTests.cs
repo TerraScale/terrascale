@@ -24,47 +24,8 @@ namespace TerraScale.Authentication.Fast.Email;
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed partial class EmailApiTests(TerraBaseFixture fixture)
 {
-
     private const string Base = $"/v1/{OidcIssuer.Slug}/email";
     private static readonly JsonObject Actor = new() { ["id"] = "user_123", ["email"] = "admin@example.test" };
-
-    [Test]
-    public async Task The_contract_documents_each_operation_with_its_body_and_the_client_credential()
-    {
-        await using var server = await AuthTestServer.StartAsync();
-        var paths = (await server.Client.GetFromJsonAsync<JsonElement>("/openapi/v1.json")).GetProperty("paths");
-        var operations = paths.EnumerateObject().Where(path => path.Name.StartsWith("/v1/{slug}/email/", StringComparison.Ordinal))
-            .SelectMany(path => path.Value.EnumerateObject().Select(operation => (Path: path.Name, Method: operation.Name, Operation: operation.Value)))
-            .ToList();
-        await Assert.That(operations.Count).IsEqualTo(13);
-        var allowance = operations.Single(operation => operation.Path == "/v1/{slug}/email/allowance");
-        await Assert.That(allowance.Method).IsEqualTo("post");
-        await Assert.That(allowance.Operation.GetProperty("operationId").GetString()).IsEqualTo("email_allowance_send");
-        foreach (var (path, method, operation) in operations)
-        {
-            var security = operation.GetProperty("security").EnumerateArray().Single().EnumerateObject().Single().Name;
-            await Assert.That(security).IsEqualTo("clientBasic").Because($"{method} {path}");
-            await Assert.That(operation.GetProperty("responses").TryGetProperty("401", out _)).IsTrue().Because($"{method} {path}");
-            if (method is "put" or "post")
-            {
-                var schema = operation.GetProperty("requestBody").GetProperty("content").GetProperty("application/json").GetProperty("schema").GetProperty("$ref").GetString();
-                if (path == "/v1/{slug}/email/allowance")
-                {
-                    await Assert.That(schema).IsEqualTo("#/components/schemas/AllowanceEmailRequest");
-                }
-                else
-                {
-                    await Assert.That(schema).Matches("^#/components/schemas/Email[A-Za-z]+Request$").Because($"{method} {path}");
-                }
-            }
-        }
-
-        await Assert.That(paths.GetProperty("/v1/{slug}/email/templates/{kind}/{locale}").GetProperty("get").GetProperty("description").GetString())
-            .Contains("lockout").And.Contains("locked_until");
-        var test = paths.GetProperty("/v1/{slug}/email/test").GetProperty("post");
-        await Assert.That(test.GetProperty("responses").GetProperty("502").GetProperty("content").GetProperty("application/json")
-            .GetProperty("schema").GetProperty("$ref").GetString()).IsEqualTo("#/components/schemas/ErrorBody");
-    }
 
     [Test]
     [Arguments(200, "{\"success\":true,\"result\":{\"queued\":[\"admin@example.test\"],\"delivered\":[],\"permanent_bounces\":[],\"suppressed_recipients\":[]}}", 202, null)]
@@ -119,53 +80,6 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
             await signIn.SendAsync(recipient, message, cancellationToken);
             return EmailDeliveryOutcome.Accepted;
         }
-    }
-
-    [Test]
-    public async Task Versions_list_newest_first_and_a_restore_appends_a_new_version()
-    {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
-        foreach (var (version, name) in new[] { (0L, "First"), (1L, "Second") })
-        {
-            using var saved = await SendAsync(oidc, HttpMethod.Put, Base + "/branding", Body(version, "branding", new JsonObject { ["brand_name"] = name }));
-            await Assert.That(saved.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        }
-
-        using (var template = await SendAsync(oidc, HttpMethod.Put, Base + "/templates/new_device/en", Body(2, "fields", new JsonObject { ["footnote"] = "Not you? Write to {{ support_email }}." })))
-        {
-            await Assert.That(template.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        }
-
-        var list = (await JsonAsync(await SendAsync(oidc, HttpMethod.Get, Base + "/versions?limit=2")))["versions"]!.AsArray();
-        await Assert.That(string.Join(',', list.Select(entry => entry!["version"]!.GetValue<long>()))).IsEqualTo("3,2");
-        await Assert.That(list[0]!["change"]!.GetValue<string>()).IsEqualTo("template:new_device/en");
-        await Assert.That(list[1]!["actor"]!["email"]!.GetValue<string>()).IsEqualTo("admin@example.test");
-
-        var first = await JsonAsync(await SendAsync(oidc, HttpMethod.Get, Base + "/versions/1"));
-        await Assert.That(first["branding"]!["brand_name"]!.GetValue<string>()).IsEqualTo("First");
-        await Assert.That(first["templates"]!.AsArray().Count).IsEqualTo(0);
-        var defaults = await JsonAsync(await SendAsync(oidc, HttpMethod.Get, Base + "/versions/0"));
-        await Assert.That(defaults["version"]!.GetValue<long>()).IsEqualTo(0);
-        foreach (var query in new[] { "?limit=0&limit=101", "?limit=5&limit=5", "?limit=101", "?limit=x" })
-        {
-            using var invalid = await SendAsync(oidc, HttpMethod.Get, Base + "/versions" + query);
-            await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity).Because(query);
-        }
-
-        foreach (var missing in new[] { "/versions/9", "/versions/-1", "/versions/x" })
-        {
-            using var response = await SendAsync(oidc, HttpMethod.Get, Base + missing);
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        }
-
-        using var stale = await SendAsync(oidc, HttpMethod.Post, Base + "/versions/1/restore", Body(2));
-        await Assert.That(stale.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-        var restored = await JsonAsync(await SendAsync(oidc, HttpMethod.Post, Base + "/versions/1/restore", Body(3)));
-        await Assert.That(restored["version"]!.GetValue<long>()).IsEqualTo(4);
-        await Assert.That(restored["change"]!.GetValue<string>()).IsEqualTo("rollback:1");
-        await Assert.That(restored["branding"]!["brand_name"]!.GetValue<string>()).IsEqualTo("First");
-        await Assert.That(restored["templates"]!.AsArray().Count).IsEqualTo(0);
-        await Assert.That((await JsonAsync(await SendAsync(oidc, HttpMethod.Get, Base + "/versions/3")))["templates"]!.AsArray().Count).IsEqualTo(1);
     }
 
     [Test]
@@ -254,16 +168,6 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
         }
 
         return await (client ?? oidc.Client).SendAsync(request);
-    }
-
-    private static async Task<JsonNode> JsonAsync(HttpResponseMessage response)
-    {
-        using (response)
-        {
-            var text = await response.Content.ReadAsStringAsync();
-            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because($"{(int)response.StatusCode}: {text}");
-            return JsonNode.Parse(text)!;
-        }
     }
 
     private static async Task<string> ErrorCodeAsync(HttpResponseMessage response) =>

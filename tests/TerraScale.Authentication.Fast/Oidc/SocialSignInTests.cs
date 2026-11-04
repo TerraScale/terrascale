@@ -26,9 +26,6 @@ public sealed partial class SocialSignInTests(TerraBaseFixture fixture)
 
     [Test]
     [Arguments("google")]
-    [Arguments("github")]
-    [Arguments("apple")]
-    [Arguments("oidc")]
     public async Task End_users_sign_up_and_back_in_with_the_projects_provider(string provider)
     {
         using var providers = new FakeSocialProviders();

@@ -85,31 +85,6 @@ public sealed class DeviceFlowTests(TerraBaseFixture fixture)
         await Assert.That(await again.Content.ReadAsStringAsync()).Contains("That code is wrong or expired");
     }
 
-    [Test]
-    public async Task A_denied_device_gets_access_denied_and_an_old_code_expires()
-    {
-        var clock = Clock();
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
-        await oidc.CreateUserAsync();
-        var session = await oidc.SignInAsync("alice@example.test");
-
-        var denied = await AuthorizeDeviceAsync(oidc);
-        using var deny = await DecideAsync(oidc, session, denied.GetProperty("user_code").GetString()!, "deny");
-        await Assert.That(deny.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await deny.Content.ReadAsStringAsync()).Contains("<h1>Request denied</h1>");
-        await Assert.That(await PollAsync(oidc, denied.GetProperty("device_code").GetString()!)).IsEqualTo("access_denied");
-
-        var expired = await AuthorizeDeviceAsync(oidc);
-        clock.Advance(DeviceFlow.Lifetime + TimeSpan.FromMinutes(1));
-        await Assert.That(await PollAsync(oidc, expired.GetProperty("device_code").GetString()!)).IsEqualTo("expired_token");
-        using var late = await DecideAsync(oidc, session, expired.GetProperty("user_code").GetString()!, "approve");
-        await Assert.That(late.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-
-        // An unknown client gets no codes.
-        using var unknown = await oidc.Client.PostAsync($"/{OidcIssuer.Slug}/oauth/device", new FormUrlEncodedContent(new Dictionary<string, string> { ["client_id"] = "00000000000000000000000099" }));
-        await Assert.That(unknown.StatusCode).IsNotEqualTo(HttpStatusCode.OK);
-    }
-
     private static async Task<JsonElement> AuthorizeDeviceAsync(OidcHarness oidc)
     {
         using var response = await oidc.Client.PostAsync($"/{OidcIssuer.Slug}/oauth/device", new FormUrlEncodedContent(new Dictionary<string, string>

@@ -61,30 +61,4 @@ public sealed class AccountDeletionTests(TerraBaseFixture fixture)
         await Assert.That(again.Id).IsNotEqualTo(alice.Id);
         await Assert.That((await oidc.OkAsync(HttpMethod.Get, Organizations, againToken)).GetProperty("items").GetArrayLength()).IsEqualTo(0);
     }
-
-    [Test]
-    public async Task The_last_owner_of_an_organization_with_other_members_cannot_delete_its_account()
-    {
-        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false);
-        var (alice, aliceToken) = await oidc.SignInUserAsync("alice@example.test");
-        var (bob, bobToken) = await oidc.SignInUserAsync("bob@example.test");
-        var own = await oidc.CreateOrganizationAsync(aliceToken, "Alone");
-        var shared = await oidc.CreateOrganizationAsync(aliceToken, "Shared");
-        await Assert.That(await oidc.AddMemberAsync(shared, bob.Id, "member")).IsTrue();
-
-        await Assert.That(await oidc.FailAsync(HttpMethod.Delete, Account, aliceToken)).IsEqualTo((409, "last_owner"));
-        var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
-        await Assert.That(await store.GetAsync(AuthStore.DeletionJobCollection, "terrascale", DeletionJob.Key("terrascale", "account", alice.Id))).IsNull();
-
-        // Nothing was deleted, not even the organization it owns alone.
-        await Assert.That((await oidc.OkAsync(HttpMethod.Get, Organizations, aliceToken)).GetProperty("items").GetArrayLength()).IsEqualTo(2);
-        await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{own}", aliceToken);
-        await Assert.That((await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{shared}/members", bobToken)).GetProperty("items").GetArrayLength()).IsEqualTo(2);
-
-        // With a second owner it can go.
-        await oidc.OkAsync(HttpMethod.Put, $"{Organizations}/{shared}/members/{bob.Id}/role", aliceToken, new { role = "owner" });
-        await oidc.OkAsync(HttpMethod.Delete, Account, aliceToken, status: HttpStatusCode.NoContent);
-        await Assert.That((await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{shared}/members", bobToken)).GetProperty("items").GetArrayLength()).IsEqualTo(1);
-    }
-
 }

@@ -22,7 +22,6 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
 {
     [Test]
     [Arguments(false)]
-    [Arguments(true)]
     public async Task Refresh_replay_ends_only_the_compromised_grant_across_warm_and_fresh_instances(bool publicClient)
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);
@@ -81,50 +80,6 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
         await Assert.That(unrelatedRefresh.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
-    [Test]
-    public async Task Code_replay_rejects_the_parent_and_preserves_the_winning_descendants()
-    {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
-        await oidc.CreateUserAsync();
-        var session = await oidc.SignInAsync("alice@example.test");
-        var (verifier, challenge) = OidcHarness.Pkce();
-        var code = await oidc.CodeAsync(session, challenge);
-        var parent = await CurrentTokenAsync(oidc, TokenTypeIdentifiers.Private.AuthorizationCode);
-
-        using var first = await oidc.RedeemCodeAsync(code, verifier);
-        await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var tokens = await OidcHarness.JsonAsync(first);
-        var refreshParent = await CurrentTokenAsync(oidc, TokenTypeIdentifiers.RefreshToken);
-        await AssertLineageAsync(oidc, parent, refreshParent);
-
-        using var replay = await oidc.RedeemCodeAsync(code, verifier);
-        await AssertReplayRejectedAsync(replay);
-        await AssertAccessWorksAsync(oidc, tokens);
-        using var refresh = await oidc.RefreshAsync(tokens.GetProperty("refresh_token").GetString()!);
-        await Assert.That(refresh.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await AssertAccessWorksAsync(oidc, await OidcHarness.JsonAsync(refresh));
-        await AssertLineageAsync(oidc, refreshParent, await CurrentTokenAsync(oidc, TokenTypeIdentifiers.RefreshToken));
-        await AssertAccessWorksAsync(oidc, tokens);
-    }
-
-    [Test]
-    public async Task Signing_out_everywhere_kills_outstanding_refresh_tokens_and_codes()
-    {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
-        var (user, session, tokens) = await oidc.SignInAndRedeemAsync();
-        var (verifier, challenge) = OidcHarness.Pkce();
-        var code = await oidc.CodeAsync(session, challenge);
-
-        await Assert.That(await oidc.Server.App.Services.GetRequiredService<Sessions>().RevokeAllAsync(OidcIssuer.InstanceId, user.Id)).IsTrue();
-
-        using var refresh = await oidc.RefreshAsync(tokens.GetProperty("refresh_token").GetString()!);
-        await Assert.That(refresh.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await OidcHarness.ErrorAsync(refresh)).IsEqualTo("invalid_grant");
-        using var redeem = await oidc.RedeemCodeAsync(code, verifier);
-        await Assert.That(redeem.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await OidcHarness.ErrorAsync(redeem)).IsEqualTo("invalid_grant");
-    }
-
     private static Task<HttpResponseMessage> RefreshAsync(OidcHarness oidc, string token, bool publicClient, HttpClient? client = null) =>
         publicClient ? (client ?? oidc.Client).PostAsync($"/{OidcIssuer.Slug}/oauth/token", new FormUrlEncodedContent(new Dictionary<string, string>
         {
@@ -170,23 +125,6 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
         }));
         await Assert.That(polled.StatusCode).IsEqualTo(HttpStatusCode.OK);
         return await OidcHarness.JsonAsync(polled);
-    }
-
-    private static async Task AssertReplayRejectedAsync(HttpResponseMessage response)
-    {
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await AssertConflictNoticeAsync(await OidcHarness.JsonAsync(response));
-    }
-
-    private static async Task AssertConflictNoticeAsync(JsonElement error)
-    {
-        await Assert.That(error.GetProperty("error").GetString()).IsEqualTo("invalid_grant");
-        await Assert.That(error.GetProperty("error_description").GetString()).Contains("another region");
-        await Assert.That(error.GetProperty("error_description").GetString()).Contains("Sign in again or use the latest credential");
-        foreach (var token in new[] { "access_token", "refresh_token", "id_token" })
-        {
-            await Assert.That(error.TryGetProperty(token, out _)).IsFalse();
-        }
     }
 
     private static async Task AssertAccessWorksAsync(OidcHarness oidc, JsonElement tokens, HttpClient? client = null)

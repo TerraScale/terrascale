@@ -36,5 +36,4 @@ public sealed class PlatformBootstrapTests(TerraBaseFixture fixture)
         await Assert.That(projects.GetProperty("items").EnumerateArray().Select(project => project.GetProperty("name").GetString()!))
             .IsEquivalentTo(ProjectNames);
     }
-
 }

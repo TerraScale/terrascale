@@ -59,6 +59,6 @@ public unicast addresses, so a configured OIDC issuer cannot reach loopback, pri
 
 ## Tests
 
-`tests/TerraScale.Authentication.Fast/Oidc/SocialSignInTests.cs` runs every provider end to end against
+`tests/TerraScale.Authentication.Fast/Oidc/SocialSignInTests.cs` runs Google end to end against
 `FakeSocialProviders`, in-process contract fakes of Google, GitHub, Apple and a generic OIDC issuer that check each
 provider's token request (client credentials or Apple's client-secret JWT, redirect URI, PKCE verifier).

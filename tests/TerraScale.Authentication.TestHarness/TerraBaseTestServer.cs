@@ -33,20 +33,11 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     private (int Internal, int Public, int Metrics) backendPorts;
     private Process? process;
 
-    private readonly bool production;
-    private readonly RegionalNode? node;
-    private readonly (string Address, string TrustFile)? issuer;
-
-    private TerraBaseTestServer(string directory, bool production, RegionalNode? node = null, (string Address, string TrustFile)? issuer = null)
+    private TerraBaseTestServer(string directory)
     {
-        this.issuer = issuer;
         this.directory = directory;
-        this.production = production;
-        this.node = node;
-        this.masterKey = node is null ? RandomNumberGenerator.GetBytes(32) : Convert.FromBase64String(node.MasterKey);
+        this.masterKey = RandomNumberGenerator.GetBytes(32);
     }
-
-    internal (int Internal, int Public, int Metrics) BackendPorts => this.backendPorts;
 
     // Offline fault fixtures may modify only a stopped child's own root.
     internal string StoppedDataDirectory => this.process is null
@@ -101,23 +92,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     public HttpClient PublicHttp { get; } = new(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false });
 
     /// <summary>Starts <c>TERRABASE_BINARY</c>; returns the reason instead when it names no file.</summary>
-    public static Task<(TerraBaseTestServer? Server, string? Unavailable)> StartAsync(CancellationToken cancellationToken = default) =>
-        StartAsync(production: false, cancellationToken);
-
-    /// <summary>
-    /// <see cref="StartAsync(CancellationToken)"/> in Production on a local host, with a backup bucket nothing answers for
-    /// (backup ships in the background).
-    /// </summary>
-    public static Task<(TerraBaseTestServer? Server, string? Unavailable)> StartProductionAsync(CancellationToken cancellationToken = default) =>
-        StartAsync(production: true, cancellationToken);
-
-    internal static Task<(TerraBaseTestServer? Server, string? Unavailable)> StartRegionalAsync(RegionalNode node, CancellationToken cancellationToken = default) =>
-        StartAsync(production: false, cancellationToken, node);
-
-    internal static Task<(TerraBaseTestServer? Server, string? Unavailable)> StartWithIssuerAsync(string issuer, string trustFile, CancellationToken cancellationToken) =>
-        StartAsync(production: false, cancellationToken, issuer: (issuer, trustFile));
-
-    private static async Task<(TerraBaseTestServer? Server, string? Unavailable)> StartAsync(bool production, CancellationToken cancellationToken, RegionalNode? node = null, (string Address, string TrustFile)? issuer = null)
+    public static async Task<(TerraBaseTestServer? Server, string? Unavailable)> StartAsync(CancellationToken cancellationToken = default)
     {
         var binary = Environment.GetEnvironmentVariable("TERRABASE_BINARY");
         if (string.IsNullOrEmpty(binary) || !File.Exists(binary))
@@ -125,7 +100,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             return (null, "TERRABASE_BINARY must name the TerraBase binary built from this commit (make auth-test-fast sets it)");
         }
 
-        var server = new TerraBaseTestServer(Directory.CreateTempSubdirectory("terrabase-test-").FullName, production, node, issuer);
+        var server = new TerraBaseTestServer(Directory.CreateTempSubdirectory("terrabase-test-").FullName);
         try
         {
             await server.StartAsync(binary, cancellationToken);
@@ -303,33 +278,6 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
             // This fixture credential is never inherited from the invoking environment.
             start.Environment[PeerSecretVariable] = PeerSecret;
-            if (this.node is { } regional)
-            {
-                start.Environment["TS_REGION"] = regional.Region;
-                start.Environment["TS_NODE"] = regional.Name;
-                start.Environment["TS_PEERS_FILE"] = regional.PeersFile;
-                start.Environment["AWS_ENDPOINT_URL_S3"] = regional.Bucket.ToString();
-                start.Environment["AWS_REGION"] = "auto";
-                start.Environment["BUCKET_NAME"] = "ts757";
-                start.Environment["AWS_ACCESS_KEY_ID"] = "test";
-                start.Environment["AWS_SECRET_ACCESS_KEY"] = "test";
-                start.Environment["TERRABASE_MASTER_KEY"] = regional.MasterKey;
-                start.Environment["SSL_CERT_FILE"] = regional.TrustFile;
-            }
-
-            if (this.production)
-            {
-                // Production admission tests require backup settings; no test contacts a production bucket.
-                start.Environment["AWS_ENDPOINT_URL_S3"] = "https://127.0.0.1:1";
-                start.Environment["AWS_REGION"] = "auto";
-                start.Environment["BUCKET_NAME"] = "terrabase-test";
-                start.Environment["AWS_ACCESS_KEY_ID"] = "test";
-                start.Environment["AWS_SECRET_ACCESS_KEY"] = "test";
-                start.Environment["TERRABASE_SHAPES_ACCESS_KEY_ID"] = "synthetic-shapes-access-key";
-                start.Environment["TERRABASE_SHAPES_SECRET_ACCESS_KEY"] = "synthetic-shapes-secret-key";
-                start.Environment["TERRABASE_SHAPES_CDN_API_TOKEN"] = "synthetic-shapes-cdn-token";
-            }
-
             // Database encryption needs the same test master across restarts, independently of backups.
             // Secrets arrive as files with a trailing newline, as OCI Vault mounts them; each file wins over a malformed
             // variable, which would stop the start if it were read.
@@ -346,15 +294,9 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             start.Environment[PeerSecretVariable + "_FILE"] = Path.Combine(secrets, "peer-secret");
 
             // All three backend ports are freshly owned by this child, including metrics on every restart.
-            start.ArgumentList.Add(this.production ? "--environment=Production" : "--environment=Development");
-            if (this.issuer is { } issuer)
-            {
-                start.ArgumentList.Add($"--auth-issuer={issuer.Address}");
-                start.ArgumentList.Add("--auth-audience=https://api.terrascale.tech");
-                start.Environment["SSL_CERT_FILE"] = issuer.TrustFile;
-            }
+            start.ArgumentList.Add("--environment=Development");
             start.ArgumentList.Add("--port=0");
-            start.ArgumentList.Add($"--internal-port={this.node?.Port ?? 0}");
+            start.ArgumentList.Add("--internal-port=0");
             start.ArgumentList.Add("--metrics-port=0");
             start.ArgumentList.Add("--postgres-port=0");
             start.ArgumentList.Add($"--data-directory={Path.Combine(this.directory, "data")}");
@@ -393,7 +335,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 }
 
                 this.publicFront.SetBackend(this.backendPorts.Public);
-                this.internalFront.SetBackend(this.backendPorts.Internal, this.node?.Address);
+                this.internalFront.SetBackend(this.backendPorts.Internal);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
@@ -429,25 +371,6 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         }
 
         this.output.Enqueue(line);
-        if (this.node is not null && line.StartsWith('{'))
-        {
-            try
-            {
-                using var entry = JsonDocument.Parse(line);
-                var fields = entry.RootElement;
-                if (fields.TryGetProperty("level", out var level) && fields.TryGetProperty("msg", out var message)
-                    && (level.GetString() is "WARN" or "ERROR" or "CRITICAL" || message.GetString() == "Application is shutting down..."))
-                {
-                    // Templates only: retain backend readiness failures without payloads or credentials.
-                    Console.Error.WriteLine($"TerraBase {DateTimeOffset.UtcNow:O} {this.node.Region}: {level.GetString()} {message.GetString()}");
-                }
-            }
-            catch (JsonException)
-            {
-                // Diagnostics must not interrupt the child's output reader.
-            }
-        }
-
         if (Listening(line) is { } address)
         {
             listening.Enqueue(address);
@@ -513,8 +436,6 @@ internal sealed class BackendErrorDiagnostics : DelegatingHandler
         return response;
     }
 }
-
-internal sealed record RegionalNode(string Region, string Name, IPAddress Address, int Port, string PeersFile, Uri Bucket, string TrustFile, string MasterKey);
 
 /// <summary>Sends the peer credential on every request; the header name is spelled out here so a drift from production fails the tests.</summary>
 internal sealed class PeerCredentialHandler(string peerSecret) : DelegatingHandler

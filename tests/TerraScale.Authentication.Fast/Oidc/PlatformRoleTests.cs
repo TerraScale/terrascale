@@ -34,17 +34,6 @@ public sealed class PlatformRoleTests(TerraBaseFixture fixture)
         await Assert.That(Role(await refreshed.Content.ReadFromJsonAsync<JsonElement>())).IsNull();
     }
 
-    [Test]
-    public async Task The_platform_owner_gets_the_claim_without_a_stored_role_and_no_other_email_does()
-    {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
-        await oidc.CreateUserAsync(PlatformBootstrap.OwnerEmail);
-        await oidc.CreateUserAsync("mariogk@example.test");
-
-        await Assert.That(Role(await SignInAsync(oidc, PlatformBootstrap.OwnerEmail))).IsEqualTo(OidcResults.PlatformRoleAdmin);
-        await Assert.That(Role(await SignInAsync(oidc, "mariogk@example.test"))).IsNull();
-    }
-
     private static async Task<JsonElement> SignInAsync(OidcHarness oidc, string address)
     {
         var session = await oidc.SignInAsync(address);

@@ -246,13 +246,6 @@ public sealed partial class OidcHarness : IAsyncDisposable
         return (client ?? this.Client).SendAsync(request);
     }
 
-    /// <summary>A page body with the address and the per-response CSP nonce and request ID masked, for comparing two answers.</summary>
-    public static async Task<string> PageAsync(HttpResponseMessage response, string email) =>
-        CspNonce().Replace((await response.Content.ReadAsStringAsync()).Replace(email, "{email}", StringComparison.Ordinal).Replace(response.Headers.GetValues("X-Request-ID").Single(), "{request-id}", StringComparison.Ordinal), "nonce=\"{nonce}\"");
-
-    [GeneratedRegex("nonce=\"[^\"]+\"")]
-    private static partial Regex CspNonce();
-
     public static string? SessionCookie(HttpResponseMessage response) =>
         response.Headers.TryGetValues("Set-Cookie", out var cookies)
             ? cookies.Select(cookie => cookie.Split(';')[0]).Where(pair => pair.StartsWith("tsauth_session=", StringComparison.Ordinal))

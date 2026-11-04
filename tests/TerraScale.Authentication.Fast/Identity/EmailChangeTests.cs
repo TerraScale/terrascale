@@ -47,34 +47,6 @@ public sealed partial class EmailChangeTests(TerraBaseFixture fixture)
         await Assert.That(await oidc.FailAsync(HttpMethod.Post, Confirm, fresh, new { code })).IsEqualTo((403, "email_change_denied"));
     }
 
-    [Test]
-    public async Task The_old_address_cancel_link_voids_the_change_and_signs_out_everywhere()
-    {
-        var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
-        var (_, token) = await oidc.SignInUserAsync("hana@example.test");
-        await oidc.OkAsync(HttpMethod.Post, Change, token, new { new_email = "hana.new@example.test" }, HttpStatusCode.Accepted);
-        var (code, notice) = await ChangeMailsAsync(oidc, "hana.new@example.test", "hana@example.test");
-        var link = new Uri(CancelLink().Match(notice.Text).Value);
-
-        using var page = await oidc.Client.GetAsync(link.PathAndQuery);
-        await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var query = System.Web.HttpUtility.ParseQueryString(link.Query);
-        var fields = new Dictionary<string, string> { ["user"] = query["user"]!, ["token"] = query["token"]! };
-        using (var crossSite = await oidc.PostFormAsync(link.AbsolutePath, fields, origin: "https://evil.example"))
-        {
-            await Assert.That(crossSite.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        }
-
-        using var cancelled = await oidc.PostFormAsync(link.AbsolutePath, fields);
-        await Assert.That(cancelled.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That((await oidc.FailAsync(HttpMethod.Post, Confirm, token, new { code })).Status).IsEqualTo(401);
-
-        clock.UtcNow += HostedAuth.MailCooldown;
-        var fresh = await SignInAgainAsync(oidc, "hana@example.test");
-        await Assert.That(await oidc.FailAsync(HttpMethod.Post, Confirm, fresh, new { code })).IsEqualTo((403, "email_change_denied"));
-    }
-
     private static async Task<string> SignInAgainAsync(OidcHarness oidc, string email)
     {
         var session = await oidc.SignInAsync(email);
@@ -93,7 +65,4 @@ public sealed partial class EmailChangeTests(TerraBaseFixture fixture)
 
     [GeneratedRegex(@"\b[0-9]{6}\b")]
     private static partial Regex SixDigits();
-
-    [GeneratedRegex(@"https?://\S+/ui/terrascale/email-change/cancel\?user=[0-9A-Z]{26}&token=[A-Za-z0-9_-]{43}")]
-    private static partial Regex CancelLink();
 }

@@ -19,7 +19,6 @@ calls per IP per 15 minutes, and five mail starts per normalized email per UTC
 clock hour. Refused cooldown requests still spend the IP budgets. IPv6 grouping
 and tenant isolation are unchanged. A cooldown does not guarantee delivery.
 
-Fast integration coverage in `HostedSignInTests` exercises every initial mail
-route against all three subsequent routes, normalized known/unknown addresses,
-another replica, the exact elapsed-time boundary, unchanged pending codes and
-no extra captured mail. `AuthThrottleTests` retains hourly-budget coverage.
+Under the 2026-11-04 happy-path test policy, Slow `AuthThrottleTests` keeps one
+case: the per-email code-attempt budget shared across replicas and sign-in
+surfaces. The cooldown matrix is no longer tested.

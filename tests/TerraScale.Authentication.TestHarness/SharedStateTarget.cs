@@ -47,37 +47,8 @@ public sealed class SharedStateTarget
     public async Task<JsonElement?> ReadAsync(string collection, string instanceId, string key) =>
         (await this.Database.GetDocumentAsync(collection, AuthStore.NaturalKeyId(instanceId, collection, key)))?.Document;
 
-    /// <summary>Overwrites a document directly in TerraBase, like an operator or attacker with storage access.</summary>
-    public async Task PutAsync(string collection, string instanceId, string key, JsonElement document)
-    {
-        var id = AuthStore.NaturalKeyId(instanceId, collection, key);
-        var current = await this.Database.GetDocumentAsync(collection, id);
-        await this.Database.PutDocumentAsync(collection, id, document, current is null ? TerraBasePrecondition.Absent : TerraBasePrecondition.Matches(current.Version));
-    }
-
     /// <summary>How many documents a collection holds.</summary>
     public async Task<int> CountAsync(string collection) => (await this.Database.ListDocumentsAsync(collection)).Items.Count;
-}
-
-/// <summary>A store whose chosen operation fails, by default like an unreachable authority (a timeout).</summary>
-/// <param name="inner">The real store that serves every other operation.</param>
-/// <param name="failing">The failing operation: <c>get</c>, <c>create</c> or <c>replace</c>.</param>
-/// <param name="error">The failure to throw; a <see cref="TimeoutException"/> when omitted.</param>
-public sealed class FailingDocumentStore(IDocumentStore inner, string failing, Func<Exception>? error = null) : IDocumentStore
-{
-    private Exception Failure => error?.Invoke() ?? new TimeoutException();
-
-    /// <inheritdoc />
-    public Task<Versioned<T>?> GetAsync<T>(string collection, string instanceId, string key, CancellationToken cancellationToken) =>
-        failing == "get" ? throw this.Failure : inner.GetAsync<T>(collection, instanceId, key, cancellationToken);
-
-    /// <inheritdoc />
-    public Task<bool> TryCreateAsync<T>(string collection, string instanceId, string key, T document, CancellationToken cancellationToken) =>
-        failing == "create" ? throw this.Failure : inner.TryCreateAsync(collection, instanceId, key, document, cancellationToken);
-
-    /// <inheritdoc />
-    public Task<bool> TryReplaceAsync<T>(string collection, string instanceId, string key, T document, string version, CancellationToken cancellationToken) =>
-        failing == "replace" ? throw this.Failure : inner.TryReplaceAsync(collection, instanceId, key, document, version, cancellationToken);
 }
 
 /// <summary>A wall clock the test moves by hand.</summary>
@@ -90,34 +61,4 @@ public sealed class ManualClock(DateTimeOffset start) : TimeProvider
 
     /// <inheritdoc />
     public override DateTimeOffset GetUtcNow() => new(Interlocked.Read(ref this.ticks), TimeSpan.Zero);
-}
-
-/// <summary>
-/// A clock whose wall time and monotonic timestamp both move only when the test advances them, so elapsed-time
-/// caches expire on demand; timers created through it still run on the system clock. <see cref="Step"/> moves the
-/// wall time alone, like an operator or NTP step.
-/// </summary>
-public sealed class SteppingClock(DateTimeOffset start) : TimeProvider
-{
-    private long wallTicks = start.UtcTicks;
-    private long monotonicTicks;
-
-    /// <inheritdoc />
-    public override long TimestampFrequency => TimeSpan.TicksPerSecond;
-
-    /// <summary>Moves wall time and the monotonic timestamp together.</summary>
-    public void Advance(TimeSpan by)
-    {
-        Interlocked.Add(ref this.wallTicks, by.Ticks);
-        Interlocked.Add(ref this.monotonicTicks, by.Ticks);
-    }
-
-    /// <summary>Moves wall time only.</summary>
-    public void Step(TimeSpan by) => Interlocked.Add(ref this.wallTicks, by.Ticks);
-
-    /// <inheritdoc />
-    public override DateTimeOffset GetUtcNow() => new(Interlocked.Read(ref this.wallTicks), TimeSpan.Zero);
-
-    /// <inheritdoc />
-    public override long GetTimestamp() => Interlocked.Read(ref this.monotonicTicks);
 }

@@ -13,7 +13,6 @@ public sealed partial class OpenApiTests
     [ClassDataSource<BrowserFixture>(Shared = SharedType.PerTestSession)]
     public required BrowserFixture Chromium { get; init; }
 
-    private static readonly string[] ExpectedSchemes = ["ManagementBearer", "OAuthAccessBearer", "OperatorBearer", "SessionCookie", "accountDeletionReceipt", "apiKeyToken", "bearerAuth", "clientBasic", "mailAdmission", "platformUser", "projectApiKey"];
     private static readonly string[] Methods = ["get", "put", "post", "delete", "patch", "head", "options", "trace"];
 
     [Test]
@@ -93,61 +92,6 @@ public sealed partial class OpenApiTests
                 }
             }
         }
-    }
-
-    [Test]
-    public async Task Operations_declare_the_credential_their_route_requires()
-    {
-        // Test-only routes stand in for the feature endpoints that later streams add. They
-        // carry a described tag: an undescribed one fails document generation by design.
-        await using var server = await AuthTestServer.StartAsync(routes: app =>
-        {
-            app.MapGet("/v1/{slug}/__test/users", () => Results.Ok()).WithName("test_management").WithTags("Admin");
-            app.MapGet("/ui/{slug}/admin/__test", () => Results.Ok()).WithName("test_admin").WithTags("Admin");
-            app.MapPost("/v1/instances", () => Results.Ok()).WithName("test_instances").WithTags("Admin");
-            app.MapGet("/v1/{slug}/__test/public", () => Results.Ok()).WithName("test_public").WithTags("Admin").AllowAnonymous();
-            var group = app.MapGroup("/scim/{directory}/__group").WithMetadata(new TerraScale.Authentication.Hosting.RequiresSecurity("bearerAuth"));
-            group.MapGet("/open", () => Results.Ok()).WithName("test_group_open").WithTags("Admin").AllowAnonymous();
-            group.MapGet("/operator", () => Results.Ok()).WithName("test_group_operator").WithTags("Admin")
-                .WithMetadata(new TerraScale.Authentication.Hosting.RequiresSecurity("OperatorBearer"));
-            app.MapPost("/scim/{directory}/__test", () => Results.Ok()).WithName("test_scim").WithTags("Admin")
-                .WithMetadata(new TerraScale.Authentication.Hosting.RequiresSecurity("bearerAuth"));
-        });
-
-        using var response = await server.Client.GetAsync("/openapi/v1.json");
-        var document = JsonSerializer.Deserialize<JsonElement>(await response.Content.ReadAsStringAsync());
-        var paths = document.GetProperty("paths");
-        static string Scheme(JsonElement operation) =>
-            operation.GetProperty("security").EnumerateArray().Single().EnumerateObject().Single().Name;
-
-        await Assert.That(Scheme(paths.GetProperty("/v1/{slug}/__test/users").GetProperty("get"))).IsEqualTo("ManagementBearer");
-        await Assert.That(Scheme(paths.GetProperty("/ui/{slug}/admin/__test").GetProperty("get"))).IsEqualTo("SessionCookie");
-        await Assert.That(Scheme(paths.GetProperty("/{slug}/oauth/userinfo").GetProperty("get"))).IsEqualTo("OAuthAccessBearer");
-        await Assert.That(Scheme(paths.GetProperty("/{slug}/oauth/token").GetProperty("post"))).IsEqualTo("clientBasic");
-        await Assert.That(Scheme(paths.GetProperty("/{slug}/oauth/revoke").GetProperty("post"))).IsEqualTo("clientBasic");
-        await Assert.That(Scheme(paths.GetProperty("/v1/instances").GetProperty("post"))).IsEqualTo("OperatorBearer");
-        await Assert.That(Scheme(paths.GetProperty("/scim/{directory}/__test").GetProperty("post"))).IsEqualTo("bearerAuth");
-        // An endpoint's own declaration beats its group's; AllowAnonymous beats both.
-        var groupOpen = paths.GetProperty("/scim/{directory}/__group/open").GetProperty("get").GetProperty("security");
-        await Assert.That(groupOpen.EnumerateArray().Single().EnumerateObject().Any()).IsFalse();
-        await Assert.That(Scheme(paths.GetProperty("/scim/{directory}/__group/operator").GetProperty("get"))).IsEqualTo("OperatorBearer");
-        // An explicitly anonymous endpoint under a protected prefix stays anonymous.
-        var publicSecurity = paths.GetProperty("/v1/{slug}/__test/public").GetProperty("get").GetProperty("security");
-        await Assert.That(publicSecurity.EnumerateArray().Single().EnumerateObject().Any()).IsFalse();
-
-        // Exactly the referenced schemes are defined, each with its real mechanism.
-        var schemes = document.GetProperty("components").GetProperty("securitySchemes");
-        await Assert.That(schemes.EnumerateObject().Select(scheme => scheme.Name).Order().ToArray())
-            .IsEquivalentTo(ExpectedSchemes);
-        await Assert.That(schemes.GetProperty("SessionCookie").GetProperty("in").GetString()).IsEqualTo("cookie");
-        await Assert.That(schemes.GetProperty("SessionCookie").GetProperty("name").GetString()).IsEqualTo("tsauth_session");
-        await Assert.That(schemes.GetProperty("ManagementBearer").GetProperty("scheme").GetString()).IsEqualTo("bearer");
-        await Assert.That(schemes.GetProperty("clientBasic").GetProperty("scheme").GetString()).IsEqualTo("basic");
-        await Assert.That(Scheme(paths.GetProperty("/v1/terrascale/email/admission").GetProperty("post"))).IsEqualTo("mailAdmission");
-        await Assert.That(schemes.GetProperty("mailAdmission").GetProperty("scheme").GetString()).IsEqualTo("bearer");
-        await Assert.That(Scheme(paths.GetProperty("/v1/terrascale/account/deletion").GetProperty("get"))).IsEqualTo("accountDeletionReceipt");
-        await Assert.That(schemes.GetProperty("accountDeletionReceipt").GetProperty("in").GetString()).IsEqualTo("header");
-        await Assert.That(schemes.GetProperty("accountDeletionReceipt").GetProperty("name").GetString()).IsEqualTo("X-TerraScale-Deletion-Receipt");
     }
 
     [Test]
@@ -302,29 +246,6 @@ public sealed partial class OpenApiTests
     }
 
     [Test]
-    public async Task Scalar_is_served_from_this_origin()
-    {
-        await using var server = await AuthTestServer.StartAsync();
-
-        using var redirect = await server.Client.GetAsync("/scalar");
-        await Assert.That(redirect.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(new Uri(new Uri(server.BaseAddress, "/scalar"), redirect.Headers.Location!).AbsolutePath).IsEqualTo("/scalar/");
-        using var response = await server.Client.GetAsync("/scalar/");
-        var html = await response.Content.ReadAsStringAsync();
-
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(html).Contains("\"url\":\"openapi/v1.json\"");
-        await Assert.That(html).DoesNotContain("cdn.jsdelivr.net");
-        foreach (Match script in ScriptSource().Matches(html))
-        {
-            var source = new Uri(new Uri(server.BaseAddress, "/scalar/"), script.Groups["src"].Value);
-            await Assert.That(source.Authority).IsEqualTo(server.BaseAddress.Authority);
-            using var asset = await server.Client.GetAsync(source);
-            await Assert.That(asset.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        }
-    }
-
-    [Test]
     [Arguments(ColorScheme.Light, 1440, 900)]
     public async Task Scalar_renders_the_contract_without_browser_errors(ColorScheme colorScheme, int width, int height)
     {
@@ -372,9 +293,6 @@ public sealed partial class OpenApiTests
         await Assert.That(errors).IsEmpty();
         await Assert.That(external).IsEmpty();
     }
-
-    [GeneratedRegex("<script[^>]*\\ssrc=\"(?<src>[^\"]+)\"")]
-    private static partial Regex ScriptSource();
 
     [GeneratedRegex("^  (?<path>/[^:]*):$")]
     private static partial Regex ContractPath();

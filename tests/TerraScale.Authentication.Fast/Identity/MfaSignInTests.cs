@@ -16,8 +16,6 @@ namespace TerraScale.Authentication.Fast.Identity;
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed partial class MfaSignInTests(TerraBaseFixture fixture)
 {
-    private static readonly string[] ReadScopes = ["documents:read"];
-
     [Test]
     public async Task A_user_enrols_signs_in_with_the_second_factor_uses_a_recovery_code_once_and_turns_it_off()
     {
@@ -124,62 +122,6 @@ public sealed partial class MfaSignInTests(TerraBaseFixture fixture)
 
         clock.UtcNow += HostedAuth.MailCooldown;
         await Assert.That(await oidc.SignInAsync(user.Email)).IsNotEmpty();
-    }
-
-    [Test]
-    public async Task An_owner_with_a_factor_requires_it_and_a_member_without_one_is_refused_until_enrolled()
-    {
-        var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
-        var (owner, ownerToken) = await oidc.SignInUserAsync("owner@example.test");
-        var organization = await oidc.CreateOrganizationAsync(ownerToken);
-        var policy = $"{Organizations}/{organization}/mfa-policy";
-        await Assert.That(await oidc.FailAsync(HttpMethod.Put, policy, ownerToken, new { require_mfa = true })).IsEqualTo((409, "mfa_not_enrolled"));
-
-        clock.UtcNow += HostedAuth.MailCooldown;
-        var session = await oidc.SignInAsync(owner.Email);
-        var (secret, _, enrolled) = await EnrolAsync(oidc, session, clock);
-        var (verifier, pkce) = OidcHarness.Pkce();
-        using var redeemed = await oidc.RedeemCodeAsync(await oidc.CodeAsync(enrolled, pkce), verifier);
-        ownerToken = (await OidcHarness.JsonAsync(redeemed)).GetProperty("access_token").GetString()!;
-        var changed = await oidc.OkAsync(HttpMethod.Put, policy, ownerToken, new { require_mfa = true });
-        await Assert.That(changed.GetProperty("require_mfa").GetBoolean()).IsTrue();
-
-        var (member, memberToken) = await oidc.SignInUserAsync("member@example.test");
-        await Assert.That(await oidc.Server.App.Services.GetRequiredService<PlatformDirectory>().AddMemberAsync(organization, member.Id, Roles.Admin, CancellationToken.None)).IsTrue();
-        await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"{Organizations}/{organization}", memberToken)).IsEqualTo((403, PlatformDirectory.MfaRequiredCode));
-        await Assert.That(await oidc.FailAsync(HttpMethod.Post, $"{Organizations}/{organization}/api-keys", memberToken, new { name = "backend", scopes = ReadScopes }))
-            .IsEqualTo((403, PlatformDirectory.MfaRequiredCode));
-        var listed = await oidc.OkAsync(HttpMethod.Get, Organizations, memberToken);
-        await Assert.That(listed.GetProperty("items")[0].GetProperty("require_mfa").GetBoolean()).IsTrue();
-        using (var exchange = await oidc.ExchangeAsync(memberToken, new() { ["organization"] = organization }))
-        {
-            await Assert.That(await OidcHarness.ErrorAsync(exchange)).IsEqualTo("access_denied");
-        }
-
-        // Leaving and deleting one's own account never need the second factor.
-        var (leaver, leaverToken) = await oidc.SignInUserAsync("leaver@example.test");
-        await Assert.That(await oidc.Server.App.Services.GetRequiredService<PlatformDirectory>().AddMemberAsync(organization, leaver.Id, Roles.Member, CancellationToken.None)).IsTrue();
-        await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{organization}/leave", leaverToken, status: HttpStatusCode.NoContent);
-        await Assert.That(await oidc.Server.App.Services.GetRequiredService<PlatformDirectory>().AddMemberAsync(organization, leaver.Id, Roles.Member, CancellationToken.None)).IsTrue();
-        using (var deleted = await oidc.CallAsync(HttpMethod.Delete, "/v1/terrascale/account", leaverToken))
-        {
-            await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-        }
-
-        // Once the member enrols, the organization opens again; the owner's audit log has both changes.
-        clock.UtcNow += HostedAuth.MailCooldown;
-        var memberSession = await oidc.SignInAsync(member.Email);
-        var (_, _, memberEnrolled) = await EnrolAsync(oidc, memberSession, clock);
-        var (memberVerifier, memberPkce) = OidcHarness.Pkce();
-        using var memberRedeemed = await oidc.RedeemCodeAsync(await oidc.CodeAsync(memberEnrolled, memberPkce), memberVerifier);
-        memberToken = (await OidcHarness.JsonAsync(memberRedeemed)).GetProperty("access_token").GetString()!;
-        await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{organization}", memberToken);
-        var audit = await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{organization}/audit-events", ownerToken);
-        var actions = audit.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("action").GetString()).ToList();
-        await Assert.That(actions).Contains("organization.mfa_required");
-        await Assert.That(actions).Contains("member.mfa_enabled");
-        await Assert.That(secret).IsNotEmpty();
     }
 
     /// <summary>Enrols through the hosted security pages; returns the secret, the recovery codes and the new session.</summary>

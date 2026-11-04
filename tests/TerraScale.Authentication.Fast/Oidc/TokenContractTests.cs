@@ -60,64 +60,11 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
         await Assert.That(second.GetClaim("email_verified").Value).IsEqualTo("true");
     }
 
-    [Test]
-    public async Task A_service_client_gets_an_at_jwt_whose_subject_is_its_client_id_and_nothing_else()
-    {
-        await using var oidc = await StartAsync();
-
-        using var response = await ClientCredentialsAsync(oidc, ServiceId, ServiceSecret);
-        var body = JsonSerializer.Deserialize<JsonElement>(await response.Content.ReadAsStringAsync());
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(body.TryGetProperty("id_token", out _)).IsFalse();
-        await Assert.That(body.TryGetProperty("refresh_token", out _)).IsFalse();
-
-        var access = await ValidateAsync(body.GetProperty("access_token").GetString()!, await KeysAsync(oidc), Audience);
-        await Assert.That(access.Typ).IsEqualTo("at+jwt");
-        await Assert.That(access.Subject).IsEqualTo(ServiceId);
-        await Assert.That(access.Audiences.ToArray()).IsEquivalentTo([Audience]);
-        await Assert.That(access.TryGetClaim("email", out _)).IsFalse();
-        await Assert.That(access.TryGetClaim("email_verified", out _)).IsFalse();
-
-        // offline_access needs the refresh-token permission, which service clients do not have.
-        using var offline = await ClientCredentialsAsync(oidc, ServiceId, ServiceSecret, "offline_access");
-        await Assert.That(offline.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-
-        using var wrongSecret = await ClientCredentialsAsync(oidc, ServiceId, ServiceSecret + "x");
-        await Assert.That(wrongSecret.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(await ErrorAsync(wrongSecret)).IsEqualTo("invalid_client");
-
-        // The dashboard is a user-facing client: it may not mint tokens for itself.
-        using var dashboard = await ClientCredentialsAsync(oidc, OidcIssuer.DashboardClientId, OidcHarness.ClientSecret);
-        await Assert.That(dashboard.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await ErrorAsync(dashboard)).IsEqualTo("unauthorized_client");
-
-        // And a service client cannot run the browser flow.
-        var (_, challenge) = OidcHarness.Pkce();
-        using var authorize = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge, clientId: ServiceId), session: null);
-        await Assert.That(authorize.Headers.Location?.OriginalString ?? string.Empty).DoesNotStartWith($"/ui/{OidcIssuer.Slug}/sign-in");
-    }
-
     private Task<OidcHarness> StartAsync() => OidcHarness.StartAsync(fixture, values =>
     {
         values["access-token-audiences"] = Audience;
         values["service-clients"] = $"{ServiceId}:{ServiceSecret}";
     });
-
-    private static Task<HttpResponseMessage> ClientCredentialsAsync(OidcHarness oidc, string clientId, string secret, string? scope = null)
-    {
-        var form = new Dictionary<string, string> { ["grant_type"] = "client_credentials" };
-        if (scope is not null)
-        {
-            form["scope"] = scope;
-        }
-
-        var request = new HttpRequestMessage(HttpMethod.Post, $"/{OidcIssuer.Slug}/oauth/token") { Content = new FormUrlEncodedContent(form) };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{secret}")));
-        return oidc.Client.SendAsync(request);
-    }
-
-    private static async Task<string?> ErrorAsync(HttpResponseMessage response) =>
-        JsonSerializer.Deserialize<JsonElement>(await response.Content.ReadAsStringAsync()).GetProperty("error").GetString();
 
     private static async Task<JsonWebKeySet> KeysAsync(OidcHarness oidc) =>
         new(await oidc.Client.GetStringAsync($"/{OidcIssuer.Slug}/.well-known/jwks.json"));

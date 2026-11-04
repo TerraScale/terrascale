@@ -71,8 +71,6 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
         return copy;
     }
 
-    public static HttpClient NewHttpClient() => new(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false });
-
     /// <summary>A handler for this fixture's TerraBase that never follows redirects and sends the peer credential.</summary>
     public static HttpMessageHandler NewHandler() => new PeerCredentialHandler(TerraBaseTestServer.PeerSecret)
     {
