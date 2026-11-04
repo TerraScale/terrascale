@@ -63,6 +63,10 @@ Options go before or after the command and its operands; -- ends options.
                                           delete requires typing the database
                                           name; -yes before db delete consents
                                           explicitly for unattended use
+  db branch create <name> --from <db> [--ttl 7d]
+  db branch list                         list database branches
+  db branch delete <name>                 delete a branch (--yes for automation)
+  db branch url <name>                    issue a scoped Postgres connection URL
   db branch <source> <db>                 copy a database into a new one
   databases rename <database> <new-name>  rename by name or immutable ULID
                                           alias: db rename
@@ -194,6 +198,10 @@ var commands = map[string][]int{
 	"db create":          {1},
 	"db delete":          {1},
 	"db branch":          {2},
+	"db branch create":   {1},
+	"db branch list":     {0},
+	"db branch delete":   {1},
+	"db branch url":      {1},
 	"db info":            {1},
 	"db placement":       {1},
 	"db move-home":       {2},
@@ -266,12 +274,14 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	replicaRegions := fs.String("replica-regions", "", "db create, db placement: comma-separated replica regions")
 	allRegions := fs.Bool("all-regions", false, "db create, db placement: a replica in every serving region")
 	expectedID := fs.String("expected-id", "", "db branch/delete: require the server to match this immutable database ULID")
+	from := fs.String("from", "", "db branch create: source database")
+	ttl := fs.String("ttl", "", "db branch create: lifetime, default 7d")
 	args, err := parseOptions(fs, args)
 	if err != nil {
 		return err
 	}
 	name, operands := "", args
-	for n := min(2, len(args)); n > 0 && name == ""; n-- {
+	for n := min(3, len(args)); n > 0 && name == ""; n-- {
 		if _, ok := commands[strings.Join(args[:n], " ")]; ok {
 			name, operands = strings.Join(args[:n], " "), args[n:]
 		}
@@ -322,8 +332,12 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			yesSet = true
 		}
 	})
-	if expectedIDSet && ((name != "db delete" && name != "db branch") || entityid.Check(*expectedID) != nil) {
-		return fmt.Errorf("-expected-id requires db branch or db delete and a canonical database ULID: %w", errUsage)
+	if expectedIDSet && ((name != "db delete" && name != "db branch" && name != "db branch create" && name != "db branch delete" && name != "db branch url") || entityid.Check(*expectedID) != nil) {
+		return fmt.Errorf("-expected-id requires branch creation, URL, or deletion and a canonical database ULID: %w", errUsage)
+	}
+	branchTTL, err := validateBranchOptions(name, operands, *from, *ttl, fs)
+	if err != nil {
+		return err
 	}
 	if name == "db branch" && operands[0] == operands[1] {
 		return fmt.Errorf("branch source and target names must differ: %w", errUsage)
@@ -357,13 +371,13 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			return consentRequired("backup destination changes require explicit consent: pass -yes; set reads its JSON only from stdin")
 		}
 	}
-	if yesSet && !slices.Contains([]string{"db delete", "orgs delete", "projects delete", "backup destination", "functions delete", "keys revoke"}, name) {
+	if yesSet && !slices.Contains([]string{"db delete", "db branch delete", "orgs delete", "projects delete", "backup destination", "functions delete", "keys revoke"}, name) {
 		return fmt.Errorf("-yes is only accepted for destructive commands: %w", errUsage)
 	}
 	if (name == "orgs delete" || name == "projects delete") && !tty && !*yes {
 		return consentRequired("resource deletion requires a terminal: pass -yes to explicitly consent")
 	}
-	if name == "db delete" && !tty && !*yes {
+	if (name == "db delete" || name == "db branch delete") && !tty && !*yes {
 		if err := confirmDelete(operands[0], *project, *yes, in, prompt, tty); err != nil {
 			return err
 		}
@@ -397,6 +411,14 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return newMigration(operands[0], out)
 	}
 	dispatch := func(s *session) error {
+		if strings.HasPrefix(name, "db branch ") {
+			if name == "db branch delete" {
+				if err := confirmDelete(operands[0], s.project, *yes, in, prompt, tty); err != nil {
+					return err
+				}
+			}
+			return runBranch(ctx, s, name, operands, *from, branchTTL, *expectedID, out)
+		}
 		if expectedIDSet {
 			database := s.tb.Database(s.project, operands[0])
 			if name == "db branch" {
@@ -811,7 +833,7 @@ func openKey(ctx context.Context, key, project string) (*session, error) {
 	if project = cmp.Or(project, claims.ProjectID); project == "" {
 		return nil, errors.New("TERRASCALE_API_KEY is an organization key: pass -project <id>")
 	}
-	tb, err := v1.New(v1.Config{TokenSource: tokens})
+	tb, err := v1.New(v1.Config{APIKey: key})
 	if err != nil {
 		return nil, err
 	}

@@ -628,3 +628,5 @@ to stop future exchanges; sources with only `Invalidate(string)` have their cach
 Token endpoint `invalid_client` is a terminal `*tsauth.Error`.
 `503 auth_unavailable` matches `v1.ErrAuthUnavailable` and follows the existing
 replay-safe request backoff and `Retry-After` policy, keeping the token cache.
+
+Preview workflows: [CLI database branches](docs/cli-branches.md) covers create, list, guarded delete and scoped connection URLs.

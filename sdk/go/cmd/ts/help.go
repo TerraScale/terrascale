@@ -16,7 +16,10 @@ var commandSyntax = map[string]string{
 	"orgs delete": "orgs delete <name|id>", "projects delete": "projects delete <name|id>",
 	"usage": "usage [<database>]", "completion": "completion bash|zsh|fish",
 	"db list": "db list", "db create": "db create <database>", "db delete": "db delete <database>",
-	"db branch": "db branch <source> <new-database>", "db info": "db info <database>",
+	"db branch create": "db branch create <name> --from <database> [--ttl 7d]",
+	"db branch list":   "db branch list", "db branch delete": "db branch delete <name>",
+	"db branch url": "db branch url <name>",
+	"db branch":     "db branch <source> <new-database>", "db info": "db info <database>",
 	"db placement": "db placement <database> (-replica-regions <a,b> | -all-regions)", "db move-home": "db move-home <database> <region>",
 	"db rename":        "db rename <database> <new-name>",
 	"databases rename": "databases rename <database> <new-name>",
@@ -66,7 +69,7 @@ func requestedHelp(args []string, out io.Writer) (bool, error) {
 		if strings.HasPrefix(a, "-") {
 			name, _, equal := strings.Cut(strings.TrimLeft(a, "-"), "=")
 			switch name {
-			case "project", "org", "expected-id", "scope", "expires", "allow-cidr", "name", "cron", "data", "limit", "home-region", "replica-regions":
+			case "from", "ttl", "project", "org", "expected-id", "scope", "expires", "allow-cidr", "name", "cron", "data", "limit", "home-region", "replica-regions":
 				if !equal {
 					i++
 				}
@@ -91,7 +94,10 @@ func requestedHelp(args []string, out io.Writer) (bool, error) {
 	}
 	selected := words[0]
 	if len(words) > 1 {
-		candidate := strings.Join(words[:2], " ")
+		candidate := strings.Join(words[:min(3, len(words))], " ")
+		if _, ok := commands[candidate]; !ok {
+			candidate = strings.Join(words[:2], " ")
+		}
 		if _, ok := commands[candidate]; ok {
 			selected = candidate
 		} else if _, ok := commands[selected]; !ok {
@@ -157,9 +163,16 @@ func helpOptions(name string) map[string]string {
 		options[flag] = text
 	}
 	switch {
+	case name == "db branch create":
+		options["--from <database>"] = "source database; snapshot and later writes are independent"
+		options["--ttl <duration>"] = "whole seconds from 60s to 365d; default 7d"
+		options["--expected-id <ULID>"] = "server-enforced source identity"
+	case name == "db branch url":
+		options["--expected-id <ULID>"] = "require this branch identity before issuing a scoped key"
+		options["TERRASCALE_API_KEY"] = "required; emits a secret URL scoped to this database, for at most 7d"
 	case name == "db branch":
 		options["-expected-id <ULID>"] = "require the inspected source ID; unsupported servers fail closed; no unguarded fallback"
-	case name == "db delete":
+	case name == "db delete" || name == "db branch delete":
 		options["-expected-id <ULID>"] = "server-enforced identity match; unsupported servers fail closed; no name-only fallback"
 		options["-yes"] = "explicit consent to permanent deletion; otherwise type the target in a terminal"
 	case name == "backup destination":
