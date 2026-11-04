@@ -20,7 +20,9 @@ public static class SharedServer
     {
         // The host belongs to the assembly, so its background work must not inherit the first test's context or timeout.
         using var flow = ExecutionContext.SuppressFlow();
-        return Task.Run(() => ManagementApi.StartAsync(lifetimeCancellationToken: Lifetime.Token));
+        // A shared host serves the whole suite; use the production CPU-derived worker count.
+        return Task.Run(() => ManagementApi.StartAsync(settings => settings.Remove("storage-threads"),
+            lifetimeCancellationToken: Lifetime.Token));
     }
 
     [After(HookType.Assembly)]
