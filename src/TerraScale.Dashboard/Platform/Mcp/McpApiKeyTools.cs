@@ -1,6 +1,5 @@
 using System.Net;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.WebUtilities;
@@ -167,7 +166,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             [.. (db.ReplicaRegions ?? []).Prepend(db.HomeRegion)], db.CreatedAt, db.AllRegions, db.ExpiresAt);
         private static CallToolResult Reply<T>(T value, JsonTypeInfo<T> type) => new()
         {
-            StructuredContent = JsonSerializer.SerializeToNode(value, type) as JsonObject,
+            StructuredContent = JsonSerializer.SerializeToElement(value, type),
             Content = [new TextContentBlock { Text = JsonSerializer.Serialize(value, type) }]
         };
 
