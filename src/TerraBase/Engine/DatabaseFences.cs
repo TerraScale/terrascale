@@ -91,6 +91,8 @@ internal sealed class DatabaseFences
         }
     }
 
+    public bool Holds(string database) => _fences.ContainsKey(database);
+
     public string? MovedTo(string database) => _fences.TryGetValue(database, out var fence) ? fence.Home : null;
 
     public void ThrowIfFenced(string database)

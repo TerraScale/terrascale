@@ -53,7 +53,9 @@ public static class BadRequests
                 Replace(context.Response);
                 context.Response.Headers["X-TerraBase-Database-Home"] = error.Home;
                 Listeners.ReplayIn(context, error.Home);
-                await WriteAsync(context, StatusCodes.Status421MisdirectedRequest, "wrong_region", error.Message, op: null).ConfigureAwait(false);
+                var url = Features.Regions.HomeForwarding.RetryUrl(context, error.Home);
+                context.Response.Headers.Location = url;
+                await WriteAsync(context, StatusCodes.Status421MisdirectedRequest, "wrong_region", error.Message, op: null, url: url).ConfigureAwait(false);
             }
             catch (DatabaseMovedException error) when (!context.Response.HasStarted)
             {
