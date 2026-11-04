@@ -45,10 +45,12 @@ public sealed class DatabaseConflicts(DataService data)
         }
         string Required(string name) => Text(name) ?? throw new InvalidDataException("Incomplete conflict response.");
         JsonElement? Json(string name) => Text(name) is { } json ? JsonSerializer.Deserialize(json, DatabaseConflictJson.Default.JsonElement) : null;
-        var state = Required("state");
+        var state = Required("loser_state");
         if (state is not ("superseded" or "reverted")) { throw new InvalidDataException("Invalid conflict state."); }
-        return new(Required("id"), Required("transaction_id"), Required("region"), state, state == "superseded" ? "confirmed" : "reverted",
-            Required("kind"), Text("table_name"), Json("row_key"), Json("change"), Required("message"), Required("created_at"));
+        return new(Required("id"), Required("kind"), Text("table_name"), Json("row_key"), Text("column_name"),
+            new(Json("winner_value"), Text("winner_region"), Text("winner_node"), Text("winner_hlc"), Text("winner_transaction_id"), Text("winner_state")),
+            new(Json("loser_value"), Required("loser_region"), Required("loser_node"), Required("loser_hlc"), Required("loser_transaction_id"), state),
+            Required("message"), Required("created_at"));
     }
 
     private static DateTimeOffset? Instant(string value, string field)
@@ -65,18 +67,14 @@ public sealed class DatabaseConflicts(DataService data)
     private static string Literal(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
 }
 
-public sealed record DatabaseConflict(string Id, string TransactionId, string Region, string State, string TransactionState,
-    string Kind, string? TableName, JsonElement? RowKey, JsonElement? Change, string Message, string CreatedAt)
+public sealed record DatabaseConflict(string Id, string Kind, string? TableName, JsonElement? RowKey, string? ColumnName,
+    DatabaseConflictWrite Winner, DatabaseConflictWrite Loser, string Message, string CreatedAt);
+
+public sealed record DatabaseConflictWrite(JsonElement? Value, string? Region, string? Node, string? Hlc, string? TransactionId, string? State)
 {
-    public IEnumerable<(string Column, string Losing)> Columns()
-    {
-        if (State == "superseded" && Change is { ValueKind: JsonValueKind.Object } change && change.TryGetProperty("values", out var values)
-            && values.ValueKind == JsonValueKind.Object && values.EnumerateObject().Any())
-        {
-            foreach (var value in values.EnumerateObject()) { yield return (value.Name, value.Value.GetRawText()); }
-        }
-        else { yield return ("—", Change?.GetRawText() ?? "—"); }
-    }
+    public string? TransactionState => State == "superseded" ? "confirmed" : State;
+    [JsonIgnore]
+    public string DisplayValue => Value?.GetRawText() ?? "Not recorded";
 }
 
 public sealed record DatabaseConflictList(IReadOnlyList<DatabaseConflict> Conflicts,
