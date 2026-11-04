@@ -1052,18 +1052,18 @@ namespace TerraScale.Dashboard.E2E.Demo
             return Task.FromResult<IReadOnlyList<ManagedDatabase>>(databases.Values.Where(item => item.ProjectId == scope.ProjectId).ToArray());
         }
 
-        public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, CancellationToken cancellationToken)
+        public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, CancellationToken cancellationToken, long? ttlSeconds = null)
         {
-            var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, HomeRegion: home.Id, ReplicaRegions: []);
+            var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, HomeRegion: home.Id, ReplicaRegions: []) { ExpiresAt = ttlSeconds is { } seconds ? DateTimeOffset.UtcNow.AddSeconds(seconds) : null };
             databases[value.Id] = value;
             return Task.FromResult(value);
         }
 
         // A branch starts as a copy of its source's tables and rows.
-        public async Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
+        public async Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken, long? ttlSeconds = null, DateTimeOffset? pointInTime = null)
         {
             var copy = Engine(scope, databaseId).Snapshot();
-            var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, databaseId, home.Id, []);
+            var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, databaseId, home.Id, []) { ExpiresAt = ttlSeconds is { } seconds ? DateTimeOffset.UtcNow.AddSeconds(seconds) : null };
             databases[value.Id] = value;
             if (copy.Count > 0)
             {
@@ -1084,6 +1084,13 @@ namespace TerraScale.Dashboard.E2E.Demo
             var renamed = current with { Name = name, PreviousName = null, ConflictOf = null };
             databases[databaseId] = renamed;
             return Task.FromResult(renamed);
+        }
+
+        public Task<ManagedDatabase> SetTtlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, long? ttlSeconds, CancellationToken cancellationToken)
+        {
+            var database = Database(scope, databaseId) with { ExpiresAt = ttlSeconds is { } seconds ? DateTimeOffset.UtcNow.AddSeconds(seconds) : (DateTimeOffset?)null };
+            databases[databaseId] = database;
+            return Task.FromResult(database);
         }
 
         public Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
