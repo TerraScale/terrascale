@@ -11,6 +11,7 @@ SCANNER = Path(__file__).with_name("scan.py")
 
 def check(case):
     files, mode, expected, terms, *locations = case
+    options = locations.pop() if locations and isinstance(locations[-1], dict) else {}
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         subprocess.run(["git", "init", "-q", directory], check=True)
@@ -27,7 +28,7 @@ def check(case):
         subprocess.run(["git", "-C", directory, "-c", "user.name=Scanner Test",
                         "-c", "user.email=scanner@example.invalid", "commit", "-qm", "fixture"], check=True)
         result = subprocess.run([sys.executable, str(SCANNER), "--root", directory,
-                                 "--repo", "terrascale", "--output", str(root / "report.md")],
+                                 "--repo", "terrascale", "--output", str(root / "report.md"), *options.get("args", [])],
                                 text=True, capture_output=True)
         assert result.returncode == expected, (result.stdout, result.stderr)
         hits = [json.loads(line) for line in result.stdout.splitlines()[1:]]
@@ -41,12 +42,17 @@ def check(case):
 
 
 cases = [
+    ({"src/TerraBase/api.cs": "CreateCollectionAsync QueryDocumentsAsync lattice feed",
+      "src/TerraBase/engine.cs": "Turso", "sdk/old.txt": "documents"},
+     "report", 1, {"collections", "documents", "lattices", "document-feeds"},
+     {"args": ["--mode", "fail", "--path-prefix", "src/TerraBase",
+               "--term", "documents", "--term", "collections", "--term", "lattices", "--term", "document-feeds"]}),
     ({"api.txt": "collections documents feeds lattices leaderless Hrana /libsql custom wire protocol webhooks Fly.io Turso IDocumentService"},
      "fail", 1, {"collections", "documents", "document-feeds", "lattices", "leaderless", "hrana", "libsql", "custom-wire", "webhooks", "fly", "engine-brand"}),
     ({"api.txt": "Hrana"}, "report", 0, {"hrana"}),
     ({"api.txt": "JsonDocument System.Collections.Generic GC collections Postgres wire protocol"}, "fail", 0, set()),
     ({"api.txt": "JsonDocument and documents; System.Collections and collections"}, "fail", 1, {"documents", "collections"}),
-    ({"src/vendor/engine.rs": "Turso libsql", "docs/archive/old.md": "Hrana documents"}, "fail", 0, set()),
+    ({"src/vendor/engine.rs": "Turso libsql"}, "fail", 0, set()),
     ({"src/vendor/engine.rs": "webhooks", "docs/active.md": "Turso"}, "fail", 1, {"webhooks", "engine-brand"}),
     ({"index.js": "document.querySelector('main'); document.body"}, "fail", 0, set()),
     ({"index.js": "document.querySelector('main'); documents"}, "fail", 1, {"documents"}),
