@@ -69,6 +69,10 @@ namespace TerraScale.Dashboard.E2E.Platform
                     await ShotAsync("database-fork");
                     await page.GetByRole(AriaRole.Button, new() { Name = "Fork database", Exact = true }).ClickAsync();
                     await page.Locator("#name-branch[open]").WaitForAsync();
+                    await GotoAsync($"/databases/{databaseId}");
+                    await page.GetByRole(AriaRole.Link, new() { Name = "Fork", Exact = true }).ClickAsync();
+                    await page.Locator("#name-branch[open]").WaitForAsync();
+                    await Assert.That(await page.Locator("#name-branch [role=alert]").CountAsync()).IsEqualTo(0);
                     await page.Locator("#branch-name").FillAsync(name + "-fork");
                     await page.Locator("#fork-ttl").FillAsync("0.5");
                     await ShotAsync("database-fork-dialog");
