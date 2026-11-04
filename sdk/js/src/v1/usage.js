@@ -6,10 +6,10 @@ import { members } from "./management-validation.js";
 /** @import { V1RequestOptions } from "./terrabase-v1.js" */
 const period = record({ from: text, to: text, granularity: text, reads: numeric, writes: numeric });
 const series = list(record({ start: text, reads: numeric, writes: numeric }));
-const databaseUsage = record({ databaseId: requireId, storageBytes: numeric,
+const databaseUsage = record({ databaseId: requireId, storageBytes: numeric, logicalBytes: numeric,
   reads: numeric, writes: numeric, period, series });
 const month = record({ month: text, readUnits: numeric, writeUnits: numeric, units: numeric, organizationUnits: numeric, organizationReadUnits: numeric });
-const projectUsage = record({ projectId: requireId, databases: numeric, storageBytes: numeric, fileBytes: numeric,
+const projectUsage = record({ projectId: requireId, databases: numeric, storageBytes: numeric, logicalBytes: numeric, fileBytes: numeric,
   reads: numeric, writes: numeric, period, series, items: list(databaseUsage), month });
 const bandwidth = record({ bytesSent: numeric, bytesReceived: numeric });
 const latency = record({ p50Ms: nullable(numeric), p95Ms: nullable(numeric), p99Ms: nullable(numeric) });
