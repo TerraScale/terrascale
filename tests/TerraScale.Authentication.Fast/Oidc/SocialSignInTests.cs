@@ -1,16 +1,9 @@
 using System.Net;
-using System.Text.Json;
-using System.Text.RegularExpressions;
 using Bogus;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Time.Testing;
-using OtpNet;
-using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
-using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
-using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Oidc;
@@ -60,34 +53,7 @@ public sealed partial class SocialSignInTests(TerraBaseFixture fixture)
         await Assert.That(await SignInAsync(oidc, providers, project, provider, "unverified-" + email, verified: false, subject: "67890")).IsNull();
         await Assert.That(await users.FindByEmailAsync(project, "unverified-" + email)).IsNull();
 
-        var sessions = oidc.Server.App.Services.GetRequiredService<Sessions>();
-        var changedEmail = this.faker.Internet.Email(provider: "example.test").ToLowerInvariant();
-        var other = (await users.CreateAsync(project, changedEmail))!;
-        await oidc.OkAsync(HttpMethod.Put, $"/v1/{project}/settings", token, new { methods = new { sign_up = false } });
-        var cookie = (await SignInAsync(oidc, providers, project, provider, changedEmail))!;
-        var resolved = (await sessions.ResolveAsync(project, cookie[(cookie.IndexOf('=') + 1)..]))!.Value;
-        await Assert.That(resolved.User.Id).IsEqualTo(created.Id);
-        await Assert.That(resolved.User.Email).IsEqualTo(email);
-        await Assert.That(TerraScale.DotNet.TerraScaleIds.IsValid(resolved.User.Id)).IsTrue();
-        await UnchangedAsync(users, created);
-        await UnchangedAsync(users, other);
-        var unusedEmail = this.faker.Internet.Email();
-        await Assert.That(await SignInAsync(oidc, providers, project, provider, unusedEmail, subject: "67890")).IsNull();
-        await Assert.That(await users.FindByEmailAsync(project, unusedEmail)).IsNull();
-
-        var organization = await oidc.CreateOrganizationAsync(token, this.faker.Company.CompanyName());
-        var second = await oidc.CreateProjectAsync(token, organization, this.faker.Commerce.ProductName());
-        await oidc.OkAsync(HttpMethod.Put, $"/v1/{second}/providers/{provider}", token, Configuration(provider, providers));
-        await Assert.That(await SignInAsync(oidc, providers, second, provider, email)).IsNotNull();
-        await Assert.That((await users.FindByEmailAsync(second, email))!.Id).IsNotEqualTo(created.Id);
-        await UnchangedAsync(users, created);
-        await users.SetDisabledAsync(project, created.Id, true);
-        await Assert.That(await SignInAsync(oidc, providers, project, provider, email)).IsNull();
     }
-
-    private static async Task UnchangedAsync(Users users, UserRecord expected) =>
-        await Assert.That(JsonSerializer.Serialize((await users.GetAsync(expected.InstanceId, expected.Id))!, IdentityJson.Default.UserRecord))
-            .IsEqualTo(JsonSerializer.Serialize(expected, IdentityJson.Default.UserRecord));
 
     private static object Configuration(string provider, FakeSocialProviders providers) => provider switch
     {

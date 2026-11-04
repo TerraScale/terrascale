@@ -72,7 +72,7 @@ public sealed class EndUserAccessTokenTests(TerraBaseFixture fixture)
 
     private static async Task<(string Owner, string Organization, string Project)> SetupAsync(OidcHarness oidc)
     {
-        var (_, owner) = await oidc.SignInUserAsync("owner@example.test");
+        var (_, owner) = await oidc.CreateUserTokenAsync("owner@example.test");
         var organization = await oidc.CreateOrganizationAsync(owner);
         return (owner, organization, await oidc.CreateProjectAsync(owner, organization, "Production"));
     }

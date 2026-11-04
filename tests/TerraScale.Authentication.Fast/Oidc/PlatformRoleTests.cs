@@ -23,8 +23,9 @@ public sealed class PlatformRoleTests(TerraBaseFixture fixture)
         var admin = await oidc.CreateUserAsync("ops@example.test");
         await SetRoleAsync(oidc.Database, admin.Id, "admin");
 
-        var adminTokens = await SignInAsync(oidc, "ops@example.test");
-        var (_, _, userTokens) = await oidc.SignInAndRedeemAsync("someone@example.test");
+        var (_, adminTokens) = await oidc.CreateSessionAndRedeemAsync(admin);
+        var user = await oidc.CreateUserAsync("someone@example.test");
+        var (_, userTokens) = await oidc.CreateSessionAndRedeemAsync(user);
 
         await Assert.That(Role(adminTokens)).IsEqualTo(OidcResults.PlatformRoleAdmin);
         await Assert.That(Role(userTokens)).IsNull();
@@ -32,14 +33,6 @@ public sealed class PlatformRoleTests(TerraBaseFixture fixture)
         await SetRoleAsync(oidc.Database, admin.Id, null);
         using var refreshed = await oidc.RefreshAsync(adminTokens.GetProperty("refresh_token").GetString()!);
         await Assert.That(Role(await refreshed.Content.ReadFromJsonAsync<JsonElement>())).IsNull();
-    }
-
-    private static async Task<JsonElement> SignInAsync(OidcHarness oidc, string address)
-    {
-        var session = await oidc.SignInAsync(address);
-        var (verifier, challenge) = OidcHarness.Pkce();
-        using var response = await oidc.RedeemCodeAsync(await oidc.CodeAsync(session, challenge), verifier);
-        return await response.Content.ReadFromJsonAsync<JsonElement>();
     }
 
     // What an operator does through TerraBase's internal listener: edits the stored user.
