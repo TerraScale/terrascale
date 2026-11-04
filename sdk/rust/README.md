@@ -1,9 +1,74 @@
 # TerraScale Rust SDK
 
-`terrascale::v1` provides typed document and SQL APIs through `https://api.terrascale.tech`.
-Start with the [current API guide](docs/current-api.md). The [document walkthrough](docs/csharp-api.md)
-covers ULID identities, conditional writes, pagination and errors.
+`terrascale::v1` is the Rust client for TerraBase SQL at `https://api.terrascale.tech`. It follows the
+shared [SQL SDK API shape](../SQL-API.md).
 
+## Quickstart
+
+```toml
+[dependencies]
+terrascale = { git = "https://github.com/TerraScale/terrascale" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+serde = { version = "1", features = ["derive"] }
+```
+
+```rust,no_run
+use terrascale::v1::{new_id, Client, SqlStatement};
+
+#[derive(serde::Deserialize)]
+struct Note { id: String, body: String }
+
+# pub async fn example(project: &str, api_key: &str) -> terrascale::v1::Result<()> {
+let client = Client::for_project_api_key(project, api_key).build()?;
+let db = client.database("main").sql();
+
+db.execute("CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, body TEXT NOT NULL)", &[]).await?;
+let id = new_id();
+db.execute("INSERT INTO notes (id, body) VALUES (?, ?)", &[id.as_str().into(), "hello".into()]).await?;
+
+let rows = db.query("SELECT id, body FROM notes WHERE id = ?", &[id.as_str().into()]).await?;
+assert_eq!(rows[0].get_str("body")?, "hello");
+
+let notes: Vec<Note> = db.query_as_named("SELECT id, body FROM notes WHERE id = :id", [("id", id.as_str())]).await?;
+
+db.batch(vec![
+    SqlStatement::new("UPDATE notes SET body = ? WHERE id = ?").args(["edited", id.as_str()]),
+    SqlStatement::new("DELETE FROM notes WHERE body = ''"),
+]).await?;
+# let _ = notes; Ok(()) }
+```
+
+The project is a canonical uppercase ULID and the database a name or ULID. Read the API key from secret
+storage: `for_project_api_key` exchanges it through ts-auth and refreshes tokens automatically. Reads need
+`documents:read`; writes and schema changes also need `documents:write`. `Client::for_project` takes an
+already exchanged bearer token.
+
+## SQL
+
+Every call is one `POST /v1/projects/{project}/databases/{database}/sql/execute` request and one transaction:
+all statements commit or none do, and `BEGIN`/`COMMIT`/`ROLLBACK` are refused.
+
+| Method | Returns |
+|---|---|
+| `execute(sql, args)`, `execute_named(sql, named)`, `execute_statement(statement)` | `SqlStatementResult` |
+| `query(sql, args)`, `query_named(sql, named)` | `Vec<SqlRecord>` |
+| `query_as::<T>(sql, args)`, `query_as_named::<T>(sql, named)` | `Vec<T>` via serde, by column name, blobs as base64 strings |
+| `batch(statements)` | one `SqlStatementResult` per statement, 1 to 256 statements |
+
+`SqlValue` is `Null`, `Integer(i64)`, `Real(f64)`, `Text` or `Blob` (`{"base64":"…"}` on the wire). Booleans
+bind as `1`/`0`; NaN and infinity are refused before sending. Named argument keys omit `:`, `@` and `$`.
+`SqlRecord` reads by ordinal or column name with `get_i64`, `get_f64`, `get_bool`, `get_str`, `get_bytes` and
+`is_null`; a repeated column name resolves to its first ordinal.
+
+A refused statement is `Error::Sql`; `Error::sql()` returns its `code` (constants in `sql_error_codes`),
+`message`, zero-based `statement` and `sqlstate`, and `is_transient()` is true for `serialization_conflict`
+and `tenant_busy`. A `409 serialization_conflict` rolled back and is resent at most twice with jitter; other
+refusals return at once. Failures before execution keep the generic error variants (401, 404, 421, 429, 503).
+The WebSocket session for interactive transactions ships once TerraBase serves it.
+
+## Documents
+
+Use an existing database name and a new collection name for this example:
 Use an existing database name and a new collection name for this example:
 
 ```rust,no_run
@@ -38,45 +103,6 @@ returns HTTP 400 `replicas_unavailable`.
 
 For deletion, call `Database::delete_database` directly in the database's home
 region. HTTP 204 confirms logical deletion and local cleanup.
-
-### Relational SQL
-
-`Database::sql()` runs parameterized SQL on `POST /v1/projects/{project}/databases/{database}/sql/execute`
-([guide](https://docs.terrascale.tech/guides/sql-http)). Each request is one transaction: every
-statement commits or none does, and `BEGIN`/`COMMIT`/`ROLLBACK` are refused.
-
-```rust,no_run
-# pub async fn demo(client: terrascale::v1::Client, database_name: &str, table_name: &str) -> terrascale::v1::Result<()> {
-use terrascale::v1::{SqlStatement, SqlValue};
-#[derive(serde::Deserialize)]
-struct User { id: i64, name: String }
-
-let sql = client.database(database_name).sql();
-// Quote the caller's new table name as an SQL identifier; bind all data values.
-let table = format!("\"{}\"", table_name.replace('"', "\"\""));
-sql.execute(&format!("CREATE TABLE {table} (id INTEGER PRIMARY KEY, name TEXT)"), &[]).await?;
-sql.execute(&format!("INSERT INTO {table}(id, name) VALUES (?, ?)"), &[1.into(), "Ada".into()]).await?;
-let users: Vec<User> = sql.query(&format!("SELECT id, name FROM {table} WHERE id = ?"), &[1.into()]).await?;
-let results = sql.batch(vec![
-    SqlStatement::new(format!("UPDATE {table} SET name = :name WHERE id = :id")).named("name", "Grace").named("id", 1),
-    SqlStatement::new(format!("SELECT count(*) FROM {table}")),
-]).await?;
-assert!(matches!(results[1].rows[0][0], SqlValue::Integer(1)));
-sql.execute(&format!("DROP TABLE {table}"), &[]).await?;
-# let _ = users; Ok(()) }
-```
-
-Results carry `columns` (name, `decltype`), `rows` of `SqlValue` (`Null`, `Integer(i64)`, `Real(f64)`,
-`Text`), `rows_affected` and `last_insert_rowid`; `decode_rows` maps rows into any `Deserialize` type
-by column name. Booleans bind as `1`/`0`. Integers are JSON numbers: this client keeps `i64`, but
-JavaScript peers lose precision beyond 2^53. SQL failures (`sql_error`, `forbidden_scope`,
-`sql_conflict`, `sql_too_large`) are `Error::Sql`, available through `Error::sql()` with `code`,
-`message`, `statement` and `sqlite_code`; other failures keep the generic error variants. The
-read-only `run_sql` route queries document collections through a separate SELECT subset.
-
-Use `Database::sql()` for parameterized relational SQL. Use `Database::run_sql`,
-`check_sql` and `explain_sql` for the read-only document SELECT subset; these methods
-do not provide parameter binding.
 
 Project-scoped collection shapes are documented in [shape reads](docs/shape-reads.md).
 Database-wide changes are available through `Database::changes` (typed events) and

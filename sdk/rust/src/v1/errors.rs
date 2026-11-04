@@ -92,9 +92,7 @@ pub enum Error {
     /// `500 internal_error`: a mutation may have taken effect.
     #[error("terrabase: 500 internal_error")]
     InternalError,
-    /// A relational SQL failure from `sql/execute`: `sql_error` (400),
-    /// `forbidden_scope` (403), `sql_conflict` (409) or `sql_too_large` (413).
-    /// The whole request was rolled back.
+    /// A refused SQL statement from `sql/execute`; the whole request rolled back.
     #[error("terrabase: {status} {error}")]
     Sql { status: u16, error: SqlError },
     /// `410 cursor_expired`: the changes cursor fell out of retention;
@@ -145,25 +143,40 @@ pub enum Error {
     UndecodableAck { status: u16, message: String },
 }
 
-/// The typed body of a relational SQL failure.
+/// A refused SQL statement. The request rolled back. `code` is one of
+/// [`sql_error_codes`](crate::v1::sql_error_codes).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct SqlError {
     pub code: String,
     pub message: String,
-    /// The 0-based index of the failing statement, when one failed.
-    pub statement: Option<usize>,
-    /// The SQLite extended result code, such as `SQLITE_CONSTRAINT_PRIMARYKEY`.
-    pub sqlite_code: Option<String>,
+    /// The zero-based index of the failing statement.
+    pub statement: usize,
+    /// The PostgreSQL SQLSTATE of `code`, such as `23505`.
+    #[serde(default)]
+    pub sqlstate: Option<String>,
+}
+
+impl SqlError {
+    /// True when sending the same request again can succeed.
+    #[must_use]
+    pub fn is_transient(&self) -> bool {
+        matches!(
+            self.code.as_str(),
+            crate::v1::sql_error_codes::SERIALIZATION_CONFLICT
+                | crate::v1::sql_error_codes::TENANT_BUSY
+        )
+    }
 }
 
 impl std::fmt::Display for SqlError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.code, self.message)?;
-        if let Some(statement) = self.statement {
-            write!(f, " (statement {statement})")?;
-        }
-        if let Some(code) = &self.sqlite_code {
-            write!(f, " [{code}]")?;
+        write!(
+            f,
+            "{}: {} (statement {})",
+            self.code, self.message, self.statement
+        )?;
+        if let Some(sqlstate) = &self.sqlstate {
+            write!(f, " [{sqlstate}]")?;
         }
         Ok(())
     }
@@ -423,8 +436,7 @@ pub(crate) fn from_response(
     let code = code.unwrap_or_else(|| format!("http_{status}"));
     let sql = raw
         .as_ref()
-        .and_then(|r| serde_json::from_str::<SqlError>(r.get()).ok())
-        .filter(|sql| sql.code.starts_with("sql_") || sql.statement.is_some());
+        .and_then(|r| serde_json::from_str::<SqlError>(r.get()).ok());
     if let Some(error) = sql {
         return Error::Sql { status, error };
     }

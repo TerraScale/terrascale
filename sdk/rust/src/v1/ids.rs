@@ -70,6 +70,12 @@ pub(crate) fn cursor<'de, D: Deserializer<'de>>(
     Ok(cursor)
 }
 
+/// A new ULID primary key in canonical uppercase form.
+#[must_use]
+pub fn new_id() -> String {
+    Ulid::generate().to_string()
+}
+
 /// The deterministic document ID for a natural `key` in `collection`: the
 /// first 16 bytes of `SHA-256(collection + "\0" + key)` as a ULID.
 #[must_use]

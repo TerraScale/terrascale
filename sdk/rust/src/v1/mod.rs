@@ -76,7 +76,7 @@ pub use files::{FileObject, FileObjectPage, FileSignedUrl, FileUploadRequest};
 pub use functions::{
     Function, FunctionDeployment, FunctionInvocation, FunctionLog, FunctionTrigger,
 };
-pub use ids::{is_valid_name, ulid_for, DocumentId, Version};
+pub use ids::{is_valid_name, new_id, ulid_for, DocumentId, Version};
 pub use management::{DatabasePlacement, ManagementPage};
 pub use observability::ServingRegions;
 pub use query::{
@@ -90,7 +90,8 @@ pub use shape_manifest::{ShapeMirrorManifest, ShapeMirrorObject};
 pub use shapes::{Shape, ShapeChange, ShapeDocument, ShapeOp, ShapeState, ShapeUpdate};
 pub use sql::{SqlCheck, SqlIndexSuggestion, SqlResult, SqlRow};
 pub use sql_exec::{
-    Sql, SqlColumn, SqlStatement, SqlStatementResult, SqlValue, MAX_SQL_BYTES, MAX_SQL_STATEMENTS,
+    sql_error_codes, Sql, SqlColumn, SqlColumnIndex, SqlRecord, SqlStatement, SqlStatementResult,
+    SqlValue, MAX_SQL_BYTES, MAX_SQL_STATEMENTS,
 };
 pub use system::HealthResponse;
 pub use tooling::{Index, IndexKind, IndexRequest};
