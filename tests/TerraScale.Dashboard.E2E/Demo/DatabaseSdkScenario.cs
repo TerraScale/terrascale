@@ -1570,7 +1570,6 @@ namespace TerraScale.Dashboard.E2E
                 catch (FormatException) { return null; }
             }
 
-            // I2 ManagedDatabaseBody: camelCase, answering region and complete placement.
             private static DateTimeOffset? Expiry(JsonElement request)
             {
                 if (!request.TryGetProperty("ttlSeconds", out var ttl)) { return null; }
