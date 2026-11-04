@@ -41,6 +41,7 @@ internal sealed class RegionReplication(
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), Follower> _followers = new();
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (TenantContext Database, long At)> _revised = new();
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), string> _published = new();
+    private readonly ConcurrentDictionary<(string Organization, string Project, string Database), bool> _suspended = new();
     private readonly Channel<bool> _publish = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
     private readonly Channel<string> _catalogWakes = Channel.CreateBounded<string>(new BoundedChannelOptions(64) { FullMode = BoundedChannelFullMode.DropWrite });
     private readonly SemaphoreSlim _pulls = new(MaxConcurrentPulls, MaxConcurrentPulls);
@@ -72,22 +73,19 @@ internal sealed class RegionReplication(
     public override async Task StartAsync(CancellationToken cancellationToken)
     {
         _peers = await peers.ListAsync(cancellationToken).ConfigureAwait(false);
-        if (_peers.Count > 0)
-        {
-            _lag = _meter.CreateHistogram<double>("terrabase.replica.lag", "ms",
-                "Time from a home's commit, on its clock, to the replica holding it after the notice's pull.");
-            _pullCount = _meter.CreateCounter<long>("terrabase.replica.pulls", "{pull}", "Replica pulls by result (pushed, changed, unchanged, failed).");
-            _verifications = _meter.CreateCounter<long>("terrabase.replica.verifications", "{round}",
-                "Replica checksum rounds against the home by result (equal, diverged, skipped, failed).");
-            _rebootstraps = _meter.CreateCounter<long>("terrabase.replica.rebootstraps", "{rebootstrap}", "Replicas deleted and bootstrapped again after a divergence.");
-            _ = _meter.CreateObservableGauge("terrabase.replica.max_lag", () => _followers.Values.Select(follower => follower.LagMs ?? 0).DefaultIfEmpty(0).Max(), "ms",
-                "The largest lag of this node's replicas behind their homes.");
-            _ = _meter.CreateObservableGauge("terrabase.replica.max_verification_age", () => _followers.Values.Select(follower => follower.VerificationAge.TotalSeconds)
-                .DefaultIfEmpty(0).Max(), "s", "The longest time any of this node's replicas went without a completed verification against its home.");
-            _verifier = new ReplicaVerifier(replicas, _http);
-        }
+        _lag = _meter.CreateHistogram<double>("terrabase.replica.lag", "ms",
+            "Time from a home's commit, on its clock, to the replica holding it after the notice's pull.");
+        _pullCount = _meter.CreateCounter<long>("terrabase.replica.pulls", "{pull}", "Replica pulls by result (pushed, changed, unchanged, failed).");
+        _verifications = _meter.CreateCounter<long>("terrabase.replica.verifications", "{round}",
+            "Replica checksum rounds against the home by result (equal, diverged, skipped, failed).");
+        _rebootstraps = _meter.CreateCounter<long>("terrabase.replica.rebootstraps", "{rebootstrap}", "Replicas deleted and bootstrapped again after a divergence.");
+        _ = _meter.CreateObservableGauge("terrabase.replica.max_lag", () => _followers.Values.Select(follower => follower.LagMs ?? 0).DefaultIfEmpty(0).Max(), "ms",
+            "The largest lag of this node's replicas behind their homes.");
+        _ = _meter.CreateObservableGauge("terrabase.replica.max_verification_age", () => _followers.Values.Select(follower => follower.VerificationAge.TotalSeconds)
+            .DefaultIfEmpty(0).Max(), "s", "The longest time any of this node's replicas went without a completed verification against its home.");
+        _verifier = new ReplicaVerifier(replicas, _http);
 
-        if (_peers.Count > 0 && options is { NatsUrl: { } natsUrl, NatsToken: { } natsToken })
+        if (options is { NatsUrl: { } natsUrl, NatsToken: { } natsToken })
         {
             _nats = new NatsConnection(new NatsOpts
             {
@@ -137,6 +135,15 @@ internal sealed class RegionReplication(
     /// <summary>Reads every home's catalog once and reconciles this region's replicas with it.</summary>
     internal async Task SyncCatalogsAsync(CancellationToken cancellationToken)
     {
+        try
+        {
+            _peers = await peers.ListAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is TerraBaseConfigurationException)
+        {
+            logger.ZLogWarning($"The peers file could not be read; replicas keep the regions they know: {error.GetType().Name:@Error}");
+        }
+
         foreach (var peer in _peers)
         {
             try
@@ -166,11 +173,6 @@ internal sealed class RegionReplication(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (_peers.Count == 0)
-        {
-            return;
-        }
-
         await (_nats is { } nats
             ? Task.WhenAll(PublishAsync(nats, stoppingToken), SubscribeAsync(nats, stoppingToken), WatchConnectionAsync(nats, stoppingToken), CatalogAsync(stoppingToken))
             : CatalogAsync(stoppingToken)).ConfigureAwait(false);
@@ -262,7 +264,7 @@ internal sealed class RegionReplication(
             return;
         }
 
-        if (_followers.TryGetValue((notice.OrganizationId, notice.ProjectId, notice.DatabaseId), out var follower))
+        if (_followers.TryGetValue((notice.OrganizationId, notice.ProjectId, notice.DatabaseId), out var follower) && follower.Home.Region == home)
         {
             var known = DatabaseRevision.TryParse(notice.Revision, out var to);
             if (known && replicas.HeldRevision(follower.Database) is { } held && held.Incarnation == to.Incarnation && DatabaseRevision.Compare(to, held) <= 0)
@@ -369,7 +371,7 @@ internal sealed class RegionReplication(
                 {
                     if (replicated && (listed is null || listed.ContainsKey(key)))
                     {
-                        Follow(key, database, home);
+                        await FollowAsync(key, database, home, cancellationToken).ConfigureAwait(false);
                     }
                     else if (replicated)
                     {
@@ -391,16 +393,91 @@ internal sealed class RegionReplication(
         while (after is not null);
     }
 
-    private void Follow((string, string, string) key, TenantContext database, ReplicaPeer home)
+    private async Task FollowAsync((string, string, string) key, TenantContext database, ReplicaPeer home, CancellationToken cancellationToken)
     {
+        Follower? stale = null;
         lock (_gate)
         {
-            if (!_followers.ContainsKey(key))
+            if (_suspended.ContainsKey(key))
+            {
+                return;
+            }
+
+            if (_followers.TryGetValue(key, out var current))
+            {
+                if (current.Home.Region == home.Region)
+                {
+                    return;
+                }
+
+                stale = current;
+                _ = _followers.TryRemove(key, out _);
+            }
+        }
+
+        if (stale is not null)
+        {
+            await stale.StopAsync().ConfigureAwait(false);
+            _ = await replicas.DeleteAsync(database, cancellationToken).ConfigureAwait(false);
+        }
+
+        lock (_gate)
+        {
+            if (!_followers.ContainsKey(key) && !_suspended.ContainsKey(key))
             {
                 _followers[key] = Follower.Start(this, database, home);
             }
         }
     }
+
+    internal void WakeCatalog(string region) => _catalogWakes.Writer.TryWrite(region);
+
+    internal async Task<bool> CatchUpAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        if (!_followers.TryGetValue(Key(database), out var follower))
+        {
+            return false;
+        }
+
+        await follower.PullNowAsync(cancellationToken).ConfigureAwait(false);
+        return Replicas.Holds(database);
+    }
+
+    internal async Task SuspendAsync(TenantContext database)
+    {
+        var key = Key(database);
+        Follower? follower;
+        lock (_gate)
+        {
+            _suspended[key] = true;
+            _ = _followers.TryRemove(key, out follower);
+        }
+
+        if (follower is not null)
+        {
+            await follower.StopAsync().ConfigureAwait(false);
+        }
+    }
+
+    internal void Resume(TenantContext database)
+    {
+        lock (_gate)
+        {
+            _ = _suspended.TryRemove(Key(database), out _);
+        }
+
+        WakeCatalogs();
+    }
+
+    private void WakeCatalogs()
+    {
+        foreach (var peer in _peers)
+        {
+            _ = _catalogWakes.Writer.TryWrite(peer.Region);
+        }
+    }
+
+    private static (string, string, string) Key(TenantContext database) => (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
 
     // Every database the home places here, or null when the home cannot be read completely.
     private async Task<Dictionary<(string, string, string), ReplicaCatalogEntry>?> ListAsync(ReplicaPeer home, CancellationToken cancellationToken)
@@ -463,7 +540,7 @@ internal sealed class RegionReplication(
             return;
         }
 
-        await catalog.UpdatePlacementAsync(database, new DatabasePlacement(entry.HomeRegion, entry.ReplicaRegions, entry.PlacementVersion), cancellationToken)
+        await catalog.UpdatePlacementAsync(database, new DatabasePlacement(entry.HomeRegion, entry.ReplicaRegions, entry.PlacementVersion, entry.AllRegions), cancellationToken)
             .ConfigureAwait(false);
         if (!entry.ReplicaRegions.Contains(options.Region))
         {
@@ -536,6 +613,8 @@ internal sealed class RegionReplication(
         }
 
         public TimeSpan VerificationAge => _owner.Time.GetUtcNow() - (_verifiedAt ?? _started);
+
+        public ReplicaPeer Home => _home;
 
         public static Follower Start(RegionReplication owner, TenantContext database, ReplicaPeer home)
         {
