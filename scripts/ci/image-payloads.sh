@@ -5,14 +5,16 @@ case ${1:-} in
   auth)
     mkdir -p "$RUNNER_TEMP/image-payloads/amd64"
     cp -a "$RUNNER_TEMP/auth-publish/." "$RUNNER_TEMP/image-payloads/amd64/"
-    make auth-publish RUNTIME=linux-arm64 PUBLISH_DIR="$RUNNER_TEMP/image-payloads/arm64"
+    make -o restore auth-publish RUNTIME=linux-arm64 PUBLISH_DIR="$RUNNER_TEMP/image-payloads/arm64"
     ;;
   terrabase)
     arch=${2:?architecture required}
     case $arch in amd64) rid=linux-x64 ;; arm64) rid=linux-arm64 ;; *) exit 2 ;; esac
     # This required packaging proof produces the exact production payload once.
     # Keep ReadyToRun and all normal compiler/analyzer checks enabled.
-    make terrabase-publish RUNTIME="$rid" PUBLISH_DIR="$RUNNER_TEMP/image-payloads/$arch"
+    # Qualification already restored both RIDs in locked mode and verified the
+    # pinned native library. Do not repeat the whole-solution restore per RID.
+    make -o restore -o turso-native terrabase-publish RUNTIME="$rid" PUBLISH_DIR="$RUNNER_TEMP/image-payloads/$arch"
     ;;
   pack)
     area=${2:?area required}
