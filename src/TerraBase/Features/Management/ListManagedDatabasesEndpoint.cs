@@ -2,6 +2,7 @@ using System.Collections.Frozen;
 using System.Diagnostics;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Regions;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -10,7 +11,7 @@ namespace TerraBase.Features.Management;
 
 /// <summary><c>GET …/projects/{project}/databases</c>: lists the databases of a project.</summary>
 internal sealed class ListManagedDatabasesEndpoint(
-    IManagementService management, IProjectCatalog catalog, IRemoteRegions regions, RemoteDatabases remote) : EndpointWithoutRequest<IResult>
+    IManagementService management, IProjectCatalog catalog, IRegionPeers regions, RemoteDatabases remote) : EndpointWithoutRequest<IResult>
 {
     internal const string ListOperationName = "listDatabases";
 
@@ -115,7 +116,7 @@ internal sealed class ListManagedDatabasesEndpoint(
 
         var items = local.Items.Select(database => ManagedDatabaseBody.From(database, region)).ToList();
         var more = local.Next is not null;
-        var peers = await regions.InternalListenersAsync(cancellationToken).ConfigureAwait(false);
+        var peers = (await regions.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).Select(peer => peer.Address).ToList();
         if (peers.Count > 0)
         {
             var pages = await Task.WhenAll(peers.Select(peer => remote.PageAsync(peer, project, page.After, page.Limit, cancellationToken)))
