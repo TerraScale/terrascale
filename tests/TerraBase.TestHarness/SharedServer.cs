@@ -25,7 +25,7 @@ public static class SharedServer
     internal static async Task<ManagementApi> GetAsync(CancellationToken cancellationToken)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-            TestContext.Current!.Execution.CancellationToken, cancellationToken);
+            TestContext.Current?.Execution.CancellationToken ?? CancellationToken.None, cancellationToken);
         return await Server.Value.WaitAsync(linked.Token);
     }
 
