@@ -97,7 +97,7 @@ namespace TerraScale.Dashboard.Features.Usage
             var allowances = new[] {
                 Allowance("Write units this month", plan?.OperationsAllowance ?? "Limit not published", limits.MonthlyOperations, units ?? 0, false, units is not null),
                 Allowance("SQL reads this month", "Not limited", limits.MonthlySqlReads is long.MaxValue ? 0 : limits.MonthlySqlReads, sqlReads ?? 0, false, sqlReads is not null, "read units/month"),
-                Allowance("Storage across regions", plan?.StorageAllowance ?? "Limit not published", limits.StorageBytes, 0, true, false),
+                Allowance("Storage across regions", plan?.StorageAllowance ?? "Limit not published", limits.StorageBytes, organizationStorage ?? 0, true, organizationStorage is not null),
                 Allowance("Client egress this month", plan?.EgressAllowance ?? "Limit not published", limits.MonthlyEgressBytes, 0, true, false)
             };
             var writesPaused = WritesPaused(plan, limits, units, time.GetUtcNow());
