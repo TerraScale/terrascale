@@ -1,4 +1,3 @@
-using System.Net;
 using System.Text;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
@@ -13,7 +12,7 @@ namespace TerraBase.Fast.Tenancy;
 public sealed class DatabaseEncryptionTests
 {
     [Test]
-    public async Task System_and_tenant_files_hide_plaintext_and_restart_reads_the_same_document()
+    public async Task System_and_tenant_files_hide_plaintext_and_restart_reads_the_same_row()
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-encryption-").FullName;
         var marker = "encrypted-" + EntityIds.New() + new Faker().Random.AlphaNumeric(32);
@@ -42,9 +41,8 @@ public sealed class DatabaseEncryptionTests
 
             await using var restarted = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory);
             using var data = restarted.DataClient(seed.ApiKey);
-            using var read = await data.GetAsync(seed.Document);
-            await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(await read.Content.ReadAsStringAsync()).IsEqualTo(seed.Response);
+            var read = await ManagementApi.RowsAsync(data, seed.Database, "SELECT marker FROM items");
+            await Assert.That(read.Single()[0].GetString()).IsEqualTo(marker);
             await Assert.That(restarted.Server.Services.GetRequiredService<IStorageEngine>()
                 .EnumerateDatabaseFiles().Any(file => file.Database is null)).IsFalse();
             await AssertNoPlaintextAsync(directory, marker);
@@ -94,12 +92,9 @@ public sealed class DatabaseEncryptionTests
         foreach (var name in (string[])["first", "second"])
         {
             var database = await api.CreateManagedDatabaseAsync(organization, project, name);
-            await ManagementApi.CreateCollectionAsync(data, database, "items");
-            var document = ManagementApi.Uri(ManagementApi.DocumentPath(database, "items", EntityIds.New().ToString()));
-            using var written = await data.PutAsJsonAsync(document, new { marker });
-            written.EnsureSuccessStatusCode();
-            first ??= new Seed(document, apiKey, await data.GetStringAsync(document),
-                Path.Combine(api.Server.DataDirectory, organization, project, database.Id + ".db"));
+            (await ManagementApi.SqlAsync(data, database, "CREATE TABLE items (id INTEGER PRIMARY KEY, marker TEXT NOT NULL)")).EnsureSuccessStatusCode();
+            (await ManagementApi.SqlAsync(data, database, $"INSERT INTO items (marker) VALUES ('{marker}')")).EnsureSuccessStatusCode();
+            first ??= new Seed(database.Data, apiKey, Path.Combine(api.Server.DataDirectory, organization, project, database.Id + ".db"));
         }
 
         return first!;
@@ -122,5 +117,5 @@ public sealed class DatabaseEncryptionTests
         }
     }
 
-    private sealed record Seed(Uri Document, string ApiKey, string Response, string DatabaseFile);
+    private sealed record Seed(string Database, string ApiKey, string DatabaseFile);
 }

@@ -1,4 +1,4 @@
-using System.Text.Json.Nodes;
+using System.Text.Json;
 using TerraBase.Primitives;
 
 namespace TerraBase.E2E.WalFaults;
@@ -6,49 +6,41 @@ namespace TerraBase.E2E.WalFaults;
 public sealed class ClientWritePowerLossTests
 {
     [Test]
+    [Category("local-only")]
     [Scenario(Nodes.Processes, Faults.ProcessKill | Faults.FileTampering)]
-    public async Task A_power_loss_keeps_every_client_write_the_node_answered()
+    public async Task A_power_loss_keeps_every_sql_write_the_node_answered()
     {
         Skip.When(WalSyncFaults.Library is null, "needs Linux and cc to build the write-ahead log fault shim");
-        await using var node = await PowerLossNode.StartAsync(nameof(TenantPowerLossHost));
+        await using var node = await PowerLossNode.StartAsync();
         var createdDatabase = await node.CreateDatabaseAsync(EntityIds.New().ToString(), []);
-        var project = createdDatabase.Project;
-        var path = $"/v1/projects/{project}/databases/canary";
-        await Cluster.CreateCollectionAsync(new(StringComparer.Ordinal) { [Cluster.Gru] = node.Client }, path, "items");
-
-        string[] ids = [EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString()];
-        foreach (var (index, id) in ids.Take(3).Index())
+        var path = $"/v1/projects/{createdDatabase.Project}/databases/canary";
+        await ExecuteAsync(node.Client, path, "CREATE TABLE items (id INTEGER PRIMARY KEY, n INTEGER NOT NULL)");
+        for (var n = 0; n < 3; n++)
         {
-            await Docs.PutAsync(node.Client, Document(path, id), new JsonObject { ["n"] = index });
+            await ExecuteAsync(node.Client, path, $"INSERT INTO items (n) VALUES ({n})");
         }
+
         var delay = TimeSpan.FromMilliseconds(500);
         node.DelaySyncs(delay);
         var clock = System.Diagnostics.Stopwatch.StartNew();
-        await Docs.PutAsync(node.Client, Document(path, ids[3]), new JsonObject { ["n"] = 3 });
-        await Assert.That(clock.Elapsed).IsGreaterThanOrEqualTo(delay).Because("a document write is answered after its commit's sync");
-        clock.Restart();
-        using (var transaction = await node.Client.PostAsJsonAsync(new Uri($"{path}/transactions", UriKind.Relative), new JsonObject
-        {
-            ["ops"] = new JsonArray(
-                new JsonObject { ["op"] = "put", ["collection"] = "items", ["id"] = ids[4], ["document"] = new JsonObject { ["n"] = 4 } },
-                new JsonObject { ["op"] = "put", ["collection"] = "items", ["id"] = ids[0], ["document"] = new JsonObject { ["n"] = 0 } }),
-        }))
-        {
-            await Docs.EnsureSuccessAsync(transaction);
-        }
-
-        await Assert.That(clock.Elapsed).IsGreaterThanOrEqualTo(delay).Because("a transaction is answered after its commit's sync");
+        await ExecuteAsync(node.Client, path, "INSERT INTO items (n) VALUES (3)", "INSERT INTO items (n) VALUES (4)");
+        await Assert.That(clock.Elapsed).IsGreaterThanOrEqualTo(delay).Because("a write is answered after its commit's sync");
         node.ClearFaults();
 
         await node.PowerLossAsync();
         await node.StartAgainAsync();
 
-        foreach (var (index, id) in ids.Index())
-        {
-            var document = await Docs.ReadAsync(node.Client, Document(path, id));
-            await Assert.That(document?["n"]?.GetValue<int>()).IsEqualTo(index).Because($"write {index + 1} was answered before the power loss");
-        }
+        var rows = await ExecuteAsync(node.Client, path, "SELECT n FROM items ORDER BY n");
+        await Assert.That(rows.GetProperty("results")[0].GetProperty("rows").EnumerateArray().Select(row => row[0].GetInt32()))
+            .IsEquivalentTo([0, 1, 2, 3, 4]).Because("every write was answered before the power loss");
     }
 
-    private static Uri Document(string path, string id) => new($"{path}/collections/items/documents/by-key?id={id}", UriKind.Relative);
+    private static async Task<JsonElement> ExecuteAsync(HttpClient client, string path, params string[] sql)
+    {
+        using var response = await client.PostAsJsonAsync(new Uri(path + "/sql/execute", UriKind.Relative),
+            new { statements = sql.Select(text => new { sql = text }).ToArray() });
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(body.GetRawText());
+        return body;
+    }
 }

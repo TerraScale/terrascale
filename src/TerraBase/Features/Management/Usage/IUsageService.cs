@@ -20,15 +20,12 @@ public sealed record UsagePoint(DateTimeOffset Start, long Reads, long Writes);
 /// <summary>What one database uses. Counters are best-effort dashboard usage, not billing.</summary>
 /// <param name="DatabaseId">The database.</param>
 /// <param name="StorageBytes">Bytes on disk.</param>
-/// <param name="LogicalBytes">Metered logical storage: JSON bytes of the live documents.</param>
-/// <param name="Collections">Collections in the database.</param>
-/// <param name="Documents">Live documents stored.</param>
-/// <param name="Reads">Document reads since the database was created: gets, and list and query pages, and SQL runs.</param>
-/// <param name="Writes">Document writes since the database was created: committed puts, patches and deletes, including each one of a transaction.</param>
+/// <param name="Reads">Reads since the database was created.</param>
+/// <param name="Writes">Writes since the database was created.</param>
 /// <param name="Period">Reads and writes over the requested period.</param>
 /// <param name="Series">One point per bucket of the period, oldest first; empty for an item of a project.</param>
 public sealed record DatabaseUsage(
-    string DatabaseId, long StorageBytes, long LogicalBytes, long Collections, long Documents, long Reads, long Writes, UsagePeriod Period, IReadOnlyList<UsagePoint> Series);
+    string DatabaseId, long StorageBytes, long Reads, long Writes, UsagePeriod Period, IReadOnlyList<UsagePoint> Series);
 
 /// <summary>
 /// Operation units of the current UTC month (https://terrascale.tech/pricing.json <c>metering.operationUnit</c>), summed
@@ -46,18 +43,15 @@ public sealed record UsageMonth(string Month, long ReadUnits, long WriteUnits, l
 /// <summary>What every database of a project uses, summed.</summary>
 /// <param name="ProjectId">The project.</param>
 /// <param name="Databases">Databases in the project.</param>
-/// <param name="Collections">Collections in every database of the project.</param>
 /// <param name="StorageBytes">Bytes on disk.</param>
-/// <param name="LogicalBytes">JSON bytes of the live documents.</param>
-/// <param name="Documents">Documents stored.</param>
-/// <param name="Reads">Document reads since each database was created.</param>
-/// <param name="Writes">Document writes since each database was created.</param>
+/// <param name="Reads">Reads since each database was created.</param>
+/// <param name="Writes">Writes since each database was created.</param>
 /// <param name="Period">Reads and writes over the requested period.</param>
 /// <param name="Series">One point per bucket of the period, oldest first.</param>
 /// <param name="Items">Usage of each database, in creation order.</param>
 /// <param name="Month">Billed operation units this UTC month.</param>
 public sealed record ProjectUsage(
-    string ProjectId, long Databases, long Collections, long StorageBytes, long LogicalBytes, long Documents, long Reads, long Writes, UsagePeriod Period,
+    string ProjectId, long Databases, long StorageBytes, long Reads, long Writes, UsagePeriod Period,
     IReadOnlyList<UsagePoint> Series, IReadOnlyList<DatabaseUsage> Items, UsageMonth Month)
 {
     /// <summary>Logical file bytes and pending reservations, counted once across regions.</summary>

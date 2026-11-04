@@ -76,9 +76,9 @@ public sealed class ShapeMirrorHttpTests
     }
 
     /// <summary>One stock server whose platform bucket is the in-memory fake; nothing in the shape slice is replaced.</summary>
-    private sealed class MirrorHost(DocumentApi api, FakeS3 s3) : IAsyncDisposable
+    private sealed class MirrorHost(DatabaseApi api, FakeS3 s3) : IAsyncDisposable
     {
-        public DocumentApi Api { get; } = api;
+        public DatabaseApi Api { get; } = api;
 
         public FakeS3 S3 { get; } = s3;
 
@@ -90,7 +90,7 @@ public sealed class ShapeMirrorHttpTests
         {
             shapes ??= new FakeS3();
             backups ??= shapes;
-            var api = await DocumentApi.StartAsync(backups.Configure, services =>
+            var api = await DatabaseApi.StartAsync(backups.Configure, services =>
             {
                 backups.RoutePlatform(services);
                 shapes.RouteShapes(services);

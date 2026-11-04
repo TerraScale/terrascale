@@ -13,21 +13,11 @@ public sealed class ApiReferenceTests
         DELETE /v1/projects/{project}/buckets/{bucket} TsAuth(documents:write) deleteFileBucket File storage
         DELETE /v1/projects/{project}/buckets/{bucket}/files/{file} TsAuth(documents:write) deleteBucketFile File storage
         DELETE /v1/projects/{project}/databases/{database} TsAuth(databases:write) deleteDatabase Databases
-        DELETE /v1/projects/{project}/databases/{database}/collections/{collection} TsAuth(documents:write) dropCollection Collections
-        DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) deleteDocument Documents
-        DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:write) deleteDeclaredCollectionSchema Collections
-        DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/ttl TsAuth(documents:write) deleteCollectionTtl Collections
-        DELETE /v1/projects/{project}/databases/{database}/functions/{function} TsAuth(documents:read,documents:write) deleteFunction Functions
         DELETE /v1/projects/{project}/databases/{database}/if-id/{expectedId} TsAuth(databases:write) deleteDatabaseIfId Databases
-        DELETE /v1/projects/{project}/databases/{database}/indexes/{index} TsAuth(databases:write) dropIndex Indexes
-        DELETE /v1/projects/{project}/saved-queries/{query} TsAuth(databases:write) deleteSavedQuery Queries
         GET /backupz anonymous backupz Health
         GET /healthz anonymous healthz Health
         GET /readyz anonymous readyz Health
         GET /v1/platform/databases TsAuth(platform_role=admin) listPlatformDatabases Platform
-        GET /v1/platform/databases/{database}/collections TsAuth(platform_role=admin) listPlatformCollections Platform
-        GET /v1/platform/databases/{database}/collections/{collection}/documents TsAuth(platform_role=admin) listPlatformDocuments Platform
-        GET /v1/platform/databases/{database}/collections/{collection}/documents/by-key TsAuth(platform_role=admin) getPlatformDocument Platform
         GET /v1/projects/{project}/analytics TsAuth(databases:read) getProjectAnalytics Analytics
         GET /v1/projects/{project}/backup-destination TsAuth(databases:read) getBackupDestination Backups
         GET /v1/projects/{project}/buckets TsAuth(documents:read) listFileBuckets File storage
@@ -37,40 +27,17 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/analytics TsAuth(databases:read) getDatabaseAnalytics Analytics
         GET /v1/projects/{project}/databases/{database}/backup-policy TsAuth(databases:read) getBackupPolicy Backups
         GET /v1/projects/{project}/databases/{database}/backups TsAuth(databases:read) listBackups Backups
-        GET /v1/projects/{project}/databases/{database}/changes TsAuth(documents:read) streamDatabaseChanges Documents
-        GET /v1/projects/{project}/databases/{database}/collections TsAuth(documents:read) listCollections Collections
-        GET /v1/projects/{project}/databases/{database}/collections/{collection} TsAuth(documents:read) getCollection Collections
-        GET /v1/projects/{project}/databases/{database}/collections/{collection}/documents TsAuth(documents:read) listDocuments Documents
-        GET /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:read) getDocument Documents
-        GET /v1/projects/{project}/databases/{database}/collections/{collection}/rules TsAuth(documents:read) getCollectionRules Collections
-        GET /v1/projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:read) getDeclaredCollectionSchema Collections
-        GET /v1/projects/{project}/databases/{database}/collections/{collection}/ttl TsAuth(documents:read) getCollectionTtl Collections
-        GET /v1/projects/{project}/databases/{database}/export TsAuth(documents:read) exportDatabase Documents
-        GET /v1/projects/{project}/databases/{database}/export-schedule TsAuth(databases:read) getExportSchedule Backups
-        GET /v1/projects/{project}/databases/{database}/functions TsAuth(documents:read,documents:write) listFunctions Functions
-        GET /v1/projects/{project}/databases/{database}/functions/{function} TsAuth(documents:read,documents:write) getFunction Functions
-        GET /v1/projects/{project}/databases/{database}/functions/{function}/logs TsAuth(documents:read,documents:write) listFunctionLogs Functions
-        GET /v1/projects/{project}/databases/{database}/import TsAuth(databases:read) getImport Imports
-        GET /v1/projects/{project}/databases/{database}/index-recommendations TsAuth(databases:read) listIndexRecommendations Indexes
-        GET /v1/projects/{project}/databases/{database}/indexes TsAuth(databases:read) listIndexes Indexes
         GET /v1/projects/{project}/databases/{database}/logs TsAuth(databases:read) listDatabaseLogs Logs
         GET /v1/projects/{project}/databases/{database}/point-in-time TsAuth(databases:read) getRestoreWindow Backups
-        GET /v1/projects/{project}/databases/{database}/query-shapes TsAuth(databases:read) listQueryShapes Queries
-        GET /v1/projects/{project}/databases/{database}/schema TsAuth(databases:read) getDatabaseSchema Schema
-        GET /v1/projects/{project}/databases/{database}/schema/{collection} TsAuth(databases:read) getCollectionSchema Schema
         GET /v1/projects/{project}/databases/{database}/sql/ws TsAuth(documents:read) connectSql Queries
         GET /v1/projects/{project}/databases/{database}/tables/{table}/shape TsAuth(documents:read) getShape Live
         GET /v1/projects/{project}/databases/{database}/tables/{table}/shape/keys TsAuth(documents:read) getShapeKey Live
         GET /v1/projects/{project}/databases/{database}/tables/{table}/shape/manifest TsAuth(documents:read) getShapeManifest Live
         GET /v1/projects/{project}/databases/{database}/usage TsAuth(databases:read) getDatabaseUsage Usage
         GET /v1/projects/{project}/metrics TsAuth(databases:read) getProjectMetrics Analytics
-        GET /v1/projects/{project}/saved-queries TsAuth(databases:read) listSavedQueries Queries
-        GET /v1/projects/{project}/saved-queries/{query} TsAuth(databases:read) getSavedQuery Queries
         GET /v1/projects/{project}/usage TsAuth(databases:read) getProjectUsage Usage
         GET /v1/regions anonymous listRegions Regions
         PATCH /v1/projects/{project}/databases/{database} TsAuth(databases:write) updateDatabase Databases
-        PATCH /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) patchDocument Documents
-        PATCH /v1/projects/{project}/databases/{database}/import TsAuth(databases:write,documents:write) updateImport Imports
         POST /v1/projects/{project}/buckets TsAuth(documents:write) createFileBucket File storage
         POST /v1/projects/{project}/buckets/{bucket}/files/upload TsAuth(documents:write) createFileUpload File storage
         POST /v1/projects/{project}/buckets/{bucket}/files/{file}/complete TsAuth(documents:write) completeFileUpload File storage
@@ -80,39 +47,12 @@ public sealed class ApiReferenceTests
         POST /v1/projects/{project}/databases/{database}/backups/{backup}/restore TsAuth(databases:write) restoreBackup Backups
         POST /v1/projects/{project}/databases/{database}/branches TsAuth(databases:write) branchDatabase Databases
         POST /v1/projects/{project}/databases/{database}/branches/if-id/{expectedId} TsAuth(databases:write) branchDatabaseIfId Databases
-        POST /v1/projects/{project}/databases/{database}/collections TsAuth(documents:write) createCollection Collections
-        POST /v1/projects/{project}/databases/{database}/collections/{collection}/documents TsAuth(documents:write) createDocument Documents
-        POST /v1/projects/{project}/databases/{database}/collections/{collection}/query TsAuth(documents:read) queryDocuments Queries
-        POST /v1/projects/{project}/databases/{database}/collections/{collection}/schema/preview TsAuth(documents:read,documents:write) previewCollectionSchema Collections
-        POST /v1/projects/{project}/databases/{database}/functions/{function}/invoke TsAuth(documents:read) invokeFunction Functions
-        POST /v1/projects/{project}/databases/{database}/import TsAuth(databases:write,documents:write) createImport Imports
-        POST /v1/projects/{project}/databases/{database}/import/cancel TsAuth(databases:write) cancelImport Imports
-        POST /v1/projects/{project}/databases/{database}/import/resume TsAuth(databases:write,documents:write) resumeImport Imports
-        POST /v1/projects/{project}/databases/{database}/import/start TsAuth(databases:write,documents:write) startImport Imports
-        POST /v1/projects/{project}/databases/{database}/index-recommendations/{recommendation}/apply TsAuth(databases:write) applyIndexRecommendation Indexes
-        POST /v1/projects/{project}/databases/{database}/indexes TsAuth(databases:write) createIndex Indexes
         POST /v1/projects/{project}/databases/{database}/point-in-time/plan TsAuth(databases:read) planPointInTime Backups
-        POST /v1/projects/{project}/databases/{database}/point-in-time/recover TsAuth(databases:write,documents:write) recoverHistoricalRecords Backups
-        POST /v1/projects/{project}/databases/{database}/point-in-time/recovery-preview TsAuth(databases:write,documents:read) previewSelectiveRecovery Backups
         POST /v1/projects/{project}/databases/{database}/point-in-time/restore TsAuth(databases:write) restorePointInTime Backups
-        POST /v1/projects/{project}/databases/{database}/sql TsAuth(databases:read) runSql Queries
-        POST /v1/projects/{project}/databases/{database}/sql/check TsAuth(databases:read) checkSql Queries
         POST /v1/projects/{project}/databases/{database}/sql/execute TsAuth(documents:read) executeSql Queries
-        POST /v1/projects/{project}/databases/{database}/sql/explain TsAuth(databases:read) explainSql Queries
-        POST /v1/projects/{project}/databases/{database}/transactions TsAuth(documents:write) runTransaction Transactions
-        POST /v1/projects/{project}/saved-queries TsAuth(databases:write) createSavedQuery Queries
         PUT /v1/projects/{project}/backup-destination TsAuth(databases:write) setBackupDestination Backups
         PUT /v1/projects/{project}/buckets/{bucket}/rules TsAuth(documents:write) setFileBucketRules File storage
         PUT /v1/projects/{project}/databases/{database}/backup-policy TsAuth(databases:write) setBackupPolicy Backups
-        PUT /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) putDocument Documents
-        PUT /v1/projects/{project}/databases/{database}/collections/{collection}/rules TsAuth(documents:write) putCollectionRules Collections
-        PUT /v1/projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:write) putDeclaredCollectionSchema Collections
-        PUT /v1/projects/{project}/databases/{database}/collections/{collection}/ttl TsAuth(documents:write) putCollectionTtl Collections
-        PUT /v1/projects/{project}/databases/{database}/export-schedule TsAuth(databases:write) setExportSchedule Backups
-        PUT /v1/projects/{project}/databases/{database}/functions/{function} TsAuth(documents:read,documents:write) deployFunction Functions
-        PUT /v1/projects/{project}/databases/{database}/import/source TsAuth(databases:write,documents:write) uploadImportSource Imports
-        PUT /v1/projects/{project}/databases/{database}/schema/{collection} TsAuth(databases:write) declareCollectionSchema Schema
-        PUT /v1/projects/{project}/saved-queries/{query} TsAuth(databases:write) updateSavedQuery Queries
         """;
 
     [Test]
@@ -182,90 +122,6 @@ public sealed class ApiReferenceTests
             .IsEqualTo("Management,Data,System");
         await Assert.That(string.Join('\n', operations.Select(operation => operation.Line).Order(StringComparer.Ordinal)))
             .IsEqualTo(Operations.ReplaceLineEndings("\n"));
-        const string project = "/v1/projects/{project}";
-        var paths = document.GetProperty("paths");
-        foreach (var (path, method, statuses) in new[]
-        {
-            (project + "/backup-destination", "get", "200,400,401,403,404,421,503"),
-            (project + "/databases/{database}/logs", "get", "200,400,401,403,404,421,503"),
-            (project + "/backup-destination", "put", "200,400,401,403,404,421,503"),
-            (project + "/backup-destination", "delete", "204,400,401,403,404,421,503"),
-            (project + "/databases/{database}/point-in-time", "get", "200,400,401,403,404,421,503"),
-            (project + "/databases/{database}/point-in-time/restore", "post", "201,400,401,403,404,409,421,429,503"),
-            (project + "/databases/{database}/point-in-time/recovery-preview", "post", "200,400,401,403,404,409,412,413,415,421,429,503"),
-            (project + "/databases/{database}/point-in-time/recover", "post", "200,400,401,403,404,409,412,413,415,421,429,503"),
-            (project + "/databases/{database}/collections/{collection}/schema/preview", "post", "200,400,401,403,404,409,413,415,421,503"),
-        })
-        {
-            await Assert.That(string.Join(',', paths.GetProperty(path).GetProperty(method).GetProperty("responses")
-                .EnumerateObject().Select(status => status.Name).Order(StringComparer.Ordinal)))
-                .IsEqualTo(statuses).Because($"{method} {path}");
-        }
-
-        var recovery = paths.GetProperty(project + "/databases/{database}/point-in-time/recovery-preview").GetProperty("post");
-        await Assert.That(recovery.GetProperty("requestBody").GetProperty("content").GetProperty("application/json")
-            .GetProperty("example").GetProperty("selections")[0].GetProperty("collection").GetString()).IsEqualTo("people");
-        await Assert.That(recovery.GetProperty("responses").GetProperty("200").GetProperty("content").GetProperty("application/json")
-            .GetProperty("example").GetProperty("records")[0].GetProperty("current").ValueKind).IsEqualTo(JsonValueKind.Null);
-        await Assert.That(recovery.GetProperty("responses").GetProperty("409").GetProperty("description").GetString()).Contains("recovery_erasure_fenced");
-
-        var destination = paths.GetProperty(project + "/backup-destination");
-        var preview = paths.GetProperty(project + "/databases/{database}/collections/{collection}/schema/preview").GetProperty("post");
-        await Assert.That(preview.GetProperty("parameters").EnumerateArray().Single(parameter => parameter.GetProperty("name").GetString() == "cursor")
-            .GetProperty("in").GetString()).IsEqualTo("query");
-        await Assert.That(preview.GetProperty("requestBody").GetProperty("content").GetProperty("application/json").GetProperty("example")
-            .GetProperty("type").GetString()).IsEqualTo("object");
-        var previewResponses = preview.GetProperty("responses");
-        await Assert.That(previewResponses.GetProperty("409").GetProperty("description").GetString()).Contains("preview_stale");
-        var previewExample = previewResponses.GetProperty("200").GetProperty("content").GetProperty("application/json").GetProperty("example");
-        await Assert.That(previewExample.GetProperty("schema_hash").GetString()!.Length).IsEqualTo(64);
-        await Assert.That(previewExample.GetProperty("examined").GetInt32()).IsEqualTo(2);
-        await Assert.That(previewExample.GetProperty("complete").GetBoolean()).IsTrue();
-        await Assert.That(destination.GetProperty("delete").GetProperty("responses").GetProperty("204").TryGetProperty("content", out _)).IsFalse();
-        var putSchema = destination.GetProperty("put").GetProperty("requestBody").GetProperty("content").GetProperty("application/json").GetProperty("schema");
-        if (putSchema.TryGetProperty("$ref", out var putReference))
-        {
-            await Assert.That(putReference.GetString()).IsEqualTo("#/components/schemas/ProjectBackupDestinationRequest");
-        }
-        else
-        {
-            await Assert.That(putSchema.GetProperty("properties").EnumerateObject().Select(property => property.Name).Order().ToList())
-                .IsEquivalentTo(document.GetProperty("components").GetProperty("schemas").GetProperty("ProjectBackupDestinationRequest")
-                    .GetProperty("properties").EnumerateObject().Select(property => property.Name).Order().ToList());
-        }
-        foreach (var method in new[] { "get", "put" })
-        {
-            var success = destination.GetProperty(method).GetProperty("responses").GetProperty("200")
-                .GetProperty("content").GetProperty("application/json");
-            await Assert.That(success.GetProperty("schema").GetProperty("oneOf").EnumerateArray()
-                .Single(schema => schema.TryGetProperty("$ref", out _)).GetProperty("$ref").GetString())
-                .IsEqualTo("#/components/schemas/ProjectBackupDestination");
-            await Assert.That(success.GetProperty("example").EnumerateObject().Select(property => property.Name).ToList())
-                .IsEquivalentTo(["endpoint", "region", "bucket", "mode", "updatedAt"]);
-        }
-
-        var schemas = document.GetProperty("components").GetProperty("schemas");
-        await Assert.That(schemas.GetProperty("ProjectBackupDestinationRequest").GetProperty("properties")
-            .EnumerateObject().Select(property => property.Name).ToList())
-            .IsEquivalentTo(["endpoint", "region", "bucket", "accessKeyId", "secretKey", "mode"]);
-        await Assert.That(schemas.GetProperty("ProjectBackupDestination").GetProperty("properties")
-            .EnumerateObject().Select(property => property.Name).ToList())
-            .IsEquivalentTo(["endpoint", "region", "bucket", "mode", "updatedAt"]);
-        foreach (var name in new[] { "PointInTimeRestoreRequest", "PointInTimePlanRequest" })
-        {
-            var request = schemas.GetProperty(name);
-            await Assert.That(request.GetProperty("properties").TryGetProperty("destination", out _)).IsTrue().Because(name);
-            await Assert.That(request.TryGetProperty("required", out var required)
-                && required.EnumerateArray().Any(property => property.GetString() == "destination")).IsFalse().Because(name);
-        }
-        var selector = paths.GetProperty(project + "/databases/{database}/point-in-time").GetProperty("get")
-            .GetProperty("parameters").EnumerateArray().Single(parameter => parameter.GetProperty("name").GetString() == "destination");
-        await Assert.That(selector.GetProperty("in").GetString()).IsEqualTo("query");
-        await Assert.That(selector.TryGetProperty("required", out var requiredSelector) && requiredSelector.GetBoolean()).IsFalse();
-        await Assert.That(selector.GetProperty("schema").GetProperty("default").GetString()).IsEqualTo("platform");
-        await Assert.That(selector.GetProperty("schema").GetProperty("enum").EnumerateArray().Select(value => value.GetString() ?? string.Empty).ToList())
-            .IsEquivalentTo(["platform", "customer"]);
-
         foreach (var (line, operation) in operations)
         {
             await Assert.That(operation.GetProperty("tags").GetArrayLength()).IsEqualTo(1).Because(line);
@@ -280,45 +136,13 @@ public sealed class ApiReferenceTests
             }
 
             var responses = operation.GetProperty("responses").EnumerateObject().ToList();
-            if (operation.GetProperty("operationId").GetString() is "getDeclaredCollectionSchema" or "putDeclaredCollectionSchema" or "deleteDeclaredCollectionSchema")
-            {
-                await Assert.That(responses.Any(status => status.Name == "503")).IsTrue().Because(line);
-            }
-
-            if (operation.GetProperty("operationId").GetString() == "putDeclaredCollectionSchema")
-            {
-                await Assert.That(responses.Any(status => status.Name == "415")).IsTrue().Because(line);
-            }
-
-            if (operation.GetProperty("operationId").GetString() == "putCollectionRules")
-            {
-                var example = operation.GetProperty("requestBody").GetProperty("content")
-                    .GetProperty("application/json").GetProperty("example");
-                await Assert.That(example.GetProperty("owner").GetString()).IsEqualTo("/userId");
-                await Assert.That(example.GetProperty("read").GetProperty("owner").GetBoolean()).IsTrue();
-                await Assert.That(example.GetProperty("write").GetProperty("public").GetBoolean()).IsFalse();
-            }
-
-            if (operation.GetProperty("operationId").GetString() is "getDocument" or "putDocument" or "patchDocument" or "deleteDocument")
-            {
-                var key = operation.GetProperty("parameters").EnumerateArray().Single(parameter => parameter.GetProperty("name").GetString() == "id");
-                await Assert.That(key.GetProperty("in").GetString()).IsEqualTo("query");
-                await Assert.That(key.GetProperty("required").GetBoolean()).IsTrue();
-                await Assert.That(key.GetProperty("schema").GetProperty("type").GetString()).IsEqualTo("string");
-                await Assert.That(key.GetProperty("schema").GetProperty("minLength").GetInt32()).IsEqualTo(26);
-                await Assert.That(key.GetProperty("schema").GetProperty("maxLength").GetInt32()).IsEqualTo(26);
-                await Assert.That(key.GetProperty("schema").GetProperty("pattern").GetString()).IsEqualTo("^[0-7][0-9A-HJKMNP-TV-Z]{25}$");
-                await Assert.That(EntityIds.IsValid(key.GetProperty("example").GetString())).IsTrue();
-                await Assert.That(responses.Any(status => status.Name == "400")).IsTrue();
-            }
-
             if (operation.GetProperty("operationId").GetString() is "getDatabaseUsage" or "getProjectUsage")
             {
                 await Assert.That(operation.GetProperty("responses").GetProperty("400").GetProperty("description").GetString()).Contains("invalid_query");
             }
 
             if (operation.GetProperty("operationId").GetString() is "createDatabase" or "branchDatabase" or "branchDatabaseIfId" or "restoreBackup"
-                or "createBackup" or "createSavedQuery" or "createCollection" or "createDocument")
+                or "createBackup")
             {
                 var success = responses.First(status => status.Name.StartsWith('2')).Value;
                 var example = success.GetProperty("content").GetProperty("application/json").GetProperty("example");

@@ -171,9 +171,9 @@ public sealed class UserAuthTests
             created.EnsureSuccessStatusCode();
         }
 
-        using (var collection = await client.PostAsJsonAsync(Uri(database + "/collections"), new { name = "items" }))
+        using (var table = await ManagementApi.SqlAsync(client, database, "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)"))
         {
-            collection.EnsureSuccessStatusCode();
+            table.EnsureSuccessStatusCode();
         }
 
         var shape = database + "/tables/items/shape?offset=-1";

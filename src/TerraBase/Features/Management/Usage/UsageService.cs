@@ -2,12 +2,11 @@ using System.Diagnostics;
 using System.Globalization;
 using TerraBase.Engine;
 using TerraBase.Errors;
-using TerraBase.Features.Management.Schema;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Usage;
 
-internal sealed class UsageService(IStorageEngine engine, IManagementService management, ISchemaService schema, UsageMeter meter, TimeProvider time, SystemCatalog catalog, Features.FileStorage.IFileStorageUsage files)
+internal sealed class UsageService(IStorageEngine engine, IManagementService management, UsageMeter meter, TimeProvider time, SystemCatalog catalog, Features.FileStorage.IFileStorageUsage files)
     : IUsageService
 {
     /// <summary>
@@ -71,18 +70,6 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
             return new NotFound();
         }
 
-        var counted = await schema.CountCollectionsAsync(database, cancellationToken).ConfigureAwait(false);
-        proceed?.Invoke();
-        if (counted is not IReadOnlyList<CollectionStats> collections)
-        {
-            return counted switch
-            {
-                NotFound error => error,
-                Validation error => error,
-                IReadOnlyList<CollectionStats> => throw new UnreachableException(),
-            };
-        }
-
         var counts = await meter.GetAsync(database, window, cancellationToken, proceed).ConfigureAwait(false);
         proceed?.Invoke();
         if (counts is not UsageCounts saved)
@@ -97,7 +84,7 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
         var (lifetime, buckets) = saved;
         var series = buckets.Select((counts, index) => new UsagePoint(window.Granularity.Start(window.First + index), counts.Reads, counts.Writes)).ToArray();
         return new DatabaseUsage(
-            database.DatabaseId!, size, collections.Sum(collection => collection.Bytes), collections.Count, collections.Sum(collection => collection.Documents),
+            database.DatabaseId!, size,
             lifetime.Reads, lifetime.Writes, Period(window, series), series);
     }
 
@@ -205,7 +192,7 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
         var series = Sum(window, items.Select(item => item.Series));
         var fileBytes = await files.BytesAsync(organizationId, projectId, cancellationToken).ConfigureAwait(false);
         return new ProjectUsage(
-            projectId, items.Count, items.Sum(item => item.Collections), checked(items.Sum(item => item.StorageBytes) + fileBytes), checked(items.Sum(item => item.LogicalBytes) + fileBytes), items.Sum(item => item.Documents),
+            projectId, items.Count, checked(items.Sum(item => item.StorageBytes) + fileBytes),
             items.Sum(item => item.Reads), items.Sum(item => item.Writes), Period(window, series), series, [.. items.Select(item => item with { Series = [] })],
             new UsageMonth(month, project.Reads, project.Writes, project.Writes, organization.Writes, organization.Reads))
         { FileBytes = fileBytes };

@@ -1,7 +1,7 @@
+using TerraBase.Hosting;
 using System.Text.Json;
 using System.Security.Cryptography;
 using TerraBase.Errors;
-using TerraBase.Features.Documents;
 
 namespace TerraBase.Engine;
 
@@ -14,9 +14,9 @@ public sealed record CollectionAccessRules(string? Owner, CollectionAccessPolicy
     /// <summary>Rejects ambiguous or unbounded policies before they enter replicated metadata.</summary>
     public Validation? Check()
     {
-        if (Owner is not null && QueryParser.CheckPointer(Owner, "invalid_rules", "owner must be a JSON Pointer of 1 to 16 object members") is Validation invalid)
+        if (Owner is not null && !IsPointer(Owner))
         {
-            return invalid;
+            return new Validation("owner must be a JSON Pointer of 1 to 16 object members", "invalid_rules");
         }
 
         if (Owner?.Split('/').Skip(1).FirstOrDefault()?.Replace("~1", "/", StringComparison.Ordinal).Replace("~0", "~", StringComparison.Ordinal) == "id")
@@ -36,6 +36,10 @@ public sealed record CollectionAccessRules(string? Owner, CollectionAccessPolicy
     /// <summary>Binds durable proofs and sync handles to the exact policy.</summary>
     public string Fingerprint() => Convert.ToHexStringLower(SHA256.HashData(
         JsonSerializer.SerializeToUtf8Bytes(this, CollectionRulesJsonContext.Default.CollectionAccessRules)));
+
+    private static bool IsPointer(string pointer) =>
+        pointer.Length <= 4096 && pointer.StartsWith('/') && pointer[1..].Split('/') is { Length: <= 16 } segments
+        && segments.All(segment => !segment.Replace("~0", "", StringComparison.Ordinal).Replace("~1", "", StringComparison.Ordinal).Contains('~', StringComparison.Ordinal));
 
     private static bool Valid(CollectionAccessPolicy policy) => policy.Roles is { Count: <= 32 }
         && policy.Roles.All(role => role is { Length: > 0 and <= 128 } && !role.Any(char.IsControl))
@@ -81,3 +85,10 @@ public sealed record CollectionAccessPolicy(bool Owner, bool Public, IReadOnlyLi
 /// <param name="Subject">Owner subject of the preimage or afterimage.</param>
 /// <param name="Policy">Fingerprint of the complete declared policy.</param>
 public sealed record DocumentOwnerProof(string Generation, string Path, string Subject, string Policy);
+
+[System.Text.Json.Serialization.JsonSourceGenerationOptions(JsonSerializerDefaults.Web,
+    PropertyNameCaseInsensitive = false, UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow,
+    AllowDuplicateProperties = false)]
+[System.Text.Json.Serialization.JsonSerializable(typeof(CollectionAccessRules))]
+[System.Text.Json.Serialization.JsonSerializable(typeof(DocumentOwnerProof))]
+internal sealed partial class CollectionRulesJsonContext : System.Text.Json.Serialization.JsonSerializerContext;

@@ -20,12 +20,12 @@ public sealed class OperatorApiKeyTests
             new { name = "ci-e2e", scopes = ReadScopes, organizationId = database.Organization, projectId = database.Project, expiresAt = expires });
         var body = await issued.Content.ReadFromJsonAsync<JsonElement>();
         using var data = api.DataClient(body.GetProperty("secret").GetString());
-        var collections = ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{database.Name}/collections");
+        var sql = database.Data;
 
-        using var before = await data.GetAsync(collections);
+        using var before = await ManagementApi.SqlAsync(data, sql, "SELECT 1");
         // Move UTC without replaying 90 days of the host's background timers.
         time.AdjustTime(expires);
-        using var after = await data.GetAsync(collections);
+        using var after = await ManagementApi.SqlAsync(data, sql, "SELECT 1");
         using var past = await api.Server.Client.PostAsJsonAsync(ManagementApi.Uri("/admin/api-keys"),
             new { name = "past", scopes = ReadScopes, organizationId = database.Organization, expiresAt = time.GetUtcNow().AddMinutes(-1) });
         using var tooFar = await api.Server.Client.PostAsJsonAsync(ManagementApi.Uri("/admin/api-keys"),
@@ -59,18 +59,18 @@ public sealed class OperatorApiKeyTests
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var issued = await created.Content.ReadFromJsonAsync<JsonElement>();
         using var reader = api.DataClient(issued.GetProperty("secret").GetString());
-        var target = ManagementApi.Uri(database.Data + "/collections");
-        using var before = await reader.GetAsync(target);
+        var target = database.Data;
+        using var before = await ManagementApi.SqlAsync(reader, target, "SELECT 1");
         await Assert.That(before.StatusCode).IsEqualTo(HttpStatusCode.OK);
 
         var revoke = ManagementApi.Uri($"/admin/api-keys/{issued.GetProperty("id").GetString()}");
         using var wrongListener = await reader.DeleteAsync(revoke);
         await Assert.That(wrongListener.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        using var stillValid = await reader.GetAsync(target);
+        using var stillValid = await ManagementApi.SqlAsync(reader, target, "SELECT 1");
         await Assert.That(stillValid.StatusCode).IsEqualTo(HttpStatusCode.OK);
         using var revoked = await api.Server.Client.DeleteAsync(revoke);
         await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-        using var after = await reader.GetAsync(target);
+        using var after = await ManagementApi.SqlAsync(reader, target, "SELECT 1");
         await Assert.That(after.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         using var repeated = await api.Server.Client.DeleteAsync(revoke);
         await Assert.That(repeated.StatusCode).IsEqualTo(HttpStatusCode.NotFound);

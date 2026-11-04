@@ -56,7 +56,7 @@ public sealed class PressureTests
     [Test]
     public async Task Admin_pressure_reports_the_schema_and_explicit_unknowns_and_is_hidden_from_authenticated_clients()
     {
-        await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = "1048576");
+        await using var api = await DatabaseApi.StartAsync(settings => settings["memory-budget"] = "1048576");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var snapshot = await ReadAsync(api.Server, deadline.Token);
         await AssertSnapshotAsync(snapshot);

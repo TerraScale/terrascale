@@ -1,5 +1,4 @@
 using TerraBase.Errors;
-using TerraBase.Features.Documents;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraScale.Endpoints;
@@ -34,7 +33,7 @@ internal sealed class CloseProjectEndpoint(IProjectCatalog catalog) : Endpoint<P
     public override async ValueTask<IResult> HandleAsync(ProjectClosureRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var project = DocumentRoute.Project(HttpContext);
+        var project = DatabaseRoute.Project(HttpContext);
         if (request.Version is not (1 or 2) || !EntityIds.IsValid(project) || !EntityIds.IsValid(request.ClosureId) || !EntityIds.IsValid(request.AuthorityOrganizationId))
         {
             return ErrorResponse.From(new Validation("version must be 1 or 2; project, closureId and authorityOrganizationId must be canonical uppercase ULIDs"));
