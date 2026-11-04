@@ -217,9 +217,12 @@ project. It is not a bearer token: code exchanges it at the token endpoint
 - **Expiry.** `expires_at` is optional; an expired key is refused like a
   revoked one.
 - **Revocation.** `DELETE` revokes at once: no new token is issued. Tokens
-  already issued stay valid until they expire (at most 60 seconds). Nothing
-  else disables a key: it does not depend on the sign-in that created it, so
-  signing out, signing out everywhere or a password reset leaves it working.
+  already issued stay valid until they expire (at most 60 seconds). A key's
+  secret keeps the fresh verification that issued it
+  ([step-up-proof.md](step-up-proof.md)): when its creator signs out
+  everywhere or resets their password, the secret stops exchanging, and an
+  admin rotates it or creates a new key. Signing out of one browser leaves
+  it working.
 - **Last use.** `last_used_at` is the key's last successful token exchange,
   recorded at most once per 5 minutes; null until the first exchange.
 - **Rotation.** `POST …/rotate` issues a new secret for the same `id`. The
@@ -374,6 +377,7 @@ tokens expire:
 | Member removed, role lowered, project or organization deleted | at once (the management API and every exchange read it) | within 60 seconds |
 | Sign-in revoked (RFC 7009, refresh-token reuse), user deleted | at once | within 5 minutes of the last exchange |
 | Signed out everywhere, password reset | at once (refresh, the management API and the exchange) | within 5 minutes of the last exchange |
+| API key creator signed out everywhere or reset their password | at once (that key secret stops exchanging) | within 60 seconds |
 
 ### 6.7 Limits
 
