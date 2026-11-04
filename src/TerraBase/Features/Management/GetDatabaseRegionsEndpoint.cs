@@ -2,6 +2,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Regions;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -10,7 +11,7 @@ using TerraScale.TerraBase.Contracts.Management;
 namespace TerraBase.Features.Management;
 
 /// <summary>Placement and successful page pulls observed by this database's home.</summary>
-internal sealed class GetDatabaseRegionsEndpoint(IManagementService management, IDatabaseRevisions revisions,
+internal sealed class GetDatabaseRegionsEndpoint(IManagementService management, IDatabaseRevisions revisions, IRegionCatalog regions,
     TerraBaseOptions options, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
@@ -46,14 +47,18 @@ internal sealed class GetDatabaseRegionsEndpoint(IManagementService management, 
             };
         }
 
-        if (record.Home(options.Region) != options.Region)
+        var home = record.Home(options.Region);
+        IReadOnlyList<string> replicas = record.AllRegions
+            ? [.. (await regions.ServingAsync(cancellationToken).ConfigureAwait(false)).Where(region => region != home)]
+            : record.Replicas;
+        if (home != options.Region)
         {
-            return DatabaseRegions.HomeRegion(record.Home(options.Region), record.Replicas.Prepend(record.Home(options.Region)));
+            return DatabaseRegions.HomeRegion(home, replicas.Prepend(home));
         }
 
         var tenant = new TenantContext(ManagementRoute.OrganizationId(HttpContext), PlanTier.Hobby, record.ProjectId, record.Id);
-        var observations = await revisions.ReplicaStatusAsync(tenant, record.Replicas, cancellationToken).ConfigureAwait(false);
-        return TypedResults.Json(new TerraBaseDatabaseRegions(record.Id, record.Home(options.Region), time.GetUtcNow(),
+        var observations = await revisions.ReplicaStatusAsync(tenant, replicas, cancellationToken).ConfigureAwait(false);
+        return TypedResults.Json(new TerraBaseDatabaseRegions(record.Id, home, time.GetUtcNow(),
             [.. observations.Select(row => new TerraBaseReplicaStatus(row.Region, row.LagMs, row.LastPulledAt, Revision: row.Revision))]),
             ManagementJson.Default.TerraBaseDatabaseRegions);
     }

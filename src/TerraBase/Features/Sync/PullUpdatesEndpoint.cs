@@ -135,7 +135,7 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
         var peer = (await peers.ListAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(peer =>
             IPAddress.TryParse(peer.Internal.Host, out var ip) && ip.MapToIPv4().Equals(address));
         if (peer is not null && await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false)
-            is TenantDatabaseRecord { Placement: var placement } && placement.Replicas.Contains(peer.Region))
+            is TenantDatabaseRecord { Placement: var placement } && (placement.AllRegions || placement.Replicas.Contains(peer.Region)))
         {
             await revisions.RecordReplicaPullAsync(database, peer.Region, answer.Revision, cancellationToken).ConfigureAwait(false);
         }
