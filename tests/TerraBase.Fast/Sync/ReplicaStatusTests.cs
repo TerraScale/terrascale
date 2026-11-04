@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
+using TerraBase.Features.Management;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 using TerraScale.TerraBase.Contracts.Management;
@@ -27,8 +28,9 @@ public sealed class ReplicaStatusTests
             });
             var managed = await api.CreateManagedDatabaseAsync();
             var database = new TenantContext(managed.Organization, PlanTier.Hobby, managed.Project, managed.Id);
-            await api.Server.Services.GetRequiredService<ITenantDirectory>()
-                .UpdatePlacementAsync(database, new DatabasePlacement("test-region", ["replica-region"], 1), token);
+            var placement = await api.Server.Services.GetRequiredService<IManagementService>()
+                .SetDatabaseRegionsAsync(api.User, managed.Organization, managed.Project, managed.Id, ["replica-region"], token);
+            await Assert.That(placement).IsTypeOf<ManagedDatabase>();
             await api.Server.ExecuteAsync(database, "CREATE TABLE items(id INTEGER PRIMARY KEY, v TEXT)");
             var path = $"/v1/projects/{managed.Project}/databases/{managed.Id}/regions";
             using var client = api.WithToken(api.Issuer.Mint(api.User, claims =>
