@@ -20,7 +20,8 @@ namespace TerraScale.Dashboard.Features.Backups
 
     public sealed record WholeDatabaseWindow(string Destination, TerraBaseRestoreWindow? Window, int DatabasesInUse, int DatabaseLimit);
     public sealed record WholeDatabaseRecoveryPage(ShellModel Shell, DatabaseRecord Database, string Destination = "platform", string Point = "",
-        string Name = "", string ConfirmName = "", WholeDatabaseWindow? Available = null, TerraBasePointInTimePlan? Plan = null, string Error = "");
+        string Name = "", string ConfirmName = "", WholeDatabaseWindow? Available = null, TerraBasePointInTimePlan? Plan = null, string Error = "",
+        string ConfirmDatabase = "");
 
     public sealed class WholeDatabaseRecovery(TerraBaseRpcClient rpc, IProjectAccessTokens tokens, DatabaseService databases, BackupService backups)
     {
@@ -105,6 +106,23 @@ namespace TerraScale.Dashboard.Features.Backups
 
             return await backups.RecordRestoreAsync(context, source, home, new(placed.Id, placed.ProjectId, placed.Name, placed.CreatedAt,
                 placed.BranchedFrom, placed.HomeRegion, placed.ReplicaRegions, placed.AllRegions), name, ct);
+        }
+
+        public async Task RewindAsync(AccountContext context, string databaseId, string destination, string point, string confirmDatabase, CancellationToken ct)
+        {
+            (context, var source) = await SourceAsync(context, databaseId, ct);
+            if (confirmDatabase != source.Name)
+            {
+                throw new AccountAccessException("Type the database name exactly to confirm restoring it in place.", 422);
+            }
+
+            var instant = Instant(point, await WindowAsync(context, databaseId, destination, ct));
+            var json = await SafeAsync(async () => await (await ClientAsync(context, source, "databases:write", ct)).RewindPointInTimeAsync(context.Project!.Id, source.Name, new(instant, null, destination)));
+            var rewound = json.Deserialize(BackupBackendJson.Default.ManagedDatabase) ?? throw new JsonException("Invalid restored database.");
+            if (rewound.Id != source.Id)
+            {
+                throw new AccountAccessException("Restore could not be confirmed. Check the database before retrying.", 503);
+            }
         }
 
         private static void Destination(string destination)
@@ -192,7 +210,8 @@ namespace TerraScale.Dashboard.Features.Backups
 
                     var page = new WholeDatabaseRecoveryPage(ShellModel.For(http, context, "Point-in-time recovery"), database,
                         form?["destination"].ToString() ?? http.Request.Query["destination"].FirstOrDefault() ?? "platform",
-                        form?["point"].ToString() ?? "", form?["name"].ToString() ?? "", form?["confirmName"].ToString() ?? "");
+                        form?["point"].ToString() ?? "", form?["name"].ToString() ?? "", form?["confirmName"].ToString() ?? "",
+                        ConfirmDatabase: form?["confirmDatabase"].ToString() ?? "");
                     var status = 200;
                     try
                     {
@@ -205,6 +224,12 @@ namespace TerraScale.Dashboard.Features.Backups
                         if (form?["operation"].ToString() == "plan")
                         {
                             page = page with { Plan = await recovery.PlanAsync(context, databaseId, page.Destination, page.Point, http.RequestAborted) };
+                        }
+
+                        if (form?["operation"].ToString() == "rewind")
+                        {
+                            await recovery.RewindAsync(context, databaseId, page.Destination, page.Point, page.ConfirmDatabase, http.RequestAborted);
+                            return HttpRedirects.SeeOther(DatabaseService.Path(databaseId));
                         }
 
                         if (form?["operation"].ToString() == "restore")
