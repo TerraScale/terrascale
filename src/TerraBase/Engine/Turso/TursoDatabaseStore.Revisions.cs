@@ -113,6 +113,31 @@ internal sealed partial class TursoDatabaseStore
         }
     }
 
+    internal async Task<DatabaseRevision> CurrentRevisionAsync(CancellationToken cancellationToken)
+    {
+        var reader = await RentAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await WithWriterAsync(writer =>
+            {
+                Revisions.Catch(writer.Connection);
+                TursoRevisionLedger.BeginSnapshot(reader.Connection);
+                try
+                {
+                    return Revisions.SnapshotRevision(reader.Connection);
+                }
+                finally
+                {
+                    TursoRevisionLedger.EndSnapshot(reader.Connection);
+                }
+            }, "a revision read", cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            await ReturnAsync(reader).ConfigureAwait(false);
+        }
+    }
+
     internal Task<IReadOnlyList<ReplicaPullObservation>> ReplicaStatusAsync(IReadOnlyList<string> regions, CancellationToken cancellationToken) =>
         WithWriterAsync(writer =>
         {

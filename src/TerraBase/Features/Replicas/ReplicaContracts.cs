@@ -33,4 +33,8 @@ internal static class ReplicaSubjects
 
     /// <summary>Every revision notice.</summary>
     public const string Revisions = "terrabase.revision.>";
+
+    public static string Held(string home, string database) => $"terrabase.held.{home}.{database}";
+
+    public static string HeldAt(string home) => $"terrabase.held.{home}.*";
 }

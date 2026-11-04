@@ -67,6 +67,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(TerraBase.Features.Replicas.NodeLease))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.HomeLease))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.HeldRevisionAnswer))]
+[JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaHeldNotice))]
 [JsonSerializable(typeof(MoveHomeRequest))]
 [JsonSerializable(typeof(DatabaseUsage))]
 [JsonSerializable(typeof(PlatformDatabaseListBody))]
