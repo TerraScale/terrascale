@@ -21,8 +21,8 @@ public sealed class SupportEmailTests(TerraBaseFixture fixture)
         var captured = new CapturingEmailSender();
         var sender = new Sender(captured);
         await using var oidc = await OidcHarness.StartAsync(fixture, email: captured, services: services => services.AddSingleton<IEmailSender>(sender));
-        var (user, _, tokens) = await oidc.SignInAndRedeemAsync("support-requester@example.test");
-        var organization = await oidc.OkAsync(HttpMethod.Post, Organizations, tokens.GetProperty("access_token").GetString()!, new { name = "Support fixture" }, HttpStatusCode.Created);
+        var (user, access) = await oidc.CreateUserTokenAsync("support-requester@example.test");
+        var organization = await oidc.OkAsync(HttpMethod.Post, Organizations, access, new { name = "Support fixture" }, HttpStatusCode.Created);
         var request = Request("01JA0000000000000000000S01", user.Id, organization.GetProperty("id").GetString()!);
         foreach (var _ in Enumerable.Range(0, 2))
         {
