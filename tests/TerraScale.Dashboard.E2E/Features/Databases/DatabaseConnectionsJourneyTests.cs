@@ -106,8 +106,10 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await page.Locator("#database-name").FillAsync("browser-placement");
             var create = page.Locator("#create-database");
             await Assert.That(await page.Locator("#database-home").InputValueAsync()).IsEqualTo("GRU");
-            await Assert.That(await create.Locator("input[name=region]:checked").CountAsync()).IsEqualTo(2);
-            await create.Locator("input[value=SFO]").UncheckAsync();
+            await Assert.That(await create.Locator("input[name=region]:checked").CountAsync()).IsEqualTo(1);
+            await Assert.That(await create.Locator("input[value=GRU]").IsCheckedAsync()).IsTrue();
+            await create.Locator("input[value=GRU]").UncheckAsync();
+            await create.Locator("input[value=SFO]").CheckAsync();
             await create.GetByRole(AriaRole.Button, new() { Name = "Create database", Exact = true }).ClickAsync();
             await Expect(page.Locator("#database-region-error")).ToBeVisibleAsync();
             await Assert.That(posts).IsEqualTo(0);
