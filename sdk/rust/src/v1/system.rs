@@ -2,7 +2,6 @@
 use super::{
     client::{Client, Req},
     errors::Result,
-    ids::{check_name, DocumentId},
 };
 use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
@@ -35,60 +34,10 @@ impl Client {
     pub async fn backup_health(&self) -> Result<HealthResponse> {
         self.health(vec!["backupz"]).await
     }
-    /// `GET /health/replication`; sends no credential.
-    pub async fn replication_health(&self) -> Result<HealthResponse> {
-        self.health(vec!["health", "replication"]).await
-    }
-
-    async fn platform<T: DeserializeOwned>(
-        &self,
-        suffix: &[&str],
-        query: &[(&str, String)],
-    ) -> Result<T> {
-        let mut segments = vec!["v1", "platform", "databases"];
-        segments.extend_from_slice(suffix);
-        let mut req = Req::new(Method::GET, segments);
-        req.query = query.to_vec();
-        self.send(req).await?.decode_status(&[StatusCode::OK])
-    }
     /// `GET /v1/platform/databases`; requires a platform-admin user token.
     pub async fn list_platform_databases<T: DeserializeOwned>(&self) -> Result<T> {
-        self.platform(&[], &[]).await
-    }
-    /// `GET /v1/platform/databases/{database}/collections`; selector is a name.
-    pub async fn list_platform_collections<T: DeserializeOwned>(
-        &self,
-        database: &str,
-        query: &[(&str, String)],
-    ) -> Result<T> {
-        check_name("database", database)?;
-        self.platform(&[database, "collections"], query).await
-    }
-    /// `GET /v1/platform/databases/{database}/collections/{collection}/documents`.
-    pub async fn list_platform_documents<T: DeserializeOwned>(
-        &self,
-        database: &str,
-        collection: &str,
-        query: &[(&str, String)],
-    ) -> Result<T> {
-        check_name("database", database)?;
-        check_name("collection", collection)?;
-        self.platform(&[database, "collections", collection, "documents"], query)
-            .await
-    }
-    /// `GET .../documents/by-key?id=`; raw keys stay once-encoded; server redacts values.
-    pub async fn get_platform_document<T: DeserializeOwned>(
-        &self,
-        database: &str,
-        collection: &str,
-        id: DocumentId,
-    ) -> Result<T> {
-        check_name("database", database)?;
-        check_name("collection", collection)?;
-        self.platform(
-            &[database, "collections", collection, "documents", "by-key"],
-            &[("id", id.to_string())],
-        )
-        .await
+        self.send(Req::new(Method::GET, vec!["v1", "platform", "databases"]))
+            .await?
+            .decode_status(&[StatusCode::OK])
     }
 }

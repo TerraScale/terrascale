@@ -12,7 +12,7 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::client::{backoff, Req, RetryPolicy};
-use super::documents::Database;
+use super::database::Database;
 use super::errors::{Error, Result};
 use super::ids::check_database_selector;
 

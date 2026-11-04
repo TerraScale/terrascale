@@ -17,7 +17,7 @@ use tokio::sync::oneshot;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::client::WebSocket;
-use super::documents::Database;
+use super::database::Database;
 use super::errors::{Error, Result, SqlError};
 use super::ids::check_database_selector;
 use super::sql_exec::{

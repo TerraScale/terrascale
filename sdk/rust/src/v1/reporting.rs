@@ -1,7 +1,7 @@
 //! Saved SQL and usage reporting. Responses are generic to retain complete JSON.
 use super::{
     client::{Client, Req},
-    documents::Database,
+    database::Database,
     errors::{Error, Result},
     ids::valid_entity_id,
 };
@@ -40,20 +40,6 @@ impl Client {
         self.management(
             Method::GET,
             vec!["v1", "analytics"],
-            query,
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
-    }
-    /// `GET P/replication`; query selects the window, region and database.
-    pub async fn get_project_replication<T: DeserializeOwned>(
-        &self,
-        query: &[(&str, String)],
-    ) -> Result<T> {
-        self.management(
-            Method::GET,
-            vec!["v1", "replication"],
             query,
             None::<&()>,
             StatusCode::OK,
@@ -142,31 +128,6 @@ impl Database {
             Method::GET,
             &["analytics"],
             query,
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
-    }
-    /// `GET D/replication`; database selector is a name.
-    pub async fn get_database_replication<T: DeserializeOwned>(
-        &self,
-        query: &[(&str, String)],
-    ) -> Result<T> {
-        self.management(
-            Method::GET,
-            &["replication"],
-            query,
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
-    }
-    /// `GET D/query-shapes`; bounded query observations, not a SQL execution.
-    pub async fn list_query_shapes<T: DeserializeOwned>(&self) -> Result<T> {
-        self.management(
-            Method::GET,
-            &["query-shapes"],
-            &[],
             None::<&()>,
             StatusCode::OK,
         )

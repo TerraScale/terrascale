@@ -1,12 +1,10 @@
-//! Typed v1 errors (api-v1.md "Errors").
+//! Typed v1 errors.
 
 use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use thiserror::Error;
-
-use super::ids::Version;
 
 /// Result alias for the v1 client.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -15,8 +13,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 ///
 /// Well-known server codes map to dedicated variants; every other non-2xx
 /// response is [`Error::Api`]. Project failures wrap the decoded error in
-/// [`Error::Response`] to retain the HTTP diagnostics. `op` is the failing
-/// transaction op index when the server names one.
+/// [`Error::Response`] to retain the HTTP diagnostics.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Error {
@@ -41,33 +38,14 @@ pub enum Error {
         status: u16,
         #[source]
         error: Box<Error>,
-        /// Exact response bytes, including malformed or empty bodies. Webhook
-        /// creation errors omit these bytes to protect one-time secrets.
+        /// Exact response bytes, including malformed or empty bodies.
         body: Vec<u8>,
         /// Server correlation id, preferring the HTTP header over the body.
         request_id: Option<String>,
     },
-    /// `412 precondition_failed`: a failed `If-Match`, `If-None-Match: *`,
-    /// `assert` or `assert_count`.
-    #[error("terrabase: 412 precondition_failed{}", fmt_op(*op))]
-    PreconditionFailed { op: Option<usize> },
-    /// `409 unique_violation` on the named constraint.
-    #[error("terrabase: 409 unique_violation (constraint {constraint}){}", fmt_op(*op))]
-    UniqueViolation {
-        constraint: String,
-        op: Option<usize>,
-    },
-    /// `404 not_found`. For a deleted document `etag` holds the tombstone's
-    /// version, so it can be recreated with `If-Match`.
-    #[error("terrabase: 404 not_found{}", fmt_op(*op))]
-    NotFound {
-        etag: Option<Version>,
-        op: Option<usize>,
-    },
-    /// `409 conflict_unresolved`: the document has concurrent siblings; resolve
-    /// it with a PUT whose `If-Match` covers its version.
-    #[error("terrabase: 409 conflict_unresolved{}", fmt_op(*op))]
-    ConflictUnresolved { op: Option<usize> },
+    /// `404 not_found`.
+    #[error("terrabase: 404 not_found")]
+    NotFound,
     /// `421 home_region_required`: the write reached a non-home region.
     #[error("terrabase: 421 home_region_required")]
     HomeRegionRequired,
@@ -78,8 +56,8 @@ pub enum Error {
     #[error("terrabase: 429 rate_limited")]
     RateLimited { retry_after: Option<Duration> },
     /// `403 forbidden_scope`.
-    #[error("terrabase: 403 forbidden_scope{}", fmt_op(*op))]
-    Forbidden { op: Option<usize> },
+    #[error("terrabase: 403 forbidden_scope")]
+    Forbidden,
     /// `401 invalid_key`: unknown, expired or revoked key.
     #[error("terrabase: 401 invalid_key")]
     InvalidKey,
@@ -99,19 +77,13 @@ pub enum Error {
         status: Option<u16>,
         error: SqlError,
     },
-    /// `410 cursor_expired`: the changes cursor fell out of retention;
-    /// restart from a fresh position.
-    #[error("terrabase: 410 cursor_expired")]
-    CursorExpired,
     /// Any other non-2xx response.
-    #[error("terrabase: {status} {code}{}{}", fmt_msg(message), fmt_op(*op))]
+    #[error("terrabase: {status} {code}{}", fmt_msg(message))]
     Api {
         status: u16,
         code: String,
         message: Option<String>,
-        op: Option<usize>,
-        /// The raw error object, for route-specific members such as
-        /// `suggested_index`.
+        /// The raw error object, for route-specific members.
         details: Option<Box<RawValue>>,
     },
     /// The request was not sent or no response was read (connect, TLS,
@@ -130,9 +102,6 @@ pub enum Error {
         status: u16,
         may_have_applied: bool,
     },
-    /// Transaction op `op` is invalid; nothing was sent.
-    #[error("terrabase: invalid transaction op {op}: {message}")]
-    InvalidTxOp { op: usize, message: String },
     /// The caller passed an invalid argument; nothing was sent.
     #[error("terrabase: invalid input: {0}")]
     InvalidInput(String),
@@ -141,8 +110,7 @@ pub enum Error {
     Decode(String),
     /// A mutation got a 2xx status but its acknowledgement did not match the
     /// contract. The write was accepted, so [`Error::is_uncertain`] is true:
-    /// read back state to learn the
-    /// outcome.
+    /// read back state to learn the outcome.
     #[error("terrabase: {status} acknowledgement could not be decoded: {message}")]
     UndecodableAck { status: u16, message: String },
 }
@@ -197,10 +165,6 @@ fn fmt_reason(reason: Option<&str>) -> String {
     reason.map(|r| format!(": {r}")).unwrap_or_default()
 }
 
-fn fmt_op(op: Option<usize>) -> String {
-    op.map(|op| format!(" (op {op})")).unwrap_or_default()
-}
-
 fn fmt_msg(message: &Option<String>) -> String {
     message
         .as_ref()
@@ -217,22 +181,16 @@ impl Error {
             Self::Response { status, .. }
             | Self::ResponseTooLarge { status, .. }
             | Self::UndecodableAck { status, .. } => *status,
-            Self::PreconditionFailed { .. } => 412,
-            Self::UniqueViolation { .. } | Self::ConflictUnresolved { .. } => 409,
-            Self::NotFound { .. } => 404,
+            Self::NotFound => 404,
             Self::HomeRegionRequired => 421,
             Self::CommitUncertain => 503,
             Self::RateLimited { .. } => 429,
-            Self::Forbidden { .. } => 403,
+            Self::Forbidden => 403,
             Self::InvalidKey | Self::KeyRevoked { .. } | Self::KeyExpired { .. } => 401,
             Self::InternalError => 500,
-            Self::CursorExpired => 410,
             Self::Api { status, .. } => *status,
             Self::Sql { status, .. } => return *status,
-            Self::InvalidTxOp { .. }
-            | Self::Transport(_)
-            | Self::InvalidInput(_)
-            | Self::Decode(_) => return None,
+            Self::Transport(_) | Self::InvalidInput(_) | Self::Decode(_) => return None,
         })
     }
 
@@ -242,44 +200,23 @@ impl Error {
         Some(match self {
             Self::TokenExchange { code, .. } => code,
             Self::Response { error, .. } => return error.code(),
-            Self::PreconditionFailed { .. } => "precondition_failed",
-            Self::UniqueViolation { .. } => "unique_violation",
-            Self::NotFound { .. } => "not_found",
-            Self::ConflictUnresolved { .. } => "conflict_unresolved",
+            Self::NotFound => "not_found",
             Self::HomeRegionRequired => "home_region_required",
             Self::CommitUncertain => "commit_uncertain",
             Self::RateLimited { .. } => "rate_limited",
-            Self::Forbidden { .. } => "forbidden_scope",
+            Self::Forbidden => "forbidden_scope",
             Self::InvalidKey => "invalid_key",
             Self::KeyRevoked { .. } => "key_revoked",
             Self::KeyExpired { .. } => "key_expired",
             Self::InternalError => "internal_error",
-            Self::CursorExpired => "cursor_expired",
             Self::Api { code, .. } => code,
             Self::Sql { error, .. } => &error.code,
             Self::ResponseTooLarge { .. }
-            | Self::InvalidTxOp { .. }
             | Self::Transport(_)
             | Self::InvalidInput(_)
             | Self::Decode(_)
             | Self::UndecodableAck { .. } => return None,
         })
-    }
-
-    /// The failing transaction op index, when the server names one.
-    #[must_use]
-    pub fn op(&self) -> Option<usize> {
-        match self {
-            Self::Response { error, .. } => error.op(),
-            Self::PreconditionFailed { op }
-            | Self::UniqueViolation { op, .. }
-            | Self::NotFound { op, .. }
-            | Self::ConflictUnresolved { op }
-            | Self::Forbidden { op }
-            | Self::Api { op, .. } => *op,
-            Self::InvalidTxOp { op, .. } => Some(*op),
-            _ => None,
-        }
     }
 
     /// The typed relational SQL failure, when this is one.
@@ -297,21 +234,14 @@ impl Error {
     pub fn is_not_found(&self) -> bool {
         match self {
             Self::Response { status, error, .. } => *status == 404 && error.is_not_found(),
-            Self::NotFound { .. } => true,
+            Self::NotFound => true,
             Self::Api { status, code, .. } => *status == 404 && code == "not_found",
             _ => false,
         }
     }
 
-    /// True for `cursor_expired` from the changes feed, as a 410 or a stream error event.
-    #[must_use]
-    pub fn is_cursor_expired(&self) -> bool {
-        self.code() == Some("cursor_expired")
-    }
-
     /// Exact bytes of a project API error response, including unknown problem
-    /// extensions and invalid JSON. Webhook creation errors return empty bytes;
-    /// local client errors have none.
+    /// extensions and invalid JSON; local client errors have none.
     #[must_use]
     pub fn raw_body(&self) -> Option<&[u8]> {
         match self {
@@ -364,7 +294,6 @@ impl Error {
 /// Maps a project API failure without discarding its HTTP diagnostics.
 pub(crate) fn from_project_response(
     status: u16,
-    etag: Option<&str>,
     retry_after: Option<Duration>,
     request_id: Option<&str>,
     body: &[u8],
@@ -388,14 +317,11 @@ pub(crate) fn from_project_response(
             status,
             code: text("code").unwrap_or_else(|| format!("http_{status}")),
             message: text("detail").or_else(|| text("title")),
-            op: problem
-                .get("op")
-                .and_then(|raw| serde_json::from_str::<usize>(raw.get()).ok()),
             // The wrapper retains every member and the exact number text.
             details: None,
         }
     } else {
-        from_response(status, etag, retry_after, body)
+        from_response(status, retry_after, body)
     };
     Error::Response {
         status,
@@ -419,26 +345,19 @@ struct Envelope<'a> {
 struct Body {
     code: Option<String>,
     message: Option<String>,
-    op: Option<usize>,
-    constraint: Option<String>,
 }
 
 /// Maps a non-2xx response to an [`Error`].
-pub(crate) fn from_response(
-    status: u16,
-    etag: Option<&str>,
-    retry_after: Option<Duration>,
-    body: &[u8],
-) -> Error {
+pub(crate) fn from_response(status: u16, retry_after: Option<Duration>, body: &[u8]) -> Error {
     let raw = serde_json::from_slice::<Envelope<'_>>(body)
         .ok()
         .and_then(|e| e.error.map(|r| r.to_owned()));
     let parsed = raw
         .as_ref()
         .and_then(|r| serde_json::from_str::<Body>(r.get()).ok());
-    let (code, message, op, constraint) = match parsed {
-        Some(b) => (b.code, b.message, b.op, b.constraint),
-        None => (None, None, None, None),
+    let (code, message) = match parsed {
+        Some(b) => (b.code, b.message),
+        None => (None, None),
     };
     let code = code.unwrap_or_else(|| format!("http_{status}"));
     let sql = raw
@@ -451,30 +370,19 @@ pub(crate) fn from_response(
         };
     }
     match (status, code.as_str()) {
-        (412, "precondition_failed") => Error::PreconditionFailed { op },
-        (409, "unique_violation") => Error::UniqueViolation {
-            constraint: constraint.unwrap_or_default(),
-            op,
-        },
-        (404, "not_found") => Error::NotFound {
-            etag: etag.and_then(Version::from_etag),
-            op,
-        },
-        (409, "conflict_unresolved") => Error::ConflictUnresolved { op },
+        (404, "not_found") => Error::NotFound,
         (421, "home_region_required") => Error::HomeRegionRequired,
         (503, "commit_uncertain") => Error::CommitUncertain,
         (429, "rate_limited") => Error::RateLimited { retry_after },
-        (403, "forbidden_scope") => Error::Forbidden { op },
+        (403, "forbidden_scope") => Error::Forbidden,
         (401, "invalid_key") => Error::InvalidKey,
         (401, "key_revoked") => Error::KeyRevoked { message },
         (401, "key_expired") => Error::KeyExpired { message },
         (500, "internal_error") => Error::InternalError,
-        (410, "cursor_expired") => Error::CursorExpired,
         _ => Error::Api {
             status,
             code,
             message,
-            op,
             details: raw,
         },
     }

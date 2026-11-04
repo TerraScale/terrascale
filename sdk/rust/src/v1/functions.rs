@@ -5,21 +5,13 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use super::{
     client::Req,
     ids::{check_database_selector, check_name},
-    Database, Result, WebhookDelivery,
+    Database, Result,
 };
 
-/// Collection changes which invoke a function. The function cannot write the watched collection.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FunctionTrigger {
-    pub collection: String,
-    pub events: Option<Vec<String>>,
-}
-
-/// JavaScript defining `handler(event)`, with an optional change trigger or UTC cron.
+/// JavaScript defining `handler(event)`, with an optional UTC cron.
 #[derive(Debug, Clone, Serialize)]
 pub struct FunctionDeployment {
     pub source: String,
-    pub trigger: Option<FunctionTrigger>,
     pub cron: Option<String>,
 }
 
@@ -29,13 +21,12 @@ pub struct FunctionDeployment {
 pub struct Function {
     pub name: String,
     pub source: Option<String>,
-    pub trigger: Option<FunctionTrigger>,
     pub cron: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
 
-/// One HTTP, change or cron invocation's bounded console output.
+/// One HTTP or cron invocation's bounded console output.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FunctionLog {
@@ -97,7 +88,7 @@ impl Database {
         .await
     }
 
-    /// Deploys or replaces a function. The server validates source, trigger and cron.
+    /// Deploys or replaces a function. The server validates source and cron.
     pub async fn deploy_function(&self, name: &str, body: &FunctionDeployment) -> Result<Function> {
         check_name("function", name)?;
         self.management(
@@ -110,7 +101,7 @@ impl Database {
         .await
     }
 
-    /// Deletes a function and stops its triggers.
+    /// Deletes a function and stops its schedule.
     pub async fn delete_function(&self, name: &str) -> Result<()> {
         check_database_selector(self.name())?;
         check_name("function", name)?;
@@ -165,19 +156,6 @@ impl Database {
                 .json(body)?,
             )
             .await
-    }
-
-    /// Returns the function's change-trigger delivery attempts.
-    pub async fn list_function_deliveries(&self, name: &str) -> Result<Vec<WebhookDelivery>> {
-        check_name("function", name)?;
-        self.management(
-            Method::GET,
-            &["functions", name, "deliveries"],
-            &[],
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
     }
 
     /// Returns recent invocation logs.

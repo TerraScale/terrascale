@@ -59,7 +59,10 @@ async fn project_https_requires_the_configured_root() {
                 };
                 let service = service_fn(move |request: Request<hyper::body::Incoming>| {
                     seen.fetch_add(1, Ordering::SeqCst);
-                    assert_eq!(request.uri(), "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/main/collections/users/documents/by-key?id=00000000000000000000000000");
+                    assert_eq!(
+                        request.uri(),
+                        "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/main"
+                    );
                     assert_eq!(
                         request.headers()["authorization"],
                         "Bearer fixture-access-token"
@@ -67,7 +70,7 @@ async fn project_https_requires_the_configured_root() {
                     async {
                         Ok::<_, std::convert::Infallible>(Response::builder().status(404)
                         .header("content-type", "application/json")
-                        .body(Full::new(Bytes::from_static(br#"{"error":{"code":"not_found","message":"Document not found"}}"#))).unwrap())
+                        .body(Full::new(Bytes::from_static(br#"{"error":{"code":"not_found","message":"Database not found"}}"#))).unwrap())
                     }
                 });
                 let _ = hyper::server::conn::http1::Builder::new()
@@ -87,8 +90,7 @@ async fn project_https_requires_the_configured_root() {
             .build()
             .unwrap()
             .database("main")
-            .collection("users")
-            .get::<serde_json::Value>(terrascale::v1::DocumentId::nil())
+            .get_database()
             .await
             .unwrap_err();
         if trusted {

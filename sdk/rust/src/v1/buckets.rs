@@ -1,8 +1,41 @@
-//! Project-scoped file bucket metadata and shared end-user policies.
+//! Project-scoped file bucket metadata and end-user policies.
 use reqwest::{Method, StatusCode};
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
-use super::{client::Req, ids::valid_entity_id, rules::CollectionRules, Client, Error, Result};
+use super::{client::Req, ids::valid_entity_id, Client, Error, Result};
+
+/// Independent grants for one operation. All-false grants deny access.
+/// `public` means authenticated end-users, never anonymous requests.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadWriteGrants {
+    pub owner: bool,
+    pub public: bool,
+    /// Trusted, case-sensitive roles; an empty array grants no role access.
+    #[serde(deserialize_with = "null_deny")]
+    pub roles: Vec<String>,
+}
+
+/// Declarative end-user bucket policy; project credentials manage this policy.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BucketRules {
+    /// JSON Pointer to the immutable owner subject, or no ownership grant.
+    /// Serialized explicitly as null when absent.
+    pub owner: Option<String>,
+    #[serde(deserialize_with = "null_deny")]
+    pub read: ReadWriteGrants,
+    #[serde(deserialize_with = "null_deny")]
+    pub write: ReadWriteGrants,
+}
+
+// Null responses carry no grants. Missing fields remain malformed, while
+// serialization always emits complete operation objects and role arrays.
+fn null_deny<'de, D, T>(d: D) -> std::result::Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
+}
 
 /// File bucket metadata. Management requires project credentials.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -11,7 +44,7 @@ pub struct FileBucket {
     pub id: String,
     pub name: String,
     pub region: String,
-    pub rules: CollectionRules,
+    pub rules: BucketRules,
 }
 
 /// At most 50 buckets in ID order. `next` is an exclusive ULID continuation.
@@ -65,7 +98,7 @@ impl Client {
     pub async fn create_bucket(
         &self,
         name: &str,
-        rules: Option<&CollectionRules>,
+        rules: Option<&BucketRules>,
     ) -> Result<FileBucket> {
         self.management(
             Method::POST,
@@ -82,7 +115,7 @@ impl Client {
     pub async fn set_bucket_rules(
         &self,
         bucket: &str,
-        rules: Option<&CollectionRules>,
+        rules: Option<&BucketRules>,
     ) -> Result<FileBucket> {
         check_id(bucket)?;
         self.management(

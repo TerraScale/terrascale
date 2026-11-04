@@ -5,7 +5,7 @@ use reqwest::{Method, StatusCode};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use super::client::{Client, Req};
-use super::documents::{Database, ProjectDatabaseInfo};
+use super::database::{Database, ProjectDatabaseInfo};
 use super::errors::Result;
 use super::ids::{check_database_selector, check_name};
 
@@ -16,22 +16,13 @@ pub struct ManagementPage<T> {
     pub next: Option<String>,
 }
 
-/// Placement supplied when creating or updating a database. Writable databases require
-/// at least two distinct serving regions: the home region and at least one replica.
-/// On create, omitting `replica_regions` uses all current serving regions;
-/// setting only `home_region` does not request single-region placement.
-/// An explicit empty replica list on create is rejected with HTTP 400.
-/// `all_regions: Some(true)` also follows regions added later; the server rejects
-/// it combined with `replica_regions` on create.
+/// Placement supplied when creating a database. A database lives in its home region only;
+/// omitting `home_region` creates it in the region that serves the request.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DatabasePlacement {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub home_region: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub replica_regions: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub all_regions: Option<bool>,
 }
 
 impl Client {
@@ -93,7 +84,7 @@ impl Client {
 }
 
 impl Database {
-    /// `POST P/databases`, including explicit home and replica placement.
+    /// `POST P/databases` in an explicit home region.
     pub async fn create_with_placement(
         &self,
         placement: &DatabasePlacement,
@@ -125,20 +116,7 @@ impl Database {
             .await
     }
 
-    /// `PATCH D`; writable databases require at least two distinct serving regions.
-    /// An empty replica list can temporarily disable document writes with HTTP 409
-    /// `placement_needs_two_regions`. It does not provide supported single-region
-    /// placement and is not required before deletion.
-    pub async fn update_database(
-        &self,
-        placement: &DatabasePlacement,
-    ) -> Result<ProjectDatabaseInfo> {
-        self.management(Method::PATCH, &[], &[], Some(placement), StatusCode::OK)
-            .await
-    }
-
-    /// `DELETE D` directly in the database's home region, without a placement update.
-    /// Deletion covers every replica, including all-regions placement. HTTP 204
+    /// `DELETE D` in the database's home region. HTTP 204
     /// confirms logical deletion and local cleanup; remote erasure is retried
     /// durably and may complete later.
     pub async fn delete_database(&self) -> Result<()> {

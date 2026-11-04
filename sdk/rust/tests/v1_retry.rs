@@ -23,8 +23,7 @@ fn client(fixture: &Fixture) -> Client {
 async fn read(fixture: &Fixture) -> Error {
     client(fixture)
         .database("orders")
-        .collection("items")
-        .get_collection()
+        .get_database()
         .await
         .unwrap_err()
 }
@@ -32,7 +31,7 @@ async fn read(fixture: &Fixture) -> Error {
 async fn write(fixture: &Fixture) -> Error {
     client(fixture)
         .database("orders")
-        .create_collection("items")
+        .create()
         .await
         .unwrap_err()
 }

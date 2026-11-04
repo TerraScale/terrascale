@@ -11,7 +11,7 @@ use std::{
 use terrascale::v1::{Client, RetryPolicy};
 
 pub const PROJECT: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
-pub const DATABASE: &str = r#"{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAW","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FAV","name":"orders","branchedFrom":null,"createdAt":"2026-10-22T12:00:00Z","region":"gru","homeRegion":"gru","replicaRegions":["fra"]}"#;
+pub const DATABASE: &str = r#"{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAW","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FAV","name":"orders","branchedFrom":null,"createdAt":"2026-10-22T12:00:00Z","region":"gru","homeRegion":"gru"}"#;
 
 pub struct Observed {
     pub method: String,

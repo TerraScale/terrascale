@@ -56,7 +56,7 @@ impl Method {
 /// One typed outgoing request.
 #[derive(Clone)]
 pub struct Request {
-    /// Route name for observability (e.g. `documents.create`).
+    /// Route name for observability (e.g. `databases.create`).
     pub route_name: String,
     pub method: Method,
     pub url: String,

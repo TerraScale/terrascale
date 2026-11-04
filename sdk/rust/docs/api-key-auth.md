@@ -12,8 +12,6 @@ A blocking exchange retries transport failures, `429` and `502`/`503`/`504` unde
 A 401 triggers at most one refresh and replay per logical HTTP request, including writes because 401 refuses admission. A late 401 cannot invalidate a newer token shared by another clone.
 A 403 never triggers refresh. Transport failures and other statuses retain the existing replay-safety policy.
 
-Raw changes feeds acquire a cached or refreshed token whenever opened. Typed feeds do so on reconnect, retaining their last delivered cursor in `Last-Event-ID`. A refused connection refreshes once after 401; another refusal ends the feed normally with an error.
-
 `Error::TokenExchange { status, code, reason, request_id }` distinguishes `token_exchange_refused`, `invalid_token_response`, and `token_transport_error`. `reason` is SDK-owned text: the issuer's RFC 6749 `error` code (for example `invalid_target: the API key does not reach this project`) or the transport failure class (`timed out`, `connection failed`). `request_id` is the issuer's `X-Request-ID`. The pending attempt or replay has not been sent; any preceding request was refused with 401, so `is_uncertain()` is false.
 Errors expose no upstream free text, credential, or token. Grants require a nonempty Bearer token and positive integer `expires_in`; oversized, malformed, or already stale grants are rejected.
 

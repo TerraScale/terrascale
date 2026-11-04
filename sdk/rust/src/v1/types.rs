@@ -1,5 +1,5 @@
 //! Wire scalars shared by the data plane and the control plane: exact JSON
-//! numbers, `u64` decimal strings and durability levels.
+//! numbers and `u64` decimal strings.
 
 use std::fmt;
 use std::str::FromStr;
@@ -12,7 +12,7 @@ use super::errors::{Error, Result};
 
 /// An exact JSON number kept as its decimal text.
 ///
-/// Document numbers are exact decimals of up to 128 significant digits, so
+/// JSON numbers are exact decimals of up to 128 significant digits, so
 /// they never pass through `f64`. `Number` serializes as a bare JSON number
 /// (not a string) and deserializes any JSON number without rounding. It works
 /// with `serde_json` only, and must not be used inside `#[serde(flatten)]` or
@@ -154,7 +154,7 @@ impl<'de> Deserialize<'de> for Number {
 }
 
 /// Serde adapter for `u64` quantities carried as canonical decimal strings
-/// (offsets, sequences, timestamps, byte and document counts).
+/// (offsets, sequences, timestamps, byte and row counts).
 pub mod u64_string {
     use super::*;
 
@@ -202,15 +202,4 @@ pub mod opt_u64_string {
                 }),
         }
     }
-}
-
-/// The acknowledgment level of a committed write.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Durability {
-    LocalDurable,
-    ObjectDurable,
-    /// A level this client does not know yet.
-    #[serde(untagged)]
-    Other(String),
 }

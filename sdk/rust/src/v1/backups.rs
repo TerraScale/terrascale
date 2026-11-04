@@ -1,7 +1,7 @@
 //! Backup management; restore acknowledgements differ from database reads.
 use super::{
     client::{Client, Req},
-    documents::Database,
+    database::Database,
     errors::{Error, Result},
     ids::{check_database_selector, check_name, valid_entity_id},
 };
@@ -20,7 +20,6 @@ pub struct RestoredDatabase {
     pub branched_from: Option<String>,
     pub created_at: String,
     pub home_region: Option<String>,
-    pub replica_regions: Option<Vec<String>>,
     #[serde(deserialize_with = "restore_placement_version")]
     pub placement_version: i64,
 }
@@ -44,12 +43,6 @@ fn restore_placement_version<'de, D: serde::Deserializer<'de>>(
         _ => None,
     };
     parsed.ok_or_else(|| serde::de::Error::custom("expected exact signed placement version"))
-}
-impl RestoredDatabase {
-    /// Assigned replicas, empty until placement is assigned.
-    pub fn replicas(&self) -> &[String] {
-        self.replica_regions.as_deref().unwrap_or_default()
-    }
 }
 impl Client {
     /// `GET P/backup-destination`; responses never contain credentials.

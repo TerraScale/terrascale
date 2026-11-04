@@ -126,7 +126,6 @@ fn capability_error(error: Error) -> Error {
     from_project_response(
         status,
         None,
-        None,
         error.request_id().filter(|id| valid_entity_id(id)),
         body.as_bytes(),
     )

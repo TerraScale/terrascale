@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, ETAG, RETRY_AFTER};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER};
 use reqwest::{Method, StatusCode, Url};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -14,7 +14,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::tungstenite;
 
 use super::auth::{Auth, Credential};
-use super::documents::Database;
+use super::database::Database;
 use super::errors::{self, Error, Result};
 
 /// The public TerraBase API origin used by [`Client::for_project`].
@@ -261,7 +261,6 @@ impl ClientBuilder {
                 max_response: self.max_response_bytes,
                 project: self.project,
                 region_pin: self.region_pin,
-                shape_keys: Default::default(),
                 socket_tls,
                 timeout: self.timeout,
                 user_agent,
@@ -332,7 +331,6 @@ struct Inner {
     max_response: usize,
     project: Option<String>,
     region_pin: Option<String>,
-    shape_keys: tokio::sync::Mutex<super::shapes::EpochKeys>,
     socket_tls: Arc<rustls::ClientConfig>,
     timeout: Option<Duration>,
     user_agent: String,
@@ -384,10 +382,6 @@ impl fmt::Debug for Client {
 }
 
 impl Client {
-    pub(crate) fn shape_keys(&self) -> &tokio::sync::Mutex<super::shapes::EpochKeys> {
-        &self.inner.shape_keys
-    }
-
     /// Builds a project-scoped C# TerraBase client for [`DEFAULT_BASE_URL`].
     /// Supply a ts-auth access token obtained through the authentication SDK.
     /// Use [`ClientBuilder::endpoint`] for an explicit static override.
@@ -498,7 +492,6 @@ impl Resp {
                 .and_then(|value| parse_retry_after(value, std::time::SystemTime::now()));
             Err(errors::from_project_response(
                 self.status.as_u16(),
-                self.header("ETag"),
                 retry_after,
                 self.header("X-Request-ID"),
                 &self.body,
@@ -536,67 +529,6 @@ enum Attempt {
 }
 
 impl Client {
-    /// Resolves shape routing without replaying machine-local offsets on a new endpoint.
-    pub(crate) async fn shape_endpoint(&self) -> Result<(Url, Option<String>)> {
-        self.inner.project.as_deref().ok_or_else(|| {
-            Error::InvalidInput("shape reads require a C# TerraBase project client".into())
-        })?;
-        Ok((self.inner.base.clone(), self.inner.region_pin.clone()))
-    }
-
-    pub(crate) fn shape_url(
-        &self,
-        base: &Url,
-        database: &str,
-        collection: &str,
-        suffix: Option<&str>,
-        query: &[(&str, String)],
-    ) -> Result<Url> {
-        let mut segments = vec![
-            "v1",
-            "databases",
-            database,
-            "collections",
-            collection,
-            "shape",
-        ];
-        if let Some(suffix) = suffix {
-            segments.push(suffix);
-        }
-        self.url(base, &segments, query)
-    }
-
-    /// Shape protocol owns redirects and must-refetch; preserve their headers and bytes.
-    pub(crate) async fn shape_get(
-        &self,
-        url: &Url,
-        region: Option<&str>,
-        headers: &[(&'static str, String)],
-    ) -> Result<Resp> {
-        let mut req = Req::new(Method::GET, Vec::new());
-        req.headers = headers.to_vec();
-        match self
-            .attempt(&req, url, region, None, true, &mut false)
-            .await
-        {
-            Attempt::Done(resp) => Ok(resp),
-            Attempt::Failed(error, _) => Err(error),
-        }
-    }
-
-    pub(crate) async fn shape_retry(&self, attempt: u32, retry_after: Option<&str>) -> bool {
-        let policy = &self.inner.retry;
-        if attempt >= policy.max_retries {
-            return false;
-        }
-        let delay = retry_after
-            .and_then(|value| parse_retry_after(value, std::time::SystemTime::now()))
-            .map(|delay| delay.min(policy.max_retry_after))
-            .unwrap_or_else(|| backoff(policy, attempt));
-        tokio::time::sleep(delay).await;
-        true
-    }
-
     pub(crate) async fn send_project(&self, req: Req<'_>) -> Result<Resp> {
         if self.inner.project.is_none() {
             return Err(Error::InvalidInput(
@@ -637,87 +569,6 @@ impl Client {
 
     pub(crate) fn max_response(&self) -> usize {
         self.inner.max_response
-    }
-
-    pub(crate) async fn changes_response(
-        &self,
-        database: &str,
-        query: &[(&str, String)],
-        last_event_id: Option<&str>,
-    ) -> Result<reqwest::Response> {
-        let (origin, region) = self.shape_endpoint().await?;
-        let url = self.url(&origin, &["v1", "databases", database, "changes"], query)?;
-        let mut request = self
-            .inner
-            .http
-            .get(url)
-            .header("Accept", "text/event-stream")
-            // The producer ends streams after 30 minutes; dropping the future/stream cancels it.
-            .timeout(Duration::from_secs(31 * 60));
-        if let Some(region) = &region {
-            request = request.header("X-TerraScale-Region-Pin", region);
-        }
-        if let Some(cursor) = last_event_id {
-            let cursor = HeaderValue::from_str(cursor)
-                .map_err(|_| Error::InvalidInput("Last-Event-ID must be a valid header".into()))?;
-            request = request.header("Last-Event-ID", cursor);
-        }
-        let response = self.authorized(request, false, &mut false).await?;
-        let status = response.status();
-        let headers = response.headers().clone();
-        let valid_region = region.as_deref().is_none_or(|expected| {
-            let mut values = headers.get_all("X-TerraBase-Region").iter();
-            values.next().and_then(|value| value.to_str().ok()) == Some(expected)
-                && values.next().is_none()
-        });
-        let event_stream = headers
-            .get(CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .is_some_and(|value| {
-                value
-                    .split(';')
-                    .next()
-                    .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("text/event-stream"))
-            });
-        if status == StatusCode::OK && valid_region && event_stream {
-            return Ok(response);
-        }
-        let limit = self.inner.max_response.min(64 << 10);
-        let mut body = Vec::new();
-        let mut chunks = response.bytes_stream();
-        while let Some(chunk) = chunks.next().await {
-            let chunk = chunk.map_err(|error| {
-                self.response_error(
-                    Error::Transport(describe(&error)),
-                    status,
-                    &headers,
-                    body.clone(),
-                )
-            })?;
-            let room = limit.saturating_sub(body.len());
-            body.extend_from_slice(&chunk[..chunk.len().min(room)]);
-            if chunk.len() > room {
-                return Err(self.response_error(
-                    Error::ResponseTooLarge {
-                        limit,
-                        status: status.as_u16(),
-                        may_have_applied: false,
-                    },
-                    status,
-                    &headers,
-                    body,
-                ));
-            }
-        }
-        let response = Resp {
-            status,
-            headers,
-            body,
-            mutation: false,
-        };
-        response.check_status(&[StatusCode::OK])?;
-        Err(response
-            .invalid("changes requires HTTP 200, text/event-stream and the pinned region".into()))
     }
 
     /// Opens a project WebSocket at `segments` (ws/wss from the base URL's
@@ -793,7 +644,6 @@ impl Client {
                     .and_then(|v| parse_retry_after(v, std::time::SystemTime::now()));
                 let error = errors::from_project_response(
                     response.status().as_u16(),
-                    header("ETag"),
                     retry_after,
                     header("X-Request-ID"),
                     response.body().as_deref().unwrap_or_default(),
@@ -888,7 +738,6 @@ impl Client {
                         | "backup-destination"
                         | "usage"
                         | "analytics"
-                        | "replication"
                 )
             )
             || (self.inner.project.is_none() && req.segments.get(1) != Some(&"platform"))
@@ -1059,10 +908,8 @@ impl Client {
             .get(RETRY_AFTER)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| parse_retry_after(v, std::time::SystemTime::now()));
-        let etag = headers.get(ETAG).and_then(|v| v.to_str().ok());
         let err = errors::from_project_response(
             status.as_u16(),
-            etag,
             retry_after,
             headers.get("X-Request-ID").and_then(|v| v.to_str().ok()),
             &body,
@@ -1113,7 +960,6 @@ impl Client {
             }
             let error = errors::from_project_response(
                 401,
-                None,
                 None,
                 headers.get("X-Request-ID").and_then(|v| v.to_str().ok()),
                 &body,
@@ -1230,8 +1076,19 @@ mod tests {
             .project(project)
             .build()
             .unwrap();
-        assert_eq!(client.url(&client.inner.base, &["v1", "databases", "orders", "collections", "items"], &[]).unwrap().as_str(),
-            format!("https://example.com/prefix/v1/projects/{project}/databases/orders/collections/items"));
+        assert_eq!(
+            client
+                .url(
+                    &client.inner.base,
+                    &["v1", "databases", "orders", "sql", "execute"],
+                    &[]
+                )
+                .unwrap()
+                .as_str(),
+            format!(
+                "https://example.com/prefix/v1/projects/{project}/databases/orders/sql/execute"
+            )
+        );
         assert!(
             Client::builder("https://example.com", "already-exchanged.jwt")
                 .build()
@@ -1325,6 +1182,3 @@ mod tests {
         assert_eq!(backoff_with(&long, 25, 0), Duration::from_secs(300));
     }
 }
-
-#[path = "export_stream.rs"]
-mod export_stream;

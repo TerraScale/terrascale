@@ -20,7 +20,7 @@ async fn production_transport_returns_redirects_without_replaying_mutations() {
     ] {
         let response = transport
             .send(Request {
-                route_name: "documents.put".into(),
+                route_name: "databases.create".into(),
                 method: Method::Put,
                 url: format!("http://{address}/mutation"),
                 headers: vec![("authorization".into(), "Bearer secret".into())],

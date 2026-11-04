@@ -8,9 +8,7 @@ behavior; the SDK does not require HTTP/2 prior knowledge.
 Keep a client for the lifetime of the application or worker. Handles and cloned
 transports share the client's connection pool; constructing a new client per
 request creates another pool. Buffered requests consume response bodies before
-returning so that their connections can be reused. Changes and shape streams
-keep their responses active; consume or drop those streams when finished to
-release their resources.
+returning so that their connections can be reused.
 
 TLS certificate and hostname validation, authorization, redirect refusal and
 retry rules remain in effect. The isolated TLS tests check both client surfaces,

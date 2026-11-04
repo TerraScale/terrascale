@@ -39,7 +39,6 @@ fn status_error(status: StatusCode) -> Error {
         status: status.as_u16(),
         code: "file_transfer_error".into(),
         message: None,
-        op: None,
         details: None,
     }
 }

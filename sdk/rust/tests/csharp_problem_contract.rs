@@ -26,7 +26,7 @@ async fn response_error(
             assert_eq!(request.method(), "GET");
             assert_eq!(
                 request.uri().path(),
-                format!("/v1/projects/{PROJECT}/databases/app/collections/items")
+                format!("/v1/projects/{PROJECT}/databases/app")
             );
             assert_eq!(
                 request.headers()["authorization"],
@@ -54,12 +54,7 @@ async fn response_error(
         .timeout(Some(Duration::from_secs(5)))
         .build()
         .unwrap();
-    let error = client
-        .database("app")
-        .collection("items")
-        .get_collection()
-        .await
-        .unwrap_err();
+    let error = client.database("app").get_database().await.unwrap_err();
     tokio::time::timeout(Duration::from_secs(5), server)
         .await
         .unwrap()
@@ -69,7 +64,7 @@ async fn response_error(
 
 #[tokio::test]
 async fn rfc9457_keeps_exact_extensions_and_http_status_wins() {
-    let body = br#"{"type":"https://example.test/problems/permission","title":"Permission denied","status":200,"detail":"documents:read is required","code":"invalid_key","op":3,"requestId":"body-request","future":{"exact":123456789012345678901234567890.123456789,"unbounded":1e9999}}"#;
+    let body = br#"{"type":"https://example.test/problems/permission","title":"Permission denied","status":200,"detail":"databases:read is required","code":"invalid_key","requestId":"body-request","future":{"exact":123456789012345678901234567890.123456789,"unbounded":1e9999}}"#;
     let error = response_error(
         403,
         body,
@@ -79,12 +74,11 @@ async fn rfc9457_keeps_exact_extensions_and_http_status_wins() {
     .await;
     assert_eq!(error.status(), Some(403));
     assert_eq!(error.code(), Some("invalid_key"));
-    assert_eq!(error.op(), Some(3));
     assert_eq!(error.request_id(), Some("header-request"));
     assert_eq!(error.raw_body(), Some(&body[..]));
     assert!(!error.is_uncertain());
     assert!(!error.is_not_found());
-    assert!(error.to_string().contains("documents:read is required"));
+    assert!(error.to_string().contains("databases:read is required"));
     let raw: Box<serde_json::value::RawValue> =
         serde_json::from_slice(error.raw_body().unwrap()).unwrap();
     assert_eq!(serde_json::to_vec(&raw).unwrap(), body);
