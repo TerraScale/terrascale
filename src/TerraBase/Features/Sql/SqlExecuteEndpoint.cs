@@ -1,8 +1,12 @@
 using Microsoft.AspNetCore.Authorization;
 using JsonResult = Microsoft.AspNetCore.Http.HttpResults.JsonHttpResult<TerraBase.Features.Sql.SqlErrorBody>;
+using TerraBase.Configuration;
+using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Documents;
+using TerraBase.Features.Management;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -10,7 +14,8 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Sql;
 
 /// <summary><c>POST /v1/projects/{project}/databases/{database}/sql/execute</c>: runs relational SQL statements.</summary>
-internal sealed class SqlExecuteEndpoint(ISqlService sql, IAuthorizationService authorization, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
+internal sealed class SqlExecuteEndpoint(
+    ISqlService sql, IAuthorizationService authorization, ITenantDirectory tenants, IReplicaCatalog placements, IDatabaseReplicas replicas, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
 {
     private const int MaxBodyBytes = 1024 * 1024;
     // The transaction log limit: every request is one transaction.
@@ -35,7 +40,7 @@ internal sealed class SqlExecuteEndpoint(ISqlService sql, IAuthorizationService 
         Produces<SqlErrorBody>(StatusCodes.Status413PayloadTooLarge);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
-        Metadata(ListenerMetadata.Client);
+        Metadata(ListenerMetadata.Client, new DatabaseRegions.ReplicaReads());
     }
 
     /// <inheritdoc />
@@ -84,6 +89,11 @@ internal sealed class SqlExecuteEndpoint(ISqlService sql, IAuthorizationService 
             return ErrorResponse.From(new Validation("transaction statements are not accepted: every request runs as one transaction"), control);
         }
 
+        if (await placements.FindAsync(database, cancellationToken) is TenantDatabaseRecord { Placement: var placement } && placement.Home != options.Region)
+        {
+            return await ReadReplicaAsync(database, placement, commands, plans, cancellationToken);
+        }
+
         var canWrite = (await authorization.AuthorizeAsync(HttpContext.User, ApiKeyScopes.DocumentsWrite)).Succeeded;
         var session = sql.Open(database, canWrite);
         await using (session.ConfigureAwait(false))
@@ -119,6 +129,46 @@ internal sealed class SqlExecuteEndpoint(ISqlService sql, IAuthorizationService 
             await session.EndRequestAsync();
             reads.ForEach(charge => charge.Accept());
             return TypedResults.Json(new SqlExecuteBody(results), TerraBaseJsonContext.Default.SqlExecuteBody);
+        }
+    }
+
+    // A replica region answers reads from its replica (docs/terrabase/region-replicas.md); writes, and reads before the replica's
+    // first pull, belong to the home.
+    private async ValueTask<IResult> ReadReplicaAsync(
+        TenantContext database, DatabasePlacement placement, List<SqlCommand> commands, List<SqlPlanOutcome> plans, CancellationToken cancellationToken)
+    {
+        var statements = new List<(SqlStatementPlan, SqlCommand)>(commands.Count);
+        for (var i = 0; i < commands.Count; i++)
+        {
+            switch (plans[i])
+            {
+                case SqlError error:
+                    return Error(error, i);
+                case SqlStatementPlan { Kind: SqlStatementKind.Read } plan:
+                    statements.Add((plan, commands[i]));
+                    break;
+                case SqlStatementPlan { Kind: SqlStatementKind.Write }:
+                    return DatabaseRegions.HomeRegion(placement.Home, [placement.Home]);
+                case SqlStatementPlan:
+                    break;
+            }
+        }
+
+        var reader = await replicas.BeginReadAsync(database, cancellationToken);
+        if (reader is null)
+        {
+            return DatabaseRegions.HomeRegion(placement.Home, [placement.Home]);
+        }
+
+        await using (reader.ConfigureAwait(false))
+        {
+            return await sql.ExecuteOnReplicaAsync(database, reader, statements, cancellationToken) switch
+            {
+                IReadOnlyList<SqlResult> results => TypedResults.Json(new SqlExecuteBody([.. results.Select(result => new SqlStatementBody(
+                    [.. result.Columns.Select(column => new SqlColumnBody(column.Name, column.DeclType))], result.Rows, result.RowsAffected, result.LastInsertRowid))]),
+                    TerraBaseJsonContext.Default.SqlExecuteBody),
+                ReplicaSqlFailure failed => Error(failed.Error, failed.Statement),
+            };
         }
     }
 
