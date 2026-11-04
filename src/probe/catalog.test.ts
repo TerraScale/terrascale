@@ -114,16 +114,14 @@ describe("probe catalog", () => {
     expect(check({ ...report, peers: [{ ...peer, region: "sjc" }] }, "01M4PVGGBJ24A140MWGJV7MVKV").outcome).toBe("ok");
   });
 
-  it("checks every regional data API for invalid_key on an unauthenticated read", () => {
+  it("checks every regional data API for invalid_key on an unauthenticated database read", () => {
     for (const [id, region] of [
       ["01M4E7G1W82VKFPF5FJ9AVK1DB", "gru"],
       ["01M4E7G1W82VKFPF5FJ9AVK1DC", "sjc"],
       ["01M4E7G1W82VKFPF5FJ9AVK1E0", "fra"],
     ] as const) {
       const row = endpoint(id);
-      expect(row.url).toBe(
-        "https://api.terrascale.tech/v1/projects/01M4E7G1W82VKFPF5FJ9AVK1DT/databases/status_canary/collections/canary/documents/by-key?id=01M4E7G1W82VKFPF5FJ9AVK1DV",
-      );
+      expect(row.url).toBe("https://api.terrascale.tech/v1/projects/01M4E7G1W82VKFPF5FJ9AVK1DT/databases/status_canary");
       expect(JSON.parse(row.headers)).toEqual({ "X-TerraScale-Region-Pin": region });
       expect(row.expectStatus).toBe("401");
       expect(JSON.parse(row.assertions)).toEqual([{ path: "error.code", op: "eq", value: "invalid_key" }]);
@@ -140,7 +138,7 @@ describe("probe catalog", () => {
         region_code,
         kind: "canary",
         probe: "documents",
-        url: "/v1/projects/{project}/databases/{database}/collections/{collection}",
+        url: "/v1/projects/{project}/databases/{database}/sql/execute",
       })),
     );
   });

@@ -146,6 +146,8 @@ describe("clean D1 bootstrap", () => {
     const pinned = '[{"path":"status","op":"eq","value":"ready"},{"path":"region","op":"eq","value":"gru"}]';
     const document =
       "https://api.terrascale.tech/v1/projects/01M4E7G1W82VKFPF5FJ9AVK1DT/databases/status_canary/collections/canary/documents/01M4E7G1W82VKFPF5FJ9AVK1DV";
+    // TerraBase is SQL-only: the anonymous read check moves on to the database route.
+    const database = "https://api.terrascale.tech/v1/projects/01M4E7G1W82VKFPF5FJ9AVK1DT/databases/status_canary";
     try {
       sqlite.exec(schema);
       // The earlier seed: a deferred dashboard, a region-pinned auth check and its SJC/FRA copies, the old read route.
@@ -179,8 +181,8 @@ describe("clean D1 bootstrap", () => {
           )
           .all(),
       ).toEqual([
-        { id: "01M4E7G1W82VKFPF5FJ9AVK1DB", url: document.replace("documents/", "documents/by-key?id=") },
-        { id: "01M4E7G1W82VKFPF5FJ9AVK1DC", url: document.replace("documents/", "documents/by-key?id=") },
+        { id: "01M4E7G1W82VKFPF5FJ9AVK1DB", url: database },
+        { id: "01M4E7G1W82VKFPF5FJ9AVK1DC", url: database },
         { id: "01M4E7G1W82VKFPF5FJ9AVK1DZ", url: "https://operator.test/readyz" },
         { id: "01M4E7G1W82VKFPF5FJ9AVK1E0", url: "https://operator.test/read" },
       ]);
