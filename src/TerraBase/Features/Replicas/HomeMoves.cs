@@ -24,7 +24,8 @@ internal readonly union PromoteResult(HomePromoteAnswer, Conflict, Unavailable);
 
 internal sealed class HomeMoves(
     TerraBaseOptions options, IHomeMoveCatalog moves, IReplicaCatalog catalog, IReplicaPeers peers, ITenantDirectory tenants, IDatabaseReplicas replicas, RegionReplication replication,
-    IStorageEngine engine, IDatabaseRevisions revisions, IWalBackup imports, DatabaseFences fences, Regions.IRegionCatalog regions, HomeApply.IHomeApply apply, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<HomeMoves> logger)
+    IStorageEngine engine, IDatabaseRevisions revisions, IWalBackup imports, DatabaseFences fences, Regions.IRegionCatalog regions, HomeApply.IHomeApply apply, HomeLeases leases,
+    InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<HomeMoves> logger)
     : BackgroundService
 {
     internal static readonly Unavailable ReplicaNotReady = new("the target region's replica could not catch up; nothing changed, retry", "replica_not_ready");
@@ -43,6 +44,7 @@ internal sealed class HomeMoves(
     public override Task StartAsync(CancellationToken cancellationToken)
     {
         _pause = _meter.CreateHistogram<double>("terrabase.placement.move.pause", "ms", "Time writes of a database paused while its home moved.");
+        leases.FailOver = FailOverAsync;
         return base.StartAsync(cancellationToken);
     }
 
@@ -280,7 +282,8 @@ internal sealed class HomeMoves(
             }
 
             IReadOnlyList<string> next = [.. request.ReplicaRegions.Where(region => region != options.Region)];
-            return await AdoptAsync(database, new DatabasePlacement(options.Region, next, request.Version, request.AllRegions)).ConfigureAwait(false);
+            return await AdoptAsync(database, request.FromRegion, new DatabasePlacement(options.Region, next, request.Version, request.AllRegions), fromDeadNode: false)
+                .ConfigureAwait(false);
         }
         finally
         {
@@ -309,7 +312,8 @@ internal sealed class HomeMoves(
             await replication.SuspendAsync(database).ConfigureAwait(false);
             try
             {
-                return await AdoptAsync(database, new DatabasePlacement(options.Region, next, version, placement.AllRegions)).ConfigureAwait(false) is HomePromoteAnswer { Promoted: true };
+                return await AdoptAsync(database, fromRegion, new DatabasePlacement(options.Region, next, version, placement.AllRegions), fromDeadNode: true)
+                    .ConfigureAwait(false) is HomePromoteAnswer { Promoted: true };
             }
             finally
             {
@@ -322,7 +326,7 @@ internal sealed class HomeMoves(
         }
     }
 
-    private async Task<PromoteResult> AdoptAsync(TenantContext database, DatabasePlacement placement)
+    private async Task<PromoteResult> AdoptAsync(TenantContext database, string fromRegion, DatabasePlacement placement, bool fromDeadNode)
     {
         string? detached = null;
         try
@@ -334,11 +338,28 @@ internal sealed class HomeMoves(
             }
 
             fences.Lift(database.DatabaseId!);
+            if (leases.Active)
+            {
+                fences.Lease(database.DatabaseId!, held: false);
+            }
+
             await imports.ImportDatabaseAsync(database, detached, CancellationToken.None).ConfigureAwait(false);
             detached = null;
+            if (!await leases.TakeAsync(database, fromRegion, placement.Version, fromDeadNode, CancellationToken.None).ConfigureAwait(false))
+            {
+                fences.Unlease(database.DatabaseId!);
+                _ = await engine.DeleteDatabaseAsync(database, CancellationToken.None).ConfigureAwait(false);
+                return new Conflict("another region holds the database's home lease", "move_aborted");
+            }
+
             if (await tenants.UpdatePlacementAsync(database, placement, CancellationToken.None).ConfigureAwait(false) is not PlacementUpdate { Updated: true })
             {
-                _ = await engine.DeleteDatabaseAsync(database, CancellationToken.None).ConfigureAwait(false);
+                if (!leases.Active)
+                {
+                    _ = await engine.DeleteDatabaseAsync(database, CancellationToken.None).ConfigureAwait(false);
+                }
+
+                logger.ZLogError($"A new home's catalog did not take its placement; it keeps the database file and its lease");
                 return new Unavailable("the catalog did not take the new placement");
             }
 
