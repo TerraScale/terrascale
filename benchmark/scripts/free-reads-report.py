@@ -19,7 +19,7 @@ def records(path):
 
 rows = records(sys.argv[1])
 cells = [row for row in rows if row.get("type") == "cell"]
-methods = list({row["sha"]: row for row in rows if row.get("type") == "method"}.values())
+methods = list({(row["sha"], row["host"], row["node"]): row for row in rows if row.get("type") == "method"}.values())
 method = methods[0]
 analytics = records(sys.argv[2]) if len(sys.argv) > 2 else []
 lookup = {(row["region"], row["shape"], row["readers"], row["repeat"]): row for row in analytics if row.get("type") == "r2"}
@@ -57,7 +57,7 @@ print("- N independent subscriptions start together, reach the snapshot and curr
 print("- A cohort that hits its deadline is recorded and the next cohort proceeds, unless the CPU guard aborts the run. Percentiles require every reader in that phase; a completed subset never substitutes for the full cohort. The tail update is not attempted if the full cohort cannot reach the current head.")
 print(f"- Target: three measured repeats for every shape/region/N; the repeats column records completed cohorts. Nearest-rank p50/p99 within each repeat; tables show the median and min–max of completed repeat percentiles; fewer than three repeats remain unqualified. N=1 supplies one latency sample per repeat, so its p99 is not a statistically useful tail estimate. Cohort deadline: {method.get('cohort_deadline_seconds', 60)} seconds.")
 print("- The authenticated bootstrap, manifests, keys, empty head probes and live tail remain origin requests. Counts include retries and refusals, exclude setup, usage observations and OAuth exchanges, and are separated from immutable payload requests. A shared token provider refreshes the synthetic account's 60-second access token before expiry.")
-print("- CPU is sampled every second from TerraBase's runtime CPU-time counters in gru, divided by its reported processor count. Every phase stops if the sample exceeds 70%, telemetry disappears or the process restarts. Table values are the highest sampled one-second mean, not instantaneous CPU.")
+print("- CPU is sampled every second from TerraBase's runtime CPU-time counters in gru, divided by its reported processor count. Every phase stops if the sample exceeds 70%, telemetry disappears or the process restarts. Table values are the highest sampled one-second mean, not instantaneous CPU. They include other concurrent TerraBase work; no idle-baseline subtraction isolates the benchmark's CPU cost.")
 print("- Usage observations include the database's best-effort operation counter and the project's monthly ledger. SQL read-unit deltas are fair-use units; the billed read component is `month.units - month.writeUnits`. This is ledger evidence, not a Stripe invoice or an infrastructure-dollar estimate.")
 print("- R2 counts are Cloudflare `r2OperationsAdaptiveGroups` results for `ts-terrabase-shapes-prod`, rounded outward to whole-second reader windows. They are bucket-wide adaptive analytics, may include unrelated traffic/adjacent setup, and are not per-object attribution. An empty analytics result is unavailable, not zero. Client MISS counts are not substituted for R2 GetObject counts.\n")
 print("- This is a small two-object workload. It does not establish latency or origin cost for larger snapshots, longer catch-up histories or browser bootstrap behavior.\n")
@@ -107,8 +107,8 @@ print("\n## Evidence\n")
 print("Raw cohort records and R2 query records accompany this report. Setup/pilot runs are excluded from measured summaries. All account, database and egress-proxy cleanup must be confirmed separately before declaring F10 done.\n")
 print("| Measured checkout | Source | Measured Git blob |")
 print("| --- | --- | --- |")
-for item in methods:
-    for path in ["benchmark/scripts/free-reads.mjs", "sdk/js/src/v1/table-shape.js", "sdk/js/src/v1/shape-cdn.js", "sdk/js/src/v1/transport.js", "sdk/js/src/v1/usage.js"]:
+for item in {item["sha"]: item for item in methods}.values():
+    for path in ["benchmark/scripts/free-reads.mjs", "benchmark/scripts/free-reads-cpu.py", "benchmark/scripts/free-reads-egress.py", "sdk/js/src/v1/table-shape.js", "sdk/js/src/v1/shape-cdn.js", "sdk/js/src/v1/transport.js", "sdk/js/src/v1/usage.js"]:
         blob = subprocess.check_output(["git", "rev-parse", f"{item['sha']}:{path}"], text=True).strip()
         print(f"| `{item['sha'][:10]}` | `{path}` | `{blob}` |")
 for row in rows:
