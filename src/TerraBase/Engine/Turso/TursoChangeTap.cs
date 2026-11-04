@@ -6,7 +6,7 @@ using Turso;
 
 namespace TerraBase.Engine.Turso;
 
-internal sealed class TursoChangeTap : IWalTap
+internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
 {
 
     private const int PageRows = 1024;
@@ -24,6 +24,25 @@ internal sealed class TursoChangeTap : IWalTap
     private readonly int _lineage;
 
     private long _anchor;
+    private long _durableAnchor;
+
+    public long Position => Volatile.Read(ref _anchor);
+
+    public async ValueTask AcknowledgeAsync(long position, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(position);
+        await _store.WithWriterAsync(writer =>
+        {
+            if (position > _anchor)
+            {
+                throw new InvalidOperationException("the backup cannot acknowledge unread CDC");
+            }
+
+            _durableAnchor = Math.Max(_durableAnchor, position);
+            _store.BackupAnchor = _durableAnchor;
+            return Truncate(writer);
+        }, "the durable backup CDC acknowledgement", cancellationToken).ConfigureAwait(false);
+    }
 
     private Dictionary<long, (string Type, string Name)> _schema = [];
 
@@ -95,31 +114,10 @@ internal sealed class TursoChangeTap : IWalTap
         ArgumentNullException.ThrowIfNull(destination);
         return await AdmittedAsync(async () =>
         {
-            var (anchor, schema) = (_anchor, _schema);
             var read = await ReadCoreAsync(destination, ReadBudget, cancellationToken).ConfigureAwait(false);
             if (!read.Continuous)
             {
                 await _store.WithWriterAsync(Reset, "the continuous backup's tap", cancellationToken).ConfigureAwait(false);
-            }
-            else if (read.Bytes > 0)
-            {
-                try
-                {
-                    if (BeforeTrim is { } trim)
-                    {
-                        await trim(cancellationToken).ConfigureAwait(false);
-                    }
-
-                    await _store.WithWriterAsync(Truncate, "the continuous backup's cleanup", cancellationToken).ConfigureAwait(false);
-                }
-                catch
-                {
-
-                    (_anchor, _schema) = (anchor, schema);
-                    throw;
-                }
-
-                _store.BackupAnchor = _anchor;
             }
 
             return read;
@@ -444,7 +442,7 @@ internal sealed class TursoChangeTap : IWalTap
             _anchor = (long)newest.ExecuteScalar()!;
             if (publish)
             {
-                _store.BackupAnchor = _anchor;
+                _store.BackupAnchor = _durableAnchor;
             }
         }
 
@@ -551,7 +549,7 @@ internal sealed class TursoChangeTap : IWalTap
     private bool Truncate(TursoSession writer)
     {
         var rewrite = _store.RewriteAnchor;
-        var below = rewrite < 0 ? _anchor : Math.Min(_anchor, rewrite);
+        var below = rewrite < 0 ? _durableAnchor : Math.Min(_durableAnchor, rewrite);
         _ = TursoStorageTransaction.Trim(writer.Connection, null, below);
         return true;
     }

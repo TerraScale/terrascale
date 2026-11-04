@@ -1,0 +1,13 @@
+diff --git a/src/Turso.Data.Sqlite/SqliteConnection.cs b/src/Turso.Data.Sqlite/SqliteConnection.cs
+index 68c07cb7e..825d8252a 100644
+--- a/src/Turso.Data.Sqlite/SqliteConnection.cs
++++ b/src/Turso.Data.Sqlite/SqliteConnection.cs
+@@ -48,7 +48,7 @@ public partial class SqliteConnection : DbConnection
+     {
+         ArgumentNullException.ThrowIfNull(connection);
+         var options = new SqliteConnectionStringBuilder(connection.ConnectionString);
+-        if (options.IsLocal)
++        if (options.IsLocal && connection.SyncDatabase is null)
+         {
+             throw new ArgumentException(
+                 "Only direct remote and embedded replica Turso connections can be wrapped.",

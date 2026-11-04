@@ -818,6 +818,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             var read = await file.Tap.ReadAsync(file.Pending, cancellationToken).ConfigureAwait(false);
             if (file.Pending.Length > before)
             {
+                file.PendingCdcPosition = (file.Tap as ICdcBackupRetention)?.Position ?? 0;
                 file.PendingClaims.Add(claim);
                 claim = null;
             }
@@ -857,6 +858,11 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 : null;
             await StoreGenerationProofAsync(file, generation, key, captured, cancellationToken).ConfigureAwait(false);
             await StoreAsync(file, key, snapshot, "snapshot", cancellationToken).ConfigureAwait(false);
+            if (file.Tap is ICdcBackupRetention baseline)
+            {
+                await baseline.AcknowledgeAsync(baseline.Position, cancellationToken).ConfigureAwait(false);
+            }
+
             (file.Generation, file.Position, file.PendingStart, file.LastSnapshot, file.LastShipped, file.BehindSince, file.Behind) =
                 (generation, 0, 0, at, at, at, false);
             Prove(file, at);
@@ -891,6 +897,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             try
             {
                 captured = await file.Tap.SnapshotAsync(file.Pending, snapshot, cancellationToken).ConfigureAwait(false);
+                file.PendingCdcPosition = (file.Tap as ICdcBackupRetention)?.Position ?? 0;
             }
             catch
             {
@@ -967,6 +974,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         var side = new SideWork(key, CancellationTokenSource.CreateLinkedTokenSource(file.Job?.Caller ?? CancellationToken.None, _jobCancellation.Token))
         {
             Stored = snapshot is null ? null : new(TaskCreationOptions.RunContinuationsAsynchronously),
+            CdcPosition = (file.Tap as ICdcBackupRetention)?.Position ?? 0,
         };
         file.Side = side;
         side.Completion = Task.Run(() => SideAsync(file, side, snapshot, live, drill, claim), CancellationToken.None);
@@ -985,6 +993,11 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             {
                 live = drill ? await _engine.ChecksumAsync(snapshot, token).ConfigureAwait(false) : null;
                 await StoreAsync(file, side.Snapshot.Key, snapshot, "snapshot", token).ConfigureAwait(false);
+                if (file.Tap is ICdcBackupRetention snapshotRetention)
+                {
+                    await snapshotRetention.AcknowledgeAsync(side.CdcPosition, token).ConfigureAwait(false);
+                }
+
                 side.Stored!.TrySetResult();
             }
             catch (Exception error)
@@ -1055,7 +1068,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         {
             file.Pending.Seek(0, SeekOrigin.End);
         }
-        file.Unstored = new(key, sealedObject, file.PendingAt, file.PendingMark, file.PendingEndsMarked);
+        file.Unstored = new(key, sealedObject, file.PendingAt, file.PendingMark, file.PendingEndsMarked, file.PendingCdcPosition);
         (file.PendingMark, file.PendingEndsMarked) = (null, false);
         file.Pending.SetLength(0);
         sealedObject.TakeClaims(file.PendingClaims);
@@ -1071,6 +1084,11 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         }
 
         await PutAsync(file, segment.Key, segment.Sealed, "segment", cancellationToken).ConfigureAwait(false);
+        if (file.Tap is ICdcBackupRetention segmentRetention)
+        {
+            await segmentRetention.AcknowledgeAsync(segment.CdcPosition, cancellationToken).ConfigureAwait(false);
+        }
+
         file.Unstored = null;
         await segment.Sealed.DisposeAsync().ConfigureAwait(false);
         file.LastShipped = segment.At;
@@ -1200,6 +1218,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private sealed record ShippingProgress(Ulid Generation, DateTimeOffset At);
     private sealed class SideWork(SnapshotKey snapshot, CancellationTokenSource cancellation)
     {
+        public long CdcPosition { get; init; }
         public SnapshotKey Snapshot { get; } = snapshot;
         public CancellationTokenSource Cancellation { get; } = cancellation;
         public TaskCompletionSource? Stored { get; init; }
@@ -1209,7 +1228,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
         public Task Completion { get; set; } = Task.CompletedTask;
     }
-    private sealed record Segment(string Key, FileStream Sealed, DateTimeOffset At, DateTimeOffset? Mark, bool EndsMarked);
+    private sealed record Segment(string Key, FileStream Sealed, DateTimeOffset At, DateTimeOffset? Mark, bool EndsMarked, long CdcPosition);
     private sealed class ShippedFile(TenantContext? database, string prefix, string scope, IWalTap tap, BackupScratchStream pending, DateTimeOffset opened, BackupTarget target)
         : IAsyncDisposable
     {
@@ -1228,6 +1247,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public string Scope { get; } = scope;
         public IWalTap Tap { get; } = tap;
         public BackupScratchStream Pending { get; } = pending;
+        public long PendingCdcPosition { get; set; }
         public List<IDisposable> PendingClaims { get; } = [];
 
         public void ReleasePendingClaims()

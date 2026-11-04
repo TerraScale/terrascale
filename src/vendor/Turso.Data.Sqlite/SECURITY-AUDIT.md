@@ -244,3 +244,5 @@ power loss, concurrent native abandonment or every native architecture.
 - RUSTSEC-2026-0204 (`crossbeam-epoch` 0.9.18) is in the native library: not reachable through upstream's code (no
   `{:p}` formatting of crossbeam pointers); it goes with an upstream release on crossbeam-epoch >= 0.9.20.
 - Distributing a TerraBase binary would bring attribution duties for the Rust crates (section 6).
+
+Patch 0015 accepts an official sync-owned connection in the Sqlite provider wrapper without treating its empty connection string as an ordinary local connection. The existing sync object retains connection ownership and encryption; it does not open a second database or change native code.

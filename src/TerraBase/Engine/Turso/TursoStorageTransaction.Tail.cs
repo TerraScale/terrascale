@@ -29,6 +29,12 @@ internal sealed partial class TursoStorageTransaction
             below = Math.Min(below, shapeFloor);
         }
 
+        command.CommandText = "SELECT min(end_offset) FROM _tb_shape_chunk WHERE handle >= '~cdc:' AND handle < '~cdc;' AND offset = 0;";
+        if (command.ExecuteScalar() is long consumerFloor)
+        {
+            below = Math.Min(below, consumerFloor);
+        }
+
         command.CommandText = RetentionCut;
         command.Parameters.AddWithValue("$below", below);
         if (command.ExecuteScalar() is not long cut || cut == 0)

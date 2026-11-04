@@ -56,3 +56,5 @@ the commit's change to the vendored files as the next patch and amend the commit
 git format-patch -1 HEAD --relative=src/vendor/Turso.Data.Sqlite --start-number <next> -o src/vendor/Turso.Data.Sqlite/patches
 git add src/vendor/Turso.Data.Sqlite/patches && git commit --amend --no-edit
 ```
+
+Patch 0015 allows wrapping connections returned directly by `TursoSyncDatabase.ConnectAsync`. Their connection string is local even though they own a sync database. Ordinary local connections remain refused. RegionShapeTailTests exercises this wrapper through the regional shape HTTP surface.
