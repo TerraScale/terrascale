@@ -630,3 +630,18 @@ Token endpoint `invalid_client` is a terminal `*tsauth.Error`.
 replay-safe request backoff and `Retry-After` policy, keeping the token cache.
 
 Preview workflows: [CLI database branches](docs/cli-branches.md) covers create, list, guarded delete and scoped connection URLs.
+
+### Declarative schema in the CLI
+
+`ts schema pull --database app` writes a new `schema.sql` from the public SQL catalog.
+Edit the CREATE statements, then run `ts schema diff schema.sql --database app` and
+`ts schema apply schema.sql --database app [--dry-run] [--allow-drop]`.
+Apply uses one REST transaction and refuses every DROP operation without `--allow-drop`.
+`--json` returns `statements`, `destructive`, and `applied`; an unchanged schema has no statements.
+Signed-in callers can use the saved context database instead of `--database`.
+
+The planner validates schema-only DDL with an embedded, offline SQLite engine (no application data is stored locally).
+It supports ordinary tables, indexes, views, triggers and column additions/removals. Existing column definition,
+constraint, table option and column order changes require explicit `ts migrate` migrations; no inferred table rebuilds.
+Engine extensions unsupported by the offline validator are refused before live writes.
+See the [agent databases guide](https://docs.terrascale.tech/guides/agent-databases#manage-schema-as-code).
