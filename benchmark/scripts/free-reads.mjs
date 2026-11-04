@@ -346,7 +346,7 @@ export async function runFreeReads(options) {
 }
 
 async function shapeFlights() {
-  const source = "import urllib.request; text=urllib.request.urlopen('http://127.0.0.1:9464/metrics',timeout=5).read().decode(); values=[float(line.split()[-1]) for line in text.splitlines() if line.startswith('terrabase_shape_flights_started_total ')]; assert values, 'FLIGHT_METRIC_MISSING'; print(sum(values))";
+  const source = "import urllib.request; text=urllib.request.urlopen('http://127.0.0.1:9091/metrics',timeout=5).read().decode(); values=[float(line.split()[-1]) for line in text.splitlines() if line.startswith(('terrabase_shape_flights_started_total ', 'terrabase_shape_flights_started_total{'))]; assert values, 'FLIGHT_METRIC_MISSING'; print(sum(values))";
   const child = spawn("ssh", ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "ts-gru-1", `python3 -c ${quote(source)}`], { stdio: ["ignore", "pipe", "ignore"] });
   let output = "";
   child.stdout.on("data", part => { output += part; });
