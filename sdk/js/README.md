@@ -180,8 +180,9 @@ scope, checked per statement. Keep service credentials private and out of logs a
 
 A database has one home region for writes and can have encrypted read replicas in other serving regions.
 REST reads can use a ready local replica; writes route to the home from any serving region. Replicas are eventually
-consistent: read from the home when you need to see your latest write. Local replica reads over psql and SQL
-WebSocket are coming. Automatic all-regions placement is coming; use an explicit replica-region list today.
+consistent. REST, psql and SQL WebSocket can read ready local replicas. Postgres and WebSocket sessions
+preserve read-your-writes; use the home for REST reads that must see a previous write. Automatic all-regions
+placement is coming; use an explicit replica-region list today.
 
 The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
 storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data

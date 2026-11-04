@@ -123,7 +123,7 @@ export const es: Messages = {
       },
       {
         q: '¿Mi base de datos se copia a otras regiones?',
-        a: 'Sí. Elige regiones de réplica para mantener copias de solo lectura cifradas fuera de la región principal. REST puede leer una réplica local lista; las lecturas locales por psql y WebSocket llegarán próximamente. Las réplicas tienen consistencia eventual. Las escrituras van a la región principal desde cualquier región en servicio.',
+        a: 'Sí. Elige regiones de réplica para mantener copias de solo lectura cifradas fuera de la región principal. REST, psql y WebSocket pueden leer una réplica local lista. Las réplicas tienen consistencia eventual. Las escrituras van a la región principal desde cualquier región en servicio.',
       },
       {
         q: '¿Puedo usar mis herramientas de Postgres?',

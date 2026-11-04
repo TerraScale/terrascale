@@ -123,7 +123,7 @@ export const ptBr: Messages = {
       },
       {
         q: 'Meu banco de dados é copiado para outras regiões?',
-        a: 'Sim. Escolha regiões de réplica para manter cópias criptografadas somente leitura fora da região principal. REST pode ler uma réplica local pronta; leituras locais por psql e WebSocket estão chegando. As réplicas têm consistência eventual. As escritas vão para a região principal a partir de qualquer região em operação.',
+        a: 'Sim. Escolha regiões de réplica para manter cópias criptografadas somente leitura fora da região principal. REST, psql e WebSocket podem ler uma réplica local pronta. As réplicas têm consistência eventual. As escritas vão para a região principal a partir de qualquer região em operação.',
       },
       {
         q: 'Posso usar minhas ferramentas do Postgres?',

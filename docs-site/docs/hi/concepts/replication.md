@@ -17,16 +17,18 @@ read-only copies in the regions you choose. See [regions](/hi/concepts/regions) 
 | Connection | Local replica reads | Writes |
 | --- | --- | --- |
 | SQL over REST | Available once the local replica is ready | Routed to the home |
-| psql and Postgres drivers | Coming; sessions use the home today | Routed to the home |
-| SQL over WebSocket | Coming; sessions use the home today | Run at the home |
+| psql and Postgres drivers | Reads outside a transaction and read-only transactions | Routed to the home |
+| SQL over WebSocket | Read-only execute frames | Run at the home |
 | Live shapes | Served from the home and its edge cache | Use SQL at the home |
 
-Replicas are eventually consistent. A local read may return an earlier committed state than the home. Read from the
-home for read-your-writes. A replica that has not completed its first pull sends reads to the home.
+Replicas are eventually consistent. A local read may return an earlier committed state than the home. Postgres and
+WebSocket sessions preserve read-your-writes: after running at the home, later reads use the home until the replica
+catches up. REST reads have no session; use the home when a read must see a previous write. A replica that has not
+completed its first pull sends reads to the home. Transactions that are not read-only run at the home.
 
 ## Recovery and availability
 
-Replicas catch up after a restart or a temporary connection failure. A ready REST replica can serve reads while
+Replicas catch up after a restart or a temporary connection failure. A ready replica can serve SQL reads while
 its home is unreachable, using the state it already holds. It cannot accept writes or promise fresh data during
 that interruption. There is no automatic failover to a new write region.
 
