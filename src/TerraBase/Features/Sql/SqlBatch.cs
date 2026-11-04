@@ -52,6 +52,11 @@ internal static class SqlBatch
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(commands);
+        if (session is ReplicaSqlSession replica && await replica.TryBatchAsync(commands, cancellationToken).ConfigureAwait(false) is { } forwarded)
+        {
+            return forwarded;
+        }
+
         var charges = new List<SqlReadCharge>(commands.Count);
         if (!session.IsAutocommit)
         {

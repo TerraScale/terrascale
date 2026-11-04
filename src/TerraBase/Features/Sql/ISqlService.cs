@@ -71,6 +71,12 @@ internal interface ISqlSession : IAsyncDisposable
     ValueTask<SqlDescribeOutcome> DescribeAsync(SqlCommand command, CancellationToken cancellationToken);
 
     ValueTask EndRequestAsync();
+
+    void Prefer(Routing.WriteOverride preference)
+    {
+    }
+
+    Routing.WriteRoute? LastRoute => null;
 }
 
 internal sealed record SqlTableColumn(string Name, string? DeclType, bool NotNull, bool PrimaryKey, string? Default = null);

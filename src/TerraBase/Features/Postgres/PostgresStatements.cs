@@ -45,7 +45,7 @@ internal static partial class PostgresStatements
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
     private static readonly UTF8Encoding Utf8 = new(false, true);
     private static readonly PostgreSqlDialect Dialect = new();
-    private static readonly string[] Settable = ["client_encoding", "DateStyle", "TimeZone", "extra_float_digits", "application_name", "search_path"];
+    private static readonly string[] Settable = ["client_encoding", "DateStyle", "TimeZone", "extra_float_digits", "application_name", "search_path", "terrascale.write"];
 
     /// <summary>The settings ParameterStatus reports at connect.</summary>
     public static readonly string[] Reported =
@@ -64,6 +64,7 @@ internal static partial class PostgresStatements
         ["application_name"] = applicationName,
         ["extra_float_digits"] = "1",
         ["search_path"] = "public",
+        ["terrascale.write"] = "auto",
         ["transaction_isolation"] = "serializable",
         ["default_transaction_isolation"] = "serializable",
     };
@@ -382,12 +383,17 @@ internal static partial class PostgresStatements
         var value = set.Groups[2].Value is ['\'', .. var quoted, '\''] ? quoted.Replace("''", "'", StringComparison.Ordinal) : set.Groups[2].Value;
         if (setting is null)
         {
-            return new PgError("0A000", "SET supports only client_encoding, DateStyle, TimeZone, extra_float_digits, application_name and search_path");
+            return new PgError("0A000", "SET supports only client_encoding, DateStyle, TimeZone, extra_float_digits, application_name, search_path and terrascale.write");
         }
 
         if (setting == "client_encoding" && !value.Replace("-", "", StringComparison.Ordinal).Equals("UTF8", StringComparison.OrdinalIgnoreCase))
         {
             return new PgError("22023", "only the UTF8 client encoding is supported");
+        }
+
+        if (setting == "terrascale.write" && value.ToLowerInvariant() is not ("home" or "local" or "auto"))
+        {
+            return new PgError("22023", "terrascale.write is home, local or auto");
         }
 
         // Session-local echo: the value changes nothing else.
@@ -643,10 +649,10 @@ internal static partial class PostgresStatements
     [GeneratedRegex(@"\A(?:precision|varying|with|without|time|zone)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex TypeWords();
 
-    [GeneratedRegex(@"\ASET\s+(?:SESSION\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|\s+TO\s+)\s*(.*)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline)]
+    [GeneratedRegex(@"\ASET\s+(?:SESSION\s+)?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*(?:=|\s+TO\s+)\s*(.*)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline)]
     private static partial Regex SetPattern();
 
-    [GeneratedRegex(@"\ASHOW\s+(transaction\s+isolation\s+level|time\s+zone|[A-Za-z_][A-Za-z0-9_]*)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\ASHOW\s+(transaction\s+isolation\s+level|time\s+zone|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ShowPattern();
 
     [GeneratedRegex(@"\ADISCARD\s+ALL\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
