@@ -2,8 +2,10 @@ using System.Text.Json;
 
 namespace Turso.Data.Sqlite.Tests;
 
+/// <summary>Change capture in full mode records UPSERTs correctly (upstream Turso 26dbb464, native patch 0008).</summary>
 public sealed class CdcUpsertTests
 {
+    /// <summary>An UPSERT updates the row, and its change record holds the old row before and the new row after.</summary>
     [Test]
     public async Task AnUpsertCapturedInFullModeKeepsTheRowAndRecordsTheOldRowAsItsBeforeImage()
     {
