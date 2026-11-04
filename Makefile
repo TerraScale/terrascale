@@ -7,9 +7,6 @@ RUNTIME ?= linux-x64
 PUBLISH_DIR ?= artifacts/publish
 # Extra arguments for every TUnit runner, e.g. TEST_ARGS="--treenode-filter /*/*/Name/*".
 TEST_ARGS ?=
-# Match Fast concurrency to the available CPUs on dev hosts and CI runners.
-AUTH_TEST_PARALLEL ?= $(shell nproc)
-TERRABASE_TEST_PARALLEL ?= $(shell nproc)
 # Build revision shown by ts-auth /healthz (CI passes the commit SHA).
 TS_AUTH_REVISION ?=
 export TS_AUTH_REVISION
@@ -123,7 +120,7 @@ auth-fast-build: turso-native
 	dotnet build scripts/auth/fast.slnx --configuration $(CONFIGURATION) --no-restore --nologo -m
 
 auth-test-fast: auth-fast-build
-	TERRABASE_BINARY=$(TERRABASE_BINARY) python3 scripts/ci/fast-budget.py auth -- dotnet run --project tests/TerraScale.Authentication.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(AUTH_TEST_PARALLEL) $(TEST_ARGS)
+	TERRABASE_BINARY=$(TERRABASE_BINARY) python3 scripts/ci/fast-budget.py auth -- dotnet run --project tests/TerraScale.Authentication.Fast --configuration $(CONFIGURATION) --no-build -- $(TEST_ARGS)
 
 auth-test-slow: auth-build turso-native
 	dotnet restore src/TerraBase/TerraBase.csproj --locked-mode
@@ -172,7 +169,7 @@ terrabase-test-fast: restore turso-native
 	dotnet build tests/Turso.Data.Sqlite.Tests/Turso.Data.Sqlite.Tests.csproj --configuration $(CONFIGURATION) --no-restore
 	# The vendored Turso driver's regression tests (src/vendor/Turso.Data.Sqlite/UPSTREAM.md), then the Fast suite.
 	python3 scripts/ci/fast-budget.py turso -- dotnet run --project tests/Turso.Data.Sqlite.Tests --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 3 $(TEST_ARGS)
-	python3 scripts/ci/fast-budget.py terrabase -- dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 1 --maximum-parallel-tests $(TERRABASE_TEST_PARALLEL) $(TEST_ARGS)
+	python3 scripts/ci/fast-budget.py terrabase -- dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 1 $(TEST_ARGS)
 
 terrabase-test-slow: terrabase-build
 	dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
