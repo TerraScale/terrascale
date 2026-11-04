@@ -1,0 +1,27 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Databases.DatabaseDetailPage>
+@using TerraScale.Dashboard.Features.Databases
+@if(Model.Conflicts is { } page){
+<section class="ts-card ts-card-boxed" id="conflicts" aria-labelledby="conflicts-title">
+<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="conflicts-title">Conflicts</h2></div><div class="ts-card-actions"><a class="ts-link" href="https://docs.terrascale.tech/guides/multi-region-writes-and-conflicts" @(ExternalLink.Attributes)>Conflict rules@(ExternalLink.Hint)</a></div></header>
+<div class="ts-card-body ts-stack-lg">
+<form class="ts-row" method="get" action="@DatabaseService.Path(Model.Database.Id, "conflicts")" aria-label="Filter conflicts">
+<div class="ts-field"><label class="ts-label" for="conflict-table">Table</label><input class="ts-input ts-mono" id="conflict-table" name="table" value="@page.Table" maxlength="256" placeholder="All tables" /></div>
+<div class="ts-field"><label class="ts-label" for="conflict-since">Since (UTC)</label><input class="ts-input" type="datetime-local" id="conflict-since" name="since" value="@page.Since" step="1" /></div>
+<div class="ts-field"><label class="ts-label" for="conflict-until">Until (UTC)</label><input class="ts-input" type="datetime-local" id="conflict-until" name="until" value="@page.Until" step="1" /></div>
+<button class="ts-btn ts-btn-secondary" type="submit">Apply</button>
+</form>
+@if(page.Error.Length > 0){<div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-body">@page.Error</p><a class="ts-link" href="@page.Path(Model.Database.Id, page.Before)">Retry</a></div>}
+else if(page.Listing is { Conflicts.Count: 0 }){<div class="ts-empty" role="status"><p class="ts-empty-title">No conflicts match these filters.</p><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@DatabaseService.Path(Model.Database.Id, "conflicts")">Show recent conflicts</a></div>}
+else if(page.Listing is { } listing){
+<div class="ts-table-wrap" role="region" aria-label="Recent conflicts" tabindex="0"><table class="ts-table"><thead><tr><th scope="col">Recorded (UTC)</th><th scope="col">Table / row key</th><th scope="col">Column</th><th scope="col">Winning value</th><th scope="col">Losing write</th><th scope="col">Transaction</th><th scope="col">Reason</th></tr></thead><tbody>
+@foreach(var conflict in listing.Conflicts){
+@foreach(var column in conflict.Columns()){
+<tr data-conflict-id="@conflict.Id"><td><time datetime="@conflict.CreatedAt">@conflict.CreatedAt</time></td><td><span class="ts-mono">@(conflict.TableName ?? "—")</span><div class="ts-mono">@(conflict.RowKey?.GetRawText() ?? "—")</div></td><td class="ts-mono">@column.Column</td><td>Not recorded</td><td><code>@column.Losing</code><div class="ts-mono">@conflict.Region</div></td><td><span class="ts-badge ts-badge-tone" data-tone="@(conflict.TransactionState == "reverted" ? "danger" : "success")">@conflict.TransactionState</span><div><code>@conflict.TransactionId</code></div></td><td><details><summary>@conflict.Kind</summary><p>@conflict.Message</p>@if(conflict.State == "superseded"){<p>The greater column HLC wins: milliseconds, logical counter, then node ID in ordinal order. Other columns can still apply.</p>}else{<p>No changes from this transaction applied at the home.</p>}</details></td></tr>
+}
+}
+</tbody></table></div>
+@if(listing.NextBefore is { } next){<a class="ts-btn ts-btn-secondary ts-btn-sm" href="@page.Path(Model.Database.Id, next)">Older conflicts</a>}
+@if(page.Before.Length > 0){<a class="ts-link" href="@page.Path(Model.Database.Id)">Newest conflicts</a>}
+}
+</div></section>
+}
