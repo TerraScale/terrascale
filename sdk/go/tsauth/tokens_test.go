@@ -43,7 +43,7 @@ func newTokenServer(t *testing.T, handle func(w http.ResponseWriter, r *http.Req
 
 func answer(w http.ResponseWriter, token string, expiresIn int) {
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"access_token":%q,"token_type":"Bearer","expires_in":%d,"scope":"documents:read"}`, token, expiresIn)
+	fmt.Fprintf(w, `{"access_token":%q,"token_type":"Bearer","expires_in":%d,"scope":"sql:read"}`, token, expiresIn)
 }
 
 func TestAPIKeySourceCachesUntilAMinuteBeforeExpiry(t *testing.T) {
@@ -51,13 +51,13 @@ func TestAPIKeySourceCachesUntilAMinuteBeforeExpiry(t *testing.T) {
 	srv = newTokenServer(t, func(w http.ResponseWriter, r *http.Request, form url.Values) {
 		id, secret, ok := r.BasicAuth()
 		if !ok || id != testKey[:26] || secret != testKey || form.Get("grant_type") != "client_credentials" ||
-			form.Get("project") != "01K6SY8PVAFJ6SW3RT5CY4TQKF" || form.Get("scope") != "documents:read documents:write" {
+			form.Get("project") != "01K6SY8PVAFJ6SW3RT5CY4TQKF" || form.Get("scope") != "sql:read sql:write" {
 			t.Errorf("client credentials request: %q %q %v", id, secret, form)
 		}
 		answer(w, fmt.Sprintf("token-%d", srv.hits.Load()), 900)
 	})
 	s, err := NewAPIKeySource(APIKeyConfig{Issuer: srv.URL + "/terrascale", Key: testKey,
-		Project: "01K6SY8PVAFJ6SW3RT5CY4TQKF", Scopes: []string{ScopeDocumentsRead, ScopeDocumentsWrite}})
+		Project: "01K6SY8PVAFJ6SW3RT5CY4TQKF", Scopes: []string{ScopeSQLRead, ScopeSQLWrite}})
 	if err != nil {
 		t.Fatal(err)
 	}

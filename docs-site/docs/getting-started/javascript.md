@@ -67,7 +67,7 @@ async function getAccessToken() {
   const result = await auth.oidc.token(keyId, apiKey, {
     grant_type: "client_credentials",
     project,
-    scope: "documents:read documents:write",
+    scope: "sql:read sql:write",
   });
   if (!result.ok) throw new Error("Token exchange failed; check the key's permissions.");
   cached = result.value.access_token;

@@ -717,7 +717,7 @@ paths:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CreateOrganizationApiKeyRequest' }
-            example: { name: ci, scopes: ['databases:read', 'documents:read'], expires_at: null }
+            example: { name: ci, scopes: ['databases:read', 'sql:read'], expires_at: null }
       responses:
         '201':
           description: The key and its secret string, shown once.
@@ -843,7 +843,7 @@ paths:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CreateProjectApiKeyRequest' }
-            example: { name: backend, scopes: ['documents:read', 'documents:write'], database: 01J8Z3NDEKTSV4RRFFQ69G5FAV, expires_at: null }
+            example: { name: backend, scopes: ['sql:read', 'sql:write'], database: 01J8Z3NDEKTSV4RRFFQ69G5FAV, expires_at: null }
       responses:
         '201':
           description: The key and its secret string, shown once.
@@ -995,7 +995,7 @@ paths:
       summary: Mint a scoped API key for an agent
       description: |
         Basic keyId:key of an API key mints a new API key that reaches one database (ULID) of one project. access read
-        grants documents:read; read_write grants documents:read and documents:write. ttl_seconds is 60 to 2,592,000
+        grants sql:read; read_write grants sql:read and sql:write. ttl_seconds is 60 to 2,592,000
         (default 3600) and the key never outlives its parent. project is required for an organization key and must equal
         a project key's project. The parent must hold the scopes and, when narrowed, the same database. A scoped key
         mints no keys; revoking or rotating the parent revokes it. The key string is answered once. 600 per parent key
@@ -1257,7 +1257,7 @@ paths:
                 value:
                   grant_type: client_credentials
                   project: 01M4EQ2FRJ8S8B29E8TQVWNW4K
-                  scope: documents:read documents:write
+                  scope: sql:read sql:write
               user:
                 summary: A user's sign-in token, for a project token
                 value:
@@ -1443,7 +1443,7 @@ components:
       enum: [viewer, member, admin]
     Scope:
       type: string
-      enum: ['databases:read', 'databases:write', 'documents:read', 'documents:write', 'usage:read', 'billing:read', 'billing:write']
+      enum: ['databases:read', 'databases:write', 'sql:read', 'sql:write', 'usage:read', 'billing:read', 'billing:write']
     ApiKeyId:
       type: string
       pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
@@ -1966,7 +1966,7 @@ components:
         subject_token: { type: string, description: 'The GitHub Actions OIDC token (RS256, signed by GitHub).' }
         scope:
           type: string
-          description: Space-separated subset of databases:read databases:write documents:read documents:write; default all four.
+          description: Space-separated subset of databases:read databases:write sql:read sql:write; default all four.
     TokenExchangeGrant:
       type: object
       description: A user's sign-in access token exchanged for an organization or project token (RFC 8693).

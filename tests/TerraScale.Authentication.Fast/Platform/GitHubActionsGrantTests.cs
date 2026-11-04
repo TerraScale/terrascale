@@ -37,10 +37,10 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
 
         // A narrower request gets only what it asked for. More than the workload's scopes is refused by OpenIddict itself:
         // the client holds no permission for it (invalid_request, before the grant runs).
-        using var narrow = await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience), "documents:read");
+        using var narrow = await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience), "sql:read");
         var narrowed = new JsonWebToken((await narrow.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("access_token").GetString());
-        await Assert.That(narrowed.GetClaim("scope").Value).IsEqualTo("documents:read");
-        await Assert.That((await ErrorAsync(await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience), "documents:read billing:read"))).Error).IsEqualTo("invalid_request");
+        await Assert.That(narrowed.GetClaim("scope").Value).IsEqualTo("sql:read");
+        await Assert.That((await ErrorAsync(await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience), "sql:read billing:read"))).Error).IsEqualTo("invalid_request");
 
         await Assert.That(await GitHubActionsBinding.UnbindAsync(oidc.Server.App.Services, CancellationToken.None)).IsTrue();
         await Assert.That((await ErrorAsync(await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience)))).Error).IsEqualTo("invalid_client");

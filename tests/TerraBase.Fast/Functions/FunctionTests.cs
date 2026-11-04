@@ -69,7 +69,7 @@ public sealed class FunctionTests
         db.Api.WithToken(db.Api.Issuer.Mint(db.Api.User, token =>
         {
             token.Claims["project_id"] = db.Database.Project;
-            token.Claims["scope"] = "documents:read documents:write";
+            token.Claims["scope"] = "sql:read sql:write";
         }));
 
     private static async Task DeployAsync(HttpClient client, string path, string source)

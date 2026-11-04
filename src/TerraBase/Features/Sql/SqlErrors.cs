@@ -83,7 +83,7 @@ internal static class SqlErrors
 
     public static SqlError NonFinite { get; } = Error("nonfinite numbers are not supported");
 
-    public static SqlError Auth { get; } = new(ForbiddenScope, "writes and schema changes need the documents:write scope");
+    public static SqlError Auth { get; } = new(ForbiddenScope, "writes and schema changes need the sql:write scope");
 
     public static SqlError Busy(string message) => new(SerializationConflict, message);
 

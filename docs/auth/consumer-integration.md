@@ -114,7 +114,7 @@ Management keys need the `roles` scope for `/v1/example/roles` and the
 `authorization` scope for `/v1/example/authorization/check` (or `*`).
 
 ```json
-{"key":"editor","name":"Editor","permissions":["documents:read","documents:write"]}
+{"key":"editor","name":"Editor","permissions":["sql:read","sql:write"]}
 ```
 
 POST that definition to `/v1/example/roles`. Existing membership/invitation
@@ -128,7 +128,7 @@ POST /v1/example/authorization/check
 Authorization: Bearer sk_...
 Content-Type: application/json
 
-{"user_id":"usr_...","organization_id":"org_...","permissions":["documents:write"]}
+{"user_id":"usr_...","organization_id":"org_...","permissions":["sql:write"]}
 ```
 
 The decision requires **all** requested permissions and reads active identity,
