@@ -17,13 +17,15 @@ public sealed class DurableRevisionTests
             await using (var first = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory))
             {
                 await database.CreateAsync(first);
-                await database.InsertAsync(first, 300);
+                // Several pages and separate commits cover incremental catch-up;
+                // bulk WAL/checkpoint stress belongs to the Slow revision tests.
+                await database.InsertAsync(first, 25);
                 before = await replica.PullAsync(first.Server, database.Database);
-                await database.InsertAsync(first, 1_200);
+                await database.InsertAsync(first, 50);
             }
 
             await using var second = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory);
-            await database.InsertAsync(second, 50);
+            await database.InsertAsync(second, 1);
             var pull = await replica.PullAsync(second.Server, database.Database);
 
             await Assert.That(pull.Full).IsNull();
