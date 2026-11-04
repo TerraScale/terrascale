@@ -7,7 +7,20 @@ public static class SharedServer
     private static readonly Lazy<Task<ManagementApi>> Server = new(StartAsync);
 
     /// <summary>Starts the assembly-owned server before parallel test requests arrive.</summary>
-    public static async Task WarmAsync() => await Server.Value;
+    public static async Task WarmAsync()
+    {
+        var api = await Server.Value;
+        var database = await api.CreateManagedDatabaseAsync();
+        using var data = api.DataClient(await api.Server.IssueAsync(database.Organization, "documents:read", "documents:write"));
+        using var query = await ManagementApi.SqlAsync(data, database, "SELECT 1");
+        query.EnsureSuccessStatusCode();
+        using var dropped = await api.Client.DeleteAsync(ManagementApi.Uri(database.Path));
+        dropped.EnsureSuccessStatusCode();
+        using var project = await api.Client.DeleteAsync(ManagementApi.Uri(database.ProjectPath));
+        project.EnsureSuccessStatusCode();
+        using var organization = await api.Client.DeleteAsync(ManagementApi.Uri($"/v1/management/organizations/{database.Organization}"));
+        organization.EnsureSuccessStatusCode();
+    }
 
     internal static async Task<ManagementApi> GetAsync(CancellationToken cancellationToken)
     {
