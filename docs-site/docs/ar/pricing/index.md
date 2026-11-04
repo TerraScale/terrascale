@@ -9,7 +9,7 @@ title: Pricing and limits
 
 # Pricing and limits
 
-See [pricing](/ar/pricing) for the current subscription catalog. SQL usage
-accounting and limits are being updated with the SQL product.
+See [pricing](/ar/pricing) for plan prices, write caps, SQL read fair use and
+storage, and [usage accounting](/ar/concepts/pricing-philosophy) for what is billed.
 
 </div>
