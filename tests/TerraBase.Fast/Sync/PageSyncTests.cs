@@ -18,7 +18,8 @@ public sealed class PageSyncTests
     [Test]
     public async Task TheOfficialClientStaysExactThroughWritesAndACheckpoint()
     {
-        await using var server = await TerraBaseTestServer.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
+        var server = api.Server;
         var directory = Directory.CreateTempSubdirectory("terrabase-page-sync-").FullName;
         try
         {
@@ -53,7 +54,8 @@ public sealed class PageSyncTests
     [Test]
     public async Task OnlyAPeerOnTheInternalListenerPullsAndOnlyItsOwnDatabase()
     {
-        await using var server = await TerraBaseTestServer.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
+        var server = api.Server;
         var directory = Directory.CreateTempSubdirectory("terrabase-page-sync-auth-").FullName;
         try
         {
@@ -86,7 +88,8 @@ public sealed class PageSyncTests
     [Test]
     public async Task AFaultAfterTheHeaderResetsThePullInsteadOfEndingIt(CancellationToken cancellationToken)
     {
-        await using var server = await TerraBaseTestServer.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
+        var server = api.Server;
         var database = await server.CreateSyncedDatabaseAsync();
         await server.FillAsync(database, 8 * 1024 * 1024);
 
