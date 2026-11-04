@@ -206,16 +206,33 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
-    public async ValueTask DeleteIncompleteShapeSnapshotsAsync(string handle, CancellationToken cancellationToken)
+    public async ValueTask PrepareShapeSnapshotAsync(ShapeSealDefinition shape, long offset, CancellationToken cancellationToken)
     {
         await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
         _ = await RunAsync(() =>
         {
+            if (!ShapeBoundary(offset) || offset < StoredShapeFloor(shape.Handle))
+            {
+                throw new ShapeSealOffsetException();
+            }
+
+            PublishShapeLineage(shape.Handle, shape.Table, shape.Generation, shape.Incarnation);
+            var floor = Command("""
+                INSERT INTO _tb_shape_chunk(handle, offset, end_offset, body, sealed_at)
+                VALUES ($key, 0, min($floor, coalesce((SELECT min(offset) FROM (
+                    SELECT offset FROM _tb_shape_snapshot WHERE handle = $handle
+                    UNION ALL SELECT offset FROM _tb_shape_chunk WHERE handle = $handle
+                )), $floor)), X'', 0) ON CONFLICT(handle, offset) DO NOTHING;
+                """);
+            floor.Parameters.AddWithValue("$key", ShapeFloorPrefix + shape.Handle);
+            floor.Parameters.AddWithValue("$floor", offset);
+            floor.Parameters.AddWithValue("$handle", shape.Handle);
+            _ = floor.ExecuteNonQuery();
             var command = Command("""
                 DELETE FROM _tb_shape_snapshot WHERE handle = $handle AND offset NOT IN
                     (SELECT offset FROM _tb_shape_snapshot WHERE handle = $handle AND next_id IS NULL);
                 """);
-            command.Parameters.AddWithValue("$handle", handle);
+            command.Parameters.AddWithValue("$handle", shape.Handle);
             return command.ExecuteNonQuery();
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }

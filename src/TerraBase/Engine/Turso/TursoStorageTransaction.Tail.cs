@@ -16,6 +16,7 @@ internal sealed partial class TursoStorageTransaction
             WITH handles AS (
                 SELECT handle FROM _tb_shape_chunk WHERE handle >= 'h1-' AND handle < 'h2'
                 UNION SELECT handle FROM _tb_shape_snapshot WHERE handle >= 'h1-' AND handle < 'h2'
+                UNION SELECT substr(handle, 8) FROM _tb_shape_chunk WHERE handle >= '~floor:' AND handle < '~floor;' AND offset = 0
             )
             SELECT min(max(
                 coalesce((SELECT end_offset FROM _tb_shape_chunk WHERE handle = '~floor:' || h.handle AND offset = 0), 0),

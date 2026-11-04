@@ -43,7 +43,7 @@ internal interface IShapeSnapshotStorage
 
     ValueTask InsertShapeSnapshotPageAsync(ShapeSealDefinition shape, long offset, int page, ShapeSnapshotPage body, long sealedAt, CancellationToken cancellationToken);
 
-    ValueTask DeleteIncompleteShapeSnapshotsAsync(string handle, CancellationToken cancellationToken);
+    ValueTask PrepareShapeSnapshotAsync(ShapeSealDefinition shape, long offset, CancellationToken cancellationToken);
 
     ValueTask<ShapeSnapshotPage?> ReadShapeSnapshotPageAsync(string handle, long offset, int page, IMemoryBudget memory, CancellationToken cancellationToken);
 }
@@ -115,7 +115,7 @@ internal sealed class ShapeSnapshots(
 
             await using (var cleanup = await transactions.BeginAsync(store, write: true, cancellationToken).ConfigureAwait(false))
             {
-                await Storage(cleanup).DeleteIncompleteShapeSnapshotsAsync(shape.Handle, cancellationToken).ConfigureAwait(false);
+                await Storage(cleanup).PrepareShapeSnapshotAsync(shape, offset, cancellationToken).ConfigureAwait(false);
                 _ = await cleanup.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
 
