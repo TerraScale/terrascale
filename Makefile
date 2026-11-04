@@ -167,9 +167,12 @@ terrabase-analyzer-check: restore
 terrabase-test-fast: restore turso-native
 	dotnet build tests/TerraBase.Fast/TerraBase.Fast.csproj --configuration $(CONFIGURATION) --no-restore
 	dotnet build tests/Turso.Data.Sqlite.Tests/Turso.Data.Sqlite.Tests.csproj --configuration $(CONFIGURATION) --no-restore
-	# The vendored Turso driver's regression tests (src/vendor/Turso.Data.Sqlite/UPSTREAM.md), then the Fast suite.
-	python3 scripts/ci/fast-budget.py turso -- dotnet run --project tests/Turso.Data.Sqlite.Tests --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 3 $(TEST_ARGS)
-	python3 scripts/ci/fast-budget.py terrabase -- dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 1 $(TEST_ARGS)
+	# The independent driver and integration assemblies run in parallel; preserve both exit codes and timing guards.
+	@set -e; \
+	python3 scripts/ci/fast-budget.py turso -- dotnet run --project tests/Turso.Data.Sqlite.Tests --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 3 $(TEST_ARGS) & driver=$$!; \
+	trap 'kill $$driver 2>/dev/null || true' EXIT INT TERM; \
+	status=0; python3 scripts/ci/fast-budget.py terrabase -- dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 1 $(TEST_ARGS) || status=$$?; \
+	wait $$driver || status=$$?; trap - EXIT INT TERM; exit $$status
 
 terrabase-test-slow: terrabase-build
 	dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
