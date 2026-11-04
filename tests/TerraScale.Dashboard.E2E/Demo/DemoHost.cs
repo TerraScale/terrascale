@@ -1093,11 +1093,36 @@ namespace TerraScale.Dashboard.E2E.Demo
             return Task.FromResult<IReadOnlyList<ManagedDatabase>>(databases.Values.Where(item => item.ProjectId == scope.ProjectId).ToArray());
         }
 
-        public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, CancellationToken cancellationToken, long? ttlSeconds = null)
+        public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, IReadOnlyList<string> replicaRegions, bool allRegions, CancellationToken cancellationToken, long? ttlSeconds = null)
         {
-            var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, HomeRegion: home.Id, ReplicaRegions: []) { ExpiresAt = ttlSeconds is { } seconds ? DateTimeOffset.UtcNow.AddSeconds(seconds) : null };
+            var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, HomeRegion: home.Id, ReplicaRegions: Replicas(home.Id, replicaRegions, allRegions), AllRegions: allRegions) { ExpiresAt = ttlSeconds is { } seconds ? DateTimeOffset.UtcNow.AddSeconds(seconds) : null };
             databases[value.Id] = value;
             return Task.FromResult(value);
+        }
+
+        public Task<ManagedDatabase> PlaceAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<string> replicaRegions, bool allRegions, CancellationToken cancellationToken)
+        {
+            var placed = Database(scope, databaseId) with { ReplicaRegions = Replicas(home.Id, replicaRegions, allRegions), AllRegions = allRegions };
+            databases[databaseId] = placed;
+            return Task.FromResult(placed);
+        }
+
+        public Task<ManagedDatabase> MoveHomeAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string homeRegion, CancellationToken cancellationToken)
+        {
+            var current = Database(scope, databaseId);
+            if (current.ReplicaRegions?.Contains(homeRegion, StringComparer.Ordinal) != true)
+            {
+                throw new DatabaseProviderException(HttpStatusCode.BadRequest);
+            }
+
+            var moved = current with { HomeRegion = homeRegion, ReplicaRegions = [.. current.ReplicaRegions.Where(region => region != homeRegion).Append(current.HomeRegion).Order(StringComparer.Ordinal)] };
+            databases[databaseId] = moved;
+            return Task.FromResult(moved);
+        }
+
+        private static string[] Replicas(string home, IReadOnlyList<string> replicaRegions, bool allRegions)
+        {
+            return [.. (allRegions ? regions.Select(region => region.Id) : replicaRegions).Where(region => region != home).Order(StringComparer.Ordinal)];
         }
 
         // A branch starts as a copy of its source's tables and rows.
