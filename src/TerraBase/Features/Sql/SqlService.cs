@@ -12,7 +12,8 @@ namespace TerraBase.Features.Sql;
 internal sealed class SqlService(
     IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time,
     [FromKeyedServices(SqlLimits.TransactionClock)] TimeProvider transactionTime,
-    IDatabaseReplicas replicas, IReplicaCatalog placements, HomeSessions homes, RegionReplication replication, TerraBaseOptions options) : ISqlService
+    IDatabaseReplicas replicas, IReplicaCatalog placements, HomeSessions homes, RegionReplication replication, TerraBaseOptions options,
+    Routing.WriteRouter router) : ISqlService
 {
     private const int MaxTables = 10_000;
 
@@ -22,7 +23,7 @@ internal sealed class SqlService(
         ISqlSession Local() => new SqlSession(engine, quota, usage, allowance, time, transactionTime, database, canWrite);
         // Only a region holding a replica of the database serves it from one; its home always holds the file.
         return replicas.Holds(database)
-            ? new ReplicaSqlSession(this, replicas, placements, homes, replication, options, transactionTime, database, canWrite, Local)
+            ? new ReplicaSqlSession(this, replicas, placements, homes, replication, router, options, transactionTime, database, canWrite, Local)
             : Local();
     }
 

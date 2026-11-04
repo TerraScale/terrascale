@@ -1,32 +1,38 @@
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Replicas;
+using TerraBase.Features.Sql.Routing;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Sql;
 
-/// <summary>
-/// A Postgres or WebSocket SQL session in a region that holds a replica of its database (docs/terrabase/region-replicas.md).
-/// Reads outside a transaction, and READ ONLY transactions, run on the local replica. Writes, other transactions and reads
-/// the replica cannot answer yet run on one session at the home. Read-your-writes: after anything the home ran, a read
-/// waits for a replica pull that started after the home's answer, and goes to the home until one completed.
-/// </summary>
 internal sealed class ReplicaSqlSession(
-    SqlService service, IDatabaseReplicas replicas, IReplicaCatalog placements, HomeSessions homes, RegionReplication replication,
+    SqlService service, IDatabaseReplicas replicas, IReplicaCatalog placements, HomeSessions homes, RegionReplication replication, WriteRouter router,
     TerraBaseOptions options, TimeProvider transactionTime, TenantContext database, bool canWrite, Func<ISqlSession> local) : ISqlSession
 {
     private static readonly SqlResult Empty = new([], [], 0, null);
     private static readonly SqlError ReadOnlyWrite = new(SqlErrors.ReadOnlyTransaction, "a READ ONLY transaction cannot write");
     private static readonly SqlError Expired = new(SqlErrors.QueryCanceled, "the transaction expired: it was open for more than 5 seconds and was rolled back");
+    private static readonly SqlError ReadThenWrite = new(SqlErrors.SerializationConflict,
+        "the transaction read in this region and then wrote: retry it, and the retry runs at the database's home");
 
     private ISqlSession? _home;
     private IReplicaReader? _snapshot;
     private bool _readOnlyTransaction;
+    private bool _declaredReadOnly;
+    private bool _readLocally;
+    private bool _conflicted;
+    private string? _first;
+    private WriteOverride _preference;
     private bool _expired;
     private long _opened;
     private long _position = -1;
 
     public bool IsAutocommit => !_readOnlyTransaction && (_home?.IsAutocommit ?? true);
+
+    public WriteRoute? LastRoute { get; private set; }
+
+    public void Prefer(WriteOverride preference) => _preference = preference;
 
     public void BeginRequest() => _home?.BeginRequest();
 
@@ -56,12 +62,16 @@ internal sealed class ReplicaSqlSession(
         {
             case SqlStatementKind.Read when await ReadAsync(plan, command, admit, cancellationToken).ConfigureAwait(false) is { } read:
                 return read;
-            case SqlStatementKind.Begin when plan.ReadOnly
+            case SqlStatementKind.Begin when (plan.ReadOnly || _preference != WriteOverride.Home)
                 && await replicas.BeginReadAsync(database, _position, cancellationToken).ConfigureAwait(false) is { } snapshot:
-                (_snapshot, _readOnlyTransaction, _expired, _opened) = (snapshot, true, false, transactionTime.GetTimestamp());
+                (_snapshot, _readOnlyTransaction, _declaredReadOnly, _expired, _opened) = (snapshot, true, plan.ReadOnly, false, transactionTime.GetTimestamp());
+                (_readLocally, _conflicted, _first) = (false, false, null);
                 return Empty;
             case SqlStatementKind.Write when !canWrite:
                 return SqlErrors.Auth;
+            case SqlStatementKind.Write:
+                await RouteAsync([command.Sql], cancellationToken).ConfigureAwait(false);
+                return await HomeAsync(command, admit, cancellationToken).ConfigureAwait(false);
             case SqlStatementKind.Noop:
                 return Empty;
             case SqlStatementKind.Rollback when _home is null:
@@ -72,6 +82,37 @@ internal sealed class ReplicaSqlSession(
                 return SqlErrors.Error("savepoints run only inside a transaction: BEGIN one first");
             default:
                 return await HomeAsync(command, admit, cancellationToken, marks: plan.Kind != SqlStatementKind.Read).ConfigureAwait(false);
+        }
+    }
+
+    internal async ValueTask<SqlBatchOutcome?> TryBatchAsync(IReadOnlyList<SqlCommand> commands, CancellationToken cancellationToken)
+    {
+        if (_readOnlyTransaction)
+        {
+            return null;
+        }
+
+        var writes = commands.Any(command => SqlScript.Classify(command.Sql) is SqlStatementPlan { Kind: SqlStatementKind.Write });
+        if ((writes && !canWrite) || (!writes && _preference != WriteOverride.Home && _home is not { IsAutocommit: false }))
+        {
+            return null;
+        }
+
+        if (writes)
+        {
+            await RouteAsync([.. commands.Select(command => command.Sql)], cancellationToken).ConfigureAwait(false);
+        }
+
+        switch (await OpenHomeAsync(cancellationToken).ConfigureAwait(false))
+        {
+            case (_, { } error):
+                return new SqlBatchFailure(error, 0);
+            case (HomeSqlSession remote, _):
+                var outcome = await remote.BatchAsync(commands, cancellationToken).ConfigureAwait(false);
+                _ = await MarkAsync(Empty).ConfigureAwait(false);
+                return outcome;
+            default:
+                return null;
         }
     }
 
@@ -105,6 +146,27 @@ internal sealed class ReplicaSqlSession(
         if (plan.Kind is not (SqlStatementKind.Read or SqlStatementKind.Write))
         {
             return new SqlDescription([], [], IsExplain: false, IsReadOnly: plan.Kind != SqlStatementKind.Write);
+        }
+
+        if (_readOnlyTransaction && !_declaredReadOnly && !_conflicted && plan.Kind == SqlStatementKind.Write && canWrite)
+        {
+            if (_readLocally)
+            {
+                router.Remember(database, _first!);
+                LastRoute = router.Record(new StatementRoute(WritePath.Home, WriteReasons.ReadThenWrite));
+                _conflicted = true;
+                await DropSnapshotAsync().ConfigureAwait(false);
+                return ReadThenWrite;
+            }
+
+            await DropSnapshotAsync().ConfigureAwait(false);
+            _readOnlyTransaction = false;
+            if (await HomeAsync(SqlBatch.Control("BEGIN"), admit: null, cancellationToken, marks: false).ConfigureAwait(false) is SqlError refused)
+            {
+                return refused;
+            }
+
+            return await DescribeAtHomeAsync(command, cancellationToken).ConfigureAwait(false);
         }
 
         if (_readOnlyTransaction)
@@ -167,10 +229,15 @@ internal sealed class ReplicaSqlSession(
     {
         if (plan.Kind is SqlStatementKind.Commit or SqlStatementKind.Rollback)
         {
-            var expired = _expired;
+            var expired = _expired && !_conflicted;
             await DropSnapshotAsync().ConfigureAwait(false);
-            _readOnlyTransaction = false;
+            (_readOnlyTransaction, _conflicted) = (false, false);
             return expired && plan.Kind == SqlStatementKind.Commit ? Expired : Empty;
+        }
+
+        if (_conflicted)
+        {
+            return SqlErrors.InFailedTransaction;
         }
 
         if (!_expired && transactionTime.GetElapsedTime(_opened) >= SqlLimits.MaxTransactionTime)
@@ -179,14 +246,77 @@ internal sealed class ReplicaSqlSession(
             await DropSnapshotAsync().ConfigureAwait(false);
         }
 
-        return plan.Kind switch
+        switch (plan.Kind)
         {
-            _ when _expired || _snapshot is null => Expired,
-            SqlStatementKind.Begin => SqlErrors.Error("cannot start a transaction within a transaction"),
-            SqlStatementKind.Write => canWrite ? ReadOnlyWrite : SqlErrors.Auth,
-            SqlStatementKind.Read => await RunOnAsync(_snapshot, plan, command, admit, cancellationToken).ConfigureAwait(false),
-            _ => Empty,
-        };
+            case var _ when _expired || _snapshot is null:
+                return Expired;
+            case SqlStatementKind.Begin:
+                return SqlErrors.Error("cannot start a transaction within a transaction");
+            case SqlStatementKind.Write when !canWrite:
+                return SqlErrors.Auth;
+            case SqlStatementKind.Write when _declaredReadOnly:
+                return ReadOnlyWrite;
+            case SqlStatementKind.Read when !_declaredReadOnly && _first is null && router.Remembers(database, command.Sql):
+                return await PromoteAsync(command, admit, write: false, cancellationToken).ConfigureAwait(false);
+            case SqlStatementKind.Read:
+                (_first, _readLocally) = (_first ?? command.Sql, true);
+                return await RunOnAsync(_snapshot!, plan, command, admit, cancellationToken).ConfigureAwait(false);
+            case SqlStatementKind.Write or SqlStatementKind.Savepoint or SqlStatementKind.Release or SqlStatementKind.RollbackTo when !_declaredReadOnly:
+                if (!_readLocally)
+                {
+                    return await PromoteAsync(command, admit, plan.Kind == SqlStatementKind.Write, cancellationToken).ConfigureAwait(false);
+                }
+
+                router.Remember(database, _first!);
+                LastRoute = router.Record(new StatementRoute(WritePath.Home, WriteReasons.ReadThenWrite));
+                _conflicted = true;
+                await DropSnapshotAsync().ConfigureAwait(false);
+                return ReadThenWrite;
+            default:
+                return Empty;
+        }
+    }
+
+    private async ValueTask<SqlOutcome> PromoteAsync(SqlCommand command, Func<SqlResult, SqlError?>? admit, bool write, CancellationToken cancellationToken)
+    {
+        await DropSnapshotAsync().ConfigureAwait(false);
+        _readOnlyTransaction = false;
+        if (await HomeAsync(SqlBatch.Control("BEGIN"), admit: null, cancellationToken, marks: false).ConfigureAwait(false) is SqlError refused)
+        {
+            return refused;
+        }
+
+        if (write)
+        {
+            await RouteAsync([command.Sql], cancellationToken).ConfigureAwait(false);
+        }
+
+        return await HomeAsync(command, admit, cancellationToken, marks: write).ConfigureAwait(false);
+    }
+
+    internal async ValueTask<WriteRoute> RouteAsync(IReadOnlyList<string> statements, CancellationToken cancellationToken)
+    {
+        IReplicaReader? reader;
+        try
+        {
+            reader = await replicas.BeginReadAsync(database, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            reader = null;
+        }
+
+        try
+        {
+            return LastRoute = await router.RouteAsync(database, reader, statements, _preference, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (reader is not null)
+            {
+                await reader.DisposeAsync().ConfigureAwait(false);
+            }
+        }
     }
 
     private async ValueTask<SqlDescribeOutcome> DescribeOnAsync(IReplicaReader reader, SqlStatementPlan plan, CancellationToken cancellationToken)

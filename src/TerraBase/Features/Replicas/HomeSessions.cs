@@ -17,13 +17,15 @@ namespace TerraBase.Features.Replicas;
 internal sealed record HomeSessionOpen(string Organization, string Project, string Database, string Region, bool CanWrite);
 
 /// <summary>One call on a home session: <c>execute</c> or <c>describe</c> one statement.</summary>
-internal sealed record HomeSessionCall(string Op, string Sql, IReadOnlyList<SqlValue> Args, IReadOnlyDictionary<string, SqlValue> Named);
+internal sealed record HomeSessionCall(
+    string Op, string Sql, IReadOnlyList<SqlValue> Args, IReadOnlyDictionary<string, SqlValue> Named, IReadOnlyList<HomeSessionCall>? Batch = null);
 
 /// <summary>A statement's result as the home answered it.</summary>
 internal sealed record HomeSessionResult(IReadOnlyList<SqlColumn> Columns, IReadOnlyList<IReadOnlyList<SqlValue>> Rows, long RowsAffected, long? LastInsertRowid);
 
 /// <summary>The home's answer to the open frame or a call, and whether the home session is outside a transaction after it.</summary>
-internal sealed record HomeSessionAnswer(bool Autocommit, SqlError? Error = null, HomeSessionResult? Result = null, SqlDescription? Description = null);
+internal sealed record HomeSessionAnswer(
+    bool Autocommit, SqlError? Error = null, HomeSessionResult? Result = null, SqlDescription? Description = null, IReadOnlyList<HomeSessionResult>? Batch = null, int Statement = 0);
 
 /// <summary>
 /// Length-prefixed JSON frames of a home session (docs/terrabase/region-replicas.md#writes-and-transactions): a 4-byte
@@ -247,6 +249,19 @@ internal sealed class HomeSqlSession(
                 var answered => answered,
             },
             _ => unreachable,
+        };
+    }
+
+    public async ValueTask<SqlBatchOutcome> BatchAsync(IReadOnlyList<SqlCommand> commands, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(commands);
+        var batch = commands.Select(command => new HomeSessionCall("execute", command.Sql, command.Args, command.Named)).ToList();
+        return await CallAsync(new HomeSessionCall("batch", "", [], NoNamed, batch), cancellationToken).ConfigureAwait(false) switch
+        {
+            { Error: { } error } answer => new SqlBatchFailure(error, answer.Statement),
+            { Batch: { } results } => new SqlExecuteBody([.. results.Select(result => new SqlStatementBody(
+                [.. result.Columns.Select(column => new SqlColumnBody(column.Name, column.DeclType))], result.Rows, result.RowsAffected, result.LastInsertRowid))]),
+            _ => new SqlBatchFailure(unreachable, 0),
         };
     }
 
