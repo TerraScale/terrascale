@@ -34,7 +34,7 @@
   <div class="pricing-section__head">
     <div class="pricing-section__intro">
       <svelte:element this={headingTag} class="pricing-section__title">
-        {$dict.pricing.titleLead} {$dict.pricing.titleAccent}
+        {$dict.pricing.titleLead}
       </svelte:element>
     </div>
     <div class="ts-segmented pricing-section__interval" role="group" aria-label={$dict.pricing.intervals.label}>

@@ -187,8 +187,7 @@ export const es: Messages = {
   },
 
   pricing: {
-    titleLead: 'Precios simples',
-    titleAccent: 'que escalan contigo',
+    titleLead: 'Precios',
     suffixMonthly: '/mes',
     suffixAnnual: '/año',
     intervals: {
