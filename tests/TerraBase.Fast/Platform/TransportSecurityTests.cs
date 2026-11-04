@@ -76,7 +76,7 @@ public sealed class TransportSecurityTests
     [Test]
     public async Task The_dashboard_rpc_passes_on_the_private_listener_and_the_same_call_is_refused_on_the_public_one()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
         var database = await api.CreateManagedDatabaseAsync();
         var key = api.Issuer.Mint(api.User, token =>
         {

@@ -20,14 +20,16 @@ public sealed class ManagementApi : IAsyncDisposable
 {
 
     private readonly Lazy<Task> _cleanup;
+    private readonly bool _ownsServer;
 
-    private ManagementApi(TerraBaseTestServer server, ClientTls tls, TestIssuer issuer, string user, bool ownsIssuer)
+    private ManagementApi(TerraBaseTestServer server, ClientTls tls, TestIssuer issuer, string user, bool ownsIssuer, bool ownsServer = true)
     {
         Server = server;
         Tls = tls;
         Issuer = issuer;
         User = user;
-        _cleanup = new(() => CleanupAssetsAsync(server.CleanupCompletion, tls, ownsIssuer ? issuer : null));
+        _ownsServer = ownsServer;
+        _cleanup = new(() => CleanupAssetsAsync(ownsServer ? server.CleanupCompletion : Task.CompletedTask, tls, ownsIssuer ? issuer : null));
         Client = As(user);
     }
 
@@ -44,6 +46,13 @@ public sealed class ManagementApi : IAsyncDisposable
     public HttpClient Client { get; }
 
     internal Task CleanupCompletion => _cleanup.Value;
+
+    /// <summary>A separate user and client on the assembly-owned server; customized and restart tests keep their own hosts.</summary>
+    public static async Task<ManagementApi> StartSharedAsync()
+    {
+        var shared = await SharedServer.GetAsync(CancellationToken.None);
+        return new(shared.Server, new ClientTls(), shared.Issuer, EntityIds.New().ToString(), ownsIssuer: false, ownsServer: false);
+    }
 
     /// <summary>
     /// Starts a server; <paramref name="configure"/> edits its settings after the issuer is configured, <paramref name="time"/>
@@ -240,7 +249,10 @@ public sealed class ManagementApi : IAsyncDisposable
         {
             try
             {
-                await Server.DisposeAsync();
+                if (_ownsServer)
+                {
+                    await Server.DisposeAsync();
+                }
             }
             finally
             {
