@@ -1,5 +1,8 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using TerraBase.Configuration;
+using TerraBase.Features.Backup;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using Turso;
@@ -12,12 +15,15 @@ namespace TerraBase.Engine.Turso;
 
 /// <summary>
 /// Region replicas on Turso's official sync client in page mode (docs/terrabase/region-replicas.md). Each replica is one
-/// file under <c>.replicas/&lt;organization&gt;/&lt;project&gt;/&lt;database&gt;.db</c>; only pulls write it. Replica files are
-/// not encrypted at rest yet: the sync client writes its WAL and staged answers without its page transform.
+/// encrypted file under <c>.replicas/&lt;organization&gt;/&lt;project&gt;/&lt;database&gt;.db</c>, keyed by its own data key
+/// wrapped by this node's master key, so a replica never shares key material with its home. Only pulls write it.
 /// </summary>
-internal sealed class TursoReplicas(TerraBaseOptions options, ILogger<TursoReplicas> logger) : IDatabaseReplicas, IAsyncDisposable
+internal sealed class TursoReplicas(
+    TerraBaseOptions options, [FromKeyedServices(EngineExtensions.DatabaseMasterKey)] IMasterKey master, ILogger<TursoReplicas> logger)
+    : IDatabaseReplicas, IAsyncDisposable
 {
     internal const string DirectoryName = ".replicas";
+    private const string KeyHeader = "TERRABASE-REPLICA-KEY-1\n";
     private const int MaxIdleConnections = 4;
     private const int MaxReadRows = 10_000;
 
@@ -136,16 +142,21 @@ internal sealed class TursoReplicas(TerraBaseOptions options, ILogger<TursoRepli
     private string PathOf((string Organization, string Project, string Database) key) =>
         Path.Combine(Root, key.Organization, key.Project, key.Database + ".db");
 
-    // Opens the replica that exists, otherwise starts one from the home's first full answer. A replica whose sync state is
-    // unreadable is deleted and started again: the home holds every page it needs.
+    // Opens the replica that exists, otherwise starts one from the home's first full answer. A replica whose key or sync
+    // state is unreadable is deleted and started again: the home holds every page it needs.
     private async Task<Replica> CreateAsync((string Organization, string Project, string Database) key, Uri source, HttpClient http)
     {
         var path = PathOf(key);
-        if (File.Exists(path + "-info"))
+        var hexKey = await Task.Run(() => DataKeyRecord(path)).ConfigureAwait(false) switch
+        {
+            { } wrapped => await UnwrapAsync(wrapped).ConfigureAwait(false),
+            null => null,
+        };
+        if (hexKey is not null && File.Exists(path + "-info"))
         {
             try
             {
-                return new Replica(await TursoSyncDatabase.OpenAsync(Options(path, source, http)).ConfigureAwait(false), path, logger, pulled: true);
+                return new Replica(await TursoSyncDatabase.OpenAsync(Options(path, hexKey, source, http)).ConfigureAwait(false), path, logger, pulled: true);
             }
             catch (TursoException error)
             {
@@ -154,8 +165,8 @@ internal sealed class TursoReplicas(TerraBaseOptions options, ILogger<TursoRepli
         }
 
         _ = await Task.Run(() => DeleteFiles(path)).ConfigureAwait(false);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var replica = new Replica(await TursoSyncDatabase.CreateAsync(Options(path, source, http)).ConfigureAwait(false), path, logger, pulled: false);
+        hexKey = await NewKeyAsync(path).ConfigureAwait(false);
+        var replica = new Replica(await TursoSyncDatabase.CreateAsync(Options(path, hexKey, source, http)).ConfigureAwait(false), path, logger, pulled: false);
         try
         {
             _ = await replica.PullAsync(CancellationToken.None).ConfigureAwait(false);
@@ -170,13 +181,74 @@ internal sealed class TursoReplicas(TerraBaseOptions options, ILogger<TursoRepli
         }
     }
 
-    private static TursoSyncDatabaseOptions Options(string path, Uri source, HttpClient http) => new(path, source)
+    private static TursoSyncDatabaseOptions Options(string path, string hexKey, Uri source, HttpClient http) => new(path, source)
     {
         HttpClient = http,
         ClientName = "terrabase-replica",
-        // The first answer is a full one either way; taking it as a pull keeps one apply path for every answer.
-        BootstrapIfEmpty = false,
+        LocalEncryption = new TursoLocalEncryptionOptions { Cipher = TursoRemoteEncryptionCipher.Aegis256, HexKey = hexKey },
     };
+
+    private async Task<string?> UnwrapAsync(string wrapped)
+    {
+        try
+        {
+            var key = await master.UnwrapAsync(wrapped, CancellationToken.None).ConfigureAwait(false);
+            try
+            {
+                return key.Length == 32 ? Convert.ToHexString(key) : null;
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(key);
+            }
+        }
+        catch (CryptographicException)
+        {
+            logger.ZLogWarning($"A replica's data key is not authentic under this node's master key; the replica is started again");
+            return null;
+        }
+    }
+
+    private async Task<string> NewKeyAsync(string path)
+    {
+        var (key, wrapped) = await master.GenerateDataKeyAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            await Task.Run(() =>
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                DatabaseKeys.RejectLink(path + DatabaseKeys.Suffix);
+                var temporary = path + DatabaseKeys.Suffix + ".tmp";
+                using (var file = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    file.Write(Encoding.ASCII.GetBytes(KeyHeader + wrapped + "\n"));
+                    file.Flush(flushToDisk: true);
+                }
+
+                File.Move(temporary, path + DatabaseKeys.Suffix, overwrite: true);
+            }).ConfigureAwait(false);
+            return Convert.ToHexString(key);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
+    }
+
+    private static string? DataKeyRecord(string path)
+    {
+        var file = path + DatabaseKeys.Suffix;
+        DatabaseKeys.RejectLink(file);
+        if (!File.Exists(file) || new FileInfo(file).Length > DatabaseKeys.MaxFileBytes)
+        {
+            return null;
+        }
+
+        var text = File.ReadAllText(file, Encoding.ASCII);
+        return text.StartsWith(KeyHeader, StringComparison.Ordinal) && text.EndsWith('\n') && text.Length > KeyHeader.Length + 1
+            ? text[KeyHeader.Length..^1]
+            : null;
+    }
 
     private static bool DeleteFiles(string path)
     {
