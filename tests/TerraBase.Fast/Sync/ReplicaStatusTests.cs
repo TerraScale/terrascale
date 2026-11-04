@@ -28,9 +28,9 @@ public sealed class ReplicaStatusTests
             });
             var managed = await api.CreateManagedDatabaseAsync();
             var database = new TenantContext(managed.Organization, PlanTier.Hobby, managed.Project, managed.Id);
-            var placement = await api.Server.Services.GetRequiredService<IManagementService>()
+            var placement = await api.Server.Services.GetRequiredService<TerraBase.Features.Management.IManagementService>()
                 .SetDatabaseRegionsAsync(api.User, managed.Organization, managed.Project, managed.Id, ["replica-region"], token);
-            await Assert.That(placement).IsTypeOf<ManagedDatabase>();
+            await Assert.That(placement is ManagedDatabase).IsTrue();
             await api.Server.ExecuteAsync(database, "CREATE TABLE items(id INTEGER PRIMARY KEY, v TEXT)");
             var path = $"/v1/projects/{managed.Project}/databases/{managed.Id}/regions";
             using var client = api.WithToken(api.Issuer.Mint(api.User, claims =>
