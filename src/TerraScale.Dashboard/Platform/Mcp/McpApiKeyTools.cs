@@ -92,7 +92,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 write = !SqlValidation.IsRead(sql);
                 if (write && tool == "run_sql") throw new AccountAccessException("run_sql accepts read-only statements. Use execute_sql for writes.", 422);
             }
-            var permission = dataTool ? write ? "documents:write" : "documents:read" : write ? "databases:write" : "databases:read";
+            var permission = dataTool ? write ? "sql:write" : "sql:read" : write ? "databases:write" : "databases:read";
             if (!credential.Scopes.Contains(permission, StringComparer.Ordinal)) throw new AccountAccessException("The API key does not grant " + permission + ".");
             if (tool == "check_sql") return Reply(SqlValidation.Analyze(sql), McpAgentJson.Default.SqlAnalysis);
             var regions = await databases.RegionsAsync(ct);
