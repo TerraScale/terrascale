@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
 
 namespace TerraScale.Dashboard.E2E.Features.Auth
@@ -87,6 +88,59 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
         }
 
         [Test]
+        public async Task AccessExpiryDuringIssuerValidationRefreshesTheSameBrowserSession()
+        {
+            await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+            using var producer = scenario.CreateProviderClient();
+            using var browser = scenario.CreateClient();
+            using var replica = scenario.CreateClient(replica: true);
+            await Control(producer, new { command = "short-grants" });
+            using var login = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me");
+            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            var cookie = Cookie(login);
+
+            // The access grant expires while the issuer is still validating it: the
+            // persistent session must refresh rather than sign the browser out.
+            await Control(producer, new { command = "pause-next-userinfo" });
+            var pending = browser.GetAsync("/api/v1/auth/me");
+            await scenario.WaitForUserInfoAsync();
+            await Control(producer, new { command = "advance", seconds = 2 });
+            await Control(producer, new { command = "release-userinfo" });
+            using var recovered = await pending;
+            await Assert.That(recovered.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+            using var next = await Request(replica, "/api/v1/auth/me", cookie);
+            await Assert.That(next.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That((await Observe(producer)).GetProperty("refreshes").GetInt32()).IsEqualTo(1);
+        }
+
+        [Test]
+        public async Task IssuerRevocationDuringValidationStillEndsTheBrowserSession()
+        {
+            await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+            using var producer = scenario.CreateProviderClient();
+            using var browser = scenario.CreateClient();
+            using var replica = scenario.CreateClient(replica: true);
+            await Control(producer, new { command = "short-grants" });
+            using var login = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me");
+            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            var cookie = Cookie(login);
+
+            // Revoked authority cannot recover through the boundary refresh, not even at expiry.
+            await Control(producer, new { command = "pause-next-userinfo" });
+            var pending = browser.GetAsync("/api/v1/auth/me");
+            await scenario.WaitForUserInfoAsync();
+            await Control(producer, new { command = "advance", seconds = 2 });
+            await Control(producer, new { command = "revoke" });
+            await Control(producer, new { command = "release-userinfo" });
+            using var rejected = await pending;
+            await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+
+            using var next = await Request(replica, "/api/v1/auth/me", cookie);
+            await Assert.That(next.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        }
+
+        [Test]
         public async Task LogoutEndsTheSessionAtHostedEndSession()
         {
             await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
@@ -115,5 +169,31 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
             await Assert.That(after.Headers.Location!.Host).IsEqualTo("auth.terrascale.tech");
         }
 
+        private static async Task Control(HttpClient producer, object command)
+        {
+            using var response = await producer.PostAsJsonAsync("/__test/control", command);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        private static async Task<JsonElement> Observe(HttpClient producer)
+        {
+            using var response = await producer.GetAsync("/__test/observations");
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            return json.RootElement.Clone();
+        }
+
+        private static string Cookie(HttpResponseMessage response)
+        {
+            return response.Headers.GetValues("Set-Cookie")
+                .Single(value => value.StartsWith("ts-dashboard-session=", StringComparison.Ordinal)).Split(';')[0];
+        }
+
+        private static Task<HttpResponseMessage> Request(HttpClient client, string path, string cookie)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, path);
+            request.Headers.Add("Cookie", cookie);
+            return client.SendAsync(request);
+        }
     }
 }
