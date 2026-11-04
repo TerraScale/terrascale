@@ -40,6 +40,7 @@ public sealed partial class SqlSurfaceParityTests
             ("SELECT nope FROM people", []),
             ("SELEC 1", []),
             ("SELECT * FROM turso_cdc", []),
+            ("VACUUM INTO '/tmp/escape.db'", []),
             ("DELETE FROM people WHERE id = $1", [2L]),
             ("SELECT count(*) AS left_over FROM people", []),
         };
@@ -63,13 +64,13 @@ public sealed partial class SqlSurfaceParityTests
         }
 
         await Assert.That(string.Join(',', answers.Select(answer => answer.Http.Code)))
-            .IsEqualTo(",,,,,,primary_key_violation,unique_violation,not_null_violation,check_violation,undefined_table,undefined_column,syntax_error,undefined_table,,");
-        await Assert.That(string.Join(',', answers.Select(answer => answer.Wire.Sqlstate))).IsEqualTo(",,,,,,23505,23505,23502,23514,42P01,42703,42601,42P01,,");
+            .IsEqualTo(",,,,,,primary_key_violation,unique_violation,not_null_violation,check_violation,undefined_table,undefined_column,syntax_error,undefined_table,sql_sandbox,,");
+        await Assert.That(string.Join(',', answers.Select(answer => answer.Wire.Sqlstate))).IsEqualTo(",,,,,,23505,23505,23502,23514,42P01,42703,42601,42P01,42501,,");
         await Assert.That(answers[1].Http.RowsAffected).IsEqualTo(1);
         await Assert.That(answers[3].Http.RowsAffected).IsEqualTo(1);
         await Assert.That(answers[4].Http.Rows).IsEqualTo($"1|{name}|{email}|1.5|{city}|31\n2|{other}|{second}|∅|∅|40");
         await Assert.That(answers[5].Http.Rows).IsEqualTo("2|71|1.5");
-        await Assert.That(answers[15].Http.Rows).IsEqualTo("1");
+        await Assert.That(answers[16].Http.Rows).IsEqualTo("1");
         await Assert.That(EngineName().IsMatch(leaks.ToString())).IsFalse().Because(leaks.ToString());
     }
 
