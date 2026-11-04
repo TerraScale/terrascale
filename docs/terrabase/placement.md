@@ -38,14 +38,16 @@ Region A is the home and region B the target. A coordinates; B's replica becomes
 
 1. **Catch up.** A asks B to pull now (`POST /v1/sync/…/databases/{database}/catch-up` on B's internal listener), while
    writes continue.
-2. **Pause.** A records a move marker for the database in its system database, then takes the database's writer. New
-   write transactions queue behind it; transactions in flight finish first. Reads continue.
+2. **Pause.** A records a move marker in its system database and a fence file under `<data-directory>/.fences/`, then
+   waits for the write transactions in flight to finish. New write transactions wait at the fence (at most 30 seconds)
+   before they take the database's writer. Reads and page pulls continue.
 3. **Promote.** A asks B to promote at the next placement version (`POST …/promote`). B stops its follower, pulls until
    a pull brings nothing new (two pulls: the second must be empty, which proves A is paused), converts its replica into
    a home file (a consistent copy into a new file under a new data key, as a restore does; a new incarnation, so every
    replica bootstraps again), and records itself as home in its catalog with the next placement version.
-4. **Demote.** A fences the database (below), releases the writer, records B as home and itself as a replica in its
-   catalog, deletes the marker and deletes its home file. A then follows B like any replica.
+4. **Demote.** A fences the database as moved (below), which ends the waiting writes, records B as home and itself as a
+   replica in its catalog, deletes the marker and the fence file, and deletes its home file. A then follows B like any
+   replica.
 
 The epoch of a database is its placement version: B is home at version `v + 1` only after A stopped writing at `v`, and a
 region accepts a placement only when it is newer than the one it holds.
@@ -54,8 +56,10 @@ region accepts a placement only when it is newer than the one it holds.
 
 A node keeps a fence per database it no longer homes, checked after a write transaction takes the database's writer:
 
-- **Moved:** writes queued behind the move, and later writes on sessions opened before it (WebSocket, Postgres), fail
-  with `421 wrong_region` (SQL code `wrong_region`, SQLSTATE `08004`) naming the new home. They were never committed.
+- **Paused:** during the move, write transactions wait; a write that passed the fence just before the pause and takes
+  the writer during it fails with `serialization_conflict` (retry).
+- **Moved:** waiting writes, and later writes on sessions opened before the move (WebSocket, Postgres), fail with
+  `421 wrong_region` (SQL code `wrong_region`, SQLSTATE `08004`) naming the new home. They were never committed.
 - **Unresolved:** after a restart with a move marker, or when A could not learn the promote outcome, writes fail with
   `tenant_busy` (retry) until A settles the move with B.
 
@@ -67,10 +71,11 @@ so two regions never accept writes for one database. A retries every 5 seconds a
 
 The pause lasts from step 2 to step 4: one incremental pull, an empty pull, the copy of the database into its new file and
 two catalog writes. The copy grows with the database size. The move logs `catch_up_ms`, `pause_ms` and `total_ms`, and
-records `terrabase.placement.move.pause` (ms).
+records `terrabase.placement.move.pause` (ms). In `HomeMoveTests` (two nodes on one host, a small table under REST
+writes) a move took 512 ms: 227 ms catch-up and a 276 ms write pause.
 
 ## Tests
 
 - Slow `HomeMoveTests`: gru and sjc nodes; a writer commits rows through REST during a move from gru to sjc; every
   acknowledged row is in sjc afterwards, sjc takes writes, and a WebSocket session opened on gru before the move is
-  refused a write after it.
+  refused a write after it (`08004`).
