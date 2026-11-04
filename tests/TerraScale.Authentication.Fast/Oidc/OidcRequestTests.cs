@@ -16,8 +16,8 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
     public async Task Redirect_uris_pkce_and_client_secrets_must_match_exactly()
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);
-        await oidc.CreateUserAsync();
-        var session = await oidc.SignInAsync("alice@example.test");
+        var user = await oidc.CreateUserAsync();
+        var session = (await oidc.Server.App.Services.GetRequiredService<Sessions>().CreateAsync(user)).Token;
         var (verifier, challenge) = OidcHarness.Pkce();
 
         // An unregistered redirect URI is answered here, never redirected to, with the hosted error page.
