@@ -1,9 +1,13 @@
 using TerraBase.Engine.Revisions;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoDatabaseStore
 {
+    /// <summary>Called after a commit gives the database a newer revision; it must not block or throw.</summary>
+    internal Action<TenantContext>? Revised { get; init; }
+
     private async ValueTask IndexRevisionAsync()
     {
         if (_writerSession is not { } writer || Closed)
@@ -13,7 +17,10 @@ internal sealed partial class TursoDatabaseStore
 
         try
         {
-            await WriteLane.RunAsync(() => Revisions.AfterWrite(writer.Connection), CancellationToken.None).ConfigureAwait(false);
+            if (await WriteLane.RunAsync(() => Revisions.AfterWrite(writer.Connection), CancellationToken.None).ConfigureAwait(false) && Tenant is { } tenant && !IsSystem)
+            {
+                Revised?.Invoke(tenant);
+            }
         }
         catch (Exception error) when (error is not OutOfMemoryException)
         {
