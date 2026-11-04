@@ -3,7 +3,6 @@
   "databases": 1,
   "storageBytes": 9007199254740993,
   "logicalBytes": 1024,
-  "documents": 2,
   "reads": 22,
   "writes": 5,
   "period": {
@@ -25,8 +24,6 @@
       "databaseId": "01JA0000000000000000000004",
       "storageBytes": 9007199254740993,
       "logicalBytes": 1024,
-      "collections": 1,
-      "documents": 2,
       "reads": 22,
       "writes": 5,
       "period": {

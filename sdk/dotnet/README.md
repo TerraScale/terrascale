@@ -4,14 +4,13 @@ The official .NET SDK for TerraBase (its v1 HTTP API) and ts-auth. The package s
 both targets.
 
 The current source package version is `0.0.12`. NuGet publication remains on hold:
-use a `ProjectReference` to an immutable checkout or `dotnet pack` into a local feed.
+use a `ProjectReference` to an immutable checkout or `dotnet pack` into a local package source.
 Keep the source revision with the package; isolate its restore cache so a previous local
 pack with the same version cannot be reused. See the [pinned C# quickstart](https://docs.terrascale.tech/getting-started/csharp).
 
 | Artifact | Availability |
 | --- | --- |
-| Historical source tag `v0.0.6` | Relational SQL; predates full-text/vector helpers and document export |
-| Current source/local pack `0.0.12` | Full-text/vector queries, imports and streaming `ExportAsync`, plus the supported auth APIs below |
+| Current source/local pack | SQL over REST and WebSocket, database lifecycle, backups, functions, management and the supported auth APIs below |
 
 These are source/API availability claims. The included producer contracts and HTTP fixtures
 carry their own pins; deployment, scope, plan and live-method qualification remain separate gates.
@@ -116,17 +115,8 @@ host clock and replace the generator to resume current timestamps; ordering
 across old and new instances is not guaranteed. Forward jumps are accepted
 because a generator can legitimately be idle for any length of time.
 
-The document key is carried in document metadata. An ordinary payload field named
-`id` does not replace that key; references to other API entities still use canonical ULIDs.
-
-**Document ids are ULIDs.** TerraBase accepts only canonical ULIDs as document
-ids and answers `400 invalid_document_id` otherwise. The SDK rejects any other id
-with `ArgumentException` before sending: `GetDocumentAsync`, `PutDocumentAsync`,
-`PatchDocumentAsync`, `DeleteDocumentAsync`, the platform `GetDocumentAsync` and
-every `TerraBaseTransactionOperation` factory that takes an id (`Create`'s id is
-optional; TerraBase generates one when it is omitted). Application natural keys can remain
-ordinary payload fields. SQL and PostgreSQL primary keys are user-chosen integer, text or
-composite values; the SDK does not hash or remap them to ULIDs.
+SQL and PostgreSQL primary keys are user-chosen integer, text or composite values; the SDK does not hash or remap
+them to ULIDs.
 There is no migration, backfill, compatibility shim or dual-read/write path.
 This SDK owns no persisted service data and performs no production reset.
 
@@ -145,172 +135,32 @@ HTTPS `Uri` supplied by an authorized integration, not created by this SDK. See 
 
 ## TerraBase client
 
-Schema10 preparation adds `TerraBaseDatabase.DeclareSchemaAsync` and `GetSchemaAsync` with native single
-and compound unique declarations. See the [exact source contract and qualification gates](docs/terrabase-schema10.md).
-These operations are not qualified by the existing pinned server release; Auth bootstrap credential
-support must land in the producer before Auth uses them at startup.
-
-`TerraScale.DotNet.TerraBase` talks to the C# TerraBase server over its public
-HTTPS client listener. `TerraBaseDocumentsClient` covers the Documents API v1:
-databases, collections, documents, queries and transactions.
-`TerraBaseManagementClient` covers the Management API: organizations, the
-current organization, plans, projects, databases, branches, members,
-invitations, ownership transfer, audit retention and audit events.
-`TerraBaseRegionsClient` reads the anonymous [serving-region catalog](contracts/terrabase/regions.md) for placement metadata.
-`TerraBaseShapeClient` follows a collection's shape protocol v1 into local state;
-see [shape reads and qualification](docs/terrabase-shapes.md). `ExportAsync` streams live documents; import methods stage, validate and run one
-user-confirmed source upload. Export is not a database backup.
+`TerraScale.DotNet.TerraBase` talks to the C# TerraBase server over its public HTTPS client listener.
+`TerraBaseSqlClient` runs SQL; see [SQL](#sql). `TerraBaseDocumentsClient` addresses projects and databases:
+`Project(projectId)` creates, lists, reads, renames and deletes databases and reads usage, analytics, saved queries and
+backup destinations; `Database(projectId, name)` reads usage and analytics, branches, backs up and restores, and
+deploys and invokes functions. `TerraBaseManagementClient` covers the Management API: organizations, the current
+organization, plans, projects, databases, branches, members, invitations, ownership transfer, audit retention and
+audit events. `TerraBaseRegionsClient` reads the anonymous [serving-region catalog](contracts/terrabase/regions.md).
+`TerraBaseHealthClient` reads the anonymous health probes.
 
 ```csharp
-using System.Text.Json;
 using TerraScale.DotNet.TerraBase;
 
 using var httpClient = new HttpClient(TerraBaseHttp.CreateHandler());
-var documents = new TerraBaseDocumentsClient(httpClient, new TerraBaseDocumentsClientOptions
+var client = new TerraBaseDocumentsClient(httpClient, new TerraBaseDocumentsClientOptions
 {
     BaseAddress = discoveredOrigin,
-    ApiKey = currentAccessToken // Authorization: Bearer; exchange the dashboard key first
+    AccessTokenProvider = token => GetProjectAccessTokenAsync(token),
 });
 
-await documents.Project(projectId).CreateDatabaseAsync("app", cancellationToken: cancellationToken); // canonical POST
-TerraBaseDatabase database = documents.Database(projectId, "app");
-await database.CreateCollectionAsync("users", cancellationToken);
-
-var user = JsonSerializer.SerializeToElement(new { email = "user@example.com" });
-TerraBaseWriteResult created = await database.PutDocumentAsync(
-    "users", userId, user, TerraBasePrecondition.Absent, cancellationToken);
-
-TerraBaseDocument? current = await database.GetDocumentAsync("users", userId, cancellationToken);
+TerraBaseManagedDatabase app = await client.Project(projectId).CreateDatabaseAsync("app", cancellationToken: cancellationToken);
+TerraBaseManagedDatabase copy = await client.Database(projectId, "app").BranchAsync("app-copy", cancellationToken);
 ```
 
-Each database is stored and served in one home region. `Project(projectId).CreateDatabaseAsync` without a
-home region uses the called region. Region replicas are not available yet: a non-empty `replicaRegions` or
-`allRegions: true` on create or `SetDatabaseRegionsAsync` returns 400 `replicas_unavailable`.
-
-Call `DeleteAsync` directly in the database's home region. A 204 response records logical deletion and local
-cleanup; branches remain independent.
-
-Relational SQL uses `TerraBaseSqlClient`; see [SQL](#sql).
-
-One-time imports follow TerraBase's import contract (monorepo `docs/terrabase/import.md` and `import-ndjson.md` at
-`2cc348ec75a11079aa20547c09203e581ce70cb8`; nothing here is live-qualified). Every imported row gets a generated deterministic ULID document id;
-source primary keys (and NDJSON `id`, `_id` or `$oid`) stay ordinary fields. The user exports with their own tools
-(`pg_dump --format=plain`, a rollback-journal SQLite/Turso file from `VACUUM INTO`, or NDJSON) and uploads it: TerraBase never
-connects to the source or receives its credentials. Create a new, empty destination database for each import with
-`Project(projectId).CreateDatabaseAsync`, a fresh `import-<lowercase ULID>` name and the same ts-auth
-project access token (a database created through `TerraBaseManagementClient` is reachable by a project token only once
-TerraBase has verified its project binding). The owning `ImportRoute` and `ImportJobs` accept normal replicated
-placement: the home region runs the import and replicates its writes. Do not remove replicas before importing.
-Every import call must use a client pinned to the destination's home region:
-
-```csharp
-TerraBaseManagedDatabase destination = await documents.Project(projectId).CreateDatabaseAsync(destinationName, cancellationToken: cancellationToken);
-TerraBaseDatabase import = regional.Database(projectId, destinationName); // a client with Region = destination.HomeRegion
-TerraBaseImportJob job = await import.CreateImportAsync(TerraBaseImportFormat.PostgresPlain, fileBytes, fileSha256Hex, cancellationToken: cancellationToken);
-var part = new byte[TerraBaseDatabase.MaxImportSourcePartBytes];
-while (job.Source.ReceivedBytes < job.Source.Bytes)
-{
-    var size = (int)Math.Min(part.Length, job.Source.Bytes - job.Source.ReceivedBytes);
-    file.Position = job.Source.ReceivedBytes;
-    await file.ReadExactlyAsync(part.AsMemory(0, size), cancellationToken);
-    job = await import.UploadImportSourceAsync(job.Source.ReceivedBytes, part.AsMemory(0, size), cancellationToken);
-}
-
-// Poll GetImportAsync until Ready (show job.Preview) or Rejected; start only the preview the user confirmed.
-job = await import.StartImportAsync(confirmedPreviewId, cancellationToken);
-```
-
-Poll `GetImportAsync` for progress, validation and errors; `UpdateImportAsync`, `CancelImportAsync` and
-`ResumeImportAsync` follow the contract's state machine. Every request is sent once and TerraBase takes no
-`Idempotency-Key`: replaying an identical create or an already received part returns the job unchanged, and
-`offset_mismatch` means "read the job and continue from `Source.ReceivedBytes`" (an upload idle for a day restarts at
-0). TerraBase keeps a staged source at most 7 days after the job failed, was cancelled or its preview was left alone,
-and meters upload bytes and imported documents; tell users before a real upload. Deleting the destination database
-discards the import and its staged source.
-
-`GetDocumentAsync` returns `null` for an absent document. `CreateDocumentAsync`
-posts a document and TerraBase generates a ULID. Lists and queries return
-pages with `NextCursor`. Patches take an RFC 7396 merge patch `JsonElement` or a
-list of `TerraBasePatchOperation`. `TransactAsync` applies `Create`, `Put`,
-`Patch`, `Delete`, `Assert`, `AssertAbsent` and `AssertCount` operations
-atomically.
-
-With a local package built from this source checkout, stream query results as follows:
-
-```csharp
-await foreach (TerraBaseDocument document in database.QueryDocumentsAsync(
-    "users", new TerraBaseQuery { Limit = 100 }, cancellationToken))
-{
-    // Process document.Document in your application.
-}
-```
-
-`QueryPagesAsync` instead yields complete pages with count, aggregate and explain metadata.
-Both preserve the query's initial opaque cursor, follow empty pages with a continuation,
-and fetch only as enumeration advances. Later requests clear `Count`; the original query
-is unchanged. Cancellation stops buffered document delivery; breaking the loop stops
-pagination. Repeated or cyclic continuations throw `InvalidDataException`.
-
-`TerraBaseSort.Near(path, vector, metric)` orders a query by vector distance
-(`cosine`, the default, or `l2`). It must be the only sort key; the query
-returns one page of at most 1000 documents, each with `Distance`.
-`SetCollectionTtlAsync`, `GetCollectionTtlAsync` and `ClearCollectionTtlAsync`
-manage a collection's expiry member: documents whose member holds a past
-RFC 3339 UTC time are deleted within about an hour and stay readable until then.
-
-```csharp
-await database.SetCollectionTtlAsync("sessions", "/expiresAt", cancellationToken);
-TerraBaseDocumentPage nearest = await database.QueryAsync("items",
-    new TerraBaseQuery { Sort = [TerraBaseSort.Near("/embedding", embedding)], Limit = 10 }, cancellationToken);
-```
-
-Vector indexes take one dotted field path and dimensions from 1 to 4096:
-
-```csharp
-TerraBaseIndex vectorIndex = await database.CreateIndexAsync(
-    new TerraBaseCreateIndexRequest("items", ["embedding"], Kind: "vector", Dimensions: 768),
-    cancellationToken);
-```
-
-Creation may return `vectorIndex.State == "building"` while existing documents are indexed.
-`ListIndexesAsync` reports when it becomes `active`; near queries scan until then.
-A matching active vector index makes near results approximate.
-
-Points are `{"lat": …, "lon": …}` objects (WGS 84 degrees). `TerraBaseFilter.WithinRadius(path, lat, lon, meters)`
-and `TerraBaseFilter.WithinBox(path, south, west, north, east)` build `within` filter nodes (a box with `west > east`
-crosses the antimeridian); they nest under `and`, `or` and `not`. `TerraBaseSort.NearPoint(path, lat, lon)` orders
-by haversine meters, nearest first, with the same one-key, one-page (at most 1000) rules as the vector `Near`;
-`Distance` then holds meters. `TerraBaseQuery.Aggregate` groups matches instead of returning documents: up to 4
-`GroupBy` paths and up to 16 `Sum`, `Avg`, `Min` and `Max` paths, without sort, project, cursor or count. The page's
-`Groups` hold each `Key`, `Count` and per-path summaries (numbers only; `null` without numbers, sums `0`), and
-`Limit` bounds the groups.
-
-```csharp
-TerraBaseDocumentPage nearby = await database.QueryAsync("places", new TerraBaseQuery
-{
-    Filter = TerraBaseFilter.WithinRadius("/loc", -23.55, -46.63, 1000),
-    Sort = [TerraBaseSort.NearPoint("/loc", -23.55, -46.63)],
-}, cancellationToken);
-TerraBaseDocumentPage totals = await database.QueryAsync("orders", new TerraBaseQuery
-{
-    Aggregate = new() { GroupBy = ["/status"], Sum = ["/amount"], Avg = ["/amount"] },
-}, cancellationToken);
-```
-
-`TerraBaseQuery.Explain = true` runs the query as usual (bypassing the result cache) and fills the page's `Explain`:
-the engine `Plan` steps, the `Indexes` used, `FullScan`, `RowsScanned`, `WorkUnits`, `ElapsedMs` and, on a full scan,
-`SuggestedIndex` (the `fields` of an index to create). `ListQueryShapesAsync` items carry `LatencyBuckets` (20
-power-of-two millisecond buckets) and `P95LatencyMs`; both are null for statistics recorded before buckets existed.
-The list is cumulative per shape, so filter on `LastSeenAt` for a recent window.
-
-```csharp
-TerraBaseDocumentPage explained = await database.QueryAsync("items", new TerraBaseQuery
-{
-    Filter = JsonDocument.Parse("""{"eq":["/status","open"]}""").RootElement,
-    Explain = true,
-}, cancellationToken);
-IReadOnlyList<string>? fields = explained.Explain!.SuggestedIndex; // ["status"] on a full scan
-```
+A database is stored and served in exactly one region, its `HomeRegion`. `CreateDatabaseAsync` without a home region
+uses the called region. Call `DeleteDatabaseAsync` in the database's region. A 204 response records logical deletion
+and local cleanup; branches remain independent.
 
 ```csharp
 // Use the ts-orch NetBird service address; the caller configures the required peer credential on httpClient.
@@ -332,7 +182,7 @@ OCI under ts-orch. Requests without a credential (private listener only) go out 
 `TerraBasePage<T>(Items, Next)`; pass `Next` as `after` with an optional `limit`.
 
 Both clients accept `AccessTokenProvider`
-(`Func<CancellationToken, ValueTask<string>>`); the Documents client also takes a static `ApiKey`. Supply at most one
+(`Func<CancellationToken, ValueTask<string>>`); `TerraBaseDocumentsClient` also takes a static `ApiKey`. Supply at most one
 credential source, and none only for a private plain-HTTP origin. The provider runs
 once per request after origin validation, shares the request deadline, and must
 be thread-safe and honor cancellation. It supplies the credential accepted by
@@ -340,16 +190,8 @@ the deployed server; the SDK performs no exchange, background refresh, or retry.
 Current routes and credentials remain supported. The TS-589 project JWT and
 route migration will follow its server release.
 
-Concurrency uses opaque document versions (`tbv1-…` or `tbv2-…` ETags).
-`TerraBasePrecondition.Matches(version)` sends `If-Match` with that version,
-`TerraBasePrecondition.Exists` sends `If-Match: *`, and
-`TerraBasePrecondition.Absent` sends `If-None-Match: *` for create-only writes;
-create-only succeeds over a deleted tombstone. A failed precondition throws
-`TerraBasePreconditionFailedException`. Transaction operations take the version
-as their `ifMatch` argument.
-
 Error statuses throw `TerraBaseException`, an `HttpRequestException` with
-`ErrorCode` and, for transactions, `OperationIndex`. Subclasses name the
+`ErrorCode`. Subclasses name the
 statuses callers act on: `TerraBaseValidationException` (400, 413, 415),
 `TerraBaseAuthenticationException` (401), including `TerraBaseKeyRevokedException`
 and `TerraBaseKeyExpiredException` (permanent; replace the key), `TerraBaseForbiddenException` (403),
@@ -365,14 +207,13 @@ with a buffered body at most twice. Safe GET/HEAD reads also resend `429 tenant_
 wait would pass the request deadline, the failure is thrown at once. Authentication errors never retry.
 The SDK does not exchange or cache tokens; caller-owned token providers must drop revoked/expired tokens
 and stop exchanging the refused key. `503 write_outcome_unknown` and all other errors are sent once. TerraBase
-rejects `Idempotency-Key`. Retry a write only
-when its precondition makes the retry safe.
+rejects `Idempotency-Key`; do not replay a write whose outcome is unknown.
 `TerraBaseHttp.CreateHandler()` fails a connection attempt after 10 seconds and replaces pooled connections every
 2 minutes, so long-lived clients follow DNS changes.
 
 Supplied `HttpClient` handlers **must disable automatic redirects**. Use
 `TerraBaseHttp.CreateHandler()` or set `AllowAutoRedirect = false` on your handler
-before constructing the client. Redirects can forward invitation tokens, document
+before constructing the client. Redirects can forward invitation tokens, request
 bodies and acting-user headers to another origin. The SDK cannot inspect or
 change a caller-owned handler's settings. Cookie handling should also be disabled.
 
@@ -394,7 +235,7 @@ carries no routing header. With `Region = "gru"` (a lowercase region id), every 
 `X-TerraScale-Region-Pin: gru`, so no other region serves it. A region that does not serve the request answers `421`,
 surfaced as `TerraBaseWrongRegionException`: `Region` is the region that answered, `HomeRegion` and `Regions` (from
 `X-TerraBase-Database-Home`/`-Regions`) say where to send it. Nothing is retried or redirected automatically: a write is
-sent once, and conditional writes (`TerraBasePrecondition`) are the duplicate guard. Every `TerraBaseException` carries
+sent once. Every `TerraBaseException` carries
 the answering region (`X-TerraBase-Region`) when TerraBase named it.
 
 No TerraBase runs in this repository (user rule, 2026-10-11: no repository other
@@ -402,18 +243,16 @@ than the monorepo depends on TerraBase). The clients are tested over HTTP fakes.
 `contracts/terrabase/routes.json` records the existing TerraBase routes the clients call;
 `TerraBaseContractTests` checks the clients send exactly those, and the monorepo's
 ts-auth Fast suite checks that the TerraBase built from the same commit serves each
-one, so the SDK and TerraBase cannot drift apart silently. Shape protocol routes
-are separately pinned in `contracts/terrabase/shape-routes.json` while FR-20
-server wiring is pending. ts-auth's suites exercise
+one, so the SDK and TerraBase cannot drift apart silently. ts-auth's suites exercise
 these clients end to end against that same TerraBase.
 
 ```bash
 nice -n 19 dotnet run --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj --framework net10.0 --configuration Release
 ```
 
-`TerraBasePlatformClient` reads TerraBase's explore API over TerraScale's own databases (`platform-auth`,
-`platform-dashboard`) for the dashboard's platform-admin pages: pass the signed-in admin's ts-auth access token through
-`AccessTokenProvider` (it must carry `platform_role: admin`). It is read-only, and TerraBase redacts secret-looking fields.
+`TerraBasePlatformClient` lists TerraScale's own databases (`platform-auth`, `platform-dashboard`) for the dashboard's
+platform-admin pages: pass the signed-in admin's ts-auth access token through `AccessTokenProvider` (it must carry
+`platform_role: admin`). It is read-only.
 
 See [TerraBase consumers](docs/terrabase-consumers.md).
 
@@ -466,4 +305,4 @@ clients (route manifest, regional contract, responses) and the retained ts-auth 
 [Package release](docs/package-release.md) records the release procedure; it does not authorize
 publication. NuGet remains on hold. Source/local-pack consumers must verify the loaded SDK DLL
 matches their pinned package, then qualify their actual service flow. Client-side validation does
-not establish server admission or plan enforcement; retain scope, role, placement and quota errors.
+not establish server admission or plan enforcement; retain scope, role, region and quota errors.

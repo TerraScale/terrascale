@@ -10,7 +10,7 @@ namespace TerraScale.DotNet;
 /// </summary>
 public sealed partial class TerraScaleAuthOidcClient(TerraScaleAuthClient client)
 {
-    /// <summary>Fetches the OIDC discovery document for the instance. Project issuers advertise only
+    /// <summary>Fetches the OIDC discovery metadata for the instance. Project issuers advertise only
     /// authorization_code and refresh_token grants and openid, email, profile and offline_access scopes;
     /// platform-only grants and device authorization metadata belong to the terrascale issuer.</summary>
     public Task<TerraScaleAuthOidcDiscovery> GetDiscoveryDocumentAsync(CancellationToken cancellationToken = default) =>
@@ -176,7 +176,7 @@ public sealed partial class TerraScaleAuthOidcClient(TerraScaleAuthClient client
     private string TokenRoute() => InstanceRoute("/oauth/token");
 }
 
-/// <summary>The OIDC discovery document for one instance.</summary>
+/// <summary>The OIDC discovery metadata for one instance.</summary>
 public sealed record TerraScaleAuthOidcDiscovery(
     [property: JsonPropertyName("issuer")] string Issuer,
     [property: JsonPropertyName("authorization_endpoint")] string AuthorizationEndpoint,

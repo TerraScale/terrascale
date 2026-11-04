@@ -20,9 +20,7 @@ public sealed class TerraBaseAnonymousHealthTests
             if (request.RequestUri!.GetLeftPart(UriPartial.Authority) != "https://api.terrascale.tech"
                 || request.Headers.Contains("Authorization") || request.Headers.Contains("Cookie"))
                 throw new InvalidOperationException("Unexpected anonymous request.");
-            var body = new StringContent(request.RequestUri.AbsolutePath == "/health/replication"
-                ? """{"region":"gru","status":"ok","maxLagSeconds":null,"peers":[]}"""
-                : """{"status":"ok","version":"0","region":"gru"}""");
+            var body = new StringContent("""{"status":"ok","version":"0","region":"gru"}""");
             bodies.Add(body);
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = body });
         });
@@ -36,7 +34,7 @@ public sealed class TerraBaseAnonymousHealthTests
         using var cancelled = new CancellationTokenSource();
         await cancelled.CancelAsync();
         await Assert.ThrowsAsync<OperationCanceledException>(() => health.GetHealthAsync(cancelled.Token));
-        for (var operation = 0; operation < 4; operation++)
+        for (var operation = 0; operation < 3; operation++)
         {
             var error = await Assert.ThrowsAsync<InvalidOperationException>(() => Read(health, operation));
             await Assert.That(error!.Message).Contains("credential-free HttpClient");
@@ -49,11 +47,11 @@ public sealed class TerraBaseAnonymousHealthTests
         await Assert.That(calls).IsEqualTo(0);
         http.DefaultRequestHeaders.Remove("Authorization"); // Caller clears its own defaults.
         http.DefaultRequestHeaders.Remove("Cookie");
-        for (var operation = 0; operation < 4; operation++) await Read(health, operation);
-        await Assert.That(calls).IsEqualTo(4);
+        for (var operation = 0; operation < 3; operation++) await Read(health, operation);
+        await Assert.That(calls).IsEqualTo(3);
         foreach (var body in bodies) await Assert.ThrowsAsync<ObjectDisposedException>(() => body.ReadAsStringAsync());
         using var callerResponse = await http.GetAsync("https://api.terrascale.tech/healthz");
-        await Assert.That(calls).IsEqualTo(5);
+        await Assert.That(calls).IsEqualTo(4);
     }
 
     private static async Task AwaitEntryAsync(Task entered, Task pending)
@@ -67,7 +65,6 @@ public sealed class TerraBaseAnonymousHealthTests
     {
         0 => health.GetHealthAsync(),
         1 => health.GetReadinessAsync(),
-        2 => health.GetBackupHealthAsync(),
-        _ => health.GetReplicationHealthAsync()
+        _ => health.GetBackupHealthAsync()
     };
 }

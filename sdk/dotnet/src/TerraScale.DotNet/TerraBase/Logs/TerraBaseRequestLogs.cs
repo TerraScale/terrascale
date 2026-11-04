@@ -12,10 +12,10 @@ namespace TerraScale.DotNet.TerraBase;
 /// <param name="Time">Request observation time.</param>
 /// <param name="Region">Region that recorded the request.</param>
 /// <param name="Method">HTTP method, or OTHER.</param>
-/// <param name="Route">Redacted route template, without document keys or credentials.</param>
+/// <param name="Route">Redacted route template, without keys or credentials.</param>
 /// <param name="Status">HTTP response status.</param>
 /// <param name="LatencyMs">Elapsed milliseconds.</param>
-/// <param name="Operations">Committed document operations.</param>
+/// <param name="Operations">Committed operations.</param>
 /// <param name="IsQuery">Whether the route is a query or SQL request.</param>
 /// <param name="RequestId">Correlation identifier, or null when unavailable.</param>
 /// <param name="Statements">SQL statements the request carried.</param>

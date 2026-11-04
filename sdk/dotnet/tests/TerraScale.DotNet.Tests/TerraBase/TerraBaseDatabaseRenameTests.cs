@@ -8,13 +8,12 @@ public sealed class TerraBaseDatabaseRenameTests
     private const string DatabaseId = "01JA0000000000000000000004";
     private const string Renamed = """
         {"id":"01JA0000000000000000000004","projectId":"01JA0000000000000000000001","name":"production",
-         "branchedFrom":null,"createdAt":"2026-10-12T00:00:00+00:00","region":"sjc","homeRegion":"gru",
-         "replicaRegions":["sjc","fra"],"allRegions":false}
+         "branchedFrom":null,"createdAt":"2026-10-12T00:00:00+00:00","region":"sjc","homeRegion":"gru"}
         """;
 
     [Test]
     [Arguments(DatabaseId)]
-    public async Task Rename_sends_one_name_only_patch_and_reads_database_identity_and_placement(string databaseId)
+    public async Task Rename_sends_one_name_only_patch_and_reads_database_identity_and_home_region(string databaseId)
     {
         var requests = 0;
         using var handler = new TerraBaseTestHandler(async (request, token) =>
@@ -40,8 +39,6 @@ public sealed class TerraBaseDatabaseRenameTests
         await Assert.That(result.Name).IsEqualTo("production");
         await Assert.That(result.Region).IsEqualTo("sjc");
         await Assert.That(result.HomeRegion).IsEqualTo("gru");
-        await Assert.That(result.ReplicaRegions).IsEquivalentTo(["sjc", "fra"]);
-        await Assert.That(result.AllRegions).IsFalse();
     }
 
 }

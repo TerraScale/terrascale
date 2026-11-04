@@ -19,14 +19,12 @@ public sealed record TerraBaseUsagePoint(DateTimeOffset Start, long Reads, long 
 /// <summary>Database storage and best-effort usage; counts can be lost on crash and are not billing data.</summary>
 /// <param name="DatabaseId">Database ULID, distinct from its route name.</param>
 /// <param name="StorageBytes">Bytes on disk.</param>
-/// <param name="LogicalBytes">JSON bytes of live documents.</param>
-/// <param name="Collections">Collection count.</param>
-/// <param name="Documents">Live document count.</param>
+/// <param name="LogicalBytes">Logical bytes of live data.</param>
 /// <param name="Reads">Reads since creation.</param>
 /// <param name="Writes">Writes since creation.</param>
 /// <param name="Period">Counts over the requested period.</param>
 /// <param name="Series">Oldest-first buckets; empty inside project Items.</param>
-public sealed record TerraBaseDatabaseUsage(string DatabaseId, long StorageBytes, long LogicalBytes, long Collections, long Documents,
+public sealed record TerraBaseDatabaseUsage(string DatabaseId, long StorageBytes, long LogicalBytes,
     long Reads, long Writes, TerraBaseUsagePeriod Period, IReadOnlyList<TerraBaseUsagePoint> Series) : IJsonOnDeserialized
 {
     void IJsonOnDeserialized.OnDeserialized() => TerraBaseJsonContext.RequireNonNullItems(Series);
@@ -36,17 +34,16 @@ public sealed record TerraBaseDatabaseUsage(string DatabaseId, long StorageBytes
 /// <param name="ProjectId">Project ULID.</param>
 /// <param name="Databases">Database count.</param>
 /// <param name="StorageBytes">Total disk bytes.</param>
-/// <param name="LogicalBytes">Total live JSON bytes.</param>
-/// <param name="Documents">Live document count.</param>
+/// <param name="LogicalBytes">Total logical bytes of live data.</param>
 /// <param name="Reads">Reads since each database's creation.</param>
 /// <param name="Writes">Writes since each database's creation.</param>
 /// <param name="Period">Counts over the requested period.</param>
 /// <param name="Series">Oldest-first buckets.</param>
 /// <param name="Items">Per-database usage in creation order.</param>
-public sealed record TerraBaseProjectUsage(string ProjectId, long Databases, long StorageBytes, long LogicalBytes, long Documents,
+public sealed record TerraBaseProjectUsage(string ProjectId, long Databases, long StorageBytes, long LogicalBytes,
     long Reads, long Writes, TerraBaseUsagePeriod Period, IReadOnlyList<TerraBaseUsagePoint> Series, IReadOnlyList<TerraBaseDatabaseUsage> Items) : IJsonOnDeserialized
 {
-    /// <summary>Logical file bytes including pending uploads, counted once across replicas. Included in project storage totals.</summary>
+    /// <summary>Logical file bytes including pending uploads, counted once. Included in project storage totals.</summary>
     public long FileBytes { get; init; }
 
     void IJsonOnDeserialized.OnDeserialized()

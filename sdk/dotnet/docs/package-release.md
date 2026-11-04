@@ -18,7 +18,7 @@ See [automatic tagged NuGet releases](automatic-nuget-releases.md) for exact qua
 From nuget.org, reference the package as usual:
 `<PackageReference Include="TerraScale.DotNet" Version="0.0.X" />`.
 
-From GitHub Packages, add the feed and map the package to it:
+From GitHub Packages, add the package source and map the package to it:
 
 ```xml
 <configuration>

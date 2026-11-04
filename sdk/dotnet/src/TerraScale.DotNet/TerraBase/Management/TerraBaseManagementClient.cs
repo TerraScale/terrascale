@@ -138,7 +138,7 @@ public sealed class TerraBaseManagementClient
 
     /// <summary>
     /// ts-auth's version 2 project erasure handoff for explicit account-deletion consent: authorizes a permanent project
-    /// fence and TerraBase's purge of the project's databases regardless of replication, TerraBase API keys and backup
+    /// fence and TerraBase's purge of the project's databases, TerraBase API keys and backup
     /// destinations. Served only on TerraBase's private listener behind the peer credential; use a client without
     /// <see cref="TerraBaseManagementClientOptions.AccessTokenProvider"/>. The caller must obtain consent before calling.
     /// Idempotent: retry with the same <paramref name="closureId"/> after a lost response. A pending response is not proof
@@ -162,7 +162,7 @@ public sealed class TerraBaseManagementClient
 
     /// <summary>
     /// ts-auth's shared-history erasure handoff (TerraBase docs/terrabase/history-erasure.md): creates or advances the permanent
-    /// erasure <paramref name="erasureId"/> (the random id of ts-auth's deletion job, whose request document names the fence) over ts-auth's
+    /// erasure <paramref name="erasureId"/> (the random id of ts-auth's deletion job, whose request names the fence) over ts-auth's
     /// database and TerraBase's SYSTEM, and returns its status computed from every holder. Served only on TerraBase's private
     /// listener behind the peer credential; the scope is fixed, no database is named. Always present the original
     /// <paramref name="requestedAt"/>. Present <paramref name="settlementToken"/> only after re-verifying auth's cleanup against the

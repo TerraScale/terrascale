@@ -59,11 +59,11 @@ public sealed class TerraBaseClientOptionsTests
     [Test]
     public async Task OptionsAndInvitationsNeverPrintSecrets()
     {
-        var documents = new TerraBaseDocumentsClientOptions { BaseAddress = Origin, ApiKey = "tb_secretvalue" };
+        var options = new TerraBaseDocumentsClientOptions { BaseAddress = Origin, ApiKey = "tb_secretvalue" };
         var invitation = new TerraBaseCreatedInvitation(
             new TerraBaseInvitation("i", "a@example.com", TerraBaseRole.Member, "u", DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, "pending"), "org.inv.secretvalue");
 
-        await Assert.That(documents.ToString()).DoesNotContain("secretvalue");
+        await Assert.That(options.ToString()).DoesNotContain("secretvalue");
         await Assert.That(invitation.ToString()).DoesNotContain("secretvalue");
     }
 
@@ -84,7 +84,7 @@ public sealed class TerraBaseClientOptionsTests
             : new TerraBaseDocumentsClient(new TerraBaseConnection(http, Origin, null, null, "credential", timeout.Value,
                 TerraBaseConnection.DefaultMaxResponseBytes, provider, anonymousAllowed: true));
         var database = client.Database("project", "app");
-        return token => database.ListCollectionsAsync(cancellationToken: token);
+        return token => database.GetUsageAsync(cancellationToken: token);
     }
 
     internal sealed class CountingResolver(Uri origin) : ITerraBaseEndpointResolver

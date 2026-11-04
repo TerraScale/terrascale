@@ -43,7 +43,7 @@ Replaced logical-name database clients, generated v1 wrappers, database proxy
 routing, reactive clients and the obsolete EF facade are deleted with their
 obsolete tests, materialization scripts and documentation. New EF support
 would require an actual public native mapping rather than retaining the old
-logical Documents adapter. There are no compatibility aliases.
+logical adapter. There are no compatibility aliases.
 
 ## Exit evidence
 

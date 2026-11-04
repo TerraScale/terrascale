@@ -186,7 +186,7 @@ public sealed partial class TerraScaleAuthClient
             cancellationToken);
     }
 
-    /// <summary>One unauthenticated GET for OIDC metadata documents.</summary>
+    /// <summary>One unauthenticated GET for OIDC metadata.</summary>
     private async Task<TResponse> GetMetadataCoreAsync<TResponse>(
         string requestUri,
         JsonTypeInfo<TResponse> responseTypeInfo,

@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
-using System.Text.Json;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.DotNet.Tests.TerraBase;
@@ -9,14 +8,13 @@ namespace TerraScale.DotNet.Tests.TerraBase;
 /// <summary>
 /// The SDK's side of TerraBase's regional contract (monorepo docs/terrabase/region-identity.md), against
 /// a fake OCI HTTP endpoint: TerraBase answers <c>X-TerraBase-Region</c>; a request for a database another
-/// region serves answers <c>421 wrong_region</c> without SDK redirects or retries; writes are
-/// leaderless; TerraBase refuses <c>Idempotency-Key</c>, so a write must never be sent twice and only conditional writes
-/// guard against duplicates. A client with <see cref="TerraBaseDocumentsClientOptions.Region"/> targets that region's
+/// region serves answers <c>421 wrong_region</c> without SDK redirects or retries; TerraBase refuses
+/// <c>Idempotency-Key</c>, so a write must never be sent twice. A client with <see cref="TerraBaseDocumentsClientOptions.Region"/> targets that region's
 /// host and pins every request to it; one without sends no routing header at all.
 /// </summary>
 public sealed class TerraBaseRegionalContractTests
 {
-    private const string WriteResult = """{"id":"a","version":"tbv1-v1","offset":"1","durability":"local_durable"}""";
+    private const string Branch = """{"id":"01JA0000000000000000000005","projectId":"01JA0000000000000000000001","name":"copy","branchedFrom":null,"createdAt":"2026-10-12T00:00:00+00:00","region":"gru","homeRegion":"gru"}""";
 
     private static readonly TerraBaseDocumentsClientOptions Options = new()
     {
@@ -25,7 +23,7 @@ public sealed class TerraBaseRegionalContractTests
     };
 
     [Test]
-    public async Task A_wrong_region_ts_replay_answer_preserves_placement_without_redirect_or_retry()
+    public async Task A_wrong_region_ts_replay_answer_preserves_the_home_region_without_redirect_or_retry()
     {
         var sent = new List<HttpRequestMessage>();
         using var handler = new TerraBaseTestHandler((request, _) =>
@@ -45,11 +43,11 @@ public sealed class TerraBaseRegionalContractTests
         using var http = new HttpClient(handler);
         var database = new TerraBaseDocumentsClient(http, Options).Database("project", "app");
 
-        var error = await Assert.ThrowsAsync<TerraBaseWrongRegionException>(() => database.PutDocumentAsync("items", "01JA00000000000000000000D1", Body()));
+        var error = await Assert.ThrowsAsync<TerraBaseWrongRegionException>(() => database.BranchAsync("copy"));
 
         await Assert.That(sent.Count).IsEqualTo(1);
-        await Assert.That(sent[0].Method).IsEqualTo(HttpMethod.Put);
-        await Assert.That(sent[0].RequestUri).IsEqualTo(new Uri("https://api.terrascale.test/v1/projects/project/databases/app/collections/items/documents/by-key?id=01JA00000000000000000000D1"));
+        await Assert.That(sent[0].Method).IsEqualTo(HttpMethod.Post);
+        await Assert.That(sent[0].RequestUri).IsEqualTo(new Uri("https://api.terrascale.test/v1/projects/project/databases/app/branches"));
         await AssertOnlyExpectedHeadersAsync(sent[0]);
         await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
         await Assert.That(error.ErrorCode).IsEqualTo("wrong_region");
@@ -66,15 +64,15 @@ public sealed class TerraBaseRegionalContractTests
         using var handler = new TerraBaseTestHandler((request, _) =>
         {
             sent.Add(request);
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(WriteResult, Encoding.UTF8, "application/json") });
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(Branch, Encoding.UTF8, "application/json") });
         });
         using var http = new HttpClient(handler);
         var regional = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { Region = "fra", ApiKey = "tb_test_key" }).Database("project", "app");
         // An explicit origin keeps its host; the pin still holds the request to the region.
         var explicitOrigin = new TerraBaseDocumentsClient(http, Options with { Region = "sjc" }).Database("project", "app");
 
-        await regional.PutDocumentAsync("items", "01JA00000000000000000000D1", Body());
-        await explicitOrigin.PutDocumentAsync("items", "01JA00000000000000000000D1", Body());
+        await regional.BranchAsync("copy");
+        await explicitOrigin.BranchAsync("copy");
 
         await Assert.That(sent.Select(request => request.RequestUri!.GetLeftPart(UriPartial.Authority))).IsEquivalentTo(["https://api.terrascale.tech", "https://api.terrascale.test"]);
         await Assert.That(sent.Select(request => string.Join(',', request.Headers.GetValues(TerraBaseRegion.PinHeader)))).IsEquivalentTo(["fra", "sjc"]);
@@ -83,8 +81,6 @@ public sealed class TerraBaseRegionalContractTests
             await AssertOnlyExpectedHeadersAsync(request, pinned: true);
         }
     }
-
-    private static JsonElement Body() => JsonSerializer.SerializeToElement(new Dictionary<string, string> { ["from"] = "sdk" });
 
     private static HttpResponseMessage Error(HttpStatusCode status, string code, string message) => new(status)
     {

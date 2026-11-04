@@ -6,7 +6,7 @@ namespace TerraScale.DotNet.Tests.TerraBase;
 
 public sealed class TerraBaseFunctionCatalogTests
 {
-    private const string Function = """{"name":"hello","source":"function handler(event) { return event; }","trigger":{"collection":"items","events":["upsert"]},"cron":"* * * * *","createdAt":"2026-10-26T00:00:00Z","updatedAt":"2026-10-26T01:00:00Z"}""";
+    private const string Function = """{"name":"hello","source":"function handler(event) { return event; }","cron":"* * * * *","createdAt":"2026-10-26T00:00:00Z","updatedAt":"2026-10-26T01:00:00Z"}""";
 
     [Test]
     public async Task Catalog_matches_pinned_routes_and_roundtrips_replacement_fields()
@@ -30,7 +30,6 @@ public sealed class TerraBaseFunctionCatalogTests
                 await Assert.That(request.Content!.Headers.ContentType!.MediaType).IsEqualTo("application/json");
                 using var body = JsonDocument.Parse(await request.Content.ReadAsStringAsync(token));
                 await Assert.That(body.RootElement.GetProperty("source").GetString()).IsEqualTo("function handler(event) { return event; }");
-                await Assert.That(body.RootElement.GetProperty("trigger").GetProperty("events")[0].GetString()).IsEqualTo("upsert");
                 await Assert.That(body.RootElement.GetProperty("cron").GetString()).IsEqualTo("* * * * *");
             }
             return TerraBaseIntegrationFixture.Json(calls == 1
@@ -40,8 +39,8 @@ public sealed class TerraBaseFunctionCatalogTests
         var db = TerraBaseIntegrationFixture.Client(http).Database(TerraBaseIntegrationFixture.ProjectId, "app");
         var listed = await db.ListFunctionsAsync();
         await Assert.That(listed.Single().Source).IsNull();
-        var deployed = await db.DeployFunctionAsync("hello", new("function handler(event) { return event; }", new("items", ["upsert"]), "* * * * *"));
-        await Assert.That(deployed.Trigger!.Collection).IsEqualTo("items");
+        var deployed = await db.DeployFunctionAsync("hello", new("function handler(event) { return event; }", "* * * * *"));
+        await Assert.That(deployed.Cron).IsEqualTo("* * * * *");
         await Assert.That(deployed.CreatedAt).IsEqualTo(DateTimeOffset.Parse("2026-10-26T00:00:00Z"));
         var fetched = await db.GetFunctionAsync("hello");
         await Assert.That(fetched.Source).IsEqualTo(deployed.Source);

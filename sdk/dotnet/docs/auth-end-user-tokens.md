@@ -22,7 +22,7 @@ Token `ToString()` is redacted; do not explicitly log or serialize the credentia
 Rate limiting uses a flat OAuth error; other failures use the nested error envelope. Every mint is sent once,
 including overload responses. Cancellation does not establish whether a token was issued. Revoking a key stops
 future minting; previously issued JWTs validate offline until expiry plus server clock skew (currently 30 seconds).
-End-user tokens are rule-bound; they grant no management, SQL or export authority. Missing collection rules deny
+End-user tokens are rule-bound; they grant no management, SQL or export authority. Missing rules deny
 access. Set owner/public/trusted-role rules through the authorized project backend, never the end-user token.
 
 Authority: producer `4b6dfd03b2d814cea0b1f7d599478f6b06532b4a`,

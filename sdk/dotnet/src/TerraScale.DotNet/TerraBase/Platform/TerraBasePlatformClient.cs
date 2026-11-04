@@ -31,19 +31,16 @@ public sealed record TerraBasePlatformClientOptions
 /// <summary>A platform database (<c>ts-auth</c> or <c>ts-dashboard</c>).</summary>
 /// <param name="Name">Its name.</param>
 /// <param name="Id">Its fixed id.</param>
-/// <param name="HomeRegion">The region it is managed in.</param>
-/// <param name="ReplicaRegions">The other regions holding a copy.</param>
-/// <param name="AllRegions">Whether every serving region holds a copy, including regions that join later.</param>
-public sealed record TerraBasePlatformDatabase(string Name, string Id, string HomeRegion, IReadOnlyList<string> ReplicaRegions, [property: JsonRequired] bool AllRegions = false);
+/// <param name="HomeRegion">The one region that holds and serves it.</param>
+public sealed record TerraBasePlatformDatabase(string Name, string Id, string HomeRegion);
 
 /// <summary>The platform databases.</summary>
 /// <param name="Items">Every platform database.</param>
 public sealed record TerraBasePlatformDatabaseList([property: JsonRequired] IReadOnlyList<TerraBasePlatformDatabase> Items);
 
 /// <summary>
-/// Client of TerraBase's read-only explore API over TerraScale's own databases (<c>/v1/platform/databases/…</c>), for the
-/// dashboard's platform-admin pages. TerraBase redacts secret-looking fields before they leave and logs every read with its
-/// actor. Built over a caller-owned <see cref="HttpClient"/> that it never disposes. Thread-safe.
+/// Client of TerraBase's read-only list of TerraScale's own databases (<c>/v1/platform/databases</c>), for the
+/// dashboard's platform-admin pages. TerraBase logs every read with its actor. Built over a caller-owned <see cref="HttpClient"/> that it never disposes. Thread-safe.
 /// </summary>
 public sealed class TerraBasePlatformClient
 {
@@ -58,7 +55,7 @@ public sealed class TerraBasePlatformClient
         ArgumentNullException.ThrowIfNull(options);
         if (options.AccessTokenProvider is null)
         {
-            throw new ArgumentException("AccessTokenProvider is required: the explore API takes a platform admin's ts-auth access token.", nameof(options));
+            throw new ArgumentException("AccessTokenProvider is required: the platform API takes a platform admin's ts-auth access token.", nameof(options));
         }
 
         connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, null, nameof(options.AccessTokenProvider),
@@ -69,40 +66,5 @@ public sealed class TerraBasePlatformClient
     public async Task<TerraBasePlatformDatabaseList> ListDatabasesAsync(CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Get, Root, null, Json.TerraBasePlatformDatabaseList, null, cancellationToken).ConfigureAwait(false)).Value;
 
-    /// <summary>Lists up to 200 collections of a platform database in name order.</summary>
-    public async Task<TerraBaseCollectionPage> ListCollectionsAsync(string database, CancellationToken cancellationToken = default) =>
-        (await connection.SendAsync(HttpMethod.Get, Collections(database), null, Json.TerraBaseCollectionPage, null, cancellationToken).ConfigureAwait(false)).Value;
 
-    /// <summary>Lists a collection's documents in id order, redacted.</summary>
-    /// <param name="database">The platform database.</param>
-    /// <param name="collection">Collection name.</param>
-    /// <param name="limit">1 to 1000; TerraBase's default is 50.</param>
-    /// <param name="cursor">The previous page's <see cref="TerraBaseDocumentPage.NextCursor"/>.</param>
-    /// <param name="cancellationToken">Cancels the request.</param>
-    public async Task<TerraBaseDocumentPage> ListDocumentsAsync(
-        string database, string collection, int? limit = null, string? cursor = null, CancellationToken cancellationToken = default) =>
-        (await connection.SendAsync(
-            HttpMethod.Get, Documents(database, collection) + TerraBaseConnection.Query(("limit", TerraBaseConnection.Number(limit)), ("cursor", cursor)),
-            null, Json.TerraBaseDocumentPage, null, cancellationToken).ConfigureAwait(false)).Value;
-
-    /// <summary>Reads one document, redacted; <see langword="null"/> when it is absent.</summary>
-    public async Task<TerraBaseDocument?> GetDocumentAsync(string database, string collection, string id, CancellationToken cancellationToken = default)
-    {
-        TerraScaleIds.Validate(id);
-        try
-        {
-            return (await connection.SendAsync(
-                HttpMethod.Get, Documents(database, collection) + "/by-key" + TerraBaseConnection.Query(("id", id)), null, Json.TerraBaseDocument, null, cancellationToken)
-                .ConfigureAwait(false)).Value;
-        }
-        catch (TerraBaseNotFoundException error) when (error.ErrorCode == "not_found")
-        {
-            return null;
-        }
-    }
-
-    private static string Collections(string database) => $"{Root}/{TerraBaseConnection.Segment(database, nameof(database))}/collections";
-
-    private static string Documents(string database, string collection) =>
-        $"{Collections(database)}/{TerraBaseConnection.Segment(collection, nameof(collection))}/documents";
 }

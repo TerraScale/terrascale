@@ -81,7 +81,7 @@ public sealed class TerraScaleAuthTokenContractTests
             AccessTokenProvider = _ => { Interlocked.Increment(ref tokens); return ValueTask.FromResult("project-token"); },
         });
         var error = await Assert.ThrowsAsync<TerraBaseException>(() =>
-            client.Database(TerraBaseIntegrationFixture.ProjectId, "app").ListCollectionsAsync());
+            client.Database(TerraBaseIntegrationFixture.ProjectId, "app").GetUsageAsync());
         await Assert.That(error!.GetType()).IsEqualTo(type);
         await Assert.That(error.ErrorCode).IsEqualTo(code);
         await Assert.That(sends).IsEqualTo(1);

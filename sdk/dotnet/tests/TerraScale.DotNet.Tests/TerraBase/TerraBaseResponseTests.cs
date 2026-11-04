@@ -2,7 +2,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text;
 using System.Net;
-using System.Text.Json.Serialization.Metadata;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.DotNet.Tests.TerraBase;
@@ -35,20 +34,6 @@ public sealed class TerraBaseResponseTests
         await Assert.That(dataError.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(authError.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
     }
-
-    private static string NestedDocument(int depth) =>
-        string.Concat(Enumerable.Repeat("{\"value\":", depth)) + "0" + new string('}', depth);
-
-    private static async Task InvalidResponseAsync<T>(string json, JsonTypeInfo<T> typeInfo)
-    {
-        var error = await Assert.ThrowsAsync<TerraBaseException>(() =>
-        {
-            _ = TerraBaseConnection.ReadResponse(Encoding.UTF8.GetBytes(json), typeInfo, HttpStatusCode.OK);
-            return Task.CompletedTask;
-        });
-        await Assert.That(error!.ErrorCode).IsEqualTo("invalid_response");
-    }
-
 }
 
 /// <summary>Response bounds, deadlines and resolution over a fake transport; no TerraBase runs in this repository.</summary>
@@ -56,20 +41,20 @@ public sealed class TerraBaseResponseIntegrationTests
 {
     private static readonly Uri Origin = new("https://terrabase.example.test/");
     private static readonly Uri Private = new("http://100.64.0.1:8081/");
-    private const string DocumentPath = "/v1/projects/01JA0000000000000000000001/databases/bounds/collections/items/documents/by-key?id=01JA0000000000000000000009";
+    private const string DatabasePath = "/v1/projects/01JA0000000000000000000001/databases/bounds";
 
     [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task SuccessResponseHonorsTheExactByteLimit(bool oneByteOver)
     {
-        var body = "{\"id\":\"01JA0000000000000000000009\",\"version\":\"v1\",\"state\":\"live\",\"document\":{\"text\":\"" + new string('x', 64 * 1024) + "\"}}";
+        var body = "{\"id\":\"01JA0000000000000000000009\",\"projectId\":\"01JA0000000000000000000001\",\"name\":\"" + new string('x', 64 * 1024) + "\"}";
         var bytes = System.Text.Encoding.UTF8.GetByteCount(body);
         using var handler = Answer(() => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") });
         using var http = new HttpClient(handler);
         var connection = new TerraBaseConnection(http, Origin, null, "tb_test_key", "ApiKey", TimeSpan.FromSeconds(30), bytes - (oneByteOver ? 1 : 0));
 
-        var call = () => connection.SendAsync(HttpMethod.Get, DocumentPath, null, TerraBaseJsonContext.Wire.TerraBaseDocument, null, CancellationToken.None);
+        var call = () => connection.SendAsync(HttpMethod.Get, DatabasePath, null, TerraBaseJsonContext.Wire.TerraBaseDatabaseInfo, null, CancellationToken.None);
         if (oneByteOver)
         {
             var error = await Assert.ThrowsAsync<TerraBaseException>(call);
@@ -82,7 +67,7 @@ public sealed class TerraBaseResponseIntegrationTests
             var (result, status) = await call();
             await Assert.That(status).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(result.Id).IsEqualTo("01JA0000000000000000000009");
-            await Assert.That(result.Document.GetProperty("text").GetString()!.Length).IsEqualTo(64 * 1024);
+            await Assert.That(result.Name.Length).IsEqualTo(64 * 1024);
         }
     }
 
@@ -96,7 +81,7 @@ public sealed class TerraBaseResponseIntegrationTests
         using var handler = Answer(() => new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(
-                JsonSerializer.Serialize(new TerraBaseCollection("items", DateTimeOffset.UnixEpoch, "01JA0000000000000000000002"), TerraBaseJsonContext.Wire.TerraBaseCollection), Encoding.UTF8, "application/json"),
+                JsonSerializer.Serialize(new TerraBaseDatabaseInfo("01JA0000000000000000000002", "01JA0000000000000000000001", "cancellation"), TerraBaseJsonContext.Wire.TerraBaseDatabaseInfo), Encoding.UTF8, "application/json"),
         });
         using var http = new HttpClient(handler);
         using var canceled = new CancellationTokenSource();
@@ -121,9 +106,9 @@ public sealed class TerraBaseResponseIntegrationTests
                 throw new JsonException("Response parsing failed after cancellation.");
             }
         }));
-        var typeInfo = new TerraBaseJsonContext(options).TerraBaseCollection;
+        var typeInfo = new TerraBaseJsonContext(options).TerraBaseDatabaseInfo;
         var connection = new TerraBaseConnection(http, Origin, null, "tb_test_key", "ApiKey", TimeSpan.FromSeconds(1), TerraBaseConnection.DefaultMaxResponseBytes, timeProvider: clock);
-        var call = () => connection.SendAsync(HttpMethod.Get, "/v1/projects/01JA0000000000000000000001/databases/cancellation/collections/items", null, typeInfo, null, canceled.Token);
+        var call = () => connection.SendAsync(HttpMethod.Get, "/v1/projects/01JA0000000000000000000001/databases/cancellation", null, typeInfo, null, canceled.Token);
         if (deadlineExpires)
         {
             await Assert.That(call).Throws<TimeoutException>();
@@ -162,15 +147,15 @@ public sealed class TerraBaseResponseIntegrationTests
 
     private static TerraBaseTestHandler Answer(Func<HttpResponseMessage> response) => new((_, _) => Task.FromResult(response()));
 
-    private sealed class ProcessingConverter(Action processed) : JsonConverter<TerraBaseCollection>
+    private sealed class ProcessingConverter(Action processed) : JsonConverter<TerraBaseDatabaseInfo>
     {
-        public override TerraBaseCollection Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        public override TerraBaseDatabaseInfo Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
-            var collection = JsonSerializer.Deserialize(ref reader, TerraBaseJsonContext.Wire.TerraBaseCollection)!;
+            var database = JsonSerializer.Deserialize(ref reader, TerraBaseJsonContext.Wire.TerraBaseDatabaseInfo)!;
             processed();
-            return collection;
+            return database;
         }
 
-        public override void Write(Utf8JsonWriter writer, TerraBaseCollection value, JsonSerializerOptions options) => throw new NotSupportedException();
+        public override void Write(Utf8JsonWriter writer, TerraBaseDatabaseInfo value, JsonSerializerOptions options) => throw new NotSupportedException();
     }
 }

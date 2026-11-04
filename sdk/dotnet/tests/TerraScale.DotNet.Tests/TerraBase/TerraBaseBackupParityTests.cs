@@ -39,7 +39,6 @@ public sealed class TerraBaseBackupParityTests
         await Assert.That(policy.UpdatedAt).IsNull();
         await Assert.That(restored.Name).IsEqualTo("copy");
         await Assert.That(restored.HomeRegion).IsNull();
-        await Assert.That(restored.Replicas).IsEmpty();
         await Assert.That(calls[0].Path).IsEqualTo($"/v1/projects/{TerraBaseIntegrationFixture.ProjectId}/databases/app/backups");
         await Assert.That(calls[1].Query).IsEqualTo("?after=opaque%2Fcursor%2B&limit=2");
         await Assert.That(calls[3].Body).IsEqualTo("{\"retentionDays\":7,\"disabled\":false}");

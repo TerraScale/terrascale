@@ -20,10 +20,8 @@ public sealed class TerraBaseContractTests
     public async Task EveryOperationSendsItsRecordedRouteAndEveryRouteIsUsed()
     {
         var routes = Load();
-        using var document = JsonDocument.Parse("{\"a\":1}");
-        var json = document.RootElement;
         var used = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var (client, operation, call) in Calls(json))
+        foreach (var (client, operation, call) in Calls())
         {
             var sent = await RecordAsync(client, call);
             var route = routes.SingleOrDefault(route => route.Client == client && route.Method == sent.Method.Method && route.Matches(sent.Path));
@@ -34,133 +32,33 @@ public sealed class TerraBaseContractTests
         await Assert.That(routes.Select(route => route.Operation).Except(used)).IsEmpty();
     }
 
-    [Test]
-    [Arguments("a/b c?d")]
-    [Arguments("01ja0000000000000000000003")]
-    [Arguments("0190f3b2-7c4e-7a1b-9c2d-3e4f5a6b7c8d")]
-    public async Task NonUlidDocumentIdsAreRejectedBeforeAnyRequest(string id)
-    {
-        var requests = 0;
-        using var handler = new TerraBaseTestHandler((_, _) => throw new HttpRequestException($"request {++requests} sent"));
-        using var http = new HttpClient(handler);
-        var origin = new Uri("https://terrabase.example.test/");
-        var db = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = origin, ApiKey = "tb_test_key" }).Database(Project, "app");
-        var platform = new TerraBasePlatformClient(http, new TerraBasePlatformClientOptions { BaseAddress = origin, AccessTokenProvider = _ => ValueTask.FromResult("user-token") });
-        using var document = JsonDocument.Parse("{}");
-        var json = document.RootElement;
-        await Assert.ThrowsAsync<ArgumentException>(() => db.GetDocumentAsync("users", id));
-        await Assert.ThrowsAsync<ArgumentException>(() => db.PutDocumentAsync("users", id, json));
-        await Assert.ThrowsAsync<ArgumentException>(() => db.PatchDocumentAsync("users", id, json));
-        await Assert.ThrowsAsync<ArgumentException>(() => db.PatchDocumentAsync("users", id, [TerraBasePatchOperation.Unset("/a")]));
-        await Assert.ThrowsAsync<ArgumentException>(() => db.DeleteDocumentAsync("users", id));
-        await Assert.ThrowsAsync<ArgumentException>(() => platform.GetDocumentAsync("ts-auth", "users", id));
-        await Assert.That(() => TerraBaseTransactionOperation.Create("users", json, id)).Throws<ArgumentException>();
-        await Assert.That(() => TerraBaseTransactionOperation.Put("users", id, json)).Throws<ArgumentException>();
-        await Assert.That(() => TerraBaseTransactionOperation.Patch("users", id, json)).Throws<ArgumentException>();
-        await Assert.That(() => TerraBaseTransactionOperation.Delete("users", id)).Throws<ArgumentException>();
-        await Assert.That(() => TerraBaseTransactionOperation.Assert("users", id, json)).Throws<ArgumentException>();
-        await Assert.That(() => TerraBaseTransactionOperation.AssertAbsent("users", id)).Throws<ArgumentException>();
-        await Assert.That(TerraBaseTransactionOperation.Create("users", json).Id).IsNull();
-        await Assert.That(requests).IsEqualTo(0);
-    }
-
-    private static IEnumerable<(string Client, string Operation, Func<object, Task> Call)> Calls(JsonElement json)
+    private static IEnumerable<(string Client, string Operation, Func<object, Task> Call)> Calls()
     {
         static TerraBaseDatabase Db(object client) => ((TerraBaseDocumentsClient)client).Database(Project, "app");
         static TerraBaseProjectClient ProjectClient(object client) => ((TerraBaseDocumentsClient)client).Project(Project);
         static TerraBaseManagementClient M(object client) => (TerraBaseManagementClient)client;
-        var schema = new TerraBaseUniqueSchemaRequest(Indexes: [new("email", ["email"], Unique: true)]);
-        yield return ("documents", "createChangeWebhook", client => Db(client).CreateChangeWebhookAsync("users", "https://receiver.example/events"));
-        yield return ("documents", "listChangeWebhooks", client => Db(client).ListChangeWebhooksAsync("users"));
-        yield return ("documents", "deleteChangeWebhook", client => Db(client).DeleteChangeWebhookAsync("users", User));
-        yield return ("documents", "listChangeWebhookDeliveries", client => Db(client).ListChangeWebhookDeliveriesAsync("users", User));
-        yield return ("documents", "invokeFunction", client => Db(client).InvokeFunctionAsync("hello"));
-        yield return ("documents", "listDatabaseLogs", client => Db(client).ListRequestLogsAsync());
-        yield return ("documents", "listFunctionLogs", client => Db(client).ListFunctionLogsAsync("hello"));
-        yield return ("documents", "listFunctionDeliveries", client => Db(client).ListFunctionDeliveriesAsync("hello"));
-        yield return ("documents", "getExportSchedule", client => Db(client).GetExportScheduleAsync());
-        yield return ("documents", "setExportSchedule", client => Db(client).SetExportScheduleAsync(null));
-        yield return ("documents", "listFunctions", client => Db(client).ListFunctionsAsync());
-        yield return ("documents", "deployFunction", client => Db(client).DeployFunctionAsync("hello", new("function handler(event) { return event; }")));
-        yield return ("documents", "getFunction", client => Db(client).GetFunctionAsync("hello"));
-        yield return ("documents", "deleteFunction", client => Db(client).DeleteFunctionAsync("hello"));
-        yield return ("documents", "createDatabase", client => Db(client).CreateAsync());
-        yield return ("documents", "deleteDatabase", client => Db(client).DeleteAsync());
-        yield return ("documents", "cancelClosure", client => Db(client).CancelClosureAsync(User, User));
-        yield return ("documents", "listCollections", client => Db(client).ListCollectionsAsync());
-        yield return ("documents", "createCollection", client => Db(client).CreateCollectionAsync("users"));
-        yield return ("documents", "getCollection", client => Db(client).GetCollectionAsync("users"));
-        yield return ("documents", "getCollectionRules", client => Db(client).GetCollectionRulesAsync("users"));
-        yield return ("documents", "putCollectionRules", client => Db(client).SetCollectionRulesAsync("users", new(null, new(false, false, []), new(false, false, []))));
-        yield return ("documents", "dropCollection", client => Db(client).DropCollectionAsync("users"));
-        yield return ("documents", "declareCollectionSchema", client => Db(client).DeclareSchemaAsync("users", schema));
-        yield return ("documents", "getCollectionSchema", client => Db(client).GetSchemaAsync("users"));
-        yield return ("documents", "getCollectionSchema", client => Db(client).GetInferredSchemaAsync("users"));
-        yield return ("documents", "getDatabaseSchema", client => Db(client).ListCollectionStatsAsync());
-        yield return ("documents", "getDocument", client => Db(client).GetDocumentAsync("users", User));
-        yield return ("documents", "listDocuments", client => Db(client).ListDocumentsAsync("users"));
-        yield return ("documents", "createDocument", client => Db(client).CreateDocumentAsync("users", json));
-        yield return ("documents", "putDocument", client => Db(client).PutDocumentAsync("users", User, json));
-        yield return ("documents", "patchDocument", client => Db(client).PatchDocumentAsync("users", User, json));
-        yield return ("documents", "patchDocument", client => Db(client).PatchDocumentAsync("users", User, [TerraBasePatchOperation.Unset("/a")]));
-        yield return ("documents", "deleteDocument", client => Db(client).DeleteDocumentAsync("users", User));
-        yield return ("documents", "queryDocuments", client => Db(client).QueryAsync("users", new TerraBaseQuery()));
-        yield return ("documents", "runTransaction", client => Db(client).TransactAsync([TerraBaseTransactionOperation.Delete("users", User)]));
-        yield return ("documents", "createImport", client => Db(client).CreateImportAsync(TerraBaseImportFormat.Sqlite, 1, new string('0', 64)));
-        yield return ("documents", "getImport", client => Db(client).GetImportAsync());
-        yield return ("documents", "uploadImportSource", client => Db(client).UploadImportSourceAsync(0, new byte[] { 1 }));
-        yield return ("documents", "updateImport", client => Db(client).UpdateImportAsync(new TerraBaseImportOptions()));
-        yield return ("documents", "startImport", client => Db(client).StartImportAsync("preview"));
-        yield return ("documents", "cancelImport", client => Db(client).CancelImportAsync());
-        yield return ("documents", "resumeImport", client => Db(client).ResumeImportAsync());
+        yield return ("database", "invokeFunction", client => Db(client).InvokeFunctionAsync("hello"));
+        yield return ("database", "listDatabaseLogs", client => Db(client).ListRequestLogsAsync());
+        yield return ("database", "listFunctionLogs", client => Db(client).ListFunctionLogsAsync("hello"));
+        yield return ("database", "listFunctions", client => Db(client).ListFunctionsAsync());
+        yield return ("database", "deployFunction", client => Db(client).DeployFunctionAsync("hello", new("function handler(event) { return event; }")));
+        yield return ("database", "getFunction", client => Db(client).GetFunctionAsync("hello"));
+        yield return ("database", "deleteFunction", client => Db(client).DeleteFunctionAsync("hello"));
+        yield return ("database", "createDatabase", client => Db(client).CreateAsync());
+        yield return ("database", "deleteDatabase", client => Db(client).DeleteAsync());
+        yield return ("database", "cancelClosure", client => Db(client).CancelClosureAsync(User, User));
+        yield return ("database", "getDatabaseUsage", client => Db(client).GetUsageAsync());
+        yield return ("database", "branchDatabase", client => Db(client).BranchAsync("copy"));
 
         yield return ("project", "createDatabase", client => ProjectClient(client).CreateDatabaseAsync("app"));
         yield return ("project", "listDatabases", client => ProjectClient(client).ListDatabasesAsync());
         yield return ("project", "getDatabase", client => ProjectClient(client).GetDatabaseAsync("app"));
         yield return ("project", "deleteDatabase", client => ProjectClient(client).DeleteDatabaseAsync("app"));
         yield return ("project", "updateDatabase", client => ProjectClient(client).RenameDatabaseAsync(User, "production"));
-        yield return ("project", "updateDatabase", client => ProjectClient(client).SetDatabaseRegionsAsync("app", []));
         yield return ("project", "getProjectUsage", client => ProjectClient(client).GetUsageAsync());
         yield return ("project", "getProjectMetrics", client => ProjectClient(client).GetPrometheusMetricsAsync());
-        yield return ("documents", "getDatabaseUsage", client => Db(client).GetUsageAsync());
-        yield return ("documents", "streamDatabaseChanges", client => ReadFirstAsync(Db(client).StreamChangesAsync()));
-        yield return ("documents", "exportDatabase", client => ReadFirstAsync(Db(client).ExportAsync()));
-        yield return ("documents", "getDeclaredCollectionSchema", client => Db(client).GetDeclaredSchemaAsync("users"));
-        yield return ("documents", "putDeclaredCollectionSchema", client => Db(client).PutDeclaredSchemaAsync("users", json));
-        yield return ("documents", "deleteDeclaredCollectionSchema", client => Db(client).DeleteDeclaredSchemaAsync("users"));
-        yield return ("documents", "getCollectionTtl", client => Db(client).GetCollectionTtlAsync("users"));
-        yield return ("documents", "putCollectionTtl", client => Db(client).SetCollectionTtlAsync("users", "/expiresAt"));
-        yield return ("documents", "deleteCollectionTtl", client => Db(client).ClearCollectionTtlAsync("users"));
-        yield return ("documents", "branchDatabase", client => Db(client).BranchAsync("copy"));
-        yield return ("documents", "runSql", client => Db(client).RunSqlAsync("SELECT * FROM users LIMIT 1"));
         yield return ("sql", "executeSql", client => ((TerraBaseSqlClient)client).Database(Project, "app").ExecuteAsync("SELECT 1"));
-        yield return ("documents", "listIndexes", client => Db(client).ListIndexesAsync());
-        yield return ("documents", "createIndex", client => Db(client).CreateIndexAsync("users", ["email"]));
-        yield return ("documents", "dropIndex", client => Db(client).DropIndexAsync("users_email"));
-
-        yield return ("project", "createDatabase", client => ProjectClient(client).CreateDatabaseAsync("app"));
-        yield return ("project", "listDatabases", client => ProjectClient(client).ListDatabasesAsync());
-        yield return ("project", "getDatabase", client => ProjectClient(client).GetDatabaseAsync("app"));
-        yield return ("project", "deleteDatabase", client => ProjectClient(client).DeleteDatabaseAsync("app"));
-        yield return ("project", "updateDatabase", client => ProjectClient(client).SetDatabaseRegionsAsync("app", []));
-        yield return ("project", "getProjectUsage", client => ProjectClient(client).GetUsageAsync());
-        yield return ("project", "getProjectMetrics", client => ProjectClient(client).GetPrometheusMetricsAsync());
-        yield return ("documents", "getDatabaseUsage", client => Db(client).GetUsageAsync());
-        yield return ("documents", "streamDatabaseChanges", client => ReadFirstAsync(Db(client).StreamChangesAsync()));
-        yield return ("documents", "getDeclaredCollectionSchema", client => Db(client).GetDeclaredSchemaAsync("users"));
-        yield return ("documents", "putDeclaredCollectionSchema", client => Db(client).PutDeclaredSchemaAsync("users", json));
-        yield return ("documents", "deleteDeclaredCollectionSchema", client => Db(client).DeleteDeclaredSchemaAsync("users"));
-        yield return ("documents", "branchDatabase", client => Db(client).BranchAsync("copy"));
-        yield return ("documents", "runSql", client => Db(client).RunSqlAsync("SELECT * FROM users LIMIT 1"));
-        yield return ("documents", "listIndexes", client => Db(client).ListIndexesAsync());
-        yield return ("documents", "createIndex", client => Db(client).CreateIndexAsync("users", ["email"]));
-        yield return ("documents", "dropIndex", client => Db(client).DropIndexAsync("users_email"));
-
-        static TerraBasePlatformClient P(object client) => (TerraBasePlatformClient)client;
-        yield return ("platform", "listPlatformDatabases", client => P(client).ListDatabasesAsync());
-        yield return ("platform", "listPlatformCollections", client => P(client).ListCollectionsAsync("ts-auth"));
-        yield return ("platform", "listPlatformDocuments", client => P(client).ListDocumentsAsync("ts-auth", "users", limit: 10));
-        yield return ("platform", "getPlatformDocument", client => P(client).GetDocumentAsync("ts-auth", "users", User));
+        yield return ("platform", "listPlatformDatabases", client => ((TerraBasePlatformClient)client).ListDatabasesAsync());
 
         yield return ("management", "createOrganization", client => M(client).CreateOrganizationAsync(User, "Acme"));
         yield return ("management", "listOrganizations", client => M(client).ListOrganizationsAsync(User));
@@ -215,7 +113,7 @@ public sealed class TerraBaseContractTests
         // Management here goes to the private listener (the platform operator, no credential), so it also proves HTTP/2.
         object sdk = client switch
         {
-            "documents" or "project" => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = origin, ApiKey = "tb_test_key" }),
+            "database" or "project" => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = origin, ApiKey = "tb_test_key" }),
             "sql" => new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { BaseAddress = origin, AccessTokenProvider = _ => ValueTask.FromResult("tb_test_key") }),
             "platform" => new TerraBasePlatformClient(http, new TerraBasePlatformClientOptions { BaseAddress = origin, AccessTokenProvider = _ => ValueTask.FromResult("user-token") }),
             _ => new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Private }),
@@ -236,12 +134,6 @@ public sealed class TerraBaseContractTests
         }
 
         return (sent.Method, uri.AbsolutePath, uri.Query);
-    }
-
-    private static async Task ReadFirstAsync<T>(IAsyncEnumerable<T> events)
-    {
-        await using var enumerator = events.GetAsyncEnumerator();
-        await enumerator.MoveNextAsync();
     }
 
     private static List<Route> Load()

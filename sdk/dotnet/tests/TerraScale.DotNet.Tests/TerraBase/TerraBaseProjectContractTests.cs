@@ -1,8 +1,4 @@
-using System.Formats.Tar;
-using System.IO.Compression;
 using System.Net;
-using System.Security.Cryptography;
-using System.Text.Json;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.DotNet.Tests.TerraBase;
@@ -11,7 +7,7 @@ public sealed class TerraBaseProjectContractTests
 {
 
     [Test]
-    public async Task Canonical_lifecycle_uses_project_authority_database_names_and_placement()
+    public async Task Canonical_lifecycle_uses_project_authority_database_names_and_home_region()
     {
         var requests = new List<(string Method, string Path, string Query, string? Body)>();
         using var handler = new TerraBaseTestHandler(async (request, token) =>
@@ -29,28 +25,23 @@ public sealed class TerraBaseProjectContractTests
         using var http = new HttpClient(handler);
         var client = TerraBaseIntegrationFixture.Client(http);
         var project = client.Project(TerraBaseIntegrationFixture.ProjectId);
-        var created = await project.CreateDatabaseAsync("app", "gru", ["sjc", "fra"]);
+        var created = await project.CreateDatabaseAsync("app", "gru");
         var page = await project.ListDatabasesAsync(after: created.Id, limit: 1);
         var found = await project.GetDatabaseAsync("app");
-        await project.SetDatabaseRegionsAsync("app", []);
         await project.DeleteDatabaseAsync("app");
         var branch = await client.Database(TerraBaseIntegrationFixture.ProjectId, "app").BranchAsync("copy");
 
         await Assert.That(created.Region).IsEqualTo("sjc");
         await Assert.That(created.HomeRegion).IsEqualTo("gru");
-        await Assert.That(created.ReplicaRegions).IsEquivalentTo(["sjc", "fra"]);
         await Assert.That(found.Id).IsEqualTo(created.Id);
         await Assert.That(page.Next).IsEqualTo(created.Id);
         await Assert.That(branch.BranchedFrom).IsEqualTo(created.Id);
         await Assert.That(branch.Name).IsEqualTo("copy");
-        await Assert.That(requests.Select(r => r.Method)).IsEquivalentTo(["POST", "GET", "GET", "PATCH", "DELETE", "POST"]);
+        await Assert.That(requests.Select(r => r.Method)).IsEquivalentTo(["POST", "GET", "GET", "DELETE", "POST"]);
         await Assert.That(requests[2].Path).IsEqualTo($"/v1/projects/{TerraBaseIntegrationFixture.ProjectId}/databases/app");
         await Assert.That(requests[1].Query).IsEqualTo($"?after={created.Id}&limit=1");
-        await Assert.That(requests[3].Body).IsEqualTo("{\"replicaRegions\":[]}");
-        using var body = JsonDocument.Parse(requests[0].Body!);
-        await Assert.That(body.RootElement.GetProperty("homeRegion").GetString()).IsEqualTo("gru");
-        await Assert.That(body.RootElement.GetProperty("replicaRegions").GetArrayLength()).IsEqualTo(2);
-        await Assert.That(requests[5].Body).IsEqualTo("{\"name\":\"copy\"}");
+        await Assert.That(requests[0].Body).IsEqualTo("{\"name\":\"app\",\"homeRegion\":\"gru\"}");
+        await Assert.That(requests[4].Body).IsEqualTo("{\"name\":\"copy\"}");
     }
 
     [Test]

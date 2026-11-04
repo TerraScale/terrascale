@@ -18,9 +18,9 @@ namespace TerraScale.DotNet.Tests;
 public sealed class HttpVersionTests
 {
     [Test]
-    [Arguments("documents", HttpProtocols.Http1AndHttp2, "HTTP/2")]
+    [Arguments("database", HttpProtocols.Http1AndHttp2, "HTTP/2")]
     [Arguments("auth", HttpProtocols.Http1AndHttp2, "HTTP/2")]
-    [Arguments("documents", HttpProtocols.Http1, "HTTP/1.1")]
+    [Arguments("database", HttpProtocols.Http1, "HTTP/1.1")]
     [Arguments("auth", HttpProtocols.Http1, "HTTP/1.1")]
     public async Task HttpsNegotiatesTheProtocolAndReusesTheConnection(string client, HttpProtocols protocols, string expected)
     {
@@ -44,7 +44,7 @@ public sealed class HttpVersionTests
             received.Enqueue((context.Request.Protocol, context.Connection.Id, context.Request.Headers.Authorization.ToString()));
             context.Response.ContentType = "application/json";
             await context.Response.WriteAsync(client == "auth" ? "{\"keys\":[]}"
-                : "{\"name\":\"users\",\"created_at\":\"0\",\"id\":\"01J00000000000000000000000\"}");
+                : "{\"id\":\"01J00000000000000000000001\",\"projectId\":\"01J00000000000000000000000\",\"name\":\"app\",\"branchedFrom\":null,\"createdAt\":\"2026-10-12T00:00:00+00:00\",\"region\":\"gru\",\"homeRegion\":\"gru\"}");
         });
         await app.StartAsync();
         var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
@@ -63,9 +63,9 @@ public sealed class HttpVersionTests
         else
         {
             var sdk = new TerraBaseDocumentsClient(http, new() { BaseAddress = address, ApiKey = "synthetic-token" });
-            var database = sdk.Database("01J00000000000000000000000", "app");
-            _ = await database.GetCollectionAsync("users");
-            _ = await database.GetCollectionAsync("users");
+            var project = sdk.Project("01J00000000000000000000000");
+            _ = await project.GetDatabaseAsync("app");
+            _ = await project.GetDatabaseAsync("app");
         }
 
         await Assert.That(received.Count).IsEqualTo(2);

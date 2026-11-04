@@ -21,7 +21,7 @@ var client = new TerraBasePlatformClient(http, new TerraBasePlatformClientOption
     AccessTokenProvider = _ => ValueTask.FromResult("consumer-token"),
 });
 var databases = await client.ListDatabasesAsync();
-if (databases.Items is not [{ Name: "platform-dashboard", HomeRegion: "gru", ReplicaRegions: ["iad"] }])
+if (databases.Items is not [{ Name: "platform-dashboard", HomeRegion: "gru" }])
 {
     throw new InvalidOperationException("The platform client returned an unexpected database list.");
 }
@@ -31,10 +31,10 @@ using var regionalHttp = new HttpClient(new WrongRegionStub());
 var regional = new TerraBaseDocumentsClient(regionalHttp, new TerraBaseDocumentsClientOptions { Region = "sjc", ApiKey = "tb_consumer" }).Database("project", "app");
 try
 {
-    _ = await regional.GetDocumentAsync("items", "01JA00000000000000000000D1");
+    _ = await regional.GetUsageAsync();
     throw new InvalidOperationException("A 421 did not throw.");
 }
-catch (TerraBaseWrongRegionException wrong) when (wrong is { Region: "sjc", HomeRegion: "gru", Regions: ["gru", "fra"] })
+catch (TerraBaseWrongRegionException wrong) when (wrong is { Region: "sjc", HomeRegion: "gru", Regions: ["gru"] })
 {
 }
 
@@ -68,18 +68,7 @@ var projects = await auth.Platform.ListProjectsAsync("original-user-token", orga
 if (projects.Items is not [{ Id: project, OrganizationId: organization, Role: "member" }] || projects.Next != "opaque+/cursor=")
     throw new InvalidOperationException("Installed auth client did not preserve the exported project page.");
 
-var transaction = File.ReadAllText(Path.Combine(installed, "terrabase", "fixtures", "transaction-changes.sse"));
-transaction = transaction[transaction.IndexOf("event: change", StringComparison.Ordinal)..];
-using var changesHttp = new HttpClient(new IntegrationStub(HttpMethod.Get,
-    $"https://api.terrascale.tech/v1/projects/{project}/databases/app/changes?collections=items", "scoped-user-token", transaction, "text/event-stream"));
-var changesDatabase = new TerraBaseDocumentsClient(changesHttp, new TerraBaseDocumentsClientOptions
-{ BaseAddress = new Uri("https://api.terrascale.tech"), ApiKey = "scoped-user-token" }).Database(project, "app");
-var changes = new List<TerraBaseChangesEvent>();
-await foreach (var item in changesDatabase.StreamChangesAsync(collections: ["items"])) changes.Add(item);
-if (changes is not [{ Cursor: null, Change.Id: "a" }, { Cursor: not null, Change.Id: "b" }])
-    throw new InvalidOperationException("Installed changes client lost a checkpointless transaction event or its final checkpoint.");
-
-Console.WriteLine($"PASS TerraScale.DotNet {loaded} on {RuntimeInformation.FrameworkDescription}: installed auth export and checkpointless transaction feed");
+Console.WriteLine($"PASS TerraScale.DotNet {loaded} on {RuntimeInformation.FrameworkDescription}: installed auth export");
 
 internal sealed class PlatformStub : HttpMessageHandler
 {
@@ -94,7 +83,7 @@ internal sealed class PlatformStub : HttpMessageHandler
         return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(
-                """{"items":[{"name":"platform-dashboard","id":"db","homeRegion":"gru","replicaRegions":["iad"],"allRegions":false}]}""", Encoding.UTF8, "application/json"),
+                """{"items":[{"name":"platform-dashboard","id":"db","homeRegion":"gru"}]}""", Encoding.UTF8, "application/json"),
         });
     }
 }
@@ -114,7 +103,7 @@ internal sealed class WrongRegionStub : HttpMessageHandler
         };
         response.Headers.Add("X-TerraBase-Region", "sjc");
         response.Headers.Add("X-TerraBase-Database-Home", "gru");
-        response.Headers.Add("X-TerraBase-Database-Regions", "gru,fra");
+        response.Headers.Add("X-TerraBase-Database-Regions", "gru");
         return Task.FromResult(response);
     }
 }

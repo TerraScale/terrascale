@@ -216,8 +216,8 @@ public sealed class TerraBaseForbiddenException : TerraBaseException
 }
 
 /// <summary>
-/// 404: the resource, or one of its parents, does not exist or is not reachable by the caller. The Documents API
-/// sends <c>not_found</c> or <c>unknown_database</c>. Every Management API 404 (an unknown id, or an organization the
+/// 404: the resource, or one of its parents, does not exist or is not reachable by the caller. Project and database
+/// routes send <c>not_found</c> or <c>unknown_database</c>. Every Management API 404 (an unknown id, or an organization the
 /// acting user is not a member of) reports <c>unknown_route</c>, the same code as a wrong path or listener.
 /// </summary>
 public sealed class TerraBaseNotFoundException : TerraBaseException
@@ -229,8 +229,8 @@ public sealed class TerraBaseNotFoundException : TerraBaseException
 }
 
 /// <summary>
-/// 409: a deterministic conflict, such as a taken name, a non-empty delete, the last owner or a patch type conflict.
-/// Documents API conflicts carry an <see cref="TerraBaseException.ErrorCode"/>; Management API 400, 403 and 409 bodies
+/// 409: a deterministic conflict, such as a taken name, a non-empty delete or the last owner.
+/// Project and database route conflicts carry an <see cref="TerraBaseException.ErrorCode"/>; Management API 400, 403 and 409 bodies
 /// are a plain message, so their <see cref="TerraBaseException.ErrorCode"/> is <see langword="null"/>.
 /// </summary>
 public sealed class TerraBaseConflictException : TerraBaseException
@@ -273,7 +273,7 @@ public sealed class TerraBaseRateLimitedException : TerraBaseException
         : base(statusCode, message, errorCode, operationIndex) { }
 }
 
-/// <summary>One schema validation failure, without document values.</summary>
+/// <summary>One schema validation failure, without input values.</summary>
 /// <param name="Path">JSON instance path.</param>
 /// <param name="Keyword">Failed schema keyword.</param>
 public sealed record TerraBaseValidationDetail(string Path, string Keyword);

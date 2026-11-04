@@ -59,7 +59,7 @@ public sealed record TerraBasePage<T>(IReadOnlyList<T> Items, string? Next) : IJ
 public sealed record TerraBaseOrganization(string Id, string Name, string CreatedBy, DateTimeOffset CreatedAt, TerraBasePlan Plan);
 
 /// <summary>A project: a folder of databases inside an organization.</summary>
-/// <param name="Id">Canonical uppercase ULID; the Documents API's <c>{project}</c>.</param>
+/// <param name="Id">Canonical uppercase ULID; the <c>{project}</c> route segment.</param>
 /// <param name="OrganizationId">Owning organization.</param>
 /// <param name="Name">Display name, unique within the organization.</param>
 /// <param name="CreatedAt">Creation time.</param>
@@ -93,37 +93,27 @@ public sealed record TerraBaseHistoryErasure(
     public bool Complete => this.Status == "complete";
 }
 
-/// <summary>A database registered in a project. The Documents API addresses it by <see cref="ProjectId"/> and <see cref="Name"/>.</summary>
+/// <summary>A database registered in a project, addressed by <see cref="ProjectId"/> and <see cref="Name"/>.</summary>
 /// <param name="Id">Canonical uppercase ULID.</param>
 /// <param name="ProjectId">Owning project.</param>
 /// <param name="Name">Database name, unique within the project.</param>
 /// <param name="BranchedFrom">Id of the database this one was branched from, if any.</param>
 /// <param name="CreatedAt">Creation time.</param>
-public sealed record TerraBaseManagedDatabase(string Id, string ProjectId, string Name, string? BranchedFrom, DateTimeOffset CreatedAt) : IJsonOnDeserialized
+public sealed record TerraBaseManagedDatabase(string Id, string ProjectId, string Name, string? BranchedFrom, DateTimeOffset CreatedAt)
 {
     /// <summary>The region that answered.</summary>
     [JsonRequired]
     public string Region { get; init; } = null!;
 
-    /// <summary>The region where the database is created and managed.</summary>
+    /// <summary>The one region that holds and serves the database.</summary>
     [JsonRequired]
     public string HomeRegion { get; init; } = null!;
-
-    /// <summary>The other regions holding a full copy and serving the database.</summary>
-    [JsonRequired]
-    public IReadOnlyList<string> ReplicaRegions { get; init; } = null!;
-
-    /// <summary>Whether every serving region holds a full copy, including regions that join later; then <see cref="ReplicaRegions"/> is empty.</summary>
-    [JsonRequired]
-    public bool AllRegions { get; init; }
 
     /// <summary>The name lost during a cross-region name conflict, or null when no conflict is reported.</summary>
     public string? PreviousName { get; init; }
 
     /// <summary>The immutable database id that kept <see cref="PreviousName"/>, or null.</summary>
     public string? ConflictOf { get; init; }
-
-    void IJsonOnDeserialized.OnDeserialized() => TerraBaseJsonContext.RequireNonNullItems(ReplicaRegions);
 }
 
 /// <summary>A user's membership in an organization.</summary>

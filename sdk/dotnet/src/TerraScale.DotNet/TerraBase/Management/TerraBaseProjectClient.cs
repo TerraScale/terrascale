@@ -19,16 +19,13 @@ public sealed partial class TerraBaseProjectClient
     }
 
     /// <summary>
-    /// Creates a database managed in the called region, or the specified home. Sent once; a regional pin may refuse a different home.
-    /// A writable database requires at least two regions. Omitting <paramref name="replicaRegions"/> uses every other current serving region;
-    /// an explicit list must include at least one region other than the home. An empty list returns 400 placement_needs_two_regions.
-    /// <paramref name="allRegions"/> true copies it to every serving region, including regions that join later; it cannot be combined with <paramref name="replicaRegions"/>.
+    /// Creates a database in the called region, or in <paramref name="homeRegion"/>. A database lives in exactly one region.
+    /// Sent once; a regional pin may refuse a different region.
     /// </summary>
-    public async Task<TerraBaseManagedDatabase> CreateDatabaseAsync(string name, string? homeRegion = null,
-        IReadOnlyList<string>? replicaRegions = null, bool? allRegions = null, CancellationToken cancellationToken = default)
+    public async Task<TerraBaseManagedDatabase> CreateDatabaseAsync(string name, string? homeRegion = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
-        var body = TerraBaseConnection.Json(new TerraBaseDatabaseRegionsRequest(name, homeRegion, replicaRegions, allRegions), Json.TerraBaseDatabaseRegionsRequest);
+        var body = TerraBaseConnection.Json(new TerraBaseCreateDatabaseRequest(name, homeRegion), Json.TerraBaseCreateDatabaseRequest);
         return (await connection.SendAsync(HttpMethod.Post, path + "/databases", body, Json.TerraBaseManagedDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
     }
 
@@ -37,32 +34,16 @@ public sealed partial class TerraBaseProjectClient
         (await connection.SendAsync(HttpMethod.Get, path + "/databases" + TerraBaseConnection.Query(("after", after), ("limit", TerraBaseConnection.Number(limit))),
             null, Json.TerraBasePageTerraBaseManagedDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
 
-    /// <summary>Reads a database by name, including the answering region and current placement.</summary>
+    /// <summary>Reads a database by name, including the answering region and its home region.</summary>
     public async Task<TerraBaseManagedDatabase> GetDatabaseAsync(string databaseName, CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Get, DatabasePath(databaseName), null, Json.TerraBaseManagedDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
 
     /// <summary>
-    /// Deletes directly in the home region without a preceding placement update. Permanent purge authority removes every replica,
-    /// including all-regions placement. A 204 response records logical deletion and local cleanup; remote erasure is retried
-    /// durably, not guaranteed synchronous. Branches remain independent. Sent once.
+    /// Deletes the database in its region. A 204 response records logical deletion and local cleanup; remote erasure is
+    /// retried durably, not guaranteed synchronous. Branches remain independent. Sent once.
     /// </summary>
     public Task DeleteDatabaseAsync(string databaseName, CancellationToken cancellationToken = default) =>
         connection.SendAsync(HttpMethod.Delete, DatabasePath(databaseName), null, null, cancellationToken);
-
-    /// <summary>
-    /// Replaces the complete replica list in the home region and turns all-regions placement off. A writable database needs
-    /// at least one replica besides the home. An empty list can temporarily make document writes return 409 placement_needs_two_regions;
-    /// it is not required for deletion and does not provide supported single-region placement. Home and name cannot change. Sent once.
-    /// </summary>
-    public async Task<TerraBaseManagedDatabase> SetDatabaseRegionsAsync(string databaseName, IReadOnlyList<string> replicaRegions, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(replicaRegions);
-        return await SetPlacementAsync(databaseName, new TerraBaseDatabaseRegionsRequest(null, null, replicaRegions, null), cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>Copies the database to every serving region, including regions that join later, and clears the replica list. Sent once.</summary>
-    public Task<TerraBaseManagedDatabase> SetDatabaseAllRegionsAsync(string databaseName, CancellationToken cancellationToken = default) =>
-        SetPlacementAsync(databaseName, new TerraBaseDatabaseRegionsRequest(null, null, null, true), cancellationToken);
 
     /// <summary>
     /// Reads best-effort dashboard usage, not billing. Granularity is hour (default) or day; from inclusive and to
@@ -78,11 +59,6 @@ public sealed partial class TerraBaseProjectClient
 
     private string DatabasePath(string databaseName) => path + "/databases/" + TerraBaseConnection.Segment(databaseName, nameof(databaseName));
 
-    private async Task<TerraBaseManagedDatabase> SetPlacementAsync(string databaseName, TerraBaseDatabaseRegionsRequest request, CancellationToken cancellationToken)
-    {
-        var body = TerraBaseConnection.Json(request, Json.TerraBaseDatabaseRegionsRequest);
-        return (await connection.SendAsync(HttpMethod.Patch, DatabasePath(databaseName), body, Json.TerraBaseManagedDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
-    }
 }
 
-internal sealed record TerraBaseDatabaseRegionsRequest(string? Name, string? HomeRegion, IReadOnlyList<string>? ReplicaRegions, bool? AllRegions);
+internal sealed record TerraBaseCreateDatabaseRequest(string Name, string? HomeRegion);

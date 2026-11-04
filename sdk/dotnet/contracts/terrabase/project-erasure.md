@@ -7,7 +7,7 @@ handoff. It sends `PUT /admin/projects/{project}/closure` with JSON
 existing private-listener transport behind the peer credential, without an
 acting-user header. The caller must obtain account-deletion consent before
 calling: version 2 authorizes a permanent project fence and TerraBase's purge of
-the project's databases regardless of replication, TerraBase API keys and backup
+the project's databases, TerraBase API keys and backup
 destinations.
 
 The result is the existing `TerraBaseProjectClosure`: only HTTP 200 with

@@ -22,7 +22,7 @@ public sealed class TerraBaseFunctionInvocationException : TerraBaseException
 /// <summary>One invocation log, retained among the latest 100; newest entries are listed first.</summary>
 /// <param name="Id">Invocation ULID.</param>
 /// <param name="At">Start time.</param>
-/// <param name="Trigger">http, change or cron.</param>
+/// <param name="Trigger">What started it, for example http or cron.</param>
 /// <param name="Status">ok or error.</param>
 /// <param name="DurationMs">Duration in milliseconds.</param>
 /// <param name="Lines">At most 50 console lines, each at most 1 KiB.</param>
@@ -75,17 +75,4 @@ public sealed partial class TerraBaseDatabase
         return response.Value;
     }
 
-    /// <summary>
-    /// Lists up to 100 trigger deliveries in ascending ID order; empty without a trigger. Requires both
-    /// documents:read and documents:write. Pending attempts/errorCode form the dead-letter view; no cursor.
-    /// </summary>
-    public async Task<IReadOnlyList<TerraBaseChangeWebhookDelivery>> ListFunctionDeliveriesAsync(string functionName,
-        CancellationToken cancellationToken = default)
-    {
-        var response = await connection.SendAsync(HttpMethod.Get, FunctionPath(functionName) + "/deliveries", null,
-            Json.IReadOnlyListTerraBaseChangeWebhookDelivery, null, cancellationToken).ConfigureAwait(false);
-        if (response.Value.Any(delivery => delivery is null))
-            throw new TerraBaseException(response.Status, "Function deliveries contain invalid items.", "invalid_response", null);
-        return response.Value;
-    }
 }

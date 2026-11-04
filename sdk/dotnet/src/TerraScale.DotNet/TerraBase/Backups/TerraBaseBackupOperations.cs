@@ -37,15 +37,9 @@ public sealed record TerraBasePointInTimePlan(TerraBaseRestoreWindow Window, Dat
 /// <param name="Name">New database name.</param>
 /// <param name="BranchedFrom">Source database ULID.</param>
 /// <param name="CreatedAt">Creation time.</param>
-/// <param name="HomeRegion">Placement home, or null.</param>
-/// <param name="ReplicaRegions">Placement replicas, or null.</param>
-/// <param name="PlacementVersion">Placement revision.</param>
+/// <param name="HomeRegion">The region holding the new database, or null.</param>
 public sealed record TerraBaseRestoredDatabase(string Id, string ProjectId, string Name, string? BranchedFrom,
-    DateTimeOffset CreatedAt, string? HomeRegion = null, IReadOnlyList<string>? ReplicaRegions = null, long PlacementVersion = 0)
-{
-    /// <summary>The replicas, empty when no replica placement was recorded.</summary>
-    public IReadOnlyList<string> Replicas => ReplicaRegions ?? [];
-}
+    DateTimeOffset CreatedAt, string? HomeRegion = null);
 
 internal sealed record TerraBaseBackupPolicyRequest(string? FullBackupCron, int RetentionDays, bool Disabled);
 internal sealed record TerraBasePointInTimeRequest(DateTimeOffset PointInTime, string? Name, string? Destination);

@@ -1,6 +1,6 @@
 # Rename a database
 
-Use `await documents.Project(projectId).RenameDatabaseAsync(database.Id, "production", cancellationToken)`
+Use `await client.Project(projectId).RenameDatabaseAsync(database.Id, "production", cancellationToken)`
 with a `databases:write` token. The immutable database ULID targets a name-only JSON
 `PATCH /v1/projects/{project}/databases/{database}` at the home region.
 

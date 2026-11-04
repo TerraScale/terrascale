@@ -16,7 +16,7 @@ Operation `listRegions`: anonymous `GET /v1/regions` on the client listener; no 
 
 `TerraBaseOptions.IsRegion` (113–114) requires 1–63 ASCII characters, first `[a-z]`, remaining `[a-z0-9-]`, final character not `-`. Syntax alone does not mean a region serves now. Use catalog ids for placement. `RegionCatalog.cs` 23–30 defines membership/filter/distinct/order; `ListRegionsEndpoint.cs` 15–29 pins method, path, operation identity, anonymous security and cache header; `TerraBaseJsonContext.cs` registers `RegionsBody`. Producer `RegionCatalogTests.cs` asserts exact camelCase JSON; `ApiReferenceTests.cs` pins anonymous route identity. These are source-derived supplemental contracts, not newly generated OpenAPI/route artifacts or live qualification.
 
-Results require a non-null, nonempty `regions` string collection with valid sorted distinct ids. Malformed responses fail without inventing fallback regions; future valid ids are preserved.
+Results require a non-null, nonempty `regions` string list with valid sorted distinct ids. Malformed responses fail without inventing fallback regions; future valid ids are preserved.
 
 ```csharp
 using var handler = TerraBaseHttp.CreateHandler();

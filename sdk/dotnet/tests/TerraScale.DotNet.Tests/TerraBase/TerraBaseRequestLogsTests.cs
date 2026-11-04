@@ -6,7 +6,7 @@ namespace TerraScale.DotNet.Tests.TerraBase;
 public sealed class TerraBaseRequestLogsTests
 {
     private const string DatabaseId = "01JA0000000000000000000002";
-    private const string Entry = """{"id":"01JA0000000000000000000003","time":"2026-10-26T10:00:00Z","region":"gru","method":"POST","route":"/v1/projects/{project}/databases/{database}/collections/{collection}/query","status":200,"latencyMs":1.25,"operations":9007199254740993,"isQuery":true}""";
+    private const string Entry = """{"id":"01JA0000000000000000000003","time":"2026-10-26T10:00:00Z","region":"gru","method":"POST","route":"/v1/projects/{project}/databases/{database}/sql/execute","status":200,"latencyMs":1.25,"operations":9007199254740993,"isQuery":true}""";
     private const string Empty = """{"databaseId":"01JA0000000000000000000002","items":[],"truncated":false,"recordingLimited":false}""";
     private static string Body(string items) => "{\"databaseId\":\"" + DatabaseId + "\",\"items\":[" + items + "],\"truncated\":true,\"recordingLimited\":true}";
 

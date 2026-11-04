@@ -25,7 +25,7 @@ The producer returns at most100 recent observations within24hours, newest first.
 Filtering applies within that already bounded window. `truncated` means the
 recent window was full, even if a filter returns fewer items. `recordingLimited`
 means this server omitted observations at capacity since startup. A route is a
-redacted template, not request text or a URL. Operations count committed document
+redacted template, not request text or a URL. Operations count committed
 operations. SQL/query observations with latency at least100ms are slow queries.
 Recording is best effort; crashes or late remote observations can cause loss.
 The result provides no durable ordering, completeness, checkpoint or retry promise.

@@ -1,12 +1,12 @@
 # Project Prometheus metrics
 
-`documents.Project(projectId).GetPrometheusMetricsAsync(cancellationToken)` reads
+`client.Project(projectId).GetPrometheusMetricsAsync(cancellationToken)` reads
 `GET /v1/projects/{project}/metrics` using the existing project access-token provider.
 The token needs `databases:read`; the project binding and database narrowing remain
 server-enforced. A raw dashboard API key is not the project bearer token.
 
 ```csharp
-TerraBasePrometheusMetrics scrape = await documents.Project(projectId)
+TerraBasePrometheusMetrics scrape = await client.Project(projectId)
     .GetPrometheusMetricsAsync(cancellationToken);
 await destination.WriteAsync(scrape.Body, cancellationToken);
 // When serving the bytes, preserve scrape.ContentType on the response.

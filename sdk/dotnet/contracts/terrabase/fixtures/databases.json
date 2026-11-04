@@ -7,12 +7,7 @@
       "branchedFrom": null,
       "createdAt": "2026-10-12T00:00:00+00:00",
       "region": "sjc",
-      "homeRegion": "gru",
-      "replicaRegions": [
-        "sjc",
-        "fra"
-      ],
-      "allRegions": false
+      "homeRegion": "gru"
     }
   ],
   "next": "01JA0000000000000000000004"

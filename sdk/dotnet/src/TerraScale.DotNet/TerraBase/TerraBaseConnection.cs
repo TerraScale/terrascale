@@ -188,12 +188,6 @@ internal sealed class TerraBaseConnection
         }
     }
 
-    internal Task<OpenResponse> OpenChangesAsync(string path, Action<HttpRequestHeaders>? headers, CancellationToken cancellationToken) =>
-        OpenAsync(HttpMethod.Get, path, null, headers, "text/event-stream", streaming: true, cancellationToken);
-
-    internal Task<OpenResponse> OpenExportAsync(string path, CancellationToken cancellationToken) =>
-        OpenAsync(HttpMethod.Get, path, null, null, "application/x-ndjson", streaming: true, cancellationToken);
-
     /// <summary>
     /// Sends a GET and lets <paramref name="read"/> handle every status, including redirects and errors, within the
     /// request deadline. <paramref name="origin"/> pins the request to a previously validated origin instead of
