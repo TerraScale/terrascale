@@ -18,9 +18,12 @@ internal sealed class ClockReports(TerraBaseOptions options) : IAsyncDisposable
 
         _connection ??= new NatsConnection(new NatsOpts
         {
-            Url = url.ToString(), Name = $"terrabase-clock-{options.MachineId}",
-            AuthOpts = new NatsAuthOpts { Token = token }, MaxReconnectRetry = -1,
-            ReconnectWaitMin = TimeSpan.FromMilliseconds(100), ReconnectWaitMax = TimeSpan.FromSeconds(2),
+            Url = url.ToString(),
+            Name = $"terrabase-clock-{options.MachineId}",
+            AuthOpts = new NatsAuthOpts { Token = token },
+            MaxReconnectRetry = -1,
+            ReconnectWaitMin = TimeSpan.FromMilliseconds(100),
+            ReconnectWaitMax = TimeSpan.FromSeconds(2),
         });
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(1));
