@@ -35,5 +35,22 @@ check(duplicate instanceof SqlError && duplicate.sqlstate === "23505", `REST err
   check(refused instanceof SqlError && refused.code === "primary_key_violation", `WebSocket error ${refused?.code} ${refused?.sqlstate}`);
 }
 
+/** @type {string[]} */
+const seen = [];
+const live = new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error("FAIL shape live update within 30 s")), 30_000);
+  const subscription = db.shape(table).subscribe(({ rows, upToDate }) => {
+    seen.push([...rows.keys()].sort().join());
+    if (upToDate && rows.has("4")) { clearTimeout(timer); subscription.close(); resolve(undefined); }
+  });
+  subscription.done.catch(reject);
+});
+const first = Date.now();
+while (seen.length === 0 && Date.now() - first < 30_000) await new Promise(resolve => setTimeout(resolve, 100));
+check(seen[0] === "1,2", `shape snapshot ${seen[0]}`);
+await db.execute(`INSERT INTO ${table} (id, name) VALUES (4, 'Live')`);
+await live;
+check(seen.at(-1) === "1,2,4", `shape live update ${seen.at(-1)}`);
+
 await db.execute(`DROP TABLE ${table}`);
 console.log("PASS");
