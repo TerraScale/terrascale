@@ -53,7 +53,7 @@ public interface IFunctions
     /// <summary>The last 100 invocation logs, newest first.</summary>
     ValueTask<FunctionResult> LogsAsync(TenantContext tenant, string name, int limit, CancellationToken cancellationToken);
 
-    /// <summary>Runs the function with <paramref name="eventJson"/>, applies its writes and records its log.</summary>
+    /// <summary>Runs the function with <paramref name="eventJson"/>, gives it SQL on its own database and records its log.</summary>
     ValueTask<FunctionResult> InvokeAsync(TenantContext tenant, string name, string trigger, string eventJson, CancellationToken cancellationToken);
 }
 
