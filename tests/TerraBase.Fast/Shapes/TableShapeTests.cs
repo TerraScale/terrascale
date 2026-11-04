@@ -14,6 +14,7 @@ public sealed class TableShapeTests
     public async Task A_shape_equals_its_table_after_100k_operations()
     {
         await using var db = await StartAsync();
+        await db.Api.SetPlanAsync(db.Api.User, db.Database.Organization, "enterprise");
         await db.OkAsync(Items);
         var faker = new Faker { Random = new Randomizer(8_675_309) };
         var early = Client(db);

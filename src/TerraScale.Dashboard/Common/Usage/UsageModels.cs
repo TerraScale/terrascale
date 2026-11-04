@@ -36,8 +36,7 @@ namespace TerraScale.Dashboard.Common.Usage
     public enum UsageSourceState { Measured, NotMetered, Unauthorized, Unavailable, NoProducer, Restricted, QueryTooExpensive }
     public sealed record UsagePeriod(DateTimeOffset From, DateTimeOffset To, string Granularity, long Reads, long Writes);
     public sealed record UsageReading(string ProjectId, string DatabaseId, long LogicalBytes, long Documents, UsagePeriod Period, IReadOnlyList<ActivityPoint> Series, IReadOnlyList<UsageReading> Items, UsageMonth? Month = null);
-    // TerraBase's billed 4 KiB operation units for one UTC month ("yyyy-MM"); older TerraBase omits it.
-    public sealed record UsageMonth(string Month, long ReadUnits, long WriteUnits, long Units, long? OrganizationUnits = null);
+    public sealed record UsageMonth(string Month, long ReadUnits, long WriteUnits, long Units, long? OrganizationUnits = null, long? OrganizationReadUnits = null);
     public sealed record UsageObservation(UsageSourceState State, UsageReading? Reading = null);
     public sealed record UsageMeasurements(UsageObservation Scope, IReadOnlyDictionary<string, UsageObservation> Monthly)
     {
@@ -45,19 +44,34 @@ namespace TerraScale.Dashboard.Common.Usage
         // The organization ledger retains deleted projects; never reconstruct it from current project totals.
         public long? OperationUnits(IEnumerable<string> projectIds, DateTimeOffset now)
         {
+            return Units(projectIds, now, reads: false);
+        }
+
+        public long? SqlReadUnits(IEnumerable<string> projectIds, DateTimeOffset now)
+        {
+            return Units(projectIds, now, reads: true);
+        }
+
+        private long? Units(IEnumerable<string> projectIds, DateTimeOffset now, bool reads)
+        {
             var month = now.UtcDateTime.ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture);
             long? units = null;
             long projectUnits = 0;
             foreach (var id in projectIds)
             {
-                if (Monthly.GetValueOrDefault(id) is not { State: UsageSourceState.Measured, Reading.Month: { OrganizationUnits: { } organizationUnits } reading } ||
-                    reading.Month != month || reading.ReadUnits < 0 || reading.WriteUnits < 0 || organizationUnits < reading.Units ||
-                    units is not null && units != organizationUnits)
+                if (Monthly.GetValueOrDefault(id) is not { State: UsageSourceState.Measured, Reading.Month: { OrganizationUnits: { } organizationWrites, OrganizationReadUnits: { } organizationReads } reading } ||
+                    reading.Month != month || reading.ReadUnits < 0 || reading.WriteUnits != reading.Units)
                 {
                     return null;
                 }
 
-                try { if (checked(reading.ReadUnits + reading.WriteUnits) != reading.Units) { return null; } projectUnits = checked(projectUnits + reading.Units); } catch (OverflowException) { return null; }
+                var (organizationUnits, project) = reads ? (organizationReads, reading.ReadUnits) : (organizationWrites, reading.WriteUnits);
+                if (organizationUnits < project || units is not null && units != organizationUnits)
+                {
+                    return null;
+                }
+
+                try { projectUnits = checked(projectUnits + project); } catch (OverflowException) { return null; }
                 units = organizationUnits;
             }
             return units is { } total && total >= projectUnits ? total : null;

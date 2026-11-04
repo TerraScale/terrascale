@@ -252,6 +252,7 @@ internal static class ApiExamples
         "415" => "unsupported_media_type",
         "421" => "region_pin_mismatch, invalid_region_pin, misdirected_request, wrong_region",
         "429" when id == "recoverHistoricalRecords" => "storage_quota, tenant_busy, tenant_memory",
+        "429" when id == "executeSql" => "quota_exceeded, tenant_busy, tenant_memory",
         "429" => "tenant_busy, tenant_memory",
         "503" when id is "dropCollection" or "runTransaction" => "capacity, storage_busy, unavailable",
         "503" when id == "planPointInTime" => "pitr_plan_limit, pitr_plan_timeout, pitr_plan_unavailable, storage_busy",
