@@ -84,10 +84,13 @@ jobs:
         continue-on-error: true
         env:
           TIGRIS_CI_CREDENTIALS: ${{ secrets.TIGRIS_CI_CREDENTIALS }}
+          R2_SHAPES_CI_CREDENTIALS: ${{ secrets.R2_SHAPES_CI_CREDENTIALS }}
         run: |
           [[ -n $TIGRIS_CI_CREDENTIALS ]] || { echo 'TIGRIS_CI_CREDENTIALS is required' >&2; exit 1; }
+          [[ -n $R2_SHAPES_CI_CREDENTIALS ]] || { echo 'R2_SHAPES_CI_CREDENTIALS is required' >&2; exit 1; }
           umask 077
-          printf '%s\n' "$TIGRIS_CI_CREDENTIALS" > "$RUNNER_TEMP/tigris-ci.env"
+          # One file: the Tigris backup keys, then the ts-terrabase-shapes-test R2 keys (R2_CI_*).
+          printf '%s\n%s\n' "$TIGRIS_CI_CREDENTIALS" "$R2_SHAPES_CI_CREDENTIALS" > "$RUNNER_TEMP/tigris-ci.env"
       - name: Cache shared Docker base layers
         if: env.AREA == 'auth'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
