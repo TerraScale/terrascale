@@ -61,7 +61,8 @@ A refused statement throws `SqlError` with `code` (a `SqlErrorCode` such as `uni
 Values are `null`, numbers, strings and `Uint8Array` blobs; integers beyond 2^53 arrive as `ExactDecimal`
 (`BigInt(String(value))`) and go out as `bigint`.
 
-For live data, `db.shape("todos").subscribe(({ rows }) => …)` keeps every row of a table current (see [Live SQL table shapes](#live-sql-table-shapes)).
+For live data, `db.shape("todos").subscribe(({ rows }) => …)` keeps every row of a table current (see
+[Live SQL table shapes](#live-sql-table-shapes)).
 
 ## Atlas and endpoint selection
 
