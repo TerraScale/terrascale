@@ -37,6 +37,7 @@ async function monitor() {
     createInterface({ input: child.stdout }).on("line", line => {
       const sample = JSON.parse(line);
       if (sample.error || sample.cpu_percent > 70) {
+        emit({ type: "guard", ...sample });
         controller.abort(new Error(sample.error ? "CPU_UNAVAILABLE" : "CPU_LIMIT"));
         clearTimeout(deadline);
         reject(controller.signal.reason);
@@ -216,6 +217,7 @@ async function main() {
             billed_read_units_before: monthBefore.units - monthBefore.writeUnits, billed_read_units_after: monthAfter.units - monthAfter.writeUnits });
           if (snapshot.length !== readers || tail.length !== readers || after.reads !== before.reads || monthAfter.readUnits !== monthBefore.readUnits
             || monthAfter.units !== monthAfter.writeUnits) throw new Error("MEASUREMENT_INCOMPLETE");
+          if (readers === 1 && (requests.snapshot_payload || requests.catchup_payload || requests.cdn < 2)) throw new Error("CDN_UNVERIFIED");
         }
       } finally { await route.close(); }
     }
