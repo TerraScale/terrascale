@@ -99,7 +99,7 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
         return sums;
     }
 
-    /// <summary>Every other region's own page of the allowance feed after <paramref name="after"/>; null when one cannot answer.</summary>
+    /// <summary>Every other region's own page of allowance usage after <paramref name="after"/>; null when one cannot answer.</summary>
     public async Task<List<AllowanceUsagePage>?> AllowancesAsync(string? after, string? month, CancellationToken cancellationToken)
     {
         var query = new StringBuilder("/v1/usage/allowances?");
