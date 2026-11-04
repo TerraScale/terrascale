@@ -100,6 +100,10 @@ Options go before or after the command and its operands; -- ends options.
   functions delete <db> <name>            delete a function and its logs
   sql <db> <statement>                    run one SQL statement in its own
                                           transaction; rows print as JSON lines
+  schema pull                             write schema.sql from --database <db>
+  schema diff <schema.sql>                print DDL for --database <db>
+  schema apply <schema.sql>               apply atomically; --dry-run previews;
+                                          --allow-drop consents to DROP operations
   migrate new <name>                      add the next migrations/NNNN_<name>.sql
   migrate up | status <db>                apply pending migrations in order, each
                                           in one transaction recorded in the
@@ -214,6 +218,9 @@ var commands = map[string][]int{
 	"functions invoke":   {2},
 	"functions logs":     {2},
 	"functions delete":   {2},
+	"schema pull":        {0},
+	"schema diff":        {1},
+	"schema apply":       {1},
 	"migrate new":        {1},
 	"migrate up":         {1},
 	"migrate status":     {1},
@@ -276,6 +283,9 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	expectedID := fs.String("expected-id", "", "db branch/delete: require the server to match this immutable database ULID")
 	from := fs.String("from", "", "db branch create: source database")
 	ttl := fs.String("ttl", "", "db branch create: lifetime, default 7d")
+	schemaDB := fs.String("database", "", "schema: database name or ID; @ uses saved context")
+	dryRun := fs.Bool("dry-run", false, "schema apply: print DDL without executing")
+	allowDrop := fs.Bool("allow-drop", false, "schema apply: consent to DROP operations")
 	args, err := parseOptions(fs, args)
 	if err != nil {
 		return err
@@ -301,6 +311,21 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			return fmt.Errorf("unknown command; run ts help: %w", errUsage)
 		}
 		return fmt.Errorf("expected %s: %w", helpSyntax(name), errUsage)
+	}
+	var schemaFlagsSet, schemaApplyFlagsSet bool
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "database" {
+			schemaFlagsSet = true
+		}
+		if f.Name == "dry-run" || f.Name == "allow-drop" {
+			schemaApplyFlagsSet = true
+		}
+	})
+	if schemaFlagsSet && !strings.HasPrefix(name, "schema ") || schemaApplyFlagsSet && name != "schema apply" {
+		return fmt.Errorf("schema options require their schema command: %w", errUsage)
+	}
+	if strings.HasPrefix(name, "schema ") && *schemaDB == "" {
+		*schemaDB = "@"
 	}
 	var rotationID string
 	var rotationGrace time.Duration
@@ -419,6 +444,13 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			}
 			return runBranch(ctx, s, name, operands, *from, branchTTL, *expectedID, out)
 		}
+		if strings.HasPrefix(name, "schema ") {
+			path := ""
+			if len(operands) > 0 {
+				path = operands[0]
+			}
+			return runSchema(ctx, s.tb.Database(s.project, *schemaDB), name, path, schemaOptions{dryRun: *dryRun, allowDrop: *allowDrop}, out)
+		}
 		if expectedIDSet {
 			database := s.tb.Database(s.project, operands[0])
 			if name == "db branch" {
@@ -448,6 +480,9 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if key := os.Getenv("TERRASCALE_API_KEY"); key != "" {
 		if strings.HasPrefix(name, "auth ") || strings.HasPrefix(name, "keys ") || strings.HasPrefix(name, "projects") || name == "whoami" || strings.HasPrefix(name, "orgs") || name == "context set" {
 			return fmt.Errorf("%s needs ts auth login without TERRASCALE_API_KEY", name)
+		}
+		if strings.HasPrefix(name, "schema ") && *schemaDB == "@" {
+			return fmt.Errorf("API key schema commands need --database <name|id>: %w", errUsage)
 		}
 		if _, err := contextDatabase(operands, ""); err != nil {
 			return err
@@ -514,6 +549,13 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		*org, *project, database, err = contextDefaults(c, claims.Sub, *org, *project)
 		if err != nil {
 			return err
+		}
+		if strings.HasPrefix(name, "schema ") && *schemaDB == "@" {
+			selected, err := contextDatabase([]string{"@"}, database)
+			if err != nil {
+				return err
+			}
+			*schemaDB = selected[0]
 		}
 		if usesDatabaseOperand(name) {
 			operands, err = contextDatabase(operands, database)

@@ -33,8 +33,11 @@ var commandSyntax = map[string]string{
 	"functions deploy":   "functions deploy <database> <file.js|directory>", "functions list": "functions list <database>",
 	"functions invoke": "functions invoke <database> <name>", "functions logs": "functions logs <database> <name>",
 	"functions delete": "functions delete <database> <name>", "sql": "sql <database> <statement|->",
-	"migrate new": "migrate new <name>",
-	"migrate up":  "migrate up <database>", "migrate status": "migrate status <database>",
+	"schema pull":  "schema pull [--database <database>]",
+	"schema diff":  "schema diff <schema.sql> [--database <database>]",
+	"schema apply": "schema apply <schema.sql> [--database <database>] [--dry-run] [--allow-drop]",
+	"migrate new":  "migrate new <name>",
+	"migrate up":   "migrate up <database>", "migrate status": "migrate status <database>",
 	"migrate diff": "migrate diff <database> [<base-database>]", "keys list": "keys list",
 	"keys create": "keys create <name> [<database-ULID>]", "keys revoke": "keys revoke <id>", "keys rotate": "keys rotate <id> <grace>",
 	"context show": "context show", "context clear": "context clear", "context set": "context set <org> <project> [<database>]",
@@ -69,7 +72,7 @@ func requestedHelp(args []string, out io.Writer) (bool, error) {
 		if strings.HasPrefix(a, "-") {
 			name, _, equal := strings.Cut(strings.TrimLeft(a, "-"), "=")
 			switch name {
-			case "from", "ttl", "project", "org", "expected-id", "scope", "expires", "allow-cidr", "name", "cron", "data", "limit", "home-region", "replica-regions":
+			case "database", "from", "ttl", "project", "org", "expected-id", "scope", "expires", "allow-cidr", "name", "cron", "data", "limit", "home-region", "replica-regions":
 				if !equal {
 					i++
 				}
@@ -170,6 +173,12 @@ func helpOptions(name string) map[string]string {
 	case name == "db branch url":
 		options["--expected-id <ULID>"] = "require this branch identity before issuing a scoped key"
 		options["TERRASCALE_API_KEY"] = "required; emits a secret URL scoped to this database, for at most 7d"
+	case strings.HasPrefix(name, "schema "):
+		options["--database <name|id>"] = "target database; defaults to the saved context database"
+		if name == "schema apply" {
+			options["--dry-run"] = "print the plan without writes"
+			options["--allow-drop"] = "consent to DROP operations"
+		}
 	case name == "db branch":
 		options["-expected-id <ULID>"] = "require the inspected source ID; unsupported servers fail closed; no unguarded fallback"
 	case name == "db delete" || name == "db branch delete":
