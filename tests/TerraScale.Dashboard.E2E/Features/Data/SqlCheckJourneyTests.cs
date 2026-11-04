@@ -102,7 +102,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             await Assert.That(missing.Body.GetProperty("sqliteCode").GetString()).IsEqualTo("SQLITE_ERROR");
             var write = await RunAsync("CREATE TABLE things (id TEXT PRIMARY KEY)");
             await Assert.That(write.Status).IsEqualTo(HttpStatusCode.OK).Because("A member with write access runs DDL with a documents:write grant.");
-            await Assert.That(write.Body.GetProperty("rowsAffected").GetInt64()).IsEqualTo(1);
+            await Assert.That(write.Body.GetProperty("rowsAffected").GetInt64()).IsEqualTo(0).Because("DDL changes no rows.");
             var transaction = await RunAsync("BEGIN");
             await Assert.That(transaction.Status).IsEqualTo(HttpStatusCode.UnprocessableEntity);
             await Assert.That(transaction.Body.GetProperty("detail").GetString()).Contains("each run is its own transaction");
