@@ -38,8 +38,12 @@ with tempfile.TemporaryDirectory() as scratch:
             return
         raise AssertionError('Untrusted receipt accepted')
     assert verify() == manifest
-    rows['ts-ship/terrabase']['description'] = 'Fast passed in 121s (30s warn); test times reported; build 100s (<600s)'
-    assert verify() == manifest  # Both budgets are warning-only until #1084 complies.
+    for elapsed in ('30', '119.999'):
+        rows['ts-ship/terrabase']['description'] = f'Fast passed in {elapsed}s (30s warn); test times reported; build 100s (<600s)'
+        assert verify() == manifest
+    for elapsed in ('120', '121'):
+        rows['ts-ship/terrabase']['description'] = f'Fast passed in {elapsed}s (30s warn); test times reported; build 100s (<600s)'
+        rejects()
     rows = copy.deepcopy(original)
     for context in rows:
         for state in ('pending', 'failure', 'error'):
