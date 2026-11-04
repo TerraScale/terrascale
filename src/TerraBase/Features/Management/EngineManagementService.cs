@@ -224,7 +224,7 @@ internal sealed partial class EngineManagementService(
         await AddDatabaseAsync(
             transaction => AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), name, sourceId: null, branchedFrom: null, cancellationToken,
             ttlSeconds: ttlSeconds,
-            placement: allRegions ? new DatabasePlacement(options.Region, [], 1, AllRegions: true)
+            placement: allRegions ? new DatabasePlacement(options.Region, replicaRegions ?? [], 1, AllRegions: true)
                 : replicaRegions is null ? null : new DatabasePlacement(options.Region, replicaRegions, 1))
             .ConfigureAwait(false) switch
         {
@@ -271,11 +271,6 @@ internal sealed partial class EngineManagementService(
         if (await CatalogTables.DatabaseAsync(transaction, projectId, databaseId, cancellationToken).ConfigureAwait(false) is not { } database)
         {
             return ManagementErrors.NotFound;
-        }
-
-        if (allRegions)
-        {
-            return new Conflict("all-region placement is unavailable: name the replica regions", "replicas_unavailable");
         }
 
         if (PlatformDatabases.IsPlatform(tenant.OrganizationId))
