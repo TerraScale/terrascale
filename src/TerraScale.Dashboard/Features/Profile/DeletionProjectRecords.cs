@@ -26,13 +26,13 @@ namespace TerraScale.Dashboard.Features.Profile
                 var queryKey = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(organizationId + "/" + projectId)));
                 await DropAsync<SavedQueryRecord>("dashboard_saved_queries", queryKey,
                     record => record.OrganizationId == organizationId && record.ProjectId == projectId, cancellationToken);
-                await DropAsync<AlertRuleSet>(AlertRules.Collection, projectId,
+                await DropAsync<AlertRuleSet>(AlertRules.Table, projectId,
                     record => record.OrganizationId == organizationId && record.ProjectId == projectId, cancellationToken);
-                await DropAsync<LogDrain>(LogDrains.Collection, projectId,
+                await DropAsync<LogDrain>(LogDrains.Table, projectId,
                     record => record.OrganizationId == organizationId && record.ProjectId == projectId, cancellationToken);
-                await RemoveIndexEntryAsync<AlertProjectIndex>(AlertRules.IndexCollection, organizationId, projectId,
+                await RemoveIndexEntryAsync<AlertProjectIndex>(AlertRules.IndexTable, organizationId, projectId,
                     index => index.Projects, cancellationToken);
-                await RemoveIndexEntryAsync<LogDrainIndex>(LogDrains.IndexCollection, organizationId, projectId,
+                await RemoveIndexEntryAsync<LogDrainIndex>(LogDrains.IndexTable, organizationId, projectId,
                     index => index.Projects, cancellationToken);
             }
             catch (Exception error) when (error is JsonException or TerraBaseException)
@@ -41,35 +41,35 @@ namespace TerraScale.Dashboard.Features.Profile
             }
         }
 
-        private async Task DropAsync<T>(string collection, string key, Func<T, bool> owns, CancellationToken cancellationToken)
+        private async Task DropAsync<T>(string table, string key, Func<T, bool> owns, CancellationToken cancellationToken)
         {
-            if (await state.GetAsync(collection, key, cancellationToken) is not { } document)
+            if (await state.GetAsync(table, key, cancellationToken) is not { } row)
             {
                 return;
             }
 
-            if (document.Id != key || !owns(AccountService.Read<T>(document)))
+            if (row.Id != key || !owns(AccountService.Read<T>(row)))
             {
                 throw new IOException("Project record ownership does not match.");
             }
 
-            await state.DeleteAsync(collection, key, document.Version, cancellationToken);
+            await state.DeleteAsync(table, key, row.Version, cancellationToken);
         }
 
-        private async Task RemoveIndexEntryAsync<T>(string collection, string organizationId, string projectId,
+        private async Task RemoveIndexEntryAsync<T>(string table, string organizationId, string projectId,
             Func<T, Dictionary<string, string>> projects, CancellationToken cancellationToken)
         {
-            if (await state.GetAsync(collection, "all", cancellationToken) is not { } document)
+            if (await state.GetAsync(table, "all", cancellationToken) is not { } row)
             {
                 return;
             }
 
-            if (document.Id != "all")
+            if (row.Id != "all")
             {
                 throw new IOException("Project cleanup index identity does not match.");
             }
 
-            var index = AccountService.Read<T>(document);
+            var index = AccountService.Read<T>(row);
             var entries = projects(index) ?? throw new IOException("Project cleanup index is invalid.");
             if (!entries.TryGetValue(projectId, out var owner))
             {
@@ -82,8 +82,8 @@ namespace TerraScale.Dashboard.Features.Profile
             }
 
             entries.Remove(projectId);
-            await state.PutAsync(collection, "all", JsonSerializer.SerializeToElement(index),
-                StatePrecondition.Matches(document.Version), cancellationToken);
+            await state.PutAsync(table, "all", JsonSerializer.SerializeToElement(index),
+                StatePrecondition.Matches(row.Version), cancellationToken);
         }
     }
 }

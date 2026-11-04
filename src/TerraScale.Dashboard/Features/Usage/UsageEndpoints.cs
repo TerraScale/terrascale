@@ -9,7 +9,7 @@ namespace TerraScale.Dashboard.Features.Usage
         public static IServiceCollection AddUsageFeatures(this IServiceCollection services)
         {
             return services.AddSingleton<SpendingService>()
-            .AddSingleton<IUsageMeasurements, UsageBackend>().AddSingleton<IUsageStorage, UsageStorageBackend>().AddSingleton<IUsageReplication, UsageReplicationBackend>().AddSingleton<UsageService>();
+            .AddSingleton<IUsageMeasurements, UsageBackend>().AddSingleton<UsageService>();
         }
 
         public static IEndpointRouteBuilder MapUsage(this IEndpointRouteBuilder endpoints)

@@ -32,7 +32,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             {
                 BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal))
             };
-            await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+            await DatabaseJourney.NativeWorkspaceAsync(client);
             using var page = await client.GetAsync("/organization?tab=billing");
             await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(await page.Content.ReadAsStringAsync()).Contains("<dt>Stripe charges</dt><dd>None</dd>");

@@ -130,7 +130,7 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
             }
             async Task ShotAsync(IPage page, string name)
             {
-                await page.EvaluateAsync("() => document.fonts.ready");
+                await page.EvaluateAsync("() => json.fonts.ready");
                 await page.ScreenshotAsync(new() { Path = Path.Combine(output, name + ".png"), FullPage = true, Caret = ScreenshotCaret.Hide });
             }
             // ts-auth's hosted page creates the account; the dashboard continues to account setup.

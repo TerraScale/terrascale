@@ -30,14 +30,14 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             // Browser sign-in and the device grant; membership fails before the privileged rotation.
             await Assert.That(result.Observed.GetProperty("issuedAdminRoleGrants").GetInt32()).IsEqualTo(2);
             var billing = result.Observed.GetProperty("billing");
-            var stored = billing.GetProperty("organizations").EnumerateArray().Single(row => row.GetProperty("id").GetString() == organization).GetProperty("document");
+            var stored = billing.GetProperty("organizations").EnumerateArray().Single(row => row.GetProperty("id").GetString() == organization).GetProperty("row");
             await Assert.That(stored.TryGetProperty("Members", out var members) &&
                 (members.ValueKind != JsonValueKind.Object || members.EnumerateObject().Any())).IsFalse();
             await Assert.That(stored.GetProperty("InternalBilling").ValueKind).IsEqualTo(JsonValueKind.Null);
             await Assert.That(billing.GetProperty("bindings").GetArrayLength()).IsEqualTo(0);
             await Assert.That(billing.GetProperty("singleton").ValueKind).IsEqualTo(JsonValueKind.Null);
             await Assert.That(billing.GetProperty("writes").EnumerateArray().Any(write =>
-                write.GetProperty("collection").GetString() is "dashboard_billing" or "dashboard_internal_billing")).IsFalse();
+                write.GetProperty("table").GetString() is "dashboard_billing" or "dashboard_internal_billing")).IsFalse();
             await Assert.That(billing.GetProperty("stripeRequests").GetArrayLength()).IsEqualTo(0);
             await Assert.That(result.Observed.GetProperty("contractFailures").GetInt32()).IsEqualTo(0);
             await Assert.That(result.Observed.GetProperty("managementMutations").GetInt32()).IsEqualTo(0);

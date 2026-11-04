@@ -133,38 +133,38 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
             return underlying.CheckReadyAsync(cancellationToken);
         }
 
-        public Task<StateRecord?> GetAsync(string collection, string id, CancellationToken cancellationToken)
+        public Task<StateRecord?> GetAsync(string table, string id, CancellationToken cancellationToken)
         {
-            return underlying.GetAsync(collection, id, cancellationToken);
+            return underlying.GetAsync(table, id, cancellationToken);
         }
 
-        public Task<IReadOnlyList<StateRecord>> ListAsync(string collection, CancellationToken cancellationToken)
+        public Task<IReadOnlyList<StateRecord>> ListAsync(string table, CancellationToken cancellationToken)
         {
-            return underlying.ListAsync(collection, cancellationToken);
+            return underlying.ListAsync(table, cancellationToken);
         }
 
-        public Task<StatePage> PageAsync(string collection, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken cancellationToken)
+        public Task<StatePage> PageAsync(string table, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken cancellationToken)
         {
-            return underlying.PageAsync(collection, scope, fields, limit, cursor, cancellationToken);
+            return underlying.PageAsync(table, scope, fields, limit, cursor, cancellationToken);
         }
 
-        public async Task PutAsync(string collection, string id, JsonElement document, StatePrecondition precondition, CancellationToken cancellationToken)
+        public async Task PutAsync(string table, string id, JsonElement row, StatePrecondition precondition, CancellationToken cancellationToken)
         {
-            if (collection == AccountService.OrganizationsCollection && id == Billing?.OrganizationId && FailNextOrganizationWrite)
+            if (table == AccountService.OrganizationsTable && id == Billing?.OrganizationId && FailNextOrganizationWrite)
             {
                 FailNextOrganizationWrite = false;
                 InterruptedWrites++;
                 throw new IOException("Local audit: billing persisted, organization projection interrupted.");
             }
-            await underlying.PutAsync(collection, id, document, precondition, cancellationToken);
-            if (collection == StripeBilling.Collection)
+            await underlying.PutAsync(table, id, row, precondition, cancellationToken);
+            if (table == StripeBilling.Table)
             {
-                Billing = document.Deserialize<BillingBinding>()!;
+                Billing = row.Deserialize<BillingBinding>()!;
             }
         }
-        public Task DeleteAsync(string collection, string id, string version, CancellationToken cancellationToken)
+        public Task DeleteAsync(string table, string id, string version, CancellationToken cancellationToken)
         {
-            return underlying.DeleteAsync(collection, id, version, cancellationToken);
+            return underlying.DeleteAsync(table, id, version, cancellationToken);
         }
 
         public async Task AgeFreeReservationAsync()
@@ -175,10 +175,10 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
                 throw new InvalidOperationException("Only a completed local Free setup can be aged.");
             }
 
-            var document = await underlying.GetAsync(StripeBilling.Collection, binding.OrganizationId, default)
+            var row = await underlying.GetAsync(StripeBilling.Table, binding.OrganizationId, default)
                 ?? throw new InvalidOperationException("Missing fixture binding.");
             binding.StartedAt = DateTimeOffset.UtcNow.AddHours(-2);
-            await PutAsync(StripeBilling.Collection, binding.OrganizationId, JsonSerializer.SerializeToElement(binding), StatePrecondition.Matches(document.Version), default);
+            await PutAsync(StripeBilling.Table, binding.OrganizationId, JsonSerializer.SerializeToElement(binding), StatePrecondition.Matches(row.Version), default);
         }
     }
 

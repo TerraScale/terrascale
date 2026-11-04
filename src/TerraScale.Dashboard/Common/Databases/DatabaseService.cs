@@ -1,7 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Common.Databases
 {
@@ -25,18 +24,6 @@ namespace TerraScale.Dashboard.Common.Databases
 
         public const string DatabaseIdCode = "database_id";
         public const string DatabaseIdRule = "Pass the database ID (a ULID), not its name.";
-
-        public static void ValidateContents(IReadOnlyList<CollectionStats> contents)
-        {
-            if (contents is null || contents.Any(item => item is null || string.IsNullOrWhiteSpace(item.Name) || item.Documents < 0 || item.Bytes < 0) ||
-                contents.Select(item => item.Name).Distinct(StringComparer.Ordinal).Count() != contents.Count)
-            {
-                throw new HttpRequestException("The data plane returned ambiguous database counts.");
-            }
-
-            _ = contents.Sum(item => item.Documents);
-            _ = contents.Sum(item => item.Bytes);
-        }
 
         public async Task<DatabaseRegion> HomeAsync(AccountContext context, DatabaseRecord? database, CancellationToken cancellationToken)
         {
@@ -433,9 +420,9 @@ namespace TerraScale.Dashboard.Common.Databases
             return name[..Math.Min(name.Length, 48)].TrimEnd('-') + "-preview-branch";
         }
 
-        public static string Path(string id, string tab = "overview", string collection = "")
+        public static string Path(string id, string tab = "overview")
         {
-            return "/databases/" + Uri.EscapeDataString(id) + (tab == "overview" ? "" : "/" + tab) + (collection.Length == 0 ? "" : "?collection=" + Uri.EscapeDataString(collection));
+            return "/databases/" + Uri.EscapeDataString(id) + (tab == "overview" ? "" : "/" + tab);
         }
 
         public static IReadOnlyList<string> Regions(DatabaseRecord record)
@@ -443,10 +430,10 @@ namespace TerraScale.Dashboard.Common.Databases
             return record.Regions.Count > 0 ? record.Regions : string.IsNullOrEmpty(record.Region) ? [] : [record.Region];
         }
 
-        public static IReadOnlyList<string> ServingRegions(DatabaseRecord record, IReadOnlyList<DatabaseRegion> catalog)
+        // A database serves from its home region only.
+        public static IReadOnlyList<string> ServingRegions(DatabaseRecord record)
         {
-            return record.AllRegions
-                ? [.. Regions(record).Concat(catalog.Select(region => region.Code)).Distinct(StringComparer.OrdinalIgnoreCase)] : Regions(record);
+            return string.IsNullOrEmpty(record.Region) ? Regions(record).Take(1).ToArray() : [record.Region];
         }
 
         internal static void DemandName(ProjectRecord project, string name)

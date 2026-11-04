@@ -15,7 +15,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
             using var client = scenario.CreateClient();
             using var producer = scenario.CreateProviderClient();
-            await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+            await DatabaseJourney.NativeWorkspaceAsync(client);
             using (var region = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = new[] { "gru", "sjc" } }))
             {
                 await Assert.That(region.IsSuccessStatusCode).IsTrue();
@@ -70,7 +70,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
             using var client = scenario.CreateClient();
             using var producer = scenario.CreateProviderClient();
-            await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+            await DatabaseJourney.NativeWorkspaceAsync(client);
             using (var region = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = new[] { "gru", "fra", "sfo" } }))
             {
                 await Assert.That(region.IsSuccessStatusCode).IsTrue();

@@ -174,8 +174,8 @@ namespace TerraScale.Dashboard.E2E
                 body = string.Join('\n', body.Split('\n').Where(line => line.StartsWith("data:", StringComparison.Ordinal)).Select(line => line[5..].TrimStart()));
             }
 
-            using var document = JsonDocument.Parse(body);
-            return document.RootElement.Clone();
+            using var json = JsonDocument.Parse(body);
+            return json.RootElement.Clone();
         }
 
         // A personal access token gets its own grant: the create form redirects through ts-auth's hosted

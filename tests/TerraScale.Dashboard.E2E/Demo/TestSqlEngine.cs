@@ -60,6 +60,43 @@ namespace TerraScale.Dashboard.E2E.Demo
             return [.. names.Select((name, index) => (name, Convert.ToInt32(counts[index].Rows[0][0], System.Globalization.CultureInfo.InvariantCulture)))];
         }
 
+        // Schema and rows as replayable statements, for producer backup snapshots.
+        public IReadOnlyList<TestSqlStatement> Snapshot()
+        {
+            gate.Wait();
+            try
+            {
+                var schema = new List<(string Name, string Sql)>();
+                using (var tables = connection.CreateCommand())
+                {
+                    tables.CommandText = "SELECT name, sql FROM sqlite_master WHERE type = 'table' ORDER BY name";
+                    using var reader = tables.ExecuteReader();
+                    while (reader.Read())
+                    {
+                        schema.Add((reader.GetString(0), reader.GetString(1)));
+                    }
+                }
+
+                var statements = new List<TestSqlStatement>();
+                foreach (var (name, sql) in schema)
+                {
+                    statements.Add(new(sql, []));
+                    using var rows = connection.CreateCommand();
+                    rows.CommandText = "SELECT * FROM \"" + name + "\"";
+                    using var reader = rows.ExecuteReader();
+                    while (reader.Read())
+                    {
+                        var values = Enumerable.Range(0, reader.FieldCount)
+                            .Select(index => reader.IsDBNull(index) ? null : Convert.ToString(reader.GetValue(index), System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+                        statements.Add(new("INSERT INTO \"" + name + "\" VALUES (" + string.Join(", ", values.Select(_ => "?")) + ")", values));
+                    }
+                }
+
+                return statements;
+            }
+            finally { gate.Release(); }
+        }
+
         public async Task<string> DigestAsync()
         {
             var text = new StringBuilder();
@@ -111,6 +148,7 @@ namespace TerraScale.Dashboard.E2E.Demo
         {
             return error.Message switch
             {
+                var message when message.Contains("no such table", StringComparison.Ordinal) => ("undefined_table", "42P01"),
                 var message when message.Contains("UNIQUE constraint failed", StringComparison.Ordinal) => ("unique_violation", "23505"),
                 var message when message.Contains("NOT NULL constraint failed", StringComparison.Ordinal) => ("not_null_violation", "23502"),
                 var message when message.Contains("constraint failed", StringComparison.Ordinal) => ("constraint_violation", "23000"),

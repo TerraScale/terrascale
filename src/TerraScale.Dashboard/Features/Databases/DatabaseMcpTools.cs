@@ -9,7 +9,7 @@ using static TerraScale.Dashboard.Platform.Mcp.McpScope;
 namespace TerraScale.Dashboard.Features.Databases
 {
     [McpServerToolType]
-    public sealed class DatabaseMcpTools(IHttpContextAccessor http, DatabaseService databases, IDatabaseBackend backend, BackupService backups)
+    public sealed class DatabaseMcpTools(IHttpContextAccessor http, DatabaseService databases, BackupService backups)
     {
         [McpServerTool(Name = "list_databases", Title = "List databases", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List the databases in a project with their status and region.")]
         public async Task<McpDatabaseList> ListDatabases(string? organizationId = null, string? projectId = null,
@@ -23,7 +23,7 @@ namespace TerraScale.Dashboard.Features.Databases
             return new(await Task.WhenAll(page.Items.Select(DatabaseOutput)), page.NextCursor, page.HasMore, page.Limit);
         }
 
-        [McpServerTool(Name = "get_database", Title = "Get database", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Show one database's status, regions, storage totals, and backup state.")]
+        [McpServerTool(Name = "get_database", Title = "Get database", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Show one database's status, regions and backup state.")]
         public async Task<McpDatabaseDetail> GetDatabase(string databaseId, string? organizationId = null, string? projectId = null)
         {
             var context = Scope(organizationId, projectId);
@@ -31,17 +31,7 @@ namespace TerraScale.Dashboard.Features.Databases
             var db = DatabaseService.Database(context, databaseId);
             var output = await DatabaseOutput(db);
             var placement = await databases.ConfiguredPlacementAsync(output.Placement, Cancellation);
-            IReadOnlyList<CollectionStats>? contents = null;
             string? unavailable = null;
-            try
-            {
-                var reported = await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, db, Cancellation), db.Id, Cancellation);
-                DatabaseService.ValidateContents(reported);
-                contents = reported;
-            }
-            catch (Exception error) when ((DatabaseEndpoints.KnownFailure(error) || error is HttpRequestException or JsonException or OverflowException or OperationCanceledException) &&
-                (error is not OperationCanceledException || !Cancellation.IsCancellationRequested))
-            { unavailable = "Database storage measurements are unavailable."; }
             bool? backupsEnabled = null;
             try
             {
@@ -60,7 +50,7 @@ namespace TerraScale.Dashboard.Features.Databases
             { unavailable = unavailable is null ? "Backup measurements are unavailable." : unavailable + " Backup measurements are unavailable."; }
             return new(db.Id, db.Name, db.Status, db.Region, output.Placement, db.CreatedAt, db.AllRegions, db.Endpoint,
                 // MCP labels are an existing response contract, independent of page display casing.
-                [.. placement.Select(region => region.Code.ToUpperInvariant() switch { "SFO" => "SFO · San Francisco", "GRU" => "GRU · São Paulo", "" => "Not configured", var code => code })], contents?.Count, contents?.Sum(item => item.Documents), contents?.Sum(item => item.Bytes),
+                [.. placement.Select(region => region.Code.ToUpperInvariant() switch { "SFO" => "SFO · San Francisco", "GRU" => "GRU · São Paulo", "" => "Not configured", var code => code })],
                 unavailable, backupsEnabled, context.CanManage, db.Status == "ready" && context.CanManage && context.Organization!.CanProvision(context.UserId));
         }
 
@@ -72,7 +62,7 @@ namespace TerraScale.Dashboard.Features.Databases
             return await DatabaseOutput(await databases.CreateAsync(context, name, string.IsNullOrEmpty(region) ? context.Project!.Region : region, Cancellation));
         }
 
-        [McpServerTool(Name = "branch_database", Title = "Branch database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a new database that copies a ready database's documents, schemas, and indexes.")]
+        [McpServerTool(Name = "branch_database", Title = "Branch database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a new database that copies a ready database's tables and data.")]
         public async Task<McpDatabase> BranchDatabase(string databaseId, string name = "", string? organizationId = null, string? projectId = null)
         {
             return await DatabaseOutput(await databases.BranchAsync(Scope(organizationId, projectId), databaseId, name, Cancellation));
@@ -92,19 +82,9 @@ namespace TerraScale.Dashboard.Features.Databases
 
         private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;
 
-        private async Task<McpDatabase> DatabaseOutput(DatabaseRecord db)
+        private static Task<McpDatabase> DatabaseOutput(DatabaseRecord db)
         {
-            IReadOnlyList<DatabaseRegion> catalog = [];
-            // Expansion is optional: discovery must not turn a committed mutation or a readable list into an error.
-            if (db.AllRegions)
-            {
-                try { catalog = await backend.RegionsAsync(Cancellation); }
-                catch (Exception error) when (!Cancellation.IsCancellationRequested &&
-                    (error is HttpRequestException or JsonException or OperationCanceledException || DatabaseEndpoints.KnownFailure(error)))
-                { }
-            }
-
-            return new(db.Id, db.Name, db.Status, db.Region, DatabaseService.ServingRegions(db, catalog), db.CreatedAt, db.AllRegions);
+            return Task.FromResult(new McpDatabase(db.Id, db.Name, db.Status, db.Region, DatabaseService.ServingRegions(db), db.CreatedAt, db.AllRegions));
         }
     }
 
@@ -112,8 +92,5 @@ namespace TerraScale.Dashboard.Features.Databases
     public sealed record McpDatabaseList(IReadOnlyList<McpDatabase> Databases, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor, bool HasMore, int Limit);
     public sealed record McpDatabaseDetail(string Id, string Name, string Status, string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt, bool AllRegions,
         string Endpoint, IReadOnlyList<string> Regions,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Collections,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Documents,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Bytes,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Unavailable, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? BackupsEnabled, bool CanManage, bool CanBranch);
 }

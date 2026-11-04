@@ -20,13 +20,10 @@ namespace TerraScale.Dashboard.Features.Home
         public string ActivityNote { get; set; } = "Reads and writes are metered by TerraBase for browser sessions signed in through TerraScale.";
         public string AnalyticsError { get; set; } = "Analytics scope is unavailable.";
         public string AnalyticsEmpty { get; set; } = "No analytics measurements for this period.";
-        public string ReplicationError { get; set; } = "Replication measurements could not be loaded.";
-        public string ReplicationEmpty { get; set; } = "No replication measurements for this period.";
         public string RegionError { get; set; } = "";
         public bool RegionsPending { get; set; }
         public IReadOnlyList<HomeRequestPoint> RequestPoints { get; set; } = [];
         public HomeAnalytics? Analytics { get; set; }
-        public HomeReplication? Replication { get; set; }
         public IReadOnlyList<HomeRegion> Regions { get; set; } = [];
         public int? ActiveCredentials { get; set; }
         public string CredentialsError { get; set; } = "";
@@ -50,14 +47,14 @@ namespace TerraScale.Dashboard.Features.Home
 
     // TerraBase owns usage and analytics; ts-status owns regional latency observations.
     public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, TerraBaseRpcClient rpc, TimeProvider time,
-        TerraScale.Dashboard.Features.ApiKeys.ApiKeyService keys, IAnalyticsBackend analyticsBackend, IUsageReplication replicationBackend,
+        TerraScale.Dashboard.Features.ApiKeys.ApiKeyService keys, IAnalyticsBackend analyticsBackend,
         TerraScale.Dashboard.Features.Auth.IProjectAccessTokens tokens) : IHomeMeasurements
     {
         public async Task<HomeMeasurement> ReadAsync(AccountContext context, string range, CancellationToken cancellationToken)
         {
             var result = new HomeMeasurement { ObservedAt = time.GetUtcNow() };
             await Task.WhenAll(ActivityAsync(context, range, result, cancellationToken), RegionsAsync(context, result, cancellationToken),
-                AnalyticsAsync(context, range, result, cancellationToken), ReplicationAsync(context, range, result, cancellationToken), CredentialsAsync(context, result, cancellationToken));
+                AnalyticsAsync(context, range, result, cancellationToken), CredentialsAsync(context, result, cancellationToken));
             return result;
         }
 
@@ -65,7 +62,7 @@ namespace TerraScale.Dashboard.Features.Home
         {
             var result = new HomeMeasurement { ObservedAt = time.GetUtcNow(), RegionsPending = true };
             await Task.WhenAll(ActivityAsync(context, range, result, cancellationToken), AnalyticsAsync(context, range, result, cancellationToken),
-                ReplicationAsync(context, range, result, cancellationToken), CredentialsAsync(context, result, cancellationToken));
+                CredentialsAsync(context, result, cancellationToken));
             return result;
         }
 

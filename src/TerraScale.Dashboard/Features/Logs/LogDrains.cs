@@ -23,13 +23,13 @@ namespace TerraScale.Dashboard.Features.Logs
 
     public sealed partial class LogDrains(IDashboardState state, ILogDrainSource source, ICustomerDelivery delivery, IDashboardIdentity identity, TimeProvider clock, ILogger<LogDrains> logger)
     {
-        public const string Collection = "dashboard_log_drains";
-        public const string IndexCollection = "dashboard_log_drain_projects";
+        public const string Table = "dashboard_log_drains";
+        public const string IndexTable = "dashboard_log_drain_projects";
         private static readonly string[] ReservedHeaders = ["host", "content-length", "content-type", "transfer-encoding", "connection", "te", "upgrade", "expect", "cookie"];
 
         public async Task<LogDrain?> ReadAsync(string projectId, CancellationToken cancellationToken)
         {
-            return await state.GetAsync(Collection, projectId, cancellationToken) is { } document ? Read(document, projectId) : null;
+            return await state.GetAsync(Table, projectId, cancellationToken) is { } row ? Read(row, projectId) : null;
         }
 
         public async Task SaveAsync(AccountContext context, string? url, string? headerName, string? headerValue, CancellationToken cancellationToken)
@@ -46,7 +46,7 @@ namespace TerraScale.Dashboard.Features.Logs
 
             var key = (await identity.ReadAsync(cancellationToken)).SessionEncryptionKey;
             var drain = new LogDrain(project.Id, organization.Id, AccountService.NewId(), target, name, null, clock.GetUtcNow());
-            await state.UpdateAsync(Collection, project.Id, () => drain, document => Read(document, project.Id), current =>
+            await state.UpdateAsync(Table, project.Id, () => drain, row => Read(row, project.Id), current =>
             {
                 // A blank value keeps the stored one while the header name stays the same; cursors survive edits, so nothing is re-sent.
                 var header = value is not null ? SealedSecret.Seal(value, key, "log-drain/" + project.Id) : name is not null && current.HeaderName == name ? current.HeaderValue : null;
@@ -57,22 +57,22 @@ namespace TerraScale.Dashboard.Features.Logs
 
                 return drain with { HeaderValue = header, Cursors = current.Cursors, CreatedAt = current.CreatedAt };
             }, cancellationToken);
-            await state.UpdateAsync(IndexCollection, "all", () => new LogDrainIndex([]), AccountService.Read<LogDrainIndex>,
+            await state.UpdateAsync(IndexTable, "all", () => new LogDrainIndex([]), AccountService.Read<LogDrainIndex>,
                 index => index.Projects.TryAdd(project.Id, organization.Id) ? index : null, cancellationToken);
         }
 
         public async Task DeleteAsync(AccountContext context, CancellationToken cancellationToken)
         {
             var (_, project) = Owner(context);
-            if (await state.GetAsync(Collection, project.Id, cancellationToken) is { } document)
+            if (await state.GetAsync(Table, project.Id, cancellationToken) is { } row)
             {
-                await state.DeleteAsync(Collection, project.Id, document.Version, cancellationToken);
+                await state.DeleteAsync(Table, project.Id, row.Version, cancellationToken);
             }
         }
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
-            if (await state.GetAsync(IndexCollection, "all", cancellationToken) is not { } index)
+            if (await state.GetAsync(IndexTable, "all", cancellationToken) is not { } index)
             {
                 return;
             }
@@ -95,8 +95,8 @@ namespace TerraScale.Dashboard.Features.Logs
                 return;
             }
 
-            if (await state.GetAsync(AccountService.OrganizationsCollection, organizationId, cancellationToken) is not { } organizationDocument ||
-                !AccountService.Read<OrganizationRecord>(organizationDocument).Projects.TryGetValue(projectId, out var project))
+            if (await state.GetAsync(AccountService.OrganizationsTable, organizationId, cancellationToken) is not { } organizationRow ||
+                !AccountService.Read<OrganizationRecord>(organizationRow).Projects.TryGetValue(projectId, out var project))
             {
                 return;
             }
@@ -143,7 +143,7 @@ namespace TerraScale.Dashboard.Features.Logs
             }
 
             var now = clock.GetUtcNow();
-            await state.UpdateAsync(Collection, projectId, () => throw new IOException("Log drain disappeared."), document => Read(document, projectId), current =>
+            await state.UpdateAsync(Table, projectId, () => throw new IOException("Log drain disappeared."), row => Read(row, projectId), current =>
             {
                 if (current.Revision != drain.Revision)
                 {
@@ -240,10 +240,10 @@ namespace TerraScale.Dashboard.Features.Logs
             return (organization, project);
         }
 
-        public static LogDrain Read(StateRecord document, string projectId)
+        public static LogDrain Read(StateRecord row, string projectId)
         {
-            var saved = AccountService.Read<LogDrain>(document);
-            if (document.Id != projectId || saved.ProjectId != projectId || saved.Cursors is null || !Uri.TryCreate(saved.Url, UriKind.Absolute, out _))
+            var saved = AccountService.Read<LogDrain>(row);
+            if (row.Id != projectId || saved.ProjectId != projectId || saved.Cursors is null || !Uri.TryCreate(saved.Url, UriKind.Absolute, out _))
             {
                 throw new IOException("Log drain identity is invalid.");
             }

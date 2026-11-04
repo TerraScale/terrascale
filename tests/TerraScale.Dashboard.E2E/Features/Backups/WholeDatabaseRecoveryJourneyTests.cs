@@ -54,7 +54,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             });
             using var client = host.CreateClient();
             using var producer = host.CreateProviderClient();
-            var account = await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+            var account = await DatabaseJourney.NativeWorkspaceAsync(client);
             var secret = await HttpJourney.CreatePatAsync(client, "PITR contract journey", account.Password);
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             var source = await CallAsync("create_database", new { name = "pitr-source", region = "GRU" });
@@ -73,10 +73,10 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             using (var page = await client.GetAsync(path + "?destination=customer"))
             {
                 var html = WebUtility.HtmlDecode(await page.Content.ReadAsStringAsync());
-                await Assert.That(html).Contains("value=\"" + RecoveryWindow.Input(latest) + "\"").And.Contains("min=\"" + RecoveryWindow.Input(earliest) + "\"").And.Contains("max=\"" + RecoveryWindow.Input(latest) + "\"").And.Contains("Databases used");
+                await Assert.That(html).Contains("value=\"" + TerraScale.Dashboard.Features.Backups.RecoveryPoint.Input(latest) + "\"").And.Contains("min=\"" + TerraScale.Dashboard.Features.Backups.RecoveryPoint.Input(earliest) + "\"").And.Contains("max=\"" + TerraScale.Dashboard.Features.Backups.RecoveryPoint.Input(latest) + "\"").And.Contains("Databases used");
                 await Assert.That(html).Contains("pattern=\"" + DatabaseService.NameInputPattern + "\"").And.Contains(DatabaseService.NameHint);
             }
-            var form = new Dictionary<string, string> { ["_csrf"] = csrf, ["destination"] = "customer", ["point"] = RecoveryWindow.Input(latest), ["name"] = "pitr-copy", ["operation"] = "plan" };
+            var form = new Dictionary<string, string> { ["_csrf"] = csrf, ["destination"] = "customer", ["point"] = TerraScale.Dashboard.Features.Backups.RecoveryPoint.Input(latest), ["name"] = "pitr-copy", ["operation"] = "plan" };
             using (var plan = await HttpJourney.PostFormAsync(client, path, form))
             {
                 await Assert.That(await plan.Content.ReadAsStringAsync()).Contains("Advisory plan").And.Contains("Type pitr-copy");
@@ -102,13 +102,13 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
 
             failure = "";
             var before = calls.Count;
-            form["point"] = RecoveryWindow.Input(latest.AddSeconds(1));
+            form["point"] = TerraScale.Dashboard.Features.Backups.RecoveryPoint.Input(latest.AddSeconds(1));
             using (var bounds = await HttpJourney.PostFormAsync(client, path, form))
             {
                 await Assert.That(bounds.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
             }
 
-            form["point"] = RecoveryWindow.Input(earliest.AddSeconds(-1));
+            form["point"] = TerraScale.Dashboard.Features.Backups.RecoveryPoint.Input(earliest.AddSeconds(-1));
             using (var bounds = await HttpJourney.PostFormAsync(client, path, form))
             {
                 await Assert.That(bounds.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
@@ -119,7 +119,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
                 await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
             }
 
-            form["point"] = RecoveryWindow.Input(latest);
+            form["point"] = TerraScale.Dashboard.Features.Backups.RecoveryPoint.Input(latest);
             form["operation"] = "restore";
             form["confirmName"] = "pitr-copy";
             using (var quota = await HttpJourney.PostFormAsync(client, path, form))
@@ -152,22 +152,21 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
 
             await Assert.That(calls.Count).IsEqualTo(before);
             form["_csrf"] = csrf;
-            await CallAsync("create_collection", new { databaseId = id, name = "users" });
-            const string record = "01K78D0C000000000000000010";
-            await CallAsync("create_document", new { databaseId = id, collection = "users", documentId = record, document = new { score = 1 } });
+            await SqlAsync("CREATE TABLE users (id TEXT PRIMARY KEY, score INTEGER)");
+            await SqlAsync("INSERT INTO users VALUES ('01K78D0C000000000000000010', 1)");
             var backup = await CallAsync("create_backup", new { databaseId = id });
             snapshotId = backup.GetProperty("id").GetString()!;
-            await CallAsync("replace_document", new { databaseId = id, collection = "users", id = record, value = new { score = 2 } });
+            await SqlAsync("UPDATE users SET score = 2");
             using (var restored = await HttpJourney.PostFormAsync(client, path, form))
             {
                 await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             }
 
             var second = await CallAsync("restore_database_point_in_time", new { databaseId = id, pointInTime = form["point"], name = "pitr-copy-two", confirmName = "pitr-copy-two", destination = "customer" });
-            var current = await CallAsync("get_document", new { databaseId = id, collection = "users", documentId = record });
-            var historical = await CallAsync("get_document", new { databaseId = second.GetProperty("databaseId").GetString(), collection = "users", documentId = record });
-            await Assert.That(current.GetProperty("value").GetProperty("score").GetInt32()).IsEqualTo(2);
-            await Assert.That(historical.GetProperty("value").GetProperty("score").GetInt32()).IsEqualTo(1);
+            var current = await CallAsync("execute_sql", new { databaseId = id, sql = "SELECT score FROM users" });
+            var historical = await CallAsync("execute_sql", new { databaseId = second.GetProperty("databaseId").GetString(), sql = "SELECT score FROM users" });
+            await Assert.That(current.GetProperty("rows")[0][0].GetInt32()).IsEqualTo(2);
+            await Assert.That(historical.GetProperty("rows")[0][0].GetInt32()).IsEqualTo(1);
             using var role = await producer.PostAsJsonAsync("/__test/control", new { command = "role", value = "member" });
             using (var denied = await client.GetAsync(path))
             {
@@ -177,6 +176,12 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             using (var foreign = await client.GetAsync("/databases/" + AccountService.NewId() + "/point-in-time"))
             {
                 await Assert.That(foreign.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+            }
+
+            async Task SqlAsync(string sql)
+            {
+                using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/sql", new() { ["_csrf"] = csrf, ["databaseId"] = id, ["sql"] = sql });
+                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(sql);
             }
 
             async Task<JsonElement> CallAsync(string name, object arguments)

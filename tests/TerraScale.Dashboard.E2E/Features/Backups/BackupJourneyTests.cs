@@ -43,7 +43,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
         {
             await using var host = await DatabaseSdkScenario.StartAsync(fixture.Root);
             using var client = host.CreateClient(); using var replica = host.CreateClient(true); using var producer = host.CreateProviderClient();
-            var native = await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+            var native = await DatabaseJourney.NativeWorkspaceAsync(client);
             using (var login = await HttpJourney.LoginAsync(replica, native.Email, native.Password))
             {
                 Check(login.StatusCode == HttpStatusCode.SeeOther, "The same newly activated account signs into the other app replica");
@@ -66,13 +66,8 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
                 "Clients do not have to supply an unsupported incremental schedule");
             var source = await CallAsync(client, secret, "create_database", new { name = "backup-source", region = "GRU" });
             var id = source.GetProperty("id").GetString()!;
-            using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()
-            { ["_csrf"] = csrf, ["databaseId"] = id, ["name"] = "users" }))
-            {
-                Check(collection.StatusCode == HttpStatusCode.Created, "Native collection creation reaches the official Documents SDK");
-            }
-
-            await CallAsync(client, secret, "create_document", new { databaseId = id, collection = "users", documentId = "01K78D0C000000000000000010", document = new { score = 1, nested = new { keep = true } } });
+            await SqlAsync(client, csrf, id, "CREATE TABLE users (id TEXT PRIMARY KEY, score INTEGER)");
+            await SqlAsync(client, csrf, id, "INSERT INTO users VALUES ('01K78D0C000000000000000010', 1)");
             var initial = await ReadAsync(replica, "/api/v1/dashboard/backups?databaseId=" + id);
             Check(initial.GetProperty("backups").GetArrayLength() == 0 && initial.GetProperty("policy").GetProperty("retentionDays").GetInt32() == 7 &&
                 !initial.GetProperty("policy").TryGetProperty("updatedAt", out _), "An empty real producer inventory reports its actual default policy without an invented update timestamp");
@@ -81,7 +76,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             var first = await JsonAsync(created); var backupId = first.GetProperty("id").GetString()!;
             Check(TerraScaleIds.IsValid(backupId) && first.EnumerateObject().Select(field => field.Name).Order(StringComparer.Ordinal)
                 .SequenceEqual(new[] { "createdAt", "id", "sizeBytes", "status" }) && first.GetProperty("status").GetString() == "ready", "Native backup has the exact original public shape, without raw provider scope metadata");
-            await CallAsync(replica, secret, "patch_document", new { databaseId = id, collection = "users", documentId = "01K78D0C000000000000000010", patch = new { score = 2 } });
+            await SqlAsync(replica, await HttpJourney.CsrfAsync(replica, "/databases"), id, "UPDATE users SET score = 2");
             var second = await CallAsync(replica, secret, "create_backup", new { databaseId = id });
             var listing = await CallAsync(client, secret, "list_backups", new { databaseId = id });
             var backupIds = listing.GetProperty("backups").EnumerateArray().Select(row => row.GetProperty("id").GetString()).ToArray();
@@ -111,7 +106,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             Check(restored.StatusCode == HttpStatusCode.Created, "Native restore finishes a real new producer database and durable projection");
             var restoredBody = await JsonAsync(restored); var restoredId = restoredBody.GetProperty("id").GetString()!;
             Check(TerraScaleIds.IsValid(restoredId) && restoredId != id && restoredBody.GetProperty("name").GetString() == "backup-restored", "Native restore returns a new canonical identity");
-            Check(await ScoreAsync(restoredId) == 1 && await ScoreAsync(id) == 2, "The restored database reads the captured snapshot through the production Documents SDK; the source retains its later write");
+            Check(await ScoreAsync(restoredId) == 1 && await ScoreAsync(id) == 2, "The restored database reads the captured snapshot through SQL; the source retains its later write");
             var defaultRestore = await CallAsync(replica, secret, "restore_backup", new { databaseId = id });
             var defaultId = defaultRestore.GetProperty("databaseId").GetString()!;
             Check(defaultRestore.GetProperty("name").GetString() == "backup-source-restore" && defaultRestore.GetProperty("status").GetString() == "ready" && await ScoreAsync(defaultId) == 2,
@@ -145,7 +140,6 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             }
 
             await ErrorAsync(client, secret, "set_backup_policy", new { databaseId = id, fullBackupCron = "0 3 * * *", incrementalBackupCron = "0 * * * *", retentionDays = 7 });
-            await ErrorAsync(client, secret, "get_document_history", new { databaseId = id, collection = "users", documentId = "01K78D0C000000000000000010" });
             var after = await ReadAsync(producer, "/__test/observations");
             Check(after.GetProperty("backupRestores").GetInt32() == before.GetProperty("backupRestores").GetInt32() && after.GetProperty("policyWrites").GetInt32() == before.GetProperty("policyWrites").GetInt32(), "Unsupported actions issue no producer mutation");
             using (var collision = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/backups/restore", new()
@@ -172,7 +166,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             Check(final.GetProperty("failures").GetArrayLength() == 0 && final.GetProperty("databases").GetArrayLength() == 0,
                 "All native/MCP backup requests matched the frozen producer contract and native cleanup deleted each real database");
             Console.WriteLine("BACKUP PROTOCOL E2E: isolated producer snapshot restore verified with actual app HTTP/MCP + official SDK; live backup storage/scheduler/secret-delivery qualification remains open.");
-            async Task<int> ScoreAsync(string databaseId) => (await CallAsync(replica, secret, "get_document", new { databaseId, collection = "users", documentId = "01K78D0C000000000000000010" })).GetProperty("value").GetProperty("score").GetInt32();
+            async Task<int> ScoreAsync(string databaseId) => (await CallAsync(replica, secret, "execute_sql", new { databaseId, sql = "SELECT score FROM users" })).GetProperty("rows")[0][0].GetInt32();
         }
 
         private static async Task<JsonElement> CallAsync(HttpClient client, string secret, string name, object arguments)
@@ -181,6 +175,12 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             Check(!IsError(rpc), "Actual MCP tool must succeed: " + name + " " + rpc.GetRawText());
             return rpc.GetProperty("result").GetProperty("structuredContent").Clone();
         }
+        private static async Task SqlAsync(HttpClient client, string csrf, string databaseId, string sql)
+        {
+            using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/sql", new() { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["sql"] = sql });
+            Check(response.StatusCode == HttpStatusCode.OK, "The SQL editor runs the statement on the producer: " + sql);
+        }
+
         private static async Task ErrorAsync(HttpClient client, string secret, string name, object arguments)
         {
             Check(IsError(await HttpJourney.McpAsync(client, secret, "tools/call", new { name, arguments })), "Actual MCP tool fails closed: " + name);

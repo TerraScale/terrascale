@@ -12,8 +12,7 @@ namespace TerraScale.Dashboard.E2E.Demo
     // Test-only producer protocol. Real dashboard HTTP endpoints, reporting
     // adapters, SDK retention requests and persisted CAS writes remain in use.
     sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Func<string, (string UserId, string Email)?> resolveToken, HttpMessageHandler stripe,
-        Func<string, (string UserId, string OrganizationId, string ProjectId, IReadOnlyList<string> Scopes)?> resolveProjectToken, TestAuthApiKeys apiKeys,
-        TestDocuments documents) : HttpMessageHandler
+        Func<string, (string UserId, string OrganizationId, string ProjectId, IReadOnlyList<string> Scopes)?> resolveProjectToken, TestAuthApiKeys apiKeys) : HttpMessageHandler
     {
         private readonly HttpMessageInvoker vendor = new(stripe, false);
         private readonly ConcurrentDictionary<string, string> scenarios = new();
@@ -134,7 +133,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                     return Json(new { error = "not_found" }, HttpStatusCode.NotFound);
                 }
                 // Auth owns identity and membership; dashboard storage owns the database references used by reporting fixtures.
-                var settings = state.Items.GetValueOrDefault(AccountService.OrganizationsCollection + "/" + org.Id)?.Body.Deserialize<OrganizationRecord>();
+                var settings = state.Items.GetValueOrDefault(AccountService.OrganizationsTable + "/" + org.Id)?.Body.Deserialize<OrganizationRecord>();
                 if (settings?.Projects.TryGetValue(id, out var storedProject) == true)
                 {
                     project.Databases = storedProject.Databases;
@@ -146,25 +145,7 @@ namespace TerraScale.Dashboard.E2E.Demo
             {
                 return Json(new { error = new { code = "forbidden_scope", message = "databases:read is required" } }, HttpStatusCode.Forbidden);
             }
-            // TerraBase document changes stream with an exchanged documents:read project token for the path's project.
-            var isDocumentChanges = segments is ["v1", "projects", _, "databases", _, "changes"];
-            if (isDocumentChanges && sessionActor is not null)
-            {
-                return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
-            }
-
-            if (isDocumentChanges && scopedActor?.Scopes.Contains("documents:read") != true)
-            {
-                return Json(new { error = new { code = "forbidden_scope", message = "documents:read is required" } }, HttpStatusCode.Forbidden);
-            }
-
-            var isDeclaredSchema = request.Method == HttpMethod.Get && segments is ["v1", "projects", _, "databases", _, "collections", _, "schema"];
-            if (isDeclaredSchema && scopedActor?.Scopes.Contains("documents:read") != true)
-            {
-                return Json(new { error = new { code = "forbidden_scope", message = "documents:read is required" } }, HttpStatusCode.Forbidden);
-            }
-
-            var isScopedReporting = segments.Last() is "analytics" or "replication" || isCanonicalUsage || isDocumentChanges || isDeclaredSchema;
+            var isScopedReporting = segments.Last() is "analytics" or "replication" || isCanonicalUsage;
             var actorUserId = sessionActor?.UserId ?? scopedActor!.Value.UserId;
             if (isScopedReporting && (sessionActor is not null || scopedActor is null || scopedActor.Value.ProjectId != id || scopedActor.Value.OrganizationId != org?.Id) ||
                 !isScopedReporting && sessionActor is null)
@@ -207,24 +188,6 @@ namespace TerraScale.Dashboard.E2E.Demo
             if (project is null || request.Method != HttpMethod.Get)
             {
                 throw new HttpRequestException("Unknown reporting fixture request.");
-            }
-
-            if (isDeclaredSchema)
-            {
-                var scope = new DatabaseScope(actorUserId, "", org.Id, org.Name, project.Id, project.Name);
-                if (!project.Databases.Values.Any(database => database.Name == segments[4]) ||
-                    !documents.Statistics(scope, segments[4]).Any(collection => collection.Name == segments[6]))
-                {
-                    return Json(new { error = new { code = "not_found", message = "collection not found" } }, HttpStatusCode.NotFound);
-                }
-                // This fixture has no declared validation schemas; stateful mutations use DatabaseSdkScenario.
-                return Json(new { schema = (object?)null, dialect = (string?)null });
-            }
-            if (isDocumentChanges)
-            {
-                return project.Databases.Values.Any(database => database.Name == segments[4])
-                    ? documents.Changes(project.Id, segments[4], uri.Host == "api.terrascale.tech" ? null : uri.Host.Split('.')[0], request)
-                    : Json(new { error = new { code = "not_found", message = "database not found" } }, HttpStatusCode.NotFound);
             }
 
             var scenario = scenarios.GetValueOrDefault(project.Id, "valid");
@@ -357,7 +320,6 @@ namespace TerraScale.Dashboard.E2E.Demo
                 databaseId = scenario == "foreign-database" ? "foreign" : id,
                 logicalBytes = 4096L * count,
                 storageBytes = 8192L * count,
-                documents = 2L * count,
                 reads = 999_999L,
                 writes = 888_888L,
                 period = scenario == "no-period" ? null : new { from, to = now, granularity, reads = reads == long.MaxValue ? reads : reads * count, writes = 7L * count },
@@ -398,8 +360,6 @@ namespace TerraScale.Dashboard.E2E.Demo
                 databaseId = scenario == "foreign-database" ? "foreign" : id,
                 storageBytes = 8192L,
                 logicalBytes = 4096L,
-                collections = 1L,
-                documents = 2L,
                 reads,
                 writes,
                 period = Period(reads, writes),
@@ -418,7 +378,6 @@ namespace TerraScale.Dashboard.E2E.Demo
                 databases = count,
                 storageBytes = 8192L * count,
                 logicalBytes = 4096L * count,
-                documents = 2L * count,
                 reads = total,
                 writes = writes * count,
                 period = Period(total, writes * count),

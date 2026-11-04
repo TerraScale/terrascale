@@ -8,7 +8,7 @@ namespace TerraScale.Dashboard.Features.Functions
     [McpServerToolType]
     public sealed class FunctionMcpTools(IHttpContextAccessor http, FunctionBackend functions)
     {
-        [McpServerTool(Name = "list_functions", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a database's deployed functions. Functions require document read and write access, including reads.")]
+        [McpServerTool(Name = "list_functions", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a database's deployed functions. Functions require SQL read and write access, including reads.")]
         public async Task<McpFunctionList> List(string databaseId, string? organizationId = null, string? projectId = null,
             [Description(CursorPaging.Description)] int limit = 100, string after = "")
         {
@@ -18,7 +18,7 @@ namespace TerraScale.Dashboard.Features.Functions
             return new(page.Items, page.NextCursor, page.HasMore, page.Limit);
         }
 
-        [McpServerTool(Name = "get_function", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read a function's source, schedule and HTTPS invoke URL. Does not invoke the function. Requires document read and write access.")]
+        [McpServerTool(Name = "get_function", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read a function's source, schedule and HTTPS invoke URL. Does not invoke the function. Requires SQL read and write access.")]
         public async Task<McpFunctionDetail> Get(string databaseId, string name, string? organizationId = null, string? projectId = null)
         {
             var context = Scope(organizationId, projectId);
@@ -28,7 +28,7 @@ namespace TerraScale.Dashboard.Features.Functions
             return new(function, FunctionBackend.InvokeUrl(context, database, name));
         }
 
-        [McpServerTool(Name = "list_function_logs", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read a function's latest 25 invocation records, newest first, with console output and errors. Requires document read and write access.")]
+        [McpServerTool(Name = "list_function_logs", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read a function's latest 25 invocation records, newest first, with console output and errors. Requires SQL read and write access.")]
         public async Task<McpFunctionLogs> Logs(string databaseId, string name, string? organizationId = null, string? projectId = null)
         {
             var context = Scope(organizationId, projectId);

@@ -1,16 +1,10 @@
 using TerraScale.TerraBase.Contracts;
 using TerraScale.Dashboard.Platform.Observability;
 using TerraScale.Dashboard.Features.Analytics;
-using TerraScale.Dashboard.Features.Usage;
 
 namespace TerraScale.Dashboard.Features.Home
 {
     public sealed record HomeAnalytics(long Requests, long Errors, double? WorstP95Ms, long? StorageBytes, long Operations, long ClientBytes);
-    public sealed record HomeDirection(string FromRegion, string ToRegion, long WireBytes);
-    public sealed record HomeReplication(int Healthy, int Lagging, int Diverged, int Stopped, int Starting, double? WorstLagMs, long SentBytes, long ReceivedBytes, IReadOnlyList<HomeDirection> Directions)
-    {
-        public long WireBytes => Directions.Aggregate(0L, (sum, direction) => checked(sum + direction.WireBytes));
-    }
 
     public sealed partial class TerraBaseHomeMeasurements
     {
@@ -48,50 +42,6 @@ namespace TerraScale.Dashboard.Features.Home
             {
                 ServiceSloTelemetry.MarkFailure(error);
                 result.AnalyticsError = "Analytics measurements could not be loaded. Retry this page.";
-            }
-        }
-
-        private async Task ReplicationAsync(AccountContext context, string range, HomeMeasurement result, CancellationToken cancellationToken)
-        {
-            if (context.Role.Length == 0) { result.ReplicationError = "Organization membership is required for replication metrics."; return; }
-            try
-            {
-                var selection = UsageSelection.For(context, context.Project?.Id ?? "", "", range);
-                var report = await replicationBackend.ReadAsync(selection, cancellationToken);
-                result.ReplicationError = report.Error;
-                result.ReplicationEmpty = report.Empty;
-                if (report.Error.Length > 0)
-                {
-                    return;
-                }
-
-                if (report.Regions.Count == 0 && report.Pairs.Count == 0)
-                {
-                    result.Replication = null;
-                    return;
-                }
-
-                var directions = report.Pairs.GroupBy(pair => (pair.FromRegion, pair.ToRegion))
-                    .OrderBy(group => group.Key.FromRegion, StringComparer.Ordinal)
-                    .ThenBy(group => group.Key.ToRegion, StringComparer.Ordinal)
-                    .Select(group => new HomeDirection(group.Key.FromRegion, group.Key.ToRegion,
-                        group.Aggregate(0L, (total, pair) => checked(total + pair.WireBytes))))
-                    .ToArray();
-                result.Replication = new(
-                    report.Regions.Count(region => string.Equals(region.Status, "healthy", StringComparison.OrdinalIgnoreCase)),
-                    report.Regions.Count(region => string.Equals(region.Status, "lagging", StringComparison.OrdinalIgnoreCase)),
-                    report.Regions.Count(region => string.Equals(region.Status, "diverged", StringComparison.OrdinalIgnoreCase)),
-                    report.Regions.Count(region => string.Equals(region.Status, "stopped", StringComparison.OrdinalIgnoreCase) && !region.Starting),
-                    report.Regions.Count(region => region.Starting),
-                    report.WorstLagMs,
-                    report.SentBytes,
-                    report.ReceivedBytes,
-                    directions);
-            }
-            catch (Exception error) when (MeasurementFailure(error, cancellationToken))
-            {
-                ServiceSloTelemetry.MarkFailure(error);
-                result.ReplicationError = "Replication measurements could not be loaded. Retry this page.";
             }
         }
 

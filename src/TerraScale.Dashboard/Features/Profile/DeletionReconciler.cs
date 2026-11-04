@@ -34,11 +34,11 @@ namespace TerraScale.Dashboard.Features.Profile
             // Replay does not depend on producer availability or delivery of an already ACKed proof.
             try
             {
-                foreach (var document in await state.ListAsync(DeletionCleanupJournal.Collection, cancellationToken))
+                foreach (var row in await state.ListAsync(DeletionCleanupJournal.Table, cancellationToken))
                 {
                     try
                     {
-                        var entry = await journal.ReadAsync(document, cancellationToken);
+                        var entry = await journal.ReadAsync(row, cancellationToken);
                         Validate(entry.Proof);
                         await CleanAsync(entry, cancellationToken);
                     }
@@ -86,19 +86,19 @@ namespace TerraScale.Dashboard.Features.Profile
                     await related.CleanAccountAsync(proof.SubjectId, cancellationToken);
                     await AccountDeletion.CleanOperationsAsync(state, identity, proof.SubjectId, cancellationToken);
                     var key = AccountService.AccountStorageKey(proof.SubjectId);
-                    foreach (var collection in new[] { AccountService.AccountsCollection, AccountService.IdentitiesCollection })
+                    foreach (var table in new[] { AccountService.AccountsTable, AccountService.IdentitiesTable })
                     {
-                        await VerifyFenceAsync(collection, key, cancellationToken);
+                        await VerifyFenceAsync(table, key, cancellationToken);
                     }
 
-                    await Task.WhenAll(new[] { AccessTokens.Collection, "session_indexes" }.Select(collection => VerifyAbsentAsync(collection, key, cancellationToken)));
+                    await Task.WhenAll(new[] { AccessTokens.Table, "session_indexes" }.Select(table => VerifyAbsentAsync(table, key, cancellationToken)));
                     break;
                 case "organization":
                     var ended = await billing.EndSubscriptionAsync(proof.SubjectId, cancellationToken, completedDeletion: true);
                     await billing.EndCustomersForDeletionAsync(proof.SubjectId, entry.CustomerIds, cancellationToken);
                     await Features.Data.SqlWorkspace.EraseAsync(state, new Dictionary<string, string> { ["OrganizationId"] = proof.SubjectId }, cancellationToken);
                     var projects = new HashSet<string>(entry.ProjectIds, StringComparer.Ordinal);
-                    if (await state.GetAsync(AccountService.OrganizationsCollection, proof.SubjectId, cancellationToken) is { } existing && !AccountService.IsDeletionFence(existing))
+                    if (await state.GetAsync(AccountService.OrganizationsTable, proof.SubjectId, cancellationToken) is { } existing && !AccountService.IsDeletionFence(existing))
                     {
                         var org = AccountService.Read<OrganizationRecord>(existing);
                         if (existing.Id != proof.SubjectId || org.Id != proof.SubjectId)
@@ -109,16 +109,16 @@ namespace TerraScale.Dashboard.Features.Profile
                         projects.UnionWith(org.Projects.Keys);
                         projects.UnionWith(org.DeletedProjectIds);
                     }
-                    foreach (var collection in new[] { "dashboard_saved_queries", "dashboard_alert_rules", "dashboard_log_drains" })
+                    foreach (var table in new[] { "dashboard_saved_queries", "dashboard_alert_rules", "dashboard_log_drains" })
                     {
-                        foreach (var document in await state.ListAsync(collection, cancellationToken))
+                        foreach (var row in await state.ListAsync(table, cancellationToken))
                         {
-                            if (!document.Body.TryGetProperty("OrganizationId", out var owner) || owner.GetString() != proof.SubjectId)
+                            if (!row.Body.TryGetProperty("OrganizationId", out var owner) || owner.GetString() != proof.SubjectId)
                             {
                                 continue;
                             }
 
-                            if (!document.Body.TryGetProperty("ProjectId", out var project) || !TerraScaleIds.IsValid(project.GetString()))
+                            if (!row.Body.TryGetProperty("ProjectId", out var project) || !TerraScaleIds.IsValid(project.GetString()))
                             {
                                 throw new IOException("Owned project record identity is invalid.");
                             }
@@ -127,9 +127,9 @@ namespace TerraScale.Dashboard.Features.Profile
                         }
                     }
 
-                    foreach (var collection in new[] { "dashboard_alert_projects", "dashboard_log_drain_projects" })
+                    foreach (var table in new[] { "dashboard_alert_projects", "dashboard_log_drain_projects" })
                     {
-                        if (await state.GetAsync(collection, "all", cancellationToken) is { } index)
+                        if (await state.GetAsync(table, "all", cancellationToken) is { } index)
                         {
                             if (!index.Body.TryGetProperty("Projects", out var entries) || entries.ValueKind != JsonValueKind.Object)
                             {
@@ -157,27 +157,27 @@ namespace TerraScale.Dashboard.Features.Profile
                     }
 
                     await related.CleanOrganizationAsync(proof.SubjectId, cancellationToken);
-                    foreach (var collection in new[] { StripeBilling.CheckoutsCollection, StripeBilling.CustomersCollection })
+                    foreach (var table in new[] { StripeBilling.CheckoutsTable, StripeBilling.CustomersTable })
                     {
-                        foreach (var document in await state.ListAsync(collection, cancellationToken))
+                        foreach (var row in await state.ListAsync(table, cancellationToken))
                         {
-                            if (document.Body.TryGetProperty("OrganizationId", out var owner) && owner.GetString() == proof.SubjectId)
+                            if (row.Body.TryGetProperty("OrganizationId", out var owner) && owner.GetString() == proof.SubjectId)
                             {
-                                await state.DeleteAsync(collection, document.Id, document.Version, cancellationToken);
+                                await state.DeleteAsync(table, row.Id, row.Version, cancellationToken);
                             }
                         }
                     }
 
-                    await AccountService.FenceRecordAsync(state, StripeBilling.Collection, proof.SubjectId, proof.Id, document =>
+                    await AccountService.FenceRecordAsync(state, StripeBilling.Table, proof.SubjectId, proof.Id, row =>
                     {
-                        var current = StripeBilling.ReadBinding(document, proof.SubjectId);
+                        var current = StripeBilling.ReadBinding(row, proof.SubjectId);
                         return ended is not null && current.RequestId == ended.RequestId && current.CustomerId == ended.CustomerId &&
                             current.CheckoutId == ended.CheckoutId && current.SubscriptionId == ended.SubscriptionId &&
                             (current.Kind != "stripe" || current.State == "deleting" && current.Status == "canceled" && !current.PaymentValidated);
                     }, cancellationToken);
                     await AccountService.FenceOrganizationDeletionAsync(state, proof.SubjectId, proof.Id, cancellationToken);
-                    await VerifyFenceAsync(StripeBilling.Collection, proof.SubjectId, cancellationToken);
-                    await VerifyFenceAsync(AccountService.OrganizationsCollection, proof.SubjectId, cancellationToken);
+                    await VerifyFenceAsync(StripeBilling.Table, proof.SubjectId, cancellationToken);
+                    await VerifyFenceAsync(AccountService.OrganizationsTable, proof.SubjectId, cancellationToken);
                     break;
                 case "project":
                     await CleanProjectAsync(proof, cancellationToken);
@@ -209,10 +209,10 @@ namespace TerraScale.Dashboard.Features.Profile
         private async Task DropProjectAsync(TsAuthDeletionProof proof, CancellationToken cancellationToken)
         {
             var organizationId = proof.OrganizationId ?? throw new IOException("Deletion organization identity is missing.");
-            var document = await state.GetAsync(AccountService.OrganizationsCollection, organizationId, cancellationToken);
-            if (document is not null && AccountService.IsDeletionFence(document))
+            var row = await state.GetAsync(AccountService.OrganizationsTable, organizationId, cancellationToken);
+            if (row is not null && AccountService.IsDeletionFence(row))
             {
-                if (document.Id != organizationId)
+                if (row.Id != organizationId)
                 {
                     throw new IOException("Deletion organization identity does not match.");
                 }
@@ -220,13 +220,13 @@ namespace TerraScale.Dashboard.Features.Profile
                 return;
             }
             // Preserve a terminal project ID even before this organization has a dashboard projection.
-            var org = document is null ? new OrganizationRecord { Id = organizationId, Kind = "business", BillingStatus = "billing_required" } : AccountService.Read<OrganizationRecord>(document);
+            var org = row is null ? new OrganizationRecord { Id = organizationId, Kind = "business", BillingStatus = "billing_required" } : AccountService.Read<OrganizationRecord>(row);
             if (org.PendingProjectDeletions is null)
             {
                 throw new JsonException("Deletion project markers are invalid.");
             }
 
-            if (document is not null && document.Id != organizationId || org.Id != organizationId)
+            if (row is not null && row.Id != organizationId || org.Id != organizationId)
             {
                 throw new IOException("Deletion organization identity does not match.");
             }
@@ -246,11 +246,11 @@ namespace TerraScale.Dashboard.Features.Profile
 
             if (removed)
             {
-                await state.PutAsync(AccountService.OrganizationsCollection, organizationId, JsonSerializer.SerializeToElement(org),
-                document is null ? StatePrecondition.Absent : StatePrecondition.Matches(document.Version), cancellationToken);
+                await state.PutAsync(AccountService.OrganizationsTable, organizationId, JsonSerializer.SerializeToElement(org),
+                row is null ? StatePrecondition.Absent : StatePrecondition.Matches(row.Version), cancellationToken);
             }
 
-            if (await state.GetAsync(AccountService.OrganizationsCollection, organizationId, cancellationToken) is { } latest)
+            if (await state.GetAsync(AccountService.OrganizationsTable, organizationId, cancellationToken) is { } latest)
             {
                 if (AccountService.IsDeletionFence(latest))
                 {
@@ -278,18 +278,18 @@ namespace TerraScale.Dashboard.Features.Profile
             }
         }
 
-        private async Task VerifyFenceAsync(string collection, string key, CancellationToken cancellationToken)
+        private async Task VerifyFenceAsync(string table, string key, CancellationToken cancellationToken)
         {
-            var document = await state.GetAsync(collection, key, cancellationToken);
-            if (document is null || document.Id != key || !AccountService.IsDeletionFence(document))
+            var row = await state.GetAsync(table, key, cancellationToken);
+            if (row is null || row.Id != key || !AccountService.IsDeletionFence(row))
             {
                 throw new IOException("Erasure fence is unavailable.");
             }
         }
 
-        private async Task VerifyAbsentAsync(string collection, string key, CancellationToken cancellationToken)
+        private async Task VerifyAbsentAsync(string table, string key, CancellationToken cancellationToken)
         {
-            if (await state.GetAsync(collection, key, cancellationToken) is not null)
+            if (await state.GetAsync(table, key, cancellationToken) is not null)
             {
                 throw new IOException("Deletion cleanup is incomplete.");
             }

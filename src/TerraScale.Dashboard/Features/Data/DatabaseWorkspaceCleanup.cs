@@ -8,7 +8,7 @@ namespace TerraScale.Dashboard.Features.Data
     // One immutable, bounded terminal marker per database; never embedded in organization metadata.
     public static class DatabaseWorkspaceCleanup
     {
-        public const string Collection = "dashboard_sql_database_deletions";
+        public const string Table = "dashboard_sql_database_deletions";
         public static string Key(DatabaseWorkspaceDeletion record)
         {
             if (new[] { record.OrganizationId, record.ProjectId, record.DatabaseId }.Any(id => !TerraScaleIds.IsValid(id)))
@@ -18,11 +18,11 @@ namespace TerraScale.Dashboard.Features.Data
 
             return record.OrganizationId + "/" + record.ProjectId + "/" + record.DatabaseId;
         }
-        public static DatabaseWorkspaceDeletion Read(StateRecord document)
+        public static DatabaseWorkspaceDeletion Read(StateRecord row)
         {
-            var record = AccountService.Read<DatabaseWorkspaceDeletion>(document);
+            var record = AccountService.Read<DatabaseWorkspaceDeletion>(row);
             if (new[] { record.OrganizationId, record.ProjectId, record.DatabaseId }.Any(id => !TerraScaleIds.IsValid(id)) ||
-                document.Id != Key(record))
+                row.Id != Key(record))
             {
                 throw new IOException("Database cleanup marker identity is invalid.");
             }
@@ -38,7 +38,7 @@ namespace TerraScale.Dashboard.Features.Data
                 return;
             }
 
-            try { await state.PutAsync(Collection, key, JsonSerializer.SerializeToElement(record), StatePrecondition.Absent, cancellationToken); }
+            try { await state.PutAsync(Table, key, JsonSerializer.SerializeToElement(record), StatePrecondition.Absent, cancellationToken); }
             catch (StateConflictException)
             {
                 if (!await IsDeletedAsync(state, record, cancellationToken))
@@ -49,12 +49,12 @@ namespace TerraScale.Dashboard.Features.Data
         }
         public static async Task<bool> IsDeletedAsync(IDashboardState state, DatabaseWorkspaceDeletion record, CancellationToken cancellationToken)
         {
-            if (await state.GetAsync(Collection, Key(record), cancellationToken) is not { } document)
+            if (await state.GetAsync(Table, Key(record), cancellationToken) is not { } row)
             {
                 return false;
             }
 
-            if (Read(document) != record)
+            if (Read(row) != record)
             {
                 throw new IOException("Database cleanup marker scope is invalid.");
             }
@@ -64,9 +64,9 @@ namespace TerraScale.Dashboard.Features.Data
 
         public static async Task ReplayAsync(IDashboardState state, CancellationToken cancellationToken)
         {
-            await foreach (var document in DashboardStatePages.ReadAsync(state, Collection, new Dictionary<string, string>(), null, cancellationToken))
+            await foreach (var row in DashboardStatePages.ReadAsync(state, Table, new Dictionary<string, string>(), null, cancellationToken))
             {
-                var record = Read(document);
+                var record = Read(row);
                 await SqlWorkspace.EraseAsync(state, Scope(record), cancellationToken);
             }
         }
@@ -79,10 +79,10 @@ namespace TerraScale.Dashboard.Features.Data
                 scope["ProjectId"] = projectId;
             }
 
-            await foreach (var document in DashboardStatePages.ReadAsync(state, Collection, scope, null, cancellationToken))
+            await foreach (var row in DashboardStatePages.ReadAsync(state, Table, scope, null, cancellationToken))
             {
-                Read(document);
-                await state.DeleteAsync(Collection, document.Id, document.Version, cancellationToken);
+                Read(row);
+                await state.DeleteAsync(Table, row.Id, row.Version, cancellationToken);
             }
         }
 
@@ -100,13 +100,13 @@ namespace TerraScale.Dashboard.Features.Data
                 throw Unavailable();
             }
 
-            var document = await state.GetAsync(AccountService.OrganizationsCollection, record.OrganizationId, cancellationToken);
-            if (document is null || document.Id != record.OrganizationId || AccountService.IsDeletionFence(document))
+            var row = await state.GetAsync(AccountService.OrganizationsTable, record.OrganizationId, cancellationToken);
+            if (row is null || row.Id != record.OrganizationId || AccountService.IsDeletionFence(row))
             {
                 throw Unavailable();
             }
 
-            var organization = AccountService.Read<OrganizationRecord>(document);
+            var organization = AccountService.Read<OrganizationRecord>(row);
             if (organization.Id != record.OrganizationId || organization.DeletedProjectIds.Contains(record.ProjectId) ||
                 !organization.Projects.TryGetValue(record.ProjectId, out var project) || project.Id != record.ProjectId ||
                 !project.Databases.ContainsKey(record.DatabaseId))

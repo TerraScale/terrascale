@@ -46,8 +46,8 @@ namespace TerraScale.Dashboard.Features.Auth
                     throw new SignInRejectedException();
                 }
 
-                using var document = JsonDocument.Parse(Decode(parts[1]));
-                var claims = document.RootElement;
+                using var json = JsonDocument.Parse(Decode(parts[1]));
+                var claims = json.RootElement;
                 if (claims.GetProperty("iss").GetString() != issuer || !Audience(claims.GetProperty("aud"), audience) ||
                     claims.GetProperty("exp").GetInt64() <= now.ToUnixTimeSeconds() ||
                     (claims.TryGetProperty("nbf", out var nbf) && nbf.GetInt64() > now.ToUnixTimeSeconds()) ||

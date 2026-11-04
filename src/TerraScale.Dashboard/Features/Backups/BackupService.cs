@@ -104,7 +104,7 @@ namespace TerraScale.Dashboard.Features.Backups
                 throw new AccountAccessException("That restore point is no longer available.", 404);
             }
             // The producer returns only after a new snapshot copy has completed.
-            // No local documents or cached metadata can claim a successful restore.
+            // No local records or cached metadata can claim a successful restore.
             var scope = DatabaseService.Scope(context);
             var home = await databases.HomeAsync(context, source, ct);
             var restored = await backend.RestoreAsync(scope, home, databaseId, backupId, name.Length == 0 ? null : name, ct);
@@ -152,19 +152,12 @@ namespace TerraScale.Dashboard.Features.Backups
             return new(record.Id, record.Name, record.Status);
         }
 
-        public async Task<BackupExportView> ExportAsync(AccountContext context, string databaseId, CancellationToken ct)
+        public async Task<BackupBucketView> BucketAsync(AccountContext context, string databaseId, CancellationToken ct)
         {
             context = await databases.CurrentAsync(context, ct);
             var scope = DatabaseService.Scope(context);
             var home = await databases.HomeAsync(context, DatabaseService.Database(context, databaseId), ct);
-            var destination = backend.DestinationAsync(scope, home, ct);
-            var schedule = await backend.ExportScheduleAsync(scope, home, databaseId, ct);
-            if (schedule.LastRun is { Status: not ("succeeded" or "failed") } || schedule.Cron is { Length: > 0 } cron && !ValidCron(cron))
-            {
-                throw new HttpRequestException("The provider returned an invalid export schedule.");
-            }
-
-            return new(await destination, schedule);
+            return new(await backend.DestinationAsync(scope, home, ct));
         }
 
         // Credentials go to TerraBase, which seals them; the dashboard never stores or shows them again.
@@ -198,21 +191,6 @@ namespace TerraScale.Dashboard.Features.Backups
             context = await databases.CurrentAsync(context, ct);
             await backend.RemoveDestinationAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, Manage(context, databaseId), ct), ct);
             await accounts.RecordAsync(context, org => org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "backup.destination_removed", context.Project!.Name, "backup_destination", accounts.Now)), ct);
-        }
-
-        public async Task<ExportScheduleView> SetExportScheduleAsync(AccountContext context, string databaseId, string cron, CancellationToken ct)
-        {
-            context = await databases.CurrentAsync(context, ct);
-            var database = Manage(context, databaseId);
-            cron = string.Join(' ', cron.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-            if (!ValidCron(cron))
-            {
-                throw new AccountAccessException("Choose off, daily or weekly, or enter a valid 5-field UTC cron schedule.", 422);
-            }
-
-            try { return await backend.SetExportScheduleAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, ct), databaseId, cron.Length == 0 ? null : cron, ct); }
-            catch (DatabaseProviderException error) when (error.StatusCode == System.Net.HttpStatusCode.Conflict)
-            { throw new AccountAccessException("Save your bucket for this project before scheduling exports.", 409); }
         }
 
         public static void RejectOverwrite()

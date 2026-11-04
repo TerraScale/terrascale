@@ -18,16 +18,14 @@ namespace TerraScale.Dashboard.Features.Databases
         {
             return services
             .AddSingleton<IDatabaseBackend, DatabaseBackend>().AddSingleton<DatabaseService>()
-            .AddSingleton<DocumentBackend>().AddSingleton<IDocumentBackend>(services => services.GetRequiredService<DocumentBackend>())
-            .AddSingleton<DataService>().AddSingleton<SchemaPreview>().AddSingleton<SavedQueryService>().AddSingleton<SqlRuns>().AddSingleton<DocumentChangesService>()
+            .AddSingleton<DataService>().AddSingleton<SavedQueryService>().AddSingleton<SqlRuns>()
             .AddSingleton<ApiKeyService>().AddSingleton<IWorkspacePlacement, WorkspacePlacement>()
             .AddSingleton<IOnboardingProjectProvisioner, OnboardingProjectProvisioner>()
-            .AddSingleton<IBackupBackend, BackupBackend>().AddSingleton<BackupService>().AddSingleton<SelectiveRecovery>().AddSingleton<WholeDatabaseRecovery>().AddDatabaseLogs().AddDatabaseFunctions();
+            .AddSingleton<IBackupBackend, BackupBackend>().AddSingleton<BackupService>().AddSingleton<WholeDatabaseRecovery>().AddDatabaseLogs().AddDatabaseFunctions();
         }
 
         public static IEndpointRouteBuilder MapDatabaseFeatures(this IEndpointRouteBuilder endpoints)
         {
-            endpoints.MapSelectiveRecovery();
             endpoints.MapWholeDatabaseRecovery();
             endpoints.MapGet("/databases", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases) =>
             {
@@ -53,7 +51,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 }
                 catch (Exception error) when (KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException) { return Failure(error); }
             });
-            foreach (var tab in new[] { "overview", "tables", "replication", "backups", "branches", "import", "danger" })
+            foreach (var tab in new[] { "overview", "tables", "region", "backups", "branches", "danger" })
             {
                 var section = tab;
                 endpoints.MapGet(tab == "overview" ? "/databases/{databaseId}" : "/databases/{databaseId}/" + tab,
@@ -69,8 +67,8 @@ namespace TerraScale.Dashboard.Features.Databases
                         {
                             return HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "danger") + "?delete=1");
                         }
-                        // Placement refresh belongs to the replication tab; other direct links resolve only their requested ID.
-                        if (section == "replication")
+                        // Placement refresh belongs to the region tab; other direct links resolve only their requested ID.
+                        if (section == "region")
                         {
                             await databases.SyncAsync(context, http.RequestAborted);
                         }
@@ -185,66 +183,19 @@ namespace TerraScale.Dashboard.Features.Databases
             string error = "", bool openCreate = false, string name = "", int status = 200, string? homeRegion = null)
         {
             await databases.SyncAsync(context, http.RequestAborted);
-            // Regions, each database's collection counts and the project metrics are independent reads; they run together.
+            // Regions and the project metrics are independent reads; they run together.
             var range = HomePage.NormalizeRange(http.Request.Query["range"].ToString());
             var metricsRead = DatabaseListMetrics.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, range, http.RequestAborted);
             var regionsRead = backend.RegionsAsync(http.RequestAborted);
             IReadOnlyList<DatabaseRegion> choices = [];
             var regionsError = "";
-            var contents = new List<CollectionStats>();
-            var contentsAvailable = true;
-            if (context.Project is not null)
-            {
-                // Explore serves no collection counts.
-                if (PlatformDatabases.IsPlatform(context.Organization?.Id))
-                {
-                    contentsAvailable = false;
-                }
-                else
-                {
-                    using var slots = new SemaphoreSlim(4);
-                    var reads = await Task.WhenAll(context.Project.Databases.Values.Select(async database =>
-                    {
-                        await slots.WaitAsync(http.RequestAborted);
-                        try
-                        {
-                            var reported = await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, http.RequestAborted), database.Id, http.RequestAborted);
-                            DatabaseService.ValidateContents(reported);
-                            return reported;
-                        }
-                        catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested &&
-                            (failure is HttpRequestException or IOException or System.Text.Json.JsonException or OverflowException || KnownFailure(failure)))
-                        { return null; }
-                        finally { slots.Release(); }
-                    }));
-                    try
-                    {
-                        foreach (var reported in reads.OfType<IReadOnlyList<CollectionStats>>())
-                        {
-                            contents.AddRange(reported);
-                            // Collection names can repeat across databases; validate only the combined totals.
-                            _ = contents.Sum(item => item.Documents);
-                            _ = contents.Sum(item => item.Bytes);
-                        }
-                    }
-                    catch (OverflowException) { reads = [null]; }
-                    if (reads.Any(reported => reported is null))
-                    {
-                        contentsAvailable = false;
-                        if (error.Length == 0)
-                        {
-                            error = "Database counts are unavailable. The data plane did not answer.";
-                        }
-                    }
-                }
-            }
             try { choices = await regionsRead; }
             catch (HttpRequestException) { regionsError = "Region discovery is unavailable. Try again shortly."; }
             var search = http.Request.Query["q"].ToString().Trim();
             var all = context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
             var filtered = all.Where(database => search.Length == 0 || database.Name.Contains(search, StringComparison.OrdinalIgnoreCase)).ToArray();
             var metrics = await metricsRead;
-            var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, contents, search, error, openCreate || http.Request.Query["create"] == "1", name, regionsError) { ContentsAvailable = contentsAvailable, Metrics = metrics, Range = range, HomeSelection = homeRegion });
+            var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, search, error, openCreate || http.Request.Query["create"] == "1", name, regionsError) { Metrics = metrics, Range = range, HomeSelection = homeRegion });
             result.StatusCode = status;
             return result;
         }

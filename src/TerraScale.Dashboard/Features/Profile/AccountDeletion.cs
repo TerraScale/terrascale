@@ -250,13 +250,13 @@ namespace TerraScale.Dashboard.Features.Profile
             }
 
             var key = Key(http);
-            var document = await state.GetAsync(Operations, key, http.RequestAborted);
-            if (document is null)
+            var row = await state.GetAsync(Operations, key, http.RequestAborted);
+            if (row is null)
             {
                 return null;
             }
 
-            var envelope = document.Body.Deserialize<Envelope>() ?? throw new IOException("Deletion operation is invalid.");
+            var envelope = row.Body.Deserialize<Envelope>() ?? throw new IOException("Deletion operation is invalid.");
             if (envelope.Key != key)
             {
                 throw new IOException("Deletion operation identity is invalid.");
@@ -267,9 +267,9 @@ namespace TerraScale.Dashboard.Features.Profile
 
         public static async Task CleanOperationsAsync(IDashboardState state, IDashboardIdentity identity, string subject, CancellationToken cancellationToken)
         {
-            foreach (var document in await state.ListAsync(Operations, cancellationToken))
+            foreach (var row in await state.ListAsync(Operations, cancellationToken))
             {
-                var envelope = AccountService.Read<Envelope>(document);
+                var envelope = AccountService.Read<Envelope>(row);
                 if (envelope.UserId != subject)
                 {
                     continue;
@@ -287,7 +287,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     continue;
                 }
 
-                if (current.Body.GetRawText() != document.Body.GetRawText())
+                if (current.Body.GetRawText() != row.Body.GetRawText())
                 {
                     throw new IOException("Deletion operation changed concurrently.");
                 }
@@ -321,11 +321,11 @@ namespace TerraScale.Dashboard.Features.Profile
             finally { CryptographicOperations.ZeroMemory(plaintext); }
         }
 
-        private static async Task DropAsync(IDashboardState state, string collection, string id, CancellationToken cancellationToken)
+        private static async Task DropAsync(IDashboardState state, string table, string id, CancellationToken cancellationToken)
         {
-            if (await state.GetAsync(collection, id, cancellationToken) is { } document)
+            if (await state.GetAsync(table, id, cancellationToken) is { } row)
             {
-                await state.DeleteAsync(collection, id, document.Version, cancellationToken);
+                await state.DeleteAsync(table, id, row.Version, cancellationToken);
             }
         }
 

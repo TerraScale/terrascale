@@ -5,7 +5,7 @@ using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Logs
 {
-    // The same document as the public database logs route, read over the dashboard's private TerraBase listener.
+    // The same response as the public database logs route, read over the dashboard's private TerraBase listener.
     public sealed class LogDrainSource(TerraBaseRpcClient rpc) : ILogDrainSource
     {
         public async Task<DatabaseLogBatch> ReadAsync(string projectId, string databaseId, string after, CancellationToken cancellationToken)

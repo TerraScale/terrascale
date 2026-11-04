@@ -13,8 +13,8 @@ namespace TerraScale.Dashboard.Features.Billing
     public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboardState state, AccountService accounts,
         IHttpClientFactory http, TimeProvider time, TerraBasePlanSync plans, ILogger<StripeBilling> logger)
     {
-        public const string Collection = "dashboard_billing";
-        public const string CustomersCollection = "dashboard_stripe_customers";
+        public const string Table = "dashboard_billing";
+        public const string CustomersTable = "dashboard_stripe_customers";
         internal const string Origin = "https://dash.terrascale.tech";
         internal static IReadOnlySet<string> WebhookEvents { get; } = new HashSet<string>(StringComparer.Ordinal)
         {
@@ -107,11 +107,11 @@ namespace TerraScale.Dashboard.Features.Billing
             // checkout. Its create-only ownership binding must never be reassigned.
             try
             {
-                await state.PutAsync(CustomersCollection, binding.CustomerId, JsonSerializer.SerializeToElement(new CustomerBinding(org.Id)), StatePrecondition.Absent, cancellationToken);
+                await state.PutAsync(CustomersTable, binding.CustomerId, JsonSerializer.SerializeToElement(new CustomerBinding(org.Id)), StatePrecondition.Absent, cancellationToken);
             }
             catch (StateConflictException)
             {
-                var index = await state.GetAsync(CustomersCollection, binding.CustomerId, cancellationToken);
+                var index = await state.GetAsync(CustomersTable, binding.CustomerId, cancellationToken);
                 if (index is null || AccountService.Read<CustomerBinding>(index).OrganizationId != org.Id)
                 {
                     throw new IOException("Billing customer ownership changed.");
@@ -277,7 +277,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 return;
             }
 
-            var customer = await state.GetAsync(CustomersCollection, customerId, cancellationToken);
+            var customer = await state.GetAsync(CustomersTable, customerId, cancellationToken);
             if (customer is null)
             {
                 return;
@@ -305,13 +305,13 @@ namespace TerraScale.Dashboard.Features.Billing
         // A live owner preflight or a completed auth deletion proof authorizes the scope.
         internal async Task<BillingBinding?> EndSubscriptionAsync(string orgId, CancellationToken cancellationToken, bool completedDeletion = false, bool authorizedDeletionPreflight = false)
         {
-            var document = await state.GetAsync(Collection, orgId, cancellationToken);
-            if (document is null || AccountService.IsDeletionFence(document))
+            var row = await state.GetAsync(Table, orgId, cancellationToken);
+            if (row is null || AccountService.IsDeletionFence(row))
             {
                 return null;
             }
 
-            var binding = ReadBinding(document, orgId);
+            var binding = ReadBinding(row, orgId);
             if (binding.Kind != "stripe")
             {
                 return binding;
@@ -410,13 +410,13 @@ namespace TerraScale.Dashboard.Features.Billing
         {
             for (var attempt = 0; attempt < 4; attempt++)
             {
-                var billingDocument = await state.GetAsync(Collection, orgId, cancellationToken);
-                if (billingDocument is null)
+                var billingRow = await state.GetAsync(Table, orgId, cancellationToken);
+                if (billingRow is null)
                 {
                     return false;
                 }
 
-                var binding = ReadBinding(billingDocument, orgId);
+                var binding = ReadBinding(billingRow, orgId);
                 RequireStripe(binding);
                 if (binding.State == "deleting")
                 {
@@ -431,9 +431,9 @@ namespace TerraScale.Dashboard.Features.Billing
                 var client = await ClientAsync(cancellationToken);
                 // Capture both versions before Stripe reads. A conflict in either
                 // projection requires fresh canonical facts, never a stale replay.
-                var organizationDocument = await state.GetAsync(AccountService.OrganizationsCollection, orgId, cancellationToken)
+                var organizationRow = await state.GetAsync(AccountService.OrganizationsTable, orgId, cancellationToken)
                     ?? throw new IOException("Billing organization is unavailable.");
-                var org = AccountService.Read<OrganizationRecord>(organizationDocument);
+                var org = AccountService.Read<OrganizationRecord>(organizationRow);
                 if (org.Id != orgId)
                 {
                     throw new IOException("Billing organization changed.");
@@ -558,8 +558,8 @@ namespace TerraScale.Dashboard.Features.Billing
 
                 try
                 {
-                    await state.PutAsync(Collection, orgId, JsonSerializer.SerializeToElement(binding), StatePrecondition.Matches(billingDocument.Version), cancellationToken);
-                    await state.PutAsync(AccountService.OrganizationsCollection, orgId, JsonSerializer.SerializeToElement(org), StatePrecondition.Matches(organizationDocument.Version), cancellationToken);
+                    await state.PutAsync(Table, orgId, JsonSerializer.SerializeToElement(binding), StatePrecondition.Matches(billingRow.Version), cancellationToken);
+                    await state.PutAsync(AccountService.OrganizationsTable, orgId, JsonSerializer.SerializeToElement(org), StatePrecondition.Matches(organizationRow.Version), cancellationToken);
                     // The two records have separate CAS versions. If another
                     // reconciliation advanced billing while we projected it,
                     // reconcile again before reporting success.
@@ -590,7 +590,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 RequestId = Guid.CreateVersion7().ToString(),
                 StartedAt = time.GetUtcNow()
             };
-            try { await state.PutAsync(Collection, orgId, JsonSerializer.SerializeToElement(initial), StatePrecondition.Absent, cancellationToken); return initial; }
+            try { await state.PutAsync(Table, orgId, JsonSerializer.SerializeToElement(initial), StatePrecondition.Absent, cancellationToken); return initial; }
             catch (StateConflictException) { }
             var existing = await ReadAsync(orgId, cancellationToken) ?? throw new IOException("Billing reservation did not persist.");
             RequireStripe(existing);
@@ -635,19 +635,19 @@ namespace TerraScale.Dashboard.Features.Billing
 
         private async Task<BillingBinding?> ReadAsync(string orgId, CancellationToken cancellationToken)
         {
-            var document = await state.GetAsync(Collection, orgId, cancellationToken);
-            if (document is null)
+            var row = await state.GetAsync(Table, orgId, cancellationToken);
+            if (row is null)
             {
                 return null;
             }
 
-            return ReadBinding(document, orgId);
+            return ReadBinding(row, orgId);
         }
 
-        internal static BillingBinding ReadBinding(StateRecord document, string orgId)
+        internal static BillingBinding ReadBinding(StateRecord row, string orgId)
         {
-            var value = AccountService.Read<BillingBinding>(document);
-            if (document.Id != orgId || value.OrganizationId != orgId || value.Revision < 0 || string.IsNullOrEmpty(value.RequestId) ||
+            var value = AccountService.Read<BillingBinding>(row);
+            if (row.Id != orgId || value.OrganizationId != orgId || value.Revision < 0 || string.IsNullOrEmpty(value.RequestId) ||
                 value.CustomerId is null || value.CheckoutId is null || value.CheckoutProjectId is null || value.ReturnPath is null || value.SubscriptionId is null || value.Status is null || value.Plan is null || value.Interval is null || value.EffectivePlan is null || value.EffectiveInterval is null)
             {
                 throw new IOException("Billing scope is invalid.");
@@ -686,8 +686,8 @@ namespace TerraScale.Dashboard.Features.Billing
         {
             for (var attempt = 0; attempt < 4; attempt++)
             {
-                var document = await state.GetAsync(Collection, orgId, cancellationToken) ?? throw new IOException("Billing state is unavailable.");
-                var binding = ReadBinding(document, orgId);
+                var row = await state.GetAsync(Table, orgId, cancellationToken) ?? throw new IOException("Billing state is unavailable.");
+                var binding = ReadBinding(row, orgId);
                 RequireStripe(binding);
                 if (binding.State == "deleting" && !allowDeletion)
                 {
@@ -695,7 +695,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 }
 
                 update(binding);
-                try { await state.PutAsync(Collection, orgId, JsonSerializer.SerializeToElement(binding), StatePrecondition.Matches(document.Version), cancellationToken); return binding; }
+                try { await state.PutAsync(Table, orgId, JsonSerializer.SerializeToElement(binding), StatePrecondition.Matches(row.Version), cancellationToken); return binding; }
                 catch (StateConflictException) when (attempt < 3) { }
             }
             throw new IOException("Billing changed concurrently.");

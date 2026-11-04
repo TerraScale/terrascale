@@ -56,7 +56,7 @@ namespace TerraScale.Dashboard.E2E.Platform
                 readinessDeadline.CancelAfter(TimeSpan.FromSeconds(10));
                 using var response = await client.GetAsync("/readyz", HttpCompletionOption.ResponseHeadersRead, readinessDeadline.Token);
                 await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK)
-                    .Because("The actual production HTTP readiness endpoint must reread every fixed state collection through the official SDK.");
+                    .Because("The actual production HTTP readiness endpoint must reread every fixed state table through the official SDK.");
                 // The public readiness body names only status, region and dependency states; child logs never reach TRX.
                 using var receipt = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(readinessDeadline.Token), cancellationToken: readinessDeadline.Token);
                 await Assert.That(receipt.RootElement.GetProperty("status").GetString()).IsEqualTo("ok")
