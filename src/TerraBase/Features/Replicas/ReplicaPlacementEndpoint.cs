@@ -1,4 +1,3 @@
-using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -12,15 +11,15 @@ namespace TerraBase.Features.Replicas;
 /// homed on this node, so a replica region tells a database that left its placement from one that was deleted. Internal
 /// listener only, behind the peer credential.
 /// </summary>
-internal sealed class ReplicaPlacementEndpoint(IReplicaCatalog catalog, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
+internal sealed class ReplicaPlacementEndpoint(IReplicaCatalog catalog) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
         Get("/v1/sync/organizations/{organization}/projects/{project}/databases/{database}/placement");
         Name("getReplicatedDatabasePlacement");
-        Summary("Reads the placement of a database homed here");
-        Description("Internal listener only, behind the peer credential; 404 on the public listener. The database's name and placement, or 404 when this "
-            + "node's catalog does not record it as homed here (it was deleted).");
+        Summary("Reads the placement this node records for a database");
+        Description("Internal listener only, behind the peer credential; 404 on the public listener. The database's name and the placement this node "
+            + "records, which names its home after a move, or 404 when this node's catalog does not record it (it was deleted).");
         Tags("Administration");
         AllowAnonymous();
         Metadata(ListenerMetadata.Internal);
@@ -41,8 +40,8 @@ internal sealed class ReplicaPlacementEndpoint(IReplicaCatalog catalog, TerraBas
         HttpContext.Response.Headers.CacheControl = "no-store";
         return await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) switch
         {
-            TenantDatabaseRecord { Placement: var placement } record when placement.Home == options.Region => TypedResults.Json(
-                new ReplicaCatalogEntry(organization, project, id, record.Name, placement.Home, placement.Replicas, placement.Version),
+            TenantDatabaseRecord { Placement: var placement } record => TypedResults.Json(
+                new ReplicaCatalogEntry(organization, project, id, record.Name, placement.Home, placement.Replicas, placement.Version, placement.AllRegions),
                 TerraBaseJsonContext.Default.ReplicaCatalogEntry),
             Unavailable error => ErrorResponse.From(error),
             _ => ErrorResponse.From(new NotFound("the database does not exist")),
