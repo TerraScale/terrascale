@@ -43,8 +43,10 @@ for region in ["gru", "sjc", "fra"]:
 complete = len(cells) == 72 and all(len(group) == 3 and [r["repeat"] for r in group] == [1, 2, 3]
                                      and all(row["snapshot"]["count"] == readers and row["tail"]["count"] == readers for row in group)
                                      for _, _, readers, group in groups)
+r2_count = sum(row.get("status") == "available" and row.get("get_object") is not None for row in lookup.values())
+complete = complete and r2_count == 72 and not any(row.get("type") in ["failure", "guard"] for row in rows)
 print("# F10: live SQL shape reads through the JS SDK — 2026-11-04\n")
-print(f"Qualification: {'complete' if complete else 'incomplete'}; {len(cells)}/72 complete measured cohorts.\n")
+print(f"Qualification: {'complete' if complete else 'incomplete'}; {len(cells)}/72 complete measured cohorts; {r2_count}/72 available R2 receipts.\n")
 print("## Method\n")
 print(f"- Measured checkout: `{method['sha']}`; shipped CDN reader: `37d7e4bb99a7db2178ede8d3e530de6e17c3e558`.")
 print(f"- Generator: `{method['host']}`, Node `{method['node']}`, admitted with `ts-heavy-any`; no load generator runs on serving hosts.")
