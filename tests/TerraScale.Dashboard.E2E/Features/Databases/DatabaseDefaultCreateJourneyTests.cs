@@ -62,8 +62,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             }
         }
 
-        // TerraBase serves a database only in its home region until replicas are available: the dialog asks for a name and
-        // a home region, and the create sends no replica placement.
+        // A create that names only a name and a home region places no replicas.
         [Test]
         public async Task DefaultCreateSucceedsWithOnlyAHomeRegionAndTheDatabaseCanBeDeleted()
         {
@@ -82,7 +81,6 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await Assert.That(html).Contains(DatabaseService.NameHint);
             await Assert.That(Regex.Match(html, "<option value=\"GRU\"[^>]*>").Value).Contains("selected");
             await Assert.That(html.Contains("name=\"region\"", StringComparison.Ordinal)).IsFalse();
-            await Assert.That(html.Contains("name=\"allRegions\"", StringComparison.Ordinal)).IsFalse();
             foreach (var name in new[] { "1database", "con", "com0", "lpt9" })
             {
                 using var rejected = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
@@ -116,6 +114,51 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             using var observations = JsonDocument.Parse(await producer.GetStringAsync("/__test/observations"));
             await Assert.That(observations.RootElement.GetProperty("creates").GetInt32()).IsEqualTo(1);
             await Assert.That(observations.RootElement.GetProperty("failures").GetArrayLength()).IsEqualTo(0);
+        }
+
+        [Test]
+        public async Task ReplicaRegionsAreAddedAndTheHomeMovesToAReplica()
+        {
+            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            using var client = scenario.CreateClient();
+            using var producer = scenario.CreateProviderClient();
+            await DatabaseJourney.NativeWorkspaceAsync(client);
+            using (var region = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = new[] { "gru", "fra", "sjc" } }))
+            {
+                await Assert.That(region.IsSuccessStatusCode).IsTrue();
+            }
+
+            var csrf = await HttpJourney.CsrfAsync(client, "/databases");
+            string databaseId;
+            using (var created = await client.PostAsync("/api/v1/dashboard/databases", new FormUrlEncodedContent(
+                new[] { new KeyValuePair<string, string>("_csrf", csrf), new("name", "orders"), new("homeRegion", "GRU"), new("replicaRegions", "SJC") })))
+            {
+                await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
+                using var body = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+                databaseId = body.RootElement.GetProperty("id").GetString()!;
+                await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(new[] { "GRU", "SJC" });
+            }
+
+            using (var placed = await client.PostAsync("/api/v1/dashboard/databases/placement", new FormUrlEncodedContent(
+                new[] { new KeyValuePair<string, string>("_csrf", csrf), new("databaseId", databaseId), new("replicaRegions", "SJC"), new("replicaRegions", "FRA") })))
+            {
+                await Assert.That(placed.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await placed.Content.ReadAsStringAsync());
+                using var body = JsonDocument.Parse(await placed.Content.ReadAsStringAsync());
+                await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(new[] { "GRU", "FRA", "SJC" });
+            }
+
+            using (var moved = await client.PostAsync("/api/v1/dashboard/databases/move-home", new FormUrlEncodedContent(
+                new[] { new KeyValuePair<string, string>("_csrf", csrf), new("databaseId", databaseId), new("homeRegion", "SJC") })))
+            {
+                await Assert.That(moved.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await moved.Content.ReadAsStringAsync());
+                using var body = JsonDocument.Parse(await moved.Content.ReadAsStringAsync());
+                await Assert.That(body.RootElement.GetProperty("region").GetString()).IsEqualTo("SJC");
+                await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(new[] { "SJC", "FRA", "GRU" });
+            }
+
+            var page = WebUtility.HtmlDecode(await client.GetStringAsync(DatabaseService.Path(databaseId, "replication")));
+            await Assert.That(page).Contains("data-home-region=\"SJC\"");
+            await Assert.That(page).Contains("action=\"/api/v1/dashboard/databases/move-home\"");
         }
     }
 }
