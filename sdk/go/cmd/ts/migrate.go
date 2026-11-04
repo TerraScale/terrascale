@@ -255,7 +255,7 @@ type schemaEntity struct {
 // schema reads a database's tables, indexes, views and triggers, keyed by kind
 // and name. SQLite's internal objects are left out.
 func schema(ctx context.Context, db *v1.Database) (map[string]schemaEntity, error) {
-	rows, err := db.Query(ctx, "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL")
+	rows, err := db.Query(ctx, schemaSelection)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", db.Name(), err)
 	}
