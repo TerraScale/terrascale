@@ -294,11 +294,13 @@ The SQL API follows the shared shape in [`sdk/SQL-API.md`](../SQL-API.md) and th
 transaction, all or nothing.
 
 ```go
-c, err := v1.New(v1.Config{Token: os.Getenv("TERRASCALE_API_KEY")})
+tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: os.Getenv("TERRASCALE_API_KEY"), Project: projectID})
+c, err := v1.New(v1.Config{TokenSource: tokens})
 db := c.Database(projectID, "main")
 
 _, err = db.Execute(ctx, "CREATE TABLE IF NOT EXISTS people (id TEXT PRIMARY KEY, name TEXT, avatar BLOB)")
-_, err = db.Execute(ctx, "INSERT INTO people VALUES (?, :name, ?)", v1.NewID(), sql.Named("name", "Ada"), []byte{1, 2, 3})
+_, err = db.Execute(ctx, "INSERT INTO people VALUES (?, ?, ?)", v1.NewID(), "Ada", []byte{1, 2, 3})
+_, err = db.Execute(ctx, "UPDATE people SET name = :name WHERE name = :old", sql.Named("name", "Ada L."), sql.Named("old", "Ada"))
 
 rows, err := db.Query(ctx, "SELECT id, name FROM people")
 for _, row := range rows {
@@ -325,7 +327,8 @@ if errors.As(err, &sqlErr) && errors.Is(err, v1.ErrUniqueViolation) {
 
 - Arguments: `nil`, booleans (stored as 1/0), Go integers, finite floats,
   strings, `[]byte` (sent as `{"base64":"…"}`), `json.Number` and any
-  `driver.Valuer`. `sql.Named` binds `:name`, `@name` or `$name`. A batch holds
+  `driver.Valuer`. `sql.Named` binds `:name`, `@name` or `$name`. SQLite numbers a bare `?` after
+  a named parameter past that parameter's slot, so use one style per statement. A batch holds
   1 to 256 statements in at most 1 MiB; NaN, infinity and empty SQL are refused
   before sending.
 - Rows: `Scan` by ordinal like `database/sql` (including `sql.Null*` scanners),
