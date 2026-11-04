@@ -6,6 +6,9 @@ public static class SharedServer
     private static readonly CancellationTokenSource Lifetime = new();
     private static readonly Lazy<Task<ManagementApi>> Server = new(StartAsync);
 
+    /// <summary>Starts the assembly-owned server before parallel test requests arrive.</summary>
+    public static async Task WarmAsync() => await Server.Value;
+
     internal static async Task<ManagementApi> GetAsync(CancellationToken cancellationToken)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
