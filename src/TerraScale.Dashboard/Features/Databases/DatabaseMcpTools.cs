@@ -51,7 +51,7 @@ namespace TerraScale.Dashboard.Features.Databases
             return new(db.Id, db.Name, db.Status, db.Region, output.Placement, db.CreatedAt, db.AllRegions, db.Endpoint,
                 // MCP labels are an existing response contract, independent of page display casing.
                 [.. placement.Select(region => region.Code.ToUpperInvariant() switch { "SFO" => "SFO · San Francisco", "GRU" => "GRU · São Paulo", "" => "Not configured", var code => code })],
-                unavailable, backupsEnabled, context.CanManage, db.Status == "ready" && context.CanManage && context.Organization!.CanProvision(context.UserId));
+                unavailable, backupsEnabled, context.CanManage, db.Status == "ready" && context.CanManage && context.Organization!.CanProvision(context.UserId), db.ExpiresAt);
         }
 
         [McpServerTool(Name = "create_database", Title = "Create database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Provision a new database in a project. It serves only in its home region: region, or the project's region when omitted. ttlSeconds (60 to 31,536,000) deletes the database, backups and data keys after expiresAt. Requires an owner or admin role and a plan with database capacity.")]
@@ -92,5 +92,5 @@ namespace TerraScale.Dashboard.Features.Databases
     public sealed record McpDatabaseList(IReadOnlyList<McpDatabase> Databases, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor, bool HasMore, int Limit);
     public sealed record McpDatabaseDetail(string Id, string Name, string Status, string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt, bool AllRegions,
         string Endpoint, IReadOnlyList<string> Regions,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Unavailable, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? BackupsEnabled, bool CanManage, bool CanBranch);
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Unavailable, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? BackupsEnabled, bool CanManage, bool CanBranch, DateTimeOffset? ExpiresAt = null);
 }
