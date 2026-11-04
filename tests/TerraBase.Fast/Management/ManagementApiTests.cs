@@ -13,7 +13,7 @@ public sealed class ManagementApiTests
     [Test]
     public async Task Organizations_are_created_listed_and_deleted()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
         var name = Faker.Company.CompanyName();
 
         using var created = await api.Client.PostAsJsonAsync(Uri("/v1/management/organizations"), new { name });
@@ -41,7 +41,7 @@ public sealed class ManagementApiTests
     [Test]
     public async Task Projects_are_created_listed_and_deleted()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
         var organization = await api.CreateOrganizationAsync("Acme");
         var other = await api.CreateOrganizationAsync("Other");
         var projects = $"/v1/management/organizations/{organization}/projects";
@@ -70,7 +70,7 @@ public sealed class ManagementApiTests
     [Test]
     public async Task Databases_are_created_branched_and_deleted_with_their_data()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
         var organization = await api.CreateOrganizationAsync("Acme");
         var project = await api.CreateProjectAsync(organization, "Shop");
         using var data = api.DataClient(await api.Server.IssueAsync(organization, "sql:read", "sql:write"));
@@ -116,7 +116,7 @@ public sealed class ManagementApiTests
     [Test]
     public async Task Users_cannot_reach_organizations_they_are_not_members_of()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
         using var intruder = api.As(EntityIds.New().ToString());
         var organization = await api.CreateOrganizationAsync("Acme");
         var project = await api.CreateProjectAsync(organization, "Web");
@@ -139,7 +139,7 @@ public sealed class ManagementApiTests
     [Test]
     public async Task Management_needs_a_user_token_on_the_client_listener()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
         using var anonymous = api.WithToken(null);
         using var garbage = api.WithToken(Faker.Random.AlphaNumeric(40));
         using var apiKey = api.DataClient(await api.Server.IssueAsync(await api.CreateOrganizationAsync("Acme"), "sql:read", "sql:write"));
