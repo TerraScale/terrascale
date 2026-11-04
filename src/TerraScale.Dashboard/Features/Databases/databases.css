@@ -169,18 +169,6 @@
   color: var(--ts-ink-2);
 }
 
-/* Replication topology: map (styled by .ts-analytics-map) beside per-region cards. */
-.ts-db-topology {
-  display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  gap: var(--ts-s5);
-  align-items: start;
-}
-.ts-db-topology > ul { margin: 0; padding: 0; list-style: none; }
-@media (max-width: 64rem) {
-  .ts-db-topology { grid-template-columns: minmax(0, 1fr); }
-}
-
 /* Branches tab: full-width rows; name wraps first on narrow screens. */
 .ts-db-branches {
   display: grid;
