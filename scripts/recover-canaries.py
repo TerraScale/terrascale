@@ -4,8 +4,8 @@
 After a production reset the organization, project, databases and keys are
 gone. This command recreates all of them: it discovers serving regions,
 creates (or reuses) the internal organization's ts-status project, one
-home-region canary database per region until replication returns, the canary
-collection and fixture, and one database-narrowed key per region. It installs
+home-region canary database per region, the canary table and its fixture row
+(TerraBase is SQL-only), and one database-narrowed key per region. It installs
 only the two ts-status Worker secrets. It does not deploy or restart a
 service, change orchestration, or touch status history in D1.
 
@@ -39,6 +39,8 @@ CLI_CLIENT = '00000000000000000000000007'  # ts-auth's registered public ts-cli 
 STATE = Path.home() / '.local/state/ts-status/canaries.json'
 DOCUMENT = '00000000000000000000000007'
 SCOPES = ['documents:read', 'documents:write']
+# The canary table: the Data API canary reads its fixture row, the write probe inserts and deletes rows.
+TABLE = 'CREATE TABLE IF NOT EXISTS "canary" (id TEXT PRIMARY KEY, canary TEXT NOT NULL)'
 CLOUDFLARE_ACCOUNT = '6cd3f3639e928077593d9b470765efeb'
 WORKER = 'ts-status'
 DASHBOARD_ORIGIN = 'https://dash.terrascale.tech'
@@ -322,8 +324,8 @@ class Setup:
             databases[region] = found
             print(json.dumps({'database': name, 'id': found['id'], 'home_region': found.get('homeRegion')}), flush=True)
             token = self.project_token(grant, organization, project)
-            self.call(base + '/' + name + '/collections', 'POST', {'name': 'canary'},
-                      token=token, region=region, statuses=(201, 409))
+            self.call(base + '/' + name + '/sql/execute', 'POST', {'statements': [{'sql': TABLE}]},
+                      token=token, region=region)
         root = AUTH + '/v1/terrascale/organizations/' + organization + '/projects/' + project + '/api-keys'
         metadata = self.call(root, token=grant['access_token'])['items']
         saved = self.state.get('canaries', {})
@@ -354,33 +356,28 @@ class Setup:
         token = self.call(config['issuer'] + '/oauth/token', 'POST',
                          {'grant_type': 'client_credentials', 'client_id': config['key'][:26],
                           'client_secret': config['key'], 'project': config['project'], 'scope': ' '.join(SCOPES)}, form=True)['access_token']
-        base = API + '/v1/projects/' + config['project'] + '/databases/' + config['database'] + '/collections/canary'
-        def call(path, method='GET', data=None, statuses=(200,)):
-            return self.call(base + path, method, data, token=token, region=config['region'], statuses=statuses)
-        call('/documents/by-key?id=' + DOCUMENT, 'PUT', {'purpose': 'Persistent status read canary'}, (200, 201))
-        if call('/documents/by-key?id=' + DOCUMENT)['state'] != 'value':
+        url = API + '/v1/projects/' + config['project'] + '/databases/' + config['database'] + '/sql/execute'
+        def sql(text, args):
+            return self.call(url, 'POST', {'statements': [{'sql': text, 'args': args}]}, token=token,
+                             region=config['region'])['results'][0]
+        sql('INSERT OR REPLACE INTO "canary" (id, canary) VALUES (?, ?)', [DOCUMENT, 'Persistent status read canary'])
+        if sql('SELECT id FROM "canary" WHERE id = ?', [DOCUMENT])['rows'] != [[DOCUMENT]]:
             raise RuntimeError('Fixture missing')
-        # A canonical ULID using random bits; independent documents for concurrent executions.
+        # A canonical ULID using random bits; independent rows for concurrent executions.
         alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
         number = secrets.randbits(128)
-        document = ''.join(alphabet[(number >> (5 * i)) & 31] for i in reversed(range(26)))
-        path = '/documents/by-key?id=' + document
+        row = ''.join(alphabet[(number >> (5 * i)) & 31] for i in reversed(range(26)))
         marker = secrets.token_hex(16)
         try:
-            written = call(path, 'PUT', {'canary': marker}, (201,))
-            read = call(path)
-            queried = call('/query', 'POST', {'filter': {'eq': ['$id', document]}, 'limit': 1})
-            if (written['id'] != document or not written.get('version') or read['id'] != document
-                    or read['state'] != 'value' or read['document']['canary'] != marker
-                    or len(queried['items']) != 1 or queried['items'][0]['id'] != document
-                    or queried['items'][0]['document']['canary'] != marker):
+            written = sql('INSERT INTO "canary" (id, canary) VALUES (?, ?)', [row, marker])
+            read = sql('SELECT canary FROM "canary" WHERE id = ?', [row])
+            queried = sql('SELECT count(*) FROM "canary" WHERE id = ? AND canary = ?', [row, marker])
+            if written['rows_affected'] != 1 or read['rows'] != [[marker]] or queried['rows'] != [[1]]:
                 raise RuntimeError('CRUD content mismatch')
         finally:
-            deleted = call(path, 'DELETE')
-            if deleted['id'] != document or not deleted.get('version'):
+            if sql('DELETE FROM "canary" WHERE id = ?', [row])['rows_affected'] != 1:
                 raise RuntimeError('Delete acknowledgement mismatch')
-        after = call(path, statuses=(200, 404))
-        if isinstance(after, dict) and after.get('state') == 'value':
+        if sql('SELECT id FROM "canary" WHERE id = ?', [row])['rows'] != []:
             raise RuntimeError('Delete not visible')
         print(json.dumps({'region': config['region'], 'project': config['project'], 'database': config['database'],
                           'key_id': config['key'][:26], 'proof': ['write', 'read', 'query', 'delete', 'read-after-delete']}), flush=True)

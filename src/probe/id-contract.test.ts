@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { isCanaryConfig, parseCanaries, holdsDocument } from "./canary";
+import { isCanaryConfig, parseCanaries, holdsRow } from "./canary";
 import { isTerraBaseConfig, parseTerraBase } from "./terrabase";
 import { isSdkProbeConfig, runSdkDocuments } from "./sdk";
 
@@ -67,9 +67,7 @@ describe("probe entity IDs", () => {
         expect(isCanaryConfig({ ...canary, [field]: invalid })).toBe(false);
         expect(isSdkProbeConfig("documents", { ...sdk, [field]: invalid })).toBe(false);
       }
-      expect(
-        holdsDocument({ id: invalid, version: `tbv1-${"0".repeat(32)}`, state: "value", document: {} }, invalid),
-      ).toBe(false);
+      expect(holdsRow({ results: [{ rows: [[invalid]] }] }, invalid)).toBe(false);
     }
   });
 });

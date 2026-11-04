@@ -1,5 +1,7 @@
 /* Read-only Data API probe. DATA_API_CANARY maps endpoint ULIDs to a
-   pre-created document and a database-scoped ts-auth client credential. */
+   pre-created fixture row and a database-scoped ts-auth client credential.
+   TerraBase is SQL-only: `collection` names the canary table and `document`
+   the fixture row's id. */
 
 import { isId } from "../ids";
 import { logEvent } from "../log";
@@ -82,26 +84,24 @@ export function isCanaryConfig(value: unknown): value is CanaryConfig {
   );
 }
 
-export const collectionPath = (config: Pick<CanaryConfig, "project" | "database" | "collection">): string =>
-  `/v1/projects/${config.project}/databases/${config.database}/collections/${config.collection}`;
+/** The database's SQL route: canaries read and write their own table. */
+export const sqlPath = (config: Pick<CanaryConfig, "project" | "database">): string =>
+  `/v1/projects/${config.project}/databases/${config.database}/sql/execute`;
 
-// The v1 by-key route takes the raw document ULID in the query, not the path.
-export const documentPath = (config: CanaryConfig): string =>
-  `${collectionPath(config)}/documents/by-key?id=${config.document}`;
+/** The canary table, quoted: a valid name may hold a hyphen. */
+export const canaryTable = (config: Pick<CanaryConfig, "collection">): string => `"${config.collection}"`;
 
-/** Validate the current document envelope; no response content reaches public errors. */
-export const holdsDocument = (value: unknown, id: string): boolean => {
-  const body = value as { id?: unknown; version?: unknown; state?: unknown; document?: unknown } | null;
-  return (
-    isId(id) &&
-    body?.id === id &&
-    typeof body.version === "string" &&
-    VERSION.test(body.version) &&
-    body.state === "value" &&
-    typeof body.document === "object" &&
-    body.document !== null &&
-    !Array.isArray(body.document)
-  );
+/** The rows of the `index`th statement of a SQL result, or null when the body is not one. */
+export const sqlRows = (value: unknown, index = 0): unknown[][] | null => {
+  const results = (value as { results?: unknown } | null)?.results;
+  const rows = Array.isArray(results) ? (results[index] as { rows?: unknown } | undefined)?.rows : undefined;
+  return Array.isArray(rows) && rows.every(Array.isArray) ? (rows as unknown[][]) : null;
+};
+
+/** Whether a fixture read returned exactly the row `id`; no response content reaches public errors. */
+export const holdsRow = (value: unknown, id: string): boolean => {
+  const rows = sqlRows(value);
+  return isId(id) && rows !== null && rows.length === 1 && rows[0]![0] === id;
 };
 
 /** Reads the canary secret, dropping malformed entries; empty when unset. */
@@ -172,6 +172,13 @@ async function readBounded(response: Response): Promise<string> {
 /** Only known error codes reach public samples; never echoed credentials. */
 const ERROR_CODES = new Set([
   "invalid_request",
+  // TerraBase's SQL errors.
+  "sql_error",
+  "sql_sandbox",
+  "sql_conflict",
+  "sql_too_large",
+  "too_large",
+  "wrong_region",
   "invalid_query",
   "invalid_cursor",
   "invalid_patch",
@@ -294,7 +301,7 @@ export async function canaryJson(
 
 /** Exchanged tokens per fetcher, reused while they outlast a round's use:
     a token exchange takes seconds, and a canary judges TerraBase, not ts-auth.
-    A document round sends at most four timed requests with one token, so a
+    A write round sends at most four timed requests with one token, so a
     token needs that long left. ts-auth issues one-minute tokens: a larger
     margin made every round exchange the key inside its own timeout. */
 const tokens = new WeakMap<typeof fetch, Map<string, { token: string; expires: number }>>();
@@ -440,20 +447,24 @@ export async function runCanary(
     const token = await readToken(config, fetcher);
     const terrabase = timed(fetcher);
     const read = await canaryJson(
-      config.origin + documentPath(config),
+      config.origin + sqlPath(config),
       {
-        method: "GET",
+        method: "POST",
         headers: {
           authorization: `Bearer ${token}`,
+          "content-type": "application/json",
           "user-agent": USER_AGENT,
           "X-TerraScale-Region-Pin": config.region,
         },
+        body: JSON.stringify({
+          statements: [{ sql: `SELECT id FROM ${canaryTable(config)} WHERE id = ?`, args: [config.document] }],
+        }),
         cache: "no-store",
       },
       terrabase.fetch,
       [200],
     );
-    if (!holdsDocument(read, config.document)) throw new CanaryError("Invalid response");
+    if (!holdsRow(read, config.document)) throw new CanaryError("Invalid response");
     return { ok: true, latencyMs: terrabase.slowest(), error: null };
   } catch (error) {
     if (!(error instanceof CanaryError)) throw error;

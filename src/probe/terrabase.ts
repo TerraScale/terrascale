@@ -10,12 +10,13 @@ import {
   CanaryError,
   CanaryMonitorError,
   canaryJson,
-  collectionPath,
-  holdsDocument,
+  canaryTable,
   isDocumentProbeConfig,
   isRegionCode,
   forgetToken,
   readToken,
+  sqlPath,
+  sqlRows,
   timed,
   type DocumentProbeConfig,
   type CanaryResult,
@@ -53,14 +54,12 @@ export const notConfiguredSample = (endpointId: string): Sample => ({
 
 const isString = (value: unknown): value is string => typeof value === "string" && value.length > 0;
 
-/** The document probe writes and deletes its own canary documents. */
+/** The write probe inserts and deletes its own canary rows. */
 const DOCUMENT_SCOPES = "documents:read documents:write";
 
 const ROUTES = {
   readyz: "/readyz",
-  document: (config: TerraBaseConfig, id: string) =>
-    `${collectionPath(config as DocumentProbeConfig)}/documents/by-key?id=${id}`,
-  query: (config: TerraBaseConfig) => `${collectionPath(config as DocumentProbeConfig)}/query`,
+  sql: (config: TerraBaseConfig) => sqlPath(config as DocumentProbeConfig),
 };
 
 /** Whether the secret configures an endpoint: it names it, with the key
@@ -122,14 +121,12 @@ const invalid = (): never => {
   throw new CanaryError("Invalid response");
 };
 
-/** A write's acknowledgement must name the canary document and a version. */
-const acknowledged = (value: unknown, id: string): boolean => {
-  const body = value as { id?: unknown; version?: unknown } | null;
-  return body?.id === id && isString(body.version);
-};
+/** The rows a one-statement SQL write changed, when the body is a SQL result. */
+const changed = (value: unknown): unknown =>
+  (value as { results?: { rows_affected?: unknown }[] } | null)?.results?.[0]?.rows_affected;
 
-/** Readiness, or a fresh canary document written, read, queried and
-    deleted; the delete is attempted even when an earlier step failed. */
+/** Readiness, or a fresh canary row inserted, read, counted and deleted
+    with SQL; the delete is attempted even when an earlier step failed. */
 export async function runTerraBase(
   probe: TerraBaseProbe,
   config: TerraBaseConfig,
@@ -161,32 +158,25 @@ export async function runTerraBase(
         headers.authorization = `Bearer ${await readToken(config as DocumentProbeConfig, fetcher, DOCUMENT_SCOPES)}`;
         // Fresh per region and round, so concurrent probes never collide.
         const id = newId();
-        const json = { "content-type": "application/json" };
+        const table = canaryTable(config as DocumentProbeConfig);
+        const execute = (sql: string, args: unknown[]) =>
+          call(ROUTES.sql(config), {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ statements: [{ sql, args }] }),
+          });
         let failure: unknown;
         try {
-          const written = await call(
-            ROUTES.document(config, id),
-            { method: "PUT", headers: { ...json, "if-none-match": "*" }, body: JSON.stringify({ canary: marker }) },
-            [201],
-          );
-          if (!acknowledged(written, id)) invalid();
-          const read = (await call(ROUTES.document(config, id), { method: "GET", cache: "no-store" })) as {
-            document?: { canary?: unknown };
-          };
-          if (!holdsDocument(read, id) || read.document?.canary !== marker) throw new CanaryError("Write not readable");
-          const page = (await call(ROUTES.query(config), {
-            method: "POST",
-            headers: json,
-            body: JSON.stringify({ filter: { eq: ["$id", id] }, limit: 1 }),
-          })) as { items?: unknown };
-          const items = Array.isArray(page.items) ? (page.items as { document?: { canary?: unknown } }[]) : [];
-          if (items.length !== 1 || !holdsDocument(items[0], id) || items[0]?.document?.canary !== marker)
-            throw new CanaryError("Query missed the document");
+          if (changed(await execute(`INSERT INTO ${table} (id, canary) VALUES (?, ?)`, [id, marker])) !== 1) invalid();
+          const read = sqlRows(await execute(`SELECT canary FROM ${table} WHERE id = ?`, [id]));
+          if (read?.length !== 1 || read[0]![0] !== marker) throw new CanaryError("Write not readable");
+          const found = sqlRows(await execute(`SELECT count(*) FROM ${table} WHERE id = ? AND canary = ?`, [id, marker]));
+          if (found?.[0]?.[0] !== 1) throw new CanaryError("Query missed the row");
         } catch (error) {
           failure = error;
         } finally {
           try {
-            if (!acknowledged(await call(ROUTES.document(config, id), { method: "DELETE" }), id)) invalid();
+            if (changed(await execute(`DELETE FROM ${table} WHERE id = ?`, [id])) !== 1) invalid();
           } catch (error) {
             failure ??= error;
           }

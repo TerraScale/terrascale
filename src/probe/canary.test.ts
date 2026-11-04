@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { canarySample, holdsDocument, isCanaryConfig, parseCanaries, runCanary, runTokenProbe } from "./canary";
+import { canarySample, holdsRow, isCanaryConfig, parseCanaries, runCanary, runTokenProbe } from "./canary";
 import { CANARY_CREDENTIAL_INVALID } from "../domain/status";
 
 const canary = {
@@ -13,7 +13,8 @@ const canary = {
   key: `01M4E7G1W82VKFPF5FJ9AVK1CQ_${"a".repeat(52)}`,
 };
 const token = "header.payload.signature";
-const document = { id: canary.document, version: `tbv1-${"a".repeat(32)}`, state: "value", document: { canary: true } };
+const rowsOf = (rows: unknown) => ({ results: [{ columns: [{ name: "id", decltype: "TEXT" }], rows, rows_affected: 0, last_insert_rowid: null }] });
+const document = rowsOf([[canary.document]]);
 const grant = { access_token: token, token_type: "Bearer", expires_in: 900 };
 const fake = (body: unknown, status = 200) =>
   vi
@@ -52,7 +53,7 @@ describe("read-only Data API probe", () => {
     }
   });
 
-  it("exchanges the key only at ts-auth and only GETs the fixture with its token", async () => {
+  it("exchanges the key only at ts-auth and only reads the fixture row with its token", async () => {
     const fetcher = fake(document);
     expect(await runCanary(canary, "round", fetcher)).toMatchObject({ ok: true, error: null });
     expect(fetcher).toHaveBeenCalledTimes(2);
@@ -67,14 +68,16 @@ describe("read-only Data API probe", () => {
       scope: "documents:read",
     });
     const [readUrl, readInit] = fetcher.mock.calls[1]!;
-    expect(readUrl).toBe(
-      `${canary.origin}/v1/projects/${canary.project}/databases/status_canary/collections/canary/documents/by-key?id=${canary.document}`,
-    );
-    expect(readInit).toMatchObject({ method: "GET", cache: "no-store", redirect: "manual" });
+    expect(readUrl).toBe(`${canary.origin}/v1/projects/${canary.project}/databases/status_canary/sql/execute`);
+    expect(readInit).toMatchObject({ method: "POST", cache: "no-store", redirect: "manual" });
+    expect(JSON.parse(String(readInit?.body))).toEqual({
+      statements: [{ sql: 'SELECT id FROM "canary" WHERE id = ?', args: [canary.document] }],
+    });
     expect(new Headers(readInit?.headers).get("authorization")).toBe(`Bearer ${token}`);
     expect(new Headers(readInit?.headers).get("X-TerraScale-Region-Pin")).toBe("gru");
     expect([...new Headers(readInit?.headers).keys()].sort()).toEqual([
       "authorization",
+      "content-type",
       "user-agent",
       "x-terrascale-region-pin",
     ]);
@@ -117,16 +120,18 @@ describe("read-only Data API probe", () => {
     }
   });
 
-  it("fails closed on invalid documents, JSON, auth failures and redirects without leaking responses", async () => {
-    for (const patch of [
-      { id: "bad" },
-      { id: canary.project },
-      { version: "bad" },
-      { state: "deleted" },
-      { document: null },
-      { document: [] },
+  it("fails closed on invalid rows, JSON, auth failures and redirects without leaking responses", async () => {
+    for (const body of [
+      rowsOf([]),
+      rowsOf([["bad"]]),
+      rowsOf([[canary.project]]),
+      rowsOf([[canary.document], [canary.document]]),
+      rowsOf(null),
+      rowsOf([canary.document]),
+      { results: [] },
+      {},
     ]) {
-      const result = await runCanary(canary, "round", fake({ ...document, ...patch }));
+      const result = await runCanary(canary, "round", fake(body));
       expect(result).toMatchObject({ ok: false, error: "Invalid response" });
     }
     for (const status of [401, 403, 404, 421, 302]) {
@@ -139,7 +144,7 @@ describe("read-only Data API probe", () => {
       .mockResolvedValueOnce(Response.json(grant))
       .mockResolvedValueOnce(new Response("bad json"));
     expect(await runCanary(canary, "round", fetcher)).toMatchObject({ ok: false, error: "Invalid JSON" });
-    expect(holdsDocument(null, canary.document)).toBe(false);
+    expect(holdsRow(null, canary.document)).toBe(false);
   });
 
   it("does not contact TerraBase when config or token exchange fails", async () => {

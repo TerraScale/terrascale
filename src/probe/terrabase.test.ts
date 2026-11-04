@@ -40,51 +40,53 @@ describe("TerraBase probe config", () => {
 
 describe("TerraBase probes", () => {
   const grant = { access_token: "header.payload.signature", token_type: "Bearer", expires_in: 900 };
-  const collection = `${origin}/v1/projects/${canary.project}/databases/canary/collections/canary`;
-  const version = `tbv1-${"a".repeat(32)}`;
+  const sql = `${origin}/v1/projects/${canary.project}/databases/canary/sql/execute`;
+  type Step = "INSERT" | "SELECT" | "COUNT" | "DELETE";
+  const result = (rows: unknown[][], affected = 0) => Response.json({
+    results: [{ columns: [], rows, rows_affected: affected, last_insert_rowid: null }],
+  });
 
-  /** A TerraBase fake that stores the canary document; `fail` swaps one step's answer. */
-  function fake(fail: Partial<Record<"PUT" | "GET" | "POST" | "DELETE", Response>> = {}) {
-    let stored: { id: string; document: unknown } | null = null;
+  /** A TerraBase SQL fake holding the canary rows; `fail` swaps one step's answer. */
+  function fake(fail: Partial<Record<Step, Response>> = {}) {
+    const rows = new Map<string, string>();
     return vi.fn<typeof fetch>(async (input, init) => {
-      const url = new URL(String(input));
-      if (url.pathname.endsWith("/oauth/token")) return Response.json(grant);
-      const method = init?.method as "PUT" | "GET" | "POST" | "DELETE";
-      if (fail[method]) return fail[method]!;
-      const id = url.searchParams.get("id") ?? "";
-      const body = () => ({ id: stored!.id, version, state: "value", document: stored!.document });
-      switch (method) {
-        case "PUT":
-          stored = { id, document: JSON.parse(String(init?.body)) };
-          return Response.json({ id, version, offset: "1", durability: "local_durable" }, { status: 201 });
-        case "GET":
-          return Response.json(body());
-        case "POST":
-          return Response.json({ items: stored ? [body()] : [], next_cursor: null });
+      if (String(input).endsWith("/oauth/token")) return Response.json(grant);
+      const { sql: text, args } = (JSON.parse(String(init?.body)) as { statements: { sql: string; args: string[] }[] })
+        .statements[0]!;
+      const step: Step = text.startsWith("INSERT") ? "INSERT" : text.startsWith("DELETE") ? "DELETE"
+        : text.includes("count(*)") ? "COUNT" : "SELECT";
+      if (fail[step]) return fail[step]!;
+      const [id, marker] = args;
+      switch (step) {
+        case "INSERT":
+          rows.set(id!, marker!);
+          return result([], 1);
+        case "SELECT":
+          return result(rows.has(id!) ? [[rows.get(id!)]] : []);
+        case "COUNT":
+          return result([[rows.get(id!) === marker ? 1 : 0]]);
         case "DELETE":
-          stored = null;
-          return Response.json({ id, version, offset: "2", durability: "local_durable" });
+          return result([], rows.delete(id!) ? 1 : 0);
       }
     });
   }
 
-  it("writes, reads, queries and deletes a fresh document with the exchanged token", async () => {
+  it("inserts, reads, counts and deletes a fresh row with the exchanged token", async () => {
     const fetcher = fake();
     expect(await runTerraBase("documents", canary, "round", fetcher)).toMatchObject({ ok: true });
-    const calls = fetcher.mock.calls.map(([url, init]) => [init?.method, String(url)]);
-    const id = new URL(String(fetcher.mock.calls[1]![0])).searchParams.get("id")!;
+    const statements = fetcher.mock.calls.slice(1).map(([url, init]) => {
+      expect([init?.method, String(url)]).toEqual(["POST", sql]);
+      return (JSON.parse(String(init?.body)) as { statements: { sql: string; args: unknown[] }[] }).statements;
+    });
+    const id = statements[0]![0]!.args[0] as string;
     expect(isId(id)).toBe(true);
-    expect(calls).toEqual([
-      ["POST", `${canary.issuer}/oauth/token`],
-      ["PUT", `${collection}/documents/by-key?id=${id}`],
-      ["GET", `${collection}/documents/by-key?id=${id}`],
-      ["POST", `${collection}/query`],
-      ["DELETE", `${collection}/documents/by-key?id=${id}`],
+    expect(statements).toEqual([
+      [{ sql: 'INSERT INTO "canary" (id, canary) VALUES (?, ?)', args: [id, "round"] }],
+      [{ sql: 'SELECT canary FROM "canary" WHERE id = ?', args: [id] }],
+      [{ sql: 'SELECT count(*) FROM "canary" WHERE id = ? AND canary = ?', args: [id, "round"] }],
+      [{ sql: 'DELETE FROM "canary" WHERE id = ?', args: [id] }],
     ]);
     expect(String(fetcher.mock.calls[0]![1]?.body)).toContain("scope=documents%3Aread+documents%3Awrite");
-    expect(JSON.parse(String(fetcher.mock.calls[1]![1]?.body))).toEqual({ canary: "round" });
-    expect(new Headers(fetcher.mock.calls[1]![1]?.headers).get("if-none-match")).toBe("*");
-    expect(JSON.parse(String(fetcher.mock.calls[3]![1]?.body))).toEqual({ filter: { eq: ["$id", id] }, limit: 1 });
     for (const [, init] of fetcher.mock.calls.slice(1)) {
       expect(init).toMatchObject({ redirect: "manual" });
       expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${grant.access_token}`);
@@ -93,32 +95,32 @@ describe("TerraBase probes", () => {
     expect(JSON.stringify(fetcher.mock.calls.slice(1))).not.toContain(canary.key);
   });
 
-  it("fails a step it cannot prove and still deletes the document", async () => {
+  it("fails a step it cannot prove and still deletes the row", async () => {
     for (const [fail, error] of [
-      [{ PUT: Response.json({ error: { code: "forbidden_scope" } }, { status: 403 }) }, "HTTP 403 forbidden_scope"],
-      [{ PUT: Response.json({ id: "x", version }, { status: 201 }) }, "Invalid response"],
-      [{ GET: Response.json({ error: { code: "not_found" } }, { status: 404 }) }, "HTTP 404 not_found"],
-      [{ GET: Response.json({ id: "x", version, state: "value", document: {} }) }, "Write not readable"],
-      [{ POST: Response.json({ items: [], next_cursor: null }) }, "Query missed the document"],
+      [{ INSERT: Response.json({ error: { code: "forbidden_scope" } }, { status: 403 }) }, "HTTP 403 forbidden_scope"],
+      [{ INSERT: result([], 0) }, "Invalid response"],
+      [{ SELECT: Response.json({ error: { code: "sql_error" } }, { status: 400 }) }, "HTTP 400 sql_error"],
+      [{ SELECT: result([["other"]]) }, "Write not readable"],
+      [{ COUNT: result([[0]]) }, "Query missed the row"],
       [{ DELETE: Response.json({ error: { code: "internal_error" } }, { status: 500 }) }, "HTTP 500 internal_error"],
     ] as const) {
       const fetcher = fake(fail);
       expect(await runTerraBase("documents", canary, "round", fetcher)).toEqual({ ok: false, latencyMs: null, error });
-      expect(fetcher.mock.calls.at(-1)![1]?.method).toBe("DELETE");
+      expect(String(fetcher.mock.calls.at(-1)![1]?.body)).toContain("DELETE FROM");
     }
   });
 
-  it("leaves documents unmeasured when the monitor's plan allowance refuses the write", async () => {
+  it("leaves writes unmeasured when the monitor's plan allowance refuses them", async () => {
     const fetcher = fake({
-      PUT: Response.json({ error: { code: "operation_allowance", message: "upgrade" } }, { status: 429 }),
+      INSERT: Response.json({ error: { code: "operation_allowance", message: "upgrade" } }, { status: 429 }),
     });
     expect(await runTerraBase("documents", canary, "round", fetcher)).toEqual({
       ok: null,
       latencyMs: null,
       error: "Canary quota exhausted",
     });
-    expect(fetcher.mock.calls.at(-1)![1]?.method).toBe("DELETE");
-    const busy = fake({ PUT: Response.json({ error: { code: "tenant_busy" } }, { status: 429 }) });
+    expect(String(fetcher.mock.calls.at(-1)![1]?.body)).toContain("DELETE FROM");
+    const busy = fake({ INSERT: Response.json({ error: { code: "tenant_busy" } }, { status: 429 }) });
     expect(await runTerraBase("documents", canary, "round", busy)).toMatchObject({
       ok: false,
       error: "HTTP 429 tenant_busy",
@@ -135,7 +137,7 @@ describe("TerraBase probes", () => {
       error: "Canary credential invalid",
     });
     expect(rejected).toHaveBeenCalledTimes(1);
-    const api = fake({ PUT: Response.json({ error: { code: "invalid_token" } }, { status: 401 }) });
+    const api = fake({ INSERT: Response.json({ error: { code: "invalid_token" } }, { status: 401 }) });
     expect(await runTerraBase("documents", canary, "round", api)).toMatchObject({
       ok: false,
       error: "HTTP 401 invalid_token",

@@ -84,8 +84,9 @@ class RecoveryTests(unittest.TestCase):
                 return dict(id=database + posted[-1][1][-1], name=data['name'], homeRegion=data['homeRegion'])
             if url.endswith('/databases'):
                 return dict(items=[], next=None)
-            if url.endswith('/collections'):
-                return {}
+            if url.endswith('/sql/execute'):
+                self.assertEqual(data, {'statements': [{'sql': r.TABLE}]})
+                return {'results': [{'rows': [], 'rows_affected': 0}]}
             if url.endswith('/step-up'):
                 return dict(proof='private-proof', step_up_url=r.AUTH + '/ui/terrascale/step-up/' + ID)
             if url.endswith('/api-keys') and method == 'GET':
@@ -158,23 +159,22 @@ class RecoveryTests(unittest.TestCase):
 
     def test_failed_query_still_deletes_and_never_prints_key(self):
         setup = object.__new__(r.Setup)
-        methods = []
+        statements = []
         def call(url, method='GET', data=None, **kwargs):
-            methods.append(method)
             if url.endswith('/oauth/token'):
                 return {'access_token': 'private-token'}
-            if url.endswith('/query'):
+            text, args = data['statements'][0]['sql'], data['statements'][0]['args']
+            statements.append(text.split()[0])
+            if 'count(*)' in text:
                 raise RuntimeError('query failed')
-            if method == 'DELETE':
-                return dict(id=url.split('id=')[1], version='v1')
-            if method == 'PUT':
-                return dict(id=url.split('id=')[1], version='v1')
-            return dict(id=url.split('id=')[1], state='value', document={'canary': 'marker'})
+            if text.startswith(('INSERT', 'DELETE')):
+                return {'results': [{'rows': [], 'rows_affected': 1}]}
+            return {'results': [{'rows': [[args[0]]] if args[0] == r.DOCUMENT else [['marker']], 'rows_affected': 0}]}
         setup.call = call
         with patch.object(r.secrets, 'token_hex', return_value='marker'), redirect_stdout(io.StringIO()) as output:
             with self.assertRaises(RuntimeError):
                 setup.verify(CONFIG)
-        self.assertEqual(methods[-1], 'DELETE')
+        self.assertEqual(statements[-1], 'DELETE')
         self.assertNotIn(CONFIG['key'], output.getvalue())
 
 
