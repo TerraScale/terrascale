@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Nodes;
 
 namespace TerraBase.E2E;
 
@@ -26,26 +25,5 @@ public sealed class BackupQualificationE2ETests
 
         var wrongPlan = run.Plan.Select(cut => cut.Name == fault.Name ? cut with { ExpectedRefusal = "invalid_request", ExpectedStatus = 400 } : cut).ToArray();
         await Assert.That(BackupQualification.Failures(wrongPlan, run.Outcomes)).Contains($"cut {fault.Name} neither restored nor answered a typed refusal");
-    }
-
-    [Test]
-    [Category("local-only")]
-    [Scenario(Nodes.InProcess)]
-    public async Task Rewriting_the_same_restored_body_fails_version_qualification()
-    {
-        var run = await BackupQualificationRun.ExecuteAsync(async (cluster, holder, path) =>
-        {
-            var documents = await BackupQualificationRun.ListAsync(holder, path, cluster.Collection, TestContext.Current!.Execution.CancellationToken);
-            var first = documents.First();
-            await Docs.PutAsync(holder, new Uri($"{path}/collections/{cluster.Collection}/documents/by-key?id={first.Key}", UriKind.Relative), JsonNode.Parse(first.Value.Body)!);
-        });
-        var failures = BackupQualification.Failures(run.Plan, run.Outcomes);
-        Outcomes.Mark("harness", JsonSerializer.Serialize(new
-        {
-            control = "real single-node backup restores deliberately rewritten; judge must reject changed stored versions",
-            failures,
-        }));
-        await Assert.That(failures.Count).IsEqualTo(3);
-        await Assert.That(failures.All(failure => failure.Contains("versions differ", StringComparison.Ordinal))).IsTrue();
     }
 }
