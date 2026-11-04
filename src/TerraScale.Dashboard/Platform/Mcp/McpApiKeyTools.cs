@@ -9,6 +9,7 @@ using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Platform.Rpc;
 using TerraScale.Dashboard.Platform.TsAuth;
+using TerraScale.TerraBase.Contracts.Backups;
 using TerraScale.TerraBase.Contracts.Management;
 
 namespace TerraScale.Dashboard.Platform.Mcp
@@ -20,7 +21,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
         internal const string ContextKey = "TerraScale.Dashboard/mcp-api-key";
         internal static readonly HashSet<string> Tools = new(StringComparer.Ordinal)
         {
-            "get_context", "list_databases", "get_database", "create_database", "branch_database", "delete_database",
+            "get_context", "list_databases", "get_database", "create_database", "fork_database", "set_database_ttl", "delete_database",
             "execute_sql", "run_sql", "check_sql", "get_database_schema", "create_scoped_key",
             "create_backup", "restore_backup"
         };
@@ -55,6 +56,8 @@ namespace TerraScale.Dashboard.Platform.Mcp
             string Text(string name, string fallback = "") => arguments?.TryGetValue(name, out var value) == true && value.ValueKind != JsonValueKind.Null ? value.GetString() ?? fallback : fallback;
             long? Number(string name) => arguments?.TryGetValue(name, out var value) == true && value.ValueKind != JsonValueKind.Null
                 ? value.ValueKind == JsonValueKind.String ? long.Parse(value.GetString()!, System.Globalization.CultureInfo.InvariantCulture) : value.GetInt64() : null;
+            decimal? Hours() => arguments?.TryGetValue("ttlHours", out var value) == true && value.ValueKind != JsonValueKind.Null
+                ? value.ValueKind == JsonValueKind.String ? decimal.Parse(value.GetString()!, System.Globalization.CultureInfo.InvariantCulture) : value.GetDecimal() : null;
             var scope = credential.Scope;
             if (!Tools.Contains(tool)) throw new AccountAccessException("This tool requires a dashboard sign-in. API keys reach database tools only.");
             if (Text("organizationId", scope.OrganizationId) != scope.OrganizationId || Text("projectId", scope.ProjectId) != scope.ProjectId)
@@ -79,7 +82,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                     throw new AccountAccessException("Scoped key minting was refused. The parent key must be active, unscoped and grant the requested database and access.", (int)(error.StatusCode ?? HttpStatusCode.BadGateway));
                 }
             }
-            var write = tool is "create_database" or "branch_database" or "delete_database" or "create_backup" or "restore_backup";
+            var write = tool is "create_database" or "fork_database" or "set_database_ttl" or "delete_database" or "create_backup" or "restore_backup";
             var dataTool = tool is "execute_sql" or "run_sql" or "check_sql" or "get_database_schema";
             var sql = Text("sql").Trim();
             if (tool is "execute_sql" or "run_sql" or "check_sql")
@@ -98,7 +101,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             var management = rpc.User<IManagementService>(scope.AccessToken, region.Id).WithCancellationToken(ct);
             if (tool == "create_database")
             {
-                var ttl = Number("ttlSeconds"); DatabaseService.ValidateTtl(ttl);
+                var ttl = DatabaseTtl.Seconds(Hours());
                 return Reply(Output(await management.CreateDatabaseAsync(scope.ProjectId, new(Name: Text("name"), HomeRegion: region.Id, TtlSeconds: ttl))), McpAgentJson.Default.McpDatabase);
             }
             if (tool == "list_databases")
@@ -136,10 +139,29 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 ?? throw new AccountAccessException("The database home region is unavailable.", 503);
             management = rpc.User<IManagementService>(scope.AccessToken, region.Id).WithCancellationToken(ct);
             if (tool == "get_database") return Reply(Output(database), McpAgentJson.Default.McpDatabase);
-            if (tool == "branch_database")
+            if (tool == "fork_database")
             {
-                var ttl = Number("ttlSeconds"); DatabaseService.ValidateTtl(ttl);
-                return Reply(Output(await management.BranchWithTtlAsync(scope.ProjectId, databaseId, Text("name"), ttl)), McpAgentJson.Default.McpDatabase);
+                var ttl = DatabaseTtl.Seconds(Hours());
+                var instant = DatabaseTtl.Instant(Text("pointInTime"));
+                TerraBaseManagedDatabase fork;
+                if (instant is { } at)
+                {
+                    var answer = await rpc.User<IBackupsService>(scope.AccessToken, region.Id).WithCancellationToken(ct)
+                        .RestorePointInTimeAsync(scope.ProjectId, databaseId, new(at, Text("name"), null, ttl));
+                    fork = answer.Deserialize(ManagementJson.Default.TerraBaseManagedDatabase) ?? throw new JsonException("Invalid fork response.");
+                }
+                else { fork = await management.BranchAsync(scope.ProjectId, databaseId, Text("name"), ttl); }
+                return Reply(Output(fork), McpAgentJson.Default.McpDatabase);
+            }
+            if (tool == "set_database_ttl")
+            {
+                var hours = Hours();
+                var clear = arguments?.TryGetValue("clear", out var value) == true && value.GetBoolean();
+                if (clear == (hours is not null)) throw new AccountAccessException("Supply ttlHours or clear=true, exclusively.", 422);
+                var ttl = DatabaseTtl.Seconds(hours);
+                var updated = ttl is { } seconds ? await management.SetDatabaseTtlAsync(scope.ProjectId, databaseId, new(seconds))
+                    : await management.ClearDatabaseTtlAsync(scope.ProjectId, databaseId);
+                return Reply(Output(updated), McpAgentJson.Default.McpDatabase);
             }
             if (tool == "delete_database")
             {

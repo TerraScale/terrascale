@@ -22,12 +22,12 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             var tools = (await HttpJourney.McpAsync(client, token, "tools/list", new { })).GetProperty("result").GetProperty("tools");
             var sqlTool = tools.EnumerateArray().Single(tool => tool.GetProperty("name").GetString() == "execute_sql");
             await Assert.That(sqlTool.GetProperty("annotations").GetProperty("readOnlyHint").GetBoolean()).IsFalse();
-            var source = await CallAsync("create_database", new { name = "agent-source", region = "GRU", ttlSeconds = 3600 });
+            var source = await CallAsync("create_database", new { name = "agent-source", region = "GRU", ttlHours = 1 });
             var sourceId = source.GetProperty("id").GetString()!;
             await Assert.That(source.GetProperty("expiresAt").GetDateTimeOffset() > DateTimeOffset.UtcNow).IsTrue();
             await CallAsync("execute_sql", new { databaseId = sourceId, sql = "CREATE TABLE results (id TEXT PRIMARY KEY, value TEXT)" });
             await CallAsync("execute_sql", new { databaseId = sourceId, sql = "INSERT INTO results VALUES ('one', 'before')" });
-            var fork = await CallAsync("branch_database", new { databaseId = sourceId, name = "agent-fork", ttlSeconds = 600 });
+            var fork = await CallAsync("fork_database", new { databaseId = sourceId, name = "agent-fork", ttlHours = 0.25m });
             var forkId = fork.GetProperty("id").GetString()!;
             await Assert.That(fork.GetProperty("expiresAt").GetDateTimeOffset() < source.GetProperty("expiresAt").GetDateTimeOffset()).IsTrue();
             var scoped = await CallAsync("create_scoped_key", new { databaseId = forkId, access = "read_write", ttlSeconds = 600 });
@@ -40,6 +40,8 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             var table = schema.GetProperty("tables").EnumerateArray().Single(table => table.GetProperty("name").GetString() == "results");
             await Assert.That(table.GetProperty("fields").EnumerateArray().Any(field => field.GetProperty("path").GetString() == "value" && field.GetProperty("type").GetString() == "TEXT")).IsTrue();
             await CallAsync("delete_database", new { databaseId = forkId, confirmName = "agent-fork" });
+            await Assert.That((await CallAsync("set_database_ttl", new { databaseId = sourceId, ttlHours = 2 })).GetProperty("expiresAt").GetDateTimeOffset() > source.GetProperty("expiresAt").GetDateTimeOffset()).IsTrue();
+            await Assert.That((await CallAsync("set_database_ttl", new { databaseId = sourceId, clear = true })).GetProperty("expiresAt").ValueKind).IsEqualTo(JsonValueKind.Null);
             var backup = await CallAsync("create_backup", new { databaseId = sourceId });
             var restored = await CallAsync("restore_backup", new { databaseId = sourceId, backupId = backup.GetProperty("id").GetString(), name = "agent-restored" });
             var restoredId = restored.GetProperty("databaseId").GetString()!;
