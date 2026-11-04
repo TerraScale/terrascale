@@ -4,7 +4,7 @@ A shape is the rows of one SQL table that match an optional `where`, with an opt
 sealed change chunks, then a live tail, Electric style (PIVOT D8). Every response is addressed by `(handle, offset)`,
 so identical URLs return identical bytes and any cache can serve many readers for the cost of one.
 
-Table-level read grants and end-user tokens (F4), the local
+End users read shapes from the browser under table read grants: [shape read grants](shape-read-grants.md). The local
 overlay (F7) and region-to-region provisional changes (F8) are later tasks. Protocol v1 (document collections over
 `_tb_feed`) is gone.
 
@@ -25,7 +25,7 @@ overlay (F7) and region-to-region provisional changes (F8) are later tasks. Prot
 
 `GET /v1/projects/{project}/databases/{database}/tables/{table}/shape?handle=&offset=&live=&cursor=&where=&columns=`
 
-Client listener, TLS, `documents:read`, OpenAPI tag `Live`. End-user tokens are refused until F4.
+Client listener, TLS, `documents:read`, OpenAPI tag `Live`. End-user tokens read only granted tables: [shape read grants](shape-read-grants.md).
 
 | Parameter | Value |
 | --- | --- |

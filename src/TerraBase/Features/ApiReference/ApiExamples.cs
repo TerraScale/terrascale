@@ -10,6 +10,7 @@ internal static class ApiExamples
     private const string Database = """
         {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA1","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main","branchedFrom":null,"createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false}
         """;
+    private const string ReadGrant = """{"table":"notes","where":"owner_id = :sub","columns":["id","owner_id","body"],"updatedAt":"2026-11-04T12:00:00Z"}""";
     private const string DeclaredSchema = """{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["name"],"properties":{"name":{"type":"string"}}}""";
     private const string CollectionRules = """{"owner":"/userId","read":{"owner":true,"public":false,"roles":[]},"write":{"owner":true,"public":false,"roles":[]}}""";
     private const string FileBucket = "{\"id\":\"01ARZ3NDEKTSV4RRFFQ69G5FAC\",\"name\":\"avatars\",\"region\":\"gru\",\"rules\":" + CollectionRules + "}";
@@ -99,6 +100,7 @@ internal static class ApiExamples
         "setFileBucketRules" => "{\"rules\":" + CollectionRules + "}",
         "createFileUpload" => """{"name":"hello.txt","contentType":"text/plain","size":5,"sha256":"LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=","metadata":{"userId":"01ARZ3NDEKTSV4RRFFQ69G5FAE"}}""",
         "createDatabase" => """{"name":"main"}""",
+        "putReadGrant" => """{"where":"owner_id = :sub","columns":["id","owner_id","body"]}""",
         "branchDatabase" or "branchDatabaseIfId" => """{"name":"main_branch"}""",
         "updateDatabase" => """{"replicaRegions":[]}""",
         "restoreBackup" => """{"name":"restored"}""",
@@ -145,6 +147,8 @@ internal static class ApiExamples
         "healthz" => $$"""{"status":"{{(status == "503" ? "degraded" : "ok")}}","version":"{{ServiceVersion.Value}}","region":"gru-1"}""",
         "readyz" => $$"""{"status":"{{(status == "503" ? "unavailable" : "ready")}}","version":"{{ServiceVersion.Value}}","region":"gru-1"}""",
         "createDatabase" or "getDatabase" or "updateDatabase" => Database,
+        "putReadGrant" or "getReadGrant" => ReadGrant,
+        "listReadGrants" => "{\"grants\":[" + ReadGrant + "]}",
         "branchDatabase" or "branchDatabaseIfId" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA6","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main_branch","branchedFrom":"01ARZ3NDEKTSV4RRFFQ69G5FA1","createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false}""",
         "listDatabases" => Page(Database),
         "createBackup" => Backup,
@@ -213,6 +217,9 @@ internal static class ApiExamples
         "400" when id == "runTransaction" => "invalid_request, invalid_patch, nested_lattice_path, invalid_query, assert_requires_index, schema_validation_failed",
         "400" when id == "connectSql" => "invalid_request, websocket_required",
         "400" when id == "executeSql" => "syntax_error, undefined_table, undefined_column, duplicate_object, primary_key_violation, unique_violation, not_null_violation, check_violation, foreign_key_violation, constraint_violation, query_canceled, read_only_transaction, transaction_state, sql_error, invalid_request",
+        "400" when id is "putReadGrant" => "invalid_request, unknown_column, unsafe_where",
+        "404" when id is "putReadGrant" => "unknown_database, unknown_table",
+        "404" when id is "getReadGrant" or "deleteReadGrant" => "unknown_database, no_read_grant",
         "400" => "invalid_request",
         "401" => "invalid_key",
         "403" when id is "createDatabase" or "branchDatabase" or "branchDatabaseIfId" or "updateDatabase" or "deleteDatabase" or "deleteDatabaseIfId" or "restoreBackup" or "setBackupPolicy" or "setExportSchedule" or "createIndex" or "dropIndex" or "applyIndexRecommendation" or "createSavedQuery" or "updateSavedQuery" or "deleteSavedQuery" or "declareCollectionSchema" => "forbidden_scope, forbidden_role",

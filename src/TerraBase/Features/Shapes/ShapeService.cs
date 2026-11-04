@@ -54,6 +54,20 @@ internal sealed class ShapeService(
         }
     }
 
+    public async ValueTask<LineageResult> CheckAsync(TenantContext database, string table, ShapeQuery query, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is { } store
+                ? await CurrentAsync(store, database, table, query, cancellationToken).ConfigureAwait(false)
+                : UnknownDatabase;
+        }
+        catch (Exception error) when (error is ShapeSealOffsetException or ObjectDisposedException or StorageBusyException or QosMemoryException)
+        {
+            return new Unavailable("shape storage changed or is busy; retry later");
+        }
+    }
+
     private async ValueTask<LineageResult> CurrentAsync(IDatabaseStore store, TenantContext database, string table, ShapeQuery query,
         CancellationToken cancellationToken)
     {
@@ -91,6 +105,7 @@ internal sealed class ShapeService(
             {
                 ShapeFilter filter => Resolved(store, new ShapeScope(database, table, generation, query, filter)),
                 Validation error => error,
+                Forbidden error => error,
                 Unavailable error => error,
             };
         }
@@ -110,6 +125,7 @@ internal sealed class ShapeService(
             NotFound missing => missing,
             Unavailable unavailable => unavailable,
             Validation => new MustRefetch("the table no longer supports shapes"),
+            Forbidden => new MustRefetch("the table's read grant no longer applies"),
             QuotaExceeded busy => busy,
         };
 

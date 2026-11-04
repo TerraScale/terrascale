@@ -18,7 +18,7 @@ internal sealed record ShapeBody(ReadOnlyMemory<byte> Json, string NextOffset, b
 
 internal sealed record MustRefetch(string Message, ShapeLineage? Lineage = null);
 
-internal readonly union LineageResult(ResolvedShape, QuotaExceeded, Validation, NotFound, Unavailable);
+internal readonly union LineageResult(ResolvedShape, QuotaExceeded, Validation, Forbidden, NotFound, Unavailable);
 
 internal readonly union SnapshotResult(long, MustRefetch, QuotaExceeded, NotFound, Unavailable);
 
@@ -27,6 +27,8 @@ internal readonly union ShapeRead(ShapeBody, MustRefetch, QuotaExceeded, NotFoun
 internal interface IShapeLineages
 {
     ValueTask<LineageResult> ResolveAsync(TenantContext database, string table, ShapeQuery query, CancellationToken cancellationToken);
+
+    ValueTask<LineageResult> CheckAsync(TenantContext database, string table, ShapeQuery query, CancellationToken cancellationToken);
 }
 
 internal interface IShapeSnapshots

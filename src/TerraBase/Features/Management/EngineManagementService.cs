@@ -1059,6 +1059,7 @@ internal sealed partial class EngineManagementService(
             var version = await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false);
             if (version == CatalogVersion)
             {
+                await CatalogTables.CreateAsync(transaction, cancellationToken).ConfigureAwait(false);
                 return new Done();
             }
 

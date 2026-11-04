@@ -136,7 +136,9 @@ internal sealed class UserAuthenticationHandler(
             using var payload = JsonDocument.Parse(Base64UrlEncoder.DecodeBytes(jwt.EncodedPayload));
             if (project is null || !payload.RootElement.TryGetProperty("instance_id", out var instance)
                 || instance.ValueKind != JsonValueKind.String || instance.GetString() != project
-                || payload.RootElement.TryGetProperty("scope", out _) || payload.RootElement.TryGetProperty("database", out _)
+                || payload.RootElement.TryGetProperty("scope", out _)
+                || payload.RootElement.TryGetProperty("tables", out var granted) && (granted.ValueKind != JsonValueKind.Array || granted.GetArrayLength() > 32
+                    || granted.EnumerateArray().Any(table => table.ValueKind != JsonValueKind.String || !Shapes.ShapeTables.IsValidName(table.GetString())))
                 || payload.RootElement.TryGetProperty(Platform.PlatformExplore.RoleClaim, out _)
                 || payload.RootElement.TryGetProperty("is_anonymous", out var guest) && guest.ValueKind != JsonValueKind.False
                 || !payload.RootElement.TryGetProperty("roles", out var roles) || roles.ValueKind != JsonValueKind.Array
@@ -148,6 +150,10 @@ internal sealed class UserAuthenticationHandler(
 
             claims.Add(new Claim("token_kind", "end_user"));
             claims.AddRange(roles.EnumerateArray().Select(role => role.GetString()!).Distinct(StringComparer.Ordinal).Select(role => new Claim("roles", role)));
+            if (payload.RootElement.TryGetProperty("tables", out var tables))
+            {
+                claims.AddRange(tables.EnumerateArray().Select(table => table.GetString()!).Distinct(StringComparer.Ordinal).Select(table => new Claim("tables", table)));
+            }
             // These admit only the document pipeline; collection rules decide every data operation.
             claims.Add(new Claim("scope", "documents:read"));
             claims.Add(new Claim("scope", "documents:write"));

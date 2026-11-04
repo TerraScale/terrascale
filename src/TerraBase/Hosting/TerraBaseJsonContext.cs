@@ -17,6 +17,7 @@ using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Pressure;
 using TerraBase.Features.Regions;
+using TerraBase.Features.Shapes;
 using TerraBase.Features.Sql;
 using TerraBase.Features.UserAuth;
 using TerraBase.Features.Functions;
@@ -135,6 +136,9 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(ManagementPage<SavedQuery>))]
 [JsonSerializable(typeof(NameRequest))]
 [JsonSerializable(typeof(DatabaseRegionsRequest))]
+[JsonSerializable(typeof(ShapeGrantRequest))]
+[JsonSerializable(typeof(ShapeGrantBody))]
+[JsonSerializable(typeof(ShapeGrantsBody))]
 [JsonSerializable(typeof(OpCounts))]
 [JsonSerializable(typeof(UsageTotals))]
 [JsonSerializable(typeof(UsageReading))]

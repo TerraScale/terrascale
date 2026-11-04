@@ -1,6 +1,7 @@
 using System.Globalization;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
+using TerraBase.Features.UserAuth;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Shapes;
@@ -13,6 +14,8 @@ internal static class ShapeRoute
 
     internal static readonly Validation BadFilter = new(
         $"where and columns are each at most once, non-empty, where at most {ShapeFilters.MaxWhere} and columns at most {ShapeFilters.MaxColumns} characters");
+
+    internal static readonly Forbidden NotGranted = new("this token has no read grant for the table", "not_granted");
 
     internal static readonly string[] FilterParameters = ["where", "columns"];
 
@@ -70,11 +73,37 @@ internal static class ShapeRoute
                     return BadFilter;
                 }
 
+                if (context.Features.Get<ProjectAccess>() is { IsEndUser: true } access)
+                {
+                    if (!access.Tables.Contains(table!))
+                    {
+                        return NotGranted;
+                    }
+
+                    switch (await context.RequestServices.GetRequiredService<IShapeGrants>().GetGrantAsync(database.DatabaseId!, table!, cancellationToken))
+                    {
+                        case ShapeGrant grant:
+                            string? bound = null;
+                            if (grant.Where is { } rule && (bound = ShapeFilters.Bind(rule, access.Actor)) is null)
+                            {
+                                return NotGranted;
+                            }
+
+                            query = query with { Grant = new ShapeGrantRule(bound, grant.Columns is { } columns ? string.Join(',', columns) : null) };
+                            break;
+                        case NotFound:
+                            return NotGranted;
+                        case Unavailable error:
+                            return error;
+                    }
+                }
+
                 return await lineages.ResolveAsync(database, table!, query, cancellationToken) switch
                 {
                     ResolvedShape shape => shape,
                     QuotaExceeded error => error,
                     Validation error => error,
+                    Forbidden error => error,
                     NotFound error => error,
                     Unavailable error => error,
                 };
@@ -86,6 +115,7 @@ internal static class ShapeRoute
     internal static IResult Error(RouteResult result) => result switch
     {
         Validation error => ErrorResponse.From(error),
+        Forbidden error => ErrorResponse.From(error),
         NotFound error => ErrorResponse.From(error),
         Unavailable error => ErrorResponse.From(error),
         QuotaExceeded error => ErrorResponse.From(error),
@@ -141,4 +171,4 @@ internal static class ShapeRoute
     internal sealed record DecimalOffset(long Value) : Offset;
 }
 
-internal readonly union RouteResult(ResolvedShape, Validation, NotFound, Unavailable, QuotaExceeded);
+internal readonly union RouteResult(ResolvedShape, Validation, Forbidden, NotFound, Unavailable, QuotaExceeded);

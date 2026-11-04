@@ -23,7 +23,7 @@ internal interface IShapeTableStorage
     ValueTask<ShapeFilterResult> ReadShapeFilterAsync(string table, string generation, ShapeQuery query, CancellationToken cancellationToken);
 }
 
-internal readonly union ShapeFilterResult(ShapeFilter, Validation, Unavailable);
+internal readonly union ShapeFilterResult(ShapeFilter, Validation, Forbidden, Unavailable);
 
 internal static class ShapeTables
 {

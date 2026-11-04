@@ -17,6 +17,8 @@ public sealed record ProjectAccess(string Actor, string ProjectId, string Organi
     /// <summary>Trusted roles from ts-auth, compared ordinally; never project administrator scopes.</summary>
     public IReadOnlySet<string> Roles { get; init; } = FrozenSet<string>.Empty;
 
+    internal IReadOnlySet<string> Tables { get; init; } = FrozenSet<string>.Empty;
+
     private static readonly AsyncLocal<ProjectAccess?> Access = new();
 
     /// <summary>The project grant of the current async request, after authorization.</summary>

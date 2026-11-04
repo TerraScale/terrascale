@@ -156,6 +156,8 @@ Per-collection TTL: [declare an expiry member; the home region sweeps expired do
 
 Transaction change-group budget, rollback and the deterministic `503 capacity` refusal: [transaction capacity](documents/transaction-capacity.md).
 
+End-user shape reads from the browser under table read grants: [shape read grants](shape-read-grants.md).
+
 Shape data of dropped or recreated collections is retired by an always-on sweep: [shape sweep](shape-sweep.md).
 
 Export a database as NDJSON, resumable by cursor: [export](export.md).

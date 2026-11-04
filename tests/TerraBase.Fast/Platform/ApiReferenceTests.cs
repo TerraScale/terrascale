@@ -20,6 +20,7 @@ public sealed class ApiReferenceTests
         DELETE /v1/projects/{project}/databases/{database}/functions/{function} TsAuth(documents:read,documents:write) deleteFunction Functions
         DELETE /v1/projects/{project}/databases/{database}/if-id/{expectedId} TsAuth(databases:write) deleteDatabaseIfId Databases
         DELETE /v1/projects/{project}/databases/{database}/indexes/{index} TsAuth(databases:write) dropIndex Indexes
+        DELETE /v1/projects/{project}/databases/{database}/tables/{table}/read-grant TsAuth(databases:write) deleteReadGrant Live
         DELETE /v1/projects/{project}/saved-queries/{query} TsAuth(databases:write) deleteSavedQuery Queries
         GET /backupz anonymous backupz Health
         GET /healthz anonymous healthz Health
@@ -56,9 +57,11 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/logs TsAuth(databases:read) listDatabaseLogs Logs
         GET /v1/projects/{project}/databases/{database}/point-in-time TsAuth(databases:read) getRestoreWindow Backups
         GET /v1/projects/{project}/databases/{database}/query-shapes TsAuth(databases:read) listQueryShapes Queries
+        GET /v1/projects/{project}/databases/{database}/read-grants TsAuth(databases:read) listReadGrants Live
         GET /v1/projects/{project}/databases/{database}/schema TsAuth(databases:read) getDatabaseSchema Schema
         GET /v1/projects/{project}/databases/{database}/schema/{collection} TsAuth(databases:read) getCollectionSchema Schema
         GET /v1/projects/{project}/databases/{database}/sql/ws TsAuth(documents:read) connectSql Queries
+        GET /v1/projects/{project}/databases/{database}/tables/{table}/read-grant TsAuth(databases:read) getReadGrant Live
         GET /v1/projects/{project}/databases/{database}/tables/{table}/shape TsAuth(documents:read) getShape Live
         GET /v1/projects/{project}/databases/{database}/tables/{table}/shape/keys TsAuth(documents:read) getShapeKey Live
         GET /v1/projects/{project}/databases/{database}/tables/{table}/shape/manifest TsAuth(documents:read) getShapeManifest Live
@@ -112,6 +115,7 @@ public sealed class ApiReferenceTests
         PUT /v1/projects/{project}/databases/{database}/functions/{function} TsAuth(documents:read,documents:write) deployFunction Functions
         PUT /v1/projects/{project}/databases/{database}/import/source TsAuth(databases:write,documents:write) uploadImportSource Imports
         PUT /v1/projects/{project}/databases/{database}/schema/{collection} TsAuth(databases:write) declareCollectionSchema Schema
+        PUT /v1/projects/{project}/databases/{database}/tables/{table}/read-grant TsAuth(databases:write) putReadGrant Live
         PUT /v1/projects/{project}/saved-queries/{query} TsAuth(databases:write) updateSavedQuery Queries
         """;
 

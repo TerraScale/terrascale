@@ -73,6 +73,8 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
             {
                 case Validation error:
                     return error;
+                case Forbidden error:
+                    return error;
                 case ShapeFilter { Where: null } filter:
                     return filter;
                 case ShapeFilter filter:

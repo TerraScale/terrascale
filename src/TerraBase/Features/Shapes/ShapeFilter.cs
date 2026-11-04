@@ -9,12 +9,14 @@ public sealed record ShapeFilter(string? Where, IReadOnlyList<string> Columns)
     public string Key => (Where ?? "") + "\0" + string.Join('\u001f', Columns);
 }
 
-internal sealed record ShapeQuery(string? Where, string? Columns)
+internal sealed record ShapeQuery(string? Where, string? Columns, ShapeGrantRule? Grant = null)
 {
     internal static readonly ShapeQuery None = new(null, null);
 
-    internal bool IsEmpty => Where is null && Columns is null;
+    internal bool IsEmpty => Where is null && Columns is null && Grant is null;
 }
+
+internal sealed record ShapeGrantRule(string? Where, string? Columns);
 
 internal static class ShapeFilters
 {
@@ -44,38 +46,96 @@ internal static class ShapeFilters
         IReadOnlyList<string> columns = tableColumns;
         if (query.Columns is { } list)
         {
-            List<string> chosen = [];
-            foreach (var part in list.Split(','))
+            var chosen = Columns(list, tableColumns);
+            if (chosen is not List<string> names)
             {
-                var name = part.Trim();
-                if (Column(tableColumns, name) is not { } column)
-                {
-                    return new Validation($"columns names a column the table does not have: {name}", "unknown_column");
-                }
-
-                if (chosen.Contains(column, StringComparer.Ordinal))
-                {
-                    return new Validation($"columns names {column} twice", "unknown_column");
-                }
-
-                chosen.Add(column);
+                return chosen;
             }
 
-            columns = chosen;
+            columns = names;
         }
 
-        if (query.Where is not { } where)
+        if (query.Grant?.Columns is { } granted)
         {
-            return new ShapeFilter(null, columns);
+            var allowed = granted.Split(',').Select(name => Column(tableColumns, name.Trim())).OfType<string>().ToHashSet(StringComparer.Ordinal);
+            columns = [.. columns.Where(allowed.Contains)];
+            if (columns.Count == 0)
+            {
+                return new Forbidden("the read grant allows none of the requested columns", "column_not_granted");
+            }
         }
 
-        return Where(where, tableColumns) switch
+        string? condition = null;
+        if (query.Where is { } where)
         {
-            string condition => new ShapeFilter(condition, columns),
-            Validation error => error,
-            _ => throw new System.Diagnostics.UnreachableException(),
-        };
+            var checkedWhere = Where(where, tableColumns);
+            if (checkedWhere is not string text)
+            {
+                return checkedWhere;
+            }
+
+            condition = text;
+        }
+
+        if (query.Grant?.Where is { } rule)
+        {
+            if (Where(rule, tableColumns) is not string checkedRule)
+            {
+                return new Forbidden("the table's read grant no longer applies to its columns", "grant_invalid");
+            }
+
+            condition = condition is null ? checkedRule : $"({checkedRule}) AND ({condition})";
+        }
+
+        return new ShapeFilter(condition, columns);
     }
+
+    private static object Columns(string list, IReadOnlyList<string> tableColumns)
+    {
+        List<string> chosen = [];
+        foreach (var part in list.Split(','))
+        {
+            var name = part.Trim();
+            if (Column(tableColumns, name) is not { } column)
+            {
+                return new Validation($"columns names a column the table does not have: {name}", "unknown_column");
+            }
+
+            if (chosen.Contains(column, StringComparer.Ordinal))
+            {
+                return new Validation($"columns names {column} twice", "unknown_column");
+            }
+
+            chosen.Add(column);
+        }
+
+        return chosen;
+    }
+
+    internal static string? Bind(string where, string subject)
+    {
+        if (!SqlText.TryTokenize(where, out var tokens))
+        {
+            return null;
+        }
+
+        var text = new StringBuilder();
+        var at = 0;
+        foreach (var token in tokens.Where(token => token.Kind == SqlTokenKind.Parameter))
+        {
+            if (token.Value != Subject)
+            {
+                return null;
+            }
+
+            text.Append(where, at, token.Start - at).Append('\'').Append(subject.Replace("'", "''", StringComparison.Ordinal)).Append('\'');
+            at = token.End;
+        }
+
+        return text.Append(where, at, where.Length - at).ToString();
+    }
+
+    internal const string Subject = ":sub";
 
     private static object Where(string where, IReadOnlyList<string> tableColumns)
     {

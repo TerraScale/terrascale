@@ -222,7 +222,7 @@ internal static class UserAuthExtensions
 
             if (Identity(context.User, UserAuthenticationHandler.SchemeName)?.HasClaim("token_kind", "end_user") == true
                 && context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName is not
-                    ("getDocument" or "listDocuments" or "queryDocuments" or "createDocument" or "putDocument"
+                    ("getShape" or "getShapeKey" or "getShapeManifest" or "getDocument" or "listDocuments" or "queryDocuments" or "createDocument" or "putDocument"
                     or "patchDocument" or "deleteDocument" or "runTransaction" or "streamDatabaseChanges"
                     or "createFileUpload" or "completeFileUpload" or "listBucketFiles" or "createFileDownload" or "deleteBucketFile"))
             {
@@ -405,6 +405,7 @@ internal static class UserAuthExtensions
         {
             IsEndUser = jwt.HasClaim("token_kind", "end_user"),
             Roles = jwt.FindAll("roles").Select(claim => claim.Value).ToFrozenSet(StringComparer.Ordinal),
+            Tables = jwt.FindAll("tables").Select(claim => claim.Value).ToFrozenSet(StringComparer.Ordinal),
         };
     }
 }
