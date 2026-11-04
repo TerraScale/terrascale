@@ -133,8 +133,7 @@ which hold read replicas. `CreateDatabaseOptions` accepts `HomeRegion`,
 
 ```go
 db, err := c.CreateDatabase(ctx, projectID, "orders", tb.CreateDatabaseOptions{HomeRegion: "gru", ReplicaRegions: []string{"sjc"}})
-db, err = c.SetDatabasePlacement(ctx, projectID, db.ID, tb.DatabasePlacement{AllRegions: true})
-db, err = c.MoveDatabaseHome(ctx, projectID, db.ID, "sjc")
+db, err = c.SetDatabasePlacement(ctx, projectID, db.ID, tb.DatabasePlacement{ReplicaRegions: []string{"sjc", "fra"}})
 ```
 
 `SetDatabasePlacement` needs exactly one of `ReplicaRegions` (an empty non-nil
@@ -142,7 +141,16 @@ slice removes every replica) or `AllRegions`. `MoveDatabaseHome` waits up to
 `MoveHomeTimeout` (5 minutes) and retries only `503 move_unresolved`, at most five
 times, after `Retry-After` or 1 second. `ManagedDatabase` carries `HomeRegion`,
 `ReplicaRegions` and `AllRegions`. [Contract fixtures](contracts/terrabase/placement/)
-qualify the HTTP boundary.
+qualify the HTTP boundary. Automatic all-regions placement and moving the home region are coming on the server.
+
+A database has one home region for writes and can have encrypted read replicas in other serving regions.
+REST reads can use a ready local replica; writes route to the home from any serving region. Replicas are eventually
+consistent: read from the home when you need to see your latest write. Local replica reads over psql and SQL
+WebSocket are coming. Automatic all-regions placement is coming; use an explicit replica-region list today.
+
+The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
+storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data
+keys, making retained encrypted backups unreadable; physical cleanup is separate. Forks remain independent.
 
 ### Relational SQL
 
@@ -304,10 +312,10 @@ collisions and `ErrForbidden` for insufficient permission. `SetPlan` requires
 the management service credential on the admin listener.
 A rejected token or credential is `ErrInvalidKey`.
 
-Each database is stored and served in one home region, identified by a region
-id such as `gru-1` (not `RegionCode`). `ManagedDatabase` reports `Region` (the
+Each database commits writes in one home region and can hold encrypted read replicas in other regions.
+The public region IDs are `gru`, `sjc` and `fra`. `ManagedDatabase` reports `Region` (the
 answering node) and `HomeRegion`.
-`CreateDatabaseIn(ctx, org, project, name, "gru-1")` (or `Database.CreateIn`)
+`CreateDatabaseIn(ctx, org, project, name, "gru")` (or `Database.CreateIn`)
 creates a database in that region; an empty region uses the called region.
 Deleting a database leaves its branches independent.
 A region that does not serve the database answers 421 `ErrWrongRegion`, and the
@@ -541,9 +549,8 @@ ts db create app && ts sql app 'CREATE TABLE users (id TEXT PRIMARY KEY, email T
 ts sql app 'SELECT * FROM users LIMIT 10'
 ts keys create backend app         # printed once on stdout
 ts db info app
-ts db create orders -home-region gru -replica-regions sjc   # or -all-regions
-ts db placement orders -all-regions                          # or -replica-regions fra,sjc
-ts db move-home orders sjc         # database JSON on stdout, elapsed ms on stderr
+ts db create orders -home-region gru -replica-regions sjc
+ts db placement orders -replica-regions fra,sjc
 ts backup create app && ts backup list app
 ts functions deploy app hello.js
 ts functions deploy app ./report -cron '0 * * * *'   # deploys report/index.js as report

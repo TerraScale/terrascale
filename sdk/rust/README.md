@@ -89,11 +89,18 @@ headers.
 ## Databases
 
 `Database::create` creates a database; `create_with_placement` takes a `DatabasePlacement` naming its
-`home_region`. Each database is stored and served in that one region; without a home region the called
-region is the home. `Client::list_databases`, `Database::get_database`, `Client::rename_database`,
-`Database::branch_database` and backups/point-in-time restore use the same project client. Call
-`Database::delete_database` in the database's home region; HTTP 204 confirms logical deletion and local
-cleanup.
+`home_region`. Without a home region the called region is the home. `Client::list_databases`,
+`Database::get_database`, `Client::rename_database`, `Database::branch_database` and backups/point-in-time restore
+use the same project client.
+
+A database has one home region for writes and can have encrypted read replicas in other serving regions.
+REST reads can use a ready local replica; writes route to the home from any serving region. Replicas are eventually
+consistent: read from the home when you need to see your latest write. Local replica reads over psql and SQL
+WebSocket are coming. Automatic all-regions placement is coming; use an explicit replica-region list today.
+
+The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
+storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data
+keys, making retained encrypted backups unreadable; physical cleanup is separate. Forks remain independent.
 
 ### Placement
 
@@ -117,12 +124,13 @@ let database = client.create_database("orders", &CreateDatabaseOptions {
     ..Default::default()
 }).await?;
 client.set_database_placement(&database.id, &DatabasePlacement {
-    all_regions: true,
+    replica_regions: Some(vec!["sjc".into(), "fra".into()]),
     ..Default::default()
 }).await?;
-let moved = client.move_database_home(&database.id, "sjc").await?;
-# let _ = moved; Ok(()) }
+# Ok(()) }
 ```
+
+Automatic all-regions placement and moving the home region are coming on the server.
 
 ## Databases for agents
 

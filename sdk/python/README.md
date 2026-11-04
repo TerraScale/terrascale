@@ -156,14 +156,15 @@ await them on `AsyncTerraScale`.
 
 ```python
 db = ts.create_database("orders", home_region="gru", replica_regions=["sjc"])
-ts.set_database_placement(db.id, all_regions=True)
-ts.move_database_home(db.id, "sjc")
+ts.set_database_placement(db.id, replica_regions=["sjc", "fra"])
 ```
 
 `Database` carries `home_region`, `replica_regions` and `all_regions`. `set_database_placement` takes exactly one of
 `replica_regions` or `all_regions`. `move_database_home` waits for the move with no read timeout and resends only on
 `503 move_unresolved` (at most 5 times, after `Retry-After` or 1 s). Tests cover the recorded fixtures in
 `sdk/dotnet/contracts/terrabase/placement/`; live producer qualification has not run.
+
+Automatic all-regions placement and moving the home region are coming on the server.
 
 ## API
 
@@ -174,11 +175,17 @@ ts.move_database_home(db.id, "sjc")
 
 **IDs** are canonical ULIDs (`terrascale.new_id()`).
 
-**Regions**: `create_database("eu", home_region="fra")` stores and serves the
-database in its home region; without `home_region` the called region is the home.
+**Regions**: `create_database("eu", home_region="fra")` selects the home region;
+without `home_region` the called region is the home.
 
-For deletion, call `db.delete()` directly in the database's home region (await
-for async clients). HTTP 204 confirms logical deletion and local cleanup.
+A database has one home region for writes and can have encrypted read replicas in other serving regions.
+REST reads can use a ready local replica; writes route to the home from any serving region. Replicas are eventually
+consistent: read from the home when you need to see your latest write. Local replica reads over psql and SQL
+WebSocket are coming. Automatic all-regions placement is coming; use an explicit replica-region list today.
+
+The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
+storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data
+keys, making retained encrypted backups unreadable; physical cleanup is separate. Forks remain independent.
 
 ## Errors
 
