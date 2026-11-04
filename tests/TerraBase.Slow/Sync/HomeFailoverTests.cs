@@ -18,7 +18,7 @@ public sealed class HomeFailoverTests
     private static readonly string[] SjcOnly = ["sjc"];
 
     [Test]
-    public async Task A_home_cut_off_mid_write_fails_over_keeping_every_acknowledged_write_and_refuses_writes_after_the_epoch_bump()
+    public async Task A_home_cut_off_from_its_lease_store_mid_write_fails_over_keeping_every_acknowledged_write_and_refuses_writes_after_the_epoch_bump()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var nats = await JetStreamServer.StartAsync(token);
@@ -27,8 +27,7 @@ public sealed class HomeFailoverTests
         var mesh = new Mesh();
         await using var gru = await StartAsync("gru", issuer, mesh, new Uri($"nats://127.0.0.1:{gruNats.Port}"), nats.Token);
         await using var sjc = await StartAsync("sjc", issuer, mesh, nats.Url, nats.Token);
-        await using var gruPeer = new TcpGate(gru.Server.BaseAddress.Port);
-        mesh.Nodes = [("gru", new UriBuilder(gru.Server.BaseAddress) { Port = gruPeer.Port }.Uri), ("sjc", sjc.Server.BaseAddress)];
+        mesh.Nodes = [("gru", gru.Server.BaseAddress), ("sjc", sjc.Server.BaseAddress)];
 
         var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
         var project = await gru.CreateProjectAsync(organization, "Project");
@@ -85,7 +84,6 @@ public sealed class HomeFailoverTests
         await TerraBaseTestServer.EventuallyAsync(async _ => acked.Values.All(rows => rows.Count >= 10)
             && (await ReplicaCountAsync(viaSjc, all, token)) >= 10 && (await ReplicaCountAsync(viaSjc, local, token)) >= 10, TimeSpan.FromSeconds(30));
         gruNats.Cut();
-        gruPeer.Cut();
         Volatile.Write(ref cut, 1);
 
         await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(sjcLeases.Find(all.Id)?.Home == "sjc" && sjcLeases.Find(local.Id)?.Home == "sjc"),
@@ -94,7 +92,6 @@ public sealed class HomeFailoverTests
         await Assert.That(await WriteAsync(viaGru, local, token)).IsNotEqualTo(HttpStatusCode.OK);
 
         gruNats.Heal();
-        gruPeer.Heal();
         await TerraBaseTestServer.EventuallyAsync(async _ => (await WriteAsync(viaGru, local, token)) == HttpStatusCode.MisdirectedRequest, TimeSpan.FromSeconds(60));
         await stop.CancelAsync();
         await Task.WhenAll(writers);
