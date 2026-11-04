@@ -212,7 +212,7 @@ internal sealed partial class TursoShapeReader(
         return columns.Count > 0 ? ([.. columns], state.Since) : throw new InvalidDataException("a shape table has no stored columns");
     }
 
-    private bool HasChangeTable()
+    internal bool HasChangeTable()
     {
         CountRead("shape");
         return Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is not null;

@@ -68,6 +68,8 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
 
     private long ShapeHead() => ShapeReader.ShapeHead();
 
+    private bool HasChangeTable() => ShapeReader.HasChangeTable();
+
     private bool ShapeBoundary(long offset) => ShapeReader.ShapeBoundary(offset);
 
     public ValueTask<ShapeFilterResult> ReadShapeFilterAsync(string table, string generation, ShapeQuery query, CancellationToken cancellationToken) =>
