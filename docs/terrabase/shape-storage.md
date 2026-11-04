@@ -1,8 +1,8 @@
 # Shape storage
 
-Shapes read the database file's own change capture. Every write connection captures after-images, so each
-committed transaction appends its row changes and one commit record to `turso_cdc` in the same transaction
-([shape-reads.md](shape-reads.md) section 1 explains why not yet `full`). `change_id` is `AUTOINCREMENT`, so ids are never reused while the table keeps its newest
+Shapes read the database file's own change capture. Every write connection captures in `full` mode, so each
+committed transaction appends its row changes (before and after images) and one commit record to `turso_cdc` in
+the same transaction. `change_id` is `AUTOINCREMENT`, so ids are never reused while the table keeps its newest
 commit record; `turso_cdc` retention (PIVOT F5) must keep it.
 
 Derived shape tables exist only in client databases:
