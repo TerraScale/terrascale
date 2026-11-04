@@ -4,7 +4,6 @@ using System.Diagnostics.Metrics;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
-using TerraBase.Engine.Lattices;
 using Turso;
 
 namespace TerraBase.Engine.Turso;
@@ -290,7 +289,6 @@ internal sealed partial class TursoDatabaseStore
                     {
                         throw new RewriteRefusedException("the copied cut precedes the requested commit offset");
                     }
-                    var stamp = !verifyReplay ? 0 : Convert.ToInt64(Scalar(source, ClockSql), System.Globalization.CultureInfo.InvariantCulture);
                     if (replay is null)
                     {
                         replay = TursoChangeTap.RewriteFrom(this, io, source);
@@ -420,7 +418,6 @@ internal sealed partial class TursoDatabaseStore
                     }
 
                     cancellationToken.ThrowIfCancellationRequested();
-                    Member?.Clock.Seed(new Hlc(checked((ulong)stamp)));
                 }
                 catch
                 {
@@ -582,9 +579,6 @@ internal sealed partial class TursoDatabaseStore
 
         return false;
     }
-
-    private string ClockSql => "SELECT COALESCE(MAX(stamp), 0) FROM (SELECT MAX(stamp) AS stamp FROM _tb_state"
-        + (IsSystem ? "" : " UNION ALL SELECT MAX(stamp) FROM _tb_feed UNION ALL SELECT MAX(stamp) FROM _tb_feed_floor") + ");";
 
     private byte[] RewriteDigest(TursoConnection connection, CancellationToken token)
     {

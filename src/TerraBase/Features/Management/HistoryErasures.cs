@@ -4,7 +4,6 @@ using System.Text;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
-using TerraBase.Engine.Lattices;
 using TerraBase.Errors;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Platform;
@@ -18,7 +17,7 @@ namespace TerraBase.Features.Management;
 internal readonly union HistoryErasureResult(HistoryErasureStatus, Conflict, Unavailable);
 
 internal sealed partial class HistoryErasures(
-    IStorageEngine engine, IHealthyRewrite rewrites, SystemCatalog catalog, LocalReplica self, TerraBaseOptions options,
+    IStorageEngine engine, IHealthyRewrite rewrites, SystemCatalog catalog, TerraBaseOptions options,
     TimeProvider time, IMeterFactory meters, IServiceProvider services, ILogger<HistoryErasures> logger) : BackgroundService
 {
     private const int Page = 16;
@@ -53,8 +52,6 @@ internal sealed partial class HistoryErasures(
     private readonly Dictionary<string, (DateTimeOffset Next, TimeSpan Delay)> _backoff = [];
 
     private string Machine => options.MachineId;
-
-    private ulong Self => self.Id.Value;
 
     public async Task<HistoryErasureResult> RequestAsync(string erasureId, DateTimeOffset requestedAt, string? token, CancellationToken cancellationToken)
     {
@@ -179,7 +176,6 @@ internal sealed partial class HistoryErasures(
                 SettlementToken = null,
                 FinalId = finalId,
                 FinalMachine = Machine,
-                FinalReplica = Self,
                 FinalMarks = marks,
                 FinalAuthMark = cut,
                 BackupCleanAt = null,
@@ -297,7 +293,7 @@ internal sealed partial class HistoryErasures(
                             retire.Add(record);
                         }
                     }
-                    else if (own is null || replaced || own.Replica != Self)
+                    else if (own is null || replaced)
                     {
                         await MarkAsync(record, cancellationToken).ConfigureAwait(false);
                     }
@@ -400,7 +396,7 @@ internal sealed partial class HistoryErasures(
         await using (transaction.ConfigureAwait(false))
         {
             if (await FenceOfAsync(transaction, record.ErasureId, cancellationToken).ConfigureAwait(false) is not { } fence
-                || await transaction.GetVersionAsync(AuthDeletionJobs, fence, cancellationToken).ConfigureAwait(false) is not { Deleted: false })
+                || await transaction.GetVersionAsync(AuthDeletionJobs, fence, cancellationToken).ConfigureAwait(false) is null)
             {
                 return;
             }
@@ -420,7 +416,7 @@ internal sealed partial class HistoryErasures(
         _ = await catalog.WriteDurableAsync(async system_ =>
         {
             await SystemCatalog.PutAsync(system_, HistoryErasure.Receipts(record.ErasureId), Machine,
-                new HistoryErasureReceipt(record.ErasureId, Machine, Self, HistoryErasure.Fenced, stamp, incarnation.ToString(), time.GetUtcNow()),
+                new HistoryErasureReceipt(record.ErasureId, Machine, HistoryErasure.Fenced, stamp, incarnation.ToString(), time.GetUtcNow()),
                 TerraBaseJsonContext.Default.HistoryErasureReceipt, cancellationToken).ConfigureAwait(false);
             await PutLineageAsync(system_, incarnation, system, cancellationToken).ConfigureAwait(false);
             return true;
@@ -494,7 +490,7 @@ internal sealed partial class HistoryErasures(
             foreach (var record in both)
             {
                 var own = await SystemCatalog.GetAsync(transaction, HistoryErasure.Receipts(record.ErasureId), Machine, TerraBaseJsonContext.Default.HistoryErasureReceipt, cancellationToken).ConfigureAwait(false);
-                if (own is null || own.Replica != Self)
+                if (own is null)
                 {
                     continue;
                 }
@@ -525,15 +521,8 @@ internal sealed partial class HistoryErasures(
 
         var clear = await WithAuthAsync(write: true, async (transaction, token) =>
         {
-            List<HistoryErasureRecord> result = [];
-            foreach (var record in ready)
-            {
-                if (!await transaction.HoldsHistoryAtOrBelowAsync(new Hlc(record.FinalAuthMark), token).ConfigureAwait(false))
-                {
-                    result.Add(record);
-                }
-            }
-
+            // Records are plain rows: a database keeps no superseded versions or tombstones, so every cut is clear.
+            List<HistoryErasureRecord> result = [.. ready];
             return (result, Offset: await transaction.GetOffsetAsync(token).ConfigureAwait(false), Incarnation: await transaction.GetIncarnationAsync(token).ConfigureAwait(false));
         }, cancellationToken).ConfigureAwait(false);
         if (clear.result.Count == 0 || await TryRewriteAsync(AuthDatabase, Auth, clear.Offset, clear.Incarnation, cancellationToken).ConfigureAwait(false) is not { } auth)
@@ -548,7 +537,7 @@ internal sealed partial class HistoryErasures(
             foreach (var record in clear.result)
             {
                 var own = await SystemCatalog.GetAsync(transaction, HistoryErasure.Receipts(record.ErasureId), Machine, TerraBaseJsonContext.Default.HistoryErasureReceipt, cancellationToken).ConfigureAwait(false);
-                if (own is { Phase: HistoryErasure.Rewritten } && own.FinalId == record.FinalId && own.Replica == Self)
+                if (own is { Phase: HistoryErasure.Rewritten } && own.FinalId == record.FinalId)
                 {
                     await SystemCatalog.PutAsync(transaction, HistoryErasure.Receipts(record.ErasureId), Machine,
                         own with { Phase = HistoryErasure.ResidueCleared, Residue = Bind(auth), ResidueAt = time.GetUtcNow() },
@@ -588,20 +577,17 @@ internal sealed partial class HistoryErasures(
                 var cut = own?.RetireCut ?? 0;
                 if (cut == 0)
                 {
-                    var request = await transaction.GetVersionAsync(HistoryErasure.MarkCollection, record.ErasureId, token).ConfigureAwait(false);
-                    if (request is { Deleted: false })
+                    if (await transaction.GetVersionAsync(HistoryErasure.MarkCollection, record.ErasureId, token).ConfigureAwait(false) is not null)
                     {
                         continue;
                     }
 
-                    cut = request is { } tombstone ? unchecked((ulong)tombstone.Version) : self.Clock.Tick().Value;
+                    // The request is gone; the auth database's offset now is the retirement cut. No history remains below it.
+                    cut = unchecked((ulong)Math.Max(1, await transaction.GetOffsetAsync(token).ConfigureAwait(false)));
                     cuts.Add((record, cut));
                 }
 
-                if (!await transaction.HoldsHistoryAtOrBelowAsync(new Hlc(cut), token).ConfigureAwait(false))
-                {
-                    result.Add(record);
-                }
+                result.Add(record);
             }
 
             return (cuts, result, Offset: await transaction.GetOffsetAsync(token).ConfigureAwait(false), Incarnation: await transaction.GetIncarnationAsync(token).ConfigureAwait(false));
@@ -614,7 +600,7 @@ internal sealed partial class HistoryErasures(
                 {
                     var own = owns[record.ErasureId];
                     await SystemCatalog.PutAsync(transaction, HistoryErasure.Receipts(record.ErasureId), Machine,
-                        (own ?? new HistoryErasureReceipt(record.ErasureId, Machine, Self, HistoryErasure.ResidueCleared, 0, "", time.GetUtcNow())) with { RetireCut = cut },
+                        (own ?? new HistoryErasureReceipt(record.ErasureId, Machine, HistoryErasure.ResidueCleared, 0, "", time.GetUtcNow())) with { RetireCut = cut },
                         TerraBaseJsonContext.Default.HistoryErasureReceipt, cancellationToken).ConfigureAwait(false);
                 }
 
@@ -848,7 +834,7 @@ internal sealed partial class HistoryErasures(
         {
             if (receipt.MachineId != Machine || receipt.AuthIncarnation != incarnation.ToString()
                 || await transaction.GetVersionAsync(HistoryErasure.MarkCollection, MarkId(erasureId, HistoryErasure.Fenced, Machine), cancellationToken).ConfigureAwait(false)
-                    is not { Deleted: false } stored || unchecked((ulong)stored.Version) != receipt.AuthMark)
+                    is not { } stored || unchecked((ulong)stored) != receipt.AuthMark)
             {
                 return false;
             }
@@ -865,7 +851,7 @@ internal sealed partial class HistoryErasures(
         var lineage = await SystemCatalog.GetAsync(transaction, HistoryErasure.Lineage, Machine,
             TerraBaseJsonContext.Default.HistoryErasureLineage, cancellationToken).ConfigureAwait(false);
         return lineage?.System == (await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false)).ToString()
-            && await transaction.GetVersionAsync(HistoryErasure.Receipts(erasureId), Machine, cancellationToken).ConfigureAwait(false) is { Deleted: false };
+            && await transaction.GetVersionAsync(HistoryErasure.Receipts(erasureId), Machine, cancellationToken).ConfigureAwait(false) is not null;
     }
 
     private async ValueTask<bool> CoversFinalAuthAsync(IStorageTransaction transaction, HistoryErasureRecord record, CancellationToken cancellationToken)
@@ -875,7 +861,7 @@ internal sealed partial class HistoryErasures(
             return false;
         }
         return await transaction.GetVersionAsync(HistoryErasure.MarkCollection, MarkId(record.ErasureId, "final", Machine), cancellationToken).ConfigureAwait(false)
-            is { Deleted: false } marker && unchecked((ulong)marker.Version) == record.FinalAuthMark && record.FinalReplica == Self;
+            is { } marker && unchecked((ulong)marker) == record.FinalAuthMark;
     }
 
     private async ValueTask<bool> CoversFinalSystemAsync(IStorageTransaction transaction, HistoryErasureRecord record, CancellationToken cancellationToken)
@@ -901,7 +887,7 @@ internal sealed partial class HistoryErasures(
 
     private static async ValueTask<string?> FenceOfAsync(IStorageTransaction transaction, string erasureId, CancellationToken cancellationToken)
     {
-        if (await transaction.GetAsync(HistoryErasure.MarkCollection, erasureId, cancellationToken).ConfigureAwait(false) is not { Deleted: false } request)
+        if (await transaction.GetAsync(HistoryErasure.MarkCollection, erasureId, cancellationToken).ConfigureAwait(false) is not { } request)
         {
             return null;
         }
@@ -918,8 +904,8 @@ internal sealed partial class HistoryErasures(
         var transaction = await auth.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            return await transaction.GetVersionAsync(HistoryErasure.MarkCollection, markId, cancellationToken).ConfigureAwait(false) is { Deleted: false } version
-                && unchecked((ulong)version.Version) == stamp;
+            return await transaction.GetVersionAsync(HistoryErasure.MarkCollection, markId, cancellationToken).ConfigureAwait(false) is { } version
+                && unchecked((ulong)version) == stamp;
         }
     }
 
@@ -966,7 +952,7 @@ internal sealed partial class HistoryErasures(
 
     internal static string MarksDigest(IEnumerable<HistoryErasureReceipt> receipts) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n',
-            receipts.OrderBy(receipt => receipt.MachineId, StringComparer.Ordinal).Select(receipt => $"{receipt.MachineId}|{receipt.Replica}|{receipt.AuthMark}")))));
+            receipts.OrderBy(receipt => receipt.MachineId, StringComparer.Ordinal).Select(receipt => $"{receipt.MachineId}|{receipt.AuthMark}")))));
 
     internal static string MarkId(string erasureId, string kind, string machine) =>
         new Ulid(SHA256.HashData(Encoding.UTF8.GetBytes($"ts873/{erasureId}/{kind}/{machine}")).AsSpan(0, 16)).ToString();

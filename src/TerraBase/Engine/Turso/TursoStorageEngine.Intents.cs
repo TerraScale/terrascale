@@ -33,10 +33,9 @@ internal sealed partial class TursoStorageEngine
         var openingToken = created ? CancellationToken.None : cancellationToken;
         // System semantics suppress recursive intent recording and fail the node closed on native journal damage.
         var store = new TursoDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time,
-            RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads, Encryption)
+            RecordCommittedWrite, _logger, _schemaMemory, _storageReads, Encryption)
         {
             QueryBudget = QueryBudget,
-            Member = Member,
             Checkpoint = _checkpoint,
             Ledger = Ledger,
             WriterHeld = _writerHeld,

@@ -17,14 +17,12 @@ namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoDatabaseStore(
     string name, string path, TursoSessionPool pool, TursoIoPool io, string pragmas, TenantContext? tenant, TimeProvider? time,
-    Action? committed, ILogger? logger = null, IMemoryBudget? schemaMemory = null, Counter<long>? schemaEvaluations = null,
+    Action? committed, ILogger? logger = null, IMemoryBudget? schemaMemory = null,
     Counter<long>? storageReads = null, DatabaseKeys? encryption = null) : IDatabaseStore, IDisposable
 {
     internal DatabaseKeys Encryption { get; } = encryption ?? throw new ArgumentNullException(nameof(encryption));
 
     internal IMemoryBudget? SchemaMemory { get; } = schemaMemory;
-    internal Action<string>? CollectionStateWritten { get; init; }
-    internal Counter<long>? SchemaEvaluations { get; } = schemaEvaluations;
     internal Counter<long>? StorageReads { get; } = storageReads;
 
     internal TursoDatabaseStore(string name, string path, TursoSessionPool pool, TursoIoPool io, string pragmas, DatabaseKeys encryption, TimeProvider? time = null, Action? committed = null)
@@ -32,18 +30,14 @@ internal sealed partial class TursoDatabaseStore(
 
     private const int SchemaVersion = 1;
 
-    internal static readonly byte[] FormatDigest =
-    SHA256.HashData(Encoding.UTF8.GetBytes(SystemSchemaSql + ClientSchemaSql + UniqueSchemaSql));
+    internal static readonly byte[] FormatDigest = SHA256.HashData(Encoding.UTF8.GetBytes(SystemSchemaSql + ClientSchemaSql));
 
-    private const string SystemSchemaSql = """
-        CREATE TABLE documents (collection TEXT NOT NULL, id TEXT NOT NULL, body TEXT NOT NULL, UNIQUE (collection, id));
-        CREATE TABLE _tb_state (
-            collection TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL,
-            stamp INTEGER NOT NULL, origin INTEGER NOT NULL, live INTEGER NOT NULL, h1 INTEGER NOT NULL, h2 INTEGER NOT NULL,
-            UNIQUE (collection, id)
+    // Records are plain rows: one per collection and id, stamped with the commit offset of the transaction that wrote it.
+    private const string DocumentSchemaSql = """
+        CREATE TABLE _tb_documents (
+            collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL, UNIQUE (collection, id)
         );
-        CREATE INDEX _tb_state_dead ON _tb_state (stamp) WHERE live = 0;
-        CREATE TABLE collections (
+        CREATE TABLE _tb_collections (
             name TEXT PRIMARY KEY, created_at INTEGER NOT NULL,
             entity_id TEXT NOT NULL CHECK (length(entity_id) = 26)
         );
@@ -51,38 +45,23 @@ internal sealed partial class TursoDatabaseStore(
             id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL, incarnation TEXT NOT NULL
         );
         INSERT INTO commit_offset (id, value, incarnation) VALUES (1, 0, '');
+        """;
+
+    private const string SystemSchemaSql = DocumentSchemaSql + """
         CREATE TABLE _tb_fault (
             organization TEXT NOT NULL, project TEXT NOT NULL, database TEXT NOT NULL,
             incarnation TEXT NOT NULL, reason TEXT NOT NULL CHECK (length(reason) <= 256),
             UNIQUE (organization, project, database)
         );
         CREATE TABLE _tb_write_intent (
-            organization TEXT NOT NULL, project TEXT NOT NULL, database TEXT NOT NULL, incarnation TEXT NOT NULL, replica INTEGER NOT NULL,
+            organization TEXT NOT NULL, project TEXT NOT NULL, database TEXT NOT NULL, incarnation TEXT NOT NULL, run INTEGER NOT NULL,
             UNIQUE (organization, project, database)
         );
         """;
 
-    private const string ClientSchemaSql = """
-        CREATE TABLE "_collections" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
-        CREATE TABLE "_indexes" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
-        CREATE TABLE _tb_text_indexes (name TEXT PRIMARY KEY, collection TEXT NOT NULL, fields TEXT NOT NULL);
-        CREATE TABLE _tb_vector_indexes (name TEXT PRIMARY KEY, collection TEXT NOT NULL, field TEXT NOT NULL, dimensions INTEGER NOT NULL, built TEXT);
-        CREATE TABLE "_unique" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
-        CREATE TABLE _tb_state (
-            collection TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL,
-            stamp INTEGER NOT NULL, origin INTEGER NOT NULL, live INTEGER NOT NULL, h1 INTEGER NOT NULL, h2 INTEGER NOT NULL,
-            UNIQUE (collection, id)
-        );
-        CREATE INDEX _tb_state_dead ON _tb_state (stamp) WHERE live = 0;
-        CREATE TABLE _tb_feed (
-            seq INTEGER NOT NULL UNIQUE, commit_offset INTEGER NOT NULL, origin INTEGER NOT NULL, stamp INTEGER NOT NULL,
-            collection TEXT NOT NULL, id TEXT NOT NULL, deleted INTEGER NOT NULL, prefix BLOB NOT NULL,
-            access_before TEXT, access_after TEXT, collection_generation TEXT
-        );
-        CREATE INDEX _tb_feed_order ON _tb_feed (origin, stamp);
-        CREATE TABLE _tb_feed_sequence (id INTEGER PRIMARY KEY CHECK (id = 1), seq INTEGER NOT NULL);
-        INSERT INTO _tb_feed_sequence (id, seq) VALUES (1, 0);
-        CREATE TABLE _tb_feed_floor (origin INTEGER PRIMARY KEY, stamp INTEGER NOT NULL, prefix BLOB NOT NULL);
+    private const string ClientSchemaSql = DocumentSchemaSql + """
+        CREATE TABLE _tb_sql_storage (id INTEGER PRIMARY KEY CHECK (id = 1), bytes INTEGER NOT NULL);
+        INSERT INTO _tb_sql_storage (id, bytes) VALUES (1, 0);
         CREATE TABLE _tb_shape_chunk (
             handle TEXT NOT NULL, offset INTEGER NOT NULL, end_offset INTEGER NOT NULL,
             body BLOB NOT NULL, sealed_at INTEGER NOT NULL, UNIQUE (handle, offset)
@@ -91,15 +70,6 @@ internal sealed partial class TursoDatabaseStore(
             handle TEXT NOT NULL, offset INTEGER NOT NULL, page INTEGER NOT NULL, next_id TEXT,
             body BLOB NOT NULL, sealed_at INTEGER NOT NULL, UNIQUE (handle, offset, page)
         );
-        CREATE TABLE collections (
-            name TEXT PRIMARY KEY, created_at INTEGER NOT NULL,
-            entity_id TEXT NOT NULL CHECK (length(entity_id) = 26)
-        );
-        CREATE TABLE _tb_collection_stats (collection TEXT PRIMARY KEY, documents INTEGER NOT NULL, bytes INTEGER NOT NULL);
-        CREATE TABLE commit_offset (
-            id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL, incarnation TEXT NOT NULL
-        );
-        INSERT INTO commit_offset (id, value, incarnation) VALUES (1, 0, '');
         """;
 
     internal Task<string> ConnectionStringAsync(TursoRunner runner, CancellationToken cancellationToken) =>
@@ -186,8 +156,6 @@ internal sealed partial class TursoDatabaseStore(
     internal TimeSpan QueryBudget { get; init; } = DefaultQueryBudget;
 
     internal int IdleCount => pool.IdleCountOf(this);
-
-    internal LocalReplica? Member { get; init; }
 
     public async ValueTask<IStorageTransaction> BeginTransactionAsync(
         bool write, CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
@@ -987,11 +955,6 @@ internal sealed partial class TursoDatabaseStore(
                     try
                     {
                         keeps = await write.RunAsync(transaction).ConfigureAwait(false);
-                        if (keeps)
-                        {
-
-                            await transaction.FlushStatesAsync().ConfigureAwait(false);
-                        }
                     }
                     catch (Exception error)
                     {
@@ -1357,7 +1320,7 @@ internal sealed partial class TursoDatabaseStore(
 
         cancellationToken.ThrowIfCancellationRequested();
         var schema = name == TursoStorageEngine.SystemName ? SystemSchemaSql : ClientSchemaSql;
-        Scalar(connection, transaction, schema + UniqueSchemaSql + $"PRAGMA user_version = {SchemaVersion};");
+        Scalar(connection, transaction, schema + $"PRAGMA user_version = {SchemaVersion};");
         RenewIncarnation(connection, transaction);
         cancellationToken.ThrowIfCancellationRequested();
         transaction.Commit();

@@ -56,7 +56,7 @@ internal static class DatabaseTtl
             var page = await transaction.ListAsync(Collection, after, 256, 1024 * 1024, cancellationToken).ConfigureAwait(false);
             foreach (var document in page.Documents)
             {
-                if (due.Count < limit && !document.Deleted && EntityPayload.Read(document, TerraBaseJsonContext.Default.DatabaseExpiry) is { } expiry && expiry.ExpiresAt <= now
+                if (due.Count < limit && EntityPayload.Read(document, TerraBaseJsonContext.Default.DatabaseExpiry) is { } expiry && expiry.ExpiresAt <= now
                     && await resolve(document.Id).ConfigureAwait(false) is { } resolved)
                 {
                     due.Add(resolved);

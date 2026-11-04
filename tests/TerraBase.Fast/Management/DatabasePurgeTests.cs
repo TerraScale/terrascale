@@ -35,7 +35,7 @@ public sealed class DatabasePurgeTests
         });
         await Assert.That(await catalog.AreActiveCopiesAbsentAsync(tenant, CancellationToken.None)).IsFalse();
         await Assert.That(await catalog.MarkBackupVerifiedAsync(tenant, state.Clock.GetUtcNow(), CancellationToken.None)).IsFalse();
-        await PurgeData.ConvergeAsync(api);
+        await PurgeData.RunMaintenanceAsync(api);
         var retried = (await catalog.ListDatabasePurgesAsync(null, 100, CancellationToken.None))!.Items.Single();
         await Assert.That(retried.RequestedAt).IsEqualTo(record.RequestedAt);
         await Assert.That(retried.ActiveDueAt).IsEqualTo(record.ActiveDueAt);
@@ -63,7 +63,7 @@ public sealed class DatabasePurgeTests
                 new Dictionary<PlanTier, int> { [PlanTier.Hobby] = 9, [PlanTier.Starter] = 3, [PlanTier.Pro] = 12, [PlanTier.Team] = 14, [PlanTier.Enterprise] = 33 };
             _s3.Route(services);
             ManualBackupHosting.Configure(services);
-            var convergence = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService) && descriptor.ImplementationType == typeof(CatalogConvergence));
+            var convergence = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService) && descriptor.ImplementationType == typeof(CatalogMaintenance));
             services.Remove(convergence);
             configure?.Invoke(services);
         }, time: Clock, userId: User);
@@ -78,7 +78,7 @@ public sealed class DatabasePurgeTests
             await transaction.CommitAsync(CancellationToken.None);
         }
 
-        public static Task ConvergeAsync(ManagementApi api) => api.Server.Services.GetRequiredService<EngineManagementService>().ConvergeAsync(CancellationToken.None).AsTask();
+        public static Task RunMaintenanceAsync(ManagementApi api) => api.Server.Services.GetRequiredService<EngineManagementService>().RunMaintenanceAsync(CancellationToken.None).AsTask();
 
         public ValueTask DisposeAsync()
         {

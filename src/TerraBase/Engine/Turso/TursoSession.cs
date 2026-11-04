@@ -28,10 +28,8 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
     private bool? _queryOnly;
     private bool? _full;
 
-    private QueryObservation? _queryObservation;
     private Func<long, bool>? _scanCharge;
     private Func<bool>? _rowCharge;
-    private Func<object?, double>? _near;
     private Func<bool>? _stop;
 
     public SqliteConnection Connection => connection;
@@ -52,9 +50,6 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
     /// <summary>The message of the error <see cref="ThrowIfStopped"/> aborts a statement with.</summary>
     internal const string StoppedMessage = "terrabase: statement stopped";
 
-    // Transactions serialize access to a session: a query sets what its per-row functions report to, and clears it after.
-    public void ObserveQueries(QueryObservation? observation) => _queryObservation = observation;
-
     /// <summary>
     /// Sets what <c>tb_qos_scan</c> charges each row's stored bytes to and what <c>tb_sql_row</c> charges each evaluated row
     /// combination to: each returns true once the query's budget is spent.
@@ -65,21 +60,10 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
         _rowCharge = row;
     }
 
-    /// <summary>Sets what <c>tb_near</c> measures each row's document with, for the running near query only.</summary>
-    public void Near(Func<object?, double>? measure) => _near = measure;
-
     // Registered once, when the connection opens and before any statement is prepared: a prepared statement keeps the
     // function it was prepared with, and Turso prepares every statement again after a registration.
     private void RegisterFunctions()
     {
-        // The row's id argument makes Turso call it per row: it evaluates a function without arguments once.
-        // Non-deterministic prevents Turso from evaluating it once per query.
-        connection.CreateFunction<object?, bool>("tb_query_scan", _ =>
-        {
-            ThrowIfStopped();
-            _queryObservation?.AddRow();
-            return true;
-        }, isDeterministic: false);
         // octet_length reads the stored byte size without decoding or copying the JSON body.
         connection.CreateFunction<long, long>("tb_qos_scan", size =>
         {
@@ -101,16 +85,10 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
             ThrowIfStopped();
             return 1;
         }, isDeterministic: false);
-        // Outside a near query no statement names it; a stray call sorts last, as a document without the vector does.
-        connection.CreateFunction<object?, double>("tb_near",
-            document => _near is { } near ? near(document) : double.PositiveInfinity, isDeterministic: false);
-        // tb_geo_meters(lat, lon, centerLat, centerLon) of a within filter; +Infinity unless all four are numbers.
-        connection.CreateFunction("tb_geo_meters", arguments => arguments.Length == 4
-            ? GeoDistance.Meters(arguments[0], arguments[1], arguments[2], arguments[3]) : double.PositiveInfinity, isDeterministic: true);
     }
 
     /// <summary>
-    /// Sets what the per-row functions (<c>tb_query_scan</c>, <c>tb_qos_scan</c>) check: once it returns true they fail
+    /// Sets what the per-row functions (<c>tb_qos_scan</c>, <c>tb_sql_row</c>) check: once it returns true they fail
     /// the running statement. Native FTS also checks the shared request budget inside loading and posting traversal.
     /// </summary>
     public void StopWhen(Func<bool>? stop) => _stop = stop;

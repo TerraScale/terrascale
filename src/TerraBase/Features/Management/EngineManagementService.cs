@@ -30,6 +30,9 @@ internal sealed partial class EngineManagementService(
     private const string CatalogVersionId = ManagementCatalog.VersionId;
 
     private const string CatalogVersion = ManagementCatalog.Version;
+
+    // Every database id this catalog unregistered, kept so the id is never adopted again.
+    internal const string RetiredDatabases = "retired_databases";
     private const long MaxPageBytes = 1024 * 1024;
 
     private const int CatalogPage = 100;
@@ -513,12 +516,9 @@ internal sealed partial class EngineManagementService(
         _ = await CatalogTables.PutPendingCleanupAsync(transaction, storage, cancellationToken).ConfigureAwait(false);
         _ = await CatalogTables.DeleteDatabaseAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false);
         await StorageSweep.AddAsync(transaction, new SweepEntry(StorageSweep.DatabaseBackups, storage.OrganizationId, database.Id), cancellationToken).ConfigureAwait(false);
-        if (await transaction.TombstoneAsync(EngineManagedBackupService.BackedUpDatabases, database.Id, cancellationToken).ConfigureAwait(false) is null)
-        {
-            await PutAsync(transaction, EngineManagedBackupService.BackedUpDatabases, database.Id, DatabaseOwner.Of(storage), TerraBaseJsonContext.Default.DatabaseOwner, cancellationToken)
-                .ConfigureAwait(false);
-            _ = await transaction.TombstoneAsync(EngineManagedBackupService.BackedUpDatabases, database.Id, cancellationToken).ConfigureAwait(false);
-        }
+        _ = await transaction.DeleteAsync(EngineManagedBackupService.BackedUpDatabases, database.Id, cancellationToken).ConfigureAwait(false);
+        await PutAsync(transaction, RetiredDatabases, database.Id, DatabaseOwner.Of(storage), TerraBaseJsonContext.Default.DatabaseOwner, cancellationToken)
+            .ConfigureAwait(false);
 
         await transaction.DeleteCollectionsAsync(SystemCatalog.DatabaseState(database.Id), cancellationToken).ConfigureAwait(false);
 

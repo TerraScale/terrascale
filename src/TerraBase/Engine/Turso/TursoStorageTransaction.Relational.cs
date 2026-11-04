@@ -16,8 +16,6 @@ internal sealed partial class TursoStorageTransaction
         "malformed JSON", "must be",
     ];
 
-    internal const string SqlStatsCollection = "_sql";
-
     private long _pageSize;
     private bool _sqlChanged;
 
@@ -82,8 +80,7 @@ internal sealed partial class TursoStorageTransaction
                 throw new InvalidOperationException("SQL storage belongs to a client database's write transaction");
             }
 
-            var command = Command(TursoStatements.AddCollectionStats, SqlStatsCollection);
-            command.Parameters.AddWithValue("$documents", 0L);
+            var command = Command(TursoStatements.AddSqlStorage);
             command.Parameters.AddWithValue("$bytes", delta);
             _ = command.ExecuteNonQuery();
             _sqlChanged = true;

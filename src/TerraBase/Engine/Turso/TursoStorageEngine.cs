@@ -7,7 +7,6 @@ using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Text;
 using TerraBase.Configuration;
-using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Revisions;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
@@ -58,7 +57,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private readonly FileStream _ownership;
     private readonly string _dataDirectory;
     private readonly IMemoryBudget? _schemaMemory;
-    private readonly Counter<long> _schemaEvaluations;
     private readonly Counter<long> _storageReads;
 
     private static readonly double[] WriterHeldBuckets = [0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60];
@@ -72,11 +70,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private readonly DatabaseLifecycleCheckpoint _checkpoint;
     private readonly Action<TursoDatabaseStore>? _afterBootstrap;
 
-    internal LocalReplica Member { get; } = null!;
-
     internal TursoIoPool Io { get; }
-
-    internal ReplicaId ReplicaId { get; }
 
     internal TursoDatabaseStore? SystemStore => Volatile.Read(ref _system);
 
@@ -295,68 +289,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
     public bool SystemDatabaseExists => File.Exists(LocateSystem());
 
-    private readonly ConcurrentDictionary<string, CollectionPresence> _systemCollectionPresence = new(StringComparer.Ordinal);
-    private readonly SemaphoreSlim _collectionProbe = new(1, 1);
-
-    private sealed class CollectionPresence
-    {
-        public int State = -1;
-    }
-
-    public async ValueTask<bool> MayHaveSystemCollectionStateAsync(string collection, CancellationToken cancellationToken)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(collection);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(collection.Length, 1024);
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
-        if (_systemCollectionPresence.TryGetValue(collection, out var presence) && Volatile.Read(ref presence.State) >= 0)
-        {
-            return Volatile.Read(ref presence.State) != 0;
-        }
-
-        await _collectionProbe.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (!_systemCollectionPresence.TryGetValue(collection, out presence))
-            {
-                if (_systemCollectionPresence.Count == 16)
-                {
-                    throw new InvalidOperationException("at most 16 system collection presence probes are tracked");
-                }
-
-                presence = new CollectionPresence();
-                _systemCollectionPresence[collection] = presence;
-            }
-
-            if (Volatile.Read(ref presence.State) < 0)
-            {
-                var exists = false;
-                if (SystemDatabaseExists)
-                {
-                    var store = await OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
-
-                    await using var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
-                    exists = await transaction.HasCollectionStateAsync(collection, prefix: false, cancellationToken).ConfigureAwait(false);
-                }
-
-                _ = Interlocked.CompareExchange(ref presence.State, exists ? 1 : 0, -1);
-            }
-
-            return Volatile.Read(ref presence.State) != 0;
-        }
-        finally
-        {
-            _collectionProbe.Release();
-        }
-    }
-
-    private void NoteSystemCollectionState(string collection)
-    {
-        if (_systemCollectionPresence.TryGetValue(collection, out var presence))
-        {
-            Volatile.Write(ref presence.State, 1);
-        }
-    }
-
     public event EventHandler<IDatabaseStore>? DatabaseDeleted;
 
     internal TimeProvider Time { get; }
@@ -372,7 +304,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     TimeSpan shutdownGrace, int? maxIdle = null, int? maxIdlePerDatabase = null, int? maxWriters = null, Func<ThreadStart, Thread>? createWorker = null,
     TimeSpan? readinessCacheTtl = null, DatabaseLifecycleCheckpoint? checkpoint = null, TimeProvider? time = null,
     Action<TursoDatabaseStore>? afterBootstrap = null, TimeSpan? queryBudget = null,
-    TimeProvider? backupTime = null, IMemoryBudget? schemaMemory = null, string? replicaOwner = null,
+    TimeProvider? backupTime = null, IMemoryBudget? schemaMemory = null,
     INativeTemporaryStorage? nativeTemporaryStorage = null, IDiskBudget? diskBudget = null)
     {
         ArgumentNullException.ThrowIfNull(masterKey);
@@ -380,7 +312,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         _dataDirectory = dataDirectory;
         Disk = diskBudget ?? new DiskBudget(dataDirectory, meter);
         _schemaMemory = schemaMemory;
-        _schemaEvaluations = meter.CreateCounter<long>("terrabase.schema.keyword_evaluations", description: "Collection schema keyword evaluations started by local writes.");
         _storageReads = meter.CreateCounter<long>("terrabase.storage.reads", description: "Instrumented document, feed and shape SELECT executions, by path (point, query, feed, shape, shape_body).");
         _writerHeld = meter.CreateHistogram<double>("terrabase.storage.writer_held", "s",
             "How long a database's writer was held, by holder kind and call site (bounded sets of names and file:line).",
@@ -411,11 +342,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             nativeTemporaryStorage?.Initialize();
             CheckIntentJournal();
             DeleteRewriteScratch();
-            ReplicaId = ReplicaIdentityFile.Start(dataDirectory, replicaOwner ?? Environment.MachineName);
-
-            Member = new LocalReplica(ReplicaId, new MemberClock(HostTime));
-            meter.CreateObservableGauge("terrabase.replica.member", () => (long)ReplicaId.Member, description: "This member's number in its replica id.");
-            meter.CreateObservableGauge("terrabase.replica.epoch", () => (long)ReplicaId.Epoch, description: "Unclean starts of this member since its number was taken.");
             Ledger = new StorageFaultLedger(this, logger, schemaMemory);
 
             Io = new(threads, queue, meter, createWorker);
@@ -809,7 +735,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                 var link = (entry.Attributes & FileAttributes.ReparsePoint) != 0;
                 var reservedRootName = entry.Directory.SequenceEqual(entry.RootDirectory)
                     && (entry.FileName.SequenceEqual(LockFileName)
-                        || entry.FileName.SequenceEqual(ReplicaIdentityFile.FileName)
                         || entry.FileName.SequenceEqual(SystemName + FileExtension)
                         || entry.FileName.SequenceEqual(SystemName + FileExtension + "-wal")
                         || entry.FileName.SequenceEqual(SystemName + FileExtension + "-shm")
@@ -888,20 +813,17 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
                     var openingToken = created ? CancellationToken.None : cancellationToken;
                     openingSystem = new TursoDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time,
-                        RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads, Encryption)
+                        RecordCommittedWrite, _logger, _schemaMemory, _storageReads, Encryption)
                     {
 
                         QueryBudget = QueryBudget,
-                        Member = Member,
                         Checkpoint = _checkpoint,
                         Ledger = Ledger,
                         WriterHeld = _writerHeld,
                         Transactions = _transactions,
                         RewriteSteps = _rewriteSteps,
-                        CollectionStateWritten = NoteSystemCollectionState,
                     };
                     await openingSystem.BootstrapAsync(openingToken).ConfigureAwait(false);
-                    await openingSystem.SeedClockAsync(openingToken).ConfigureAwait(false);
 
                     _ = await Io.WithAdmissionAsync(async () =>
                     {
@@ -1083,6 +1005,22 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                     errors.Add(error);
                 }
             }
+            if (errors.Count == 0 && Ledger.FailedClosed is null)
+            {
+                try
+                {
+                    _ = await Io.WithAdmissionAsync(async () =>
+                    {
+                        await Ledger.ClearRunAsync().ConfigureAwait(false);
+                        return true;
+                    }).ConfigureAwait(false);
+                }
+                catch (Exception error)
+                {
+                    errors.Add(error);
+                }
+            }
+
             closed = await Io.RunAsync(() =>
             {
                 foreach (var store in _stores.Values.Concat(_system is { } system ? [system] : [])
@@ -1140,18 +1078,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         catch (Exception error)
         {
             errors.Add(error);
-        }
-
-        if (errors.Count == 0 && Ledger.FailedClosed is null)
-        {
-            try
-            {
-                ReplicaIdentityFile.Stop(_dataDirectory, ReplicaId);
-            }
-            catch (Exception error)
-            {
-                errors.Add(error);
-            }
         }
 
         Ledger.Dispose();
@@ -1646,11 +1572,10 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     {
         var tenant = new TenantContext(key.Organization, PlanTier.Hobby, key.Project, key.Database);
         var store = new TursoDatabaseStore(key.Database, path, Pool, Io, _pragmas, tenant, Time,
-            RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads, Encryption)
+            RecordCommittedWrite, _logger, _schemaMemory, _storageReads, Encryption)
         {
 
             QueryBudget = QueryBudget,
-            Member = Member,
             Checkpoint = _checkpoint,
             Ledger = Ledger,
             WriterHeld = _writerHeld,
@@ -1669,7 +1594,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token);
             RejectDatabaseLinks(path);
             await store.BootstrapAsync(lifetime.Token).ConfigureAwait(false);
-            await store.SeedClockAsync(lifetime.Token).ConfigureAwait(false);
             _afterBootstrap?.Invoke(store);
 
             await Ledger.LoadAsync(store, lifetime.Token).ConfigureAwait(false);

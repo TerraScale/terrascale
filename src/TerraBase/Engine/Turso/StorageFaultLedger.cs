@@ -11,6 +11,10 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
     internal const string Recording = "storage.fault.recording";
     internal const string Recorded = "storage.fault.recorded";
     private const long Faulting = 0;
+
+    // This process's intents: a clean stop clears them, so every other non-faulting intent a start finds was left by a
+    // process that exited uncleanly.
+    private readonly long _run = Random.Shared.NextInt64(1, long.MaxValue);
     private const int Page = 128;
     private const int MaxReason = 256;
     private const long RowBytes = 4096;
@@ -142,15 +146,15 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
             _ = await InSystemAsync(engine.IntentStore!, command =>
             {
                 using var insert = command("""
-                    INSERT INTO _tb_write_intent (organization, project, database, incarnation, replica)
-                    VALUES ($organization, $project, $database, $incarnation, $replica)
+                    INSERT INTO _tb_write_intent (organization, project, database, incarnation, run)
+                    VALUES ($organization, $project, $database, $incarnation, $run)
                     ON CONFLICT (organization, project, database) DO UPDATE
-                        SET incarnation = excluded.incarnation, replica = excluded.replica
-                        WHERE NOT (replica = $faulting AND incarnation = excluded.incarnation);
+                        SET incarnation = excluded.incarnation, run = excluded.run
+                        WHERE NOT (run = $faulting AND incarnation = excluded.incarnation);
                     """);
                 key.Bind(insert);
                 insert.Parameters.AddWithValue("$incarnation", store.Incarnation.ToString());
-                insert.Parameters.AddWithValue("$replica", unchecked((long)engine.ReplicaId.Value));
+                insert.Parameters.AddWithValue("$run", _run);
                 insert.Parameters.AddWithValue("$faulting", Faulting);
                 return insert.ExecuteNonQuery();
             }, cancellationToken, full: Refusal(store) is not null).ConfigureAwait(false);
@@ -177,18 +181,18 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         }
     }
 
-    private Task<int> WriteIntentAsync(TursoDatabaseStore system, Key key, Ulid incarnation, CancellationToken cancellationToken, long? replica = null) =>
+    private Task<int> WriteIntentAsync(TursoDatabaseStore system, Key key, Ulid incarnation, CancellationToken cancellationToken, long? run = null) =>
         InSystemAsync(system, command =>
         {
             using var insert = command("""
-                INSERT INTO _tb_write_intent (organization, project, database, incarnation, replica)
-                VALUES ($organization, $project, $database, $incarnation, $replica)
+                INSERT INTO _tb_write_intent (organization, project, database, incarnation, run)
+                VALUES ($organization, $project, $database, $incarnation, $run)
                 ON CONFLICT (organization, project, database) DO UPDATE
-                    SET incarnation = excluded.incarnation, replica = excluded.replica;
+                    SET incarnation = excluded.incarnation, run = excluded.run;
                 """);
             key.Bind(insert);
             insert.Parameters.AddWithValue("$incarnation", incarnation.ToString());
-            insert.Parameters.AddWithValue("$replica", replica ?? unchecked((long)engine.ReplicaId.Value));
+            insert.Parameters.AddWithValue("$run", run ?? _run);
             return insert.ExecuteNonQuery();
         }, cancellationToken);
 
@@ -207,11 +211,11 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
             {
                 using var delete = command("""
                     DELETE FROM _tb_write_intent WHERE organization = $organization AND project = $project AND database = $database
-                        AND incarnation = $incarnation AND replica = $replica;
+                        AND incarnation = $incarnation AND run = $run;
                     """);
                 Key.Of(store.Tenant!).Bind(delete);
                 delete.Parameters.AddWithValue("$incarnation", store.Incarnation.ToString());
-                delete.Parameters.AddWithValue("$replica", unchecked((long)engine.ReplicaId.Value));
+                delete.Parameters.AddWithValue("$run", _run);
                 return delete.ExecuteNonQuery();
             }, CancellationToken.None, full: false).ConfigureAwait(false);
         }
@@ -249,19 +253,26 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         }
     }
 
-    internal async Task RecoverAsync(TursoDatabaseStore system, CancellationToken cancellationToken)
+    internal async Task ClearRunAsync()
     {
-        var replica = unchecked((long)engine.ReplicaId.Value);
-        while (await InSystemAsync(engine.IntentStore!, command =>
+        if (engine.IntentStore is not { } journal)
         {
-            using var clean = command("DELETE FROM _tb_write_intent WHERE rowid IN (SELECT rowid FROM _tb_write_intent WHERE replica = $replica LIMIT $limit);");
-            clean.Parameters.AddWithValue("$replica", replica);
-            clean.Parameters.AddWithValue("$limit", (long)Page);
-            return clean.ExecuteNonQuery();
-        }, cancellationToken, rows: Page).ConfigureAwait(false) > 0)
-        {
+            return;
         }
 
+        while (await InSystemAsync(journal, command =>
+        {
+            using var clean = command("DELETE FROM _tb_write_intent WHERE rowid IN (SELECT rowid FROM _tb_write_intent WHERE run = $run LIMIT $limit);");
+            clean.Parameters.AddWithValue("$run", _run);
+            clean.Parameters.AddWithValue("$limit", (long)Page);
+            return clean.ExecuteNonQuery();
+        }, CancellationToken.None, rows: Page).ConfigureAwait(false) > 0)
+        {
+        }
+    }
+
+    internal async Task RecoverAsync(TursoDatabaseStore system, CancellationToken cancellationToken)
+    {
         var faults = 0;
 
         List<double> proofs = [];
@@ -275,7 +286,7 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
                 using (var select = command("""
                     SELECT rowid, organization, project, database, incarnation,
                         length(organization) = 26 AND length(project) = 26 AND length(database) = 26 AND length(incarnation) = 26,
-                        replica = $faulting
+                        run = $faulting
                     FROM _tb_write_intent ORDER BY rowid LIMIT $limit;
                     """))
                 {

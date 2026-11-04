@@ -22,7 +22,7 @@ internal static class SharedProcess
             provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
             provider.GetRequiredService<ILogger<TursoStorageEngine>>(), provider.GetRequiredKeyedService<IMasterKey>(EngineExtensions.DatabaseMasterKey),
             options.ShutdownGrace, maxWriters: maxWriters, backupTime: provider.GetRequiredService<TimeProvider>(),
-            schemaMemory: provider.GetRequiredService<TerraBase.Features.Memory.IMemoryBudget>(), replicaOwner: options.MachineId,
+            schemaMemory: provider.GetRequiredService<TerraBase.Features.Memory.IMemoryBudget>(),
             nativeTemporaryStorage: provider.GetRequiredService<INativeTemporaryStorage>(), diskBudget: provider.GetRequiredService<IDiskBudget>());
     });
 

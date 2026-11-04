@@ -1,7 +1,6 @@
 using System.Buffers;
 using System.Globalization;
 using System.Text;
-using TerraBase.Engine.Lattices;
 using TerraBase.Features.Shapes;
 using TerraBase.Primitives;
 
@@ -19,7 +18,7 @@ internal sealed partial class TursoStorageTransaction : IShapeSweepTransaction
 
     private void PublishShapeLineage(string handle, string table, string generation, Ulid incarnation)
     {
-        var expected = ShapeLineageBody(incarnation, Member.Id, generation, table);
+        var expected = ShapeLineageBody(incarnation, generation, table);
         if (CurrentShapeLineage(table, "shape") is not { } current || !current.AsSpan().SequenceEqual(expected))
         {
             throw new ShapeSealOffsetException();
@@ -55,12 +54,12 @@ internal sealed partial class TursoStorageTransaction : IShapeSweepTransaction
 
         CountRead(path);
         return Command(TursoStatements.Incarnation).ExecuteScalar() is string incarnation && EntityIds.IsValid(incarnation)
-            ? ShapeLineageBody(Ulid.Parse(incarnation), Member.Id, generation, table)
+            ? ShapeLineageBody(Ulid.Parse(incarnation), generation, table)
             : throw new InvalidDataException("the database has no valid incarnation");
     }
 
-    private static byte[] ShapeLineageBody(Ulid incarnation, ReplicaId replica, string generation, string table) =>
-        Encoding.ASCII.GetBytes(string.Create(CultureInfo.InvariantCulture, $"1 {incarnation} {replica.Value} {generation} {table}"));
+    private static byte[] ShapeLineageBody(Ulid incarnation, string generation, string table) =>
+        Encoding.ASCII.GetBytes(string.Create(CultureInfo.InvariantCulture, $"2 {incarnation} {generation} {table}"));
 
     public ValueTask<IReadOnlyList<string>> ListShapeHandlesAsync(string? after, int limit, CancellationToken cancellationToken) =>
         RunAsync<IReadOnlyList<string>>(() =>

@@ -16,6 +16,8 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
     IStorageQuota quota, TerraBaseOptions options, TimeProvider time, ICatalogGate gate, ILogger<FileStorageService> logger)
     : BackgroundService, IFileStorage
 {
+    private const int ListPage = 50;
+    private const int MaxListScan = 1000;
     private static readonly Forbidden Denied = new("the bucket rules deny this operation", "access_denied");
     private static readonly NotFound Missing = new("the bucket or file does not exist");
     private static readonly Action<ILogger, Exception?> CleanupIncomplete = LoggerMessage.Define(
@@ -258,15 +260,33 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             {
                 return Denied;
             }
-            DocumentFilter filter = new CompareFilter(new DocumentPath(["status"]), Comparison.Equal, new ScalarValue(ScalarKind.Text, "ready"));
-            if (Access.IsEndUser && !CollectionWide(definition.Rules.Read, Access))
+            // Ready files the caller may read, in id order; a page reads at most MaxListScan files.
+            List<FileObject> items = [];
+            var cursor = after;
+            for (var scanned = 0; scanned < MaxListScan;)
             {
-                var owner = definition.Rules.Owner!.Split('/').Skip(1).Select(s => s.Replace("~1", "/", StringComparison.Ordinal).Replace("~0", "~", StringComparison.Ordinal));
-                filter = new AndFilter([filter, new CompareFilter(new DocumentPath(["metadata", .. owner]), Comparison.Equal, new ScalarValue(ScalarKind.Text, Access.Actor))]);
+                var page = await transaction.ListAsync(Files(bucket), cursor, 100, 1024 * 1024, cancellationToken).ConfigureAwait(false);
+                foreach (var document in page.Documents)
+                {
+                    scanned++;
+                    cursor = document.Id;
+                    if (EntityPayload.Read(document, TerraBaseJsonContext.Default.FileObject) is { Status: "ready" } file && Allowed(definition, file, write: false))
+                    {
+                        items.Add(file);
+                        if (items.Count == ListPage)
+                        {
+                            return new FileObjectPage(items, page.HasMore || document.Id != page.Documents[^1].Id ? file.Id : null);
+                        }
+                    }
+                }
+
+                if (!page.HasMore)
+                {
+                    return new FileObjectPage(items, null);
+                }
             }
-            var page = await transaction.QueryAsync(new DocumentQuery(Files(bucket), filter, [], after is null ? null : new QueryPosition([], after), 50, 1024 * 1024), cancellationToken).ConfigureAwait(false);
-            var items = page.Rows.Select(row => EntityPayload.Read(row.Document, TerraBaseJsonContext.Default.FileObject)!).ToArray();
-            return new FileObjectPage(items, page.HasMore ? items[^1].Id : null);
+
+            return new FileObjectPage(items, cursor);
         }, static error => error, cancellationToken);
 
     private ValueTask<FileStorageResult> ReadFileAsync(string bucket, string file, bool write, CancellationToken cancellationToken) =>

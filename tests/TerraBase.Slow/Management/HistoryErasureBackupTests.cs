@@ -53,7 +53,6 @@ public sealed partial class HistoryErasureBackupTests
         await Assert.That(await Host.UntilPhaseAsync(host, api, backup, erasure, requested, HistoryErasure.Residue)).IsEqualTo(HistoryErasure.Residue);
 
         host.Clock.Advance(TimeSpan.FromDays(8));
-        await Host.CollectAndTrimAsync(api);
         await Assert.That(await Host.UntilPhaseAsync(host, api, backup, erasure, requested, HistoryErasure.Backup)).IsEqualTo(HistoryErasure.Backup).Because("generations and bucket snapshots from before the residue rewrite remain");
 
         await DaysOfBackupAsync(host, backup, 3);
@@ -82,10 +81,7 @@ public sealed partial class HistoryErasureBackupTests
         await Assert.That((await Host.RequestAsync(api, erasure, requested)).Status).IsEqualTo(HistoryErasure.Retire);
 
         await Host.RetireAsync(api, fence, erasure);
-        await Host.PassWithBackupAsync(api, backup);
-        await Assert.That((await Host.RequestAsync(api, erasure, requested)).Status).IsEqualTo(HistoryErasure.Retire).Because("the retirement's tombstones are not collected yet");
         host.Clock.Advance(TimeSpan.FromDays(8));
-        await Host.CollectAndTrimAsync(api);
         await Assert.That(await Host.UntilPhaseAsync(host, api, backup, erasure, requested, HistoryErasure.Complete)).IsEqualTo(HistoryErasure.Complete);
 
         await Host.PassWithBackupAsync(api, backup);
@@ -255,11 +251,6 @@ public sealed partial class HistoryErasureBackupTests
 
         public static Task DeleteAsync(ManagementApi api, string collection, string id) =>
             WriteAsync(api, async transaction => _ = await transaction.DeleteAsync(collection, id, CancellationToken.None));
-
-        public static async Task CollectAndTrimAsync(ManagementApi api)
-        {
-            await api.Server.Services.GetRequiredService<FeedRetention>().TrimAsync(CancellationToken.None);
-        }
 
         public ValueTask DisposeAsync()
         {

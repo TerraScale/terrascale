@@ -45,7 +45,7 @@ public sealed class SqlNativePostgresTests
 
         await using var reader = await db.ReadOnlyPostgres.OpenConnectionAsync();
         var write = await StateAsync(reader, "INSERT INTO notes (body) VALUES ($1)", Faker.Lorem.Word());
-        var state = await StateAsync(reader, "SELECT * FROM _tb_state");
+        var state = await StateAsync(reader, "SELECT * FROM _tb_documents");
         var attach = await StateAsync(reader, "ATTACH DATABASE 'other.db' AS other");
 
         await Assert.That(write).IsEqualTo("42501");

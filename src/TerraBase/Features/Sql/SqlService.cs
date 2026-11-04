@@ -102,13 +102,13 @@ internal sealed class SqlService(
         ArgumentNullException.ThrowIfNull(database);
         if (replicas.Holds(database))
         {
-            // A replica region lists its replica's tables; document collections stay on the home's document API.
+            // A replica region lists its replica's tables.
             var reader = await replicas.BeginReadAsync(database, cancellationToken).ConfigureAwait(false);
             if (reader is not null)
             {
                 await using (reader.ConfigureAwait(false))
                 {
-                    return await ListTablesAsync(statement => reader.ExecuteAsync(statement, cancellationToken), new HashSet<string>(), cancellationToken).ConfigureAwait(false);
+                    return await ListTablesAsync(statement => reader.ExecuteAsync(statement, cancellationToken), cancellationToken).ConfigureAwait(false);
                 }
             }
         }
@@ -120,20 +120,19 @@ internal sealed class SqlService(
 
         await using (transaction.ConfigureAwait(false))
         {
-            var collections = await SqlSession.CollectionsAsync(transaction, cancellationToken).ConfigureAwait(false);
-            return await ListTablesAsync(statement => transaction.ExecuteStatementAsync(statement, cancellationToken), collections, cancellationToken).ConfigureAwait(false);
+            return await ListTablesAsync(statement => transaction.ExecuteStatementAsync(statement, cancellationToken), cancellationToken).ConfigureAwait(false);
         }
     }
 
     private static async ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(
-        Func<SqlStatement, ValueTask<SqlStatementResult>> run, HashSet<string> collections, CancellationToken cancellationToken)
+        Func<SqlStatement, ValueTask<SqlStatementResult>> run, CancellationToken cancellationToken)
     {
         var names = await run(SqlSession.Internal("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name")).ConfigureAwait(false);
         var tables = new List<SqlTableInfo>();
         foreach (var row in names.Rows)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (row[0] is not string name || SqlScript.IsReservedName(name) || collections.Contains(name))
+            if (row[0] is not string name || SqlScript.IsReservedName(name))
             {
                 continue;
             }
@@ -353,29 +352,6 @@ internal sealed class SqlSession(
     }
 
     internal static SqlStatement Internal(string sql) => new(sql, [], NoNamed, MaxRows, MaxBytes, SqlLimits.MaxRequestTime);
-
-    internal static async ValueTask<HashSet<string>> CollectionsAsync(IStorageTransaction transaction, CancellationToken cancellationToken)
-    {
-        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        string? after = null;
-        while (names.Count < 10_000)
-        {
-            var (collections, hasMore) = await transaction.ListCollectionsAsync(after, 200, cancellationToken).ConfigureAwait(false);
-            foreach (var collection in collections)
-            {
-                names.Add(collection.Name);
-            }
-
-            if (!hasMore || collections.Count == 0)
-            {
-                break;
-            }
-
-            after = collections[^1].Name;
-        }
-
-        return names;
-    }
 
     private int _consumed;
 
@@ -653,12 +629,6 @@ internal sealed class SqlSession(
         if (RequestExpired)
         {
             return (SqlErrors.Interrupt, false);
-        }
-
-        if (plan.Kind == SqlStatementKind.Write && plan.Names.Count > 0
-            && (await CollectionsAsync(transaction, cancellationToken).ConfigureAwait(false)) is var collections && plan.Names.Any(collections.Contains))
-        {
-            return (SqlErrors.Error("SQL statements cannot change a document collection's table; use the documents API"), false);
         }
 
         SqlStatementResult raw;

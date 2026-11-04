@@ -424,7 +424,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         insert.Parameters.AddWithValue("$offset", offset);
         insert.Parameters.AddWithValue("$end", covered);
         insert.Parameters.AddWithValue("$body", body);
-        var sealedAt = Member.Clock.UtcNow.ToUnixTimeMilliseconds();
+        var sealedAt = store.Time.GetUtcNow().ToUnixTimeMilliseconds();
         insert.Parameters.AddWithValue("$at", sealedAt);
         insert.ExecuteNonQuery();
         insert.Parameters.Clear();

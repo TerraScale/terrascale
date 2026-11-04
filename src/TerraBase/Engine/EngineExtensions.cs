@@ -3,7 +3,6 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
-using TerraBase.Features.Catalog;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Shapes;
 using TerraBase.Hosting;
@@ -42,7 +41,7 @@ public static class EngineExtensions
                 checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(),
                 time: provider.GetKeyedService<TimeProvider>(QueryDeadlineClock), queryBudget: configured.QueryBudget,
                 backupTime: provider.GetService<TimeProvider>(),
-                schemaMemory: provider.GetRequiredService<IMemoryBudget>(), replicaOwner: configured.MachineId,
+                schemaMemory: provider.GetRequiredService<IMemoryBudget>(),
                 nativeTemporaryStorage: provider.GetRequiredService<INativeTemporaryStorage>(),
                 diskBudget: provider.GetRequiredService<IDiskBudget>());
         });
@@ -53,13 +52,8 @@ public static class EngineExtensions
         services.AddSingleton<IDatabaseRevisions>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton<IDatabaseReplicas, TursoReplicas>();
         services.AddSingleton<IStorageCopyFaults>(provider => provider.GetRequiredService<TursoStorageEngine>().Ledger);
-        services.AddSingleton(provider => provider.GetRequiredService<TursoStorageEngine>().Member);
-        services.AddSingleton(provider => new FeedRetention(provider.GetRequiredService<TursoStorageEngine>(), provider.GetRequiredService<ILogger<FeedRetention>>(), provider.GetRequiredService<ICatalogGate>()));
-        services.AddHostedService(provider => provider.GetRequiredService<FeedRetention>());
         services.AddSingleton<IShapeStorage>(provider => new TursoShapeStorage(provider.GetRequiredService<TursoStorageEngine>()));
         services.AddSingleton<IShapeSnapshotTransactions>(provider => new TursoShapeSnapshotTransactions(provider.GetRequiredService<TursoStorageEngine>()));
-        services.AddSingleton(provider => new StampingStorageEngine(provider.GetRequiredService<TursoStorageEngine>()));
-        services.AddSingleton<IStorageEngine>(provider => provider.GetRequiredService<StampingStorageEngine>());
-        return services.AddSingleton<IWriteStamps>(provider => provider.GetRequiredService<StampingStorageEngine>());
+        return services.AddSingleton<IStorageEngine>(provider => provider.GetRequiredService<TursoStorageEngine>());
     }
 }

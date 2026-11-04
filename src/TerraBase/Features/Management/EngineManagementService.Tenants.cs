@@ -309,13 +309,15 @@ internal sealed partial class EngineManagementService
             return ManagementErrors.NotFound;
         }
 
-        // Every database id this catalog ever registered keeps its entry, deleted ones as tombstones.
+        // Every database id this catalog ever registered keeps its entry, unregistered ones in RetiredDatabases.
         var history = await ReadAsync<AdoptDatabaseResult>(
             async transaction => !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                 ? UnreadableCatalog
                 : !await DatabasePurge.IsDeletedAsync(transaction, database.DatabaseId, cancellationToken).ConfigureAwait(false)
                     && await transaction.GetVersionAsync(EngineManagedBackupService.BackedUpDatabases, database.DatabaseId, cancellationToken)
-                        .ConfigureAwait(false) is null ? new Done() : CatalogDatabaseDeleted,
+                        .ConfigureAwait(false) is null
+                    && await transaction.GetVersionAsync(RetiredDatabases, database.DatabaseId, cancellationToken).ConfigureAwait(false) is null
+                    ? new Done() : CatalogDatabaseDeleted,
             static error => error, cancellationToken).ConfigureAwait(false);
         if (history is not Done)
         {

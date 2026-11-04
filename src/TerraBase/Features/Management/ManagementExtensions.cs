@@ -18,7 +18,7 @@ internal static class ManagementExtensions
         services.AddSingleton(provider => new Lazy<IStorageQuota>(provider.GetRequiredService<IStorageQuota>));
         services.AddSingleton(provider => new Lazy<IBackupKeyShredding>(provider.GetRequiredService<IBackupKeyShredding>));
         services.AddHostedService(provider => provider.GetRequiredService<EngineManagementService>());
-        services.AddHostedService<CatalogConvergence>();
+        services.AddHostedService<CatalogMaintenance>();
         services.AddSingleton<IManagementService>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<IProjectCatalog>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<ITenantDirectory>(provider => provider.GetRequiredService<EngineManagementService>());
@@ -30,7 +30,6 @@ internal static class ManagementExtensions
         services.AddSingleton<RemoteDatabases>();
         services.AddHttpClient(RemoteDatabases.HttpClientName);
         services.AddSingleton<ClosureCancellation>();
-        services.AddSingleton<IClosureCancellation>(provider => provider.GetRequiredService<ClosureCancellation>());
         services.AddSingleton<HistoryErasures>();
         services.AddHostedService(provider => provider.GetRequiredService<HistoryErasures>());
         return services

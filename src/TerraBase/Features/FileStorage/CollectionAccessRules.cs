@@ -1,17 +1,16 @@
 using TerraBase.Hosting;
 using System.Text.Json;
-using System.Security.Cryptography;
 using TerraBase.Errors;
 
-namespace TerraBase.Engine;
+namespace TerraBase.Features.FileStorage;
 
-/// <summary>A collection's declarative end-user permissions. Missing rules deny access.</summary>
+/// <summary>A file bucket's declarative end-user permissions. Missing rules deny access.</summary>
 /// <param name="Owner">JSON Pointer of the immutable owner subject, or null.</param>
 /// <param name="Read">Read grants.</param>
 /// <param name="Write">Write grants.</param>
 public sealed record CollectionAccessRules(string? Owner, CollectionAccessPolicy? Read, CollectionAccessPolicy? Write)
 {
-    /// <summary>Rejects ambiguous or unbounded policies before they enter replicated metadata.</summary>
+    /// <summary>Rejects ambiguous or unbounded policies before they are stored.</summary>
     public Validation? Check()
     {
         if (Owner is not null && !IsPointer(Owner))
@@ -32,10 +31,6 @@ public sealed record CollectionAccessRules(string? Owner, CollectionAccessPolicy
 
         return null;
     }
-
-    /// <summary>Binds durable proofs and sync handles to the exact policy.</summary>
-    public string Fingerprint() => Convert.ToHexStringLower(SHA256.HashData(
-        JsonSerializer.SerializeToUtf8Bytes(this, CollectionRulesJsonContext.Default.CollectionAccessRules)));
 
     private static bool IsPointer(string pointer) =>
         pointer.Length <= 4096 && pointer.StartsWith('/') && pointer[1..].Split('/') is { Length: <= 16 } segments
@@ -66,29 +61,10 @@ public sealed record CollectionAccessRules(string? Owner, CollectionAccessPolicy
 
         return value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 and <= 256 } subject ? subject : null;
     }
-
-    /// <summary>The owner predicate used before pagination, sorting and counting.</summary>
-    public DocumentFilter OwnerFilter(string subject) => new CompareFilter(
-        new DocumentPath([.. Owner!.Split('/').Skip(1).Select(segment => segment.Replace("~1", "/", StringComparison.Ordinal).Replace("~0", "~", StringComparison.Ordinal))]),
-        Comparison.Equal, new ScalarValue(ScalarKind.Text, subject));
 }
 
 /// <summary>Independent public, role and owner grants for one operation.</summary>
-/// <param name="Owner">Whether the signed subject can access its own documents.</param>
-/// <param name="Public">Whether every authenticated end-user can access documents.</param>
-/// <param name="Roles">Trusted, case-sensitive roles with collection-wide access.</param>
+/// <param name="Owner">Whether the signed subject can access its own files.</param>
+/// <param name="Public">Whether every authenticated end-user can access files.</param>
+/// <param name="Roles">Trusted, case-sensitive roles with bucket-wide access.</param>
 public sealed record CollectionAccessPolicy(bool Owner, bool Public, IReadOnlyList<string>? Roles);
-
-/// <summary>A bounded preimage proof retained with a feed event; never returned to clients.</summary>
-/// <param name="Generation">Collection incarnation.</param>
-/// <param name="Path">Owner pointer at the time of the write.</param>
-/// <param name="Subject">Owner subject of the preimage or afterimage.</param>
-/// <param name="Policy">Fingerprint of the complete declared policy.</param>
-public sealed record DocumentOwnerProof(string Generation, string Path, string Subject, string Policy);
-
-[System.Text.Json.Serialization.JsonSourceGenerationOptions(JsonSerializerDefaults.Web,
-    PropertyNameCaseInsensitive = false, UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow,
-    AllowDuplicateProperties = false)]
-[System.Text.Json.Serialization.JsonSerializable(typeof(CollectionAccessRules))]
-[System.Text.Json.Serialization.JsonSerializable(typeof(DocumentOwnerProof))]
-internal sealed partial class CollectionRulesJsonContext : System.Text.Json.Serialization.JsonSerializerContext;

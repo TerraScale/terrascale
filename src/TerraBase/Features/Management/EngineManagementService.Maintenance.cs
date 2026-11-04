@@ -6,7 +6,11 @@ namespace TerraBase.Features.Management;
 
 internal sealed partial class EngineManagementService
 {
-    internal async ValueTask ConvergeAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// One pass of this machine's catalog upkeep: purges, project closures, database expiry, the file audit and retried
+    /// cleanups of deleted databases.
+    /// </summary>
+    internal async ValueTask RunMaintenanceAsync(CancellationToken cancellationToken)
     {
         if (!catalogGate.Value.IsOpen)
         {
@@ -66,22 +70,6 @@ internal sealed partial class EngineManagementService
 
             after = page.Next;
         }
-
-        await foreach (var database in engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
-        {
-            try
-            {
-                if (await ReadAsync<bool>(async transaction => await HasDeletionAuthorityAsync(transaction, database, cancellationToken).ConfigureAwait(false),
-                    static _ => false, cancellationToken).ConfigureAwait(false))
-                {
-                    await DropLocalAsync(database, cancellationToken).ConfigureAwait(false);
-                }
-            }
-            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
-            {
-                logger.ZLogWarning(error, $"Applying the catalog to database {database.DatabaseId:@Database} failed; the next pass tries again");
-            }
-        }
     }
 
     private async ValueTask DropLocalAsync(TenantContext database, CancellationToken cancellationToken)
@@ -128,7 +116,7 @@ internal sealed partial class EngineManagementService
     }
 }
 
-internal sealed class CatalogConvergence(EngineManagementService catalog, TimeProvider time, ILogger<CatalogConvergence> logger) : BackgroundService
+internal sealed class CatalogMaintenance(EngineManagementService catalog, TimeProvider time, ILogger<CatalogMaintenance> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -137,11 +125,11 @@ internal sealed class CatalogConvergence(EngineManagementService catalog, TimePr
         {
             try
             {
-                await catalog.ConvergeAsync(stoppingToken).ConfigureAwait(false);
+                await catalog.RunMaintenanceAsync(stoppingToken).ConfigureAwait(false);
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {
-                logger.ZLogWarning(error, $"Applying the catalog to this machine's database files failed; the next pass tries again");
+                logger.ZLogWarning(error, $"Catalog maintenance failed; the next pass tries again");
             }
         }
     }

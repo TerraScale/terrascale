@@ -2,7 +2,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using TerraBase.Configuration;
 using TerraBase.Engine;
-using TerraBase.Engine.Lattices;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 
@@ -19,25 +18,11 @@ internal sealed record ClosureCommitRecord(string Generation, DateTimeOffset Com
 /// acknowledges after installing it; a retained commit mark prevents a cancellation from hiding irreversible work.
 /// No subject address or natural-key hash is copied into SYSTEM.
 /// </summary>
-internal interface IClosureCancellation
-{
-    ValueTask<bool> AdmitAsync(IStorageTransaction transaction, DocumentState state, CancellationToken cancellationToken);
-    ValueTask ObserveAsync(IStorageTransaction transaction, IReadOnlyCollection<(string Collection, string Id)> changed, CancellationToken cancellationToken);
-}
-
-internal sealed class ClosureCancellation(TerraBaseOptions options) : IClosureCancellation
+internal sealed class ClosureCancellation(TerraBaseOptions options)
 {
     internal const string Jobs = "closure_jobs";
     internal const string Fences = "closure_cancellations";
     internal const string Commits = "closure_commits";
-
-    public async ValueTask<bool> AdmitAsync(IStorageTransaction transaction, DocumentState state, CancellationToken cancellationToken)
-    {
-        var generation = Generation(state.Materialize());
-        return generation is null
-            || await transaction.GetVersionAsync(Fences, generation + "/cancelled", cancellationToken).ConfigureAwait(false) is null
-            || await transaction.GetVersionAsync(Commits, generation, cancellationToken).ConfigureAwait(false) is not null;
-    }
 
     private static string? Generation(ReadOnlyMemory<byte>? json)
     {
@@ -58,35 +43,6 @@ internal sealed class ClosureCancellation(TerraBaseOptions options) : IClosureCa
         }
     }
 
-    // Called after all joins, on both streaming and anti-entropy paths, before either can acknowledge the batch.
-    public async ValueTask ObserveAsync(IStorageTransaction transaction, IReadOnlyCollection<(string Collection, string Id)> changed, CancellationToken cancellationToken)
-    {
-        HashSet<string> generations = [];
-        foreach (var (collection, id) in changed)
-        {
-            if ((collection == Fences || collection == Commits) && EntityIds.IsValid(id))
-            {
-                generations.Add(id);
-            }
-            else if (collection == Fences && id.EndsWith("/cancelled", StringComparison.Ordinal) && EntityIds.IsValid(id[..^10]))
-            {
-                generations.Add(id[..^10]);
-            }
-            else if (collection == Jobs && await transaction.GetAsync(Jobs, id, cancellationToken).ConfigureAwait(false) is { } job)
-            {
-                if (Generation(job.Json) is { } generation)
-                {
-                    generations.Add(generation);
-                }
-            }
-        }
-
-        foreach (var generation in generations)
-        {
-            await FenceAsync(transaction, generation, cancellationToken).ConfigureAwait(false);
-        }
-    }
-
     private static async ValueTask<T?> ReadAsync<T>(IStorageTransaction transaction, string id, JsonTypeInfo<T> type, CancellationToken cancellationToken)
         where T : class
     {
@@ -97,7 +53,7 @@ internal sealed class ClosureCancellation(TerraBaseOptions options) : IClosureCa
         }
         catch (Exception error) when (error is JsonException or NotSupportedException)
         {
-            // Malformed stored content never stalls a peer stream and never supplies an acknowledgement.
+            // Malformed stored content never supplies an acknowledgement.
             return null;
         }
     }
@@ -128,9 +84,8 @@ internal sealed class ClosureCancellation(TerraBaseOptions options) : IClosureCa
 
             if (finalized && !committed)
             {
-                // A different creation at this address is never removed. The cancellation mark outlives tombstone GC,
-                // so even a later replay with a newer stamp is removed before the receiving transaction commits.
-                _ = await transaction.TombstoneAsync(Jobs, targetId, cancellationToken).ConfigureAwait(false);
+                // A different creation at this address is never removed.
+                _ = await transaction.DeleteAsync(Jobs, targetId, cancellationToken).ConfigureAwait(false);
             }
         }
 

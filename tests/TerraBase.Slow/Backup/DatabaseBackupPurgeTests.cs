@@ -80,7 +80,7 @@ public sealed class DatabaseBackupPurgeTests
     {
         using var response = await api.Client.DeleteAsync(ManagementApi.Uri(database.Path), token);
         response.EnsureSuccessStatusCode();
-        await api.Server.Services.GetRequiredService<EngineManagementService>().ConvergeAsync(token);
+        await api.Server.Services.GetRequiredService<EngineManagementService>().RunMaintenanceAsync(token);
         await Assert.That(await api.Server.Services.GetRequiredService<SystemCatalog>().AreActiveCopiesAbsentAsync(
             new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id), token)).IsTrue();
     }
@@ -125,7 +125,7 @@ public sealed class DatabaseBackupPurgeTests
         {
             S3.Route(services);
             ManualBackupHosting.Configure(services);
-            var convergence = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService) && descriptor.ImplementationType == typeof(CatalogConvergence));
+            var convergence = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService) && descriptor.ImplementationType == typeof(CatalogMaintenance));
             services.Remove(convergence);
         }, time: Clock, userId: _user);
 

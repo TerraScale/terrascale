@@ -28,7 +28,7 @@ internal sealed partial class HistoryErasures
             return new HistoryErasureInspection(record.ErasureId, record.RequestedAt, status.Status, status.PendingHolders,
                 record.ActiveDueAt, record.BackupDueAt, record.Requester, [.. holders.Order(StringComparer.Ordinal)],
                 record.FinalId, record.FinalAuthMark, record.BackupCleanAt, record.BackupFinalId, record.BackupVerifiedAt,
-                record.CertifiedHolders, [.. receipts.Select(receipt => new HistoryHolderInspection(receipt.MachineId, receipt.Replica,
+                record.CertifiedHolders, [.. receipts.Select(receipt => new HistoryHolderInspection(receipt.MachineId,
                     receipt.Phase, receipt.FinalId, receipt.MarkedAt, receipt.Auth, receipt.System, receipt.Residue, receipt.Retired,
                     receipt.RewrittenAt, receipt.ResidueAt, receipt.RetiredAt))]);
         }, cancellationToken).ConfigureAwait(false);
@@ -39,6 +39,6 @@ internal sealed record HistoryErasureInspection(string ErasureId, DateTimeOffset
     string? FinalId, ulong FinalAuthMark, DateTimeOffset? BackupCleanAt, string? BackupFinalId,
     DateTimeOffset? BackupVerifiedAt, string[]? CertifiedHolders, HistoryHolderInspection[] Receipts);
 
-internal sealed record HistoryHolderInspection(string MachineId, ulong Replica, string Phase, string? FinalId, DateTimeOffset MarkedAt,
+internal sealed record HistoryHolderInspection(string MachineId, string Phase, string? FinalId, DateTimeOffset MarkedAt,
     HistoryRewrite? Auth, HistoryRewrite? System, HistoryRewrite? Residue, HistoryRewrite? Retired,
     DateTimeOffset? RewrittenAt, DateTimeOffset? ResidueAt, DateTimeOffset? RetiredAt);

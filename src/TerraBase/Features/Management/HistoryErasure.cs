@@ -7,7 +7,7 @@ internal sealed record HistoryRewrite(string Source, string Target, long Offset)
 internal sealed record HistoryErasureRecord(
     string ErasureId, DateTimeOffset RequestedAt, DateTimeOffset ActiveDueAt, DateTimeOffset BackupDueAt, string[] ExpectedHolders,
     string? Requester = null, string? SettlementToken = null, string? SettledMarks = null, string? FinalId = null, string? FinalMachine = null,
-    ulong FinalReplica = 0, string? FinalMarks = null, ulong FinalAuthMark = 0,
+    string? FinalMarks = null, ulong FinalAuthMark = 0,
     DateTimeOffset? BackupCleanAt = null, string? BackupFinalId = null, DateTimeOffset? BackupVerifiedAt = null, string[]? CertifiedHolders = null,
     int FormatVersion = 1)
 {
@@ -15,7 +15,7 @@ internal sealed record HistoryErasureRecord(
 }
 
 internal sealed record HistoryErasureReceipt(
-    string ErasureId, string MachineId, ulong Replica, string Phase, ulong AuthMark, string AuthIncarnation,
+    string ErasureId, string MachineId, string Phase, ulong AuthMark, string AuthIncarnation,
     DateTimeOffset MarkedAt,
     string? FinalId = null, HistoryRewrite? Auth = null, HistoryRewrite? System = null, DateTimeOffset? RewrittenAt = null,
     HistoryRewrite? Residue = null, DateTimeOffset? ResidueAt = null,
