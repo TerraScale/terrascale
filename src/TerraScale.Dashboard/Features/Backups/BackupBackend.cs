@@ -147,6 +147,7 @@ namespace TerraScale.Dashboard.Features.Backups
 
         private async Task<string> AccessAsync(DatabaseScope scope, string permission, CancellationToken ct)
         {
+            if (scope.IsApiKey) return scope.AccessToken;
             var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
             return await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, [permission], ct);
         }
@@ -176,6 +177,7 @@ namespace TerraScale.Dashboard.Features.Backups
         // UI URLs use database IDs; the authoritative project list resolves them to the route names TerraBase expects.
         private async Task<string> NameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
+            if (scope.IsApiKey) return databaseId;
             return (await databases.ListAsync(scope, home, cancellationToken)).SingleOrDefault(item => item.Id == databaseId)?.Name
                 ?? throw new DatabaseProviderException(HttpStatusCode.NotFound);
         }
