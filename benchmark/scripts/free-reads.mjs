@@ -10,6 +10,7 @@ const api = "https://api.terrascale.tech";
 const controller = new AbortController();
 const cpu = [];
 const children = [];
+let phase = "startup";
 const emit = value => process.stdout.write(`${JSON.stringify(value)}\n`);
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
 const signal = () => AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
@@ -93,6 +94,7 @@ async function main() {
     rows: 16, body_bytes: 128, repeats: 3, readers: [1, 10, 100, 1000], cpu_limit_percent: 70,
     latency: "Dev-host SDK through regional SSH CONNECT egress; includes tunnel and write request latency; nearest-rank percentiles per repeat" });
   await monitor();
+  phase = "create_database";
   const catalog = await writer.createDatabase(credentials.project, `f10-${Date.now().toString(36)}`, { homeRegion: "gru", ttlSeconds: 3600, signal: signal() });
   const db = writer.database(catalog.id);
   const path = `${api}/v1/projects/${credentials.project}/databases/${catalog.id}`;
@@ -107,6 +109,7 @@ async function main() {
       try {
         for (const shape of ["table", "where_columns"]) for (const readers of [1, 10, 100, 1000]) for (let repeat = 1; repeat <= 3; repeat++) {
           controller.signal.throwIfAborted();
+          phase = `setup_${region}_${shape}_${readers}_${repeat}`;
           const table = `f10_${region}_${shape}_${readers}_${repeat}`;
           const filter = shape === "table" ? {} : { where: "active = 1", columns: ["id", "version"] };
           await db.execute(`CREATE TABLE ${table} (id INTEGER PRIMARY KEY, active INTEGER NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL)`, undefined, { signal: signal() });
@@ -136,6 +139,7 @@ async function main() {
           }
           if (objects.length < 2 || !objects.some(item => !item.offset.startsWith("snap."))) throw new Error("MIRROR_NOT_READY");
           const before = await db.metrics.usage({}, { signal: signal() });
+          phase = `readers_${region}_${shape}_${readers}_${repeat}`;
           const started = Date.now();
           const requests = { bootstrap: 0, manifest: 0, keys: 0, snapshot_payload: 0, catchup_payload: 0, head: 0, tail: 0, cdn: 0 };
           const statuses = {};
@@ -217,7 +221,8 @@ async function main() {
 }
 
 try { await main(); }
-catch (error) { emit({ type: "failure", error: controller.signal.aborted ? controller.signal.reason.message : /^[A-Z][A-Z0-9_]+$/.test(error.message) ? error.message : error.name }); process.exitCode = 1; }
+catch (error) { emit({ type: "failure", phase, error: controller.signal.aborted ? controller.signal.reason.message : /^[A-Z][A-Z0-9_]+$/.test(error.message) ? error.message : error.name,
+  frames: error.stack?.split("\n").slice(1).filter(line => line.includes("/benchmark/") || line.includes("/sdk/js/")).slice(0, 5) }); process.exitCode = 1; }
 finally {
   for (const child of children) { child.stdin?.end(); child.kill(); }
 }
