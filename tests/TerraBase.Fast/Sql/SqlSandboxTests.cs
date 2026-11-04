@@ -76,7 +76,7 @@ public sealed class SqlSandboxTests
             "PRAGMA table_list");
         var wire = await psql.QueryAsync("SELECT type, name FROM sqlite_schema ORDER BY name");
 
-        await Assert.That(Rows(listings[0])).IsEquivalentTo(["table,notes", "index,notes_body"]);
+        await Assert.That(Rows(listings[0])).IsEquivalentTo(["table,notes", "index,notes_body"]).Because(string.Join(';', Rows(listings[0])));
         await Assert.That(Rows(listings[1])).IsEquivalentTo(["notes"]);
         await Assert.That(listings[2].GetProperty("rows").EnumerateArray().Select(row => row[1].GetString()!).Where(name => !name.StartsWith("sqlite_", StringComparison.Ordinal)))
             .IsEquivalentTo(["notes"]);
