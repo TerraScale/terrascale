@@ -287,6 +287,10 @@ func schemaGuard(live map[string]schemaEntity) v1.Statement {
 	if len(live) == 0 {
 		expected = []byte("[]")
 	}
-	desired := "SELECT json_extract(value,'$.kind'), json_extract(value,'$.name'), json_extract(value,'$.table'), json_extract(value,'$.sql') FROM json_each(?)"
-	return v1.Statement{SQL: "SELECT CASE WHEN NOT EXISTS (" + schemaSelection + " EXCEPT " + desired + ") AND NOT EXISTS (" + desired + " EXCEPT " + schemaSelection + ") THEN 1 ELSE json('schema changed; rerun ts schema diff') END", Args: []any{string(expected), string(expected)}}
+	// Turso supports scalar count subqueries, but not compound EXCEPT inside
+	// EXISTS. Unique catalogue names make equal counts plus exact matches a
+	// complete comparison, including concurrent additions and replacements.
+	count := "SELECT count(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL"
+	matched := "SELECT count(*) FROM sqlite_schema AS s JOIN json_each(?) AS e ON s.type=json_extract(e.value,'$.kind') AND s.name=json_extract(e.value,'$.name') AND s.tbl_name=json_extract(e.value,'$.table') AND s.sql=json_extract(e.value,'$.sql') WHERE s.name NOT LIKE 'sqlite_%' AND s.sql IS NOT NULL"
+	return v1.Statement{SQL: "SELECT CASE WHEN (" + count + ")=? AND (" + matched + ")=? THEN 1 ELSE json('schema changed; rerun ts schema diff') END", Args: []any{len(live), string(expected), len(live)}}
 }
