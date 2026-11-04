@@ -51,7 +51,7 @@ public sealed partial class DatabaseRecoveryTests
         {
             if (protection == "pending")
             {
-                await SystemCatalog.PutAsync(transaction, "pending_database_cleanup", orphan.DatabaseId!, orphan, TerraBaseJsonContext.Default.TenantContext, token);
+                _ = await CatalogTables.PutPendingCleanupAsync(transaction, orphan, token);
             }
             if (protection == "purge")
             {
@@ -59,7 +59,7 @@ public sealed partial class DatabaseRecoveryTests
             }
             if (protection == "registered")
             {
-                await SystemCatalog.PutAsync(transaction, $"projects/{orphan.ProjectId}/databases", orphan.DatabaseId!, new ManagedDatabase(orphan.DatabaseId!, orphan.ProjectId!, "adopted", null, DateTimeOffset.UtcNow), TerraBaseJsonContext.Default.ManagedDatabase, token);
+                await CatalogTables.PutDatabaseAsync(transaction, new ManagedDatabase(orphan.DatabaseId!, orphan.ProjectId!, "adopted", null, DateTimeOffset.UtcNow), token);
             }
             await transaction.CommitAsync(token);
         }
@@ -90,14 +90,18 @@ public sealed partial class DatabaseRecoveryTests
                 TerraBaseJsonContext.Default.OrphanDatabaseFile, token);
             if (registerFirst)
             {
-                await SystemCatalog.PutAsync(transaction, $"projects/{orphan.ProjectId}/databases", orphan.DatabaseId!, new ManagedDatabase(orphan.DatabaseId!, orphan.ProjectId!, "adopted", null, DateTimeOffset.UtcNow), TerraBaseJsonContext.Default.ManagedDatabase, token);
+                await CatalogTables.PutDatabaseAsync(transaction, new ManagedDatabase(orphan.DatabaseId!, orphan.ProjectId!, "adopted", null, DateTimeOffset.UtcNow), token);
             }
             await transaction.CommitAsync(token);
         }
         await AuditAsync(api, token);
         await Assert.That(File.Exists(path)).IsEqualTo(registerFirst);
         await Assert.That(await ObservationAsync(api, orphan)).IsNull();
-        await Assert.That(await CatalogAsync(api, "pending_database_cleanup", orphan.DatabaseId!)).IsNull();
+        var system2 = await engine.OpenSystemDatabaseAsync(token);
+        await using (var read = await system2.BeginTransactionAsync(write: false, token))
+        {
+            await Assert.That(await CatalogTables.PendingCleanupAsync(read, orphan.DatabaseId!, token)).IsNull();
+        }
         await Assert.That(File.Exists(Path.Combine(api.Server.DataDirectory, registered.Organization, registered.Project, registered.Id + ".db"))).IsTrue();
     }
 

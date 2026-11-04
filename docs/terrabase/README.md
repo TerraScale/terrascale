@@ -88,6 +88,7 @@ Each database is served by its home region only ([cross-region.md](cross-region.
 [decision](decisions/2026-10-29-single-region-until-sync.md)). The leaderless replication engine, its peer streams,
 anti-entropy and `GET /replication` status are removed. Superseded designs are kept in [archive/](archive/README.md).
 
+Catalog of organizations, projects and databases: [SQL catalog](sql-catalog.md).
 Renaming a database: [database rename](database-rename.md).
 
 ## API reference

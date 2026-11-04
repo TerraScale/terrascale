@@ -1,8 +1,7 @@
 using System.Net;
-using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
-using TerraBase.Hosting;
+using TerraBase.Features.Management;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -32,8 +31,7 @@ public sealed class CatalogCleanupRaceTests
                 var catalog = await engine.OpenSystemDatabaseAsync(token);
                 await using var write = await catalog.BeginTransactionAsync(write: true, token);
 
-                _ = await write.PutAsync("pending_database_cleanup", database.Id,
-                    JsonSerializer.SerializeToUtf8Bytes(tenant, TerraBaseJsonContext.Default.TenantContext), token);
+                _ = await CatalogTables.PutPendingCleanupAsync(write, tenant, token);
                 _ = await write.CommitAsync(token);
             }
 
@@ -43,8 +41,8 @@ public sealed class CatalogCleanupRaceTests
             var system = await storage.OpenSystemDatabaseAsync(token);
             await using (var read = await system.BeginTransactionAsync(write: false, token))
             {
-                await Assert.That(await read.GetAsync($"projects/{database.Project}/databases", database.Id, token)).IsNotNull();
-                await Assert.That(await read.GetAsync("pending_database_cleanup", database.Id, token)).IsNotNull();
+                await Assert.That(await CatalogTables.DatabaseAsync(read, database.Project, database.Id, token)).IsNotNull();
+                await Assert.That(await CatalogTables.PendingCleanupAsync(read, database.Id, token)).IsNotNull();
             }
 
             using var removed = await restarted.Client.DeleteAsync(ManagementApi.Uri(
@@ -52,7 +50,7 @@ public sealed class CatalogCleanupRaceTests
             await Assert.That(removed.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
             await Assert.That(await storage.OpenDatabaseAsync(tenant, token)).IsNull();
             await using var final = await system.BeginTransactionAsync(write: false, token);
-            await Assert.That(await final.GetAsync("pending_database_cleanup", database.Id, token)).IsNull();
+            await Assert.That(await CatalogTables.PendingCleanupAsync(final, database.Id, token)).IsNull();
         }
         finally
         {

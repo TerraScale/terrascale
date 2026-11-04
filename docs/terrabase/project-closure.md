@@ -27,7 +27,7 @@ after a lost response, a restart or a repeated request presents the same identit
 ## TerraBase rule
 
 - The fence is `project_closures/<project>` in `_system`, outside `projects/<project>/` so project-state prefix deletes
-  never tombstone it. Catalog GC is off (`system-catalog-invariants.md`), so it is permanent.
+  never tombstone it. Closure records are never collected, so it is permanent.
 - The request's transaction resolves TerraBase's own mapping and binding, checks local emptiness and writes the fence
   plus this machine's receipt atomically. Expected holders are the retained catalog members plus this machine, the same
   rule as permanent database purge.

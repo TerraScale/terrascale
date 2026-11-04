@@ -1,6 +1,5 @@
 using TerraBase.Errors;
 using TerraBase.Features.Platform;
-using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
@@ -14,14 +13,12 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
     {
         var tenants = await WriteAsync<EnsurePlatformResult>(async transaction =>
         {
-            var organization = await GetAsync(transaction, Organizations, PlatformDatabases.OrganizationId, TerraBaseJsonContext.Default.Organization, cancellationToken)
-                .ConfigureAwait(false);
+            var organization = await CatalogTables.OrganizationAsync(transaction, PlatformDatabases.OrganizationId, cancellationToken).ConfigureAwait(false);
             if (organization is null)
             {
                 organization = new Organization(PlatformDatabases.OrganizationId, PlatformOrganizationName, PlatformCreator, DateTimeOffset.UnixEpoch, PlanTier.Enterprise);
 
-                await PutAsync(transaction, OrganizationNames(PlatformCreator), Key(organization.Name), organization.Id, Id, cancellationToken).ConfigureAwait(false);
-                await PutAsync(transaction, Organizations, organization.Id, organization, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false);
+                _ = await CatalogTables.PutOrganizationAsync(transaction, organization, cancellationToken).ConfigureAwait(false);
             }
             else if (organization.CreatedBy != PlatformCreator || organization.Plan != PlanTier.Enterprise)
             {
@@ -30,14 +27,11 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
 
             foreach (var (name, database) in PlatformDatabases.Databases)
             {
-                var owner = await GetAsync(transaction, ProjectOrganizations, database.ProjectId, Id, cancellationToken).ConfigureAwait(false);
+                var owner = await CatalogTables.ProjectOrganizationAsync(transaction, database.ProjectId, cancellationToken).ConfigureAwait(false);
                 if (owner is null)
                 {
                     var project = new Project(database.ProjectId, organization.Id, name, DateTimeOffset.UnixEpoch);
-                    await PutAsync(transaction, ProjectOrganizations, project.Id, organization.Id, Id, cancellationToken).ConfigureAwait(false);
-
-                    await PutAsync(transaction, ProjectNames(organization.Id), Key(project.Name), project.Id, Id, cancellationToken).ConfigureAwait(false);
-                    await PutAsync(transaction, Projects(organization.Id), project.Id, project, TerraBaseJsonContext.Default.Project, cancellationToken).ConfigureAwait(false);
+                    _ = await CatalogTables.PutProjectAsync(transaction, project, cancellationToken).ConfigureAwait(false);
                 }
                 else if (owner != organization.Id)
                 {

@@ -1,8 +1,4 @@
-using System.Text.Json;
 using TerraBase.Engine;
-using TerraBase.Engine.Lattices;
-using TerraBase.Hosting;
-using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using ZLogger;
 
@@ -10,12 +6,6 @@ namespace TerraBase.Features.Management;
 
 internal sealed partial class EngineManagementService
 {
-    private const int MaxDatabaseName = 63;
-
-    // Where the rotating stale-name pass resumes: one page of one project's name index per pass.
-    private string? _namesProject;
-    private string? _namesAfter;
-
     internal async ValueTask ConvergeAsync(CancellationToken cancellationToken)
     {
         if (!catalogGate.Value.IsOpen)
@@ -23,7 +13,6 @@ internal sealed partial class EngineManagementService
             return;
         }
 
-        _quotaRegistered = _quotaRegistered || await RegisterQuotaRegionAsync(cancellationToken).ConfigureAwait(false);
         await ConvergePurgesAsync(cancellationToken).ConfigureAwait(false);
         await ConvergeClosuresAsync(cancellationToken).ConfigureAwait(false);
         if (time.GetUtcNow() >= _nextFileAudit)
@@ -38,277 +27,56 @@ internal sealed partial class EngineManagementService
             }
         }
 
-        // A failed file deletion may have removed the main file already; its durable intent remains discoverable.
         string? after = null;
         while (true)
         {
-            var page = await ReadAsync<DocumentPage?>(async transaction => await transaction.ListAsync(
-                PendingDatabaseCleanup, after, CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false), static _ => null, cancellationToken).ConfigureAwait(false);
-            if (page is null || page.Documents.Count == 0)
+            var page = await ReadAsync<ManagementPage<TenantContext>?>(
+                async transaction => await CatalogTables.PendingCleanupsAsync(transaction, after, CatalogPage, cancellationToken).ConfigureAwait(false),
+                static _ => null, cancellationToken).ConfigureAwait(false);
+            if (page is null || page.Items.Count == 0)
             {
                 break;
             }
 
-            foreach (var document in page.Documents)
+            foreach (var database in page.Items)
             {
                 try
                 {
-                    var database = JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.TenantContext)
-                        ?? throw new InvalidOperationException("a database cleanup intent is invalid");
-                    if (document.Id != database.DatabaseId)
-                    {
-                        throw new InvalidOperationException("a database cleanup intent conflicts with the catalog");
-                    }
-
-                    // Creation intents are shared too: only a verified deletion authorizes background cleanup.
                     await DropLocalAsync(database, cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested)
                 {
-                    logger.ZLogWarning(error, $"Retrying database cleanup {document.Id:@Database} failed; the next pass tries again");
+                    logger.ZLogWarning(error, $"Retrying database cleanup {database.DatabaseId:@Database} failed; the next pass tries again");
                 }
             }
 
-            if (!page.HasMore)
+            if (page.Next is null)
             {
                 break;
             }
 
-            after = page.Documents[^1].Id;
+            after = page.Next;
         }
 
-        string? firstProject = null, nextProject = null;
-        var resumable = false;
         await foreach (var database in engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
-            var project = database.ProjectId!;
-            firstProject = firstProject is null || string.CompareOrdinal(project, firstProject) < 0 ? project : firstProject;
-            if (string.CompareOrdinal(project, _namesProject) > 0 && (nextProject is null || string.CompareOrdinal(project, nextProject) < 0))
-            {
-                nextProject = project;
-            }
-
-            resumable |= project == _namesProject;
             try
             {
-                await ConvergeDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
+                if (await ReadAsync<bool>(async transaction => await HasDeletionAuthorityAsync(transaction, database, cancellationToken).ConfigureAwait(false),
+                    static _ => false, cancellationToken).ConfigureAwait(false))
+                {
+                    await DropLocalAsync(database, cancellationToken).ConfigureAwait(false);
+                }
             }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested)
             {
                 logger.ZLogWarning(error, $"Applying the catalog to database {database.DatabaseId:@Database} failed; the next pass tries again");
             }
         }
-
-        // Never a scan of a project's whole index per database: one bounded page per pass, rotating across the projects held here.
-        var resume = resumable && _namesAfter is not null;
-        if ((resume ? _namesProject : nextProject ?? firstProject) is { } names)
-        {
-            _namesAfter = await DropStaleNameEntriesAsync(names, resume ? _namesAfter : null, cancellationToken).ConfigureAwait(false);
-            _namesProject = names;
-        }
     }
-
-    private async ValueTask ConvergeDatabaseAsync(TenantContext database, CancellationToken cancellationToken)
-    {
-        var (projectId, databaseId) = (database.ProjectId!, database.DatabaseId!);
-        var (deleted, found, named, winner, stale) = await ReadAsync<(bool Deleted, ManagedDatabase? Record, string? Named, string? Winner, bool Stale)>(async transaction =>
-        {
-            if (await HasDeletionAuthorityAsync(transaction, database, cancellationToken).ConfigureAwait(false))
-            {
-                return (true, null, null, null, false);
-            }
-
-            var version = await transaction.GetVersionAsync(Databases(projectId), databaseId, cancellationToken).ConfigureAwait(false);
-            if (version is not { Deleted: false })
-            {
-                return (version is { Deleted: true }, null, null, null, false);
-            }
-
-            var record = await GetAsync(transaction, Databases(projectId), databaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false);
-            if (record is null)
-            {
-                return (false, null, null, null, false);
-            }
-
-            var name = await GetAsync(transaction, DatabaseNames(projectId), record.Name, Id, cancellationToken).ConfigureAwait(false);
-            var winner = await NameWinnerAsync(transaction, record, name, cancellationToken).ConfigureAwait(false);
-            return (false, record, name, winner, await StaleNamesAsync(transaction, record, cancellationToken).ConfigureAwait(false) is not []);
-        }, static _ => (false, null, null, null, false), cancellationToken).ConfigureAwait(false);
-
-        if (deleted)
-        {
-            await DropLocalAsync(database, cancellationToken).ConfigureAwait(false);
-        }
-        else if (found is not { } record)
-        {
-            return;
-        }
-        else if (winner is not null)
-        {
-            if (record.Home(options.Region) == options.Region)
-            {
-                await KeepLoserAsync(record, cancellationToken).ConfigureAwait(false);
-            }
-        }
-        else if (named != databaseId)
-        {
-            await ClaimNameAsync(record, cancellationToken).ConfigureAwait(false);
-        }
-        else if (stale)
-        {
-            await DropStaleNamesAsync(record, cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    // The smaller id holding the database's name in the index (`named`) under the same name: that database keeps the name.
-    private static async ValueTask<string?> NameWinnerAsync(IStorageTransaction transaction, ManagedDatabase record, string? named, CancellationToken cancellationToken) =>
-        named is not null
-        && string.CompareOrdinal(named, record.Id) < 0
-        && await GetAsync(transaction, Databases(record.ProjectId), named, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is { } rival
-        && rival.Name == record.Name
-            ? named
-            : null;
-
-    // The database that lost its name keeps its id, data, backups, keys and file under the first free name every region
-    // derives alike (docs/terrabase/database-name-conflicts.md). A name conflict never deletes a database.
-    private async ValueTask KeepLoserAsync(ManagedDatabase record, CancellationToken cancellationToken) =>
-        _ = await WriteAsync<bool>(async transaction =>
-        {
-            if (await GetAsync(transaction, Databases(record.ProjectId), record.Id, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is not { } current
-                || await NameWinnerAsync(transaction, current, await GetAsync(transaction, DatabaseNames(current.ProjectId), current.Name, Id, cancellationToken).ConfigureAwait(false),
-                    cancellationToken).ConfigureAwait(false) is not { } winner)
-            {
-                return false;
-            }
-
-            // A database that loses a conflict name again keeps the name its customer chose, and the database that holds it.
-            var kept = current.ConflictOf is null ? current with { PreviousName = current.Name, ConflictOf = winner } : current;
-            return await MoveToFreeNameAsync(transaction, kept, ConflictNames(kept.PreviousName ?? current.Name, current.Id), cancellationToken)
-                .ConfigureAwait(false)
-                ? true
-                : throw new InvalidOperationException("every conflict name of a database that lost its name is held");
-        }, static _ => false, cancellationToken).ConfigureAwait(false);
-
-    // The names a database that lost `name` tries, in order: the name, cut to fit the database name rules, then
-    // "-conflict-" and a longer tail of the database's own lowercase id each time. Every region derives the same list.
-    private static IEnumerable<string> ConflictNames(string name, string id)
-    {
-        foreach (var length in (int[])[6, 8, 10, 13, 16, 20, 26])
-        {
-            var suffix = $"-conflict-{id[^Math.Min(length, id.Length)..].ToLowerInvariant()}";
-            yield return name[..Math.Min(name.Length, MaxDatabaseName - suffix.Length)] + suffix;
-        }
-    }
-
-    private static async ValueTask<bool> MoveToFreeNameAsync(
-        IStorageTransaction transaction, ManagedDatabase database, IEnumerable<string> candidates, CancellationToken cancellationToken)
-    {
-        foreach (var name in candidates)
-        {
-            if (await NameHolderAsync(transaction, database.ProjectId, name, cancellationToken).ConfigureAwait(false) is { } holder && holder != database.Id)
-            {
-                continue;
-            }
-
-            var json = EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(database with { Name = name }, TerraBaseJsonContext.Default.ManagedDatabase), database.Id, nested: true);
-            FieldOperation[] fields =
-            [
-                new(FieldOperationKind.Set, "name", JsonSerializer.SerializeToElement(name, Id)),
-                new(FieldOperationKind.Set, "previousName", JsonSerializer.SerializeToElement(database.PreviousName!, Id)),
-                new(FieldOperationKind.Set, "conflictOf", JsonSerializer.SerializeToElement(database.ConflictOf!, Id)),
-            ];
-            _ = await transaction.PatchAsync(Databases(database.ProjectId), database.Id, json, fields, cancellationToken).ConfigureAwait(false);
-            await PutAsync(transaction, DatabaseNames(database.ProjectId), name, database.Id, Id, cancellationToken).ConfigureAwait(false);
-            return true;
-        }
-
-        return false;
-    }
-
-    // Index entries that still point at the database under a name it no longer carries: its previous name and its conflict names.
-    private static async ValueTask<List<string>> StaleNamesAsync(IStorageTransaction transaction, ManagedDatabase record, CancellationToken cancellationToken)
-    {
-        List<string> stale = [];
-        if (record.PreviousName is { } previous)
-        {
-            foreach (var name in ConflictNames(previous, record.Id).Prepend(previous))
-            {
-                if (name != record.Name && await GetAsync(transaction, DatabaseNames(record.ProjectId), name, Id, cancellationToken).ConfigureAwait(false) == record.Id)
-                {
-                    stale.Add(name);
-                }
-            }
-        }
-
-        return stale;
-    }
-
-    private async ValueTask DropStaleNamesAsync(ManagedDatabase record, CancellationToken cancellationToken) =>
-        _ = await WriteAsync<bool>(async transaction =>
-        {
-            if (await GetAsync(transaction, Databases(record.ProjectId), record.Id, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is not { } current)
-            {
-                return false;
-            }
-
-            foreach (var name in await StaleNamesAsync(transaction, current, cancellationToken).ConfigureAwait(false))
-            {
-                _ = await transaction.DeleteAsync(DatabaseNames(current.ProjectId), name, cancellationToken).ConfigureAwait(false);
-            }
-
-            return true;
-        }, static _ => false, cancellationToken).ConfigureAwait(false);
-
-    // Drops the stale entries of one page of the project's name index after `after`, rereading each in the write. Answers
-    // where the next page starts, or null after the last. Writes nothing when the page holds no stale entry.
-    private async ValueTask<string?> DropStaleNameEntriesAsync(string projectId, string? after, CancellationToken cancellationToken)
-    {
-        var (stale, next) = await ReadAsync<(List<string> Stale, string? Next)>(async transaction =>
-        {
-            var page = await transaction.ListAsync(DatabaseNames(projectId), after, CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-            List<string> stale = [];
-            foreach (var entry in page.Documents)
-            {
-                if (await IsStaleNameAsync(transaction, projectId, entry.Id, EntityPayload.Read(entry, Id), cancellationToken).ConfigureAwait(false))
-                {
-                    stale.Add(entry.Id);
-                }
-            }
-
-            return (stale, page.HasMore ? page.Documents[^1].Id : null);
-        }, static _ => ([], null), cancellationToken).ConfigureAwait(false);
-        if (stale.Count > 0)
-        {
-            _ = await WriteAsync<bool>(async transaction =>
-            {
-                foreach (var name in stale)
-                {
-                    if (await IsStaleNameAsync(transaction, projectId, name, await GetAsync(transaction, DatabaseNames(projectId), name, Id, cancellationToken).ConfigureAwait(false),
-                        cancellationToken).ConfigureAwait(false))
-                    {
-                        _ = await transaction.DeleteAsync(DatabaseNames(projectId), name, cancellationToken).ConfigureAwait(false);
-                    }
-                }
-
-                return true;
-            }, static _ => false, cancellationToken).ConfigureAwait(false);
-        }
-
-        return next;
-    }
-
-    // An index entry is stale when its database is deleted or purged, or, seen from that database's home only (one writer,
-    // like the loser's move), carries another name. An entry whose database has not replicated here yet stays.
-    private async ValueTask<bool> IsStaleNameAsync(IStorageTransaction transaction, string projectId, string name, string? named, CancellationToken cancellationToken) =>
-        named is not null
-        && (await GetAsync(transaction, Databases(projectId), named, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is { } holder
-            ? holder.Name != name && holder.Home(options.Region) == options.Region
-            : await DatabasePurge.IsDeletedAsync(transaction, named, cancellationToken).ConfigureAwait(false)
-                || await transaction.GetVersionAsync(Databases(projectId), named, cancellationToken).ConfigureAwait(false) is { Deleted: true });
 
     private async ValueTask DropLocalAsync(TenantContext database, CancellationToken cancellationToken)
     {
-        // Missing rows can describe an unfinished creation or an unknown file; neither authorizes deletion.
         var deleted = await ReadAsync<bool>(async transaction =>
             await HasDeletionAuthorityAsync(transaction, database, cancellationToken).ConfigureAwait(false),
             static _ => false, cancellationToken).ConfigureAwait(false);
@@ -323,7 +91,6 @@ internal sealed partial class EngineManagementService
             return;
         }
 
-        // A local reservation can outlive the shared intent a peer cleared while cleaning its own copy.
         var resumed = await WriteAsync<bool>(transaction => PrepareAsync(transaction, cancellationToken), static _ => false, cancellationToken).ConfigureAwait(false);
         if (resumed)
         {
@@ -337,62 +104,19 @@ internal sealed partial class EngineManagementService
                 return false;
             }
 
-            if (await transaction.GetAsync(PendingDatabaseCleanup, database.DatabaseId!, token).ConfigureAwait(false) is not { } pending)
+            if (await CatalogTables.PendingCleanupAsync(transaction, database.DatabaseId!, token).ConfigureAwait(false) is not { } owner)
             {
-                await PutAsync(transaction, PendingDatabaseCleanup, database.DatabaseId!, database, TerraBaseJsonContext.Default.TenantContext, token).ConfigureAwait(false);
+                _ = await CatalogTables.PutPendingCleanupAsync(transaction, database, token).ConfigureAwait(false);
             }
-            else
+            else if (owner.OrganizationId != database.OrganizationId || owner.ProjectId != database.ProjectId)
             {
-                var owner = JsonSerializer.Deserialize(pending.Json.Span, TerraBaseJsonContext.Default.TenantContext);
-                if (owner is null || owner.OrganizationId != database.OrganizationId || owner.ProjectId != database.ProjectId || owner.DatabaseId != database.DatabaseId)
-                {
-                    throw new InvalidOperationException("a database cleanup intent conflicts with the catalog");
-                }
+                throw new InvalidOperationException("a database cleanup intent conflicts with the catalog");
             }
 
-            // Purge before clearing the intent, so a failure after file removal still has durable retry work.
             await transaction.DeleteCollectionsAsync(SystemCatalog.DatabaseState(database.DatabaseId!), token).ConfigureAwait(false);
             return true;
         }
     }
-
-    // The database that holds a name in the project: its index entry's, unless that database is deleted or now carries
-    // another name. A database whose record has not replicated here yet still holds its name.
-    private static async ValueTask<string?> NameHolderAsync(IStorageTransaction transaction, string projectId, string name, CancellationToken cancellationToken)
-    {
-        if (await GetAsync(transaction, DatabaseNames(projectId), name, Id, cancellationToken).ConfigureAwait(false) is not { } named)
-        {
-            return null;
-        }
-
-        // Every name lookup pays this read, so the record is read raw and the version only when there is no record.
-        if (await transaction.GetAsync(Databases(projectId), named, cancellationToken).ConfigureAwait(false) is { } holder)
-        {
-            return EntityPayload.Read(holder, TerraBaseJsonContext.Default.ManagedDatabase)?.Name == name ? named : null;
-        }
-
-        return await transaction.GetVersionAsync(Databases(projectId), named, cancellationToken).ConfigureAwait(false) is { Deleted: true } ? null : named;
-    }
-
-    private async ValueTask ClaimNameAsync(ManagedDatabase record, CancellationToken cancellationToken) =>
-        _ = await WriteAsync<bool>(async transaction =>
-        {
-            if (await GetAsync(transaction, Databases(record.ProjectId), record.Id, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is not { } current)
-            {
-                return false;
-            }
-
-            var named = await NameHolderAsync(transaction, record.ProjectId, current.Name, cancellationToken).ConfigureAwait(false);
-            if (named == current.Id
-                || (named is not null && (string.CompareOrdinal(named, current.Id) < 0
-                    || await GetAsync(transaction, Databases(record.ProjectId), named, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is null)))
-            {
-                return false;
-            }
-
-            await PutAsync(transaction, DatabaseNames(record.ProjectId), current.Name, current.Id, Id, cancellationToken).ConfigureAwait(false);
-            return true;
-        }, static _ => false, cancellationToken).ConfigureAwait(false);
 }
 
 internal sealed class CatalogConvergence(EngineManagementService catalog, TimeProvider time, ILogger<CatalogConvergence> logger) : BackgroundService

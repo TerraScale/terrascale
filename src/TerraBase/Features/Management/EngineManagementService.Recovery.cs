@@ -1,5 +1,4 @@
 using System.Diagnostics.Metrics;
-using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management.Backups;
@@ -66,37 +65,29 @@ internal sealed partial class EngineManagementService
             while (!retried)
             {
                 // One bounded page at a time; release the catalog connection before deleting storage.
-                var page = await ReadCatalogAsync(transaction => transaction.ListAsync(
-                    PendingDatabaseCleanup, after, CatalogPage, MaxPageBytes, cancellationToken), cancellationToken).ConfigureAwait(false);
-                if (page.Documents.Count == 0)
+                var page = await ReadCatalogAsync(transaction => CatalogTables.PendingCleanupsAsync(transaction, after, CatalogPage, cancellationToken), cancellationToken)
+                    .ConfigureAwait(false);
+                if (page.Items.Count == 0)
                 {
                     break;
                 }
 
-                foreach (var document in page.Documents)
+                foreach (var storage in page.Items)
                 {
-                    var storage = JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.TenantContext)
-                        ?? throw new InvalidOperationException("a database cleanup intent is invalid");
-                    if (document.Id != storage.DatabaseId)
-                    {
-                        // Inconsistent metadata cannot authorize deletion of registered data.
-                        throw new InvalidOperationException("a database cleanup intent conflicts with the catalog");
-                    }
-
-                    if (only is not null && !only.Contains(storage.DatabaseId))
+                    if (only is not null && !only.Contains(storage.DatabaseId!))
                     {
                         continue;
                     }
 
                     checkpoint("recovery.intent", storage);
-                    if (await FinishDatabaseCleanupAsync(storage, cancellationToken, intent: document).ConfigureAwait(false) is Unavailable)
+                    if (await FinishDatabaseCleanupAsync(storage, cancellationToken, intent: storage).ConfigureAwait(false) is Unavailable)
                     {
                         // An unavailable or unsupported catalog cannot authorize an audit against this version either.
                         return;
                     }
 
                     if (await ReadCatalogAsync(async transaction =>
-                            await transaction.GetAsync(PendingDatabaseCleanup, storage.DatabaseId!, cancellationToken).ConfigureAwait(false) is not null,
+                            await CatalogTables.PendingCleanupAsync(transaction, storage.DatabaseId!, cancellationToken).ConfigureAwait(false) is not null,
                             cancellationToken).ConfigureAwait(false))
                     {
                         // A still-closing copy or withheld receipt is retried by convergence without spinning during startup;
@@ -106,12 +97,12 @@ internal sealed partial class EngineManagementService
                     }
                 }
 
-                if (!page.HasMore)
+                if (page.Next is null)
                 {
                     break;
                 }
 
-                after = page.Documents[^1].Id;
+                after = page.Next;
             }
         }
 
@@ -143,30 +134,28 @@ internal sealed partial class EngineManagementService
 
     private static async ValueTask<bool> IsRegisteredAsync(IStorageTransaction transaction, TenantContext storage, CancellationToken cancellationToken) =>
         await OrganizationProjectAsync(transaction, storage.OrganizationId, storage.ProjectId!, cancellationToken).ConfigureAwait(false) is not null
-        && (await GetAsync(transaction, Databases(storage.ProjectId!), storage.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is not null
+        && (await CatalogTables.DatabaseAsync(transaction, storage.ProjectId!, storage.DatabaseId!, cancellationToken).ConfigureAwait(false) is not null
             || await GetAsync(transaction, BackupCatalog.Records(storage.OrganizationId), storage.DatabaseId!, TerraBaseJsonContext.Default.BackupRecord, cancellationToken)
                 .ConfigureAwait(false) is { } backup && backup.ProjectId == storage.ProjectId);
 
     private readonly union CleanupRegistration(bool, Done, Unavailable);
 
-    private static bool SameCleanupIntent(StoredDocument? current, StoredDocument expected) =>
-        current is not null && current.Id == expected.Id && current.Version == expected.Version && current.Scope == expected.Scope
-        && current.Json.Span.SequenceEqual(expected.Json.Span);
+    private static bool SameCleanupIntent(TenantContext? current, TenantContext expected) => current == expected;
 
     private async ValueTask<CatalogCheck> FinishDatabaseCleanupAsync(
-        TenantContext storage, CancellationToken cancellationToken, bool abandonedCreation = false, StoredDocument? intent = null)
+        TenantContext storage, CancellationToken cancellationToken, bool abandonedCreation = false, TenantContext? intent = null)
     {
         // A paged intent can be cleared by registration, or replaced, before recovery reaches it.
         // Revalidate its identity and registration in one snapshot before authorizing either deletion or conflict.
         var registered = await ReadAsync<CleanupRegistration>(async transaction =>
         {
             if (intent is not null && !SameCleanupIntent(
-                await transaction.GetAsync(PendingDatabaseCleanup, storage.DatabaseId!, cancellationToken).ConfigureAwait(false), intent))
+                await CatalogTables.PendingCleanupAsync(transaction, storage.DatabaseId!, cancellationToken).ConfigureAwait(false), intent))
             {
                 return new Done();
             }
 
-            return await GetAsync(transaction, Databases(storage.ProjectId!), storage.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is not null;
+            return await CatalogTables.DatabaseAsync(transaction, storage.ProjectId!, storage.DatabaseId!, cancellationToken).ConfigureAwait(false) is not null;
         }, static error => error, cancellationToken).ConfigureAwait(false);
         if (registered is Unavailable refused)
         {
@@ -219,7 +208,7 @@ internal sealed partial class EngineManagementService
         return await ClearDatabaseCleanupAsync(storage, erasureVerified, cancellationToken, intent).ConfigureAwait(false);
     }
 
-    private async ValueTask<CatalogCheck> ClearDatabaseCleanupAsync(TenantContext storage, bool erasureVerified, CancellationToken cancellationToken, StoredDocument? intent = null)
+    private async ValueTask<CatalogCheck> ClearDatabaseCleanupAsync(TenantContext storage, bool erasureVerified, CancellationToken cancellationToken, TenantContext? intent = null)
     {
         try
         {
@@ -227,7 +216,7 @@ internal sealed partial class EngineManagementService
             var cleared = await WriteAsync<RecordedDeletion>(async transaction =>
             {
                 if (intent is not null && !SameCleanupIntent(
-                    await transaction.GetAsync(PendingDatabaseCleanup, storage.DatabaseId!, cancellationToken).ConfigureAwait(false), intent))
+                    await CatalogTables.PendingCleanupAsync(transaction, storage.DatabaseId!, cancellationToken).ConfigureAwait(false), intent))
                 {
                     return false;
                 }
@@ -238,7 +227,7 @@ internal sealed partial class EngineManagementService
                     return false;
                 }
 
-                await transaction.DeleteAsync(PendingDatabaseCleanup, storage.DatabaseId!, cancellationToken).ConfigureAwait(false);
+                _ = await CatalogTables.DeletePendingCleanupAsync(transaction, storage.DatabaseId!, cancellationToken).ConfigureAwait(false);
                 return true;
             }, static error => error, cancellationToken).ConfigureAwait(false);
             if (cleared is Unavailable refused)
@@ -266,7 +255,7 @@ internal sealed partial class EngineManagementService
     private async ValueTask ReleaseUnrecordedIntentAsync(TenantContext storage)
     {
         var recorded = await ReadAsync<RecordedDeletion>(async transaction =>
-            await transaction.GetAsync(PendingDatabaseCleanup, storage.DatabaseId!, CancellationToken.None).ConfigureAwait(false) is not null,
+            await CatalogTables.PendingCleanupAsync(transaction, storage.DatabaseId!, CancellationToken.None).ConfigureAwait(false) is not null,
             static error => error, CancellationToken.None).ConfigureAwait(false);
         if (recorded is bool exists && !exists)
         {

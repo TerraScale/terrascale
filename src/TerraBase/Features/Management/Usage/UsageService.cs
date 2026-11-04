@@ -218,11 +218,10 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, budget.Token);
         try
         {
-            // The catalog keeps one document per organization, named by its id.
             var listed = await catalog.ReadAsync<OrganizationPage>(async transaction =>
             {
-                var page = await transaction.ListAsync("organizations", after, AllowancePageSize, 1024 * 1024, bounded.Token).ConfigureAwait(false);
-                return new OrganizationIds([.. page.Documents.Select(document => document.Id)], page.HasMore);
+                var page = await CatalogTables.OrganizationIdsAsync(transaction, after, AllowancePageSize, bounded.Token).ConfigureAwait(false);
+                return new OrganizationIds([.. page.Items], page.Next is not null);
             }, static error => error, bounded.Token).ConfigureAwait(false);
             if (listed is not OrganizationIds organizations)
             {

@@ -33,9 +33,8 @@ region holds the database's record and the placement does not include this regio
 - `Cache-Control: no-store`;
 - `ts-replay: region=<regions>` behind the edge ([ts-orch.md](ts-orch.md#ts-replay)).
 
-TerraBase never proxies or forwards the request. Records exist only in the region that created the database, so a
-region without the record answers as for any unknown database. Region pins and regional hosts are in
-[region identity](region-identity.md).
+TerraBase never proxies or forwards the request. A region's catalog holds the databases homed there
+([SQL catalog](sql-catalog.md#regions)), so a region without the record answers as for any unknown database.
 
 ## Region discovery
 

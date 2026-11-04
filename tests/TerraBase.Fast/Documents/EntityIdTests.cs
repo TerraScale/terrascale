@@ -67,7 +67,7 @@ public sealed class EntityIdTests
         }));
         await connection.OpenAsync();
         using var query = connection.CreateCommand();
-        query.CommandText = "SELECT id, body FROM documents WHERE collection IN ('organizations', 'api_keys') AND body IS NOT NULL;";
+        query.CommandText = "SELECT id, body FROM documents WHERE collection = 'api_keys' AND body IS NOT NULL;";
         using var rows = await query.ExecuteReaderAsync();
         var count = 0;
         while (await rows.ReadAsync())
@@ -78,6 +78,17 @@ public sealed class EntityIdTests
             count++;
         }
 
-        await Assert.That(count).IsGreaterThanOrEqualTo(2);
+        await Assert.That(count).IsGreaterThanOrEqualTo(1);
+        rows.Close();
+        query.CommandText = "SELECT id FROM catalog_organizations;";
+        using var organizations = await query.ExecuteReaderAsync();
+        var organizationCount = 0;
+        while (await organizations.ReadAsync())
+        {
+            await Assert.That(EntityIds.IsValid(organizations.GetString(0))).IsTrue();
+            organizationCount++;
+        }
+
+        await Assert.That(organizationCount).IsGreaterThanOrEqualTo(1);
     }
 }

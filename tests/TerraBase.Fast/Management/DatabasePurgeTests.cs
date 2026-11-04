@@ -100,12 +100,8 @@ public sealed class DatabasePurgeTests
         var tenant = Tenant(database);
         using var deleted = await api.Client.DeleteAsync(new Uri(database.Path, UriKind.Relative));
         deleted.EnsureSuccessStatusCode();
-        await PurgeData.WriteAsync(api, async transaction =>
-        {
-            await SystemCatalog.PutAsync(transaction, $"projects/{database.Project}/databases", database.Id,
-                new ManagedDatabase(database.Id, database.Project, database.Name, null, state.Clock.GetUtcNow(), "elsewhere"), TerraBaseJsonContext.Default.ManagedDatabase, CancellationToken.None);
-            await SystemCatalog.PutAsync(transaction, $"projects/{database.Project}/database_names", database.Name, database.Id, TerraBaseJsonContext.Default.String, CancellationToken.None);
-        });
+        await PurgeData.WriteAsync(api, transaction => CatalogTables.PutDatabaseAsync(transaction,
+            new ManagedDatabase(database.Id, database.Project, database.Name, null, state.Clock.GetUtcNow(), "elsewhere"), CancellationToken.None));
         var directory = api.Server.Services.GetRequiredService<ITenantDirectory>();
         await Assert.That(await directory.RegisteredAsync(tenant, CancellationToken.None) is false).IsTrue();
         await Assert.That(await directory.ReplicatesAsync(tenant, CancellationToken.None) is false).IsTrue();
@@ -129,8 +125,8 @@ public sealed class DatabasePurgeTests
         await using var state = new PurgeData();
         await using var api = await state.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await PurgeData.WriteAsync(api, transaction => SystemCatalog.PutAsync(transaction, $"projects/{database.Project}/databases", database.Id,
-            new ManagedDatabase(database.Id, database.Project, database.Name, null, state.Clock.GetUtcNow(), "elsewhere"), TerraBaseJsonContext.Default.ManagedDatabase, CancellationToken.None));
+        await PurgeData.WriteAsync(api, transaction => CatalogTables.PutDatabaseAsync(transaction,
+            new ManagedDatabase(database.Id, database.Project, database.Name, null, state.Clock.GetUtcNow(), "elsewhere"), CancellationToken.None));
         await Assert.That(await api.Server.Services.GetRequiredService<EngineManagementService>().ForgetDatabaseAsync(Tenant(database), CancellationToken.None) is DatabaseForgotten { Forgotten: true }).IsTrue();
         var page = await api.Server.Services.GetRequiredService<SystemCatalog>().ListDatabasePurgesAsync(null, 100, CancellationToken.None);
         await Assert.That(page!.Items).IsEmpty();

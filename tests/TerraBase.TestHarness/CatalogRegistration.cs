@@ -1,44 +1,31 @@
-using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.Management;
-using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Testing;
 
-/// <summary>
-/// Registers databases of chosen ids in a server's catalog: a replication receiver takes only databases its catalog registers.
-/// </summary>
 public static class CatalogRegistration
 {
-    /// <summary>Registers <paramref name="database"/>, or a new database of random ids, and returns it.</summary>
     public static async Task<TenantContext> RegisterAsync(this TerraBaseTestServer server, TenantContext? database = null)
     {
         ArgumentNullException.ThrowIfNull(server);
         database ??= new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
         var (organization, project, id) = (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
         var created = DateTimeOffset.UnixEpoch;
-        (string Collection, string Id, byte[] Json)[] rows =
-        [
-            ("catalog", "version", "\"1\""u8.ToArray()),
-            ("organizations", organization, JsonSerializer.SerializeToUtf8Bytes(
-                new Organization(organization, "registered", EntityIds.New().ToString(), created, database.Plan), TerraBaseJsonContext.Default.Organization)),
-            ($"organizations/{organization}/projects", project, JsonSerializer.SerializeToUtf8Bytes(
-                new Project(project, organization, "registered", created), TerraBaseJsonContext.Default.Project)),
-            ($"projects/{project}/databases", id, JsonSerializer.SerializeToUtf8Bytes(
-                new ManagedDatabase(id, project, id, null, created), TerraBaseJsonContext.Default.ManagedDatabase)),
-        ];
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        var store = await server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(deadline.Token);
-        await using var write = await store.BeginTransactionAsync(write: true, deadline.Token);
-        foreach (var (collection, key, json) in rows)
+        if (await server.Services.GetRequiredService<EngineManagementService>().EnsureCatalogAsync(deadline.Token) is not Done)
         {
-            await write.CreateCollectionAsync(new CollectionInfo(collection, 0), deadline.Token);
-            await write.PutAsync(collection, key, json, deadline.Token);
+            throw new InvalidOperationException("the catalog is unavailable");
         }
 
+        var store = await server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(deadline.Token);
+        await using var write = await store.BeginTransactionAsync(write: true, deadline.Token);
+        _ = await CatalogTables.PutOrganizationAsync(write, new Organization(organization, "registered", EntityIds.New().ToString(), created, database.Plan), deadline.Token);
+        _ = await CatalogTables.PutProjectAsync(write, new Project(project, organization, "registered", created), deadline.Token);
+        await CatalogTables.PutDatabaseAsync(write, new ManagedDatabase(id, project, id, null, created), deadline.Token);
         await write.CommitAsync(deadline.Token);
         return database;
     }

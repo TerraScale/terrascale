@@ -8,5 +8,5 @@ public static class ManagementCatalog
     /// <summary>The immutable version row's document key.</summary>
     public const string VersionId = "version";
     /// <summary>The only management catalog version this build accepts.</summary>
-    public const string Version = "1";
+    public const string Version = "2";
 }

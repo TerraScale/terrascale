@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -19,11 +18,10 @@ internal sealed partial class EngineManagementService
 {
     public ValueTask<ResolveProjectDatabaseResult> ResolveProjectDatabaseAsync(string projectId, string database, CancellationToken cancellationToken) =>
         ReadAsync<ResolveProjectDatabaseResult>(async transaction =>
-            await GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken).ConfigureAwait(false) is { } organizationId
+            await CatalogTables.ProjectOrganizationAsync(transaction, projectId, cancellationToken).ConfigureAwait(false) is { } organizationId
                 && await IsProjectRegisteredAsync(transaction, projectId, organizationId, cancellationToken).ConfigureAwait(false)
                 && await FindDatabaseAsync(transaction, organizationId, projectId, database, cancellationToken).ConfigureAwait(false) is { } tenant
-                && await GetAsync(transaction, Databases(projectId), tenant.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
-                    .ConfigureAwait(false) is { } record && record.Id == tenant.DatabaseId && record.ProjectId == projectId
+                && await CatalogTables.DatabaseAsync(transaction, projectId, tenant.DatabaseId!, cancellationToken).ConfigureAwait(false) is { } record
                     ? new ResolvedProjectDatabase(tenant, record.Placement(options.Region))
                     : ManagementErrors.NotFound,
             static error => error, cancellationToken);
@@ -279,8 +277,7 @@ internal sealed partial class EngineManagementService
             : ReadCachedAsync<DatabaseRecordResult>("placements", _placements, database, async transaction =>
                 !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                     ? UnreadableCatalog
-                    : await GetAsync(transaction, Databases(database.ProjectId), database.DatabaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
-                        .ConfigureAwait(false) is { } record
+                    : await CatalogTables.DatabaseAsync(transaction, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false) is { } record
                         ? new TenantDatabaseRecord(record.Name, record.Placement(options.Region))
                         : ManagementErrors.NotFound,
                 static error => error, static value => value switch
@@ -294,68 +291,13 @@ internal sealed partial class EngineManagementService
     public ValueTask<ReadDatabaseRecordsResult> ReadDatabaseRecordsAsync(string homeRegion, TenantContext? after, CancellationToken cancellationToken) =>
         ReadAsync<ReadDatabaseRecordsResult>(async transaction =>
         {
-            // Check this snapshot before decoding records, even if the primary accepted an earlier version.
             if (!Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false)))
             {
                 return UnreadableCatalog;
             }
 
-            // At most 100 identities, each with three ULIDs: under 22 KiB of character data. Storage scan pages are
-            // separately bounded to 100 documents and 1 MiB. Release the reader before WAN requests or cleanup writes.
-            var records = new List<TenantContext>(CatalogPage);
-            string? afterProject = after?.ProjectId;
-            if (afterProject is not null
-                && await GetAsync(transaction, ProjectOrganizations, afterProject, Id, cancellationToken).ConfigureAwait(false) is { } organization
-                && await ReadProjectAsync(afterProject, organization, after!.DatabaseId).ConfigureAwait(false))
-            {
-                return new TenantDatabasePage(records, records[^1]);
-            }
-
-            // ponytail: scan the paged catalog; index by home region once catalogs hold thousands of databases.
-            DocumentPage projects;
-            do
-            {
-                projects = await transaction.ListAsync(ProjectOrganizations, afterProject, CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-                foreach (var project in projects.Documents)
-                {
-                    if (await ReadProjectAsync(project.Id, JsonSerializer.Deserialize(project.Json.Span, Id)!, afterDatabase: null).ConfigureAwait(false))
-                    {
-                        return new TenantDatabasePage(records, records[^1]);
-                    }
-                }
-
-                afterProject = projects.Documents.Count > 0 ? projects.Documents[^1].Id : afterProject;
-            }
-            while (projects.HasMore);
-
-            return new TenantDatabasePage(records, Next: null);
-
-            async ValueTask<bool> ReadProjectAsync(string project, string organizationId, string? afterDatabase)
-            {
-                DocumentPage databases;
-                do
-                {
-                    databases = await transaction.ListAsync(Databases(project), afterDatabase, CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-                    foreach (var document in databases.Documents)
-                    {
-                        var database = EntityPayload.Read(document, TerraBaseJsonContext.Default.ManagedDatabase)!;
-                        if (database.Home(options.Region) == homeRegion
-                            && !await DatabasePurge.IsDeletedAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false))
-                        {
-                            records.Add(new TenantContext(organizationId, PlanTier.Hobby, project, database.Id));
-                            if (records.Count == CatalogPage)
-                            {
-                                return true;
-                            }
-                        }
-                    }
-
-                    afterDatabase = databases.Documents.Count > 0 ? databases.Documents[^1].Id : afterDatabase;
-                }
-                while (databases.HasMore);
-
-                return false;
-            }
+            var records = await CatalogTables.DatabasesHomedAsync(transaction, homeRegion, options.Region, after, CatalogPage, cancellationToken).ConfigureAwait(false);
+            return new TenantDatabasePage(records, records.Count == CatalogPage ? records[^1] : null);
         }, static error => error, cancellationToken);
 
     public async ValueTask<AdoptDatabaseResult> AdoptDatabaseAsync(TenantContext database, string name, DatabasePlacement placement, CancellationToken cancellationToken)
@@ -420,9 +362,7 @@ internal sealed partial class EngineManagementService
             var check = await CanAddDatabaseAsync(transaction, project, name, cancellationToken).ConfigureAwait(false);
             if (check is TenantContext tenant)
             {
-                await PutAsync(transaction, DatabaseNames(database.ProjectId), name, database.DatabaseId, Id, cancellationToken).ConfigureAwait(false);
-                await PutAsync(transaction, Databases(database.ProjectId), database.DatabaseId, record, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
-                    .ConfigureAwait(false);
+                await CatalogTables.PutDatabaseAsync(transaction, record, cancellationToken).ConfigureAwait(false);
 
             }
 
@@ -451,20 +391,20 @@ internal sealed partial class EngineManagementService
                 return UnreadableCatalog;
             }
 
-            if (await GetAsync(transaction, Databases(database.ProjectId), database.DatabaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
-                .ConfigureAwait(false) is not { } record || placement.Version <= record.PlacementVersion || record.Home(options.Region) == options.Region)
+            if (await CatalogTables.DatabaseAsync(transaction, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false) is not { } record
+                || placement.Version <= record.PlacementVersion || record.Home(options.Region) == options.Region)
             {
                 // The home region decides its databases' placement; nothing older replaces a newer one.
                 return new PlacementUpdate(Updated: false);
             }
 
-            await PutAsync(transaction, Databases(database.ProjectId), database.DatabaseId, record with
+            await CatalogTables.PutDatabaseAsync(transaction, record with
             {
                 HomeRegion = placement.Home,
                 ReplicaRegions = placement.Replicas.Count == 0 ? null : [.. placement.Replicas],
                 PlacementVersion = placement.Version,
                 AllRegions = placement.AllRegions,
-            }, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false);
+            }, cancellationToken).ConfigureAwait(false);
             // Backed up where it is served; a removal leaves no tombstone, so the database can come back with its placement.
             if (placement.Includes(options.Region))
             {
@@ -492,8 +432,7 @@ internal sealed partial class EngineManagementService
         async ValueTask<(TenantContext Storage, ManagedDatabase Record)?> ElsewhereAsync(IStorageTransaction transaction)
         {
             return await OrganizationProjectAsync(transaction, database.OrganizationId, database.ProjectId, cancellationToken).ConfigureAwait(false) is { } tenant
-                && await GetAsync(transaction, Databases(database.ProjectId), database.DatabaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
-                    .ConfigureAwait(false) is { } record
+                && await CatalogTables.DatabaseAsync(transaction, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false) is { } record
                 && record.Home(options.Region) != options.Region
                     ? (tenant with { DatabaseId = record.Id }, record)
                     : null;
@@ -553,7 +492,7 @@ internal sealed partial class EngineManagementService
 
         var found = await ShareMissAsync("record", key, sequence, token => ReadAsync<FindDatabaseRecordResult>(async transaction =>
             await FindDatabaseAsync(transaction, organizationId, projectId, name, token).ConfigureAwait(false) is { } tenant
-            && await GetAsync(transaction, Databases(projectId), tenant.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, token).ConfigureAwait(false) is { } record
+            && await CatalogTables.DatabaseAsync(transaction, projectId, tenant.DatabaseId!, token).ConfigureAwait(false) is { } record
                 ? record
                 : ManagementErrors.NotFound,
             static error => error, token), cancellationToken).ConfigureAwait(false);
@@ -620,8 +559,8 @@ internal sealed partial class EngineManagementService
                 !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                     ? UnreadableCatalog
                     : await ScopeExistsUncheckedAsync(transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false)
-                        && (await GetAsync(transaction, Databases(database.ProjectId), database.DatabaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
-                            .ConfigureAwait(false))?.PlacedIn(options.Region) == true,
+                        && (await CatalogTables.DatabaseAsync(transaction, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false))
+                            ?.PlacedIn(options.Region) == true,
                 static error => error, static value => value is bool, cancellationToken);
     }
 
@@ -634,11 +573,10 @@ internal sealed partial class EngineManagementService
                 !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                     ? UnreadableCatalog
                     : (await ScopeExistsUncheckedAsync(transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false)
-                        && (await GetAsync(transaction, Databases(database.ProjectId), database.DatabaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
-                            .ConfigureAwait(false))?.PlacedIn(options.Region) == true)
+                        && (await CatalogTables.DatabaseAsync(transaction, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false))
+                            ?.PlacedIn(options.Region) == true)
                         || (!await DatabasePurge.IsDeletedAsync(transaction, database.DatabaseId, cancellationToken).ConfigureAwait(false)
-                            && await GetAsync(transaction, PendingDatabaseCleanup, database.DatabaseId, TerraBaseJsonContext.Default.TenantContext, cancellationToken)
-                                .ConfigureAwait(false) is not null),
+                            && await CatalogTables.PendingCleanupAsync(transaction, database.DatabaseId, cancellationToken).ConfigureAwait(false) is not null),
                 static error => error, cancellationToken);
     }
 
@@ -655,23 +593,20 @@ internal sealed partial class EngineManagementService
         if (projectId is null)
         {
             return databaseId is null
-                && await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken)
-                    .ConfigureAwait(false) is not null;
+                && await CatalogTables.OrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false) is not null;
         }
 
         return await OrganizationProjectAsync(transaction, organizationId, projectId, cancellationToken).ConfigureAwait(false) is not null
             && (databaseId is null
-                || await GetAsync(transaction, Databases(projectId), databaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
-                    .ConfigureAwait(false) is not null);
+                || await CatalogTables.DatabaseAsync(transaction, projectId, databaseId, cancellationToken).ConfigureAwait(false) is not null);
     }
 
     private static async ValueTask<TenantContext?> FindDatabaseAsync(
         IStorageTransaction transaction, string organizationId, string projectId, string database, CancellationToken cancellationToken) =>
         await OrganizationProjectAsync(transaction, organizationId, projectId, cancellationToken).ConfigureAwait(false) is { } project
-        && (EntityIds.IsValid(database) ? database : await NameHolderAsync(transaction, projectId, database, cancellationToken).ConfigureAwait(false)) is { } databaseId
-        && await GetAsync(transaction, Databases(projectId), databaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is { } record
-        && record.ProjectId == projectId && (record.Id == database || record.Name == database)
-        && !await DatabasePurge.IsDeletedAsync(transaction, databaseId, cancellationToken).ConfigureAwait(false)
+        && (EntityIds.IsValid(database) ? database : await CatalogTables.DatabaseNamedAsync(transaction, projectId, database, cancellationToken).ConfigureAwait(false)) is { } databaseId
+        && await CatalogTables.DatabaseAsync(transaction, projectId, databaseId, cancellationToken).ConfigureAwait(false) is { } record
+        && (record.Id == database || record.Name == database)
             ? project with { DatabaseId = databaseId }
             : null;
 
@@ -680,7 +615,7 @@ internal sealed partial class EngineManagementService
         IStorageTransaction transaction, string organizationId, string projectId, CancellationToken cancellationToken) =>
         await ProjectTenantAsync(
             transaction,
-            await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false),
+            await CatalogTables.OrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false),
             projectId,
             cancellationToken).ConfigureAwait(false);
 }

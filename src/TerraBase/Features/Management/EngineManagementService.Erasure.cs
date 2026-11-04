@@ -20,24 +20,19 @@ internal sealed partial class EngineManagementService
             return false;
         }
 
-        var databases = await transaction.ListAsync(Databases(project), null, CatalogPage, MaxPageBytes, token).ConfigureAwait(false);
-        foreach (var document in databases.Documents)
+        var databases = await CatalogTables.DatabasesAsync(transaction, project, null, CatalogPage, token).ConfigureAwait(false);
+        foreach (var database in databases.Items)
         {
-            var database = EntityPayload.Read(document, TerraBaseJsonContext.Default.ManagedDatabase)
-                ?? throw new InvalidOperationException("a closing project's database is invalid");
-            var namespaceId = await GetAsync(transaction, ProjectOrganizations, project, Id, token).ConfigureAwait(false);
-            var organization = namespaceId is null ? null : await GetAsync(transaction, Organizations, namespaceId, TerraBaseJsonContext.Default.Organization, token).ConfigureAwait(false);
-            if (organization is null || database.ProjectId != project || database.Id != document.Id)
-            {
-                throw new InvalidOperationException("a closing database has no matching storage namespace");
-            }
+            var namespaceId = await CatalogTables.ProjectOrganizationAsync(transaction, project, token).ConfigureAwait(false);
+            var organization = (namespaceId is null ? null : await CatalogTables.OrganizationAsync(transaction, namespaceId, token).ConfigureAwait(false))
+                ?? throw new InvalidOperationException("a closing database has no matching storage namespace");
 
             var storage = new TenantContext(organization.Id, organization.Plan, project, database.Id);
             _ = await UnregisterRecordAsync(transaction, storage, database, token, customerDeletion: true).ConfigureAwait(false);
         }
 
         await EngineApiKeyStore.RevokeProjectBatchAsync(transaction, project, CatalogPage, MaxPageBytes, token).ConfigureAwait(false);
-        if (databases.HasMore)
+        if (databases.Next is not null)
         {
             return false;
         }

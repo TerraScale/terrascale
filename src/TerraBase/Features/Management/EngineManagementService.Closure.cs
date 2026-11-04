@@ -57,7 +57,7 @@ internal sealed partial class EngineManagementService
 
     private async ValueTask<bool> ClosureOrganizationMatchesAsync(IStorageTransaction transaction, string project, string authorityOrganization, CancellationToken token)
     {
-        if (await GetAsync(transaction, ProjectOrganizations, project, Id, token).ConfigureAwait(false) is not { } namespaceId)
+        if (await CatalogTables.ProjectOrganizationAsync(transaction, project, token).ConfigureAwait(false) is not { } namespaceId)
         {
             return true;
         }
@@ -70,7 +70,7 @@ internal sealed partial class EngineManagementService
         ProjectClosure.IsClosedAsync(transaction, projectId, cancellationToken);
 
     private static async ValueTask<bool> IsProjectEmptyAsync(IStorageTransaction transaction, string projectId, CancellationToken cancellationToken) =>
-        !await AnyAsync(transaction, Databases(projectId), cancellationToken).ConfigureAwait(false)
+        !await CatalogTables.HasDatabasesAsync(transaction, projectId, cancellationToken).ConfigureAwait(false)
         && !await AnyAsync(transaction, EngineApiKeyStore.ProjectKeys(projectId), cancellationToken).ConfigureAwait(false)
         && !await AnyAsync(transaction, ProjectBackupDestinations.Collection(projectId), cancellationToken).ConfigureAwait(false)
         && !await AnyAsync(transaction, Features.FileStorage.FileStorageUsage.Buckets(projectId), cancellationToken).ConfigureAwait(false);

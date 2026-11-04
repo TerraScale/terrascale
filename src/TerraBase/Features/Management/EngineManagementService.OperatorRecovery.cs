@@ -2,7 +2,6 @@ using System.Diagnostics;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
-using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
@@ -60,9 +59,6 @@ internal sealed partial class EngineManagementService
         IStorageTransaction transaction, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken) =>
         options.AuthIssuer is not null
         && await IsProjectRegisteredAsync(transaction, projectId, organizationId, cancellationToken).ConfigureAwait(false)
-        && await GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken).ConfigureAwait(false) == organizationId
-        && await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false)
-            is { CreatedBy: OperatorHandler.KeyId }
-
+        && await CatalogTables.OrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false) is { CreatedBy: OperatorHandler.KeyId }
             ? await DatabaseTenantUncheckedAsync(transaction, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false) : null;
 }

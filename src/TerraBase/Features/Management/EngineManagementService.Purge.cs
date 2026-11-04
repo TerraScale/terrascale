@@ -125,7 +125,7 @@ internal sealed partial class EngineManagementService
         var purge = await GetAsync(transaction, DatabasePurge.Collection, database.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
         return purge is not null
             ? purge.FormatVersion == 1 && DatabasePurge.SameDatabase(purge.Database, database)
-            : await transaction.GetVersionAsync(Databases(database.ProjectId!), database.DatabaseId!, cancellationToken).ConfigureAwait(false) is { Deleted: true };
+            : await CatalogTables.RetiredAsync(transaction, database.DatabaseId!, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask<bool> TryRecordLocalPurgeAbsenceAsync(IStorageTransaction transaction, TenantContext database, bool erasureVerified, CancellationToken cancellationToken)

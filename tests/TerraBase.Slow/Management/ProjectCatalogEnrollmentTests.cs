@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Features.Management;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -36,9 +37,9 @@ public sealed class ProjectCatalogEnrollmentTests
         var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
         await using (var transaction = await system.BeginTransactionAsync(write: false, CancellationToken.None))
         {
-            await Assert.That(await transaction.GetAsync("project_organizations", project, CancellationToken.None)).IsNull();
-            var organizations = await transaction.ListAsync("organizations", afterId: null, limit: 100, maxBytes: 1024 * 1024, CancellationToken.None);
-            await Assert.That(organizations.Documents.Count).IsEqualTo(0);
+            await Assert.That(await CatalogTables.ProjectOrganizationAsync(transaction, project, CancellationToken.None)).IsNull();
+            var organizations = await CatalogTables.OrganizationIdsAsync(transaction, null, 100, CancellationToken.None);
+            await Assert.That(organizations.Items.Count).IsEqualTo(0);
         }
 
         using var creator = api.WithToken(api.Issuer.Mint(actor, token =>

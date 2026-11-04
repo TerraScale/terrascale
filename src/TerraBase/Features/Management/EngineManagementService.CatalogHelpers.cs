@@ -30,7 +30,7 @@ internal sealed partial class EngineManagementService
     private static async ValueTask<AuthorizedOrganization> AuthorizeAsync(
         IStorageTransaction transaction, string userId, string organizationId, bool allowProject, CancellationToken cancellationToken)
     {
-        var organization = await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false);
+        var organization = await CatalogTables.OrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
         if (organization is null || organization.CreatedBy != userId && !(allowProject && ProjectActor(userId, organizationId)))
         {
             return ManagementErrors.NotFound;

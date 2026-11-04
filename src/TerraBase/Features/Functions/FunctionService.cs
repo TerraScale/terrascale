@@ -52,8 +52,7 @@ internal sealed class FunctionService(SystemCatalog catalog, IDocumentService do
         var now = time.GetUtcNow();
         var result = await catalog.WriteDurableAsync<FunctionResult>(async transaction =>
         {
-            if (await SystemCatalog.GetAsync(transaction, $"projects/{tenant.ProjectId}/databases", tenant.DatabaseId!,
-                TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is null)
+            if (await CatalogTables.DatabaseAsync(transaction, tenant.ProjectId!, tenant.DatabaseId!, cancellationToken).ConfigureAwait(false) is null)
             {
                 return new NotFound();
             }

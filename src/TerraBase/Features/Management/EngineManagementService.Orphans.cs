@@ -204,7 +204,7 @@ internal sealed partial class EngineManagementService
             {
                 return false;
             }
-            await PutAsync(transaction, PendingDatabaseCleanup, database.DatabaseId!, database, TerraBaseJsonContext.Default.TenantContext, token).ConfigureAwait(false);
+            _ = await CatalogTables.PutPendingCleanupAsync(transaction, database, token).ConfigureAwait(false);
             await transaction.DeleteAsync(OrphanFiles, id, token).ConfigureAwait(false);
             return true;
         }, static _ => false, token), cancellationToken).ConfigureAwait(false);
@@ -220,7 +220,7 @@ internal sealed partial class EngineManagementService
 
     private static async ValueTask<bool> OwnedFileAsync(IStorageTransaction transaction, TenantContext database, CancellationToken token) =>
         await IsRegisteredAsync(transaction, database, token).ConfigureAwait(false)
-        || await transaction.GetAsync(PendingDatabaseCleanup, database.DatabaseId!, token).ConfigureAwait(false) is not null
+        || await CatalogTables.PendingCleanupAsync(transaction, database.DatabaseId!, token).ConfigureAwait(false) is not null
         || await transaction.GetAsync(DatabasePurge.Collection, database.DatabaseId!, token).ConfigureAwait(false) is not null
         || await HasDeletionAuthorityAsync(transaction, database, token).ConfigureAwait(false);
 }
