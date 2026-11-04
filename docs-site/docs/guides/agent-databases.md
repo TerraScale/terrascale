@@ -58,10 +58,10 @@ restore a backup, and delete the databases. Substitute the IDs returned by earli
 
 | Tool | Arguments |
 | --- | --- |
-| `create_database` | `{"name":"agent-run","ttlSeconds":3600}` |
+| `create_database` | `{"name":"agent-run","ttlHours":1}` |
 | `execute_sql` | `{"databaseId":"<run-id>","sql":"CREATE TABLE results (id TEXT PRIMARY KEY, value TEXT)"}` |
 | `execute_sql` | `{"databaseId":"<run-id>","sql":"INSERT INTO results VALUES ('one', 'ready')"}` |
-| `branch_database` | `{"databaseId":"<run-id>","name":"agent-fork","ttlSeconds":600}` |
+| `fork_database` | `{"databaseId":"<run-id>","name":"agent-fork","ttlHours":0.25}` |
 | `create_scoped_key` | `{"databaseId":"<fork-id>","access":"read_write","ttlSeconds":600}` |
 | `run_sql` | `{"databaseId":"<fork-id>","sql":"SELECT * FROM results"}` |
 | `get_database_schema` | `{"databaseId":"<fork-id>"}` |
@@ -71,6 +71,7 @@ restore a backup, and delete the databases. Substitute the IDs returned by earli
 | `delete_database` | `{"databaseId":"<restored-id>","confirmName":"agent-restored"}` |
 | `delete_database` | `{"databaseId":"<run-id>","confirmName":"agent-run"}` |
 
+MCP database TTLs use `ttlHours`; scoped keys use `ttlSeconds`.
 Fork and restore each need room for another database under the organization's plan. Free allows one database;
 use a plan with capacity for the source and its copy.
 
