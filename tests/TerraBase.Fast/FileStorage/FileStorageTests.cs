@@ -19,8 +19,8 @@ public sealed class FileStorageTests
         var created = await Send(api.Client, HttpMethod.Post, buckets, new { name = "avatars", rules });
         await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
         var bucket = buckets + "/" + created.Json.GetProperty("id").GetString();
-        using var alice = User(api, DocumentApi.NewId());
-        using var bob = User(api, DocumentApi.NewId());
+        using var alice = User(api, DatabaseApi.NewId());
+        using var bob = User(api, DatabaseApi.NewId());
         var actor = alice.DefaultRequestHeaders.GetValues("X-Test-Actor").Single();
         var upload = await Send(alice, HttpMethod.Post, bucket + "/files/upload", new { name = "hello.txt", contentType = "text/plain", size = 5, sha256 = Convert.ToBase64String(new byte[32]), metadata = new { owner = actor } });
         await Assert.That(upload.Status).IsEqualTo(HttpStatusCode.Created);
@@ -53,7 +53,7 @@ public sealed class FileStorageTests
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var backups = new FakeS3();
-        await using var api = await DocumentApi.StartAsync(settings =>
+        await using var api = await DatabaseApi.StartAsync(settings =>
         {
             if (backupConfigured)
             {
@@ -66,7 +66,7 @@ public sealed class FileStorageTests
                 settings["files-s3-secret-access-key"] = "file-only-test-secret";
             }
         }, backupConfigured ? backups.Route : null, cancellationToken: token);
-        await Assert.That((await api.SendAsync(HttpMethod.Get, api.Documents, cancellationToken: token)).Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await SqlApi.ExecuteAsync(api, "SELECT 1")).Status).IsEqualTo(HttpStatusCode.OK);
         using var owner = api.Management.As(api.Tenant.User);
         using var project = api.Management.WithToken(api.Management.Issuer.Mint(api.Tenant.User, descriptor =>
         {
@@ -104,7 +104,7 @@ public sealed class FileStorageTests
         return client;
     }
     private static Task<ApiResponse> Send(HttpClient client, HttpMethod method, string path, object? body = null) =>
-        DocumentApi.SendAsync(client, method, path, body is null ? null : JsonContent.Create(body));
+        DatabaseApi.SendAsync(client, method, path, body is null ? null : JsonContent.Create(body));
 
     private sealed class Objects : IFileObjectStore
     {

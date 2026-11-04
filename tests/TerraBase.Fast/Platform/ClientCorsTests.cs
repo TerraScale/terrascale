@@ -75,12 +75,9 @@ public sealed class ClientCorsTests
 
         (string Route, string Method)[] cases =
         [
-            ("/collections/todos/documents/by-key", "PUT"),
-            ("/collections/todos/query", "POST"),
-            ("/transactions", "POST"),
-            ("/changes", "GET"),
+            ("/sql/execute", "POST"),
             ("/tables/todos/shape", "GET"),
-            ("/COLLECTIONS/todos/query", "POST"),
+            ("/SQL/execute", "POST"),
         ];
 
         foreach (var (route, method) in cases)
@@ -92,7 +89,7 @@ public sealed class ClientCorsTests
             await Assert.That(response.Headers.GetValues("Access-Control-Allow-Origin").Single()).IsEqualTo("*");
             await Assert.That(response.Headers.Contains("Access-Control-Allow-Credentials")).IsFalse();
             await Assert.That(response.Headers.GetValues("Access-Control-Allow-Methods").Single().Split(',')).Contains(method);
-            foreach (var header in new[] { "authorization", "content-type", "if-match", "last-event-id" })
+            foreach (var header in new[] { "authorization", "content-type", "if-none-match" })
             {
                 await Assert.That(response.Headers.GetValues("Access-Control-Allow-Headers").Single().Split(',').Select(value => value.Trim().ToLowerInvariant())).Contains(header);
             }

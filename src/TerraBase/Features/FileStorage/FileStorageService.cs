@@ -3,7 +3,6 @@ using Amazon.S3;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
-using TerraBase.Features.Documents;
 using TerraBase.Features.Management;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Catalog;
@@ -47,7 +46,7 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             return true;
         }
         var policy = write ? bucket.Rules.Write : bucket.Rules.Read;
-        return CollectionRuleAccess.CollectionWide(policy, Access)
+        return CollectionWide(policy, Access)
             || policy?.Owner == true && bucket.Rules.Subject(JsonSerializer.SerializeToUtf8Bytes(file.Metadata, TerraBaseJsonContext.Default.JsonElement)) == Access.Actor;
     }
 
@@ -255,12 +254,12 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             {
                 return Missing;
             }
-            if (Access.DatabaseName is not null || Access.IsEndUser && !CollectionRuleAccess.Granted(definition.Rules, Access, write: false))
+            if (Access.DatabaseName is not null || Access.IsEndUser && !Granted(definition.Rules, Access, write: false))
             {
                 return Denied;
             }
             DocumentFilter filter = new CompareFilter(new DocumentPath(["status"]), Comparison.Equal, new ScalarValue(ScalarKind.Text, "ready"));
-            if (Access.IsEndUser && !CollectionRuleAccess.CollectionWide(definition.Rules.Read, Access))
+            if (Access.IsEndUser && !CollectionWide(definition.Rules.Read, Access))
             {
                 var owner = definition.Rules.Owner!.Split('/').Skip(1).Select(s => s.Replace("~1", "/", StringComparison.Ordinal).Replace("~0", "~", StringComparison.Ordinal));
                 filter = new AndFilter([filter, new CompareFilter(new DocumentPath(["metadata", .. owner]), Comparison.Equal, new ScalarValue(ScalarKind.Text, Access.Actor))]);
@@ -413,4 +412,12 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             _sweepCollection = null;
         }
     }
+
+    /// <summary>Whether a policy grants every end user of the access regardless of ownership.</summary>
+    private static bool CollectionWide(CollectionAccessPolicy? policy, ProjectAccess access) =>
+        policy is not null && (policy.Public || policy.Roles is { } roles && roles.Any(access.Roles.Contains));
+
+    /// <summary>Whether the rules may grant the access a read or write, by role or by ownership.</summary>
+    private static bool Granted(CollectionAccessRules? rules, ProjectAccess access, bool write) =>
+        (write ? rules?.Write : rules?.Read) is { } policy && (CollectionWide(policy, access) || policy.Owner && access.Actor.Length > 0);
 }

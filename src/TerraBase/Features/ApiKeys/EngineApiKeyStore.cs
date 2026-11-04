@@ -3,7 +3,6 @@ using System.Text;
 using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Errors;
-using TerraBase.Features.Documents;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -16,7 +15,7 @@ namespace TerraBase.Features.ApiKeys;
 /// with a SHA-256 secret lookup. Secrets are 256 random bits, so an unsalted hash is sufficient.
 /// Project-scoped operator keys also have a hash entry in <see cref="ProjectKeys"/> so project closure can revoke them.
 /// </summary>
-internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time, ISystemDocumentReader documents) : IApiKeyStore
+internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time) : IApiKeyStore
 {
     private const string Collection = "api_keys";
     private const string Hashes = "api_key_hashes";
@@ -49,19 +48,22 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
             return new NotFound();
         }
 
-        var lookup = await documents.GetSystemAsync(Hashes, Hash(secret), cancellationToken).ConfigureAwait(false);
-        if (lookup is null)
+        var document = await catalog.ReadUncheckedAsync<StoredDocument?>(async transaction =>
         {
-            return new NotFound();
-        }
+            var hash = await transaction.GetAsync(Hashes, Hash(secret), cancellationToken).ConfigureAwait(false);
+            if (hash is null)
+            {
+                return null;
+            }
 
-        var id = JsonSerializer.Deserialize(lookup.Json.Span, TerraBaseJsonContext.Default.String);
-        if (!EntityIds.IsValid(id))
-        {
-            throw new InvalidDataException("the API key lookup names an invalid id");
-        }
+            var keyId = JsonSerializer.Deserialize(hash.Json.Span, TerraBaseJsonContext.Default.String);
+            if (!EntityIds.IsValid(keyId))
+            {
+                throw new InvalidDataException("the API key lookup names an invalid id");
+            }
 
-        var document = await documents.GetSystemAsync(Collection, id, cancellationToken).ConfigureAwait(false);
+            return await transaction.GetAsync(Collection, keyId, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken).ConfigureAwait(false);
         // A key without a tenant scope authenticates nothing; data-plane reads never initialize the catalog.
         return document is null || EntityPayload.Read(document, TerraBaseJsonContext.Default.ApiKey) is not { OrganizationId: not null } key
             || key.ExpiresAt <= time.GetUtcNow()

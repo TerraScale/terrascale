@@ -1,5 +1,4 @@
 using TerraBase.Errors;
-using TerraBase.Features.Documents;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraScale.Endpoints;
@@ -27,7 +26,7 @@ internal sealed class SetEnrolledProjectPlanEndpoint(IProjectCatalog catalog) : 
     public override async ValueTask<IResult> HandleAsync(PlanRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var project = DocumentRoute.Project(HttpContext);
+        var project = DatabaseRoute.Project(HttpContext);
         if (!EntityIds.IsValid(project))
         {
             return ErrorResponse.From(new Validation("project must be a canonical uppercase ULID"));

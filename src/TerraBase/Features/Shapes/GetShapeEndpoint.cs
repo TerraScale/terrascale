@@ -3,7 +3,6 @@ using Microsoft.Net.Http.Headers;
 using Microsoft.OpenApi;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
-using TerraBase.Features.Documents;
 using TerraBase.Features.Qos;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -143,11 +142,11 @@ internal sealed class GetShapeEndpoint(
         headers["TB-Shape-Up-To-Date"] = body.UpToDate ? "true" : "false";
         if (request.Live)
         {
-            headers["TB-Shape-Cursor"] = DocumentRoute.Decimal(flights.NextCursor(request.Cursor));
+            headers["TB-Shape-Cursor"] = DatabaseRoute.Decimal(flights.NextCursor(request.Cursor));
         }
 
         metrics.RecordRead();
-        HttpContext.Response.ContentType = DocumentRoute.JsonMediaType;
+        HttpContext.Response.ContentType = DatabaseRoute.JsonMediaType;
         if (notModified)
         {
             body.Lease?.Dispose();
@@ -178,15 +177,15 @@ internal sealed class GetShapeEndpoint(
         var headers = HttpContext.Response.Headers;
         headers.Vary = "Authorization";
         headers["TB-Shape-Handle"] = lineage.Handle;
-        HttpContext.Response.ContentType = DocumentRoute.JsonMediaType;
+        HttpContext.Response.ContentType = DatabaseRoute.JsonMediaType;
         metrics.RecordRedirect();
-        var location = $"/v1/projects/{Uri.EscapeDataString(DocumentRoute.Project(HttpContext))}/databases/{DocumentRoute.Database(HttpContext)}/tables/{scope.Table}/shape?handle={lineage.Handle}&offset={offset}{QueryString(scope.Query)}";
+        var location = $"/v1/projects/{Uri.EscapeDataString(DatabaseRoute.Project(HttpContext))}/databases/{DatabaseRoute.Database(HttpContext)}/tables/{scope.Table}/shape?handle={lineage.Handle}&offset={offset}{QueryString(scope.Query)}";
         return TypedResults.Redirect(location, permanent: false, preserveMethod: true);
     }
 
     private object CheckRequest()
     {
-        if (DocumentRoute.CheckParameters(HttpContext, "handle", "offset", "live", "cursor", "where", "columns") is Validation invalid)
+        if (DatabaseRoute.CheckParameters(HttpContext, "handle", "offset", "live", "cursor", "where", "columns") is Validation invalid)
         {
             return invalid;
         }

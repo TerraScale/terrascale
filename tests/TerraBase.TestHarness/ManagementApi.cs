@@ -129,6 +129,13 @@ public sealed class ManagementApi : IAsyncDisposable
     }
 
     /// <summary>A client that sends <paramref name="token"/> as its bearer token, or no token when it is null.</summary>
+    /// <summary>A project access token for <paramref name="project"/> with <paramref name="scopes"/> (space-separated).</summary>
+    public string ProjectToken(string project, string scopes) => Issuer.Mint(EntityIds.New().ToString(), token =>
+    {
+        token.Claims["project_id"] = project;
+        token.Claims["scope"] = scopes;
+    });
+
     public HttpClient WithToken(string? token) => Tls.CreateClient(Server.ClientAddress!, token);
 
     /// <summary>A data API client for the client listener that sends <paramref name="apiKey"/>, if any.</summary>
@@ -184,23 +191,27 @@ public sealed class ManagementApi : IAsyncDisposable
         return new Ulid(bytes).ToString();
     }
 
-    /// <summary>The fixture name <see cref="DocumentId"/> encoded in <paramref name="id"/>.</summary>
-    public static string DocumentName(string id) => Encoding.UTF8.GetString(Ulid.Parse(id).ToByteArray()).TrimEnd('\0');
-
-    /// <summary>The data API route of document <see cref="DocumentId"/>(<paramref name="name"/>) of a collection of <paramref name="database"/>.</summary>
-    public static string DocumentPath(ManagedDatabaseRef database, string collection, string name) =>
-        $"{database.Data}/collections/{collection}/documents/by-key?id={System.Uri.EscapeDataString(DocumentId(name))}";
-
-    /// <summary>Creates <paramref name="collection"/> through the data API, unless it exists.</summary>
-    public static async Task CreateCollectionAsync(HttpClient data, ManagedDatabaseRef database, string collection, CancellationToken cancellationToken = default)
+    /// <summary>Posts one SQL statement to <c>…/sql/execute</c> of the database at <paramref name="databasePath"/>.</summary>
+    public static Task<HttpResponseMessage> SqlAsync(HttpClient data, string databasePath, string sql, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(data);
+        return data.PostAsJsonAsync(Uri($"{databasePath}/sql/execute"), new { statements = new[] { new { sql } } }, cancellationToken);
+    }
+
+    /// <summary>Runs one query that must succeed and returns its rows.</summary>
+    public static async Task<JsonElement[]> RowsAsync(HttpClient data, string databasePath, string sql, CancellationToken cancellationToken = default)
+    {
+        using var response = await SqlAsync(data, databasePath, sql, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+        return [.. body.GetProperty("results")[0].GetProperty("rows").EnumerateArray()];
+    }
+
+    /// <summary>Posts one SQL statement to <paramref name="database"/> (see <see cref="SqlAsync(HttpClient, string, string, CancellationToken)"/>).</summary>
+    public static Task<HttpResponseMessage> SqlAsync(HttpClient data, ManagedDatabaseRef database, string sql, CancellationToken cancellationToken = default)
+    {
         ArgumentNullException.ThrowIfNull(database);
-        using var response = await data.PostAsJsonAsync(Uri($"{database.Data}/collections"), new { name = collection }, cancellationToken);
-        if (response.StatusCode != HttpStatusCode.Conflict)
-        {
-            response.EnsureSuccessStatusCode();
-        }
+        return SqlAsync(data, database.Data, sql, cancellationToken);
     }
 
     /// <summary>
@@ -222,34 +233,6 @@ public sealed class ManagementApi : IAsyncDisposable
         }
 
         return await command.ExecuteNonQueryAsync();
-    }
-
-    /// <summary>Replaces the stored JSON of the live document <paramref name="name"/> (see <see cref="ExecuteStoredAsync"/>).</summary>
-    public static async Task ReplaceStoredBodyAsync(string dataDirectory, ManagedDatabaseRef database, string collection, string name, string json)
-    {
-        var changed = await ExecuteStoredAsync(
-            dataDirectory,
-            database,
-            $"UPDATE {TerraBase.Engine.Turso.TursoStorageTransaction.Table(collection)} SET doc = $body WHERE id = $id;",
-            ("$body", json),
-            ("$id", DocumentId(name)));
-        if (changed != 1)
-        {
-            throw new InvalidOperationException("the document to replace does not exist");
-        }
-    }
-
-    /// <summary>
-    /// Creates document <paramref name="name"/> as <c>{}</c> through the data API, then stores <paramref name="json"/> as its
-    /// body straight in the file: for bodies the data API refuses, and for megabytes of seed data a test would otherwise upload.
-    /// </summary>
-    public async Task PutStoredAsync(HttpClient data, ManagedDatabaseRef database, string collection, string name, string json)
-    {
-        ArgumentNullException.ThrowIfNull(data);
-        using var content = new StringContent("{}", Encoding.UTF8, "application/json");
-        using var put = await data.PutAsync(Uri(DocumentPath(database, collection, name)), content);
-        put.EnsureSuccessStatusCode();
-        await ReplaceStoredBodyAsync(Server.DataDirectory, database, collection, name, json);
     }
 
     /// <summary>

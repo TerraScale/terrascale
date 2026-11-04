@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Connections;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
-using TerraBase.Features.Documents;
 using TerraBase.Features.Qos;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -20,7 +19,7 @@ internal sealed class SqlSocketEndpoint(IAuthorizationService authorization, ITe
     /// <inheritdoc />
     public override void Configure()
     {
-        Get(DocumentRoute.DatabaseRoute + "/sql/ws");
+        Get(DatabaseRoute.Template + "/sql/ws");
         Name("connectSql");
         Summary("Runs SQL over a WebSocket");
         Description("""
@@ -40,7 +39,7 @@ internal sealed class SqlSocketEndpoint(IAuthorizationService authorization, ITe
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        if (DocumentRoute.CheckParameters(HttpContext) is Validation invalid)
+        if (DatabaseRoute.CheckParameters(HttpContext) is Validation invalid)
         {
             return ErrorResponse.From(invalid);
         }
@@ -61,7 +60,7 @@ internal sealed class SqlSocketEndpoint(IAuthorizationService authorization, ITe
         }
 
         var canWrite = (await authorization.AuthorizeAsync(HttpContext.User, HttpContext, ApiKeyScopes.DocumentsWrite)).Succeeded;
-        return await DocumentRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
+        return await DatabaseRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
         {
             Validation error => ErrorResponse.From(error),
             NotFound error => ErrorResponse.From(error),

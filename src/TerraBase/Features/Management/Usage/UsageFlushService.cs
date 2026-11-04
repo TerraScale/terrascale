@@ -1,6 +1,5 @@
 using TerraBase.Configuration;
 using TerraBase.Engine;
-using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Logs;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -8,7 +7,7 @@ using ZLogger;
 namespace TerraBase.Features.Management.Usage;
 
 internal sealed class UsageFlushService(
-    UsageMeter meter, QueryFieldRecorder recorder, QueryShapeRecorder shapes, TimeProvider time, TerraBaseOptions options, ILogger<UsageFlushService> logger,
+    UsageMeter meter, TimeProvider time, TerraBaseOptions options, ILogger<UsageFlushService> logger,
     IStorageEngine engine, IRequestLogs logs, Features.Qos.IStorageQuota quota) : BackgroundService
 {
     private long _storageHour = -1;
@@ -141,7 +140,7 @@ internal sealed class UsageFlushService(
         }
     }
 
-    private Func<CancellationToken, ValueTask>[] Flushes => [meter.FlushAsync, recorder.FlushAsync, shapes.FlushAsync, logs.FlushAsync];
+    private Func<CancellationToken, ValueTask>[] Flushes => [meter.FlushAsync, logs.FlushAsync];
 
     private ValueTask ReportActive(CancellationToken cancellationToken)
     {

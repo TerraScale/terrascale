@@ -1,7 +1,6 @@
 using Microsoft.OpenApi;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
-using TerraBase.Features.Documents;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -60,7 +59,7 @@ internal sealed class GetShapeManifestEndpoint(
             return Error(resolved);
         }
 
-        if (DocumentRoute.CheckParameters(HttpContext, "handle", "offset", "where", "columns") is Validation invalid)
+        if (DatabaseRoute.CheckParameters(HttpContext, "handle", "offset", "where", "columns") is Validation invalid)
         {
             return ErrorResponse.From(invalid);
         }

@@ -37,8 +37,10 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
             var database = await api.CreateManagedDatabaseAsync("main");
             await api.SetPlanAsync(api.User, database.Organization, "enterprise");
             var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
-            await ManagementApi.CreateCollectionAsync(data, database, "people");
-            await ManagementApi.CreateCollectionAsync(data, database, "load");
+            foreach (var table in new[] { "people", "load" })
+            {
+                (await ManagementApi.SqlAsync(data, database, $"CREATE TABLE {table} (id TEXT PRIMARY KEY, text TEXT NOT NULL)")).EnsureSuccessStatusCode();
+            }
             return new BackupShippingHost(api, s3, time, database, data);
         }
         catch
@@ -61,23 +63,24 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
         [.. S3.Objects.Keys.Where(key => key.StartsWith($"{File}/wal/{generation}/", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal).Select(key => BackupLayout.ParseSegment(key)!)];
 
-    public async Task PutAsync(string collection, string name, string text, CancellationToken cancellationToken)
+    /// <summary>Upserts row <paramref name="name"/> of table <paramref name="table"/> (<c>people</c> or <c>load</c>).</summary>
+    public async Task PutAsync(string table, string name, string text, CancellationToken cancellationToken)
     {
-        using var response = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(Database, collection, name)), new { text }, cancellationToken);
+        using var response = await SqlAsync(Database.Data, $"INSERT INTO {table} (id, text) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET text = excluded.text", [name, text], cancellationToken);
         response.EnsureSuccessStatusCode();
     }
 
-    public async Task<string?> ReadAsync(string databaseName, string collection, string name, CancellationToken cancellationToken)
+    /// <summary>The text of row <paramref name="name"/> in the database named <paramref name="databaseName"/>, or null.</summary>
+    public async Task<string?> ReadAsync(string databaseName, string table, string name, CancellationToken cancellationToken)
     {
-        using var response = await data.GetAsync(ManagementApi.Uri(ManagementApi.DocumentPath(Database with { Name = databaseName }, collection, name)), cancellationToken);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-        {
-            return null;
-        }
-
+        using var response = await SqlAsync((Database with { Name = databaseName }).Data, $"SELECT text FROM {table} WHERE id = ?", [name], cancellationToken);
         response.EnsureSuccessStatusCode();
-        return (await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("document").GetProperty("text").GetString();
+        var rows = (await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("results")[0].GetProperty("rows");
+        return rows.GetArrayLength() == 0 ? null : rows[0][0].GetString();
     }
+
+    private Task<HttpResponseMessage> SqlAsync(string path, string sql, string[] args, CancellationToken cancellationToken) =>
+        data.PostAsJsonAsync(ManagementApi.Uri(path + "/sql/execute"), new { statements = new[] { new { sql, args } } }, cancellationToken);
 
     public async Task RestoreAsync(DateTimeOffset at, string name, CancellationToken cancellationToken)
     {

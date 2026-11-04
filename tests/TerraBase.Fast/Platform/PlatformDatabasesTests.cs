@@ -26,14 +26,14 @@ public sealed partial class PlatformDatabasesTests
         await SeededAsync(server);
         using var storage = PeerTls.CreateClient(server.BaseAddress);
 
-        using var collection = await storage.PostAsJsonAsync(ManagementApi.Uri(Auth + "/collections"), new { name = "users" });
-        using var written = await storage.PutAsJsonAsync(ManagementApi.Uri(Auth + "/collections/users/documents/by-key?id=" + ManagementApi.DocumentId("ada")), new { name = "Ada" });
-        using var read = await storage.GetAsync(ManagementApi.Uri(Auth + "/collections/users/documents/by-key?id=" + ManagementApi.DocumentId("ada")));
-        using var dashboard = await storage.GetAsync(ManagementApi.Uri(Dashboard + "/collections"));
+        using var table = await ManagementApi.SqlAsync(storage, Auth, "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
+        using var written = await ManagementApi.SqlAsync(storage, Auth, "INSERT INTO users (name) VALUES ('Ada')");
+        var read = await ManagementApi.RowsAsync(storage, Auth, "SELECT name FROM users");
+        using var dashboard = await ManagementApi.SqlAsync(storage, Dashboard, "SELECT 1");
 
-        await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That(table.IsSuccessStatusCode).IsTrue();
         await Assert.That(written.IsSuccessStatusCode).IsTrue();
-        await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("document").GetProperty("name").GetString()).IsEqualTo("Ada");
+        await Assert.That(read[0][0].GetString()).IsEqualTo("Ada");
         await Assert.That(dashboard.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
@@ -45,10 +45,10 @@ public sealed partial class PlatformDatabasesTests
         using var storage = PeerTls.CreateClient(server.BaseAddress);
 
         // These are the shared contracts consumed by auth and dashboard through ts-dotnet.
-        using var auth = await storage.GetAsync(ManagementApi.Uri("/v1/projects/00000000000000000000000002/databases/ts-auth/collections"));
-        using var dashboard = await storage.GetAsync(ManagementApi.Uri("/v1/projects/00000000000000000000000005/databases/ts-dashboard/collections"));
-        using var wrongAuth = await storage.GetAsync(ManagementApi.Uri("/v1/projects/00000000000000000000000005/databases/ts-auth/collections"));
-        using var wrongDashboard = await storage.GetAsync(ManagementApi.Uri("/v1/projects/00000000000000000000000002/databases/ts-dashboard/collections"));
+        using var auth = await ManagementApi.SqlAsync(storage, "/v1/projects/00000000000000000000000002/databases/ts-auth", "SELECT 1");
+        using var dashboard = await ManagementApi.SqlAsync(storage, "/v1/projects/00000000000000000000000005/databases/ts-dashboard", "SELECT 1");
+        using var wrongAuth = await ManagementApi.SqlAsync(storage, "/v1/projects/00000000000000000000000005/databases/ts-auth", "SELECT 1");
+        using var wrongDashboard = await ManagementApi.SqlAsync(storage, "/v1/projects/00000000000000000000000002/databases/ts-dashboard", "SELECT 1");
 
         await Assert.That(auth.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(dashboard.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -81,8 +81,8 @@ public sealed partial class PlatformDatabasesTests
                 token.Claims["database"] = database.Id;
                 token.Claims["scope"] = "databases:read documents:read";
             }));
-            using var read = await client.GetAsync(ManagementApi.Uri($"/v1/projects/{database.ProjectId}/databases/{name}/collections"));
-            using var other = await client.GetAsync(ManagementApi.Uri(name == PlatformDatabases.Auth ? Dashboard + "/collections" : Auth + "/collections"));
+            using var read = await ManagementApi.SqlAsync(client, $"/v1/projects/{database.ProjectId}/databases/{name}", "SELECT 1");
+            using var other = await ManagementApi.SqlAsync(client, name == PlatformDatabases.Auth ? Dashboard : Auth, "SELECT 1");
             await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(other.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }
@@ -96,7 +96,7 @@ public sealed partial class PlatformDatabasesTests
                 token.Claims["project_id"] = PlatformDatabases.AuthProjectId;
                 token.Claims["scope"] = "databases:read documents:read";
             }));
-            using var response = await rejected.GetAsync(ManagementApi.Uri(Auth + "/collections"));
+            using var response = await ManagementApi.SqlAsync(rejected, Auth, "SELECT 1");
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         }
 

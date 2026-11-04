@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.Features;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
-using TerraBase.Features.Documents;
 using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Features.UserAuth;
@@ -94,7 +93,7 @@ internal static class QosExtensions
             context.Features.Set(new QosRequestLease(lease));
         }
 
-        if (context.Request.ContentLength > DocumentRoute.MaxRequestBytes)
+        if (context.Request.ContentLength > DatabaseRoute.MaxRequestBytes)
         {
             await BadRequests.WriteAsync(context, StatusCodes.Status413PayloadTooLarge, "payload_too_large", "the request body exceeds the size limit", null).ConfigureAwait(false);
             return;
@@ -102,12 +101,7 @@ internal static class QosExtensions
 
         if (context.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit)
         {
-            bodyLimit.MaxRequestBodySize = Math.Min(bodyLimit.MaxRequestBodySize ?? long.MaxValue, DocumentRoute.MaxRequestBytes);
-        }
-
-        if (tenant is not null)
-        {
-            context.RequestServices.GetRequiredService<IDocumentCacheQuota>().Reconcile(tenant);
+            bodyLimit.MaxRequestBodySize = Math.Min(bodyLimit.MaxRequestBodySize ?? long.MaxValue, DatabaseRoute.MaxRequestBytes);
         }
 
         using var scope = QosContext.Enter(tenant, admission: admission);

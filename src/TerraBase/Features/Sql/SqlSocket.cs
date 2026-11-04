@@ -5,7 +5,6 @@ using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.Authorization;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
-using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Logs;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
@@ -144,7 +143,7 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
         }
 
         _canWrite = (await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.DocumentsWrite).ConfigureAwait(false)).Succeeded;
-        switch (await DocumentRoute.CheckTenantAsync(context, _services.GetRequiredService<ITenantDirectory>(), cancellationToken).ConfigureAwait(false))
+        switch (await DatabaseRoute.CheckTenantAsync(context, _services.GetRequiredService<ITenantDirectory>(), cancellationToken).ConfigureAwait(false))
         {
             case TenantContext found:
                 _database = found;
@@ -332,7 +331,7 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
             return CredentialRevoked;
         }
 
-        return await DocumentRoute.CheckTenantAsync(context, _services.GetRequiredService<ITenantDirectory>(), cancellationToken).ConfigureAwait(false) switch
+        return await DatabaseRoute.CheckTenantAsync(context, _services.GetRequiredService<ITenantDirectory>(), cancellationToken).ConfigureAwait(false) switch
         {
             TenantContext found when found.DatabaseId == Database.DatabaseId && found.OrganizationId == Database.OrganizationId => null,
             Unavailable error => error,

@@ -46,25 +46,23 @@ public sealed class OperatorTests
     }
 
     [Test]
-    public async Task The_operator_reads_and_writes_a_projects_documents_on_the_internal_listener_with_the_peer_credential()
+    public async Task The_operator_reads_and_writes_a_projects_rows_on_the_internal_listener_with_the_peer_credential()
     {
         // ts-auth's own storage: it reaches TerraBase over NetBird with the peer credential.
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync("auth");
         using var storage = PeerTls.CreateClient(api.Server.BaseAddress);
-        await ManagementApi.CreateCollectionAsync(storage, database, "users");
-        var path = ManagementApi.Uri(ManagementApi.DocumentPath(database, "users", "ada"));
-
-        using var written = await storage.PutAsJsonAsync(path, new { name = "Ada" });
-        using var read = await storage.GetAsync(path);
+        using var created = await ManagementApi.SqlAsync(storage, database, "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
+        using var written = await ManagementApi.SqlAsync(storage, database, "INSERT INTO users (name) VALUES ('Ada')");
+        var read = await ManagementApi.RowsAsync(storage, database.Data, "SELECT name FROM users");
         using var anonymous = api.WithToken(null);
-        using var onPublic = await anonymous.GetAsync(path);
-        using var unknownProject = await storage.GetAsync(ManagementApi.Uri($"/v1/projects/{EntityIds.New()}/databases/auth/collections/users/documents"));
+        using var onPublic = await ManagementApi.SqlAsync(anonymous, database, "SELECT name FROM users");
+        using var unknownProject = await ManagementApi.SqlAsync(storage, $"/v1/projects/{EntityIds.New()}/databases/auth", "SELECT 1");
         using var managementWithoutUser = await storage.GetAsync(ManagementApi.Uri(Organizations));
 
+        await Assert.That(created.IsSuccessStatusCode).IsTrue();
         await Assert.That(written.IsSuccessStatusCode).IsTrue();
-        await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("document").GetProperty("name").GetString()).IsEqualTo("Ada");
+        await Assert.That(read[0][0].GetString()).IsEqualTo("Ada");
         await Assert.That(onPublic.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(unknownProject.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(managementWithoutUser.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);

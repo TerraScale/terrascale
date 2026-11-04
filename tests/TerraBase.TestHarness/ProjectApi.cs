@@ -28,7 +28,7 @@ internal sealed class ProjectApi : IAsyncDisposable
             fixture.Database = await fixture.Api.CreateManagedDatabaseAsync();
             await fixture.Api.VerifyCatalogAsync(CancellationToken.None);
             fixture._client = fixture.ProjectClient();
-            await ManagementApi.CreateCollectionAsync(fixture.Client, fixture.Database, "items", token);
+            (await ManagementApi.SqlAsync(fixture.Client, fixture.Database, "CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT)", token)).EnsureSuccessStatusCode();
             return fixture;
         }
         catch

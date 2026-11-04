@@ -4,34 +4,22 @@ using System.Text.Json.Serialization;
 using TerraBase.Engine;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
-using TerraBase.Features.Documents;
 using TerraBase.Features.Health;
-using TerraBase.Features.Import;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Backups;
-using TerraBase.Features.Management.Indexes;
-using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Logs;
-using TerraBase.Features.Management.Schema;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Pressure;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Sql;
 using TerraBase.Features.UserAuth;
-using TerraBase.Features.Functions;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Hosting;
 
-[JsonSerializable(typeof(DeployFunctionRequest))]
-[JsonSerializable(typeof(FunctionBody))]
-[JsonSerializable(typeof(FunctionBody[]))]
 [JsonSerializable(typeof(ManagedDatabaseBody))]
 [JsonSerializable(typeof(ManagedDatabaseBody[]))]
-[JsonSerializable(typeof(FunctionLogBody))]
-[JsonSerializable(typeof(FunctionLogBody[]))]
-[JsonSerializable(typeof(FunctionRecord))]
 [JsonSerializable(typeof(TerraBase.Features.FileStorage.FileBucket))]
 [JsonSerializable(typeof(TerraBase.Features.FileStorage.CreateFileBucketRequest))]
 [JsonSerializable(typeof(TerraBase.Features.FileStorage.FileBucketRulesRequest))]
@@ -40,75 +28,30 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(TerraBase.Features.FileStorage.FileSignedUrl))]
 [JsonSerializable(typeof(TerraBase.Features.FileStorage.FileBucketPage))]
 [JsonSerializable(typeof(TerraBase.Features.FileStorage.FileObjectPage))]
-[JsonSerializable(typeof(FunctionSchedule))]
-[JsonSerializable(typeof(CollectionSchemaPreviewBody))]
 [JsonSerializable(typeof(DatabaseRequestLogs))]
 [JsonSerializable(typeof(RequestLogRecord))]
 [JsonSerializable(typeof(Ulid))]
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, MaxDepth = RequestJson.StoredDocumentMaxDepth + 8)]
-[JsonSerializable(typeof(CreateImportRequest))]
-[JsonSerializable(typeof(UpdateImportRequest))]
-[JsonSerializable(typeof(StartImportRequest))]
-[JsonSerializable(typeof(ImportJobBody))]
-[JsonSerializable(typeof(ImportJobRecord))]
-[JsonSerializable(typeof(ImportStateRecord))]
-[JsonSerializable(typeof(ImportManifest))]
-[JsonSerializable(typeof(ImportStored))]
-[JsonSerializable(typeof(ImportPreview))]
 [JsonSerializable(typeof(ApiKey))]
-[JsonSerializable(typeof(AppliedIndexRecommendation))]
 [JsonSerializable(typeof(BackupPolicy))]
 [JsonSerializable(typeof(BackupStatus))]
 [JsonSerializable(typeof(BackupStatusRecord))]
 [JsonSerializable(typeof(BackupPolicyRequest))]
-[JsonSerializable(typeof(ExportSchedule))]
-[JsonSerializable(typeof(ExportScheduleRequest))]
-[JsonSerializable(typeof(ExportScheduleRecord))]
 [JsonSerializable(typeof(BackupRecord))]
 [JsonSerializable(typeof(BackupSchedule))]
-[JsonSerializable(typeof(CollectionList))]
 [JsonSerializable(typeof(CollectionAccessRules))]
-[JsonSerializable(typeof(CollectionRulesBody))]
-[JsonSerializable(typeof(CollectionSchema))]
 [JsonSerializable(typeof(UniqueSchema))]
-[JsonSerializable(typeof(UniqueSchemaRequest))]
 [JsonSerializable(typeof(CreateApiKeyRequest))]
 [JsonSerializable(typeof(CreatedApiKeyBody))]
-[JsonSerializable(typeof(CreateIndexRequest))]
 [JsonSerializable(typeof(DatabaseBackup))]
 [JsonSerializable(typeof(ErrorBody))]
-[JsonSerializable(typeof(DatabaseChangeCursor))]
-[JsonSerializable(typeof(DatabaseChangeEvent))]
-[JsonSerializable(typeof(DatabaseBody))]
 [JsonSerializable(typeof(DatabaseOwner))]
 [JsonSerializable(typeof(DatabaseUsage))]
-[JsonSerializable(typeof(CollectionBody))]
-[JsonSerializable(typeof(CollectionSchemaBody))]
-[JsonSerializable(typeof(CollectionTtlBody))]
-[JsonSerializable(typeof(CollectionPageBody))]
-[JsonSerializable(typeof(CreateCollectionRequest))]
-[JsonSerializable(typeof(DocumentBody))]
-[JsonSerializable(typeof(DocumentPageBody))]
-[JsonSerializable(typeof(ExportLineBody))]
 [JsonSerializable(typeof(PlatformDatabaseListBody))]
-[JsonSerializable(typeof(IndexBody))]
-[JsonSerializable(typeof(IndexListBody))]
-[JsonSerializable(typeof(IndexRecommendationListBody))]
-[JsonSerializable(typeof(WriteBody))]
-[JsonSerializable(typeof(QueryRequest))]
-[JsonSerializable(typeof(IReadOnlyList<QuerySortRequest>))]
 [JsonSerializable(typeof(IReadOnlyList<JsonElement>))]
-[JsonSerializable(typeof(PatchOpsRequest))]
 [JsonSerializable(typeof(PointInTimeRestoreRequest))]
 [JsonSerializable(typeof(PointInTimePlanRequest))]
 [JsonSerializable(typeof(PointInTimePlan))]
-[JsonSerializable(typeof(RecoveryPreviewRequest))]
-[JsonSerializable(typeof(RecoveryPreview))]
-[JsonSerializable(typeof(RecoveryRequest))]
-[JsonSerializable(typeof(RecoveryApproval))]
-[JsonSerializable(typeof(TransactionRequest))]
-[JsonSerializable(typeof(TransactionOpRequest))]
-[JsonSerializable(typeof(TransactionBody))]
 [JsonSerializable(typeof(JsonElement))]
 [JsonSerializable(typeof(JsonArray))]
 [JsonSerializable(typeof(JsonNode))]
@@ -132,7 +75,6 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(ManagementPage<ManagedDatabaseBody>))]
 [JsonSerializable(typeof(ManagementPage<Organization>))]
 [JsonSerializable(typeof(ManagementPage<Project>))]
-[JsonSerializable(typeof(ManagementPage<SavedQuery>))]
 [JsonSerializable(typeof(NameRequest))]
 [JsonSerializable(typeof(DatabaseRegionsRequest))]
 [JsonSerializable(typeof(OpCounts))]
@@ -155,18 +97,8 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(ProjectUsage))]
 [JsonSerializable(typeof(AllowanceUsagePage))]
 [JsonSerializable(typeof(ProjectAnalytics))]
-[JsonSerializable(typeof(QueryFieldUsage))]
-[JsonSerializable(typeof(QueryShapeListBody))]
-[JsonSerializable(typeof(QueryShapeRecord))]
-[JsonSerializable(typeof(QueryShapeStats))]
 [JsonSerializable(typeof(RestoreWindow))]
 [JsonSerializable(typeof(RegionsBody))]
-[JsonSerializable(typeof(SavedQuery))]
-[JsonSerializable(typeof(SavedQueryEntry))]
-[JsonSerializable(typeof(SavedQueryRequest))]
-[JsonSerializable(typeof(SqlCheckBody))]
-[JsonSerializable(typeof(SqlRequest))]
-[JsonSerializable(typeof(SqlResultBody))]
 [JsonSerializable(typeof(SqlExecuteRequest))]
 [JsonSerializable(typeof(SqlExecuteBody))]
 [JsonSerializable(typeof(SqlErrorBody))]
