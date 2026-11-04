@@ -39,7 +39,16 @@ namespace TerraScale.Dashboard.Features.Databases
                     const rows = await db.query("SELECT 1");
                     """),
                 new("go", "Go", $$"""
-                    c, err := v1.New(v1.Config{Token: os.Getenv("TERRASCALE_API_KEY")})
+                    tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{
+                        Key: os.Getenv("TERRASCALE_API_KEY"), Project: "{{projectId}}",
+                    })
+                    if err != nil {
+                        panic(err)
+                    }
+                    c, err := v1.New(v1.Config{TokenSource: tokens})
+                    if err != nil {
+                        panic(err)
+                    }
                     db := c.Database("{{projectId}}", "{{database}}")
                     rows, err := db.Query(ctx, "SELECT 1")
                     """),
