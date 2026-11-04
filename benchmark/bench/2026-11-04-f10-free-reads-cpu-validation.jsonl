@@ -1,0 +1,5 @@
+{"at": 1793824171.1218188, "cores": 2.0, "affinity_cpus": 4, "cpu_percent": 42.47518722087989, "core_percent": 84.95037444175978, "pid": 3023650, "start_ticks": 114685863, "source": "proc_cgroup_v2"}
+{"at": 1793824172.1224477, "cores": 2.0, "affinity_cpus": 4, "cpu_percent": 15.490262047451512, "core_percent": 30.980524094903025, "pid": 3023650, "start_ticks": 114685863, "source": "proc_cgroup_v2"}
+{"at": 1793824173.1230764, "cores": 2.0, "affinity_cpus": 4, "cpu_percent": 9.993703458165283, "core_percent": 19.987406916330567, "pid": 3023650, "start_ticks": 114685863, "source": "proc_cgroup_v2"}
+{"at": 1793824174.1236968, "cores": 2.0, "affinity_cpus": 4, "cpu_percent": 20.48728456422372, "core_percent": 40.97456912844744, "pid": 3023650, "start_ticks": 114685863, "source": "proc_cgroup_v2"}
+{"at": 1793824175.1243162, "cores": 2.0, "affinity_cpus": 4, "cpu_percent": 11.49288303351513, "core_percent": 22.98576606703026, "pid": 3023650, "start_ticks": 114685863, "source": "proc_cgroup_v2"}
