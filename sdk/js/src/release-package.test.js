@@ -33,12 +33,13 @@ test("packed SDK independently installs its project-scoped JavaScript and declar
     assert.doesNotMatch(listing, /^package\/(?:src\/better-auth\.js|types\/better-auth\.d\.ts)$/mu);
     assert.doesNotMatch(listing, /^package\/(?:src|types)\/(?:local\/|tanstack\/|(?:postgres|schema|sql|database-view|database-codec|database-types)\.(?:js|d\.ts)$)/mu);
     await writeFile(path.join(consumer, "package.json"), JSON.stringify({ type: "module" }));
-    await npmRun(["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball, "typescript@5.9.3", "react@19.2.8"], consumer);
+    // The locked npm ci already cached these exact packages; qualification must not wait on registry metadata.
+    await npmRun(["install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund", tarball, "typescript@5.9.3", "react@19.2.8"], consumer);
     const manifest = JSON.parse(await readFile(path.join(consumer, "node_modules/@terrascale/sdk/package.json"), "utf8"));
     await qualifyRuntimeDependencies(consumer, manifest.dependencies);
     assert.equal(manifest.bin, undefined);
     await writeFile(path.join(consumer, "caller.ts"), installedCaller);
-    await npmRun(["exec", "--", "tsc", "--noEmit", "--strict", "--skipLibCheck", "--target", "ES2023", "--module", "NodeNext", "--moduleResolution", "NodeNext", "caller.ts"], consumer);
+    await run(process.execPath, [path.join(consumer, "node_modules/typescript/bin/tsc"), "--noEmit", "--strict", "--skipLibCheck", "--target", "ES2023", "--module", "NodeNext", "--moduleResolution", "NodeNext", "caller.ts"], { cwd: consumer });
     await run(process.execPath, ["caller.ts"], { cwd: consumer });
     await run(process.execPath, ["--conditions=browser", "--input-type=module", "--eval",
       "import assert from 'node:assert/strict'; for (const entry of ['local','better-auth','postgres','schema','sql','tanstack','codegen']) await assert.rejects(import('@terrascale/sdk/' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });"], { cwd: consumer });
