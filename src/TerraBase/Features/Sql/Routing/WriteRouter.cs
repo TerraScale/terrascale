@@ -59,6 +59,12 @@ internal readonly record struct StatementRoute(WritePath Path, string Reason);
 public interface ILocalCommitPath
 {
     bool Ready(TenantContext database);
+
+    /// <summary>
+    /// Whether a local commit is acknowledged on two nodes of the region (PIVOT D16): the region's second node answers and the
+    /// push stream is ready. Without it, only <c>durability=home</c> writes commit locally; the others go home.
+    /// </summary>
+    bool TwoNodeAck { get; }
 }
 
 internal sealed class WriteRouter(
@@ -73,7 +79,7 @@ internal sealed class WriteRouter(
         "Writes of replica regions by the router's decision (route, reason) and where they committed (commit).");
 
     private bool LocalCommitAvailable(TenantContext database, bool homeDurable) =>
-        homeDurable && _clock?.Allowed == true && _path?.Ready(database) == true;
+        _clock?.Allowed == true && _path?.Ready(database) == true && (homeDurable || _path.TwoNodeAck);
 
     public async ValueTask<WriteRoute> RouteAsync(
         TenantContext database, IReplicaReader? reader, IReadOnlyList<string> statements, WriteOverride preference, bool homeDurable,
