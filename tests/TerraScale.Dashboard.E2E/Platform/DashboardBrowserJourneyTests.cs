@@ -39,6 +39,7 @@ namespace TerraScale.Dashboard.E2E.Platform
                     await SubmitAsync("form:is([action=\"/api/v1/dashboard/profile\"],[action^=\"/api/v1/dashboard/profile?\"])", "Save profile");
 
                     await GotoAsync("/databases");
+                    await ShotAsync("databases");
                     await page.GetByRole(AriaRole.Button, new() { Name = "New database", Exact = true }).First.ClickAsync();
                     await page.Locator("#create-database[open]").WaitForAsync();
                     foreach (var invalid in new[] { "Orders", "-orders", "orders-" })
@@ -56,10 +57,15 @@ namespace TerraScale.Dashboard.E2E.Platform
                     await page.WaitForFunctionAsync(pressed, true);
                     await home.SelectOptionAsync("GRU");
                     await page.WaitForFunctionAsync(pressed, false);
+                    await ShotAsync("create-database");
                     await SubmitAsync("#create-database form", "Create database");
                     var databaseId = new Uri(page.Url).AbsolutePath.Split('/').ElementAtOrDefault(2);
                     await Assert.That(databaseId).IsNotNullOrEmpty().Because("Created database opens its details");
                     await ShotAsync("database");
+                    await GotoAsync($"/databases/{databaseId}/branches");
+                    await ShotAsync("database-fork");
+                    await GotoAsync($"/databases/{databaseId}/settings");
+                    await ShotAsync("database-settings");
                     await GotoAsync($"/databases/{databaseId}/documents");
                     await page.GetByRole(AriaRole.Button, new() { Name = "New collection", Exact = true }).Last.ClickAsync();
                     await page.Locator("#new-collection[open]").WaitForAsync();
