@@ -52,7 +52,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 }
                 catch (Exception error) when (KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException) { return Failure(error); }
             });
-            foreach (var tab in new[] { "overview", "tables", "region", "backups", "branches", "danger" })
+            foreach (var tab in new[] { "overview", "tables", "replication", "backups", "branches", "danger" })
             {
                 var section = tab;
                 endpoints.MapGet(tab == "overview" ? "/databases/{databaseId}" : "/databases/{databaseId}/" + tab,
@@ -68,8 +68,8 @@ namespace TerraScale.Dashboard.Features.Databases
                         {
                             return HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "danger") + "?delete=1");
                         }
-                        // Placement refresh belongs to the region tab; other direct links resolve only their requested ID.
-                        if (section == "region")
+                        // Refresh placement before routing the observations call to its home.
+                        if (section == "replication")
                         {
                             await databases.SyncAsync(context, http.RequestAborted);
                         }
