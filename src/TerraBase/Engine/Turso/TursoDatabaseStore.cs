@@ -204,6 +204,8 @@ internal sealed partial class TursoDatabaseStore(
 
     private string? FencedId(bool maintenance) => !maintenance && !IsSystem && Fences is not null ? Tenant?.DatabaseId : null;
 
+    internal void ThrowIfUnleased(string database) => Fences?.ThrowIfUnleased(database);
+
     internal Task DrainWritersAsync(CancellationToken cancellationToken) => WithWriterAsync(static _ => 0, "a home move", cancellationToken);
 
     private void ThrowIfRefused(bool maintenance)
@@ -316,6 +318,7 @@ internal sealed partial class TursoDatabaseStore(
                 this, session, transaction, runner, write, write ? Committed : null, ownsAdmission)
             {
                 Operation = operation,
+                Fenced = write ? FencedId(maintenance) : null,
             };
         }
         catch (Exception error)

@@ -14,7 +14,9 @@ internal sealed class DatabaseFences
     private static readonly TimeSpan MaxPause = TimeSpan.FromSeconds(30);
 
     private readonly ConcurrentDictionary<string, Fence> _fences = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, bool> _leased = new(StringComparer.Ordinal);
     private readonly string _directory;
+    private long _leaseUntil;
 
     public DatabaseFences(string directory)
     {
@@ -70,6 +72,7 @@ internal sealed class DatabaseFences
     public async ValueTask WaitAsync(string database, CancellationToken cancellationToken)
     {
         var waited = TimeSpan.Zero;
+        ThrowIfUnleased(database);
         while (_fences.TryGetValue(database, out var fence))
         {
             if (!fence.Paused || waited >= MaxPause)
@@ -91,6 +94,17 @@ internal sealed class DatabaseFences
         }
     }
 
+    public IReadOnlyCollection<string> Leased => [.. _leased.Keys];
+
+    public void Lease(string database, bool held) => _leased[database] = held;
+
+    public void Unlease(string database) => _leased.TryRemove(database, out _);
+
+    public void Renewed(long until) => Volatile.Write(ref _leaseUntil, until);
+
+    public bool Holds(string database) =>
+        !_leased.TryGetValue(database, out var held) || (held && TimeProvider.System.GetTimestamp() < Volatile.Read(ref _leaseUntil));
+
     public string? MovedTo(string database) => _fences.TryGetValue(database, out var fence) ? fence.Home : null;
 
     public void ThrowIfFenced(string database)
@@ -98,6 +112,16 @@ internal sealed class DatabaseFences
         if (_fences.TryGetValue(database, out var fence))
         {
             throw new DatabaseMovedException(fence.Home);
+        }
+
+        ThrowIfUnleased(database);
+    }
+
+    public void ThrowIfUnleased(string database)
+    {
+        if (!Holds(database))
+        {
+            throw new DatabaseMovedException(null);
         }
     }
 

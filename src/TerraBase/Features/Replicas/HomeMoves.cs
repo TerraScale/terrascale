@@ -271,7 +271,6 @@ internal sealed class HomeMoves(
     private async Task<PromoteResult> PromoteHereAsync(TenantContext database, HomePromoteRequest request)
     {
         await replication.SuspendAsync(database).ConfigureAwait(false);
-        string? detached = null;
         try
         {
             if (await replicas.PullAsync(database, CancellationToken.None).ConfigureAwait(false) is null
@@ -280,6 +279,54 @@ internal sealed class HomeMoves(
                 return new Conflict("the replica is not open or its home is still writing", "move_aborted");
             }
 
+            IReadOnlyList<string> next = [.. request.ReplicaRegions.Where(region => region != options.Region)];
+            return await AdoptAsync(database, new DatabasePlacement(options.Region, next, request.Version, request.AllRegions)).ConfigureAwait(false);
+        }
+        finally
+        {
+            replication.Resume(database);
+        }
+    }
+
+    public async Task<bool> FailOverAsync(TenantContext database, string fromRegion, long version, CancellationToken cancellationToken)
+    {
+        var gate = _locks.GetOrAdd(database.DatabaseId!, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (await catalog.FindAsync(database, CancellationToken.None).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement })
+            {
+                return false;
+            }
+
+            if (placement.Home == options.Region)
+            {
+                return placement.Version >= version;
+            }
+
+            IReadOnlyList<string> next = placement.AllRegions ? []
+                : [.. placement.Replicas.Where(region => region != options.Region).Append(fromRegion).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
+            await replication.SuspendAsync(database).ConfigureAwait(false);
+            try
+            {
+                return await AdoptAsync(database, new DatabasePlacement(options.Region, next, version, placement.AllRegions)).ConfigureAwait(false) is HomePromoteAnswer { Promoted: true };
+            }
+            finally
+            {
+                replication.Resume(database);
+            }
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<PromoteResult> AdoptAsync(TenantContext database, DatabasePlacement placement)
+    {
+        string? detached = null;
+        try
+        {
             detached = await replicas.DetachAsync(database, CancellationToken.None).ConfigureAwait(false);
             if (detached is null)
             {
@@ -289,9 +336,7 @@ internal sealed class HomeMoves(
             fences.Lift(database.DatabaseId!);
             await imports.ImportDatabaseAsync(database, detached, CancellationToken.None).ConfigureAwait(false);
             detached = null;
-            IReadOnlyList<string> next = [.. request.ReplicaRegions.Where(region => region != options.Region)];
-            if (await tenants.UpdatePlacementAsync(database, new DatabasePlacement(options.Region, next, request.Version, request.AllRegions), CancellationToken.None)
-                    .ConfigureAwait(false) is not PlacementUpdate { Updated: true })
+            if (await tenants.UpdatePlacementAsync(database, placement, CancellationToken.None).ConfigureAwait(false) is not PlacementUpdate { Updated: true })
             {
                 _ = await engine.DeleteDatabaseAsync(database, CancellationToken.None).ConfigureAwait(false);
                 return new Unavailable("the catalog did not take the new placement");
@@ -311,8 +356,6 @@ internal sealed class HomeMoves(
             {
                 TerraBase.Engine.Turso.TursoReplicas.DeleteDetached(detached);
             }
-
-            replication.Resume(database);
         }
     }
 
