@@ -56,17 +56,22 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     private string Tenant => Tenancy.Current(http.HttpContext);
 
     /// <summary>
+    /// A refused mail start: how long to wait, and whether this UTC clock hour's code budget for the address is spent.
+    /// </summary>
+    public sealed record MailRefusal(TimeSpan Wait, bool BudgetExhausted);
+
+    /// <summary>
     /// Emails a sign-up code, or a sign-in code when the address has an account, and returns the pending token that
     /// must accompany a sign-up code's redemption; or how long to wait. The token is random either way, so it reveals
     /// nothing, and only its hash is stored.
     /// </summary>
-    public async Task<(string? PendingToken, TimeSpan? Wait)> SignUpAsync(string email, string password, string ip, string locale, CancellationToken cancellationToken)
+    public async Task<(string? PendingToken, MailRefusal? Refusal)> SignUpAsync(string email, string password, string ip, string locale, CancellationToken cancellationToken)
     {
         // Reserved first: a full delivery queue answers 503 without spending the caller's mail budgets.
         using var reservation = mail.Reserve();
-        if (await this.LimitMailAsync(email, ip, cancellationToken) is { } wait)
+        if (await this.LimitMailAsync(email, ip, cancellationToken) is { } refusal)
         {
-            return (null, wait);
+            return (null, refusal);
         }
 
         // Hashed whether or not the address has an account, so both take the same time.
@@ -79,12 +84,12 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     }
 
     /// <summary>Emails a password-reset code when <paramref name="email"/> has an account. Null, or how long to wait.</summary>
-    public async Task<TimeSpan?> StartPasswordResetAsync(string email, string ip, string locale, CancellationToken cancellationToken)
+    public async Task<MailRefusal?> StartPasswordResetAsync(string email, string ip, string locale, CancellationToken cancellationToken)
     {
         using var reservation = mail.Reserve();
-        if (await this.LimitMailAsync(email, ip, cancellationToken) is { } wait)
+        if (await this.LimitMailAsync(email, ip, cancellationToken) is { } refusal)
         {
-            return wait;
+            return refusal;
         }
 
         var tenant = this.Tenant;
@@ -101,7 +106,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     {
         const string method = "password-reset";
         if ((await this.LimitIpAsync(ip, mails: false, cancellationToken)
-            ?? await this.LimitCodeAsync(email, PasscodePurpose.PasswordReset, issuing: false, cancellationToken, locale)) is { } wait)
+            ?? await this.LimitCodeAsync(email, PasscodePurpose.PasswordReset, cancellationToken, locale)) is { } wait)
         {
             return (false, wait);
         }
@@ -181,24 +186,37 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     }
 
     /// <summary>Charges the shared IP, per-email cooldown and hourly budgets before any hosted code mail is issued.</summary>
-    public async Task<TimeSpan?> LimitMailAsync(string email, string ip, CancellationToken cancellationToken)
+    public async Task<MailRefusal?> LimitMailAsync(string email, string ip, CancellationToken cancellationToken)
     {
         if (await this.LimitIpAsync(ip, mails: true, cancellationToken) is { } wait)
         {
-            return wait;
+            return new MailRefusal(wait, BudgetExhausted: false);
         }
 
-        if (Users.NormalizeEmail(email) is { } normalized
-            && await limiter.AcquireCooldownAsync(this.Tenant, "headless-mail-email", limiter.Fold(normalized), MailCooldown, cancellationToken) is { } cooldownWait)
+        if (Users.NormalizeEmail(email) is not { } normalized)
+        {
+            return null;
+        }
+
+        if (await limiter.AcquireCooldownAsync(this.Tenant, "headless-mail-email", limiter.Fold(normalized), MailCooldown, cancellationToken) is { } cooldownWait)
         {
             logger.ZLogWarning($"Audit: hosted request rate-limited by the {"headless-mail-email":@Purpose} budget");
-            return cooldownWait;
+            return new MailRefusal(cooldownWait, BudgetExhausted: false);
         }
 
-        var issueWait = await this.LimitCodeAsync(email, PasscodePurpose.SignIn, issuing: true, cancellationToken);
-        // The cooldown was just admitted. Cover it too when the hourly budget refuses this request,
-        // even if the UTC hour ends first; cooldown refusals still spend no hourly allowance.
-        return issueWait is { } hourlyWait && hourlyWait < MailCooldown ? MailCooldown : issueWait;
+        if (await limiter.AcquireWithDeadlineAsync(this.Tenant, "code-mail-email", limiter.Fold(normalized), Passcodes.MaxIssuesPerWindow, Passcodes.IssueWindow, cancellationToken)
+            is { } rejection)
+        {
+            logger.ZLogWarning($"Audit: hosted request rate-limited by the {"code-mail-email":@Purpose} budget");
+            // The stored passcode window is the authority: only an address whose account or pending sign-up already
+            // spent it is told the budget is exhausted, so this never distinguishes an account-less address.
+            var budgetWait = await passcodes.IssueBudgetRetryAfterAsync(this.Tenant, email, cancellationToken);
+            var wait = budgetWait ?? rejection.RetryAfter;
+            // The cooldown was just admitted, so cover it too, even when the UTC hour ends first.
+            return new MailRefusal(wait < MailCooldown ? MailCooldown : wait, budgetWait is not null);
+        }
+
+        return null;
     }
 
     /// <summary>Charges the IP call and mail budgets, including the IPv6 /48 budget, across sign-in surfaces.</summary>
@@ -233,15 +251,15 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     }
 
     /// <summary>
-    /// Charges normalized emails before account lookup, including unknown addresses. Every code issue shares one
-    /// hourly budget; sign-in redemption (including sign-up) and reset redemption have separate budgets so recovery
-    /// remains available during a sign-in throttle. Replacing a code never renews its email's budget.
+    /// Charges normalized emails before account lookup, including unknown addresses. Sign-in redemption (including
+    /// sign-up) and reset redemption have separate budgets so recovery remains available during a sign-in throttle;
+    /// every code issue shares the one hourly budget <see cref="LimitMailAsync"/> charges. Replacing a code never
+    /// renews its email's budget.
     /// </summary>
-    public Task<TimeSpan?> LimitCodeAsync(string email, PasscodePurpose purpose, bool issuing, CancellationToken cancellationToken, string locale = AuthEmails.English)
+    public Task<TimeSpan?> LimitCodeAsync(string email, PasscodePurpose purpose, CancellationToken cancellationToken, string locale = AuthEmails.English)
     {
-        var key = issuing ? "code-mail-email" : purpose == PasscodePurpose.PasswordReset ? "reset-code-email" : "sign-in-code-email";
-        return this.LimitEmailAsync(email, key, issuing ? Passcodes.MaxIssuesPerWindow : CodePerEmail,
-            issuing ? Passcodes.IssueWindow : CodeWindow, notify: !issuing, cancellationToken, locale);
+        var key = purpose == PasscodePurpose.PasswordReset ? "reset-code-email" : "sign-in-code-email";
+        return this.LimitEmailAsync(email, key, CodePerEmail, CodeWindow, notify: true, cancellationToken, locale);
     }
 
     private async Task<TimeSpan?> LimitEmailAsync(string email, string purpose, int maximum, TimeSpan window, bool notify,

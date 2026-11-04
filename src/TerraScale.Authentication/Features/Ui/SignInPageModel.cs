@@ -102,6 +102,12 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>Whether the error is a rate limit (a warning, not a failure).</summary>
     public bool Limited { get; init; }
 
+    /// <summary>Whether this hour's code budget is spent; the page says so instead of implying a code was sent.</summary>
+    public bool CodeBudgetExhausted { get; init; }
+
+    /// <summary>The wait a disabled resend control repeats when <see cref="CodeBudgetExhausted"/>.</summary>
+    public string? WaitText { get; init; }
+
     /// <summary>The pending sign-up's token, carried from the sign-up form to its code form.</summary>
     public string? PendingToken { get; init; }
 

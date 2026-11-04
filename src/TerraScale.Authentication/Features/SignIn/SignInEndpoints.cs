@@ -66,7 +66,7 @@ public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, 
         Post("/ui/{slug}/sign-in");
         Name("ui_sign_in_request_code");
         Summary("Email a sign-in code");
-        Description("Same-origin form post (the Origin header must be the public origin). The response never reveals whether the address has an account. Shared mail-start limits: an IP call bucket of 120 refilling 30 per minute, an IP mail bucket of 30 refilling 60 per hour, a 60-second cooldown per normalized email across sign-in, sign-up and reset, and 5 mail calls per normalized email per hour, including unknown emails. IPv6 is grouped per /64 and additionally per /48 at four times the IP budget. Exhaustion answers 429 with Retry-After. A new code replaces the previous one. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
+        Description("Same-origin form post (the Origin header must be the public origin). The response never reveals whether the address has an account. Shared mail-start limits: an IP call bucket of 120 refilling 30 per minute, an IP mail bucket of 30 refilling 60 per hour, a 60-second cooldown per normalized email across sign-in, sign-up and reset, and 5 mail calls per normalized email per hour, including unknown emails. IPv6 is grouped per /64 and additionally per /48 at four times the IP budget. Exhaustion answers 429 with Retry-After; an address whose account or pending sign-up already spent the hour's code budget is told that plainly and gets no working resend control, while an address without either keeps the same answer as before. A new code replaces the previous one. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -98,9 +98,11 @@ public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, 
 
         // Reserved first: a full delivery queue answers 503 without spending the caller's mail budgets.
         using var reservation = mail.Reserve();
-        if (await hosted.LimitMailAsync(address, ip, cancellationToken) is { } wait)
+        if (await hosted.LimitMailAsync(address, ip, cancellationToken) is { } refusal)
         {
-            return SignInFlow.Limited(this.HttpContext, SignInStep.Code, wait, address, SignInFlow.SafeNext(this.HttpContext, form.Next));
+            return refusal.BudgetExhausted
+                ? SignInFlow.BudgetExhausted(this.HttpContext, SignInStep.Code, refusal.Wait, address, SignInFlow.SafeNext(this.HttpContext, form.Next))
+                : SignInFlow.Limited(this.HttpContext, SignInStep.Code, refusal.Wait, address, SignInFlow.SafeNext(this.HttpContext, form.Next));
         }
 
         var tenant = SignInFlow.Tenant(this.HttpContext);
@@ -152,7 +154,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         }
 
         if ((await hosted.LimitIpAsync(ip, mails: false, cancellationToken)
-            ?? await hosted.LimitCodeAsync(address, PasscodePurpose.SignIn, issuing: false, cancellationToken,
+            ?? await hosted.LimitCodeAsync(address, PasscodePurpose.SignIn, cancellationToken,
                 AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage))) is { } wait)
         {
             AuthMetrics.SignIn("hosted_code", "rate_limited");
@@ -294,7 +296,7 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
         Post("/ui/{slug}/sign-up");
         Name("ui_sign_up_start");
         Summary("Start a sign-up");
-        Description("Same-origin form post with email and password (15 to 256 Unicode characters, not a common, repetitive or own-email password). Shares the mail-start limits: the IP call and mail budgets, a 60-second cooldown per normalized email across every mail start, and 5 codes per normalized email per UTC clock hour; exhaustion answers 429 with Retry-After. A new address is mailed a verification code bound to a random pending token the page carries; an address with an account is mailed a sign-in code and the password is discarded. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
+        Description("Same-origin form post with email and password (15 to 256 Unicode characters, not a common, repetitive or own-email password). Shares the mail-start limits: the IP call and mail budgets, a 60-second cooldown per normalized email across every mail start, and 5 codes per normalized email per UTC clock hour; exhaustion answers 429 with Retry-After. A new address is mailed a verification code bound to a random pending token the page carries; an address with an account is mailed a sign-in code and the password is discarded. An address whose account or pending sign-up already spent the hour's code budget is told that plainly (429, Retry-After, resend disabled), while an address without either keeps the same answer as before. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -335,10 +337,12 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
             return sso;
         }
 
-        var (pending, wait) = await hosted.SignUpAsync(address, form.Password!, SignInFlow.Ip(this.HttpContext),
+        var (pending, refusal) = await hosted.SignUpAsync(address, form.Password!, SignInFlow.Ip(this.HttpContext),
             AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage), cancellationToken);
-        return wait is { } retry
-            ? SignInFlow.Limited(this.HttpContext, SignInStep.SignUp, retry, address, next)
+        return refusal is { } limited
+            ? limited.BudgetExhausted
+                ? SignInFlow.BudgetExhausted(this.HttpContext, SignInStep.SignUpCode, limited.Wait, address, next)
+                : SignInFlow.Limited(this.HttpContext, SignInStep.SignUp, limited.Wait, address, next)
             : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUpCode, SignInFlow.Tenant(this.HttpContext), address, next) { PendingToken = pending });
     }
 }
@@ -356,7 +360,7 @@ public sealed class ResendSignUpEndpoint(SignInMail mail, HostedAuth hosted, Aut
         Post("/ui/{slug}/sign-up/resend");
         Name("ui_sign_up_resend");
         Summary("Resend the sign-up code");
-        Description("Same-origin form post with the email and pending token of the pending sign-up. A fresh code is mailed to the same pending sign-up, replacing the previous code; an address that got an account meanwhile is mailed a sign-in code instead. The page is the same either way. Shares the mail-start limits (IP call and mail budgets, the 60-second mail cooldown per normalized email, 5 codes per normalized email per UTC clock hour); exhaustion answers 429 with Retry-After. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
+        Description("Same-origin form post with the email and pending token of the pending sign-up. A fresh code is mailed to the same pending sign-up, replacing the previous code; an address that got an account meanwhile is mailed a sign-in code instead. The page is the same either way. Shares the mail-start limits (IP call and mail budgets, the 60-second mail cooldown per normalized email, 5 codes per normalized email per UTC clock hour); exhaustion answers 429 with Retry-After, and an address whose account or pending sign-up already spent the hour's code budget is told that plainly with its resend control disabled, while an address without either keeps the same answer as before. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -379,9 +383,11 @@ public sealed class ResendSignUpEndpoint(SignInMail mail, HostedAuth hosted, Aut
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         // Reserved first: a full delivery queue answers 503 without spending the caller's mail budgets.
         using var reservation = mail.Reserve();
-        if (await hosted.LimitMailAsync(address, SignInFlow.Ip(this.HttpContext), cancellationToken) is { } wait)
+        if (await hosted.LimitMailAsync(address, SignInFlow.Ip(this.HttpContext), cancellationToken) is { } refusal)
         {
-            return SignInFlow.Limited(this.HttpContext, SignInStep.SignUpCode, wait, address, next, form.PendingToken);
+            return refusal.BudgetExhausted
+                ? SignInFlow.BudgetExhausted(this.HttpContext, SignInStep.SignUpCode, refusal.Wait, address, next, form.PendingToken)
+                : SignInFlow.Limited(this.HttpContext, SignInStep.SignUpCode, refusal.Wait, address, next, form.PendingToken);
         }
 
         await reservation.EnqueueSignUpResendAsync(SignInFlow.Tenant(this.HttpContext), address,
@@ -430,7 +436,7 @@ public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions,
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         var code = form.Code ?? string.Empty;
         if ((await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken)
-            ?? await hosted.LimitCodeAsync(address, PasscodePurpose.SignIn, issuing: false, cancellationToken,
+            ?? await hosted.LimitCodeAsync(address, PasscodePurpose.SignIn, cancellationToken,
                 AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage))) is { } wait)
         {
             AuthMetrics.SignIn("hosted_sign_up", "rate_limited");
@@ -492,7 +498,7 @@ public sealed class StartResetEndpoint(HostedAuth hosted, AuthOptions options) :
         Post("/ui/{slug}/reset");
         Name("ui_password_reset_start");
         Summary("Email a password reset code");
-        Description("Same-origin form post with email. Shares the mail-start limits (IP call and mail budgets, the 60-second mail cooldown per normalized email, 5 codes per normalized email per UTC clock hour); exhaustion answers 429 with Retry-After. The response never reveals whether the address has an account. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
+        Description("Same-origin form post with email. Shares the mail-start limits (IP call and mail budgets, the 60-second mail cooldown per normalized email, 5 codes per normalized email per UTC clock hour); exhaustion answers 429 with Retry-After. The response never reveals whether the address has an account; an address whose account already spent the hour's code budget is told that plainly (429, Retry-After, resend disabled). A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -513,10 +519,15 @@ public sealed class StartResetEndpoint(HostedAuth hosted, AuthOptions options) :
 
         var address = form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
-        return await hosted.StartPasswordResetAsync(address, SignInFlow.Ip(this.HttpContext),
-            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage), cancellationToken) is { } wait
-            ? SignInFlow.Limited(this.HttpContext, SignInStep.Reset, wait, address, next)
-            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, SignInFlow.Tenant(this.HttpContext), address, next));
+        if (await hosted.StartPasswordResetAsync(address, SignInFlow.Ip(this.HttpContext),
+            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage), cancellationToken) is { } refusal)
+        {
+            return refusal.BudgetExhausted
+                ? SignInFlow.BudgetExhausted(this.HttpContext, SignInStep.ResetCode, refusal.Wait, address, next)
+                : SignInFlow.Limited(this.HttpContext, SignInStep.Reset, refusal.Wait, address, next);
+        }
+
+        return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, SignInFlow.Tenant(this.HttpContext), address, next));
     }
 }
 
@@ -582,6 +593,26 @@ internal static class SignInFlow
                 Limited = true,
                 PendingToken = pendingToken,
                 Challenge = challenge,
+            },
+            StatusCodes.Status429TooManyRequests);
+    }
+
+    /// <summary>
+    /// The page for an address that spent this hour's code budget: says so, instead of claiming a code was sent, and
+    /// leaves no resend control to press. Renders for addresses with an account or a pending sign-up only.
+    /// </summary>
+    public static IResult BudgetExhausted(HttpContext context, SignInStep step, TimeSpan wait, string email, string? next, string? pendingToken = null)
+    {
+        var seconds = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds));
+        context.Response.Headers.RetryAfter = seconds.ToString(CultureInfo.InvariantCulture);
+        context.Response.Headers.CacheControl = "no-store";
+        return SignInPageModel.Render(context,
+            new SignInPageModel(step, Tenant(context), email, next, $"You've requested several codes. Use the latest code you received, or try again in {RetryWait(seconds)}.")
+            {
+                ErrorTitle = "Too many codes this hour",
+                CodeBudgetExhausted = true,
+                WaitText = RetryWait(seconds),
+                PendingToken = pendingToken,
             },
             StatusCodes.Status429TooManyRequests);
     }

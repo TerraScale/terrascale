@@ -38,7 +38,7 @@ internal static class StepUpHosted
             {
                 if (await hosted.LimitMailAsync(user.Email, ip, cancellationToken) is { } mailWait)
                 {
-                    return HostedAuth.TooMany(mailWait);
+                    return HostedAuth.TooMany(mailWait.Wait);
                 }
 
                 record = record with { MailRequested = true };
@@ -79,7 +79,7 @@ internal static class StepUpHosted
                 }
                 else if (record.MailRequested)
                 {
-                    if (await hosted.LimitCodeAsync(user.Email, PasscodePurpose.StepUp, issuing: false, cancellationToken) is { } codeWait)
+                    if (await hosted.LimitCodeAsync(user.Email, PasscodePurpose.StepUp, cancellationToken) is { } codeWait)
                     {
                         return HostedAuth.TooMany(codeWait);
                     }

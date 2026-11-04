@@ -35,7 +35,7 @@ public sealed class UnlinkProviderEndpoint(PlatformAuthentication authentication
 
         var body = await this.BodyAsync(PlatformSocialJson.Default.UnlinkProviderRequest, cancellationToken);
         if ((await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken)
-            ?? await hosted.LimitCodeAsync(caller.Email, PasscodePurpose.SignIn, issuing: false, cancellationToken)) is { } wait)
+            ?? await hosted.LimitCodeAsync(caller.Email, PasscodePurpose.SignIn, cancellationToken)) is { } wait)
         {
             return HostedAuth.TooMany(wait);
         }
