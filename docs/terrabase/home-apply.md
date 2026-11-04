@@ -4,8 +4,6 @@ A database's home applies transactions that committed in another region (D4, D5)
 Turso's push and its server-side apply are never used (D14). R7 (streaming push over JetStream) delivers transactions
 to this API; until R7 lands, the internal HTTP endpoint below is the only producer.
 
-Status: API contract for R7; the implementation lands with R6.
-
 ## Guarantees
 
 - **All or nothing per transaction.** Every change of a transaction is applied in one write transaction at the home,
@@ -16,10 +14,15 @@ Status: API contract for R7; the implementation lands with R6.
 - **Exactly once.** The transaction id is the dedupe key. Sending an applied or reverted transaction again returns its
   recorded state and changes nothing.
 - **Column last-writer-wins by HLC (D21).** Each column of each row keeps the stamp of its last write: the writer's
-  HLC, then its region id as the tie-breaker (ordinal). A change to a column applies only when its stamp is greater.
+  [`HlcTimestamp`](hlc-clock.md), ordered by milliseconds, logical counter, then node id (ordinal) as the tie-breaker. A change to a column applies only when its stamp is greater.
   A losing column is not applied and is recorded in `terrascale.conflicts` as `superseded`, with its value.
 - **Delete tombstones.** A delete keeps a tombstone with its stamp, so an older insert or update of that row cannot
-  bring it back. A delete older than a column write of the row loses (`superseded`), and the row stays.
+  bring it back (`superseded`). A delete older than a column write of the row loses (`superseded`), and the row stays.
+- **Inserts never overwrite.** An insert of a key that exists at the home is a `primary_key` conflict and reverts its
+  transaction (D12: tables that take local writes use ULID keys). An update of a row that the home never had reverts
+  as `missing_row`.
+- **Clock guard.** A transaction stamped more than 60 seconds ahead of the home's clock reverts as `clock` and never
+  advances the home's HLC (D21; R12 adds the per-node skew guard).
 - **Triggers do not fire for applied changes.** The origin region already ran them and their writes are part of the
   transaction. See [triggers](#triggers).
 - **Foreign keys are re-checked at the end of the transaction.** Foreign-key actions (`CASCADE`, `SET NULL`) do not run
@@ -41,12 +44,14 @@ Status: API contract for R7; the implementation lands with R6.
 `IHomeApply` in `TerraBase.Features.HomeApply`:
 
 ```csharp
-ValueTask<HomeApplyResult> ApplyAsync(TenantContext database, RegionTransaction transaction, CancellationToken cancellationToken);
+ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, CancellationToken cancellationToken);
 ValueTask<HomeApplyResult?> StateAsync(TenantContext database, string transactionId, CancellationToken cancellationToken);
 ```
 
 `ApplyAsync` runs on the database's home only, inside the organization's QoS context (E11). It throws only when the
-home is unavailable (`StorageBusyException`, cancellation, shutdown); every data outcome is a result. Callers ack a
+home is unavailable (`StorageBusyException`, a busy `SqlStatementException`, cancellation, shutdown) and returns null
+when the database is not stored on this node; every data outcome is a result. Validate the transaction as
+`ApplyEndpoint.Invalid` does before calling it. Callers ack a
 JetStream message after `ApplyAsync` returns, whatever its state.
 
 ## Internal HTTP
@@ -58,7 +63,7 @@ Internal listener only, behind the peer credential; 404 on the public listener.
   here or its placement does not name the origin region; `400` for a malformed transaction; `503` when the home is
   unavailable (retry).
 - `GET …/databases/{database}/apply/{transaction}`: the transaction's `HomeApplyResult`, or
-  `{"id":…,"state":"provisional"}` when the home has not seen it.
+  `{"id":…,"state":"provisional"}` when the home has not seen it (or applied it more than 7 days ago).
 
 ### RegionTransaction
 
@@ -66,7 +71,7 @@ Internal listener only, behind the peer credential; 404 on the public listener.
 {
   "id": "01JC3Y6Q4M2V8K5T7W9X1Z3B5D",
   "region": "sjc",
-  "hlc": "117557302837870592",
+  "hlc": { "physicalMilliseconds": 1793805256123, "logical": 0, "nodeId": "sjc-1" },
   "changes": [
     { "op": "insert", "table": "users", "values": { "id": "01JC…", "email": "a@example.com", "credits": 5 } },
     { "op": "update", "table": "users", "key": { "id": "01JC…" }, "values": { "credits": 7 } },
@@ -77,8 +82,8 @@ Internal listener only, behind the peer credential; 404 on the public listener.
 
 - `id`: a ULID minted by the origin region for the transaction.
 - `region`: the origin region; it must be in the database's placement and differ from the home.
-- `hlc`: the transaction's commit HLC on the origin, a decimal string of the 64-bit value (48 bits of Unix
-  milliseconds, 16 logical bits). Every change of the transaction carries this stamp.
+- `hlc`: the transaction's commit `HlcTimestamp` on the origin node (R12, [hlc-clock.md](hlc-clock.md)). Every change of
+  the transaction carries this stamp; a replay keeps it.
 - `changes`: 1 to 1024, in commit order. `table` is a table of the database with a declared `PRIMARY KEY` (D12: ULID
   keys); `key` names every primary-key column; `insert` carries every column of the new row, `update` only the
   columns it changed (never a key column), `delete` only the key.
@@ -116,7 +121,7 @@ Postgres wire) in every region:
 | `transaction_id` | TEXT | The region transaction's id. |
 | `region` | TEXT | The region the transaction committed in. |
 | `state` | TEXT | `superseded` (the transaction applied, these columns lost) or `reverted` (nothing applied). |
-| `kind` | TEXT | `superseded`, `unique`, `primary_key`, `not_null`, `check`, `foreign_key`, `constraint`, `missing_row`, `schema`. |
+| `kind` | TEXT | `superseded`, `unique`, `primary_key`, `not_null`, `check`, `foreign_key`, `constraint`, `missing_row`, `schema`, `clock`. |
 | `table_name` | TEXT | The table, or null when the rejection is not about one row. |
 | `row_key` | TEXT | JSON object of the row's primary key, or null. |
 | `change` | TEXT | JSON of the losing values: the losing columns for `superseded`, the whole transaction's changes for `reverted`. |
@@ -138,7 +143,14 @@ was written.
 
 ## Storage
 
-Per database, internal and invisible to customers: `_ts_conflicts` (created with the database), and `_ts_rows`
-(column stamps and tombstones per row) and `_ts_applied` (each applied or reverted transaction id, with its result),
-created when the database first applies a transaction or gains a replica region. A database without replica regions
-stamps nothing.
+Per database, internal and invisible to customers, created when the database is created with replica regions, gains
+them, or first applies a transaction: `_ts_rows` (column stamps and tombstones per row), `_ts_applied` (each applied or
+reverted transaction with its result, kept 7 days, so a transaction is exactly once within that window) and
+`_ts_conflicts`. A database without them stamps nothing and reads an empty `terrascale.conflicts`. Rows written at the
+home before the database had replica regions carry no stamp and lose to any region write, which can only be newer.
+The tables are created in place with no format change: older files gain them on first use.
+
+## Known gaps
+
+- Tombstones in `_ts_rows` are kept until the row's key is written again.
+- Applied writes are metered where they committed (the origin region), not again at the home.
