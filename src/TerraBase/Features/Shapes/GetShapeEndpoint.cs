@@ -3,6 +3,7 @@ using Microsoft.Net.Http.Headers;
 using Microsoft.OpenApi;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Management;
 using TerraBase.Features.Qos;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -44,7 +45,7 @@ internal sealed class GetShapeEndpoint(
             Query("where", "Optional SQL condition on this table's columns: literals, operators, CASE, CAST, COLLATE and deterministic functions; no subqueries or parameters."),
             Query("columns", "Optional comma-separated column names; rows carry only these columns."));
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
-        Metadata(new ListenerMetadata(TerraBaseListener.Client), OriginNoStore.Instance);
+        Metadata(new ListenerMetadata(TerraBaseListener.Client), OriginNoStore.Instance, new DatabaseRegions.ReplicaReads());
     }
 
     private static OpenApiParameter Query(string name, string description, bool required = false) => new()
