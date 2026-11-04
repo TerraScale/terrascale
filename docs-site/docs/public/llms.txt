@@ -1,7 +1,10 @@
 # TerraScale documentation
 
 > TerraScale hosts SQL databases in the SQLite dialect. Each database lives in
-> one home region. Exchange a dashboard API key for a short-lived access token
+> one home region for writes and can have encrypted read replicas in other regions.
+> REST reads can use a ready local replica; local psql and WebSocket replica reads are coming.
+> Replicas are eventually consistent. REST requests and Postgres sessions reach the home from any serving region.
+> Exchange a dashboard API key for a short-lived access token
 > at https://auth.terrascale.tech/terrascale/oauth/token (client credentials
 > grant), then reach the database three ways:
 >
@@ -13,9 +16,19 @@
 > - Postgres wire: postgresql://{database}@pg.terrascale.tech:5432/{database}
 >   with the API key as the password. Statements stay in the SQLite dialect.
 
+> Live shapes support where filters and selected columns. End-user tokens need table read grants.
+> Agent databases support TTL, forks and database-scoped keys. Point-in-time recovery creates a new database;
+> in-place restore is coming. Database deletion destroys backup data keys; physical cleanup is separate.
+> Plans enforce write caps and SQL read fair use. Customer-set hard dollar spending caps are coming.
+> Replica storage is not billed separately. No production replication-lag guarantee is published.
+
 - [Documentation](https://docs.terrascale.tech/)
 - [Getting started](https://docs.terrascale.tech/getting-started/)
 - [SQL overview](https://docs.terrascale.tech/concepts/sql)
+- [Regions](https://docs.terrascale.tech/concepts/regions)
+- [Replication](https://docs.terrascale.tech/concepts/replication)
+- [Agent databases](https://docs.terrascale.tech/guides/agent-databases)
+- [Pricing](https://docs.terrascale.tech/pricing)
 - [SQL over HTTP](https://docs.terrascale.tech/guides/sql-http)
 - [Postgres clients](https://docs.terrascale.tech/guides/postgres-clients)
 - [Authentication](https://docs.terrascale.tech/guides/authentication)

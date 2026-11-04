@@ -19,7 +19,7 @@
     },
     "storage": {
       "name": "Storage",
-      "definition": "Stored bytes in the database's home region, sampled hourly. One GB-month is 1 GB (10^9 bytes) stored for a whole month."
+      "definition": "Stored bytes in the database's home region, sampled hourly. Replica storage is not billed separately. One GB-month is 1 GB (10^9 bytes) stored for a whole month."
     },
     "allowances": {
       "paidOverages": true,
@@ -27,7 +27,7 @@
     },
     "entitlements": {
       "name": "Plan entitlements",
-      "definition": "Per-plan ceilings enforced by TerraBase. Requests per second, burst requests, and concurrent requests apply per organization; requests beyond them receive HTTP 429 with a Retry-After header. queryTimeoutSeconds is the longest a single query may run. storageLimitGb is the hard storage ceiling, distinct from the included storage allowance. pitrDays is the point-in-time recovery window and backupRetentionDays the backup retention, in days. regionsPerDatabase is the number of regions that hold a database: its home region. support is a support response target, not an SLA. null means no plan ceiling."
+      "definition": "Per-plan ceilings enforced by TerraBase. Requests per second, burst requests, and concurrent requests apply per organization; requests beyond them receive HTTP 429 with a Retry-After header. queryTimeoutSeconds is the longest a single query may run. storageLimitGb is the hard storage ceiling, distinct from the included storage allowance. pitrDays is the point-in-time recovery window and backupRetentionDays the backup retention, in days. regionsPerDatabase counts home regions per database. Explicit read replicas do not add a home region. support is a support response target, not an SLA. null means no plan ceiling."
     },
     "egress": {
       "name": "Client egress",

@@ -227,7 +227,7 @@ export const es: Messages = {
     triad: [
       { title: 'Almacenamiento en la región principal' },
       { title: 'Escrituras contadas en unidades de 4 KiB' },
-      { title: 'Topes de escritura en todos los planes' },
+      { title: 'Topes de escritura por plan' },
     ],
     compare: {
       title: 'Asignaciones por plan.',
