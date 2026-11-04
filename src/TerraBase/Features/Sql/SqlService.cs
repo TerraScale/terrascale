@@ -12,14 +12,14 @@ namespace TerraBase.Features.Sql;
 internal sealed class SqlService(
     IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time,
     [FromKeyedServices(SqlLimits.TransactionClock)] TimeProvider transactionTime,
-    IDatabaseReplicas replicas, IReplicaCatalog placements, HomeSessions homes, RegionReplication replication, TerraBaseOptions options) : ISqlService
+    IDatabaseReplicas replicas, IReplicaCatalog placements, HomeSessions homes, RegionReplication replication, TerraBaseOptions options, DatabaseFences fences) : ISqlService
 {
     private const int MaxTables = 10_000;
 
     public ISqlSession Open(TenantContext database, bool canWrite)
     {
         ArgumentNullException.ThrowIfNull(database);
-        ISqlSession Local() => new SqlSession(engine, quota, usage, allowance, time, transactionTime, database, canWrite);
+        ISqlSession Local() => new SqlSession(engine, quota, usage, allowance, time, transactionTime, database, canWrite, fences);
         // Only a region holding a replica of the database serves it from one; its home always holds the file.
         return replicas.Holds(database)
             ? new ReplicaSqlSession(this, replicas, placements, homes, replication, options, transactionTime, database, canWrite, Local)
@@ -159,7 +159,7 @@ internal sealed class SqlService(
 
 internal sealed class SqlSession(
     IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time, TimeProvider transactionTime,
-    TenantContext database, bool canWrite)
+    TenantContext database, bool canWrite, DatabaseFences fences)
     : ISqlSession
 {
     private const int MaxStatements = 256;
@@ -172,6 +172,10 @@ internal sealed class SqlSession(
     private static readonly SqlResult Empty = new([], [], 0, null);
     private static readonly IReadOnlyDictionary<string, object?> NoNamed = new Dictionary<string, object?>();
     private static readonly SqlError UnknownDatabase = SqlErrors.Error("the database does not exist");
+
+    private SqlError Missing() => database.DatabaseId is { } id && fences.MovedTo(id) is { } home
+        ? SqlErrors.Moved(new DatabaseMovedException(home))
+        : UnknownDatabase;
     private static readonly SqlError TooManyChanges = SqlErrors.TooBig("a transaction changes at most 1024 rows and grows the database by at most 8 MiB");
     internal static readonly SqlError TooManyRows = SqlErrors.TooBig("a result holds at most 10000 rows and 8 MiB; add a LIMIT");
     private static readonly SqlError Expired = new(SqlErrors.QueryCanceled, "the transaction expired: it was open for more than 5 seconds and was rolled back");
@@ -833,7 +837,7 @@ internal sealed class SqlSession(
         var write = canWrite && !_readOnlyTransaction;
         if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
-            return (null, UnknownDatabase);
+            return (null, Missing());
         }
 
         StorageQuotaLease? lease = null;
@@ -862,6 +866,11 @@ internal sealed class SqlSession(
         try
         {
             transaction = await store.BeginTransactionAsync(write, cancellationToken).ConfigureAwait(false);
+        }
+        catch (DatabaseMovedException moved)
+        {
+            lease?.Dispose();
+            return (null, SqlErrors.Moved(moved));
         }
         catch (StorageBusyException)
         {
@@ -947,7 +956,7 @@ internal sealed class SqlSession(
     {
         if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
-            return (null, null, UnknownDatabase);
+            return (null, null, Missing());
         }
 
         StorageQuotaLease? lease = null;
@@ -966,6 +975,11 @@ internal sealed class SqlSession(
         try
         {
             return (await store.BeginTransactionAsync(write, cancellationToken).ConfigureAwait(false), lease, null);
+        }
+        catch (DatabaseMovedException moved)
+        {
+            lease?.Dispose();
+            return (null, null, SqlErrors.Moved(moved));
         }
         catch (StorageBusyException)
         {
@@ -1023,6 +1037,7 @@ internal sealed class SqlSession(
     private static SqlError? Failure(Exception error) => error switch
     {
         StorageBusyException => SqlErrors.Busy("the database is busy; retry"),
+        DatabaseMovedException moved => SqlErrors.Moved(moved),
         QueryCapacityException => SqlErrors.Interrupt,
         _ => null,
     };
