@@ -4,6 +4,7 @@ using System.Text;
 using TerraBase.Configuration;
 using TerraBase.Engine.Revisions;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Shapes;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using Turso;
@@ -14,11 +15,6 @@ using ZLogger;
 
 namespace TerraBase.Engine.Turso;
 
-/// <summary>
-/// Region replicas on Turso's official sync client in page mode (docs/terrabase/region-replicas.md). Each replica is one
-/// encrypted file under <c>.replicas/&lt;organization&gt;/&lt;project&gt;/&lt;database&gt;.db</c>, keyed by its own data key
-/// wrapped by this node's master key, so a replica never shares key material with its home. Only pulls write it.
-/// </summary>
 internal sealed class TursoReplicas(
     TerraBaseOptions options, [FromKeyedServices(EngineExtensions.DatabaseMasterKey)] IMasterKey master, ILogger<TursoReplicas> logger)
     : IDatabaseReplicas, IAsyncDisposable
@@ -47,7 +43,6 @@ internal sealed class TursoReplicas(
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
-            // A failed open is retried by the next call, not cached.
             _ = _replicas.TryRemove(new KeyValuePair<(string, string, string), Lazy<Task<Replica>>>(key, opening));
             throw;
         }
@@ -102,6 +97,11 @@ internal sealed class TursoReplicas(
     public async ValueTask<IReplicaReader?> BeginReadAsync(TenantContext database, CancellationToken cancellationToken) =>
         await FindAsync(database).ConfigureAwait(false) is { Pulled: true } replica
             ? await replica.BeginReadAsync(cancellationToken).ConfigureAwait(false)
+            : null;
+
+    public async ValueTask<IReplicaShapeReader?> BeginShapeReadAsync(TenantContext database, CancellationToken cancellationToken) =>
+        await FindAsync(database).ConfigureAwait(false) is { Pulled: true } replica
+            ? await TursoReplicaShapeReader.OpenAsync(await replica.ConnectShapeAsync(cancellationToken).ConfigureAwait(false), database, cancellationToken).ConfigureAwait(false)
             : null;
 
     public long Position => Volatile.Read(ref _position);
@@ -164,8 +164,6 @@ internal sealed class TursoReplicas(
     private string PathOf((string Organization, string Project, string Database) key) =>
         Path.Combine(Root, key.Organization, key.Project, key.Database + ".db");
 
-    // Opens the replica that exists, otherwise starts one from the home's first full answer. A replica whose key or sync
-    // state is unreadable is deleted and started again: the home holds every page it needs.
     private async Task<Replica> CreateAsync((string Organization, string Project, string Database) key, Uri source, HttpClient http)
     {
         var path = PathOf(key);
@@ -198,7 +196,6 @@ internal sealed class TursoReplicas(
         }
         catch
         {
-            // A replica is reopened only after its first full pull; without one it starts again from nothing.
             await replica.DisposeAsync().ConfigureAwait(false);
             _ = await Task.Run(() => DeleteFiles(path)).ConfigureAwait(false);
             throw;
@@ -337,11 +334,8 @@ internal sealed class TursoReplicas(
         private int _idleCount;
         private int _disposed;
 
-        // The client's statistics read its local change table, which a replica that never writes does not have, so readiness
-        // is the first applied pull of this replica's files.
         public bool Pulled { get; private set; } = pulled;
 
-        // The node position its last completed pull started at; a pull that starts after a home's answer holds what it answered.
         public long Applied => Volatile.Read(ref _applied);
 
         private long _applied;
@@ -427,7 +421,6 @@ internal sealed class TursoReplicas(
                 Volatile.Write(ref _applied, position);
                 Held = DatabaseRevision.TryParse(observer.Take(), out var held) ? held : null;
                 Pulled = true;
-                // The replica's own log only holds pulled pages; fold it into the file once it outgrows the home's policy.
                 var log = new FileInfo(path + "-wal");
                 if (log.Exists && log.Length > 4L * 1024 * 1024)
                 {
@@ -448,6 +441,8 @@ internal sealed class TursoReplicas(
                 _pulls.Release();
             }
         }
+
+        internal Task<TursoConnection> ConnectShapeAsync(CancellationToken cancellationToken) => sync.ConnectAsync(cancellationToken);
 
         public async Task<IReplicaReader> BeginReadAsync(CancellationToken cancellationToken)
         {

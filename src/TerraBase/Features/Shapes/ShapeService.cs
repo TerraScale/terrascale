@@ -11,7 +11,7 @@ namespace TerraBase.Features.Shapes;
 internal sealed class ShapeService(
     IStorageEngine engine, IShapeSealer sealer, IShapeSnapshotSealer snapshots, IShapeStorage storage, IShapeRetention retention,
     ShapeRegistry registry, ShapeLiveGate gate, IShapeFlights<ShapeRead> flights, IMemoryBudget memory, IHostApplicationLifetime lifetime,
-    ILogger<ShapeService> logger) : IShapeLineages, IShapeSnapshots, IShapeChunks, IShapeLiveTail
+    ILogger<ShapeService> logger, ReplicaShapeTails replicaTails) : IShapeLineages, IShapeSnapshots, IShapeChunks, IShapeLiveTail
 {
     private int _maintaining;
     private readonly ClosedChunks _closed = new(memory);
@@ -24,6 +24,11 @@ internal sealed class ShapeService(
     {
         try
         {
+            if (replicaTails.Holds(database))
+            {
+                return await replicaTails.ResolveAsync(database, table, query, cancellationToken).ConfigureAwait(false);
+            }
+
             if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
             {
                 return UnknownDatabase;
@@ -248,6 +253,11 @@ internal sealed class ShapeService(
 
     public async ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, CancellationToken cancellationToken)
     {
+        if (replicaTails.Holds(scope.Database))
+        {
+            return await replicaTails.WaitAsync(scope, lineage, offset, cancellationToken).ConfigureAwait(false);
+        }
+
         if (await engine.OpenDatabaseAsync(scope.Database, cancellationToken).ConfigureAwait(false) is null)
         {
             return UnknownDatabase;

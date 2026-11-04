@@ -1,3 +1,4 @@
+using static TerraBase.Engine.Turso.TursoShapeReader;
 using System.Buffers;
 using System.Text.Json;
 using TerraBase.Features.Memory;
