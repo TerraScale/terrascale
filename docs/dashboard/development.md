@@ -69,9 +69,13 @@ GitHub Actions verifies that exact revision's Fast proof. Heavy validation runs 
 on the dev host, publishing the `dashboard/qualified-<sha>` release and the
 `dashboard-release/dashboard` status; the Images (GHCR) push run then waits for that
 commit's CI, publishes the image and releases it to every region automatically, with
-no manual step and no deploy switch. The regions' release verifier accepts a run's
-GitHub OIDC token only from push and dispatch events, so the workflow_run-triggered
-run never deploys; the push run is the deployer. Slow failures remain visible and
+no manual step and no deploy switch. The release token's sha must equal the image's
+revision, so each qualified commit is released by its own push run, even after later
+pushes outside the dashboard move main: `scripts/dashboard/ci/release-gate.py` admits
+the newest qualified main commit whose CI passed and that is newer than live. The
+regions' release verifier accepts a run's GitHub OIDC token only from push and dispatch
+events, so the workflow_run-triggered run never deploys; after each CI completion it
+reruns the push run of that commit if it ended without releasing it. Slow failures remain visible and
 create or update a matching GitHub issue.
 CI does not run the explicit hot-reload journey. For changes to `scripts/dashboard/demo.sh`, `scripts/dashboard/dev.sh`, the asset scripts or the demo host,
 use `nice -n 19 make -f scripts/dashboard/Makefile test-hot-reload` on a tailnet machine when investigating hot reload locally.
