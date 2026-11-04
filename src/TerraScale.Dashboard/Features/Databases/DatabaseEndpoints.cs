@@ -312,7 +312,7 @@ namespace TerraScale.Dashboard.Features.Databases
             var storage = storageRead is null ? null : (await storageRead).Databases.GetValueOrDefault(database.Id)?.StorageBytes;
             // The backups section shows the same page error, which the tables read above may have just set.
             var backups = backupsRead is null ? null : (await backupsRead) with { Error = error };
-            var result = DatabaseDetailView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, error, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, range, activity)
+            var page = new DatabaseDetailPage(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, error, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, range, activity)
             {
                 Replication = replicationRead is null ? null : await replicationRead,
                 BranchName = branchName,
@@ -320,7 +320,14 @@ namespace TerraScale.Dashboard.Features.Databases
                 Table = shownTable,
                 Preview = preview,
                 StorageBytes = storage
-            });
+            };
+            if (tab == "replication" && http.Request.Headers["Datastar-Request"] == "true")
+            {
+                await DatastarEvents.PatchElementsAsync(http, DatabaseReplicationView.Create(page));
+                return Results.Empty;
+            }
+
+            var result = DatabaseDetailView.Create(page);
             result.StatusCode = status;
             return result;
         }
