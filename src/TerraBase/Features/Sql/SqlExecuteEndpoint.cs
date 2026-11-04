@@ -20,7 +20,7 @@ namespace TerraBase.Features.Sql;
 /// <summary><c>POST /v1/projects/{project}/databases/{database}/sql/execute</c>: runs relational SQL statements.</summary>
 internal sealed class SqlExecuteEndpoint(
     ISqlService sql, IAuthorizationService authorization, ITenantDirectory tenants, IReplicaCatalog placements, IDatabaseReplicas replicas, IReplicaPeers peers,
-    WriteRouter router, ILocalWrites local, TerraBaseOptions options, ShapeOverlay overlay) : EndpointWithoutRequest<IResult>
+    WriteRouter router, ILocalWrites local, ReplicaHolds holds, TerraBaseOptions options, ShapeOverlay overlay) : EndpointWithoutRequest<IResult>
 {
 
     /// <inheritdoc />
@@ -64,7 +64,8 @@ internal sealed class SqlExecuteEndpoint(
                     byte[] body => RequestJson.Read<SqlExecuteRequest>(body, "invalid_request") switch
                     {
                         Validation error => ErrorResponse.From(error),
-                        SqlExecuteRequest request => await ExecuteAsync(database, request.Statements ?? [], body, cancellationToken),
+                        SqlExecuteRequest { Durability: not (null or "local" or "all") } => ErrorResponse.From(new Validation("durability is local or all", "invalid_request")),
+                        SqlExecuteRequest request => await ExecuteAsync(database, request.Statements ?? [], body, request.Durability == "all", cancellationToken),
                     },
                 },
             },
@@ -89,21 +90,22 @@ internal sealed class SqlExecuteEndpoint(
         _ => null,
     };
 
-    private async ValueTask<IResult> ExecuteAsync(TenantContext database, IReadOnlyList<SqlExecuteStatement> statements, byte[] body, CancellationToken cancellationToken)
+    private async ValueTask<IResult> ExecuteAsync(TenantContext database, IReadOnlyList<SqlExecuteStatement> statements, byte[] body, bool all,
+        CancellationToken cancellationToken)
         => SqlBatch.Commands(statements) switch
         {
             SqlBatchFailure invalid => Error(invalid),
-            List<SqlCommand> commands => await RunAsync(database, commands, body, cancellationToken),
+            List<SqlCommand> commands => await RunAsync(database, commands, body, all, cancellationToken),
         };
 
-    private async ValueTask<IResult> RunAsync(TenantContext database, List<SqlCommand> commands, byte[] body, CancellationToken cancellationToken)
+    private async ValueTask<IResult> RunAsync(TenantContext database, List<SqlCommand> commands, byte[] body, bool all, CancellationToken cancellationToken)
     {
         SqlRequestTiming.Mark(HttpContext, "tenant");
         // Only a node holding a replica of the database reads its placement here; the home answers without another catalog read.
         if (replicas.Holds(database)
             && await placements.FindAsync(database, cancellationToken) is TenantDatabaseRecord { Placement: var placement } && placement.Home != options.Region)
         {
-            return await ReplicaAsync(database, placement, commands, body, cancellationToken);
+            return await ReplicaAsync(database, placement, commands, body, all, cancellationToken);
         }
 
         if (await SettledAsync(database, cancellationToken) is { } unsettled)
@@ -124,6 +126,12 @@ internal sealed class SqlExecuteEndpoint(
             session.BeginRequest();
             var outcome = await SqlBatch.RunAsync(session, commands, cancellationToken);
             await session.EndRequestAsync();
+            if (outcome is SqlExecuteBody && all && !await holds.WaitAllAsync(database, cancellationToken))
+            {
+                return Error(new SqlBatchFailure(new SqlError(SqlErrors.Unavailable,
+                    "the write committed at the home but not every replica region held it within 10 s; it may be lost if the home region fails"), commands.Count - 1));
+            }
+
             if (forwarded && outcome is SqlExecuteBody && ShapeOverlay.EncodeCommits(session.Committed) is { } committed)
             {
                 // The replica region shows these rows on its shape tails at once, until its next pull holds them (PIVOT F7).
@@ -141,7 +149,7 @@ internal sealed class SqlExecuteEndpoint(
     // A replica region answers reads from its replica (docs/terrabase/region-replicas.md); writes, and reads before the replica's
     // first pull, belong to the home.
     private async ValueTask<IResult> ReplicaAsync(
-        TenantContext database, DatabasePlacement placement, List<SqlCommand> commands, byte[] body, CancellationToken cancellationToken)
+        TenantContext database, DatabasePlacement placement, List<SqlCommand> commands, byte[] body, bool all, CancellationToken cancellationToken)
     {
         if (Preference(HttpContext.Request.Headers[WriteHeader]) is not { } preference)
         {
@@ -202,7 +210,7 @@ internal sealed class SqlExecuteEndpoint(
                 await reader.DisposeAsync();
             }
 
-            if (route?.Commit == WritePath.Local && every.Count == commands.Count
+            if (route?.Commit == WritePath.Local && !all && every.Count == commands.Count
                 && (await authorization.AuthorizeAsync(HttpContext.User, ApiKeyScopes.SqlWrite)).Succeeded
                 && await LocalAsync(database, route, every, homeDurable, cancellationToken) is { } answered)
             {
