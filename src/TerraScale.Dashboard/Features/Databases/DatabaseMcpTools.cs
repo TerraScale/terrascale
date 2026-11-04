@@ -9,7 +9,7 @@ using static TerraScale.Dashboard.Platform.Mcp.McpScope;
 namespace TerraScale.Dashboard.Features.Databases
 {
     [McpServerToolType]
-    public sealed class DatabaseMcpTools(IHttpContextAccessor http, DatabaseService databases, BackupService backups)
+    public sealed class DatabaseMcpTools(IHttpContextAccessor http, DatabaseService databases, BackupService backups, DatabaseConflicts conflicts)
     {
         [McpServerTool(Name = "list_databases", Title = "List databases", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List the databases in a project with their status and region.")]
         public async Task<McpDatabaseList> ListDatabases(string? organizationId = null, string? projectId = null,
@@ -21,6 +21,13 @@ namespace TerraScale.Dashboard.Features.Databases
             var page = CursorPaging.Page(context.Project!.Databases.Values, db => db.Id,
                 CursorPaging.Scope(context, "databases"), limit, after);
             return new(await Task.WhenAll(page.Items.Select(DatabaseOutput)), page.NextCursor, page.HasMore, page.Limit);
+        }
+
+        [McpServerTool(Name = "list_conflicts", Title = "List conflicts", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read recent multi-region write conflicts, newest first, from terrascale.conflicts. Filter by exact table name and ISO 8601 since (inclusive)/until (exclusive). Limit 1–100; pass nextBefore as before for the next page. Superseded columns belong to confirmed transactions; reverted transactions applied no changes.")]
+        public Task<DatabaseConflictList> ListConflicts(string databaseId, string table = "", string since = "", string until = "", int limit = 50,
+            string before = "", string? organizationId = null, string? projectId = null)
+        {
+            return conflicts.ListAsync(Scope(organizationId, projectId), databaseId, table, since, until, limit, before, Cancellation);
         }
 
         [McpServerTool(Name = "get_database", Title = "Get database", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Show one database's status, regions and backup state.")]
