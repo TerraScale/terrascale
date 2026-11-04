@@ -39,7 +39,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 
 .PHONY: restore turso-native build fmt fmt-check lint test-fast test-slow test check docker-test clean \
 	libs-build libs-test libs-check libs-nativeaot-check \
-	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-mail-delivery-check auth-check auth-publish auth-dev \
+	auth-restore auth-build auth-fast-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-mail-delivery-check auth-check auth-publish auth-dev \
 	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-e2e-local terrabase-e2e terrabase-check terrabase-run terrabase-publish \
 	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke region-sim
 
@@ -101,8 +101,11 @@ libs-nativeaot-check: restore
 	dotnet publish src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj --configuration Release --runtime $(RUNTIME) --output artifacts/nativeaot/endpoints-example
 
 # ts-auth.
-auth-build: restore turso-native
-	dotnet build auth.slnf --configuration $(CONFIGURATION) --no-restore --nologo
+auth-restore:
+	dotnet restore auth.slnf --locked-mode
+
+auth-build: auth-restore turso-native
+	dotnet build auth.slnf --configuration $(CONFIGURATION) --no-restore --nologo -m
 
 auth-audit:
 	dotnet run scripts/auth/check-nuget-vulnerabilities.cs src/TerraScale.Authentication/TerraScale.Authentication.csproj
@@ -115,12 +118,15 @@ auth-openapi-check: auth-build
 
 # Builds only the Fast suite and its references; the Slow suite has its own target.
 # Cases share one TerraBase process; individual concurrency tests still run their own request races.
-auth-test-fast: restore turso-native
-	dotnet build src/TerraBase/TerraBase.csproj --configuration $(CONFIGURATION) --no-restore --nologo
-	dotnet build tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj --configuration $(CONFIGURATION) --no-restore --nologo
+auth-fast-build: turso-native
+	dotnet restore scripts/auth/fast.slnx --locked-mode
+	dotnet build scripts/auth/fast.slnx --configuration $(CONFIGURATION) --no-restore --nologo -m
+
+auth-test-fast: auth-fast-build
 	TERRABASE_BINARY=$(TERRABASE_BINARY) dotnet run --project tests/TerraScale.Authentication.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(AUTH_TEST_PARALLEL) $(TEST_ARGS)
 
 auth-test-slow: auth-build turso-native
+	dotnet restore src/TerraBase/TerraBase.csproj --locked-mode
 	dotnet build src/TerraBase/TerraBase.csproj --configuration $(CONFIGURATION) --no-restore --nologo
 	TERRABASE_BINARY=$(TERRABASE_BINARY) dotnet run --project tests/TerraScale.Authentication.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
 
