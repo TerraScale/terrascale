@@ -6,8 +6,9 @@ checks the token offline and applies the grant on every read. Shape reads stay f
 
 ## 1. Grants
 
-A grant belongs to one table of one database. It is stored in the node's SQL catalog (`catalog_shape_grants`, see
-[SQL catalog](sql-catalog.md)) and deleted with its database.
+A grant belongs to one table of one database. It is stored in the database's internal shape metadata,
+replicated with its pages, and deleted with its database. Regional shape reads check the local replicated grant.
+Grant changes and revocations are captured in CDC so backup replay preserves them.
 
 | Route | Scope | Answer |
 |---|---|---|
