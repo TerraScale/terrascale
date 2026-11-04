@@ -13,7 +13,8 @@ public sealed record ErrorDetail(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Op = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ValidationDetail>? Details = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Region = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Machine = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Machine = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Url = null);
 public static class BadRequests
 {
     public static WebApplication UseTerraBaseBadRequests(this WebApplication app)
@@ -84,12 +85,13 @@ public static class BadRequests
     }
 
     internal static Task WriteAsync(
-        HttpContext context, int status, string code, string? message, int? op, IReadOnlyList<ValidationDetail>? details = null, string? region = null, string? machine = null)
+        HttpContext context, int status, string code, string? message, int? op, IReadOnlyList<ValidationDetail>? details = null, string? region = null, string? machine = null,
+        string? url = null)
     {
         context.Response.StatusCode = status;
         context.Response.Headers.CacheControl = "no-store";
         context.Response.ContentType = "application/json";
         return JsonSerializer.SerializeAsync(
-            context.Response.Body, new ErrorBody(new ErrorDetail(code, message, op, details, region, machine)), TerraBaseJsonContext.Default.ErrorBody, context.RequestAborted);
+            context.Response.Body, new ErrorBody(new ErrorDetail(code, message, op, details, region, machine, url)), TerraBaseJsonContext.Default.ErrorBody, context.RequestAborted);
     }
 }
