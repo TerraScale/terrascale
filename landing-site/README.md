@@ -66,9 +66,9 @@ The [zero-configuration operating contract](AGENTS.md#zero-configuration-user-de
 requires every serving region to be discovered automatically, with no regional
 activation step. The checked-in `static/regions.json` is currently a marketing
 catalog, not live node admission or evidence of which regions serve. An
-upstream public discovery feed and its publication integration remain pending.
+upstream public discovery source and its publication integration remain pending.
 Do not describe manually editing the catalog as enabling a region or invent a
-shipped automatic feed.
+shipped automatic source.
 
 Displayed SDK samples currently accept a caller-supplied resolver and authorized
 customer project/key. Automatic first-party endpoint and credential acquisition
