@@ -48,6 +48,19 @@ public static class BadRequests
                 context.Response.Headers.RetryAfter = "30";
                 await WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "disk_capacity", error.Message, op: null).ConfigureAwait(false);
             }
+            catch (DatabaseMovedException error) when (!context.Response.HasStarted && error.Home is not null)
+            {
+                Replace(context.Response);
+                context.Response.Headers["X-TerraBase-Database-Home"] = error.Home;
+                Listeners.ReplayIn(context, error.Home);
+                await WriteAsync(context, StatusCodes.Status421MisdirectedRequest, "wrong_region", error.Message, op: null).ConfigureAwait(false);
+            }
+            catch (DatabaseMovedException error) when (!context.Response.HasStarted)
+            {
+                Replace(context.Response);
+                context.Response.Headers.RetryAfter = "1";
+                await WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "move_unresolved", error.Message, op: null).ConfigureAwait(false);
+            }
             catch (StorageBusyException error) when (!context.Response.HasStarted)
             {
                 Replace(context.Response);

@@ -10,7 +10,7 @@ internal sealed class DatabaseKeys(IMasterKey master)
 {
     internal const string Suffix = ".key";
     internal const int MaxFileBytes = 16 * 1024;
-    private const string Header = "TERRABASE-DB-KEY-1\n";
+    internal const string Header = "TERRABASE-DB-KEY-1\n";
 
     internal async Task<string> CreateAsync(string path, TursoRunner io, CancellationToken cancellationToken)
     {
