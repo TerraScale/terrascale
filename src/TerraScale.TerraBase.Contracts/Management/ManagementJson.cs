@@ -9,6 +9,7 @@ namespace TerraScale.TerraBase.Contracts.Management
     [JsonSerializable(typeof(TerraBaseManagedDatabase))]
     [JsonSerializable(typeof(TerraBaseDatabasePage))]
     [JsonSerializable(typeof(TerraBaseDatabasePlacement))]
+    [JsonSerializable(typeof(TerraBaseDatabaseTtl))]
     [JsonSerializable(typeof(TerraBaseIndex))]
     [JsonSerializable(typeof(TerraBaseIndexPage))]
     [JsonSerializable(typeof(TerraBaseCreateIndex))]

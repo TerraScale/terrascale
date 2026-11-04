@@ -154,6 +154,13 @@
         "resolved": "10.0.0",
         "contentHash": "qy6C3gQRTrfhFfuiIYU1jNwWfFdJpBVo1BARW7jgMm1zTEm3LRzLLyOLJGaAuKE+nZCGkEP71y4rj9NWjqLGdQ=="
       },
+      "terrascale.endpoints": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.AspNetCore.OpenApi": "[11.0.0-rc.3.26522.148, )",
+          "Scalar.AspNetCore": "[2.17.13, )"
+        }
+      },
       "terrascale.terrabase.contracts": {
         "type": "Project",
         "dependencies": {

@@ -12,7 +12,7 @@ namespace TerraScale.TerraBase.Contracts.Backups
 
     /// <summary>A restore or advisory plan request.</summary>
     [MessagePackObject(true)]
-    public sealed record TerraBasePointInTimeRequest(DateTimeOffset PointInTime, string? Name, string? Destination);
+    public sealed record TerraBasePointInTimeRequest(DateTimeOffset PointInTime, string? Name, string? Destination, long? TtlSeconds = null);
 
 
 }

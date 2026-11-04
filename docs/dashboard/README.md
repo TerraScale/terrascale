@@ -8,6 +8,8 @@ The C# application is the only implementation; the Go application was removed.
 Production runs on OCI gru under ts-orch; see the
 [OCI deployment contract](oci-deployment.md).
 
+[Agent databases](agent-databases.md) describes TTL, forks and the database MCP lifecycle.
+
 Connect an assistant with the [MCP guide](https://docs.terrascale.tech/guides/mcp).
 The [dashboard integration API](platform-api.md) describes the serving
 session-authenticated contract and links its interactive reference.
