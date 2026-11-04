@@ -35,6 +35,7 @@ from .errors import (
 )
 from .ids import is_valid_id, new_id, validate_id
 from .models import Document, Group, Page, SQLResult, TransactionResult, WriteResult
+from .session import AsyncSqlSession, SqlSession
 from .sql import Column, Row, Statement, StatementResult
 
 __all__ = [
@@ -55,6 +56,8 @@ __all__ = [
     "Group",
     "WriteResult",
     "SQLResult",
+    "SqlSession",
+    "AsyncSqlSession",
     "Statement",
     "StatementResult",
     "Column",

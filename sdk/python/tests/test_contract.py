@@ -67,7 +67,7 @@ def test_every_sync_request_is_a_published_route(ts: TerraScale, fake: Fake) -> 
 async def test_async_client_has_the_same_surface() -> None:
     public = {n for n in dir(TerraScale) if not n.startswith("_")}
     assert public <= {n for n in dir(AsyncTerraScale) if not n.startswith("_")}
-    from terrascale import AsyncCollection, AsyncDatabase, Collection, Database
+    from terrascale import AsyncCollection, AsyncDatabase, AsyncSqlSession, Collection, Database, SqlSession
 
-    for sync, aio in ((Database, AsyncDatabase), (Collection, AsyncCollection)):
+    for sync, aio in ((Database, AsyncDatabase), (Collection, AsyncCollection), (SqlSession, AsyncSqlSession)):
         assert {n for n in dir(sync) if not n.startswith("_")} <= {n for n in dir(aio) if not n.startswith("_")}

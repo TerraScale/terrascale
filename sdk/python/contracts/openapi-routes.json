@@ -59,6 +59,7 @@
   "GET /v1/projects/{project}/databases/{database}/replication",
   "GET /v1/projects/{project}/databases/{database}/schema",
   "GET /v1/projects/{project}/databases/{database}/schema/{collection}",
+  "GET /v1/projects/{project}/databases/{database}/sql/ws",
   "GET /v1/projects/{project}/databases/{database}/usage",
   "GET /v1/projects/{project}/metrics",
   "GET /v1/projects/{project}/replication",

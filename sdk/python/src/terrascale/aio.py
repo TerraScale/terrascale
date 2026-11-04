@@ -16,6 +16,7 @@ from ._version import __version__
 from .auth import AsyncAPIKeyTokenSource
 from .client import _error, _settings
 from .errors import CommitUncertainError, InvalidResponseError, SqlError, SqlErrorCodes
+from .session import AsyncSqlSession
 from .sql import Args, Row, Statement, StatementResult
 
 __all__ = ["AsyncTerraScale", "AsyncDatabase", "AsyncCollection", "AsyncTransaction"]
@@ -243,6 +244,10 @@ class AsyncDatabase:
     async def batch(self, statements: Sequence[str | tuple[str, Args] | Statement]) -> builtins.list[StatementResult]:
         """Run 1 to 256 statements as one all-or-nothing transaction; one result per statement."""
         return await self._c._send(_spec.execute(*self._p, _sql.statements(statements)))
+
+    def connect(self) -> AsyncSqlSession:
+        """A SQL WebSocket session: ``await db.connect()`` or ``async with db.connect() as session``."""
+        return AsyncSqlSession(self)
 
     def transaction(self) -> AsyncTransaction:
         """An atomic group of document ops across collections::

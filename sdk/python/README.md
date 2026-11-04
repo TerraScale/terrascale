@@ -79,6 +79,32 @@ A refused statement raises `SqlError` with `code` (a `SqlErrorCodes` constant),
 back. `is_transient` is true for `serialization_conflict` and `tenant_busy`. A
 `409 serialization_conflict` is resent at most twice; nothing else is.
 
+### Sessions
+
+`db.connect()` opens a SQL WebSocket session (`terrascale.sql.v1`) for
+interactive transactions of at most 5 seconds:
+
+```python
+with db.connect() as session:
+    session.transaction(lambda s: s.execute("UPDATE ledger SET amount = amount - 5 WHERE id = ?", [1]))
+    session.begin()
+    session.execute("INSERT INTO ledger VALUES (?, ?)", [3, 5])
+    session.commit()                       # or session.rollback()
+
+async with ats.database("main").connect() as session:  # or: session = await db.connect()
+    rows = await session.query("SELECT * FROM ledger")
+```
+
+`execute`, `query` and `batch` match the REST methods; outside a transaction each
+call is its own transaction. `transaction(fn)` begins, runs `fn(session)` and
+commits, rolling back and re-raising when `fn` raises. `in_transaction` is the
+last answer's flag. Error frames raise `SqlError` with `status` 0; a refused
+upgrade raises the same HTTP errors as REST. Nothing is resent: when the socket
+drops, calls in flight fail and the next call reconnects with a fresh token. If a
+transaction was open, every call except `rollback()` raises
+`transaction_rolled_back` until `rollback()`. After `close()` the session stays
+closed. Async calls may overlap.
+
 ### Async
 
 ```python

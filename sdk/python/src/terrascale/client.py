@@ -17,6 +17,7 @@ from ._version import __version__
 from .auth import APIKeyTokenSource
 from .errors import APIError, CommitUncertainError, InvalidResponseError, SqlError, SqlErrorCodes, error_for
 from .ids import validate_id
+from .session import SqlSession
 from .sql import Args, Row, Statement, StatementResult
 
 __all__ = ["TerraScale", "Database", "Collection", "Transaction"]
@@ -263,6 +264,10 @@ class Database:
     def batch(self, statements: Sequence[str | tuple[str, Args] | Statement]) -> builtins.list[StatementResult]:
         """Run 1 to 256 statements as one all-or-nothing transaction; one result per statement."""
         return self._c._send(_spec.execute(*self._p, _sql.statements(statements)))
+
+    def connect(self) -> SqlSession:
+        """Open a SQL WebSocket session for interactive transactions; close it or use ``with``."""
+        return SqlSession(self)
 
     def transaction(self) -> Transaction:
         """An atomic group of document ops across collections::
