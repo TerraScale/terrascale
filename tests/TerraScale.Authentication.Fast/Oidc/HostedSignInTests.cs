@@ -154,6 +154,7 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         }
 
         // The sixth request says the budget is spent: no new code, the wait until the hour turns, no live resend.
+        clock.Advance(TimeSpan.FromSeconds(61));
         using var limited = await oidc.PostFormAsync(SignIn, new() { ["email"] = "alice@example.test", ["next"] = string.Empty });
         var budgetPage = await limited.Content.ReadAsStringAsync();
         await Assert.That(limited.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
