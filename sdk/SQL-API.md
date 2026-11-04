@@ -168,8 +168,11 @@ ORDER BY id DESC LIMIT 50;
 
 Bind the exact table name, inclusive UTC start and exclusive UTC end as positional arguments. For older records,
 add `AND id < ?` with the last returned conflict ID; omit predicates for unfiltered recent records.
-`created_at` is recording time, not the write's HLC. `row_key` and `change` are JSON text. A `superseded` conflict
-belongs to a `confirmed` transaction whose losing columns did not apply; `reverted` means none of the transaction's
-changes applied. Provisional writes have no conflict record yet, so no records does not prove confirmation.
-The newest 10,000 records are retained per database, subject to replica freshness. Never reconstruct historical
-winning values by joining against the current application row.
+`created_at` is recording time, distinct from `winner_hlc` and `loser_hlc`. `row_key`, `winner_value` and `loser_value`
+are JSON text; SQL NULL means no value was recorded, distinct from the JSON text `null`. Values above 4 KiB of JSON
+are represented by `{"sha256":"…","bytes":12345}`. The log includes `column_name`, and both writers' `_region`,
+`_node`, `_hlc`, `_transaction_id` and `_state` fields. HLC text sorts by hex milliseconds, logical counter and node ID.
+`loser_state = 'superseded'` belongs to a confirmed transaction whose losing columns did not apply; `reverted` means
+none of its changes applied. Provisional writes have no conflict record yet, so no records does not prove confirmation.
+The home retains at most the newest 10,000 records and trims records older than 30 days when recording a conflict,
+subject to replica freshness. Never reconstruct historical winners by joining against the current application row.
