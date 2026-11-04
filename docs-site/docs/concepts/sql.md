@@ -88,4 +88,4 @@ The C#, TypeScript, Go, Python and Rust SDKs call the same endpoint; see [SDKs](
 
 Errors keep SQLite codes such as `SQLITE_CONSTRAINT_UNIQUE`, `SQLITE_CONSTRAINT_FOREIGNKEY`, `SQLITE_BUSY` and `SQLITE_TOOBIG`. Over HTTP a refused statement rolls back the request and answers `{"error":{"code","message","statement","sqlite_code"}}`. The Postgres wire maps them to SQLSTATE `23505`, `23503`, `40001`, `54000` and similar. A write with a read-only key answers `403 forbidden_scope` over HTTP and `42501` over the Postgres wire.
 
-Reads need the `documents:read` scope; writes and schema changes also need `documents:write`. A **Read and write** key from the dashboard has both.
+Reads need the `sql:read` scope; writes and schema changes also need `sql:write`. A **Read and write** key from the dashboard has both.

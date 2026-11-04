@@ -85,7 +85,7 @@ Electric references: <https://electric.ax/docs/api/http> and <https://electric.a
 ### 2.3 Read paths today
 
 - **Point read and query:** authenticated per request, `no-store`, served by the machine the client reaches.
-- **R8 changes feed:** `GET /v1/…/databases/{d}/changes` over SSE, scope `documents:read`
+- **R8 changes feed:** `GET /v1/…/databases/{d}/changes` over SSE, scope `sql:read`
   ([GetDatabaseChangesEndpoint.cs#L18](https://github.com/TerraScale/terrascale/blob/f7d5c3c45a45c58495068f1874e4a0c7e5465608/src/TerraBase/Features/Documents/GetDatabaseChangesEndpoint.cs#L18)).
   - Every client holds its own connection. Nothing is cacheable or shared, so **cost grows linearly with readers.**
   - Limits: 32 per database and 1024 per machine, with a 30-minute lifetime
@@ -345,7 +345,7 @@ Exact bytes are in [`shape-reads.md` §12](shape-reads.md#12-tbs1-sealed-bytes).
   - `key_id` is required. It picks the correct project data key after a rotation.
   - Serves only epochs from the retention floor up to the current epoch. A future epoch is `400 invalid_request`.
     Retired objects or an unknown data-key identity fail closed; exact errors are in the protocol.
-  - Scope `documents:read` (3.12). Client listener, same tenancy checks as any data route. `Cache-Control: private,
+  - Scope `sql:read` (3.12). Client listener, same tenancy checks as any data route. `Cache-Control: private,
     no-store`.
   - The retention floor is the oldest epoch whose objects are still served (the feed's 7-day retention). Older keys
     stay available only while their objects are in retention, for authorized resnapshot and catch-up.
@@ -413,7 +413,7 @@ Metrics on `TerraScale.TerraBase`, without tenant labels:
 
 - **Always on.** No flag, setting or toggle. All values are constants.
 - **APIs.** `/v1`, built on TerraScale.Endpoints, OpenAPI through Scalar, source-generated serializer context.
-- **Scope.** `documents:read` for the shape route and the key and manifest routes. ts-auth already defines `documents:read` ([ApiKeys.cs#L22](../../src/TerraScale.Authentication/Features/Platform/ApiKeys.cs#L22)). No new scope is needed.
+- **Scope.** `sql:read` for the shape route and the key and manifest routes. ts-auth already defines `sql:read` ([ApiKeys.cs#L22](../../src/TerraScale.Authentication/Features/Platform/ApiKeys.cs#L22)). No new scope is needed.
 - **Data placement.** T0: sealed bodies in TerraBase's database file, as uncaptured derived data. T1: TBS1 ciphertext in
   Tigris. No new store.
 - **Tests.** Integration tests only, through `TerraBaseTestServer`. Every test runs in parallel. Fast covers the
@@ -529,7 +529,7 @@ Test-time classes. Measured values are cited; everything else is an estimate.
 
 | ID | Work | Files owned | Depends | Tests | Time | Model |
 | --- | --- | --- | --- | --- | --- | --- |
-| FR-10 | Slice and endpoint skeleton: route, parameter validation, `307` from `-1`, `409 must_refetch`, headers, OpenAPI/Scalar, serializer context, `documents:read`, client listener | `Features/Shapes/{GetShapeEndpoint,ShapeModels,ShapesExtensions}.cs`, one line in `Program.cs` | FR-03 | Fast filtered: `ShapeApiTests` | ~4 min | Haiku |
+| FR-10 | Slice and endpoint skeleton: route, parameter validation, `307` from `-1`, `409 must_refetch`, headers, OpenAPI/Scalar, serializer context, `sql:read`, client listener | `Features/Shapes/{GetShapeEndpoint,ShapeModels,ShapesExtensions}.cs`, one line in `Program.cs` | FR-03 | Fast filtered: `ShapeApiTests` | ~4 min | Haiku |
 | FR-11 | Handle and shape id (3.3), canonical filter, rotation triggers | `Features/Shapes/ShapeHandle.cs` | FR-03 | Fast filtered: `ShapeHandleTests` (rotates on drop and re-create, copy, restore, unclean start) | ~4 min | Haiku |
 | FR-12 | Chunk sealer (3.4): commit-boundary chunks, `values_at`, publication gate, committed seal (no extra FULL barrier), capture suspended, memory reserved, damaged rows refused as in #152, `503 shape_too_large` | `Features/Shapes/ShapeSealer.cs`, `Engine/Sqlite/SqliteStorageTransaction.Shapes.cs` | FR-03 | Fast filtered: `ShapeSealTests` (1 node; 2 nodes with joined writes) | ~5 min | Haiku |
 | FR-13 | Snapshot sealer (3.5): one read transaction at `S`, gate `F ≥ S` | `Features/Shapes/ShapeSnapshots.cs`, `Engine/Sqlite/SqliteStorageTransaction.ShapeSnapshots.cs` | FR-03 | Fast filtered: `ShapeSnapshotTests` | ~5 min | Haiku |
@@ -605,7 +605,7 @@ qualification of wave A). FR-40..42 and FR-44 = S1..S3 and S4; FR-43 (ts-cli) ha
 | D10 | Resume cursor is opaque. Sent as `cursor` query or `TB-Shape-Resume` header, never both. Live bucket keeps the `cursor` name when `live=true` | Settled |
 | D11 | No commit splitting. A commit over 8 MiB answers `503 shape_too_large` and does not advance | Settled, explicit limitation |
 | D12 | Values are read in the materialization transaction; `values_at` gates publication. No copy-on-overwrite table | Settled |
-| D13 | Scope `documents:read` for the shape, key and manifest routes | Settled |
+| D13 | Scope `sql:read` for the shape, key and manifest routes | Settled |
 | D14 | Resume token is `base64url(0x01 ‖ resume_scope16 ‖ R8)`. `resume_scope16` binds organization, project, database, collection, collection generation, canonical filter and wire format, not the machine. Malformed is `400`, mismatched scope is `409` (B0 review) | Settled |
 | D15 | Publication gate uses `covered_offset`: the `next_offset` for chunks and fresh bodies, the snapshot's `S` for every page (B0 review) | Settled |
 | D16 | Region-failover redirect goes to the earlier of the commit boundary before the first uncovered row and the local sealed head; a target below retention is `409` (B0 review) | Settled |

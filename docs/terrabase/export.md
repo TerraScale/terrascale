@@ -7,7 +7,7 @@
 {"collection":"items","id":"01JC9Q5Y6Z2K8V7N3M4P5R6S7T","document":{"name":"Ada"}}
 ```
 
-- Scope: `documents:read`. A database the key does not reach answers `404 unknown_database`.
+- Scope: `sql:read`. A database the key does not reach answers `404 unknown_database`.
 - Order: collection name, then document id. Deleted documents are not exported.
 - Consistency: one request reads one snapshot (a single read transaction for the whole stream).
 - Resume: pass `after_collection` and `after_id` from the last line received. The export continues after that

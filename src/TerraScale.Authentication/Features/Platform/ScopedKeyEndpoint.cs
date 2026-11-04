@@ -35,7 +35,7 @@ public sealed class ScopedKeyEndpoint(ApiKeys keys, PlatformDirectory directory,
         Post("/v1/terrascale/api-keys/self/scoped-keys");
         Name("create_scoped_api_key");
         Summary("Mint a scoped API key for an agent");
-        Description("Authorization: Basic base64(keyId:key) of an API key. Mints a new API key that reaches one database (ULID) of one project: access read grants documents:read, read_write documents:read and documents:write. ttl_seconds is 60 to 2,592,000 (default 3600) and the key never outlives its parent. project is required for an organization key and must equal a project key's project. The parent must hold the scopes and, when narrowed, the same database. A scoped key mints no keys; revoking or rotating the parent revokes it. The key string is answered once.");
+        Description("Authorization: Basic base64(keyId:key) of an API key. Mints a new API key that reaches one database (ULID) of one project: access read grants sql:read, read_write sql:read and sql:write. ttl_seconds is 60 to 2,592,000 (default 3600) and the key never outlives its parent. project is required for an organization key and must equal a project key's project. The parent must hold the scopes and, when narrowed, the same database. A scoped key mints no keys; revoking or rotating the parent revokes it. The key string is answered once.");
         Tags("API keys");
         Metadata(new Microsoft.AspNetCore.Http.Metadata.AcceptsMetadata(["application/json"], typeof(ScopedKeyRequest)));
         Produces<ScopedKeyBody>(StatusCodes.Status201Created);
@@ -81,8 +81,8 @@ public sealed class ScopedKeyEndpoint(ApiKeys keys, PlatformDirectory directory,
 
         IReadOnlyList<string>? scopes = body.Access switch
         {
-            "read" => [TerraBaseScopes.DocumentsRead],
-            "read_write" => [TerraBaseScopes.DocumentsRead, TerraBaseScopes.DocumentsWrite],
+            "read" => [TerraBaseScopes.SqlRead],
+            "read_write" => [TerraBaseScopes.SqlRead, TerraBaseScopes.SqlWrite],
             _ => null,
         };
         if (scopes is null)

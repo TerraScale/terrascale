@@ -1,12 +1,12 @@
 # Optional collection validation
 
-Collections start schemaless. A caller with `documents:write` can attach, replace,
+Collections start schemaless. A caller with `sql:write` can attach, replace,
 or detach a declared JSON Schema on the client TLS listener. These routes use v1:
 
 | Method | Route | Behavior |
 | --- | --- | --- |
 | PUT | `/v1/projects/{project}/databases/{database}/collections/{collection}/schema` | Attach or replace; the body is the schema itself |
-| GET | Same route | Read the schema (`documents:read`) |
+| GET | Same route | Read the schema (`sql:read`) |
 | DELETE | Same route | Detach without removing documents |
 
 Route decision (owner instruction, 2026-10-09): public APIs use v1. Breaking

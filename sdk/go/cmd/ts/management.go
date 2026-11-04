@@ -19,7 +19,7 @@ func scopedKeyRequest(operands []string, expires, allowCIDR, scope string) (tsau
 	}
 	switch scope {
 	case "read":
-		req.Scopes = []string{tsauth.ScopeDatabasesRead, tsauth.ScopeDocumentsRead}
+		req.Scopes = []string{tsauth.ScopeDatabasesRead, tsauth.ScopeSQLRead}
 	case "", "read-write":
 		// Preserve the existing default; read access is an explicit choice.
 	default:

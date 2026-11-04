@@ -57,13 +57,13 @@ into a database that holds data, schema/constraint enforcement in TerraBase.
 
 | Method | Route | operationId | Scopes (all required) | Success |
 | --- | --- | --- | --- | --- |
-| POST | `D/import` | `createImport` | `databases:write`, `documents:write` | `201` `ImportJob` (`awaiting_source`); `200` for an identical replay |
+| POST | `D/import` | `createImport` | `databases:write`, `sql:write` | `201` `ImportJob` (`awaiting_source`); `200` for an identical replay |
 | GET | `D/import` | `getImport` | `databases:read` | `200` `ImportJob` |
-| PUT | `D/import/source?offset={n}` | `uploadImportSource` | `databases:write`, `documents:write` | `200` `ImportJob` |
-| PATCH | `D/import` | `updateImport` | `databases:write`, `documents:write` | `202` `ImportJob` (`analyzing`) |
-| POST | `D/import/start` | `startImport` | `databases:write`, `documents:write` | `202` `ImportJob` (`queued`) |
+| PUT | `D/import/source?offset={n}` | `uploadImportSource` | `databases:write`, `sql:write` | `200` `ImportJob` |
+| PATCH | `D/import` | `updateImport` | `databases:write`, `sql:write` | `202` `ImportJob` (`analyzing`) |
+| POST | `D/import/start` | `startImport` | `databases:write`, `sql:write` | `202` `ImportJob` (`queued`) |
 | POST | `D/import/cancel` | `cancelImport` | `databases:write` | `202` `ImportJob` |
-| POST | `D/import/resume` | `resumeImport` | `databases:write`, `documents:write` | `202` `ImportJob` |
+| POST | `D/import/resume` | `resumeImport` | `databases:write`, `sql:write` | `202` `ImportJob` |
 
 Listing: `listDatabases` (existing), then `getImport` per database (`404 unknown_import` when it has none).
 Cleanup: `deleteDatabase` (existing) removes the destination and its job; TerraBase then deletes the staged source.

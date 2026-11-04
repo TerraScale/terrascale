@@ -7,7 +7,7 @@ import { createTsAuthClient } from "../src/ts-auth.js";
 const origin = "https://auth.terrascale.tech";
 const issuer = "https://auth.terrascale.tech/terrascale";
 const audience = "https://api.terrascale.tech";
-const scopes = ["databases:read", "databases:write", "documents:read", "documents:write"];
+const scopes = ["databases:read", "databases:write", "sql:read", "sql:write"];
 const clientId = "01ARZ3NDEKTSV4RRFFQ6000002";
 const project = "01ARZ3NDEKTSV4RRFFQ69G5FA1";
 
@@ -29,12 +29,12 @@ function platform(respond, overrides = {}) {
   return { client, requests };
 }
 
-const token = { access_token: "header.payload.signature", token_type: "Bearer", expires_in: 900, scope: "databases:read documents:read" };
+const token = { access_token: "header.payload.signature", token_type: "Bearer", expires_in: 900, scope: "databases:read sql:read" };
 
 describe("platform token contract", () => {
   // Public producer platform-api.openapi.yaml ClientCredentialsGrant / PlatformGrants.ApiKeyAsync.
   test("project API keys send the explicit project and optional subset scope without resource", async () => {
-    for (const scope of [undefined, "documents:read"]) {
+    for (const scope of [undefined, "sql:read"]) {
       const response = { ...token, expires_in: 60, scope: scope ?? token.scope };
       const { client, requests } = platform(() => Response.json(scope === undefined ? response : { access_token: token.access_token, token_type: "Bearer", expires_in: 60 }));
       const result = await client.oidc.token(clientId, "secret&+", { grant_type: "client_credentials", project, ...(scope === undefined ? {} : { scope }) });
@@ -50,14 +50,14 @@ describe("platform token contract", () => {
 
   test("client_credentials sends exactly the requested scopes and never defaults or broadens them", async () => {
     const { client, requests } = platform(() => Response.json(token));
-    for (const scope of ["documents:read", scopes.join(" ")]) {
+    for (const scope of ["sql:read", scopes.join(" ")]) {
       await client.oidc.token(clientId, "secret", { grant_type: "client_credentials", resource: audience, scope });
       expect(new URLSearchParams(await requests.at(-1)?.text()).get("scope")).toBe(scope);
     }
     const sent = requests.length;
-    for (const scope of [undefined, "", /** @type {never} */ (scopes), "documents:read documents:read"])
+    for (const scope of [undefined, "", /** @type {never} */ (scopes), "sql:read sql:read"])
       expect(() => client.oidc.token(clientId, "secret", { grant_type: "client_credentials", resource: audience, scope: /** @type {string} */ (scope) })).toThrow(TypeError);
-    expect(() => client.oidc.token(clientId, "secret", /** @type {never} */ ({ grant_type: "client_credentials", resource: audience, scope: "documents:read", scopes }))).toThrow(TypeError);
+    expect(() => client.oidc.token(clientId, "secret", /** @type {never} */ ({ grant_type: "client_credentials", resource: audience, scope: "sql:read", scopes }))).toThrow(TypeError);
     // A refresh without scope keeps the stored grant; the SDK adds none.
     await client.oidc.token(clientId, "secret", { grant_type: "refresh_token", refresh_token: "rt" });
     expect(new URLSearchParams(await requests.at(-1)?.text()).has("scope")).toBe(false);

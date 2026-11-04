@@ -27,7 +27,7 @@ import { platformIdentityRoutes } from "./platform-management-routes.js";
 /** @typedef {{readonly name: string}} IdentityNameRequest */
 /** @typedef {"viewer" | "member" | "admin" | "owner"} IdentityOrganizationRole */
 /** @typedef {Exclude<IdentityOrganizationRole, "owner">} IdentityProjectRole */
-/** @typedef {"documents:read" | "documents:write" | "databases:read" | "databases:write"} IdentityKeyScope */
+/** @typedef {"sql:read" | "sql:write" | "databases:read" | "databases:write"} IdentityKeyScope */
 /** @typedef {{readonly name: string; readonly scopes: readonly IdentityKeyScope[]; readonly expires_at?: string | null; readonly allowed_cidrs?: readonly string[] | null}} IdentityOrganizationKeyRequest */
 /** Database restrictions use immutable database ULIDs, never names.
  * @typedef {IdentityOrganizationKeyRequest & {readonly database?: string | null}} IdentityProjectKeyRequest */

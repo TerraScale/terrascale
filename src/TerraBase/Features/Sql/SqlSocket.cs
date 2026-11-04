@@ -137,12 +137,12 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
         }
 
         var authorization = _services.GetRequiredService<IAuthorizationService>();
-        if (!(await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.DocumentsRead).ConfigureAwait(false)).Succeeded)
+        if (!(await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.SqlRead).ConfigureAwait(false)).Succeeded)
         {
-            return await RefuseAsync(request.Id, SqlErrors.Auth with { Message = "SQL needs the documents:read scope" }, cancellationToken).ConfigureAwait(false);
+            return await RefuseAsync(request.Id, SqlErrors.Auth with { Message = "SQL needs the sql:read scope" }, cancellationToken).ConfigureAwait(false);
         }
 
-        _canWrite = (await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.DocumentsWrite).ConfigureAwait(false)).Succeeded;
+        _canWrite = (await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.SqlWrite).ConfigureAwait(false)).Succeeded;
         switch (await DatabaseRoute.CheckTenantAsync(context, _services.GetRequiredService<ITenantDirectory>(), cancellationToken).ConfigureAwait(false))
         {
             case TenantContext found:
@@ -325,8 +325,8 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
 
         context.User = authenticated.Principal;
         var authorization = _services.GetRequiredService<IAuthorizationService>();
-        if (!(await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.DocumentsRead).ConfigureAwait(false)).Succeeded
-            || (await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.DocumentsWrite).ConfigureAwait(false)).Succeeded != _canWrite)
+        if (!(await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.SqlRead).ConfigureAwait(false)).Succeeded
+            || (await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.SqlWrite).ConfigureAwait(false)).Succeeded != _canWrite)
         {
             return CredentialRevoked;
         }

@@ -74,7 +74,7 @@ public sealed class KeyRevocationTests
         await Assert.That(startup.MessageText).StartsWith("key_revoked:");
     }
 
-    private static (string Key, string Token) Grant(ManagementApi api, ManagedDatabaseRef database, bool mismatched = false, string scope = "documents:read databases:read")
+    private static (string Key, string Token) Grant(ManagementApi api, ManagedDatabaseRef database, bool mismatched = false, string scope = "sql:read databases:read")
     {
         var id = EntityIds.New().ToString();
         var key = id + "_" + new Faker().Random.String2(52, "0123456789abcdefghjkmnpqrstvwxyz");

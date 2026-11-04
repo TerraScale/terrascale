@@ -31,7 +31,7 @@ test('coalesces and caches; exact project grant without resource', async t => {
   assert.equal(await f.getAccessToken(), values[0]); assert.equal(f.requests.length, 1)
   const r = f.requests[0]
   assert.equal(r.url, '/terrascale/oauth/token')
-  assert.deepEqual(Object.fromEntries(r.form), { client_id: keyId, client_secret: key, grant_type: 'client_credentials', project, scope: 'documents:read documents:write' })
+  assert.deepEqual(Object.fromEntries(r.form), { client_id: keyId, client_secret: key, grant_type: 'client_credentials', project, scope: 'sql:read sql:write' })
   assert.equal(r.headers.authorization, undefined)
 })
 test('renews early, denial never falls back to stale cache, explicit later retry coalesces', async t => {

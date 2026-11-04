@@ -14,7 +14,7 @@ main at `2020a18ee`; operation `executeSql`). Bearer API key or project access t
   booleans (stored as 1 or 0), strings or blobs `{"base64":"…"}`. `named` keys omit the `:`, `@` or `$` prefix.
 - Every request is one transaction, all or nothing. `BEGIN`, `COMMIT` and `ROLLBACK` are refused
   (`transaction_state`); `SAVEPOINT`, `RELEASE` and `ROLLBACK TO` are accepted.
-- Scope `documents:read`; writes and DDL also need `documents:write`.
+- Scope `sql:read`; writes and DDL also need `sql:write`.
 
 200 answers one result per statement, in order:
 

@@ -19,7 +19,7 @@ namespace TerraScale.Dashboard.E2E.Demo
         public int CreatedKeys => Volatile.Read(ref createdKeys);
         public int RotatedKeys => Volatile.Read(ref rotatedKeys);
         private const string Alphabet = "0123456789abcdefghjkmnpqrstvwxyz";
-        private static readonly string[] Allowed = ["databases:read", "databases:write", "documents:read", "documents:write"];
+        private static readonly string[] Allowed = ["databases:read", "databases:write", "sql:read", "sql:write"];
         private readonly TerraScaleIdGenerator ids = new();
         private readonly object gate = new();
         private readonly SortedDictionary<string, (Key Key, string Secret)> keys = new(StringComparer.Ordinal);

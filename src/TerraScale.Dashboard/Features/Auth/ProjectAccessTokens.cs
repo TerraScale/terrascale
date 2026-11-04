@@ -27,7 +27,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
         public static readonly IReadOnlySet<string> ProjectScopes = new HashSet<string>(StringComparer.Ordinal)
         {
-            "databases:read", "databases:write", "documents:read", "documents:write"
+            "databases:read", "databases:write", "sql:read", "sql:write"
         };
 
         public async Task<string> GetAsync(SessionRecord session, string organizationId, string projectId, IReadOnlyList<string> scopes, CancellationToken cancellationToken)
