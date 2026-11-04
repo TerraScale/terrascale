@@ -21,7 +21,7 @@ internal sealed class CreateManagedDatabaseEndpoint(IManagementService managemen
         Post(ProjectApiRoute.Databases);
         Name(OperationName);
         Summary("Creates a database in a project");
-        Description("Creates a database in its home region. replicaRegions names up to 8 other regions that hold read replicas: they pull the home's pages and serve SQL reads, while writes go to the home. allRegions is unavailable." + DatabaseTtl.Description + " " + ProjectApiRoute.IdentityDescription);
+        Description("Creates a database in its home region. replicaRegions names up to 8 other regions that hold read replicas: they pull the home's pages and serve SQL reads, while writes go to the home. allRegions places a replica in every serving region, including regions that join later." + DatabaseTtl.Description + " " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -51,11 +51,11 @@ internal sealed class CreateManagedDatabaseEndpoint(IManagementService managemen
             return ErrorResponse.From(invalidTtl);
         }
 
-        if (request.AllRegions == true)
+        var all = request.AllRegions == true;
+        if (all && request.ReplicaRegions is not null)
         {
-            return ErrorResponse.From(new Validation("all-region placement is unavailable: name the replica regions", "replicas_unavailable"));
+            return ErrorResponse.From(new Validation("send replicaRegions or allRegions, not both"));
         }
-        const bool all = false;
 
         var home = request.HomeRegion ?? options.Region;
         var serving = await regions.ServingAsync(cancellationToken).ConfigureAwait(false);
@@ -64,7 +64,7 @@ internal sealed class CreateManagedDatabaseEndpoint(IManagementService managemen
             return ErrorResponse.From(unservedHome);
         }
 
-        IReadOnlyList<string> replicas = all ? [] : request.ReplicaRegions ?? [];
+        IReadOnlyList<string> replicas = all ? DatabaseRegions.AllBut(serving, home) : request.ReplicaRegions ?? [];
         if (home != options.Region)
         {
             return TerraBaseOptions.IsRegion(home)

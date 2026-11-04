@@ -23,7 +23,7 @@ public sealed record ManagedDatabase(
 
     public bool PlacedIn(string region) => Home(region) == region;
 
-    public DatabasePlacement Placement(string region) => new(Home(region), Replicas, PlacementVersion);
+    public DatabasePlacement Placement(string region) => new(Home(region), Replicas, PlacementVersion, AllRegions);
 }
 
 public readonly union CreateOrganizationResult(Organization, Conflict, Unavailable);
