@@ -741,7 +741,10 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 session.Statements.Clear();
                 return new[] { new PgResult(null, [], "DEALLOCATE ALL") };
             case PgKind.Set or PgKind.Show:
-                return PostgresStatements.RunCommand(statement.Kind, statement.Text, session.Settings);
+                session.Settings["terrascale.write_route"] = session.Sql.LastRoute?.Header ?? "none";
+                var answered = PostgresStatements.RunCommand(statement.Kind, statement.Text, session.Settings);
+                session.Sql.Prefer(SqlExecuteEndpoint.Preference(session.Settings["terrascale.write"]) ?? Features.Sql.Routing.WriteOverride.Auto);
+                return answered;
             case PgKind.Catalog when PgCatalog.Functions(statement.Text, session.Database, session.User) is { } functions:
                 return new[] { functions };
         }
