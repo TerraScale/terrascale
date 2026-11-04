@@ -95,6 +95,45 @@ region is the home. `Client::list_databases`, `Database::get_database`, `Client:
 `Database::delete_database` in the database's home region; HTTP 204 confirms logical deletion and local
 cleanup.
 
+## Databases for agents
+
+The project-bound SQL `Client` exposes `create_database(name, &CreateDatabaseOptions)`,
+`fork_database(source, name, &ForkDatabaseOptions)`, `set_database_ttl(database, seconds)`,
+`clear_database_ttl(database)` and `delete_database(database)`. They need `databases:write` and
+return `ManagedDatabase` metadata, including `expires_at` (`None` without a TTL); deletion returns `()`.
+Selectors accept names or ULIDs. TTLs are whole seconds, from 60 to 31,536,000. A fork without
+`point_in_time` copies the source now; an RFC 3339 `point_in_time` restores inside its restore window.
+Forks do not inherit TTLs. Expiry deletes the database, backups and data keys; billing continues until deletion.
+
+```rust,no_run
+use terrascale::v1::{Client, CreateDatabaseOptions, ScopedKeyAccess, ScopedKeyOptions};
+
+# async fn example(project: &str, api_key: &str) -> terrascale::v1::Result<()> {
+let client = Client::for_project_api_key(project, api_key).build()?;
+let database = client.create_database("agent", &CreateDatabaseOptions {
+    ttl_seconds: Some(3600),
+}).await?;
+let scoped = client.create_scoped_key(&ScopedKeyOptions {
+    project: Some(project.into()),
+    database: database.id,
+    access: ScopedKeyAccess::ReadWrite,
+    ttl_seconds: Some(3600),
+}).await?;
+let agent = Client::for_project_api_key(project, scoped.key).build()?;
+# let _ = agent; Ok(()) }
+```
+
+`create_scoped_key` sends the client's API key with Basic authentication only to the fixed ts-auth
+scoped-keys endpoint. It requires a database ULID and `Read` or `ReadWrite` access. Key TTLs range
+from 60 to 2,592,000 seconds, default to 3600 and cannot outlive the parent key. Supply `project` for
+an organization key; for a project key it must match that key's project. Scoped keys cannot manage
+databases, mint keys or reach another database. Revoking or rotating the parent revokes its scoped keys.
+The returned `ScopedKey.key` is shown once and can be passed directly to another client's API-key builder.
+Refusals use the existing HTTP error types; mutations are never replayed after an uncertain result.
+
+Qualification: this surface is checked against the local contract fixtures in
+`contracts/terrabase/agent/`, equivalent to the shared SQL API contract. Live server qualification is pending.
+
 ## Authentication
 
 See [API-key authentication](docs/api-key-auth.md) for error and refresh behavior. Project requests use

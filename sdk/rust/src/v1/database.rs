@@ -66,6 +66,8 @@ pub struct ProjectDatabaseInfo {
     )]
     pub conflict_of: Option<String>,
     pub created_at: String,
+    #[serde(default)]
+    pub expires_at: Option<String>,
     pub region: String,
     pub home_region: String,
 }

@@ -1,0 +1,88 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases",
+      "body": {
+        "name": "denied"
+      }
+    },
+    "response": {
+      "status": 403,
+      "body": {
+        "error": {
+          "code": "forbidden_scope",
+          "message": "databases:write is required"
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/terrascale/api-keys/self/scoped-keys",
+      "body": {
+        "database": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "access": "read"
+      }
+    },
+    "response": {
+      "status": 403,
+      "body": {
+        "error": "forbidden",
+        "error_description": "Database is outside the parent key scope."
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/terrascale/api-keys/self/scoped-keys",
+      "body": {
+        "database": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "access": "read"
+      }
+    },
+    "response": {
+      "status": 401,
+      "body": {
+        "error": "invalid_client",
+        "error_description": "Parent key was not accepted."
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/terrascale/api-keys/self/scoped-keys",
+      "body": {
+        "database": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "access": "read"
+      }
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": "invalid_request",
+        "error_description": "Request refused."
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/terrascale/api-keys/self/scoped-keys",
+      "body": {
+        "database": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "access": "read"
+      }
+    },
+    "response": {
+      "status": 429,
+      "body": {
+        "error": "rate_limited",
+        "error_description": "Request refused."
+      }
+    }
+  }
+]

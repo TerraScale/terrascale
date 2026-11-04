@@ -30,6 +30,7 @@ pub(super) struct KeyAuth {
     pub(super) basic: HeaderValue,
     pub(super) project: String,
     pub(super) endpoint: String,
+    pub(super) scoped_endpoint: String,
     cached: Mutex<Option<Cached>>,
     /// Set while one background task renews a still-valid token.
     renewing: AtomicBool,
@@ -96,6 +97,9 @@ impl Auth {
                     basic,
                     project: project.to_owned(),
                     endpoint: "https://auth.terrascale.tech/terrascale/oauth/token".into(),
+                    scoped_endpoint:
+                        "https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys"
+                            .into(),
                     cached: Mutex::new(None),
                     renewing: AtomicBool::new(false),
                 })))

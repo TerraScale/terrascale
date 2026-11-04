@@ -14,6 +14,9 @@ use std::sync::{
 #[path = "token_failure_tests.rs"]
 mod failures;
 
+#[path = "agent_tests.rs"]
+mod agent;
+
 const PROJECT: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const KEY_ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
 fn key() -> String {
@@ -24,6 +27,7 @@ fn grant(token: &str, lifetime: u64) -> String {
 }
 
 struct Seen {
+    method: String,
     path: String,
     headers: HeaderMap,
     body: Vec<u8>,
@@ -64,15 +68,17 @@ impl Fixture {
                                 let (seen, handler, gate) = (seen.clone(), handler.clone(), gate.clone());
                                 async move {
                                     let (parts, body) = req.into_parts();
-                                    let request = Seen { path: parts.uri.to_string(), headers: parts.headers,
+                                    let request = Seen { method: parts.method.to_string(), path: parts.uri.to_string(), headers: parts.headers,
                                         body: body.collect().await.unwrap().to_bytes().to_vec() };
                                     let response = handler(&request);
                                     seen.lock().unwrap().push(request);
                                     if response.0 == 401 {
                                         if let Some(gate) = gate { gate.wait().await; }
                                     }
-                                    Ok::<_, std::convert::Infallible>(Response::builder().status(response.0)
-                                        .header(CONTENT_TYPE, response.1).body(Full::new(Bytes::from(response.2))).unwrap())
+                                    let mut builder = Response::builder().status(response.0)
+                                        .header(CONTENT_TYPE, response.1);
+                                    if response.0 == 429 { builder = builder.header(RETRY_AFTER, "7"); }
+                                    Ok::<_, std::convert::Infallible>(builder.body(Full::new(Bytes::from(response.2))).unwrap())
                                 }
                             });
                             let _ = hyper::server::conn::http1::Builder::new().serve_connection(TokioIo::new(socket), service).await;

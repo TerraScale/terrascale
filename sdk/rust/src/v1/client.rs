@@ -529,6 +529,90 @@ enum Attempt {
 }
 
 impl Client {
+    pub(crate) async fn send_scoped_key(
+        &self,
+        options: &super::agent::ScopedKeyOptions,
+    ) -> Result<Resp> {
+        let Auth::Key(key) = &self.inner.auth else {
+            return Err(Error::InvalidInput(
+                "create_scoped_key requires an API key".into(),
+            ));
+        };
+        let response = self
+            .inner
+            .http
+            .post(&key.scoped_endpoint)
+            .header(AUTHORIZATION, key.basic.clone())
+            .header("Accept", "application/json")
+            .json(options)
+            .send()
+            .await
+            .map_err(|e| Error::Transport(describe(&e)))?;
+        let status = response.status();
+        let headers = response.headers().clone();
+        let mut body = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| {
+                self.response_error(
+                    Error::Transport(describe(&e)),
+                    status,
+                    &headers,
+                    body.clone(),
+                )
+            })?;
+            if body.len() + chunk.len() > self.inner.max_response {
+                return Err(self.response_error(
+                    Error::ResponseTooLarge {
+                        limit: self.inner.max_response,
+                        status: status.as_u16(),
+                        may_have_applied: !status.is_client_error(),
+                    },
+                    status,
+                    &headers,
+                    body,
+                ));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let response = Resp {
+            status,
+            headers,
+            body,
+            mutation: true,
+        };
+        if !status.is_success() {
+            #[derive(serde::Deserialize)]
+            struct Refusal {
+                error: String,
+                error_description: Option<String>,
+            }
+            let retry_after = response
+                .header("Retry-After")
+                .and_then(|value| parse_retry_after(value, std::time::SystemTime::now()));
+            if let Ok(refusal) = serde_json::from_slice::<Refusal>(&response.body) {
+                let error = if status == StatusCode::TOO_MANY_REQUESTS {
+                    Error::RateLimited { retry_after }
+                } else {
+                    Error::Api {
+                        status: status.as_u16(),
+                        code: refusal.error,
+                        message: refusal.error_description,
+                        details: None,
+                    }
+                };
+                return Err(self.response_error(error, status, &response.headers, response.body));
+            }
+            return Err(errors::from_project_response(
+                status.as_u16(),
+                retry_after,
+                response.header("X-Request-ID"),
+                &response.body,
+            ));
+        }
+        Ok(response)
+    }
+
     pub(crate) async fn send_project(&self, req: Req<'_>) -> Result<Resp> {
         if self.inner.project.is_none() {
             return Err(Error::InvalidInput(

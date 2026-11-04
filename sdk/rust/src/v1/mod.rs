@@ -16,6 +16,7 @@
 //! # let _ = rows; Ok(()) }
 //! ```
 
+mod agent;
 mod auth;
 mod backups;
 mod buckets;
@@ -35,6 +36,10 @@ mod sql_session;
 mod system;
 mod types;
 
+pub use agent::{
+    CreateDatabaseOptions, ForkDatabaseOptions, ManagedDatabase, ScopedKey, ScopedKeyAccess,
+    ScopedKeyOptions,
+};
 pub use backups::RestoredDatabase;
 pub use buckets::{BucketRules, FileBucket, FileBucketPage, ReadWriteGrants};
 pub use client::{

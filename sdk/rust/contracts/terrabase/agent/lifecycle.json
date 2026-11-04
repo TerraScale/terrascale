@@ -1,0 +1,191 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases",
+      "body": {
+        "name": "agent",
+        "ttlSeconds": 3600
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "name": "agent",
+        "branchedFrom": null,
+        "createdAt": "2026-11-04T12:00:00Z",
+        "region": "gru",
+        "homeRegion": "gru",
+        "expiresAt": "2026-11-04T13:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases",
+      "body": {
+        "name": "durable"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "name": "durable",
+        "branchedFrom": null,
+        "createdAt": "2026-11-04T12:00:00Z",
+        "region": "gru",
+        "homeRegion": "gru",
+        "expiresAt": null
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/agent/branches",
+      "body": {
+        "name": "fork"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "name": "fork",
+        "branchedFrom": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "createdAt": "2026-11-04T12:00:00Z",
+        "region": "gru",
+        "homeRegion": "gru",
+        "expiresAt": null
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/01ARZ3NDEKTSV4RRFFQ69G5FAW/point-in-time/restore",
+      "body": {
+        "name": "past",
+        "pointInTime": "2026-11-04T12:30:00Z",
+        "ttlSeconds": 3600
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "name": "past",
+        "branchedFrom": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "createdAt": "2026-11-04T12:00:00Z",
+        "region": "gru",
+        "homeRegion": "gru",
+        "expiresAt": "2026-11-04T13:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "PUT",
+      "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/01ARZ3NDEKTSV4RRFFQ69G5FAW/ttl",
+      "body": {
+        "ttlSeconds": 3600
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "name": "agent",
+        "branchedFrom": null,
+        "createdAt": "2026-11-04T12:00:00Z",
+        "region": "gru",
+        "homeRegion": "gru",
+        "expiresAt": "2026-11-04T13:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "DELETE",
+      "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/agent/ttl",
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "name": "agent",
+        "branchedFrom": null,
+        "createdAt": "2026-11-04T12:00:00Z",
+        "region": "gru",
+        "homeRegion": "gru",
+        "expiresAt": null
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "DELETE",
+      "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      "body": null
+    },
+    "response": {
+      "status": 204,
+      "body": null
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/terrascale/api-keys/self/scoped-keys",
+      "body": {
+        "project": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "database": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "access": "read"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "key": "01ARZ3NDEKTSV4RRFFQ69G5FAY_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+        "database": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "access": "read",
+        "project_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "expires_at": "2026-11-04T13:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/terrascale/api-keys/self/scoped-keys",
+      "body": {
+        "project": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "database": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "access": "read_write",
+        "ttl_seconds": 3600
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "key": "01ARZ3NDEKTSV4RRFFQ69G5FAY_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+        "database": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "access": "read_write",
+        "project_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "expires_at": "2026-11-04T13:00:00Z"
+      }
+    }
+  }
+]
