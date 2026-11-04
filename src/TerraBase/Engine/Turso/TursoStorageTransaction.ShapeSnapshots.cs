@@ -75,7 +75,8 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
             throw new ShapeSealOffsetException();
         }
 
-        var columns = current.Columns;
+        var columns = shape.Filter?.Columns.ToArray() ?? current.Columns;
+        var condition = shape.Filter?.Where is { } where ? $"({where}) AND " : "";
 
         var workspace = memory.TryReserve(MemoryLane.Bulk, ShapeSnapshots.WorkspaceBytes, store.Tenant) ?? throw new StorageBusyException();
         IMemoryReservation? rowMemory = null;
@@ -87,12 +88,12 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
             var started = time.GetTimestamp();
             var envelopeBytes = ShapeSnapshots.EncodePage(shape, offset, page, more: true, []).Length;
             var more = false;
-            var select = $"SELECT rowid, {string.Join(", ", columns.Select(Quote))} FROM {Quote(shape.Table)}";
+            var select = $"SELECT rowid, {string.Join(", ", columns.Select(Quote))} FROM {Quote(shape.Table)} WHERE {condition}";
             while (!more)
             {
                 var rows = session.TableCommand(last is null
-                    ? select + " ORDER BY rowid LIMIT $limit;"
-                    : select + " WHERE rowid > $after ORDER BY rowid LIMIT $limit;", transaction);
+                    ? select + "1 ORDER BY rowid LIMIT $limit;"
+                    : select + "rowid > $after ORDER BY rowid LIMIT $limit;", transaction);
                 rows.Parameters.Clear();
                 rows.Parameters.AddWithValue("$limit", 128);
                 if (last is { } after)

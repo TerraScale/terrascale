@@ -66,7 +66,7 @@ internal sealed class GetShapeKeyEndpoint(
     private async ValueTask<IResult> ServeAsync(ResolvedShape shape, CancellationToken cancellationToken)
     {
         var query = HttpContext.Request.Query;
-        if (query.Count != 3 || !query.TryGetValue("handle", out var handles) || handles.Count != 1
+        if (query.Count != 3 + ShapeRoute.FilterParameters.Count(query.ContainsKey) || !query.TryGetValue("handle", out var handles) || handles.Count != 1
             || !query.TryGetValue("epoch", out var epochs) || epochs.Count != 1
             || !query.TryGetValue("key_id", out var ids) || ids.Count != 1
             || handles[0] is not { Length: 19 } handle || !handle.StartsWith("h1-", StringComparison.Ordinal)

@@ -101,6 +101,82 @@ public sealed class TableShapeTests
         await Assert.That(stale.Handle).IsEqualTo(client.Handle);
     }
 
+    [Test]
+    public async Task A_filtered_shape_carries_its_columns_and_moves_rows_in_and_out_as_they_start_and_stop_matching()
+    {
+        await using var db = await StartAsync();
+        await db.OkAsync(Items);
+        await db.OkAsync(Stmt("INSERT INTO items (id, name, score) VALUES (1, ?, 5), (2, ?, 50), (3, ?, 70)", "low", "high", "top"));
+        var client = Client(db, "&where=" + Uri.EscapeDataString("score >= 10 AND name != 'hidden'") + "&columns=name,score");
+        await client.SyncAsync();
+        await Assert.That(client.Equals(await TableShapeClient.TruthAsync(db, "items", "name, score", "score >= 10 AND name != 'hidden'"))).IsTrue();
+        await Assert.That(client.State.Keys.ToList()).IsEquivalentTo(["2", "3"]);
+
+        await db.OkAsync(Stmt("UPDATE items SET score = 20 WHERE id = 1"), Stmt("UPDATE items SET score = 1 WHERE id = 2"),
+            Stmt("UPDATE items SET note = ? WHERE id = 3", "ignored"), Stmt("INSERT INTO items (id, name, score) VALUES (4, ?, 90), (5, ?, 0)", "new", "out"),
+            Stmt("UPDATE items SET name = ? WHERE id = 3", "hidden"));
+        List<(string, string, string?)> ops = [];
+        ShapeReply chunk;
+        do
+        {
+            chunk = await client.ReadAsync(client.NextOffset);
+            await Assert.That(chunk.Status).IsEqualTo(HttpStatusCode.OK);
+            ops.AddRange(chunk.Ops.Select(op => (op.GetProperty("op").GetString()!, op.GetProperty("key").GetString()!,
+                op.TryGetProperty("move", out var move) ? move.GetString() : null)));
+        }
+        while (chunk.UpToDate != "true");
+
+        await Assert.That(ops).IsEquivalentTo([("insert", "1", "in"), ("delete", "2", "out"), ("insert", "4", null), ("delete", "3", "out")],
+            TUnit.Assertions.Enums.CollectionOrdering.Matching).Because("the note-only update changes no shape column and row 5 never matches");
+        await Assert.That(client.State["1"].Select(pair => pair.Key).ToList()).IsEquivalentTo(["name", "score"]);
+        await Assert.That(client.Equals(await TableShapeClient.TruthAsync(db, "items", "name, score", "score >= 10 AND name != 'hidden'"))).IsTrue();
+    }
+
+    [Test]
+    public async Task A_schema_change_gives_a_filtered_shape_a_new_handle_and_409_for_the_old_one()
+    {
+        await using var db = await StartAsync();
+        await db.OkAsync(Items);
+        await db.OkAsync(Stmt("INSERT INTO items (id, name, score) VALUES (1, ?, 50)", "a"));
+        var client = Client(db, "&where=" + Uri.EscapeDataString("score > 10") + "&columns=name");
+        await client.SyncAsync();
+        var first = client.Handle;
+        var table = Client(db);
+        await table.SyncAsync();
+        await Assert.That(table.Handle).IsNotEqualTo(first).Because("each where and columns pair has its own handle");
+
+        await db.OkAsync("ALTER TABLE items ADD COLUMN extra INTEGER DEFAULT 7");
+        var stale = await client.ReadAsync(client.NextOffset);
+        await Assert.That((stale.Status, stale.Code)).IsEqualTo((HttpStatusCode.Conflict, "must_refetch"));
+        await Assert.That(stale.Handle).IsNotEqualTo(first);
+        await client.SyncAsync();
+        await Assert.That(client.Handle).IsEqualTo(stale.Handle);
+        await Assert.That(client.Equals(await TableShapeClient.TruthAsync(db, "items", "name", "score > 10"))).IsTrue();
+    }
+
+    [Test]
+    public async Task Unsafe_or_unknown_where_and_columns_are_refused()
+    {
+        await using var db = await StartAsync();
+        await db.OkAsync(Items);
+        foreach (var (query, code) in ((string, string)[])[
+            ("where=" + Uri.EscapeDataString("id IN (SELECT id FROM items)"), "unsafe_where"),
+            ("where=" + Uri.EscapeDataString("random() > 0"), "unsafe_where"),
+            ("where=" + Uri.EscapeDataString("id = ?"), "unsafe_where"),
+            ("where=" + Uri.EscapeDataString("id = 1; DROP TABLE items"), "unsafe_where"),
+            ("where=" + Uri.EscapeDataString("id = (1"), "unsafe_where"),
+            ("where=" + Uri.EscapeDataString("missing = 1"), "unsafe_where"),
+            ("columns=name,missing", "unknown_column")])
+        {
+            var reply = await Client(db).GetAsync(new Uri($"{Client(db).Path}?offset=-1&{query}", UriKind.Relative));
+            await Assert.That((reply.Status, reply.Code)).IsEqualTo((HttpStatusCode.BadRequest, code)).Because(query);
+        }
+
+        await Assert.That(await db.CountAsync("items")).IsEqualTo(0);
+    }
+
+    private static TableShapeClient Client(SqlNativeDatabase db, string filter) => new(db.Reader, db.Database.Data, "items", filter);
+
     private static TableShapeClient Client(SqlNativeDatabase db) => new(db.Reader, db.Database.Data, "items");
 
     private static Task ParkedAsync(SqlNativeDatabase db, int readers) =>

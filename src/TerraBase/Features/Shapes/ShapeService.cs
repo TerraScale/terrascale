@@ -20,7 +20,7 @@ internal sealed class ShapeService(
     private static readonly NotFound UnknownTable = new("the table does not exist", "unknown_table");
     private static readonly Validation UnsupportedTable = new("shapes read ordinary rowid tables", "unsupported_table");
 
-    public async ValueTask<LineageResult> ResolveAsync(TenantContext database, string table, CancellationToken cancellationToken)
+    public async ValueTask<LineageResult> ResolveAsync(TenantContext database, string table, ShapeQuery query, CancellationToken cancellationToken)
     {
         try
         {
@@ -29,17 +29,17 @@ internal sealed class ShapeService(
                 return UnknownDatabase;
             }
 
-            var resolved = await CurrentAsync(store, database, table, cancellationToken).ConfigureAwait(false);
+            var resolved = await CurrentAsync(store, database, table, query, cancellationToken).ConfigureAwait(false);
             if (resolved is not ResolvedShape shape)
             {
                 return resolved;
             }
 
             var definition = ShapeHandle.Definition(store, shape.Scope);
-            if (registry.CurrentHandle(database, table) != definition.Handle)
+            if (registry.CurrentHandle(database, shape.Scope.Key) != definition.Handle)
             {
                 var head = await ReadHeadAsync(store, cancellationToken).ConfigureAwait(false);
-                if (registry.Track(database, definition, head) is { } full)
+                if (registry.Track(database, query, definition, head) is { } full)
                 {
                     return full;
                 }
@@ -54,7 +54,8 @@ internal sealed class ShapeService(
         }
     }
 
-    private async ValueTask<LineageResult> CurrentAsync(IDatabaseStore store, TenantContext database, string table, CancellationToken cancellationToken)
+    private async ValueTask<LineageResult> CurrentAsync(IDatabaseStore store, TenantContext database, string table, ShapeQuery query,
+        CancellationToken cancellationToken)
     {
         ShapeTableState state;
         await using (var reader = await storage.BeginTransactionAsync(store, write: false, cancellationToken).ConfigureAwait(false))
@@ -69,23 +70,40 @@ internal sealed class ShapeService(
             _ = await writer.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        return state switch
+        if (state is not { Status: ShapeTableStatus.Current, Generation: { } generation })
         {
-            { Status: ShapeTableStatus.Missing } => UnknownTable,
-            { Status: ShapeTableStatus.Unsupported } => UnsupportedTable,
-            { Status: ShapeTableStatus.Current, Generation: { } generation } => Resolved(store, new ShapeScope(database, table, generation)),
-            _ => new Unavailable("the table changed while resolving its shape; retry later"),
-        };
+            return state.Status switch
+            {
+                ShapeTableStatus.Missing => UnknownTable,
+                ShapeTableStatus.Unsupported => UnsupportedTable,
+                _ => new Unavailable("the table changed while resolving its shape; retry later"),
+            };
+        }
+
+        if (query.IsEmpty)
+        {
+            return Resolved(store, new ShapeScope(database, table, generation, query, null));
+        }
+
+        await using (var reader = await storage.BeginTransactionAsync(store, write: false, cancellationToken).ConfigureAwait(false))
+        {
+            return await Tables(reader).ReadShapeFilterAsync(table, generation, query, cancellationToken).ConfigureAwait(false) switch
+            {
+                ShapeFilter filter => Resolved(store, new ShapeScope(database, table, generation, query, filter)),
+                Validation error => error,
+                Unavailable error => error,
+            };
+        }
     }
 
     private static ResolvedShape Resolved(IDatabaseStore store, ShapeScope scope)
     {
-        var handle = ShapeHandle.Compute(store, scope.Table, scope.Generation);
+        var handle = ShapeHandle.Compute(store, scope.Table, scope.Generation, scope.Filter);
         return new ResolvedShape(scope, new ShapeLineage(handle.ShapeId, handle.Handle));
     }
 
     private async ValueTask<ShapeRead?> StaleAsync(IDatabaseStore store, ShapeScope scope, ShapeLineage lineage, CancellationToken cancellationToken) =>
-        await CurrentAsync(store, scope.Database, scope.Table, cancellationToken).ConfigureAwait(false) switch
+        await CurrentAsync(store, scope.Database, scope.Table, scope.Query, cancellationToken).ConfigureAwait(false) switch
         {
             ResolvedShape current when current.Lineage.Handle == lineage.Handle => null,
             ResolvedShape current => new MustRefetch("the shape lineage changed", current.Lineage),
@@ -245,7 +263,7 @@ internal sealed class ShapeService(
 
                 if (parked)
                 {
-                    registry.Advance(scope.Database, scope.Table, offset);
+                    registry.Advance(scope.Database, scope.Key, offset);
                     gate.Park(group);
                 }
 
@@ -464,7 +482,7 @@ internal sealed class ShapeService(
             var requeued = false;
             try
             {
-                if (await CurrentAsync(store, scope.Database, retired.Table, cancellationToken).ConfigureAwait(false) is ResolvedShape current
+                if (await CurrentAsync(store, scope.Database, retired.Table, retired.Query, cancellationToken).ConfigureAwait(false) is ResolvedShape current
                     && current.Lineage.Handle == retired.Handle)
                 {
                     return;
@@ -491,7 +509,7 @@ internal sealed class ShapeService(
             }
         }
 
-        if (registry.ClaimTrim(scope.Database, scope.Table))
+        if (registry.ClaimTrim(scope.Database, scope.Key))
         {
             try
             {

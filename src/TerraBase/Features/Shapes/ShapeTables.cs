@@ -1,4 +1,5 @@
 using System.Buffers;
+using TerraBase.Errors;
 using TerraBase.Primitives;
 
 namespace TerraBase.Features.Shapes;
@@ -18,7 +19,11 @@ internal interface IShapeTableStorage
     ValueTask<ShapeTableState> ReadShapeTableAsync(string table, CancellationToken cancellationToken);
 
     ValueTask<ShapeTableState> RenewShapeTableAsync(string table, CancellationToken cancellationToken);
+
+    ValueTask<ShapeFilterResult> ReadShapeFilterAsync(string table, string generation, ShapeQuery query, CancellationToken cancellationToken);
 }
+
+internal readonly union ShapeFilterResult(ShapeFilter, Validation, Unavailable);
 
 internal static class ShapeTables
 {

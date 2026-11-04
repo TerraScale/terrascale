@@ -1,10 +1,10 @@
 # Shape reads, protocol v2 (SQL tables)
 
-A shape is every row of one SQL table of a database. Clients sync it over plain HTTP GET as a sealed snapshot, then
+A shape is the rows of one SQL table that match an optional `where`, with an optional column list. Clients sync it over plain HTTP GET as a sealed snapshot, then
 sealed change chunks, then a live tail, Electric style (PIVOT D8). Every response is addressed by `(handle, offset)`,
 so identical URLs return identical bytes and any cache can serve many readers for the cost of one.
 
-Filters, column lists and move-in/move-out (PIVOT F2), table-level read grants and end-user tokens (F4), the local
+Table-level read grants and end-user tokens (F4), the local
 overlay (F7) and region-to-region provisional changes (F8) are later tasks. Protocol v1 (document collections over
 `_tb_feed`) is gone.
 
@@ -23,7 +23,7 @@ overlay (F7) and region-to-region provisional changes (F8) are later tasks. Prot
 
 ## 2. Route
 
-`GET /v1/projects/{project}/databases/{database}/tables/{table}/shape?handle=&offset=&live=&cursor=`
+`GET /v1/projects/{project}/databases/{database}/tables/{table}/shape?handle=&offset=&live=&cursor=&where=&columns=`
 
 Client listener, TLS, `documents:read`, OpenAPI tag `Live`. End-user tokens are refused until F4.
 
@@ -33,6 +33,11 @@ Client listener, TLS, `documents:read`, OpenAPI tag `Live`. End-user tokens are 
 | `handle` | Required unless `offset=-1`. A bootstrap with a handle is `409 must_refetch`. |
 | `live` | `true`, only with a decimal `O`. |
 | `cursor` | Only with `live=true`: the decimal live bucket. |
+| `where` | Optional SQL condition on the table's columns, at most 4096 characters (section 2a). Every row when absent. |
+| `columns` | Optional comma-separated column names, at most 4096 characters. Every stored column when absent. |
+
+Send the same `where` and `columns` on every request of a shape, including `/keys` and `/manifest`; the `307` from
+`offset=-1` keeps them in `Location`.
 
 Validation answers `400 invalid_request`: unknown or repeated parameters, non-canonical decimals (no sign or leading
 zeros, at most `9223372036854775807`), a malformed handle, `live` without a decimal offset, `cursor` without `live`.
@@ -45,6 +50,37 @@ zeros, at most `9223372036854775807`), a malformed handle, `live` without a deci
 | `400` | `invalid_request` | The table name is malformed or reserved. |
 | `400` | `unsupported_table` | `WITHOUT ROWID` tables and virtual tables. |
 | `404` | `unknown_database`, `unknown_table` | The database or table does not exist, or the credential cannot reach it. |
+
+## 2a. Filters, columns and move-in/move-out (F2)
+
+`where` is one expression over this table's columns, refused with `400 unsafe_where` unless it uses only:
+
+- this table's stored columns, by bare or double-quoted name (no `table.` qualifier);
+- string, number and blob literals, `TRUE`, `FALSE`, `NULL`;
+- operators `= == != <> < <= > >= + - * / % || & | ~ << >>`, `AND OR NOT IS IN BETWEEN LIKE GLOB ESCAPE`,
+  `CASE WHEN THEN ELSE END`, `CAST(… AS INTEGER|INT|TEXT|REAL|BLOB|NUMERIC)`, `COLLATE BINARY|NOCASE|RTRIM`, parentheses
+  and value lists such as `IN (1, 2)`;
+- the deterministic functions without side effects `abs coalesce ifnull nullif iif length lower upper ltrim rtrim trim
+  substr substring instr replace round typeof hex like glob`.
+
+Anything else is refused before it reaches the engine: subqueries (`SELECT`, `EXISTS`), other functions (`random`,
+`date('now')`, `load_extension`, …), parameters, `;`, unknown names and unbalanced parentheses. The accepted text is
+rebuilt from its tokens (comments dropped, column names quoted and prefixed with `+`, so comparisons use stored values
+without column affinity), then checked against the table once; an expression the engine rejects is
+`400 unsafe_where`. A name in `columns` the table does not have, or named twice, is `400 unknown_column`.
+
+Each `(table generation, where, columns)` has its own handle (section 8). Snapshots hold the matching rows. Chunks
+compare every captured change's before and after images with `where`:
+
+| Change | Before matched | After matches | Shape op |
+| --- | --- | --- | --- |
+| insert | – | yes | `insert` |
+| update | yes | yes | `update`, skipped when none of the shape's columns changed |
+| update | no | yes | `insert` with `"move":"in"` |
+| update | yes | no | `delete` with `"move":"out"` |
+| delete | yes | – | `delete` |
+
+Other changes produce no op. `row` carries only the shape's columns, in the order `columns` lists them.
 
 ## 3. Offsets
 
@@ -88,8 +124,8 @@ every table of the database file; commits that do not touch the table still adva
 ```
 
 - One `changes` entry per commit that touched the table, in commit order; its `offset` is the commit's boundary.
-- `key` is the row id as a decimal string. `row` holds every stored column in declaration order (virtual generated
-  columns are omitted): null, numbers, strings, or blobs as `{"base64":"…"}` (standard base64), as SQL over REST
+- `key` is the row id as a decimal string. `row` holds the shape's columns (by default every stored column in declaration order (virtual generated
+  columns are omitted)): null, numbers, strings, or blobs as `{"base64":"…"}` (standard base64), as SQL over REST
   returns them. A non-finite real cannot be served and answers `503 unavailable`.
 - An `UPDATE` that changes the row id arrives as `delete` of the old key, then `insert` of the new one.
   The pinned Turso captures that insert without an after-image, so the sealer reads the row's values as
@@ -117,7 +153,9 @@ every table of the database file; commits that do not touch the table still adva
   no row, issues a new generation. A different schema version rechecks the captured `sqlite_schema` changes after
   `since`: one that names the table (`DROP TABLE` followed by an identical `CREATE TABLE`, `CREATE INDEX` on it)
   issues a new generation; otherwise the row only records the new schema version.
-- `fields = organization ‖ 0x00 ‖ project ‖ 0x00 ‖ database ‖ 0x00 ‖ incarnation ‖ 0x00 ‖ table ‖ 0x00 ‖ generation ‖ 0x00 ‖ "2"`;
+- `fields = organization ‖ 0x00 ‖ project ‖ 0x00 ‖ database ‖ 0x00 ‖ incarnation ‖ 0x00 ‖ table ‖ 0x00 ‖ generation ‖ 0x00 ‖ "2" ‖ 0x00 ‖ filter`,
+  where `filter` is the rebuilt `where` (empty when absent) ‖ 0x00 ‖ the column names joined by 0x1F (empty without
+  `where` or `columns`);
   `handle = "h1-" ‖ hex(SHA-256("TB-SHAPE-HANDLE-V2" ‖ 0x00 ‖ fields))[0..16]`,
   `shape_id = hex(SHA-256("TB-SHAPE-V2" ‖ 0x00 ‖ fields))[0..32]`.
 - Any DDL that names the table ends the lineage, so rows captured under one definition are never decoded under
@@ -163,6 +201,9 @@ snapshot always keeps every page. Handles of retired generations are swept
 PIVOT F5, tied to the shape floor and the backup position.
 
 ## 12. Proof
+
+`tests/TerraBase.Fast/Shapes/TableShapeTests.cs`: a filtered shape with a column list moves rows in and out; a schema
+change gives a filtered shape a new handle and `409` for the old one; unsafe `where` and unknown columns are refused.
 
 `tests/TerraBase.Slow/Shapes/TableShapeWorkloadTests.cs`: a shape equals its table after 100,000 random inserts, upserts,
 updates, row id changes, replaces and deletes, for a client that synced before the workload, one that bootstrapped in

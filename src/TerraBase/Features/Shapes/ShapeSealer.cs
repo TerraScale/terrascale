@@ -6,7 +6,7 @@ using ZLogger;
 
 namespace TerraBase.Features.Shapes;
 
-public sealed record ShapeSealDefinition(string ShapeId, string Handle, string Table, string Generation, Ulid Incarnation);
+public sealed record ShapeSealDefinition(string ShapeId, string Handle, string Table, string Generation, Ulid Incarnation, ShapeFilter? Filter = null);
 public sealed record ShapeSealRequest(ShapeSealDefinition Shape, long Offset);
 public sealed class ShapeSealedChunk(long offset, long endOffset, long valuesAt, ReadOnlyMemory<byte> body,
     IMemoryReservation reservation, long sealedAt = 0) : IDisposable

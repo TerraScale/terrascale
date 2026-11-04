@@ -60,7 +60,7 @@ internal sealed class GetShapeManifestEndpoint(
             return Error(resolved);
         }
 
-        if (DocumentRoute.CheckParameters(HttpContext, "handle", "offset") is Validation invalid)
+        if (DocumentRoute.CheckParameters(HttpContext, "handle", "offset", "where", "columns") is Validation invalid)
         {
             return ErrorResponse.From(invalid);
         }

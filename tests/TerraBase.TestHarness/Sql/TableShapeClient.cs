@@ -14,7 +14,7 @@ internal sealed record ShapeReply(HttpStatusCode Status, byte[] Body, JsonElemen
     public IEnumerable<JsonElement> Ops => Json.GetProperty("changes").EnumerateArray().SelectMany(change => change.GetProperty("ops").EnumerateArray());
 }
 
-internal sealed class TableShapeClient(HttpClient http, string database, string table)
+internal sealed class TableShapeClient(HttpClient http, string database, string table, string filter = "")
 {
     public Dictionary<string, JsonObject> State { get; } = [with(StringComparer.Ordinal)];
 
@@ -26,7 +26,7 @@ internal sealed class TableShapeClient(HttpClient http, string database, string 
 
     public async Task<ShapeReply> SyncAsync()
     {
-        var bootstrap = await GetAsync(new Uri($"{Path}?offset=-1", UriKind.Relative));
+        var bootstrap = await GetAsync(new Uri($"{Path}?offset=-1{filter}", UriKind.Relative));
         if (bootstrap.Status != HttpStatusCode.TemporaryRedirect)
         {
             throw new InvalidOperationException($"bootstrap answered {bootstrap.Status}: {System.Text.Encoding.UTF8.GetString(bootstrap.Body)}");
@@ -68,7 +68,7 @@ internal sealed class TableShapeClient(HttpClient http, string database, string 
     }
 
     public Uri Uri(string offset, bool live, string? cursor = null, string? handle = null) =>
-        new($"{Path}?handle={handle ?? Handle}&offset={offset}" + (live ? "&live=true" : "") + (cursor is null ? "" : "&cursor=" + cursor), UriKind.Relative);
+        new($"{Path}?handle={handle ?? Handle}&offset={offset}" + (live ? "&live=true" : "") + (cursor is null ? "" : "&cursor=" + cursor) + filter, UriKind.Relative);
 
     public async Task<ShapeReply> GetAsync(Uri target, params (string Name, string Value)[] headers)
     {
@@ -119,9 +119,9 @@ internal sealed class TableShapeClient(HttpClient http, string database, string 
         Handle = reply.Handle ?? Handle;
     }
 
-    public static async Task<Dictionary<string, JsonObject>> TruthAsync(SqlNativeDatabase db, string table)
+    public static async Task<Dictionary<string, JsonObject>> TruthAsync(SqlNativeDatabase db, string table, string select = "*", string where = "1")
     {
-        var result = (await db.OkAsync($"SELECT rowid AS shape_key, * FROM {table} ORDER BY rowid"))[0];
+        var result = (await db.OkAsync($"SELECT rowid AS shape_key, {select} FROM {table} WHERE {where} ORDER BY rowid"))[0];
         var columns = result.GetProperty("columns").EnumerateArray()
             .Select(column => column.ValueKind == JsonValueKind.Object ? column.GetProperty("name").GetString()! : column.GetString()!).ToArray();
         Dictionary<string, JsonObject> rows = [with(StringComparer.Ordinal)];

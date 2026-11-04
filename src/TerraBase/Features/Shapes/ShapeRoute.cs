@@ -11,6 +11,42 @@ internal static class ShapeRoute
 
     internal static readonly Validation BadTable = new("table must be an ordinary table name of at most 63 letters, digits and underscores");
 
+    internal static readonly Validation BadFilter = new(
+        $"where and columns are each at most once, non-empty, where at most {ShapeFilters.MaxWhere} and columns at most {ShapeFilters.MaxColumns} characters");
+
+    internal static readonly string[] FilterParameters = ["where", "columns"];
+
+    internal static ShapeQuery? Query(HttpContext context)
+    {
+        var query = context.Request.Query;
+        string? where = null;
+        string? columns = null;
+        if (query.TryGetValue("where", out var wheres))
+        {
+            if (wheres.Count != 1 || wheres[0] is not { Length: > 0 and <= ShapeFilters.MaxWhere } text)
+            {
+                return null;
+            }
+
+            where = text;
+        }
+
+        if (query.TryGetValue("columns", out var lists))
+        {
+            if (lists.Count != 1 || lists[0] is not { Length: > 0 and <= ShapeFilters.MaxColumns } text)
+            {
+                return null;
+            }
+
+            columns = text;
+        }
+
+        return new ShapeQuery(where, columns);
+    }
+
+    internal static string QueryString(ShapeQuery query) =>
+        (query.Where is { } where ? "&where=" + Uri.EscapeDataString(where) : "") + (query.Columns is { } columns ? "&columns=" + Uri.EscapeDataString(columns) : "");
+
     internal static async ValueTask<RouteResult> ResolveAsync(HttpContext context, ITenantDirectory tenants, IShapeLineages lineages,
         CancellationToken cancellationToken)
     {
@@ -29,7 +65,12 @@ internal static class ShapeRoute
                     return BadTable;
                 }
 
-                return await lineages.ResolveAsync(database, table!, cancellationToken) switch
+                if (Query(context) is not { } query)
+                {
+                    return BadFilter;
+                }
+
+                return await lineages.ResolveAsync(database, table!, query, cancellationToken) switch
                 {
                     ResolvedShape shape => shape,
                     QuotaExceeded error => error,

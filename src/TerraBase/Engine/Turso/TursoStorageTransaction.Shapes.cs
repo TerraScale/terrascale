@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using TerraBase.Errors;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Shapes;
@@ -58,6 +59,62 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
             upsert.Parameters.Clear();
             return state with { Status = ShapeTableStatus.Current, Generation = generation, Since = since };
         }, cancellationToken, mutation: true).ConfigureAwait(false);
+    }
+
+    public ValueTask<ShapeFilterResult> ReadShapeFilterAsync(string table, string generation, ShapeQuery query, CancellationToken cancellationToken) =>
+        RunAsync<ShapeFilterResult>(() =>
+        {
+            if (CurrentShapeColumns(table, generation) is not { } current)
+            {
+                return new Unavailable("the table changed while resolving its shape; retry later");
+            }
+
+            switch (ShapeFilters.Parse(query, current.Columns))
+            {
+                case Validation error:
+                    return error;
+                case ShapeFilter { Where: null } filter:
+                    return filter;
+                case ShapeFilter filter:
+                    var matcher = ShapeMatcher(current.Columns, filter.Where);
+                    try
+                    {
+                        _ = ShapeMatches(matcher, new object?[current.Columns.Length]);
+                    }
+                    catch (SqliteException)
+                    {
+                        return ShapeFilters.Refused("where is not a valid expression on this table's columns");
+                    }
+
+                    return filter;
+                default:
+                    throw new System.Diagnostics.UnreachableException();
+            }
+        }, cancellationToken);
+
+    private SqliteCommand ShapeMatcher(string[] columns, string where)
+    {
+        var projection = string.Join(", ", columns.Select((column, index) => $"$c{index} AS {Quote(column)}"));
+        return session.TableCommand($"SELECT 1 FROM (SELECT {projection}) WHERE ({where});", transaction);
+    }
+
+    private bool ShapeMatches(SqliteCommand matcher, object?[] values)
+    {
+        matcher.Parameters.Clear();
+        for (var index = 0; index < values.Length; index++)
+        {
+            matcher.Parameters.AddWithValue($"$c{index}", values[index] ?? DBNull.Value);
+        }
+
+        CountRead("shape");
+        try
+        {
+            return matcher.ExecuteScalar() is not null;
+        }
+        finally
+        {
+            matcher.Parameters.Clear();
+        }
     }
 
     private ShapeTableState ShapeTable(string table)
@@ -222,6 +279,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         IMemoryBudget memory, CancellationToken cancellationToken)
     {
         var (columns, since) = CurrentShapeColumns(shape.Table, shape.Generation) ?? throw new ShapeSealOffsetException();
+        var output = new ShapeOutput(columns, shape.Filter, shape.Filter?.Where is { } where ? ShapeMatcher(columns, where) : null);
         var head = ShapeHead();
         var stored = Command("SELECT end_offset FROM _tb_shape_chunk WHERE handle = $handle AND offset = $offset;");
         stored.Parameters.AddWithValue("$handle", shape.Handle);
@@ -317,14 +375,15 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
                         continue;
                     }
 
-                    if (!WriteShapeOperation(commit, reader, type, shape.Table, columns, admission))
+                    var written = WriteShapeOperation(commit, reader, type, shape.Table, output, admission);
+                    if (written is null)
                     {
                         retired = covered == offset;
                         stop = true;
                         break;
                     }
 
-                    commitRows++;
+                    commitRows += written.Value ? 1 : 0;
                     if (commit.WrittenCount > ShapeCommitBytes)
                     {
                         if (rows == 0)
@@ -401,35 +460,75 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         return false;
     }
 
-    private bool WriteShapeOperation(ArrayBufferWriter<byte> commit, SqliteDataReader reader, long type, string table, string[] columns, ShapeMemory admission)
+    private sealed record ShapeOutput(string[] Columns, ShapeFilter? Filter, SqliteCommand? Matcher)
+    {
+        public int[] Selected { get; } = Filter is null
+            ? [.. Enumerable.Range(0, Columns.Length)]
+            : [.. Filter.Columns.Select(column => Array.IndexOf(Columns, column))];
+    }
+
+    private bool? WriteShapeOperation(ArrayBufferWriter<byte> commit, SqliteDataReader reader, long type, string table, ShapeOutput output, ShapeMemory admission)
     {
         if (reader.IsDBNull(3) || reader.GetValue(3) is not long key)
         {
             throw new InvalidDataException("a captured row change has no integer row id");
         }
 
-        object?[]? values = null;
+        if (type is not (0 or 1 or -1))
+        {
+            throw new InvalidDataException($"a captured change has change type {type}, which no capture writes");
+        }
+
+        object?[]? after = null;
         if (type is 0 or 1)
         {
             if (reader.IsDBNull(5))
             {
-                values = CurrentShapeRow(table, columns, key, admission);
-                type = values is null ? -1 : type;
+                after = CurrentShapeRow(table, output.Columns, key, admission);
+                type = after is null ? -1 : type;
+            }
+            else if (ShapeImage(reader, 5, output.Columns.Length, admission) is { } image)
+            {
+                after = image;
             }
             else
             {
-                var image = TursoSession.Bytes(reader, 5);
-                admission.Reserve(checked(image.Length * 6L + 256));
-                values = SqliteRecord.Decode(image, columns: columns.Length + 1);
-                if (values.Length != columns.Length)
-                {
-                    return false;
-                }
+                return null;
             }
         }
-        else if (type != -1)
+
+        string? move = null;
+        if (output.Filter is not null)
         {
-            throw new InvalidDataException($"a captured change has change type {type}, which no capture writes");
+            object?[]? before = null;
+            if (type is 0 or -1 && !reader.IsDBNull(4))
+            {
+                before = ShapeImage(reader, 4, output.Columns.Length, admission);
+                if (before is null)
+                {
+                    return null;
+                }
+            }
+
+            bool? was = before is null ? null : output.Matcher is null || ShapeMatches(output.Matcher, before);
+            var now = after is not null && (output.Matcher is null || ShapeMatches(output.Matcher, after));
+            switch (type, was, now)
+            {
+                case (1, _, false) or (0, false, false) or (-1, false, _):
+                    return false;
+                case (0, true, true) when output.Selected.All(index =>
+                    System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(before![index], after![index])):
+                    return false;
+                case (0, false, true):
+                    (type, move) = (1, "in");
+                    break;
+                case (0, true, false):
+                    (type, after, move) = (-1, null, "out");
+                    break;
+                case (0, null, false):
+                    (type, after) = (-1, null);
+                    break;
+            }
         }
 
         if (commit.WrittenCount > 0)
@@ -441,21 +540,34 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         writer.WriteStartObject();
         writer.WriteString("op", type switch { 1 => "insert", 0 => "update", _ => "delete" });
         writer.WriteString("key", ShapeNumber(key));
-        if (values is not null)
+        if (after is not null)
         {
             writer.WriteStartObject("row");
-            for (var index = 0; index < columns.Length; index++)
+            foreach (var index in output.Selected)
             {
-                writer.WritePropertyName(columns[index]);
-                WriteShapeValue(writer, values[index]);
+                writer.WritePropertyName(output.Columns[index]);
+                WriteShapeValue(writer, after[index]);
             }
 
             writer.WriteEndObject();
         }
 
+        if (move is not null)
+        {
+            writer.WriteString("move", move);
+        }
+
         writer.WriteEndObject();
         writer.Flush();
         return true;
+    }
+
+    private static object?[]? ShapeImage(SqliteDataReader reader, int column, int columns, ShapeMemory admission)
+    {
+        var image = TursoSession.Bytes(reader, column);
+        admission.Reserve(checked(image.Length * 6L + 256));
+        var values = SqliteRecord.Decode(image, columns: columns + 1);
+        return values.Length == columns ? values : null;
     }
 
     private object?[]? CurrentShapeRow(string table, string[] columns, long key, ShapeMemory admission)

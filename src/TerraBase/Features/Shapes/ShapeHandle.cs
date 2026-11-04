@@ -6,7 +6,7 @@ namespace TerraBase.Features.Shapes;
 
 internal readonly record struct ShapeHandle(string Handle, string ShapeId)
 {
-    public static ShapeHandle Compute(IDatabaseStore store, string table, string generation)
+    public static ShapeHandle Compute(IDatabaseStore store, string table, string generation, ShapeFilter? filter)
     {
         ArgumentNullException.ThrowIfNull(store);
         ObjectDisposedException.ThrowIf(store.IsClosed, store);
@@ -14,14 +14,14 @@ internal readonly record struct ShapeHandle(string Handle, string ShapeId)
         ArgumentException.ThrowIfNullOrEmpty(tenant.OrganizationId);
         ArgumentException.ThrowIfNullOrEmpty(tenant.ProjectId);
         ArgumentException.ThrowIfNullOrEmpty(tenant.DatabaseId);
-        var fields = string.Join('\0', tenant.OrganizationId, tenant.ProjectId, tenant.DatabaseId, store.Incarnation.ToString(), table, generation, "2");
+        var fields = string.Join('\0', tenant.OrganizationId, tenant.ProjectId, tenant.DatabaseId, store.Incarnation.ToString(), table, generation, "2", filter?.Key ?? "");
         return new ShapeHandle("h1-" + Digest("TB-SHAPE-HANDLE-V2", fields, 8), Digest("TB-SHAPE-V2", fields, 16));
     }
 
     public static ShapeSealDefinition Definition(IDatabaseStore store, ShapeScope scope)
     {
-        var handle = Compute(store, scope.Table, scope.Generation);
-        return new ShapeSealDefinition(handle.ShapeId, handle.Handle, scope.Table, scope.Generation, store.Incarnation);
+        var handle = Compute(store, scope.Table, scope.Generation, scope.Filter);
+        return new ShapeSealDefinition(handle.ShapeId, handle.Handle, scope.Table, scope.Generation, store.Incarnation, scope.Filter);
     }
 
     private static string Digest(string domain, string fields, int bytes) =>

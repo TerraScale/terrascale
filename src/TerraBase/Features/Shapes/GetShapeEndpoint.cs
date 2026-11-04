@@ -26,7 +26,7 @@ internal sealed class GetShapeEndpoint(
         Name("getShape");
         Summary("Syncs a table shape");
         Description("""
-            Requires documents:read. A shape is every row of one ordinary rowid table, read from the home database's committed changes. offset=-1 answers 307 to the first page of the newest snapshot; follow next_offset from there: snap.<S>.<P> pages, then decimal commit boundaries, then live=true long-polls with the TB-Shape-Cursor bucket. Each operation is insert, update or delete with the row id as key; inserts and updates carry every stored column. Apply operations in order. handle is required on every request but the bootstrap. A changed table definition, a stale handle, an offset below retention or above the head, or an unretained snapshot page answers 409 must_refetch with the current handle in TB-Shape-Handle and the body; restart at offset=-1. 429 shape_busy and 503 shape_too_large or unavailable: keep state and retry with backoff.
+            Requires documents:read. A shape is the rows of one ordinary rowid table that match where (every row when omitted), with the listed columns (every stored column when omitted), read from the home database's committed changes. Send the same where and columns on every request; each pair has its own handle. offset=-1 answers 307 to the first page of the newest snapshot; follow next_offset from there: snap.<S>.<P> pages, then decimal commit boundaries, then live=true long-polls with the TB-Shape-Cursor bucket. Each operation is insert, update or delete with the row id as key; inserts and updates carry the shape's columns. A row that starts matching where arrives as an insert with move "in"; a row that stops matching arrives as a delete with move "out". Apply operations in order. handle is required on every request but the bootstrap. A changed table definition, a stale handle, an offset below retention or above the head, or an unretained snapshot page answers 409 must_refetch with the current handle in TB-Shape-Handle and the body; restart at offset=-1. 429 shape_busy and 503 shape_too_large or unavailable: keep state and retry with backoff.
             """);
         Tags("Live");
         Produces<ShapeResponse>();
@@ -43,7 +43,9 @@ internal sealed class GetShapeEndpoint(
             Query("offset", "-1, snap.<S>.<P>, or a decimal commit boundary.", required: true),
             Query("handle", "The handle of the previous response; required unless offset is -1."),
             Query("live", "true to long-poll at a decimal offset."),
-            Query("cursor", "With live=true: the TB-Shape-Cursor bucket."));
+            Query("cursor", "With live=true: the TB-Shape-Cursor bucket."),
+            Query("where", "Optional SQL condition on this table's columns: literals, operators, CASE, CAST, COLLATE and deterministic functions; no subqueries or parameters."),
+            Query("columns", "Optional comma-separated column names; rows carry only these columns."));
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
         Metadata(new ListenerMetadata(TerraBaseListener.Client), OriginNoStore.Instance);
     }
@@ -178,13 +180,13 @@ internal sealed class GetShapeEndpoint(
         headers["TB-Shape-Handle"] = lineage.Handle;
         HttpContext.Response.ContentType = DocumentRoute.JsonMediaType;
         metrics.RecordRedirect();
-        var location = $"/v1/projects/{Uri.EscapeDataString(DocumentRoute.Project(HttpContext))}/databases/{DocumentRoute.Database(HttpContext)}/tables/{scope.Table}/shape?handle={lineage.Handle}&offset={offset}";
+        var location = $"/v1/projects/{Uri.EscapeDataString(DocumentRoute.Project(HttpContext))}/databases/{DocumentRoute.Database(HttpContext)}/tables/{scope.Table}/shape?handle={lineage.Handle}&offset={offset}{QueryString(scope.Query)}";
         return TypedResults.Redirect(location, permanent: false, preserveMethod: true);
     }
 
     private object CheckRequest()
     {
-        if (DocumentRoute.CheckParameters(HttpContext, "handle", "offset", "live", "cursor") is Validation invalid)
+        if (DocumentRoute.CheckParameters(HttpContext, "handle", "offset", "live", "cursor", "where", "columns") is Validation invalid)
         {
             return invalid;
         }

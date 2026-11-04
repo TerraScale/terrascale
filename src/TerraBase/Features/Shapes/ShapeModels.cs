@@ -5,7 +5,10 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Shapes;
 
-internal sealed record ShapeScope(TenantContext Database, string Table, string Generation);
+internal sealed record ShapeScope(TenantContext Database, string Table, string Generation, ShapeQuery Query, ShapeFilter? Filter)
+{
+    internal string Key => Table + "\0" + (Filter?.Key ?? "");
+}
 
 internal sealed record ShapeLineage(string ShapeId, string Handle);
 
@@ -23,7 +26,7 @@ internal readonly union ShapeRead(ShapeBody, MustRefetch, QuotaExceeded, NotFoun
 
 internal interface IShapeLineages
 {
-    ValueTask<LineageResult> ResolveAsync(TenantContext database, string table, CancellationToken cancellationToken);
+    ValueTask<LineageResult> ResolveAsync(TenantContext database, string table, ShapeQuery query, CancellationToken cancellationToken);
 }
 
 internal interface IShapeSnapshots
@@ -62,10 +65,12 @@ internal sealed record ShapeChange(string Offset, IReadOnlyList<ShapeOperation> 
 /// <summary>An <c>insert</c> or <c>update</c> with the row's column values, or a <c>delete</c>.</summary>
 /// <param name="Op"><c>insert</c>, <c>update</c> or <c>delete</c>.</param>
 /// <param name="Key">The row id, as a decimal string.</param>
-/// <param name="Row">Column values: null, numbers, strings, or blobs as <c>{"base64":…}</c>.</param>
+/// <param name="Row">The shape's column values: null, numbers, strings, or blobs as <c>{"base64":…}</c>.</param>
+/// <param name="Move"><c>in</c> on an insert for a row that started matching where; <c>out</c> on a delete for a row that stopped matching.</param>
 internal sealed record ShapeOperation(
     string Op, string Key,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Row = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Row = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Move = null);
 
 internal sealed record ShapeErrorBody(ShapeErrorDetail Error);
 
