@@ -72,7 +72,7 @@ public sealed class LocalCatalogAnchorTests
             await using (var api = await StartAsync(directory, s3, time, user))
             {
                 var database = await api.CreateManagedDatabaseAsync();
-                shape = $"/v1/projects/{database.Project}/databases/{database.Name}/collections/people/shape";
+                shape = $"/v1/projects/{database.Project}/databases/{database.Name}/tables/people/shape";
                 using var created = await api.Server.Client.PostAsJsonAsync(ManagementApi.Uri("/admin/api-keys"),
                     new { name = new Faker().Hacker.Noun(), scopes = ReadScopes, organizationId = database.Organization, projectId = database.Project }, cancellationToken);
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
@@ -147,7 +147,7 @@ public sealed class LocalCatalogAnchorTests
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var key = await created.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
         using var reader = host.Api.DataClient(key.GetProperty("secret").GetString());
-        var shape = $"/v1/projects/{host.Database.Project}/databases/{host.Database.Name}/collections/people/shape";
+        var shape = $"/v1/projects/{host.Database.Project}/databases/{host.Database.Name}/tables/people/shape";
         using var admitted = await reader.GetAsync(ManagementApi.Uri(shape + "?offset=-1"), cancellationToken);
         await Assert.That(admitted.StatusCode).IsEqualTo(HttpStatusCode.TemporaryRedirect);
         var handle = admitted.Headers.GetValues("TB-Shape-Handle").Single();

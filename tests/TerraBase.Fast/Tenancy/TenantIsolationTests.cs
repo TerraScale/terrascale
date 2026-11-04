@@ -246,6 +246,7 @@ public sealed class TenantIsolationTests
                 // Legacy management routes name a database by id; canonical management and data use its name.
                 .Replace("{database}", IsManagement(pattern) ? database : databaseName, StringComparison.Ordinal)
                 .Replace("{collection}", "people", StringComparison.Ordinal)
+                .Replace("{table}", "people", StringComparison.Ordinal)
                 .Replace("{id}", DocumentId, StringComparison.Ordinal)
                 .Replace("{user}", user, StringComparison.Ordinal)
                 .Replace("{query}", tooling.Query, StringComparison.Ordinal)

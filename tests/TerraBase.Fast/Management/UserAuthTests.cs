@@ -176,7 +176,7 @@ public sealed class UserAuthTests
             collection.EnsureSuccessStatusCode();
         }
 
-        var shape = database + "/collections/items/shape?offset=-1";
+        var shape = database + "/tables/items/shape?offset=-1";
         var before = await ShapeStatusAsync(client, shape);
 
         // ts-auth retires the key; until TerraBase's next scheduled refresh the cached key still verifies the token.
