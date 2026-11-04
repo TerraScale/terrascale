@@ -82,6 +82,65 @@ internal sealed class TursoReplicas(
         return await Task.Run(() => DeleteFiles(PathOf(key)), cancellationToken).ConfigureAwait(false);
     }
 
+    public async ValueTask<string?> DetachAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        var key = Key(database);
+        if (!_replicas.TryRemove(key, out var opening))
+        {
+            return null;
+        }
+
+        Replica replica;
+        try
+        {
+            replica = await opening.Value.ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            return null;
+        }
+
+        var pulled = replica.Pulled;
+        await replica.DisposeAsync().ConfigureAwait(false);
+        var path = PathOf(key);
+        if (!pulled)
+        {
+            _ = await Task.Run(() => DeleteFiles(path), CancellationToken.None).ConfigureAwait(false);
+            return null;
+        }
+
+        return await Task.Run(() =>
+        {
+            var wrapped = DataKeyRecord(path) ?? throw new InvalidDataException("the replica's data key record is missing");
+            var detached = Path.Combine(Path.GetDirectoryName(path)!, key.Database + ".promote.db");
+            DeleteDetached(detached);
+            DatabaseKeys.RejectLink(path);
+            File.Move(path, detached);
+            if (File.Exists(path + "-wal"))
+            {
+                File.Move(path + "-wal", detached + "-wal");
+            }
+
+            using (var file = new FileStream(detached + DatabaseKeys.Suffix, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                file.Write(Encoding.ASCII.GetBytes(DatabaseKeys.Header + wrapped + "\n"));
+                file.Flush(flushToDisk: true);
+            }
+
+            _ = DeleteFiles(path);
+            return detached;
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal static void DeleteDetached(string detached)
+    {
+        foreach (var suffix in (string[])["", "-wal", "-shm", DatabaseKeys.Suffix])
+        {
+            DatabaseKeys.RejectLink(detached + suffix);
+            File.Delete(detached + suffix);
+        }
+    }
+
     public bool Holds(TenantContext database) =>
         database.ProjectId is { } project && database.DatabaseId is { } id && _replicas.ContainsKey((database.OrganizationId, project, id));
 
