@@ -185,8 +185,7 @@ export const en = {
   },
 
   pricing: {
-    titleLead: 'Simple pricing',
-    titleAccent: 'That scales with YOU',
+    titleLead: 'Pricing',
     suffixMonthly: '/month',
     suffixAnnual: '/year',
     intervals: {
