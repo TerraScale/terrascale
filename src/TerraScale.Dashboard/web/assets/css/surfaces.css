@@ -457,6 +457,10 @@ summary.ts-card-head {
   text-align: center;
 }
 
+.ts-empty > .ts-code {
+  text-align: start;
+}
+
 .ts-empty > .ts-icon-tile {
   margin-bottom: var(--ts-s2);
 }
