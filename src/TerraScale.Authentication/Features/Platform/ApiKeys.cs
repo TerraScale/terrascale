@@ -20,10 +20,10 @@ public static class TerraBaseScopes
     /// <summary>Create, branch and delete databases; backups, restores, policies, indexes and saved queries.</summary>
     public const string DatabasesWrite = "databases:write";
 
-    /// <summary>Read collections and documents; queries.</summary>
+    /// <summary>Run SQL reads; read shapes and files.</summary>
     public const string SqlRead = "sql:read";
 
-    /// <summary>Write collections and documents; transactions.</summary>
+    /// <summary>Run SQL writes and schema changes; write files.</summary>
     public const string SqlWrite = "sql:write";
 
     /// <summary>Every scope.</summary>

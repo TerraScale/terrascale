@@ -190,6 +190,33 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(await TokenErrorAsync(oidc.ExchangeAsync(aliceToken, new() { ["organization"] = organization }))).IsEqualTo((400, "invalid_grant"));
     }
 
+    // The dashboard sends ts-auth the scope set below when a user creates a full-access key. Read from the dashboard's
+    // own source, so a scope rename that leaves the two products disagreeing at one commit fails here.
+    [Test]
+    public async Task A_key_with_the_scopes_the_dashboard_sends_is_created_and_its_token_carries_them()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "TerraScale.slnx")))
+        {
+            root = root.Parent;
+        }
+
+        var source = await File.ReadAllTextAsync(Path.Combine(root!.FullName, "src", "TerraScale.Dashboard", "Features", "ApiKeys", "ApiKeyService.cs"));
+        var scopes = DashboardFullAccess().Match(source).Groups["scopes"].Value.Split(',').Select(scope => scope.Trim().Trim('"')).ToArray();
+        await Assert.That(scopes).IsNotEmpty();
+
+        await using var oidc = await StartAsync();
+        var (_, token) = await oidc.SignInUserAsync("dana@example.test");
+        var organization = await oidc.CreateOrganizationAsync(token);
+        var project = await oidc.CreateProjectAsync(token, organization, "Production");
+        var created = await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{organization}/projects/{project}/api-keys", token,
+            new { name = "dashboard", scopes }, HttpStatusCode.Created);
+        using var exchanged = await oidc.ApiKeyTokenAsync(created.GetProperty("key").GetString()!);
+        await Assert.That(exchanged.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var access = await oidc.ValidateAsync((await OidcHarness.JsonAsync(exchanged)).GetProperty("access_token").GetString()!, Audience);
+        await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(scopes);
+    }
+
     private Task<OidcHarness> StartAsync(TimeProvider? clock = null) => OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience, clock: clock);
 
     private static async Task<(int Status, string? Error)> TokenErrorAsync(Task<HttpResponseMessage> call)
@@ -198,6 +225,9 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         var body = await OidcHarness.JsonAsync(response);
         return ((int)response.StatusCode, body.TryGetProperty("error", out var error) ? error.GetString() : null);
     }
+
+    [GeneratedRegex(@"FullAccessScopes = \[(?<scopes>[^\]]+)\]")]
+    private static partial Regex DashboardFullAccess();
 
     [GeneratedRegex("^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$")]
     private static partial Regex KeyString();
