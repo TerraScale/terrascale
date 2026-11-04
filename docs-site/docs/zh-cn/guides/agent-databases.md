@@ -34,7 +34,7 @@ The file contains the database's tables, indexes, views and triggers, without da
 Keep every object you want to retain in the file: omitting one plans its removal. An empty file plans removal of every SQL object.
 
 `diff` and `apply --dry-run` print the DDL needed to reach the desired schema without writing to the database.
-Whitespace, comments and identifier quoting do not create changes. The planner supports creating and dropping
+Whitespace and comments do not create changes. The planner supports creating and dropping
 objects, replacing indexes, views and triggers, and adding or dropping table columns. Changes to an existing
 column's type, default or constraints, table constraints, table options and column order require an explicit
 [`ts migrate` migration](/zh-cn/guides/migrations). Unsupported SQL is refused before any live write.

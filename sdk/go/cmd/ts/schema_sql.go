@@ -7,7 +7,8 @@ import (
 )
 
 // schemaToken retains source offsets for column DDL while comparing SQL without
-// whitespace, comments or identifier quoting differences. String values stay exact.
+// whitespace or comments. Quoted values stay exact, including SQLite's
+// double-quoted string defaults.
 type schemaToken struct {
 	raw, key   string
 	start, end int
@@ -61,7 +62,7 @@ func schemaTokens(source string) ([]schemaToken, error) {
 			if !closed {
 				return nil, fmt.Errorf("unterminated SQL quote")
 			}
-			key := "w:" + strings.ToLower(value.String())
+			key := "w:" + value.String()
 			if quote == '\'' {
 				key = "s:" + value.String()
 			}
@@ -75,9 +76,19 @@ func schemaTokens(source string) ([]schemaToken, error) {
 		default:
 			i++
 		}
-		out = append(out, schemaToken{source[start:i], "w:" + strings.ToLower(source[start:i]), start, i})
+		out = append(out, schemaToken{source[start:i], "w:" + foldSchemaWord(source[start:i]), start, i})
 	}
 	return out, nil
+}
+
+// SQLite folds ASCII identifier letters only. Preserve non-ASCII names.
+func foldSchemaWord(word string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 'A' && r <= 'Z' {
+			return r + ('a' - 'A')
+		}
+		return r
+	}, word)
 }
 
 func tokenKeys(tokens []schemaToken) string {
