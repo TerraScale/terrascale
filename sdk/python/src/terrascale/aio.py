@@ -92,6 +92,7 @@ class AsyncTerraScale:
         refreshed = False
         attempt = 0
         conflicts = 0
+        resends = 0
         while True:
             direct = "Authorization" in call.headers
             token = "" if direct else await self._bearer()
@@ -103,8 +104,9 @@ class AsyncTerraScale:
                     request = httpx.Request(call.method, url, headers=headers, content=content)
                     response = await self._http.send(request, auth=None, follow_redirects=False)
                 else:
-                    response = await self._http.request(call.method, url, params=call.params or None, headers=headers,
-                                              content=content)
+                    response = await self._http.request(
+                        call.method, url, params=call.params or None, headers=headers, content=content,
+                        timeout=call.timeout if call.timeout is not None else httpx.USE_CLIENT_DEFAULT)
             except (httpx.TransportError, httpx.DecodingError) as exc:
                 attempt += 1
                 # A connect or pool failure never reached the server, so even a write can be repeated.
@@ -127,6 +129,10 @@ class AsyncTerraScale:
                 # Refresh an ordinary token refusal once, never a permanent key refusal.
                 self._source.invalidate(token)
                 refreshed = True
+                continue
+            if err.status == 503 and err.code in call.resend_codes and resends < _spec.MOVE_RESENDS:
+                resends += 1
+                await asyncio.sleep(err.retry_after if err.retry_after is not None else 1.0)
                 continue
             if isinstance(err, SqlError) and err.code == SqlErrorCodes.SERIALIZATION_CONFLICT and conflicts < 2:
                 conflicts += 1
@@ -161,9 +167,11 @@ class AsyncTerraScale:
 
     async def create_database(
         self, name: str, *, home_region: str | None = None, ttl_seconds: int | None = None,
+        replica_regions: Sequence[str] | None = None, all_regions: bool | None = None,
     ) -> models.Database:
         """Create a database in ``home_region`` (a region id such as ``"gru"``), or in the region that answers."""
-        return await self._send(_spec.create_database(self.project, name, home_region, ttl_seconds))
+        return await self._send(
+            _spec.create_database(self.project, name, home_region, ttl_seconds, replica_regions, all_regions))
 
     async def fork_database(
         self, source: str, name: str, *, point_in_time: str | None = None, ttl_seconds: int | None = None,
@@ -174,6 +182,16 @@ class AsyncTerraScale:
     async def set_database_ttl(self, database: str, ttl_seconds: int) -> models.Database:
         """Set expiry in 60 to 31,536,000 seconds; the database and backups are deleted on expiry."""
         return await self._send(_spec.set_database_ttl(self.project, database, ttl_seconds))
+
+    async def set_database_placement(
+        self, database: str, *, replica_regions: Sequence[str] | None = None, all_regions: bool | None = None,
+    ) -> models.Database:
+        """Set the replica regions, or turn all-regions mode on or off; pass exactly one."""
+        return await self._send(_spec.set_database_placement(self.project, database, replica_regions, all_regions))
+
+    async def move_database_home(self, database: str, home_region: str) -> models.Database:
+        """Move the home to one of the database's replica regions and wait until the move is done."""
+        return await self._send(_spec.move_database_home(self.project, database, home_region))
 
     async def clear_database_ttl(self, database: str) -> models.Database:
         """Remove the database's expiry."""

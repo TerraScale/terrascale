@@ -4,6 +4,7 @@
  "contract": "sdk/SQL-API.md#databases-for-agents",
  "contract_routes": [
   "DELETE /v1/projects/{project}/databases/{database}/ttl",
+  "POST /v1/projects/{project}/databases/{database}/move-home",
   "POST /v1/terrascale/api-keys/self/scoped-keys",
   "PUT /v1/projects/{project}/databases/{database}/ttl"
  ],
@@ -91,6 +92,7 @@
   "POST /v1/projects/{project}/databases/{database}/import/start",
   "POST /v1/projects/{project}/databases/{database}/index-recommendations/{recommendation}/apply",
   "POST /v1/projects/{project}/databases/{database}/indexes",
+  "POST /v1/projects/{project}/databases/{database}/move-home",
   "POST /v1/projects/{project}/databases/{database}/point-in-time/plan",
   "POST /v1/projects/{project}/databases/{database}/point-in-time/recover",
   "POST /v1/projects/{project}/databases/{database}/point-in-time/recovery-preview",

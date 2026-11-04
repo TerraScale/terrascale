@@ -26,6 +26,8 @@ class Database:
     previous_name: str | None = None
     conflict_of: str | None = None
     expires_at: str | None = None
+    replica_regions: list[str] = field(default_factory=list)
+    all_regions: bool = False
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> Database:
@@ -33,6 +35,11 @@ class Database:
             raise ValueError("invalid database metadata")
         if body.get("expiresAt") is not None and (not isinstance(body["expiresAt"], str) or not body["expiresAt"]):
             raise ValueError("invalid database expiry")
+        replicas = body.get("replicaRegions", [])
+        if not isinstance(replicas, list) or any(not isinstance(r, str) or not r for r in replicas):
+            raise ValueError("invalid database replica regions")
+        if not isinstance(body.get("allRegions", False), bool):
+            raise ValueError("invalid database allRegions")
         return cls(
             id=validate_id(body["id"]),
             project_id=validate_id(body["projectId"]),
@@ -44,6 +51,8 @@ class Database:
             previous_name=body.get("previousName"),
             conflict_of=validate_id(body["conflictOf"]) if body.get("conflictOf") is not None else None,
             expires_at=body.get("expiresAt"),
+            replica_regions=list(replicas),
+            all_regions=body.get("allRegions", False),
             raw=body,
         )
 

@@ -152,6 +152,19 @@ revoked when their parent is revoked or rotated. Refusals retain `APIError`
 types, status, code and `retry_after`. Both clients expose these methods;
 await them on `AsyncTerraScale`.
 
+## Placement
+
+```python
+db = ts.create_database("orders", home_region="gru", replica_regions=["sjc"])
+ts.set_database_placement(db.id, all_regions=True)
+ts.move_database_home(db.id, "sjc")
+```
+
+`Database` carries `home_region`, `replica_regions` and `all_regions`. `set_database_placement` takes exactly one of
+`replica_regions` or `all_regions`. `move_database_home` waits for the move with no read timeout and resends only on
+`503 move_unresolved` (at most 5 times, after `Retry-After` or 1 s). Tests cover the recorded fixtures in
+`sdk/dotnet/contracts/terrabase/placement/`; live producer qualification has not run.
+
 ## API
 
 | Surface | Methods |
