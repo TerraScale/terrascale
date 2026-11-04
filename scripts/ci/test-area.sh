@@ -3,9 +3,11 @@ set -euo pipefail
 scripts/vendor/verify-turso-native.sh src/vendor/Turso.Data.Sqlite/native
 
 case "$1:$2" in
-  fast:libs)
+  build:libs|fast:libs)
     make -o restore fmt-check libs-build SOLUTION=libs.slnf CONFIGURATION=Release
-    make -o restore libs-check libs-test CONFIGURATION=Release
+    make -o restore -o libs-build libs-check CONFIGURATION=Release
+    [[ $1 == build ]] && exit 0
+    make -o restore -o libs-build libs-test CONFIGURATION=Release
     ;;
   build:terrabase|fast:terrabase)
     make -o restore fmt-check SOLUTION=terrabase.slnf CONFIGURATION=Release
