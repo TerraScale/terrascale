@@ -14,6 +14,7 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Data;
+using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Common.Validation;
 
 namespace TerraScale.Dashboard.Platform.Mcp
