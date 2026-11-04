@@ -39,7 +39,7 @@ internal sealed partial class EngineManagementService
 
     // Every data request resolves its database here. A lookup stays valid while the catalog has not committed since it
     // was read, so a point operation reads no catalog row and a long read on the storage threads cannot hold it up.
-        private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (long Sequence, TenantContext Tenant)> _tenants = new();
+    private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (long Sequence, TenantContext Tenant)> _tenants = new();
 
     // The same validity for the records the placement check reads on every data request (docs/cross-region.md).
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (long Sequence, ManagedDatabase? Record)> _records = new();
