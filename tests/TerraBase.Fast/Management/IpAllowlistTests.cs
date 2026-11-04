@@ -16,7 +16,7 @@ public sealed class IpAllowlistTests
     [Test]
     public async Task Http_requests_must_come_from_every_allowlist_the_token_carries()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
         var database = await api.CreateManagedDatabaseAsync("main");
         var sql = Uri(database.Data + "/sql/execute");
 

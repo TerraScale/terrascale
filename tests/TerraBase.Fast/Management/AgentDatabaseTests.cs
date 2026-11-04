@@ -48,7 +48,7 @@ public sealed class AgentDatabaseTests
     [Test]
     public async Task A_token_narrowed_to_one_database_is_refused_on_another_and_cannot_set_a_ttl()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
         var source = await api.CreateManagedDatabaseAsync();
         using var owner = ProjectClient(api, source.Project);
         var other = await CreatedAsync(await owner.PostAsJsonAsync(ManagementApi.Uri($"/v1/projects/{source.Project}/databases"), new { name = "other", ttlSeconds = 600 }));

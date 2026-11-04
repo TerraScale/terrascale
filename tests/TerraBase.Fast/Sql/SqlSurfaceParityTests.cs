@@ -16,7 +16,7 @@ public sealed partial class SqlSurfaceParityTests
     [Test]
     public async Task Rest_websocket_and_postgres_answer_the_same_results_and_errors()
     {
-        await using var db = await StartAsync();
+        await using var db = await StartSharedAsync();
         var socketDatabase = await db.Api.CreateManagedDatabaseAsync(db.Database.Organization, db.Database.Project, "websocket");
         var wireDatabase = await db.Api.CreateManagedDatabaseAsync(db.Database.Organization, db.Database.Project, "wire");
         await using var socket = await SqlSocketClient.ConnectAsync(db.Api, socketDatabase.Data, apiKey: null);

@@ -11,7 +11,7 @@ public sealed class SqlNativeRestTests
     [Test]
     public async Task Rows_are_created_read_updated_and_deleted_with_parameters_and_json_columns()
     {
-        await using var db = await StartAsync();
+        await using var db = await StartSharedAsync();
         var (name, city, renamed) = (Faker.Name.FullName(), Faker.Address.City(), Faker.Name.FullName());
         var age = Faker.Random.Int(18, 90);
 
@@ -36,7 +36,7 @@ public sealed class SqlNativeRestTests
     [Test]
     public async Task Schema_statements_pass_through_and_queries_use_their_indexes()
     {
-        await using var db = await StartAsync();
+        await using var db = await StartSharedAsync();
         await db.OkAsync("CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
         await db.OkAsync(Stmt("INSERT INTO people (name) VALUES (?)", Faker.Name.FullName()));
 
@@ -56,7 +56,7 @@ public sealed class SqlNativeRestTests
     [Test]
     public async Task Constraints_answer_their_error_codes_and_foreign_keys_cascade()
     {
-        await using var db = await StartAsync();
+        await using var db = await StartSharedAsync();
         await db.OkAsync(
             "CREATE TABLE teams (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
             "CREATE TABLE players (id INTEGER PRIMARY KEY, team INTEGER NOT NULL REFERENCES teams (id) ON DELETE CASCADE, email TEXT UNIQUE, goals INTEGER CHECK (goals >= 0))",
@@ -84,7 +84,7 @@ public sealed class SqlNativeRestTests
     [Test]
     public async Task A_request_is_one_transaction_and_a_failed_statement_rolls_all_of_it_back()
     {
-        await using var db = await StartAsync();
+        await using var db = await StartSharedAsync();
         await db.OkAsync("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)");
 
         var failed = await db.RefusedAsync(db.Writer, Stmt("INSERT INTO notes (body) VALUES (?)", Faker.Lorem.Sentence()), Stmt("INSERT INTO notes (body) VALUES (NULL)"));
@@ -102,7 +102,7 @@ public sealed class SqlNativeRestTests
     [Test]
     public async Task Read_only_keys_read_but_cannot_write()
     {
-        await using var db = await StartAsync();
+        await using var db = await StartSharedAsync();
         await db.OkAsync("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)", "INSERT INTO notes (body) VALUES ('kept')");
 
         var write = await db.RefusedAsync(db.Reader, Stmt("INSERT INTO notes (body) VALUES (?)", Faker.Lorem.Word()));
@@ -118,7 +118,7 @@ public sealed class SqlNativeRestTests
     [Test]
     public async Task Blobs_round_trip_as_base64()
     {
-        await using var db = await StartAsync();
+        await using var db = await StartSharedAsync();
         var bytes = Faker.Random.Bytes(Faker.Random.Int(1, 4096));
         await db.OkAsync("CREATE TABLE files (id INTEGER PRIMARY KEY, data BLOB NOT NULL)");
 
