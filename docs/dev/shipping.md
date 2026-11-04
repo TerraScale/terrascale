@@ -30,9 +30,9 @@ tests, and everything else is deleted. Delete at least 80% of tests against the
 2026-11-04 workspace `test-policy.md` baseline. New features add at most one
 happy-path and one critical-failure test.
 
-**Temporary enforcement until #1084 closes:** `ts-ship` reports its 30 s
-per-area suite budget and 10 s per-test budget as warnings while the slow tests
-are fixed. Once #1084 closes, both caps become hard: 10 s per test and 30 s per suite.
+**Temporary enforcement until #1084 closes:** `ts-ship` keeps its current 120 s
+per-area suite cap and warn-only 10 s per-test check while the slow tests are
+fixed. Once #1084 closes, both caps become hard: 10 s per test and 30 s per suite.
 The temporary gate does not change the policy above.
 
 Fast batches and `ts-heavy-any` jobs wait for dev host capacity instead of
