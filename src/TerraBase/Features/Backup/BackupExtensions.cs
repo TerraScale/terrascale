@@ -18,7 +18,8 @@ public static class BackupExtensions
         {
             return services.AddSingleton<NoBackup>()
                 .AddSingleton<IContinuousBackup>(provider => provider.GetRequiredService<NoBackup>())
-                .AddSingleton<IPointInTimeRestore>(provider => provider.GetRequiredService<NoBackup>());
+                .AddSingleton<IPointInTimeRestore>(provider => provider.GetRequiredService<NoBackup>())
+                .AddSingleton<IBackupKeyShredding>(provider => provider.GetRequiredService<NoBackup>());
         }
 
         // Engine/Cluster registers IShipperLeases: a database's primary member ships it while it holds its lease.
@@ -43,13 +44,18 @@ public static class BackupExtensions
             .AddHostedService(provider => provider.GetRequiredService<ContinuousBackup>())
             .AddSingleton<DatabaseBackupPurge>()
             .AddHostedService(provider => provider.GetRequiredService<DatabaseBackupPurge>())
+            .AddSingleton<IBackupKeyShredding>(provider => provider.GetRequiredService<DatabaseBackupPurge>())
             .AddSingleton<BackupReader>()
             .AddSingleton<IPointInTimeRestore, PointInTimeRestore>();
     }
 
     // Backup is off: nothing ships and nothing can be restored.
-    private sealed class NoBackup : IContinuousBackup, IPointInTimeRestore
+    private sealed class NoBackup : IContinuousBackup, IPointInTimeRestore, IBackupKeyShredding
     {
+        public void Shred(TenantContext database)
+        {
+        }
+
         public BackupStatus Status { get; } = new(false, []);
 
         public DateTimeOffset? LastShipped(TenantContext database, Ulid? generation = null) => null;

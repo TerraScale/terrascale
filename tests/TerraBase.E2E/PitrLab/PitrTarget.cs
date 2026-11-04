@@ -76,7 +76,7 @@ internal static class PitrTarget
         try
         {
             await PitrDownload.RunAsync(source,
-                [$"v1/{database.Organization}/{database.Project}/{database.Id}/", $"v1/keys/{database.Organization}/{database.Project}/"],
+                [$"v1/{database.Organization}/{database.Project}/{database.Id}/", $"v1/keys/{database.Organization}/{database.Project}/{database.Id}/"],
                 root, Path.Combine(work, "fresh-target-manifest.json"), cancellationToken);
         }
         finally

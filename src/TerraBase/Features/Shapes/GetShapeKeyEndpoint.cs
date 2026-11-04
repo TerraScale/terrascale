@@ -39,7 +39,7 @@ internal sealed class GetShapeKeyEndpoint(
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         Metadata(Query("handle", "The current shape handle: h1- and 16 lowercase hex characters."),
             Query("epoch", "Canonical unsigned decimal epoch, floor(unix_seconds / 600)."),
-            Query("key_id", "Canonical uppercase ULID of the project data key named by the TBS1 header."));
+            Query("key_id", "Canonical uppercase ULID of the database data key named by the TBS1 header."));
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
         Metadata(new ListenerMetadata(TerraBaseListener.Client), OriginNoStore.Instance);
     }
@@ -118,7 +118,7 @@ internal sealed class GetShapeKeyEndpoint(
         catch (Exception error) when (!cancellationToken.IsCancellationRequested
             && error is IOException or HttpRequestException or AmazonS3Exception or InvalidDataException or OperationCanceledException)
         {
-            return ErrorResponse.From(new Unavailable("the project data key is unavailable"));
+            return ErrorResponse.From(new Unavailable("the database data key is unavailable"));
         }
     }
 }

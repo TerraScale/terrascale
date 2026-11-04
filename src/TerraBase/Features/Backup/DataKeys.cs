@@ -8,8 +8,9 @@ using TerraBase.Primitives;
 namespace TerraBase.Features.Backup;
 
 /// <summary>
-/// Per-project data keys (envelope encryption): generated and wrapped by the master key, stored wrapped in the bucket,
-/// kept in the clear only in memory. A project uses its newest unexpired key; objects name the key that sealed them.
+/// Per-database data keys (envelope encryption): generated and wrapped by the master key, stored wrapped in the bucket,
+/// kept in the clear only in memory. A database uses its newest unexpired key; objects name the key that sealed them.
+/// Deleting a database destroys its wrapped keys and leaves a deletion record; its scope then refuses every key.
 /// </summary>
 /// <remarks>
 /// Two members rotating a project's key at once both succeed; each object names its own persisted key. Current keys
@@ -69,6 +70,12 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
                     }
 
                     var candidate = item.Key[prefix.Length..];
+                    if (candidate == BackupLayout.ShreddedName)
+                    {
+                        // A deleted database's keys are destroyed; it never gets a new one.
+                        throw new DatabaseShreddedException((await ShredRecords.ReadAsync(store, scope, cancellationToken).ConfigureAwait(false))?.ShreddedAt);
+                    }
+
                     if (TryParseKey(candidate, out var candidateKey) && NotFuture(candidateKey))
                     {
                         id = candidate;
@@ -83,6 +90,12 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
             }
             else
             {
+                // Customer shipping skips the listing: check the deletion record before creating a key.
+                if (freshKey && await ShredRecords.ReadAsync(store, scope, cancellationToken).ConfigureAwait(false) is { } shredded)
+                {
+                    throw new DatabaseShreddedException(shredded.ShreddedAt);
+                }
+
                 var (generated, wrapped) = await master.GenerateDataKeyAsync(cancellationToken).ConfigureAwait(false);
                 key = generated;
                 id = EntityIds.New(time).ToString();
@@ -161,6 +174,11 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
                             wrapped = Encoding.ASCII.GetString(buffer, 0, length);
                         }, cancellationToken).ConfigureAwait(false) || string.IsNullOrEmpty(wrapped))
                     {
+                        if (await ShredRecords.ReadAsync(store, scope, cancellationToken).ConfigureAwait(false) is { } shredded)
+                        {
+                            throw new DatabaseShreddedException(shredded.ShreddedAt);
+                        }
+
                         throw new InvalidDataException("a backup object names a data key the bucket does not hold");
                     }
 
@@ -189,6 +207,22 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
         finally
         {
             gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Drops this member's cached keys of a shredded <paramref name="scope"/>. Arrays already handed to running operations
+    /// are not zeroed: they may still be sealing, and what they seal is unreadable once the wrapped keys are gone.
+    /// </summary>
+    public void Forget(string scope)
+    {
+        _current.Remove(scope);
+        foreach (var id in _keys.Keys)
+        {
+            if (id is ValueTuple<string, string> key && key.Item1 == scope)
+            {
+                _keys.Remove(id);
+            }
         }
     }
 

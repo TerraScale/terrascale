@@ -306,6 +306,12 @@ internal sealed class PointInTimeRestore(
             return new NotFound("continuous backup holds nothing of this database");
         }
 
+        // Checked before anything else: a deleted database's objects may still be listed, but nothing can decrypt them.
+        if (await ShredRecords.ReadAsync(backup.Store, BackupLayout.KeyScope(source), cancellationToken).ConfigureAwait(false) is { } shredded)
+        {
+            return Shredded(shredded.ShreddedAt);
+        }
+
         var file = BackupLayout.File(source, options.MachineId);
         var snapshots = await ScanSnapshotsAsync(backup.Store, file, at, int.MaxValue, cancellationToken).ConfigureAwait(false);
         if (snapshots?.First is null)
@@ -364,6 +370,10 @@ internal sealed class PointInTimeRestore(
         {
             return new Conflict("continuous backup cannot place pointInTime between two transactions: " + error.Message, "restore_point_unproven");
         }
+        catch (DatabaseShreddedException error)
+        {
+            return Shredded(error.ShreddedAt);
+        }
         catch (InvalidDataException)
         {
             return new Conflict("continuous backup of this database cannot be read: an object fails authentication or its integrity check", "backup_unreadable");
@@ -371,6 +381,12 @@ internal sealed class PointInTimeRestore(
 
         return restored;
     }
+
+    private static Conflict Shredded(DateTimeOffset? at) => new(
+        at is { } when && when > DateTimeOffset.MinValue
+            ? $"the database was deleted at {when:O} and its backup keys destroyed; its backups cannot be restored"
+            : "the database was deleted and its backup keys destroyed; its backups cannot be restored",
+        "database_shredded");
 
     private static Unavailable PlanLimit() => new("the point-in-time plan metadata scan exceeds 10000 objects", "pitr_plan_limit");
 
