@@ -63,7 +63,10 @@ internal static class TursoCopy
         Execute(copy, "PRAGMA wal_checkpoint(TRUNCATE);");
     }
 
-    internal static void CopyRows(TursoConnection source, System.Data.Common.DbConnection copy, string table, long chunkRows, long chunkBytes, CancellationToken cancellationToken)
+    internal static void CopyRows(TursoConnection source, System.Data.Common.DbConnection copy, string table, CancellationToken cancellationToken) =>
+        CopyRows(source, copy, table, long.MaxValue, long.MaxValue, cancellationToken, ownsTransaction: false);
+
+    internal static void CopyRows(TursoConnection source, System.Data.Common.DbConnection copy, string table, long chunkRows, long chunkBytes, CancellationToken cancellationToken, bool ownsTransaction = true)
     {
         var (columns, alias) = TableShape.Read(source, table);
 
@@ -89,7 +92,11 @@ internal static class TursoCopy
         var rowsInChunk = 0L;
         var bytesInChunk = 0L;
 
-        Execute(copy, "BEGIN IMMEDIATE;");
+        if (ownsTransaction)
+        {
+            Execute(copy, "BEGIN IMMEDIATE;");
+        }
+
         using var rows = read.ExecuteReader();
         if (rows.FieldCount != names.Count)
         {
@@ -118,7 +125,10 @@ internal static class TursoCopy
             Execute(copy, "BEGIN IMMEDIATE;");
         }
 
-        Execute(copy, "COMMIT;");
+        if (ownsTransaction)
+        {
+            Execute(copy, "COMMIT;");
+        }
     }
 
     private static void Execute(System.Data.Common.DbConnection connection, string sql)
