@@ -59,6 +59,7 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/point-in-time TsAuth(databases:read) getRestoreWindow Backups
         GET /v1/projects/{project}/databases/{database}/query-shapes TsAuth(databases:read) listQueryShapes Queries
         GET /v1/projects/{project}/databases/{database}/read-grants TsAuth(databases:read) listReadGrants Live
+        GET /v1/projects/{project}/databases/{database}/regions TsAuth(databases:read) getDatabaseRegions Databases
         GET /v1/projects/{project}/databases/{database}/schema TsAuth(databases:read) getDatabaseSchema Schema
         GET /v1/projects/{project}/databases/{database}/schema/{collection} TsAuth(databases:read) getCollectionSchema Schema
         GET /v1/projects/{project}/databases/{database}/sql/ws TsAuth(documents:read) connectSql Queries
