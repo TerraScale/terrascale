@@ -55,10 +55,9 @@ public sealed class CrossRegionDatabaseListTests
         }
 
         await Assert.That(names.Order(StringComparer.Ordinal)).IsEquivalentTo(["athome", "away"]);
-        await Assert.That(page.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("name").GetString() == "away")
-            .GetProperty("region").GetString()).IsEqualTo("sjc");
-        await Assert.That(page.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("name").GetString() == "away")
-            .GetProperty("homeRegion").GetString()).IsEqualTo("sjc");
+        var merged = page.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("name").GetString() == "away");
+        await Assert.That(merged.GetProperty("region").GetString()).IsEqualTo("sjc");
+        await Assert.That(merged.GetProperty("homeRegion").GetString()).IsEqualTo("sjc");
     }
 
     private static string Token(ManagementApi api, string project) =>
