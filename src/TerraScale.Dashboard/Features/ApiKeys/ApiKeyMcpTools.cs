@@ -41,7 +41,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         }
 
         [McpServerTool(Name = "create_scoped_key", Title = "Create scoped key", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Mint a short-lived key for one database from the API key authenticating this MCP connection. access is read or read_write; ttlSeconds is 60 to 2,592,000, default 3600, capped by the parent key. The secret is returned once. Scoped keys cannot mint keys or manage databases. OAuth and personal access tokens cannot mint scoped keys.")]
-        public TerraScale.DotNet.TerraBase.TerraBaseScopedKey CreateScopedKey(string databaseId, string access = "read_write", int ttlSeconds = 3600, string? organizationId = null, string? projectId = null)
+        public TerraScale.Dashboard.Platform.TsAuth.TsAuthScopedKey CreateScopedKey(string databaseId, string access = "read_write", int ttlSeconds = 3600, string? organizationId = null, string? projectId = null)
         {
             throw new AccountAccessException("Connect MCP using a project API key to mint scoped keys. OAuth and personal access tokens cannot mint scoped keys.", 403);
         }
