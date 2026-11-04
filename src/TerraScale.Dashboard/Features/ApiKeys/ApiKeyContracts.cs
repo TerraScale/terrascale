@@ -10,6 +10,8 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         public string CreatedByUserId { get; init; } = "";
         public string? DatabaseName { get; init; }
         public IReadOnlyList<string>? AllowedCidrs { get; init; }
+        // UTC instant until which the key string before the last rotation still works; empty when no grace period is active.
+        public string PreviousSecretExpiresAt { get; init; } = "";
     }
     public sealed record ProjectCredentialMetadata(string KeyId, string ProjectId, string Name, string Prefix, string LastFour, IReadOnlyList<string> Scopes,
         string DatabaseId, string CreatedByEmail, string CreatedAt, string ExpiresAt, string LastUsedAt, string RevokedAt, bool IsActive, string Kind)
