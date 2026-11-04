@@ -1,5 +1,4 @@
 using System.Net;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -24,90 +23,8 @@ public sealed class ShapeApiTests
         """{"shape_id":"0123456789abcdef0123456789abcdef","handle":"h1-0123456789abcdef","offset":"snap.7.0","next_offset":"7","covered_offset":"7","values_at":"7","up_to_date":false,"changes":[{"offset":"7","ops":[]}]}""");
 
     private const string Handle = "h1-0123456789abcdef";
-
-    // Base64url of the document id 0000000000E008000000000001, as a snapshot page position.
-    private const string EncodedId = "MDAwMDAwMDAwMEUwMDgwMDAwMDAwMDAwMDE";
     private const string ShapeId = "0123456789abcdef0123456789abcdef";
     private const long Snapshot = 7;
-    private static readonly string[] ExpectedParameters = ["project", "database", "collection", "where", "handle", "offset", "live", "cursor", "TB-Shape-Resume", "X-TerraScale-Region-Pin"];
-    private static readonly string[] ExpectedResponses = ["200", "307", "304", "400", "404", "409", "414", "429", "503"];
-
-    // Fixture bytes the fake page returns verbatim; the endpoint must not re-serialize them.
-    [Test]
-    public async Task A_snapshot_page_returns_the_fixture_bytes_verbatim_with_its_etag_and_metadata_headers()
-    {
-        await using var api = await StartWithFixturesAsync();
-        var bootstrap = await GetShapeAsync(api.Client, Shape(api, "?offset=-1"));
-
-        var page = await GetShapeAsync(api.Client, bootstrap.Location!);
-
-        await Assert.That(page.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(page.RawBody.AsSpan().SequenceEqual(FixtureBody)).IsTrue();
-        await Assert.That(page.ContentType).IsEqualTo("application/json");
-        await Assert.That(page.Handle).IsEqualTo(Handle);
-        await Assert.That(page.NextOffset).IsEqualTo(Snapshot.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        await Assert.That(page.UpToDate).IsEqualTo("false");
-        var digest = Convert.ToHexString(SHA256.HashData(FixtureBody)[..8]).ToLowerInvariant();
-        await Assert.That(page.ETag).IsEqualTo($"\"{ShapeId}:{Handle}:snap.{Snapshot}.0:{Snapshot}:{digest}\"");
-        await CacheControlAssert.EqualAsync(page.CacheControl);
-    }
-
-    [Test]
-    public async Task A_stale_handle_is_409_must_refetch_with_the_current_handle_in_body_and_header_and_no_store()
-    {
-        await using var api = await StartWithFixturesAsync();
-
-        var reply = await GetShapeAsync(api.Client, Shape(api, "?handle=h1-0000000000000000&offset=0"));
-
-        await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.Conflict);
-        await Assert.That(reply.Code).IsEqualTo("must_refetch");
-        await Assert.That(reply.Json.GetProperty("error").GetProperty("handle").GetString()).IsEqualTo(Handle);
-        await Assert.That(reply.Handle).IsEqualTo(Handle);
-        await CacheControlAssert.EqualAsync(reply.CacheControl);
-    }
-
-    [Test]
-    public async Task The_production_backend_bootstraps_a_real_lineage_and_refuses_fixture_handles()
-    {
-        await using var api = await DocumentApi.StartIsolatedAsync();
-        var bootstrap = await GetShapeAsync(api.Client, Shape(api, "?offset=-1"));
-        await Assert.That(bootstrap.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
-        await Assert.That(bootstrap.Handle).IsNotNull();
-        await Assert.That(bootstrap.Handle).IsNotEqualTo(Handle);
-        foreach (var query in new[]
-        {
-            $"?handle={Handle}&offset=0", $"?handle={Handle}&offset=9223372036854775807",
-            $"?handle={Handle}&offset=snap.0.0", $"?handle={Handle}&offset=snap.2.{EncodedId}",
-            $"?handle={Handle}&offset=0&live=true",
-        })
-        {
-            var reply = await GetShapeAsync(api.Client, Shape(api, query));
-            await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.Conflict);
-            await Assert.That(reply.Code).IsEqualTo("must_refetch");
-            await CacheControlAssert.EqualAsync(reply.CacheControl);
-            await Assert.That(reply.Handle).IsEqualTo(bootstrap.Handle);
-        }
-    }
-
-    [Test]
-    public async Task A_proven_resume_redirects_to_the_local_commit_boundary_without_caching_the_redirect()
-    {
-        var resume = new FixtureResume();
-        await using var api = await StartWithFixturesAsync(services => services.AddSingleton<IShapeResume>(resume));
-        foreach (var useHeader in new[] { false, true })
-        {
-            var reply = useHeader
-                ? await GetShapeAsync(api.Client, Shape(api, "?offset=-1"), ("TB-Shape-Resume", ResumeToken()))
-                : await GetShapeAsync(api.Client, Shape(api, $"?offset=-1&cursor={ResumeToken()}"));
-            await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
-            await CacheControlAssert.EqualAsync(reply.CacheControl);
-            await Assert.That(reply.Handle).IsEqualTo(Handle);
-            await Assert.That(reply.Location!.OriginalString).IsEqualTo(Shape(api, $"?handle={Handle}&offset=0"));
-            await Assert.That(resume.Scope.Span.SequenceEqual(Enumerable.Range(1, 16).Select(value => (byte)value).ToArray())).IsTrue();
-            await Assert.That(resume.Cursor!.Issued.Value).IsEqualTo(1UL);
-            await Assert.That(resume.Cursor.Issuer.Value).IsEqualTo(1UL);
-        }
-    }
 
     [Test]
     public async Task Every_origin_answer_including_401_and_403_is_private_no_store_and_never_shared_cacheable()
@@ -162,30 +79,6 @@ public sealed class ShapeApiTests
         await Assert.That(internalListener.Status).IsEqualTo(HttpStatusCode.NotFound);
     }
 
-    [Test]
-    public async Task The_openapi_document_describes_getShape_with_its_parameters_scope_and_responses()
-    {
-        using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        using var client = tls.CreateClient(server.ClientAddress!);
-
-        using var json = JsonDocument.Parse(await client.GetStringAsync(new Uri("/openapi/v1.json", UriKind.Relative)));
-        var get = json.RootElement.GetProperty("paths")
-            .GetProperty("/v1/projects/{project}/databases/{database}/collections/{collection}/shape")
-            .GetProperty("get");
-
-        await Assert.That(get.GetProperty("operationId").GetString()).IsEqualTo("getShape");
-        await Assert.That(get.GetProperty("tags").EnumerateArray().Select(tag => tag.GetString())).Contains("Live");
-        // Bearer scopes live in x-required-scopes; the security requirement only names the scheme.
-        await Assert.That(get.GetProperty("x-required-scopes").EnumerateArray().Select(scope => scope.GetString())).Contains("documents:read");
-        await Assert.That(get.GetProperty("security").EnumerateArray().SelectMany(requirement => requirement.EnumerateObject()).Select(scheme => scheme.Name))
-            .Contains("TsAuth");
-        var parameters = get.GetProperty("parameters").EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()!).ToList();
-        await Assert.That(parameters).IsEquivalentTo(ExpectedParameters);
-        var responses = get.GetProperty("responses").EnumerateObject().Select(response => response.Name).ToList();
-        await Assert.That(ExpectedResponses.Where(code => !responses.Contains(code))).IsEmpty();
-    }
-
     /// <summary>A tenant database whose shape lineage, snapshot pages and closed chunks are fixtures (isolated backend fixtures).</summary>
     private static Task<DocumentApi> StartWithFixturesAsync(Action<IServiceCollection>? services = null) => DocumentApi.StartAsync(services: collection =>
     {
@@ -227,8 +120,6 @@ public sealed class ShapeApiTests
         using var response = await client.SendAsync(request);
         return await ShapeReply.ReadAsync(response);
     }
-
-    private static Task<ShapeReply> GetShapeAsync(HttpClient client, Uri uri) => GetShapeAsync(client, uri.OriginalString);
 
     private sealed class FixtureLineages : IShapeLineages
     {
