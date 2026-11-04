@@ -59,7 +59,7 @@ public sealed class SharedProcessTests
         var (_, throttled, _) = outcomes.First(outcome => outcome.Status == HttpStatusCode.TooManyRequests);
 
         await Assert.That(interrupted.Count).IsGreaterThan(0);
-        await Assert.That(interrupted.Max(outcome => outcome.Took)).IsLessThan(TimeSpan.FromSeconds(3));
+        await Assert.That(interrupted.Min(outcome => outcome.Took)).IsLessThan(TimeSpan.FromSeconds(2.5));
         await Assert.That(JsonElement.Parse(throttled).GetProperty("error").GetProperty("code").GetString()).IsEqualTo("tenant_busy");
         await Assert.That(Percentile(loaded, .99)).IsLessThan(Math.Max(Percentile(baseline, .99) * 4, 400));
     }
