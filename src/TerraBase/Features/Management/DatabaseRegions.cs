@@ -35,6 +35,9 @@ internal static class DatabaseRegions
         : replicas.Distinct(StringComparer.Ordinal).Count() != replicas.Count ? new Validation("replicaRegions names a region twice")
         : (IReadOnlyList<string>)[.. replicas.Order(StringComparer.Ordinal)];
 
+    internal static IReadOnlyList<string> AllBut(IEnumerable<string> serving, string home) =>
+        [.. serving.Where(region => region != home).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
+
     internal static Validation? Unserved(string field, IEnumerable<string> regions, IReadOnlyList<string> serving) =>
         regions.FirstOrDefault(region => !serving.Contains(region, StringComparer.Ordinal)) is { } unknown
             ? new Validation($"{field} names {unknown}, a region TerraBase does not serve; choose from: {string.Join(", ", serving)}")
