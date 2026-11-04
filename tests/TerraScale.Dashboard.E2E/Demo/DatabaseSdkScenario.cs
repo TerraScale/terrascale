@@ -147,7 +147,7 @@ namespace TerraScale.Dashboard.E2E
                 application.Services.Replace(ServiceDescriptor.Singleton(protocol.Platform));
                 var auth = (TestAuth)application.Services.Last(item => item.ServiceType == typeof(IAuthGateway)).ImplementationInstance!;
                 protocol.ResolveAccessToken = auth.ResolveAccessToken;
-                protocol.ResolveProjectToken = auth.ResolveProjectToken;
+                protocol.ResolveProjectToken = token => auth.ResolveProjectToken(token) ?? protocol.ApiKeys?.ResolveMachineToken(token);
                 protocol.ApiKeys ??= new TestAuthApiKeys(auth.ResolveAccessToken, protocol.KeyRole);
                 transport!.ApiKeys = protocol.ApiKeys;
                 application.Services.Replace(ServiceDescriptor.Singleton<IDashboardState>(state));
@@ -1014,7 +1014,7 @@ namespace TerraScale.Dashboard.E2E
                 {
                     Require(method == "POST", "Canonical database create");
                     var body = await JsonAsync(http);
-                    Require(body.EnumerateObject().All(field => field.Name is "name" or "homeRegion" or "replicaRegions" or "allRegions"), "Create sends only name and placement");
+                    Require(body.EnumerateObject().All(field => field.Name is "name" or "homeRegion" or "replicaRegions" or "allRegions" or "ttlSeconds"), "Create sends only name and placement");
                     // As production TerraBase until replicas are available: a database serves only its home region.
                     if (body.TryGetProperty("replicaRegions", out _) || body.TryGetProperty("allRegions", out var every) && every.GetBoolean())
                     {
@@ -1042,7 +1042,8 @@ namespace TerraScale.Dashboard.E2E
                             return Error(409, createConflict);
                         }
 
-                        var database = new ManagedDatabase(ids.NewId(), project, name, DateTimeOffset.UtcNow, HomeRegion: home, ReplicaRegions: replicas);
+                        var database = new ManagedDatabase(ids.NewId(), project, name, DateTimeOffset.UtcNow, HomeRegion: home, ReplicaRegions: replicas)
+                        { ExpiresAt = body.TryGetProperty("ttlSeconds", out var ttl) ? DateTimeOffset.UtcNow.AddSeconds(ttl.GetInt64()) : null };
                         databases[database.Id] = database;
                         Interlocked.Increment(ref creates);
                         return Results.Json(Wire(database, answering), statusCode: 201);
@@ -1126,13 +1127,14 @@ namespace TerraScale.Dashboard.E2E
                         }
 
                         var request = await JsonAsync(http);
-                        Require(request.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "name" }), "The branch body accepts only its new database name");
+                        Require(request.EnumerateObject().All(field => field.Name is "name" or "ttlSeconds"), "The branch body accepts only its new database name");
                         var branchName = request.GetProperty("name").GetString()!;
                         lock (gate)
                         {
                             if (databases.Values.Any(database => database.ProjectId == project && database.Name == branchName))
                             { Interlocked.Increment(ref branchConflicts); return Error(409, "name_taken"); }
-                            var branch = new ManagedDatabase(ids.NewId(), project, branchName, DateTimeOffset.UtcNow, current.Id, current.HomeRegion, []);
+                            var branch = new ManagedDatabase(ids.NewId(), project, branchName, DateTimeOffset.UtcNow, current.Id, current.HomeRegion, [])
+                            { ExpiresAt = request.TryGetProperty("ttlSeconds", out var ttl) ? DateTimeOffset.UtcNow.AddSeconds(ttl.GetInt64()) : null };
                             databases.Add(branch.Id, branch);
                             Interlocked.Increment(ref branchCreates);
                             return Results.Json(Wire(branch, answering), statusCode: 201);
@@ -1227,6 +1229,9 @@ namespace TerraScale.Dashboard.E2E
                     return Error(404, "not_found");
                 }
 
+                var only = text.StartsWith("Bearer ", StringComparison.Ordinal) ? ApiKeys?.MachineDatabase(text[7..]) : null;
+                var parts = http.Request.Path.Value!.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                if (only is not null && (parts.Length < 5 || parts[4] != only)) return Error(404, "not_found");
                 if (!admitted.Scopes.Contains(scope, StringComparer.Ordinal))
                 {
                     return Error(403, "forbidden_scope");
@@ -1247,6 +1252,7 @@ namespace TerraScale.Dashboard.E2E
                     name = database.Name,
                     branchedFrom = database.BranchedFrom,
                     createdAt = database.CreatedAt,
+                    expiresAt = database.ExpiresAt,
                     region,
                     homeRegion = database.HomeRegion,
                     replicaRegions = database.ReplicaRegions ?? Array.Empty<string>(),
