@@ -24,6 +24,7 @@ internal readonly union ShapeFlightResult<T>(ShapeFlight<T>, QuotaExceeded, NotF
 internal interface IShapeFlights<T>
 {
     long NextCursor(long? input);
+    ValueTask<ShapeFlightResult<T>> ReadAsync(ShapeFlightRequest request, Func<CancellationToken, ValueTask<T>> read, CancellationToken cancellationToken);
     ValueTask<ShapeFlightResult<T>> ReadAsync(
         ShapeFlightRequest request, ShapeHeadProbe probe, ShapeTailReader<T> read, CancellationToken cancellationToken);
 }
@@ -67,7 +68,14 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
         _stopping = lifetime.ApplicationStopping;
     }
     public long NextCursor(long? input) => Math.Max(_time.GetUtcNow().ToUnixTimeSeconds() / LiveBucketSeconds, (input ?? -1) + 1);
-    public async ValueTask<ShapeFlightResult<T>> ReadAsync(ShapeFlightRequest request, ShapeHeadProbe probe, ShapeTailReader<T> read, CancellationToken cancellationToken)
+    public ValueTask<ShapeFlightResult<T>> ReadAsync(ShapeFlightRequest request, ShapeHeadProbe probe, ShapeTailReader<T> read, CancellationToken cancellationToken) =>
+        JoinAsync(request, probe, read, null, cancellationToken);
+
+    public ValueTask<ShapeFlightResult<T>> ReadAsync(ShapeFlightRequest request, Func<CancellationToken, ValueTask<T>> read, CancellationToken cancellationToken) =>
+        JoinAsync(request, null, null, read, cancellationToken);
+
+    private async ValueTask<ShapeFlightResult<T>> JoinAsync(ShapeFlightRequest request, ShapeHeadProbe? probe, ShapeTailReader<T>? read,
+        Func<CancellationToken, ValueTask<T>>? regional, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         var tenant = request.Database with { Plan = QosContext.Current?.Plan ?? request.Database.Plan };
@@ -118,7 +126,7 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
 
         if (start)
         {
-            _ = RunAsync(request, probe, read, key, flight, tenant);
+            _ = RunAsync(request, probe, read, regional, key, flight, tenant);
         }
 
         try
@@ -175,7 +183,7 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
             _requesters--;
             _organizations[key.Database.OrganizationId].Requesters--;
             Settle(key.Database.OrganizationId);
-            if (--flight.Requesters > 0 || !_flights.TryGetValue(key, out var current) || current != flight)
+            if (--flight.Requesters > 0 || flight.Result.Task.IsCompleted || !_flights.TryGetValue(key, out var current) || current != flight)
             {
                 return;
             }
@@ -186,7 +194,8 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
         flight.Cancel.Cancel();
     }
 
-    private async Task RunAsync(ShapeFlightRequest request, ShapeHeadProbe probe, ShapeTailReader<T> read, FlightKey key, Flight flight, TenantContext tenant)
+    private async Task RunAsync(ShapeFlightRequest request, ShapeHeadProbe? probe, ShapeTailReader<T>? read,
+        Func<CancellationToken, ValueTask<T>>? regional, FlightKey key, Flight flight, TenantContext tenant)
     {
         Answer? answer = null;
         Exception? error = null;
@@ -194,11 +203,33 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
         {
             using var scope = QosContext.EnterFlight(tenant, flight.Memory);
             using var token = CancellationTokenSource.CreateLinkedTokenSource(_stopping, flight.Cancel.Token);
-            answer = await AnswerAsync(request, probe, read, flight.Database, token.Token).ConfigureAwait(false);
+            answer = regional is null
+                ? await AnswerAsync(request, probe!, read!, flight.Database, token.Token).ConfigureAwait(false)
+                : new Answer(await regional(token.Token).ConfigureAwait(false));
         }
         catch (Exception caught)
         {
             error = caught;
+        }
+
+        if (error is null)
+        {
+            flight.Result.SetResult(answer!);
+            if (request.Live && answer!.Missing is null && answer.Stuck is null)
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1), _time, _stopping).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
+                {
+                }
+            }
+        }
+        else
+        {
+            flight.Result.SetException(error);
+            _ = flight.Result.Task.Exception;
         }
 
         lock (_gate)
@@ -218,15 +249,7 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
             Settle(key.Database.OrganizationId);
         }
         flight.Memory.Dispose();
-        if (error is null)
-        {
-            flight.Result.SetResult(answer!);
-        }
-        else
-        {
-            flight.Result.SetException(error);
-            _ = flight.Result.Task.Exception;
-        }
+        flight.Cancel.Dispose();
     }
     private async Task<Answer> AnswerAsync(ShapeFlightRequest request, ShapeHeadProbe probe, ShapeTailReader<T> read, DatabaseState state, CancellationToken cancellationToken)
     {

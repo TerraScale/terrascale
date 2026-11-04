@@ -11,7 +11,7 @@ namespace TerraBase.Features.Shapes;
 internal sealed class ShapeService(
     IStorageEngine engine, IShapeSealer sealer, IShapeSnapshotSealer snapshots, IShapeStorage storage, IShapeRetention retention,
     ShapeRegistry registry, ShapeLiveGate gate, IShapeFlights<ShapeRead> flights, IMemoryBudget memory, IHostApplicationLifetime lifetime,
-    ILogger<ShapeService> logger, ReplicaShapeTails replicaTails) : IShapeLineages, IShapeSnapshots, IShapeChunks, IShapeLiveTail
+    ILogger<ShapeService> logger, ReplicaShapeTails replicaTails, ShapeControls controls) : IShapeLineages, IShapeSnapshots, IShapeChunks, IShapeLiveTail
 {
     private int _maintaining;
     private readonly ClosedChunks _closed = new(memory);
@@ -73,7 +73,11 @@ internal sealed class ShapeService(
         }
     }
 
-    private async ValueTask<LineageResult> CurrentAsync(IDatabaseStore store, TenantContext database, string table, ShapeQuery query,
+    private ValueTask<LineageResult> CurrentAsync(IDatabaseStore store, TenantContext database, string table, ShapeQuery query,
+        CancellationToken cancellationToken) => controls.ReadAsync(store, database, table, query,
+            token => LoadCurrentAsync(store, database, table, query, token), cancellationToken);
+
+    private async ValueTask<LineageResult> LoadCurrentAsync(IDatabaseStore store, TenantContext database, string table, ShapeQuery query,
         CancellationToken cancellationToken)
     {
         ShapeTableState state;
@@ -415,7 +419,7 @@ internal sealed class ShapeService(
 
     private static string Decimal(long value) => value.ToString(CultureInfo.InvariantCulture);
 
-    private static ShapeRead Detach(ShapeRead read)
+    internal static ShapeRead Detach(ShapeRead read)
     {
         if (read is not ShapeBody body)
         {
@@ -450,7 +454,7 @@ internal sealed class ShapeService(
 
     private static readonly ShapeHeadProbe NotParked = static (_, _) => ValueTask.FromResult(false);
 
-    private static ShapeRead Join(ShapeFlightResult<ShapeRead> result) => result switch
+    internal static ShapeRead Join(ShapeFlightResult<ShapeRead> result) => result switch
     {
         ShapeFlight<ShapeRead> flight => Hold(flight),
         QuotaExceeded refused => refused,

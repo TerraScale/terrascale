@@ -13,7 +13,7 @@ internal interface IReplicaShapeReader : IAsyncDisposable
     ValueTask<ShapeRead?> ReadAsync(ShapeScope scope, ShapeLineage lineage, long offset, IMemoryBudget memory, CancellationToken cancellationToken);
 }
 
-internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudget memory, TimeProvider time) : IDisposable
+internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudget memory, TimeProvider time, IShapeFlights<ShapeRead> flights) : IDisposable
 {
     private readonly SemaphoreSlim _waiting = new(128, 128);
 
@@ -29,6 +29,15 @@ internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudge
     }
 
     internal async ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, CancellationToken cancellationToken)
+    {
+        var request = new ShapeFlightRequest(scope.Database, lineage.Handle, offset.ToString(System.Globalization.CultureInfo.InvariantCulture), true);
+        return ShapeService.Join(await flights.ReadAsync(request, Read, cancellationToken).ConfigureAwait(false));
+
+        async ValueTask<ShapeRead> Read(CancellationToken token) =>
+            ShapeService.Detach(await WaitCoreAsync(scope, lineage, offset, token).ConfigureAwait(false));
+    }
+
+    private async ValueTask<ShapeRead> WaitCoreAsync(ShapeScope scope, ShapeLineage lineage, long offset, CancellationToken cancellationToken)
     {
         if (!await _waiting.WaitAsync(0, cancellationToken).ConfigureAwait(false))
         {

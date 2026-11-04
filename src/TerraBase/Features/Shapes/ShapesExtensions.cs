@@ -82,6 +82,7 @@ public static class ShapesExtensions
 
                 return Task.CompletedTask;
             }))
+            .AddSingleton<ShapeControls>()
             .AddSingleton<ShapeRegistry>()
             .AddSingleton<IShapeFlightSealer>(provider => provider.GetRequiredService<ShapeRegistry>())
             .AddSingleton<ShapeLiveGate>()
