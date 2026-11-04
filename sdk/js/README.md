@@ -169,6 +169,8 @@ release qualification remain open gates.
 | Saved queries | `client.savedQueries` |
 | File buckets | `client.storage` |
 
+`client.metrics.usage()` includes the current month’s `readUnits`, `writeUnits` and billed `units` in `month`. Billed `units` equals `writeUnits`; SQL reads count against fair use. Database usage reports stored bytes and operation counts.
+
 Current project routes authenticate ts-auth project access JWTs. Legacy C# `tb_` keys remain accepted for their
 narrower data scopes; they cannot grant `databases:read` or `databases:write`. Credentials travel as
 `Authorization: Bearer <token>` and are held privately. The SDK validates header-safe syntax; authentication and
