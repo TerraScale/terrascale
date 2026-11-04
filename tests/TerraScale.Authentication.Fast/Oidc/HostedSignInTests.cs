@@ -136,7 +136,7 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task An_exhausted_code_budget_is_said_so_for_an_account_but_not_for_an_unknown_address()
+    public async Task A_spent_code_budget_answers_identically_for_an_account_and_an_unknown_address()
     {
         // A whole UTC clock hour, so the fixed issue window and the mail budgets never roll over mid-test.
         var clock = new ManualClock(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600 * 3600));
@@ -144,38 +144,46 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         await oidc.CreateUserAsync("alice@example.test");
         const string Stranger = "stranger@example.test";
 
-        // The account spends its five codes for this hour (mail arrives after each response).
+        // Both addresses spend their five code requests for this hour; only the account is mailed.
         for (var request = 0; request < Passcodes.MaxIssuesPerWindow; request++)
         {
             clock.Advance(TimeSpan.FromSeconds(61));
             using var sent = await oidc.PostFormAsync(SignIn, new() { ["email"] = "alice@example.test", ["next"] = string.Empty });
             await Assert.That(sent.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await oidc.Email.NextCodeAsync("alice@example.test");
+            using var silent = await oidc.PostFormAsync(SignIn, new() { ["email"] = Stranger, ["next"] = string.Empty });
+            await Assert.That(silent.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
 
-        // The sixth request says the budget is spent: no new code, the wait until the hour turns, no live resend.
+        // The sixth request of each address answers byte-identically apart from the address itself (and the
+        // per-response randoms: the CSP nonce and the request id).
         clock.Advance(TimeSpan.FromSeconds(61));
         using var limited = await oidc.PostFormAsync(SignIn, new() { ["email"] = "alice@example.test", ["next"] = string.Empty });
-        var budgetPage = await limited.Content.ReadAsStringAsync();
+        var accountPage = await limited.Content.ReadAsStringAsync();
+        using var unknown = await oidc.PostFormAsync(SignIn, new() { ["email"] = Stranger, ["next"] = string.Empty });
+        var strangerPage = await unknown.Content.ReadAsStringAsync();
         await Assert.That(limited.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
-        await Assert.That(budgetPage).Contains("requested several codes. Use the latest code you received, or try again in");
-        await Assert.That(budgetPage).Contains("No new code was sent");
-        await Assert.That(budgetPage).Contains("disabled>Send a new code in");
-        await Assert.That(budgetPage).DoesNotContain(">Send a new code</button>");
+        await Assert.That(unknown.StatusCode).IsEqualTo(limited.StatusCode);
+        await Assert.That(unknown.Headers.GetValues("Retry-After")).IsEquivalentTo(limited.Headers.GetValues("Retry-After"));
+        await Assert.That(Normalize(strangerPage)).IsEqualTo(Normalize(accountPage.Replace("alice@example.test", Stranger)));
+        await Assert.That(accountPage).Contains("requested several codes. Use the latest code you received, or try again in");
+        await Assert.That(accountPage).Contains("No new code was sent");
+        await Assert.That(accountPage).Contains("disabled>Send a new code in");
+        await Assert.That(accountPage).DoesNotContain(">Send a new code</button>");
         await Assert.That(limited.Headers.TryGetValues("Retry-After", out var retry) && long.TryParse(retry.First(), out var seconds) && seconds >= 60).IsTrue();
-
-        // An address with no account and no pending sign-up keeps the neutral answers, so nothing is enumerable.
-        for (var request = 0; request < Passcodes.MaxIssuesPerWindow + 1; request++)
-        {
-            clock.Advance(TimeSpan.FromSeconds(61));
-            using var neutral = await oidc.PostFormAsync(SignIn, new() { ["email"] = Stranger, ["next"] = string.Empty });
-            var neutralPage = await neutral.Content.ReadAsStringAsync();
-            await Assert.That(neutral.StatusCode).IsEqualTo(request < Passcodes.MaxIssuesPerWindow ? HttpStatusCode.OK : HttpStatusCode.TooManyRequests);
-            await Assert.That(neutralPage).DoesNotContain("requested several codes");
-            await Assert.That(neutralPage).DoesNotContain("No new code was sent");
-        }
+        await Assert.That(oidc.Email.HasPending).IsFalse();
     }
+
+    // Erases the two values a fresh response always regenerates, so the remaining bytes must match.
+    private static string Normalize(string page) =>
+        RequestIdHint().Replace(NonceAttribute().Replace(page, "nonce=\"N\""), "Request ID: R");
 
     [GeneratedRegex("name=\"pending_token\" value=\"([^\"]+)\"")]
     private static partial Regex PendingToken();
+
+    [GeneratedRegex("nonce=\"[^\"]+\"")]
+    private static partial Regex NonceAttribute();
+
+    [GeneratedRegex("Request ID: [^<]+")]
+    private static partial Regex RequestIdHint();
 }

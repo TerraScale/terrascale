@@ -115,30 +115,6 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
     }
 
     /// <summary>
-    /// How long <paramref name="email"/> must wait for its next code because this UTC clock hour's issue budget is
-    /// spent, read from the stored record of the account or pending sign-up that owns the address. Null when that
-    /// record's budget is not spent or the address owns no record, so a caller never tells an account-less address
-    /// apart.
-    /// </summary>
-    public async Task<TimeSpan?> IssueBudgetRetryAfterAsync(string instanceId, string email, CancellationToken cancellationToken)
-    {
-        if (Users.NormalizeEmail(email) is not { } normalized)
-        {
-            return null;
-        }
-
-        var key = await users.FindByEmailAsync(instanceId, normalized, cancellationToken).ConfigureAwait(false) is { } user
-            ? user.Id
-            : SignUpKey + normalized;
-        var passcode = (await store.GetAsync(AuthStore.PasscodeCollection, instanceId, key, cancellationToken).ConfigureAwait(false))
-            ?.Document.Deserialize(IdentityJson.Default.PasscodeRecord);
-        var now = clock.GetUtcNow();
-        return passcode is { IssuedInWindow: >= MaxIssuesPerWindow } && IssueWindowStart(passcode.WindowStartedAt) == IssueWindowStart(now)
-            ? IssueWindowStart(now) + IssueWindow - now
-            : null;
-    }
-
-    /// <summary>
     /// Starts a sign-up for <paramref name="email"/> with an Argon2id <paramref name="passwordHash"/>: issues a code that
     /// creates the account once redeemed together with <paramref name="pendingToken"/> (<see cref="RedeemSignUpAsync"/>),
     /// replacing any earlier pending sign-up of the address. When the address already has an account, issues that account

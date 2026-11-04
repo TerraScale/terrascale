@@ -208,12 +208,10 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
             is { } rejection)
         {
             logger.ZLogWarning($"Audit: hosted request rate-limited by the {"code-mail-email":@Purpose} budget");
-            // The stored passcode window is the authority: only an address whose account or pending sign-up already
-            // spent it is told the budget is exhausted, so this never distinguishes an account-less address.
-            var budgetWait = await passcodes.IssueBudgetRetryAfterAsync(this.Tenant, email, cancellationToken);
-            var remaining = budgetWait ?? rejection.RetryAfter;
+            // The limiter's own hourly window, the same for every address, answers the wait: nothing tells an
+            // address with an account from one without, so every spent budget renders the same page.
             // The cooldown was just admitted, so cover it too, even when the UTC hour ends first.
-            return new MailRefusal(remaining < MailCooldown ? MailCooldown : remaining, budgetWait is not null);
+            return new MailRefusal(rejection.RetryAfter < MailCooldown ? MailCooldown : rejection.RetryAfter, BudgetExhausted: true);
         }
 
         return null;
