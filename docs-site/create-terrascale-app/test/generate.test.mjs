@@ -52,8 +52,8 @@ test("scaffold is deterministic, cloud-only, and complete", async () => {
       assert.match(client, /createTerraBaseV1Client/);
       assert.match(client, /grant_type: "client_credentials"/);
       const page = await readFile(join(root, "first", "app/page.tsx"), "utf8");
-      assert.match(page, /\.query\(/);
-      assert.match(page, /\.create\(/);
+      assert.match(page, /\.query[<(]/);
+      assert.match(page, /\.execute\(/);
       for (const file of files) {
         const text = await readFile(join(root, "first", file), "utf8");
         assert.doesNotMatch(text, /NEXT_PUBLIC_TERRASCALE_API_KEY|createTerraScaleClient|npx create-terrascale-app/u, file);

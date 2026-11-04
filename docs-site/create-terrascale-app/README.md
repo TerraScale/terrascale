@@ -1,5 +1,4 @@
 # `create-terrascale-app`
 
-This unpublished source example is awaiting the SQL product update.
-It is not a current connection or API guide. See the
+Scaffolds a Next.js app that runs SQL against a TerraScale database from server code. See the
 [SQL overview](https://docs.terrascale.tech/concepts/sql).

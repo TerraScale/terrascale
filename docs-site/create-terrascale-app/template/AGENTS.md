@@ -14,9 +14,9 @@ Build: `npm run build`. The template has no separate test script; validate scaff
 ## SDK
 
 - Import from `@terrascale/sdk`. Create clients with `createTerraBaseV1Client({ baseUrl, project, token })`; `terrascale.ts` does this on the server.
-- Address data as `client.database(name).collection(name)`, then `create`, `get`, `put`, `patch`, `delete`, `query`, `pages` or `items`.
-- Build filters with `v1Filter` (for example `v1Filter.eq("/authorId", id)`). Sort and filter paths are JSON Pointers or `$id`.
-- Pass `ifMatch: version` to `patch` and `delete` for conditional writes; a stale version throws `V1PreconditionFailedError`.
+- Address data as `client.database(name)`, then run SQL with `execute(sql, args)`, `query(sql, args)` or `batch(statements)`. Each call is one request and one transaction; a batch commits all of its statements or none.
+- Pass values as `?` or named arguments, never by string interpolation. A refused statement throws `SqlError`.
+- Primary keys are ULIDs from `generateId()`.
 - Do not invent APIs. Check the package's `types/index.d.ts` for the exact surface.
 
 ## Credentials
