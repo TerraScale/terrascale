@@ -105,7 +105,7 @@ async function main() {
   const config = { project: credentials.project, token: accessToken, baseUrl: api };
   const writer = createTerraBaseClient(config);
   emit({ type: "method", sha: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), host: hostname(), node: process.version,
-    rows: 16, body_bytes: 128, repeats: 3, readers: [1, 10, 100, 1000], cpu_limit_percent: 70,
+    rows: 16, body_bytes: 128, repeats: 3, readers: [1, 10, 100, 1000], cpu_limit_percent: 70, cohort_deadline_seconds: 180,
     latency: "Dev-host SDK through regional SSH CONNECT egress; includes tunnel and write request latency; nearest-rank percentiles per repeat" });
   await monitor();
   for (const previous of (await writer.databases.list({ limit: 100 }, { signal: signal() })).items) {
@@ -114,7 +114,7 @@ async function main() {
     emit({ type: "cleanup", previous_database_deleted: true });
   }
   phase = "create_database";
-  const catalog = await writer.createDatabase(credentials.project, `f10-${Date.now().toString(36)}`, { homeRegion: "gru", ttlSeconds: 3600, signal: signal() });
+  const catalog = await writer.createDatabase(credentials.project, `f10-${Date.now().toString(36)}`, { homeRegion: "gru", ttlSeconds: 7200, signal: signal() });
   const db = writer.database(catalog.id);
   const path = `${api}/v1/projects/${credentials.project}/databases/${catalog.id}`;
   const origin = async (url, mode = "follow") => {
@@ -192,7 +192,7 @@ async function main() {
             return response;
           };
           const reader = createTerraBaseClient({ ...config, fetch: measuredFetch }).database(catalog.id);
-          const deadline = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
+          const deadline = AbortSignal.any([controller.signal, AbortSignal.timeout(180_000)]);
           try {
             for (let index = 0; index < readers; index++) {
               const begin = performance.now();
