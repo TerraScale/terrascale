@@ -217,6 +217,19 @@ internal sealed partial class TursoDatabaseStore(
     private string? FencedId(bool maintenance) => !maintenance && !IsSystem && Fences is not null ? Tenant?.DatabaseId : null;
 
     internal Task DrainWritersAsync(CancellationToken cancellationToken) => WithWriterAsync(static _ => 0, "a home move", cancellationToken);
+    internal HomeLeaseGate? Leases { get; init; }
+
+    private string? LeasedId => !IsSystem && Leases is not null ? Tenant?.DatabaseId : null;
+
+    internal void ThrowIfUnleased(string database) => Leases?.ThrowIfUnleased(database);
+
+    private void ThrowIfUnleased(bool maintenance)
+    {
+        if (!maintenance && LeasedId is { } database)
+        {
+            Leases!.ThrowIfUnleased(database);
+        }
+    }
 
     private void ThrowIfRefused(bool maintenance)
     {
@@ -284,6 +297,7 @@ internal sealed partial class TursoDatabaseStore(
             {
                 await Fences!.WaitAsync(fenced, cancellationToken).ConfigureAwait(false);
             }
+            ThrowIfUnleased(maintenance);
         }
 
         durable |= write && !maintenance;
@@ -312,6 +326,7 @@ internal sealed partial class TursoDatabaseStore(
                 {
                     Fences!.ThrowIfFenced(fenced);
                 }
+                ThrowIfUnleased(maintenance);
             }
 
             session = write ? await WriterSessionAsync(cancellationToken).ConfigureAwait(false) : await RentAsync(runner, cancellationToken).ConfigureAwait(false);
@@ -328,6 +343,7 @@ internal sealed partial class TursoDatabaseStore(
                 this, session, transaction, runner, write, write ? Committed : null, ownsAdmission)
             {
                 Operation = operation,
+                Leased = write && !maintenance ? LeasedId : null,
             };
         }
         catch (Exception error)
