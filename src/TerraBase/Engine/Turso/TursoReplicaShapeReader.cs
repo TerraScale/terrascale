@@ -25,7 +25,7 @@ internal sealed class TursoReplicaShapeReader : IReplicaShapeReader
             queryOnly.ExecuteNonQuery();
         }
 
-        _transaction = _connection.BeginTransaction();
+        _transaction = _connection.BeginTransaction(deferred: true);
         _reader = new TursoShapeReader(Command, Command, database, _ => { });
     }
 
