@@ -316,9 +316,8 @@ internal sealed partial class EngineManagementService(
     /// <summary>The local page behind the internal peer listener: the project's databases without membership checks.</summary>
     public ValueTask<ListProjectDatabasesResult> ListProjectDatabasesAsync(
         string projectId, string? after, int limit, CancellationToken cancellationToken) =>
-        ReadAsync<ListProjectDatabasesResult>(async transaction =>
-            await ListAsync(transaction, Databases(projectId), after, limit, TerraBaseJsonContext.Default.ManagedDatabase, item => item.Id, cancellationToken)
-                .ConfigureAwait(false),
+        ReadAsync<ListProjectDatabasesResult>(
+            async transaction => await CatalogTables.DatabasesAsync(transaction, projectId, after, limit, cancellationToken).ConfigureAwait(false),
             static error => error, cancellationToken);
 
     public ValueTask<DatabaseTenantResult> GetDatabaseTenantAsync(

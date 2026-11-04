@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Diagnostics;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -42,29 +43,28 @@ internal sealed class ListManagedDatabasesEndpoint(
     private async ValueTask<IResult> ListAsync(PageQuery page, CancellationToken cancellationToken)
     {
         var project = ManagementRoute.Value(HttpContext, "project");
-        var actor = ManagementRoute.UserId(HttpContext);
-        var organization = HttpContext.Request.RouteValues.TryGetValue("organization", out var bound) && bound is string known ? known : null;
-        if (organization is null)
+        if (HttpContext.Request.RouteValues.TryGetValue("organization", out var bound) && bound is string known)
         {
-            var resolved = await catalog.ResolveProjectAsync(project, actor, createIn: null, cancellationToken).ConfigureAwait(false);
-            if (resolved is not string owner)
-            {
-                return ErrorResponse.From(resolved switch
-                {
-                    Unavailable unavailable => unavailable,
-                    NotFound => Unknown(),
-                    string => throw new UnreachableException(),
-                });
-            }
+            return await ListAsync(ManagementRoute.UserId(HttpContext), known, project, null, null, page, cancellationToken).ConfigureAwait(false);
+        }
 
-            organization = owner;
+        var actor = ManagementRoute.UserId(HttpContext);
+        var resolved = await catalog.ResolveProjectAsync(project, actor, createIn: null, cancellationToken).ConfigureAwait(false);
+        if (resolved is not string owner)
+        {
+            return ErrorResponse.From(resolved switch
+            {
+                Unavailable unavailable => unavailable,
+                NotFound => Unknown(),
+                string => throw new UnreachableException(),
+            });
         }
 
         var restricted = HttpContext.User.FindFirst("database")?.Value;
         string? restrictedId = null;
         if (restricted is not null)
         {
-            switch (await management.FindDatabaseRecordAsync(organization, project, restricted, cancellationToken).ConfigureAwait(false))
+            switch (await management.FindDatabaseRecordAsync(owner, project, restricted, cancellationToken).ConfigureAwait(false))
             {
                 case ManagedDatabase record:
                     restrictedId = record.Id;
@@ -78,19 +78,24 @@ internal sealed class ListManagedDatabasesEndpoint(
             }
         }
 
-        var grant = new ProjectAccess(actor, project, organization, restricted, restrictedId);
-        HttpContext.Request.RouteValues["organization"] = organization;
+        HttpContext.Request.RouteValues["organization"] = owner;
         IResult result = null!;
-        await ProjectAccess.RunAsync(grant, async () => result = await ListAsync(grant, organization, project, page, cancellationToken).ConfigureAwait(false))
+        var grant = new ProjectAccess(actor, project, owner, restricted, restrictedId)
+        {
+            IsEndUser = HttpContext.User.HasClaim("token_kind", "end_user"),
+            Roles = HttpContext.User.FindAll("roles").Select(claim => claim.Value).ToFrozenSet(StringComparer.Ordinal),
+        };
+        await ProjectAccess.RunAsync(grant, async () => result = await ListAsync(grant.Actor, owner, project, restricted, grant, page, cancellationToken).ConfigureAwait(false))
             .ConfigureAwait(false);
         return result;
     }
 
-    private async ValueTask<IResult> ListAsync(ProjectAccess grant, string organization, string project, PageQuery page, CancellationToken cancellationToken) =>
-        await management.ListDatabasesAsync(grant.Actor, organization, project, page.After, page.Limit, cancellationToken).ConfigureAwait(false) switch
+    private async ValueTask<IResult> ListAsync(
+        string actor, string organization, string project, string? restricted, ProjectAccess? grant, PageQuery page, CancellationToken cancellationToken) =>
+        await management.ListDatabasesAsync(actor, organization, project, page.After, page.Limit, cancellationToken).ConfigureAwait(false) switch
         {
-            ManagementPage<ManagedDatabase> local => TypedResults.Ok(await MergedAsync(local, grant, page, project, cancellationToken).ConfigureAwait(false)),
-            NotFound => ErrorResponse.From(Unknown()),
+            ManagementPage<ManagedDatabase> local => TypedResults.Ok(await MergedAsync(local, restricted is not null, page, project, cancellationToken).ConfigureAwait(false)),
+            NotFound error => grant is null ? ErrorResponse.From(error) : ErrorResponse.From(Unknown()),
             Unavailable unavailable => ErrorResponse.From(unavailable),
             _ => throw new InvalidOperationException(),
         };
@@ -100,10 +105,10 @@ internal sealed class ListManagedDatabasesEndpoint(
     /// region's, deduplicated by id in id order. A narrowed token keeps its single-database local page.
     /// </summary>
     private async ValueTask<ManagementPage<ManagedDatabaseBody>> MergedAsync(
-        ManagementPage<ManagedDatabase> local, ProjectAccess grant, PageQuery page, string project, CancellationToken cancellationToken)
+        ManagementPage<ManagedDatabase> local, bool restricted, PageQuery page, string project, CancellationToken cancellationToken)
     {
         var region = Listeners.RegionOf(HttpContext);
-        if (grant.DatabaseName is not null)
+        if (restricted)
         {
             return new([.. local.Items.Select(database => ManagedDatabaseBody.From(database, region))], local.Next);
         }
