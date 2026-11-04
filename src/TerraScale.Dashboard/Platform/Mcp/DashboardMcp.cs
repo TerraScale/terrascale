@@ -27,6 +27,8 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
         private static McpServerTool[] CreateTools()
         {
+            var serializer = new JsonSerializerOptions(McpJsonUtilities.DefaultOptions);
+            serializer.TypeInfoResolverChain.Insert(0, TerraScale.Dashboard.Features.Databases.DatabaseConflictJson.Default);
             Type[] toolTypes =
             [
                 typeof(DashboardMcpTools),
@@ -50,7 +52,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 .Where(method => method.IsDefined(typeof(McpServerToolAttribute)))
                 .Select(method => McpServerTool.Create(method, request => ActivatorUtilities.CreateInstance(
                     request.Services ?? throw new InvalidOperationException("MCP request services are unavailable."), toolType),
-                    options: new() { SchemaCreateOptions = new() { TransformSchemaNode = NullableRequirements } })))];
+                    options: new() { SerializerOptions = serializer, SchemaCreateOptions = new() { TransformSchemaNode = NullableRequirements } })))];
         }
 
         private static JsonNode NullableRequirements(AIJsonSchemaCreateContext context, JsonNode schema)
