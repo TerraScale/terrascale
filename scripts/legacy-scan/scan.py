@@ -17,6 +17,8 @@ def main():
     parser.add_argument("--repo", required=True)
     parser.add_argument("--mode", choices=["report", "fail"])
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--path-prefix", help="Scan only paths under this repository-relative directory")
+    parser.add_argument("--term", action="append", choices=["documents", "collections", "document-feeds", "lattices"], help="Scan only these retired document API terms (repeatable)")
     parser.add_argument("--changed-from", help="Scan only existing files changed since this Git revision")
     args = parser.parse_args()
     root = args.root.resolve()
@@ -24,7 +26,7 @@ def main():
     terms = json.loads((policy / "terms.json").read_text())
     rules = json.loads((policy / "allow-list.json").read_text())
     owners = json.loads((policy / "owners.json").read_text())
-    terms = [(t, re.compile(t["pattern"])) for t in terms]
+    terms = [(t, re.compile(t["pattern"])) for t in terms if not args.term or t["id"] in args.term]
     rules = [(r, re.compile(r["path"]), re.compile(r["match"]) if "match" in r else None)
              for r in rules if r.get("repo", args.repo) == args.repo]
     mode = args.mode or (root / ".legacy-scan-mode").read_text().strip()
@@ -34,6 +36,8 @@ def main():
     paths = (git(root, "diff", "--name-only", "--diff-filter=ACMRT", "-z", args.changed_from, "HEAD")
              if args.changed_from else git(root, "ls-files", "-z")).decode("utf-8").split("\0")
     for name in sorted(set(paths) - {""}):
+        if args.path_prefix and not name.startswith(args.path_prefix.rstrip("/") + "/"):
+            continue
         path = root / name
         data = os.readlink(path).encode("utf-8") if path.is_symlink() else path.read_bytes()
         content = "" if b"\0" in data else data.decode("utf-8", errors="replace")
