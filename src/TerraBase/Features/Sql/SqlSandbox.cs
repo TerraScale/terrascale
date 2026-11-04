@@ -1,16 +1,12 @@
 using System.Text;
 using TerraBase.Engine;
+using TerraScale.TerraBase.Contracts;
 
 namespace TerraBase.Features.Sql;
 
 internal static class SqlSandbox
 {
     public const string Code = "sql_sandbox";
-
-    private static readonly string[] HiddenPrefixes = ["_tb_", "_ts_", "turso_", "__turso_", "tb_index_", "fts_dir_", "pragma_", "sqlite_stat"];
-
-    private static readonly HashSet<string> HiddenTables =
-        [with(StringComparer.OrdinalIgnoreCase), "collections", "commit_offset", "_collections", "_indexes", "_unique"];
 
     private static readonly HashSet<string> DeniedNames =
         [with(StringComparer.OrdinalIgnoreCase), "sqlite_dbpage", "sqlite_temp_master", "sqlite_temp_schema", "sqlite_stmt", "btree_dump", "dbstat"];
@@ -42,8 +38,7 @@ internal static class SqlSandbox
 
     public static SqlError Hidden(string name) => SqlErrors.Error($"no such table: {name}");
 
-    public static bool IsHidden(string name) =>
-        HiddenTables.Contains(name) || HiddenPrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+    public static bool IsHidden(string name) => TerraBaseSqlNames.IsReserved(name);
 
     public static SqlError? Check(List<SqlToken> tokens)
     {
@@ -138,8 +133,8 @@ internal static class SqlSandbox
 
     private static string Visible(string column)
     {
-        var names = string.Join(", ", HiddenTables.Order(StringComparer.Ordinal).Select(name => $"'{name}'"));
-        var prefixes = HiddenPrefixes.Select(prefix => $" AND substr(lower({column}), 1, {prefix.Length}) <> '{prefix}'");
+        var names = string.Join(", ", TerraBaseSqlNames.ReservedTableNames.Select(name => $"'{name}'"));
+        var prefixes = TerraBaseSqlNames.ReservedPrefixes.Select(prefix => $" AND substr(lower({column}), 1, {prefix.Length}) <> '{prefix}'");
         return $"lower({column}) NOT IN ({names}){string.Concat(prefixes)}";
     }
 }
