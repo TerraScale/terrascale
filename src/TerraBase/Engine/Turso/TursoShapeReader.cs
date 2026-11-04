@@ -13,7 +13,8 @@ using Turso.Data.Sqlite;
 namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoShapeReader(
-    Func<string, SqliteCommand> command, Func<string, SqliteCommand> tableCommand, TenantContext? tenant, Action<string> countRead)
+    Func<string, SqliteCommand> command, Func<string, SqliteCommand> tableCommand, TenantContext? tenant, Action<string> countRead,
+    TursoReplicaShapeSchema? replicaSchema = null)
 {
     private SqliteCommand Command(string sql) => command(sql);
 
@@ -106,9 +107,36 @@ internal sealed partial class TursoShapeReader(
             return new ShapeTableState(ShapeTableStatus.Unsupported, sql, null);
         }
 
-        return StoredShapeTable(table) is { } stored && stored.Sql == sql && stored.Cookie == SchemaCookie()
+        return StoredShapeTable(table) is { } stored && stored.Sql == sql && CurrentSchema(table, stored.Generation, stored.Since, stored.Cookie)
             ? new ShapeTableState(ShapeTableStatus.Current, sql, stored.Generation, stored.Since)
             : new ShapeTableState(ShapeTableStatus.Stale, sql, null);
+    }
+
+    private bool CurrentSchema(string table, string generation, long since, long homeCookie)
+    {
+        var localCookie = SchemaCookie();
+        if (homeCookie == localCookie)
+        {
+            return true;
+        }
+
+        if (replicaSchema is null)
+        {
+            return false;
+        }
+
+        if (replicaSchema.Contains(table, generation, homeCookie, localCookie))
+        {
+            return true;
+        }
+
+        if (SchemaChangedSince(table, since))
+        {
+            return false;
+        }
+
+        replicaSchema.Remember(table, generation, homeCookie, localCookie);
+        return true;
     }
 
     internal (string Sql, string Generation, long Since, long Cookie)? StoredShapeTable(string table)

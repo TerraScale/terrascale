@@ -101,7 +101,7 @@ internal sealed class TursoReplicas(
 
     public async ValueTask<IReplicaShapeReader?> BeginShapeReadAsync(TenantContext database, CancellationToken cancellationToken) =>
         await FindAsync(database).ConfigureAwait(false) is { Pulled: true } replica
-            ? await TursoReplicaShapeReader.OpenAsync(await replica.ConnectShapeAsync(cancellationToken).ConfigureAwait(false), database, cancellationToken).ConfigureAwait(false)
+            ? await TursoReplicaShapeReader.OpenAsync(await replica.ConnectShapeAsync(cancellationToken).ConfigureAwait(false), database, replica.ShapeSchema, cancellationToken).ConfigureAwait(false)
             : null;
 
     public long Position => Volatile.Read(ref _position);
@@ -335,6 +335,8 @@ internal sealed class TursoReplicas(
         private int _disposed;
 
         public bool Pulled { get; private set; } = pulled;
+
+        internal TursoReplicaShapeSchema ShapeSchema { get; } = new();
 
         public long Applied => Volatile.Read(ref _applied);
 
