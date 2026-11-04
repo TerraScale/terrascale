@@ -83,7 +83,8 @@ public sealed class TerraBasePublicInventoryTests
         {
             sent = null;
             requests = 0;
-            await Assert.ThrowsAsync<TerraBaseValidationException>(call);
+            var refusal = await Assert.ThrowsAsync<TerraBaseException>(call);
+            await Assert.That(refusal!.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
             await Assert.That(requests).IsEqualTo(1);
             if (sent is not { } wire) throw new InvalidOperationException(operation + " sent no request");
             var route = expected[operation];
