@@ -75,7 +75,10 @@ type SQLError struct {
 }
 
 func (e *SQLError) Error() string {
-	msg := fmt.Sprintf("terrabase: %d %s", e.Status, e.Code)
+	msg := "terrabase: " + string(e.Code)
+	if e.Status != 0 {
+		msg = fmt.Sprintf("terrabase: %d %s", e.Status, e.Code)
+	}
 	if e.Message != "" {
 		msg += ": " + e.Message
 	}
@@ -87,6 +90,9 @@ func (e *SQLError) Error() string {
 }
 
 func (e *SQLError) Unwrap() error { return e.API }
+
+// Is matches the error's code constant, also for session errors that carry no *APIError.
+func (e *SQLError) Is(target error) bool { return target == e.Code }
 
 func (e *SQLError) IsTransient() bool {
 	return e.Code == ErrSerializationConflict || e.Code == ErrTenantBusy
@@ -101,6 +107,15 @@ func (*SQLProtocolError) Error() string {
 func (*SQLProtocolError) Is(target error) bool { return target == ErrCommitUncertain }
 
 func (d *Database) Execute(ctx context.Context, query string, args ...any) (*Result, error) {
+	out, err := d.Batch(ctx, []Statement{statementOf(query, args)})
+	if err != nil {
+		return nil, err
+	}
+	return &out[0], nil
+}
+
+// statementOf binds sql.NamedArg values by name and every other value by position.
+func statementOf(query string, args []any) Statement {
 	st := Statement{SQL: query}
 	for _, a := range args {
 		if n, ok := a.(sql.NamedArg); ok {
@@ -112,11 +127,7 @@ func (d *Database) Execute(ctx context.Context, query string, args ...any) (*Res
 			st.Args = append(st.Args, a)
 		}
 	}
-	out, err := d.Batch(ctx, []Statement{st})
-	if err != nil {
-		return nil, err
-	}
-	return &out[0], nil
+	return st
 }
 
 func (d *Database) Query(ctx context.Context, query string, args ...any) ([]Row, error) {
@@ -127,8 +138,13 @@ func (d *Database) Query(ctx context.Context, query string, args ...any) ([]Row,
 	return res.Rows, nil
 }
 
-func QueryAs[T any](ctx context.Context, d *Database, query string, args ...any) ([]T, error) {
-	rows, err := d.Query(ctx, query, args...)
+// SQLQuerier runs one SQL statement and returns its rows: a *Database or a *SQLSession.
+type SQLQuerier interface {
+	Query(ctx context.Context, query string, args ...any) ([]Row, error)
+}
+
+func QueryAs[T any](ctx context.Context, q SQLQuerier, query string, args ...any) ([]T, error) {
+	rows, err := q.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -148,30 +164,9 @@ func QueryAs[T any](ctx context.Context, d *Database, query string, args ...any)
 }
 
 func (d *Database) Batch(ctx context.Context, statements []Statement) ([]Result, error) {
-	if len(statements) == 0 || len(statements) > MaxSQLStatements {
-		return nil, fmt.Errorf("terrabase: SQL batch needs 1 to %d statements, got %d", MaxSQLStatements, len(statements))
-	}
-	wire := make([]Statement, len(statements))
-	for i, st := range statements {
-		if strings.TrimSpace(st.SQL) == "" {
-			return nil, fmt.Errorf("terrabase: SQL statement %d is empty", i)
-		}
-		w := Statement{SQL: st.SQL, Args: make([]any, len(st.Args))}
-		var err error
-		for j, v := range st.Args {
-			if w.Args[j], err = sqlArg(v); err != nil {
-				return nil, fmt.Errorf("terrabase: SQL statement %d arg %d: %w", i, j, err)
-			}
-		}
-		if len(st.Named) > 0 {
-			w.Named = make(map[string]any, len(st.Named))
-		}
-		for k, v := range st.Named {
-			if w.Named[strings.TrimLeft(k, ":@$")], err = sqlArg(v); err != nil {
-				return nil, fmt.Errorf("terrabase: SQL statement %d arg %q: %w", i, k, err)
-			}
-		}
-		wire[i] = w
+	wire, err := wireStatements(statements)
+	if err != nil {
+		return nil, err
 	}
 	body, err := json.Marshal(struct {
 		Statements []Statement `json:"statements"`
@@ -197,6 +192,36 @@ func (d *Database) Batch(ctx context.Context, statements []Statement) ([]Result,
 		}
 		return out, err
 	}
+}
+
+// wireStatements validates statements and encodes their arguments for the wire.
+func wireStatements(statements []Statement) ([]Statement, error) {
+	if len(statements) == 0 || len(statements) > MaxSQLStatements {
+		return nil, fmt.Errorf("terrabase: SQL batch needs 1 to %d statements, got %d", MaxSQLStatements, len(statements))
+	}
+	wire := make([]Statement, len(statements))
+	for i, st := range statements {
+		if strings.TrimSpace(st.SQL) == "" {
+			return nil, fmt.Errorf("terrabase: SQL statement %d is empty", i)
+		}
+		w := Statement{SQL: st.SQL, Args: make([]any, len(st.Args))}
+		var err error
+		for j, v := range st.Args {
+			if w.Args[j], err = sqlArg(v); err != nil {
+				return nil, fmt.Errorf("terrabase: SQL statement %d arg %d: %w", i, j, err)
+			}
+		}
+		if len(st.Named) > 0 {
+			w.Named = make(map[string]any, len(st.Named))
+		}
+		for k, v := range st.Named {
+			if w.Named[strings.TrimLeft(k, ":@$")], err = sqlArg(v); err != nil {
+				return nil, fmt.Errorf("terrabase: SQL statement %d arg %q: %w", i, k, err)
+			}
+		}
+		wire[i] = w
+	}
+	return wire, nil
 }
 
 func (d *Database) batchOnce(ctx context.Context, p []string, body []byte, expected int) ([]Result, error) {

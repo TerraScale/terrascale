@@ -131,7 +131,7 @@ func mirrorPackagedModuleDependencies(t *testing.T, root, proxy string, module, 
 		return stdout.Bytes()
 	}
 	modules := make(map[string]struct{})
-	packages := json.NewDecoder(bytes.NewReader(runGo(root, "list", "-mod=readonly", "-deps", "-json", ".")))
+	packages := json.NewDecoder(bytes.NewReader(runGo(root, "list", "-mod=readonly", "-deps", "-json", ".", "./v1")))
 	for {
 		var pkg struct {
 			Module *struct {

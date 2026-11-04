@@ -345,9 +345,46 @@ if errors.As(err, &sqlErr) && errors.Is(err, v1.ErrUniqueViolation) {
   (the request rolled back), plus the client's existing pre-execution refusals
   (429 and transient 503 with Retry-After). A lost response returns
   `ErrCommitUncertain` and is never resent.
-- Not yet: interactive transactions over the SQL WebSocket ship once TerraBase
-  serves that protocol on main. There is no `Region` option; the client uses the
-  one global origin.
+- There is no `Region` option or region pin header; the client uses the one
+  global origin.
+
+#### Interactive transactions (WebSocket)
+
+`db.Connect(ctx)` opens `GET /v1/projects/{project}/databases/{database}/sql/ws`
+(subprotocol `terrascale.sql.v1`, `Authorization: Bearer` on the upgrade) and
+returns a `*v1.SQLSession` the caller closes. `Execute`, `Query`, `Batch` and
+`v1.QueryAs` take the same arguments as over REST; outside a transaction each
+call is one transaction.
+
+```go
+s, err := db.Connect(ctx)
+defer s.Close()
+err = s.Transaction(ctx, func(s *v1.SQLSession) error {
+	_, err := s.Execute(ctx, "UPDATE accounts SET balance = balance - ? WHERE id = ?", 10, from)
+	if err != nil {
+		return err // rolled back
+	}
+	_, err = s.Execute(ctx, "UPDATE accounts SET balance = balance + ? WHERE id = ?", 10, to)
+	return err
+})
+```
+
+- `Begin`, `Commit`, `Rollback` send the matching frames; a transaction lasts at
+  most 5 seconds. `InTransaction` is the last answer's flag. After a failed
+  statement calls return `ErrTransactionAborted` until `Rollback`, and `Commit`
+  returns `ErrTransactionRolledBack`.
+- The session is safe for concurrent use; answers are matched by frame id and
+  nothing is resent. A frame holds at most 1 MiB, checked before sending.
+- Errors are `*v1.SQLError` with `Status` 0. A refused upgrade (401, 403, 404,
+  421, …) returns the same `*APIError` as REST.
+- Reconnect: when the socket drops, calls in flight fail (`ErrCommitUncertain`
+  for `Execute`, `Batch` and `Commit`). The next call opens a new socket with a
+  fresh credential. If a transaction was open, every call except `Rollback`
+  returns `ErrTransactionRolledBack` until `Rollback`, which only clears that
+  state. After `Close` calls return `ErrSQLSessionClosed`.
+- Tests replay the recorded session in
+  [websocket-session.json](contracts/terrabase/sql/websocket-session.json)
+  against a local fake; the Go session has not yet run against a live TerraBase.
 - Live sample: `go run ./examples/sql` with `TERRASCALE_API_KEY`,
   `TERRASCALE_PROJECT` and `TERRASCALE_DATABASE` creates a throwaway table,
   writes, reads and drops it.
