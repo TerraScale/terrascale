@@ -1067,12 +1067,12 @@ namespace TerraScale.Dashboard.E2E.Demo
             return Task.FromResult<IReadOnlyList<ManagedDatabase>>(databases.Values.Where(item => item.ProjectId == scope.ProjectId).ToArray());
         }
 
-        public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, CancellationToken cancellationToken)
-        { var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, HomeRegion: home.Id, ReplicaRegions: []); databases[value.Id] = value; return Task.FromResult(value); }
-        public Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
+        public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, CancellationToken cancellationToken, long? ttlSeconds = null)
+        { var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, HomeRegion: home.Id, ReplicaRegions: []) { ExpiresAt = ttlSeconds is { } seconds ? DateTimeOffset.UtcNow.AddSeconds(seconds) : null }; databases[value.Id] = value; return Task.FromResult(value); }
+        public Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken, long? ttlSeconds = null, DateTimeOffset? pointInTime = null)
         {
             var source = Database(scope, databaseId);
-            var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, databaseId, home.Id, []);
+            var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, databaseId, home.Id, []) { ExpiresAt = ttlSeconds is { } seconds ? DateTimeOffset.UtcNow.AddSeconds(seconds) : null };
             documents.CopyDatabase(scope, source.Name, value.Name);
             foreach (var index in indexes.Where(item => item.Key.StartsWith(databaseId + "/", StringComparison.Ordinal)).Select(item => item.Value).ToArray())
             {
@@ -1081,6 +1081,12 @@ namespace TerraScale.Dashboard.E2E.Demo
 
             databases[value.Id] = value;
             return Task.FromResult(value);
+        }
+        public Task<ManagedDatabase> SetTtlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, long? ttlSeconds, CancellationToken cancellationToken)
+        {
+            var database = Database(scope, databaseId) with { ExpiresAt = ttlSeconds is { } seconds ? DateTimeOffset.UtcNow.AddSeconds(seconds) : (DateTimeOffset?)null };
+            databases[databaseId] = database;
+            return Task.FromResult(database);
         }
         public Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {

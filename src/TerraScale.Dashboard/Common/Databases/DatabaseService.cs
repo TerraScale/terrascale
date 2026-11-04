@@ -74,8 +74,9 @@ namespace TerraScale.Dashboard.Common.Databases
         }
 
         // TerraBase serves a database only in its home region until replicas are available, so a create names only that region.
-        public async Task<DatabaseRecord> CreateAsync(AccountContext context, string name, string homeRegion, CancellationToken cancellationToken)
+        public async Task<DatabaseRecord> CreateAsync(AccountContext context, string name, string homeRegion, CancellationToken cancellationToken, decimal? ttlHours = null)
         {
+            var ttlSeconds = DatabaseTtl.Seconds(ttlHours);
             name = ValidName(name);
             context = await CurrentAsync(context, cancellationToken);
             var scope = Scope(context);
@@ -85,7 +86,7 @@ namespace TerraScale.Dashboard.Common.Databases
             var home = ResolveRegion(await backend.RegionsAsync(cancellationToken), homeRegion);
             ManagedDatabase remote;
             var recovered = false;
-            try { remote = await backend.CreateAsync(scope, name, home, cancellationToken); }
+            try { remote = await backend.CreateAsync(scope, name, home, cancellationToken, ttlSeconds); }
             catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken")
             {
                 // A prior provision whose dashboard commit failed is recovered by name. Other conflicts (database_limit, a
@@ -128,8 +129,10 @@ namespace TerraScale.Dashboard.Common.Databases
             return record;
         }
 
-        public async Task<DatabaseRecord> BranchAsync(AccountContext context, string id, string name, CancellationToken cancellationToken)
+        public async Task<DatabaseRecord> BranchAsync(AccountContext context, string id, string name, CancellationToken cancellationToken, decimal? ttlHours = null, string? pointInTime = null)
         {
+            var ttlSeconds = DatabaseTtl.Seconds(ttlHours);
+            var instant = DatabaseTtl.Instant(pointInTime);
             context = await CurrentAsync(context, cancellationToken);
             var source = Database(context, id);
             DemandProvision(context.Organization!, context.UserId);
@@ -144,8 +147,8 @@ namespace TerraScale.Dashboard.Common.Databases
             var scope = Scope(context);
             var home = await HomeAsync(context, source, cancellationToken);
             ManagedDatabase remote;
-            try { remote = await backend.BranchAsync(scope, home, id, name, cancellationToken); }
-            catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken")
+            try { remote = await backend.BranchAsync(scope, home, id, name, cancellationToken, ttlSeconds, instant); }
+            catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken" && instant is null)
             {
                 remote = (await backend.ListAsync(scope, home, cancellationToken)).FirstOrDefault(database => database.Name == name && database.BranchedFrom == source.Id)
                     ?? throw new AccountAccessException("A database with this name already exists.", 409);
@@ -187,6 +190,31 @@ namespace TerraScale.Dashboard.Common.Databases
                 project.Databases[record.Id] = record;
             }, cancellationToken);
             return record;
+        }
+
+        public async Task<DatabaseRecord> SetTtlAsync(AccountContext context, string id, decimal? ttlHours, CancellationToken cancellationToken)
+        {
+            var ttlSeconds = DatabaseTtl.Seconds(ttlHours);
+            context = await CurrentAsync(context, cancellationToken);
+            var database = Database(context, id);
+            if (!context.CanManage) { throw new AccountAccessException("Organization management access is required."); }
+            if (PlatformDatabases.IsPlatform(context.Organization!.Id)) { throw PlatformDatabases.ReadOnly(); }
+            var remote = await backend.SetTtlAsync(Scope(context), await HomeAsync(context, database, cancellationToken), id, ttlSeconds, cancellationToken);
+            if (remote.Id != id || remote.ProjectId != context.Project!.Id || remote.Name != database.Name ||
+                ttlSeconds is null && remote.ExpiresAt is not null || ttlSeconds is not null && remote.ExpiresAt is null)
+            {
+                throw new HttpRequestException("The database expiry could not be confirmed. Reload Settings before retrying.");
+            }
+            await accounts.UpdateOrganizationAsync(context, org =>
+            {
+                if (!org.CanManage(context.UserId)) { throw new AccountAccessException("Organization management access is required."); }
+                var current = org.Projects.GetValueOrDefault(context.Project.Id)?.Databases.GetValueOrDefault(id)
+                    ?? throw new AccountAccessException("Database is unavailable.", 404);
+                current.ExpiresAt = remote.ExpiresAt;
+                current.PlacementRevision = checked(current.PlacementRevision + 1);
+            }, cancellationToken);
+            database.ExpiresAt = remote.ExpiresAt;
+            return database;
         }
 
         public async Task<DatabaseRecord> RenameAsync(AccountContext context, string id, string name, string confirmation, CancellationToken cancellationToken)
@@ -336,7 +364,7 @@ namespace TerraScale.Dashboard.Common.Databases
                         }
                         // Existing identity and immutable home must match; refresh configuration, never inferred health/status.
                         else if (record.Name == before.Name && record.ProjectId == before.ProjectId && record.Region.Equals(before.Region, StringComparison.OrdinalIgnoreCase) &&
-                            (record.AllRegions != before.AllRegions || !Regions(record).SequenceEqual(before.Regions, StringComparer.OrdinalIgnoreCase)))
+                            (record.ExpiresAt != before.ExpiresAt || record.AllRegions != before.AllRegions || !Regions(record).SequenceEqual(before.Regions, StringComparer.OrdinalIgnoreCase)))
                         {
                             refreshed.Add(record);
                         }
@@ -353,7 +381,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 bool Unchanged(DatabaseRecord record)
                 {
                     return observed.TryGetValue(record.Id, out var before) && record.Name == before.Name && record.ProjectId == before.ProjectId &&
-                    record.PreviousName == before.PreviousName && record.ConflictOf == before.ConflictOf &&
+                    record.PreviousName == before.PreviousName && record.ConflictOf == before.ConflictOf && record.ExpiresAt == before.ExpiresAt &&
                     record.PlacementRevision == before.PlacementRevision && record.Region == before.Region && record.AllRegions == before.AllRegions && Regions(record).SequenceEqual(before.Regions, StringComparer.OrdinalIgnoreCase);
                 }
 
@@ -372,6 +400,7 @@ namespace TerraScale.Dashboard.Common.Databases
                     {
                         if (target.Databases.TryGetValue(record.Id, out var current) && Unchanged(current))
                         {
+                            current.ExpiresAt = record.ExpiresAt;
                             current.Regions = [.. record.Regions];
                             current.AllRegions = record.AllRegions;
                             current.Endpoint = record.Endpoint;
@@ -493,6 +522,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 PreviousName = remote.PreviousName,
                 ConflictOf = remote.ConflictOf,
                 CreatedAt = remote.CreatedAt,
+                ExpiresAt = remote.ExpiresAt,
                 BranchedFrom = remote.BranchedFrom,
                 Region = placement[0].Code,
                 Regions = [.. placement.Select(region => region.Code)],

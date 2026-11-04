@@ -102,12 +102,12 @@ namespace TerraScale.Dashboard.Features.Databases
                         throw new AccountAccessException("Choose a home region.", 422);
                     }
 
-                    var database = await databases.CreateAsync(context, form["name"].ToString(), home, http.RequestAborted);
+                    var database = await databases.CreateAsync(context, form["name"].ToString(), home, http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()));
                     return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : Results.Json(DatabaseOutput(database), statusCode: 201);
                 }
                 catch (Exception error) when (KnownFailure(error))
                 {
-                    return WantsHtml(http) ? await ListPageAsync(http, context, backend, databases, error: Message(error), openCreate: true, name: form["name"].ToString(), status: Status(error), homeRegion: form.ContainsKey("homeRegion") ? form["homeRegion"].ToString() : null) : Failure(error);
+                    return WantsHtml(http) ? await ListPageAsync(http, context, backend, databases, error: Message(error), openCreate: true, name: form["name"].ToString(), status: Status(error), homeRegion: form.ContainsKey("homeRegion") ? form["homeRegion"].ToString() : null, ttlHours: form["ttlHours"].ToString()) : Failure(error);
                 }
             });
             foreach (var operation in new[] { "branch", "delete" })
@@ -133,7 +133,7 @@ namespace TerraScale.Dashboard.Features.Databases
                         {
                             if (action == "branch")
                             {
-                                var branch = await databases.BranchAsync(context, id, form["name"].ToString(), http.RequestAborted);
+                                var branch = await databases.BranchAsync(context, id, form["name"].ToString(), http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()), form["pointInTime"].ToString());
                                 return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(branch.Id)) : Results.Json(DatabaseOutput(branch), statusCode: 201);
                             }
                             await databases.DeleteAsync(context, id, form.ContainsKey("confirmName") ? form["confirmName"].ToString() : form["confirm"].ToString(), http.RequestAborted);
@@ -146,7 +146,7 @@ namespace TerraScale.Dashboard.Features.Databases
                                 return DatabaseResults.PageFailure(http, context, error);
                             }
 
-                            return await DetailPageAsync(http, context, id, action == "branch" ? "branches" : "danger", backend, databases, Message(error), action == "delete", Status(error), branchName: action == "branch" ? form["name"].ToString() : null);
+                            return await DetailPageAsync(http, context, id, action == "branch" ? "branches" : "danger", backend, databases, Message(error), action == "delete", Status(error), branchName: action == "branch" ? form["name"].ToString() : null, ttlHours: form["ttlHours"].ToString(), pointInTime: form["pointInTime"].ToString());
                         }
                     });
             }
@@ -177,12 +177,13 @@ namespace TerraScale.Dashboard.Features.Databases
                 OperationLimits = restricted ? null : database.OperationLimits,
                 BackupRetentionDays = restricted ? (int?)null : database.BackupRetentionDays,
                 BranchedFrom = restricted ? null : database.BranchedFrom,
-                database.CreatedAt
+                database.CreatedAt,
+                database.ExpiresAt
             };
         }
 
         internal static async Task<IResult> ListPageAsync(HttpContext http, AccountContext context, IDatabaseBackend backend, DatabaseService databases,
-            string error = "", bool openCreate = false, string name = "", int status = 200, string? homeRegion = null)
+            string error = "", bool openCreate = false, string name = "", int status = 200, string? homeRegion = null, string ttlHours = "")
         {
             await databases.SyncAsync(context, http.RequestAborted);
             // Regions, each database's collection counts and the project metrics are independent reads; they run together.
@@ -244,12 +245,12 @@ namespace TerraScale.Dashboard.Features.Databases
             var all = context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
             var filtered = all.Where(database => search.Length == 0 || database.Name.Contains(search, StringComparison.OrdinalIgnoreCase)).ToArray();
             var metrics = await metricsRead;
-            var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, contents, search, error, openCreate || http.Request.Query["create"] == "1", name, regionsError) { ContentsAvailable = contentsAvailable, Metrics = metrics, Range = range, HomeSelection = homeRegion });
+            var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, contents, search, error, openCreate || http.Request.Query["create"] == "1", name, regionsError) { ContentsAvailable = contentsAvailable, Metrics = metrics, Range = range, HomeSelection = homeRegion, TtlHours = ttlHours });
             result.StatusCode = status;
             return result;
         }
 
-        internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, string? branchName = null)
+        internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, string? branchName = null, string ttlHours = "", string pointInTime = "")
         {
             DatabaseRecord database;
             try
@@ -314,6 +315,9 @@ namespace TerraScale.Dashboard.Features.Databases
             var result = DatabaseDetailView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, error, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, range, activity)
             {
                 BranchName = branchName,
+                ShowFork = http.Request.Query["fork"] == "1",
+                TtlHours = ttlHours,
+                PointInTime = pointInTime,
                 Tables = tables,
                 Table = shownTable,
                 Preview = preview,

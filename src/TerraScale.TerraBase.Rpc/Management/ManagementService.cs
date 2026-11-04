@@ -45,9 +45,23 @@ namespace TerraScale.TerraBase.Rpc.Management
         }
 
         /// <inheritdoc />
-        public async UnaryResult<TerraBaseManagedDatabase> BranchAsync(string projectId, string database, string name)
+        public async UnaryResult<TerraBaseManagedDatabase> BranchAsync(string projectId, string database, string name, long? ttlSeconds = null)
         {
-            var answer = await api.SendAsync(Context, "POST", RestPaths.Database(projectId, database) + "/branches", RestApi.Json(new TerraBaseDatabasePlacement(Name: name), ManagementJson.Default.TerraBaseDatabasePlacement));
+            var answer = await api.SendAsync(Context, "POST", RestPaths.Database(projectId, database) + "/branches", RestApi.Json(new TerraBaseDatabasePlacement(Name: name, TtlSeconds: ttlSeconds), ManagementJson.Default.TerraBaseDatabasePlacement));
+            return RestApi.Read(answer, ManagementJson.Default.TerraBaseManagedDatabase);
+        }
+
+        /// <summary><c>PUT /v1/projects/{project}/databases/{database}/ttl</c>.</summary>
+        public async UnaryResult<TerraBaseManagedDatabase> SetDatabaseTtlAsync(string projectId, string database, TerraBaseDatabaseTtl request)
+        {
+            var answer = await api.SendAsync(Context, "PUT", RestPaths.Database(projectId, database) + "/ttl", RestApi.Json(request, ManagementJson.Default.TerraBaseDatabaseTtl));
+            return RestApi.Read(answer, ManagementJson.Default.TerraBaseManagedDatabase);
+        }
+
+        /// <summary><c>DELETE /v1/projects/{project}/databases/{database}/ttl</c>.</summary>
+        public async UnaryResult<TerraBaseManagedDatabase> ClearDatabaseTtlAsync(string projectId, string database)
+        {
+            var answer = await api.SendAsync(Context, "DELETE", RestPaths.Database(projectId, database) + "/ttl");
             return RestApi.Read(answer, ManagementJson.Default.TerraBaseManagedDatabase);
         }
 

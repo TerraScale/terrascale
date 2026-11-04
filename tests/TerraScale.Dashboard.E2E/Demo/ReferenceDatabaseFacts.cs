@@ -265,14 +265,19 @@ namespace TerraScale.Dashboard.E2E
             return inner.ListAsync(scope, home, ct);
         }
 
-        public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, CancellationToken ct)
+        public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, CancellationToken ct, long? ttlSeconds = null)
         {
-            return inner.CreateAsync(scope, name, home, ct);
+            return inner.CreateAsync(scope, name, home, ct, ttlSeconds);
         }
 
-        public Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string id, string name, CancellationToken ct)
+        public Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string id, string name, CancellationToken ct, long? ttlSeconds = null, DateTimeOffset? pointInTime = null)
         {
-            return inner.BranchAsync(scope, home, id, name, ct);
+            return inner.BranchAsync(scope, home, id, name, ct, ttlSeconds, pointInTime);
+        }
+
+        public Task<ManagedDatabase> SetTtlAsync(DatabaseScope scope, DatabaseRegion home, string id, long? ttlSeconds, CancellationToken ct)
+        {
+            return inner.SetTtlAsync(scope, home, id, ttlSeconds, ct);
         }
 
         public Task<ManagedDatabase> RenameAsync(DatabaseScope scope, DatabaseRegion home, string id, string name, CancellationToken ct)
