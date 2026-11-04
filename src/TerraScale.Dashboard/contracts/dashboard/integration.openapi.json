@@ -136,7 +136,7 @@
           "Credentials"
         ],
         "summary": "List ts-auth project keys without secrets",
-        "description": "Cursor paging: limit 1–100 (default 100); pass nextCursor as after with the same scope and filters. Continue until hasMore=false; nextCursor is then null. Invalid limits/cursors are rejected. A cursor the issuer repeats ends the traversal. Keys arrive in the issuer's creation order, one bounded issuer page per request (no total is available). DatabaseId (a ULID) is the restriction; DatabaseName is its display name (Deleted database once the ID is gone). A key with DatabaseName but no DatabaseId was narrowed by name and mints no token. LastUsedAt is the last token exchange (up to five minutes stale).",
+        "description": "Cursor paging: limit 1–100 (default 100); pass nextCursor as after with the same scope and filters. Continue until hasMore=false; nextCursor is then null. Invalid limits/cursors are rejected. A cursor the issuer repeats ends the traversal. Keys arrive in the issuer's creation order, one bounded issuer page per request (no total is available). DatabaseId (a ULID) is the restriction; DatabaseName is its display name (Deleted database once the ID is gone). A key with DatabaseName but no DatabaseId was narrowed by name and mints no token. LastUsedAt is the last token exchange (up to five minutes stale). PreviousSecretExpiresAt is the UTC instant until which the key string before the last rotation still works; it is empty once that grace period has passed.",
         "operationId": "listDashboardCredentials",
         "parameters": [
           {
@@ -900,6 +900,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "previousSecretExpiresAt": {
+            "type": "string"
           }
         }
       },
@@ -999,6 +1002,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "previousSecretExpiresAt": {
+            "type": "string"
           }
         }
       },

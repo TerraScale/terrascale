@@ -4,10 +4,12 @@ using System.Text;
 using System.Text.Json;
 using TUnit.Assertions.Enums;
 using TerraScale.Dashboard.Features.ApiKeys;
+using Microsoft.AspNetCore.Builder;
 
 namespace TerraScale.Dashboard.E2E.Features.Data
 {
-    public sealed class ProjectApiKeyContractTests
+    [ClassDataSource<DashboardRootFixture>]
+    public sealed class ProjectApiKeyContractTests(DashboardRootFixture fixture)
     {
         private const string OrganizationId = "01JA0000000000000000000002";
         private const string ProjectId = "01JA0000000000000000000001";
@@ -79,6 +81,88 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             await Assert.That(rejected).IsNotNull();
             await Assert.That(wire.Requests).IsEqualTo(1);
             await Assert.That(wire.Methods.All(method => method == HttpMethod.Get)).IsTrue();
+        }
+
+        // ts-auth reports previous_secret_expires_at only while the old secret's grace period runs; the dashboard carries
+        // that deadline into the key list (REST and MCP) and the pending-rotation refusal, and never a secret.
+        [Test]
+        public async Task RotationGraceDeadlineReachesListAndPendingRefusalWithoutSecrets()
+        {
+            var environment = new DemoEnvironment();
+            await environment.InitializeAsync();
+            await using var app = await StartAsync(environment, fixture.Root);
+            using var client = new HttpClient(new HttpClientHandler
+            {
+                ServerCertificateCustomValidationCallback = TestHttps.Validate,
+                AllowAutoRedirect = false,
+                CookieContainer = new CookieContainer()
+            })
+            { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)), Timeout = TimeSpan.FromSeconds(30) };
+            using var login = await HttpJourney.LoginAsync(client);
+            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            var csrf = await HttpJourney.CsrfAsync(client, "/api-keys");
+            string keyId;
+            using (var created = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/key", new()
+            { ["_csrf"] = csrf, ["name"] = "Grace " + Guid.NewGuid().ToString("N")[..8], ["scopes"] = "documents:read" }))
+            {
+                await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+                using var json = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+                keyId = json.RootElement.GetProperty("apiKey").GetProperty("keyId").GetString()!;
+                await Assert.That(json.RootElement.GetProperty("apiKey").GetProperty("previousSecretExpiresAt").GetString()).IsEmpty();
+            }
+
+            var before = DateTimeOffset.UtcNow.AddHours(1).AddSeconds(-5);
+            using (var rotated = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/rotate", new()
+            { ["_csrf"] = csrf, ["keyId"] = keyId, ["previousSecretTtl"] = "3600" }))
+            {
+                await Assert.That(rotated.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                using var json = JsonDocument.Parse(await rotated.Content.ReadAsStringAsync());
+                await Assert.That(json.RootElement.GetProperty("apiKey").GetProperty("keyId").GetString()).IsEqualTo(keyId);
+            }
+
+            using (var listed = await client.GetAsync("/api/v1/dashboard/credentials"))
+            {
+                await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                using var json = JsonDocument.Parse(await listed.Content.ReadAsStringAsync());
+                var key = json.RootElement.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("keyId").GetString() == keyId);
+                var deadline = DateTimeOffset.Parse(key.GetProperty("previousSecretExpiresAt").GetString()!, System.Globalization.CultureInfo.InvariantCulture);
+                await Assert.That(deadline).IsGreaterThanOrEqualTo(before);
+                await Assert.That(deadline - before).IsLessThan(TimeSpan.FromMinutes(5));
+            }
+
+            using (var page = await client.GetAsync("/api-keys"))
+            {
+                var html = await page.Content.ReadAsStringAsync();
+                await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(html).Contains("Previous secret works until");
+            }
+
+            var secret = await HttpJourney.CreatePatAsync(client, "TUnit rotation grace");
+            var tools = await HttpJourney.McpAsync(client, secret, "tools/call", new { name = "list_api_keys", arguments = new { } });
+            var mcpKey = tools.GetProperty("result").GetProperty("structuredContent").GetProperty("credentials")
+                    .EnumerateArray().Single(item => item.GetProperty("keyId").GetString() == keyId);
+            await Assert.That(DateTimeOffset.Parse(mcpKey.GetProperty("previousSecretExpiresAt").GetString()!, System.Globalization.CultureInfo.InvariantCulture))
+                .IsGreaterThanOrEqualTo(before);
+
+            using (var refused = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/rotate", new()
+            { ["_csrf"] = csrf, ["keyId"] = keyId, ["previousSecretTtl"] = "0" }))
+            {
+                await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+                using var json = JsonDocument.Parse(await refused.Content.ReadAsStringAsync());
+                await Assert.That(json.RootElement.GetProperty("detail").GetString()).Contains("still works until");
+            }
+
+            using (var revoked = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/" + keyId + "/revoke", new() { ["_csrf"] = csrf }))
+            {
+                await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+            }
+        }
+
+        private static async Task<WebApplication> StartAsync(DemoEnvironment environment, string root)
+        {
+            var app = environment.CreateTestHost(root, 0, "http://127.0.0.1");
+            await app.StartAsync();
+            return app;
         }
 
         [Test]

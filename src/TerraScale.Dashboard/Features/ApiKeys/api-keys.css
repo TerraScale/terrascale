@@ -41,6 +41,12 @@
   flex: none;
 }
 
+/* Rotation grace: the old secret's deadline sits muted under the key's status. */
+.ts-apikeys-grace {
+  margin: var(--ts-s1) 0 0;
+  white-space: nowrap;
+}
+
 /* Credential type is neutral text with its icon, not a tinted badge. */
 .ts-apikeys-page .ts-apikeys-type {
   height: auto;

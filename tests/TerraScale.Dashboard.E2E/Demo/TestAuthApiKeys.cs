@@ -184,7 +184,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                     }
 
                     keys[keyId] = (stored.Key with { AllowedCidrs = replaced }, stored.Secret);
-                    return Json(keys[keyId].Key);
+                    return Json(Visible(keys[keyId].Key));
                 }
             }
             if (keyId.Length == 0 && request.Method == HttpMethod.Get)
@@ -212,7 +212,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                     }
 
                     var page = scoped.Where(key => string.CompareOrdinal(key.Id, after) > 0).Take(limit + 1).ToArray();
-                    return Json(new { items = page.Take(limit), next = page.Length > limit ? page[limit - 1].Id : null });
+                    return Json(new { items = page.Take(limit).Select(Visible), next = page.Length > limit ? page[limit - 1].Id : null });
                 }
             }
             if (keyId.Length == 0 && request.Method == HttpMethod.Post)
@@ -310,7 +310,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                     var key = stored.Key with { PreviousSecretExpiresAt = ttl > 0 ? DateTimeOffset.UtcNow.AddSeconds(ttl) : null };
                     var secret = Secret(key.Id);
                     keys[key.Id] = (key, secret);
-                    return Json(new { api_key = key, key = secret });
+                    return Json(new { api_key = Visible(key), key = secret });
                 }
             }
             lock (gate)
@@ -322,7 +322,7 @@ namespace TerraScale.Dashboard.E2E.Demo
 
                 if (request.Method == HttpMethod.Get)
                 {
-                    return Json(stored.Key);
+                    return Json(Visible(stored.Key));
                 }
 
                 if (request.Method != HttpMethod.Delete)
@@ -381,6 +381,12 @@ namespace TerraScale.Dashboard.E2E.Demo
 
         [GeneratedRegex("^/v1/terrascale/organizations/(?<organization>[0-9A-HJKMNP-TV-Z]{26})/projects/(?<project>[0-9A-HJKMNP-TV-Z]{26})(?:(?<keys>/api-keys(?:/(?<key>[0-9A-HJKMNP-TV-Z]{26})(?:(?<rotate>/rotate)|(?<cidrs>/allowed-cidrs))?)?)|(?<cidrs>/allowed-cidrs))?$")]
         private static partial Regex Route();
+        // Like ts-auth: the previous key string's expiry is shown only while it still works.
+        private static Key Visible(Key key)
+        {
+            return key.PreviousSecretExpiresAt > DateTimeOffset.UtcNow ? key : key with { PreviousSecretExpiresAt = null };
+        }
+
         private static string Secret(string keyId)
         {
             return keyId + "_" + string.Concat(Enumerable.Range(0, 52).Select(_ => Alphabet[RandomNumberGenerator.GetInt32(Alphabet.Length)]));
