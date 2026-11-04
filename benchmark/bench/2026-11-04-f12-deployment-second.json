@@ -1,0 +1,26 @@
+{
+  "source_sha": "d0e1db758c0c33e28eae398265d5bbb94314c472",
+  "run_url": "https://github.com/TerraScale/terrascale/actions/runs/41928598256",
+  "regions": [
+    {
+      "region": "gru",
+      "result": "applied",
+      "image": "ghcr.io/terrascale/terrabase@sha256:6d64954bfbf31455e373b305c522de8d9da31adaf431cff8750b61a80f096708",
+      "revision": "d0e1db758c0c33e28eae398265d5bbb94314c472"
+    },
+    {
+      "region": "sjc",
+      "result": "applied",
+      "image": "ghcr.io/terrascale/terrabase@sha256:6d64954bfbf31455e373b305c522de8d9da31adaf431cff8750b61a80f096708",
+      "revision": "d0e1db758c0c33e28eae398265d5bbb94314c472"
+    },
+    {
+      "region": "fra",
+      "result": "applied",
+      "image": "ghcr.io/terrascale/terrabase@sha256:6d64954bfbf31455e373b305c522de8d9da31adaf431cff8750b61a80f096708",
+      "revision": "d0e1db758c0c33e28eae398265d5bbb94314c472"
+    }
+  ],
+  "gru_inspected_digest": "sha256:6d64954bfbf31455e373b305c522de8d9da31adaf431cff8750b61a80f096708",
+  "f12_source_diff_from_4e0567d01": []
+}

@@ -1,0 +1,59 @@
+{
+  "observed_at": "2026-11-04T22:37:04.388814+00:00",
+  "rulesets": [
+    {
+      "id": "c2e48e2abf5b4dca89cb6d5009a3839d",
+      "version": "3",
+      "phase": "http_request_cache_settings",
+      "last_updated": "2026-10-29T17:32:46.743362Z",
+      "rules": [
+        {
+          "action": "set_cache_settings",
+          "action_parameters": {
+            "browser_ttl": {
+              "mode": "respect_origin"
+            },
+            "cache": true,
+            "edge_ttl": {
+              "mode": "respect_origin",
+              "status_code_ttl": [
+                {
+                  "status_code_range": {
+                    "from": 400,
+                    "to": 599
+                  },
+                  "value": -1
+                }
+              ]
+            }
+          },
+          "description": "TerraBase shape CDN (shapes-<bucket>): cache immutable TBS1 objects by path; errors are not cached",
+          "enabled": true,
+          "expression": "(starts_with(http.host, \"shapes-\") and ends_with(http.host, \".terrascale.tech\") and starts_with(http.request.uri.path, \"/v1/shapes/\") and http.request.uri.query eq \"\" and http.request.method in {\"GET\" \"HEAD\" \"PURGE\"})",
+          "id": "0ab9b726a5254876a3fde8a06f2f9bf3",
+          "last_updated": "2026-10-29T17:32:46.743362Z",
+          "ref": "0ab9b726a5254876a3fde8a06f2f9bf3",
+          "version": "2"
+        }
+      ]
+    },
+    {
+      "id": "e63dd3e752a547f48bbb0ee49b76767c",
+      "version": "2",
+      "phase": "http_request_firewall_custom",
+      "last_updated": "2026-10-29T17:32:49.036529Z",
+      "rules": [
+        {
+          "action": "block",
+          "description": "TerraBase shape CDN (shapes-<bucket>): only GET/HEAD of v1/shapes objects, no query",
+          "enabled": true,
+          "expression": "(starts_with(http.host, \"shapes-\") and (not starts_with(http.request.uri.path, \"/v1/shapes/\") or http.request.uri.path contains \"..\" or raw.http.request.uri.path contains \"..\" or raw.http.request.uri.path contains \"%\" or http.request.uri.query ne \"\" or not http.request.method in {\"GET\" \"HEAD\"}))",
+          "id": "57cbc2e1e59142c395ff6f3c33a22cec",
+          "last_updated": "2026-10-29T17:32:49.036529Z",
+          "ref": "57cbc2e1e59142c395ff6f3c33a22cec",
+          "version": "2"
+        }
+      ]
+    }
+  ]
+}

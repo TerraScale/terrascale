@@ -132,7 +132,6 @@ async function main({ readerCounts = [1, 10, 100, 1000], regions = ["gru", "sjc"
   try {
     previousDatabases = (await writer.databases.list({ limit: 100 }, { signal: signal() })).items;
   } catch (error) {
-    // A new hosted project enters TerraBase's catalog on its first database creation.
     if (error.status !== 404 || error.code !== "unknown_database") throw error;
   }
   for (const previous of previousDatabases) {
@@ -205,7 +204,6 @@ async function main({ readerCounts = [1, 10, 100, 1000], regions = ["gru", "sjc"
           let outcome = "complete";
           let rejectReader;
           const readerFailed = new Promise((_, reject) => { rejectReader = reject; });
-          // Raw sockets can fail while the rest of the cohort is still connecting.
           readerFailed.catch(() => {});
           const measuredFetch = async (input, init) => {
             const url = new URL(String(input));
