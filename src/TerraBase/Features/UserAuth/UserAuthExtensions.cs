@@ -90,6 +90,17 @@ internal static class UserAuthExtensions
             return new SocketRefusal("ip_not_allowed", IpAllowlists.Refusal(client));
         }
 
+        switch (await GrantAsync(context, jwt, project, bucketCreation: false).ConfigureAwait(false))
+        {
+            case ProjectAccess granted:
+                context.Features.Set(granted);
+                break;
+            case NotFound:
+                return new SocketRefusal("unknown_database", "the database does not exist");
+            case Unavailable unavailable:
+                return new SocketRefusal("unavailable", unavailable.Message);
+        }
+
         if (token?.Key is not { } key)
         {
             return null;
@@ -294,48 +305,23 @@ internal static class UserAuthExtensions
                 return;
             }
 
-            var actor = jwt.FindFirst(ClaimTypes.NameIdentifier)!.Value;
-            var catalog = context.RequestServices.GetRequiredService<IProjectCatalog>();
             var bucketCreation = context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == "createFileBucket"
                 && !jwt.HasClaim("token_kind", "end_user") && jwt.FindFirst("database") is null;
-            var resolved = await catalog.ResolveProjectAsync(project, actor,
-                createIn: bucketCreation ? jwt.FindFirst("org_id")?.Value : null, context.RequestAborted).ConfigureAwait(false);
-            if (resolved is not string organization)
+            var granted = await GrantAsync(context, jwt, project, bucketCreation).ConfigureAwait(false);
+            if (granted is not ProjectAccess grant)
             {
-                await (resolved switch
+                await (granted switch
                 {
-                    NotFound => ErrorResponse.From(new NotFound("the database does not exist", "unknown_database")),
-                    Unavailable error => ErrorResponse.From(error),
-                    string => throw new UnreachableException(),
+                    NotFound refused => ErrorResponse.From(refused),
+                    Unavailable unavailable => ErrorResponse.From(unavailable),
+                    ProjectAccess => throw new UnreachableException(),
                 }).ExecuteAsync(context).ConfigureAwait(false);
                 return;
             }
 
-            var management = context.RequestServices.GetRequiredService<IManagementService>();
-            var restricted = jwt.FindFirst("database")?.Value;
-            string? restrictedId = null;
-            if (restricted is not null)
-            {
-                var restriction = await management.FindDatabaseRecordAsync(organization, project, restricted, context.RequestAborted).ConfigureAwait(false);
-                if (restriction is Unavailable unavailable)
-                {
-                    await ErrorResponse.From(unavailable).ExecuteAsync(context).ConfigureAwait(false);
-                    return;
-                }
-
-                restrictedId = restriction switch
-                {
-                    ManagedDatabase record => record.Id,
-                    NotFound => null,
-                    Unavailable => throw new UnreachableException(),
-                };
-            }
-            var grant = new ProjectAccess(actor, project, organization, restricted, restrictedId)
-            {
-                IsEndUser = jwt.HasClaim("token_kind", "end_user"),
-                Roles = jwt.FindAll("roles").Select(claim => claim.Value).ToFrozenSet(StringComparer.Ordinal),
-            };
             context.Features.Set(grant);
+            var management = context.RequestServices.GetRequiredService<IManagementService>();
+            var (organization, restricted, restrictedId) = (grant.OrganizationId, grant.DatabaseName, grant.DatabaseId);
 
             if (managementRoute)
             {
@@ -381,5 +367,44 @@ internal static class UserAuthExtensions
             await ProjectAccess.RunAsync(grant, () => next(context)).ConfigureAwait(false);
         });
         return app;
+    }
+
+    internal static async ValueTask<ProjectGrant> GrantAsync(HttpContext context, ClaimsIdentity jwt, string project, bool bucketCreation)
+    {
+        var actor = jwt.FindFirst(ClaimTypes.NameIdentifier)!.Value;
+        var catalog = context.RequestServices.GetRequiredService<IProjectCatalog>();
+        var resolved = await catalog.ResolveProjectAsync(project, actor,
+            createIn: bucketCreation ? jwt.FindFirst("org_id")?.Value : null, context.RequestAborted).ConfigureAwait(false);
+        if (resolved is not string organization)
+        {
+            return resolved switch
+            {
+                NotFound => new NotFound("the database does not exist", "unknown_database"),
+                Unavailable error => error,
+                string => throw new UnreachableException(),
+            };
+        }
+
+        var restricted = jwt.FindFirst("database")?.Value;
+        string? restrictedId = null;
+        if (restricted is not null)
+        {
+            var restriction = await context.RequestServices.GetRequiredService<IManagementService>()
+                .FindDatabaseRecordAsync(organization, project, restricted, context.RequestAborted).ConfigureAwait(false);
+            switch (restriction)
+            {
+                case Unavailable unavailable:
+                    return unavailable;
+                case ManagedDatabase record:
+                    restrictedId = record.Id;
+                    break;
+            }
+        }
+
+        return new ProjectAccess(actor, project, organization, restricted, restrictedId)
+        {
+            IsEndUser = jwt.HasClaim("token_kind", "end_user"),
+            Roles = jwt.FindAll("roles").Select(claim => claim.Value).ToFrozenSet(StringComparer.Ordinal),
+        };
     }
 }

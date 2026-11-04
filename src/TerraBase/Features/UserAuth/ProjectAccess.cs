@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using TerraBase.Errors;
 
 namespace TerraBase.Features.UserAuth;
 
@@ -35,3 +36,5 @@ public sealed record ProjectAccess(string Actor, string ProjectId, string Organi
         }
     }
 }
+
+internal readonly union ProjectGrant(ProjectAccess, NotFound, Unavailable);
