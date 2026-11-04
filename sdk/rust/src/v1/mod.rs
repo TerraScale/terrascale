@@ -35,7 +35,6 @@ mod export_schedule;
 mod file_transfer;
 mod files;
 mod functions;
-mod hrana;
 mod ids;
 mod imports;
 mod management;
@@ -77,7 +76,6 @@ pub use files::{FileObject, FileObjectPage, FileSignedUrl, FileUploadRequest};
 pub use functions::{
     Function, FunctionDeployment, FunctionInvocation, FunctionLog, FunctionTrigger,
 };
-pub use hrana::{HranaCursor, HranaPipelineResponse, HranaVersion};
 pub use ids::{is_valid_name, ulid_for, DocumentId, Version};
 pub use management::{DatabasePlacement, ManagementPage};
 pub use observability::ServingRegions;
