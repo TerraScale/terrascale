@@ -32,7 +32,7 @@ Flags: `-terrabase <binary or .dll>`, `-ts <ts binary>`, `-out <file>`, `-logs <
 
 ## Scenarios
 
-Functional steps use `ts`: `auth login`, `projects create`, `db create simdb -replica-regions sjc` and `exec`. Visibility polls call `POST /v1/projects/{project}/databases/{db}/sql/execute` directly on the node. Visibility is polled with a deadline, never a fixed sleep.
+Functional steps use `ts`: `auth login`, `projects create`, `db create simdb -replica-regions sjc` and `sql`. Visibility polls call `POST /v1/projects/{project}/databases/{db}/sql/execute` directly on the node. Visibility is polled with a deadline, never a fixed sleep.
 
 | Scenario | Pass condition | Lag |
 | --- | --- | --- |
