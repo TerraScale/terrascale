@@ -1,0 +1,27 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/projects/01JA0000000000000000000001/databases/01JA0000000000000000000004/branches",
+    "headers": {
+      "Accept": "application/json",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "name": "agent-fork",
+      "ttlSeconds": 3600
+    }
+  },
+  "response": {
+    "status": 201,
+    "body": {
+      "id": "01JA0000000000000000000005",
+      "projectId": "01JA0000000000000000000001",
+      "name": "agent-fork",
+      "branchedFrom": "01JA0000000000000000000004",
+      "createdAt": "2026-11-04T12:00:00+00:00",
+      "region": "gru",
+      "homeRegion": "gru",
+      "expiresAt": "2026-11-04T13:00:00+00:00"
+    }
+  }
+}

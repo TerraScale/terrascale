@@ -1,0 +1,28 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/terrascale/api-keys/self/scoped-keys",
+    "headers": {
+      "Accept": "application/json",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "project": "01JA0000000000000000000001",
+      "database": "01JA0000000000000000000004",
+      "access": "read_write",
+      "ttl_seconds": 3600
+    },
+    "origin": "https://auth.terrascale.tech"
+  },
+  "response": {
+    "status": 201,
+    "body": {
+      "key": "01JA00000000000000000000K9_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "id": "01JA00000000000000000000K9",
+      "database": "01JA0000000000000000000004",
+      "access": "read_write",
+      "project_id": "01JA0000000000000000000001",
+      "expires_at": "2026-11-04T13:00:00+00:00"
+    }
+  }
+}
