@@ -66,7 +66,7 @@ internal sealed class ReplicaCatalogEndpoint(IReplicaCatalog catalog, TerraBaseO
                 {
                     case TenantDatabaseRecord { Placement: var placement } record when placement.Home == options.Region && placement.Replicas.Contains(region):
                         entries.Add(new ReplicaCatalogEntry(database.OrganizationId, database.ProjectId!, database.DatabaseId!, record.Name,
-                            placement.Home, placement.Replicas, placement.Version));
+                            placement.Home, placement.Replicas, placement.Version, placement.AllRegions));
                         break;
                     case Unavailable error:
                         return ErrorResponse.From(error);
