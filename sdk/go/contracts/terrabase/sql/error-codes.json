@@ -1,5 +1,5 @@
 {
-  "source": "src/TerraBase/Features/Sql/SqlErrors.cs (PIVOT E3, branch wrk/e3-sql-ws 8169fa185)",
+  "source": "src/TerraBase/Features/Sql/SqlErrors.cs (PIVOT E3, main 2020a18ee)",
   "codes": [
     {"code": "sql_error", "sqlstate": "0A000", "status": 400},
     {"code": "syntax_error", "sqlstate": "42601", "status": 400},
