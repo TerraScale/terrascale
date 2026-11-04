@@ -404,6 +404,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         _pragmas = TursoSession.Pragmas(memoryBudget, threads);
         Pool = new(maxIdle: maxIdle ?? 4 * Environment.ProcessorCount, maxIdlePerDatabase: maxIdlePerDatabase ?? Environment.ProcessorCount,
             maxWriters: maxWriters ?? Math.Max(64, 8 * threads));
+        meter.CreateObservableGauge("terrabase.cdc.retained.rows", () => _stores.Values.Sum(store => store.RetainedCdcRows),
+            description: "Retained CDC row span across open tenant databases, sampled by retention maintenance.");
         meter.CreateObservableGauge("terrabase.storage.open_writers", () => Pool.OpenWriters, description: "Client databases holding an open writer connection.");
         _ownership = Own(dataDirectory);
         try

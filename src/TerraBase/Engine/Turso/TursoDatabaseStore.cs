@@ -27,6 +27,18 @@ internal sealed partial class TursoDatabaseStore(
     internal Counter<long>? SchemaEvaluations { get; } = schemaEvaluations;
     internal Counter<long>? StorageReads { get; } = storageReads;
 
+    private long _retainedCdcRows;
+
+    internal long RetainedCdcRows => Volatile.Read(ref _retainedCdcRows);
+
+    internal void ObserveCdcSize(SqliteConnection connection, SqliteTransaction? transaction = null)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = TursoStatements.ChangeRows;
+        Volatile.Write(ref _retainedCdcRows, (long)command.ExecuteScalar()!);
+    }
+
     internal TursoDatabaseStore(string name, string path, TursoSessionPool pool, TursoIoPool io, string pragmas, DatabaseKeys encryption, TimeProvider? time = null, Action? committed = null)
         : this(name, path, pool, io, pragmas, null, time, committed, encryption: encryption) { }
 
