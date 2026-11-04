@@ -49,6 +49,7 @@ internal sealed class ReplicaPullProgress
         // A slower concurrent stream cannot replace a newer successfully served revision.
         if (previous is not null && previous.Revision.Incarnation == revision.Incarnation && Compare(previous.Revision, revision) > 0)
         {
+            _pulls[region] = previous with { At = at };
             return;
         }
 
