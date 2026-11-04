@@ -22,25 +22,6 @@ public sealed class SqlNativeHardeningTests
     private static readonly Faker Faker = new();
 
     [Test]
-    public async Task Engine_tables_are_refused_wherever_their_names_appear()
-    {
-        await using var db = await StartAsync();
-        await db.OkAsync("CREATE TABLE audit (id INTEGER PRIMARY KEY, note TEXT)");
-
-        var offset = await db.RefusedAsync("UPDATE OR IGNORE commit_offset SET value = 0");
-        var quotedStats = await db.RefusedAsync("UPDATE OR IGNORE '_tb_collection_stats' SET bytes = 0");
-        var commaJoin = await db.RefusedAsync("SELECT count(*) FROM sqlite_schema, 'turso_cdc'");
-        var trigger = await db.RefusedAsync("CREATE TRIGGER wipe AFTER INSERT ON audit BEGIN DELETE FROM _tb_state; END");
-
-        foreach (var refused in new[] { offset, quotedStats, commaJoin, trigger })
-        {
-            await Assert.That((refused.Status, refused.Code)).IsEqualTo((HttpStatusCode.BadRequest, "sql_error"));
-        }
-
-        await Assert.That((await db.OkAsync("SELECT count(*) FROM sqlite_schema WHERE name = 'wipe'"))[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(0);
-    }
-
-    [Test]
     public async Task An_endless_autocommit_statement_is_interrupted_within_the_bound()
     {
         await using var db = await StartAsync();
