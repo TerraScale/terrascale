@@ -23,7 +23,7 @@ with tempfile.TemporaryDirectory() as scratch:
         'ci-build/terrabase': {'state': 'success', 'creator': {'login': 'MarioGK'},
                              'description': 'Checked build; manifest sha256 ' + qualified.digest(path)},
         'ts-ship/terrabase': {'state': 'success', 'creator': {'login': 'MarioGK'},
-                            'description': 'Fast passed in 20.1s (<120s); tests <=10s; build 100s (<600s)'},
+                            'description': 'Fast passed in 20.1s (<120s); test times reported; build 100s (<600s)'},
     }
     original = copy.deepcopy(rows)
     qualified.statuses = lambda revision: rows
@@ -46,7 +46,7 @@ with tempfile.TemporaryDirectory() as scratch:
         rows[context]['creator']['login'] = 'outside-contributor'
         rejects()
         rows[context] = copy.deepcopy(original[context])
-    for description in ('Fast passed in 121s (<120s); tests <=10s;',
+    for description in ('Fast passed in 121s (<120s); test times reported;',
                         'Fast passed in 20s (<300s); build 10s (<600s)',
                         'Fast passed in 20s (<120s); build 10s (<600s)'):
         rows['ts-ship/terrabase']['description'] = description
