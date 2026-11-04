@@ -22,6 +22,7 @@ public sealed class ManagementRpcTests
     public async Task Management_rpc_preserves_identity_placement_usage_and_backup_readback()
     {
         await using var api = await DatabaseApi.StartAsync();
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         using var channel = Channel(api);
         var token = Token(api, "databases:read databases:write sql:read sql:write");
         var management = Client<IManagementService>(channel, token);
