@@ -18,7 +18,7 @@ const percentile = (values, p) => {
   const sorted = values.toSorted((a, b) => a - b);
   return sorted.length ? sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)] : null;
 };
-const stats = values => ({ count: values.length, p50_ms: percentile(values, 0.5), p99_ms: percentile(values, 0.99) });
+const stats = (values, expected) => ({ count: values.length, p50_ms: values.length === expected ? percentile(values, 0.5) : null, p99_ms: values.length === expected ? percentile(values, 0.99) : null });
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function remote(host, file) {
@@ -83,6 +83,8 @@ async function main() {
   const input = [];
   for await (const part of process.stdin) input.push(part);
   const credentials = JSON.parse(Buffer.concat(input).toString("utf8"));
+  const completed = new Set(credentials.completed ?? []);
+  if ([...completed].some(value => typeof value !== "string" || !/^f10_(gru|sjc|fra)_(table|where_columns)_(1|10|100|1000)_[123]$/.test(value))) throw new Error("RESUME_INVALID");
   let currentToken;
   let refreshAt = 0;
   let refreshing;
@@ -104,7 +106,8 @@ async function main() {
   };
   const config = { project: credentials.project, token: accessToken, baseUrl: api };
   const writer = createTerraBaseClient(config);
-  emit({ type: "method", sha: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), host: hostname(), node: process.version,
+  const sha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  emit({ type: "method", sha, host: hostname(), node: process.version, resumed_cohorts: [...completed],
     rows: 16, body_bytes: 128, repeats: 3, readers: [1, 10, 100, 1000], cpu_limit_percent: 70, cohort_deadline_seconds: 180,
     latency: "Dev-host SDK through regional SSH CONNECT egress; includes tunnel and write request latency; nearest-rank percentiles per repeat" });
   await monitor();
@@ -123,13 +126,14 @@ async function main() {
     return response;
   };
   try {
-    for (const region of ["gru", "sjc", "fra"]) {
+    for (const readers of [1, 10, 100, 1000]) for (const region of ["gru", "sjc", "fra"]) {
       const route = await egress(region);
       try {
-        for (const shape of ["table", "where_columns"]) for (const readers of [1, 10, 100, 1000]) for (let repeat = 1; repeat <= 3; repeat++) {
+        for (const shape of ["table", "where_columns"]) for (let repeat = 1; repeat <= 3; repeat++) {
           controller.signal.throwIfAborted();
           phase = `setup_${region}_${shape}_${readers}_${repeat}`;
           const table = `f10_${region}_${shape}_${readers}_${repeat}`;
+          if (completed.has(table)) continue;
           const filter = shape === "table" ? {} : { where: "active = 1", columns: ["id", "version"] };
           await db.execute(`CREATE TABLE ${table} (id INTEGER PRIMARY KEY, active INTEGER NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL)`, undefined, { signal: signal() });
           await db.execute(`INSERT INTO ${table} VALUES ${Array.from({ length: 16 }, (_, i) => `(${i + 1},${i % 2 === 0 ? 1 : 0},0,'${"x".repeat(128)}')`).join(",")}`, undefined, { signal: signal() });
@@ -172,6 +176,9 @@ async function main() {
           const waiters = [];
           let tailStarted = 0;
           let live = 0;
+          let outcome = "complete";
+          let rejectReader;
+          const readerFailed = new Promise((_, reject) => { rejectReader = reject; });
           const measuredFetch = async (input, init) => {
             const url = new URL(String(input));
             if (url.hostname.startsWith("shapes-")) requests.cdn++;
@@ -210,15 +217,18 @@ async function main() {
               }, { signal: deadline });
               subscriptions.push(subscription);
               waiters.push({ ready: readyPromise, tail: tailPromise });
-              subscription.done.catch(() => undefined);
+              subscription.done.catch(error => rejectReader(error));
             }
             const failed = new Promise((_, reject) => deadline.addEventListener("abort", () => reject(deadline.reason), { once: true }));
-            await Promise.race([Promise.all(waiters.map(waiter => waiter.ready)), failed]);
+            await Promise.race([Promise.all(waiters.map(waiter => waiter.ready)), failed, readerFailed]);
             for (let attempt = 0; live < readers && attempt < 100; attempt++) { deadline.throwIfAborted(); await delay(10); }
             if (live < readers) throw new Error("LIVE_NOT_READY");
             tailStarted = performance.now();
             await db.execute(`UPDATE ${table} SET version = 2 WHERE id = 1`, undefined, { signal: deadline });
-            await Promise.race([Promise.all(waiters.map(waiter => waiter.tail)), failed]);
+            await Promise.race([Promise.all(waiters.map(waiter => waiter.tail)), failed, readerFailed]);
+          } catch (error) {
+            if (!controller.signal.aborted && deadline.aborted && deadline.reason?.name === "TimeoutError") outcome = "timeout";
+            else throw error;
           } finally {
             for (const subscription of subscriptions) subscription.close();
             await Promise.allSettled(subscriptions.map(subscription => subscription.done));
@@ -227,14 +237,14 @@ async function main() {
           const after = await db.metrics.usage({}, { signal: signal() });
           const monthAfter = (await writer.metrics.usage({}, { signal: signal() })).month;
           const samples = cpu.filter(sample => sample.at * 1000 >= started && sample.at * 1000 <= ended);
-          emit({ type: "cell", region, shape, readers, repeat, start: new Date(started).toISOString(), end: new Date(ended).toISOString(),
-            snapshot: stats(snapshot), catchup: stats(caughtUp), tail: stats(tail), requests, statuses, origin_statuses: originStatuses, colos,
+          emit({ type: "cell", sha, outcome, region, shape, readers, repeat, start: new Date(started).toISOString(), end: new Date(ended).toISOString(),
+            snapshot: stats(snapshot, readers), catchup: stats(caughtUp, readers), tail: stats(tail, readers), requests, statuses, origin_statuses: originStatuses, colos,
             cdn_hit_ratio: (statuses.HIT ?? 0) / requests.cdn,
             cpu_samples: samples.length, cpu_max_percent: samples.length ? Math.max(...samples.map(sample => sample.cpu_percent)) : null,
             usage_reads_before: before.reads, usage_reads_after: after.reads,
             month_before: monthBefore, month_after: monthAfter, sql_read_units: monthAfter.readUnits - monthBefore.readUnits,
             billed_read_units_before: monthBefore.units - monthBefore.writeUnits, billed_read_units_after: monthAfter.units - monthAfter.writeUnits });
-          if (snapshot.length !== readers || tail.length !== readers || after.reads !== before.reads || monthAfter.readUnits !== monthBefore.readUnits
+          if ((outcome === "complete" && (snapshot.length !== readers || tail.length !== readers)) || after.reads !== before.reads || monthAfter.readUnits !== monthBefore.readUnits
             || monthAfter.units !== monthAfter.writeUnits) throw new Error("MEASUREMENT_INCOMPLETE");
           if (readers === 1 && (requests.snapshot_payload || requests.catchup_payload || requests.cdn < 2)) throw new Error("CDN_UNVERIFIED");
         }
