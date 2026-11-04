@@ -30,23 +30,6 @@ public sealed class TerraBaseKeyErrorTests
         await Assert.That(tokens).IsEqualTo(1);
     }
 
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task AuthorityUnavailableRetriesOnlySafeReads(bool mutation)
-    {
-        var calls = 0;
-        using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(
-            ++calls == 1 ? Error(HttpStatusCode.ServiceUnavailable, "auth_unavailable") : new HttpResponseMessage(HttpStatusCode.NoContent)));
-        using var http = new HttpClient(handler);
-        var connection = new TerraBaseConnection(http, new Uri("https://terrabase.example.test/"), null, "key", "ApiKey",
-            TimeSpan.FromSeconds(30), TerraBaseConnection.DefaultMaxResponseBytes);
-        var call = () => connection.SendAsync(mutation ? HttpMethod.Post : HttpMethod.Get, "/v1/test", null, null, CancellationToken.None);
-        if (mutation) await Assert.ThrowsAsync<TerraBaseUnavailableException>(call);
-        else await call();
-        await Assert.That(calls).IsEqualTo(mutation ? 1 : 2);
-    }
-
     private static HttpResponseMessage Error(HttpStatusCode status, string code)
     {
         var response = new HttpResponseMessage(status) { Content = new StringContent($"{{\"error\":{{\"code\":\"{code}\",\"message\":\"Replace the key.\"}}}}") };

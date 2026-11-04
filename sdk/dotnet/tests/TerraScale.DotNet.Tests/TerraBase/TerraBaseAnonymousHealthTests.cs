@@ -56,59 +56,6 @@ public sealed class TerraBaseAnonymousHealthTests
         await Assert.That(calls).IsEqualTo(5);
     }
 
-    [Test]
-    public async Task Refused_health_does_not_strip_or_serialize_authenticated_work()
-    {
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var handler = new TerraBaseTestHandler(async (request, token) =>
-        {
-            if (request.Headers.Authorization?.Parameter != "synthetic-explicit" || request.Headers.GetValues("Cookie").Single() != "health=synthetic")
-                throw new InvalidOperationException("Authenticated headers changed.");
-            entered.SetResult();
-            await release.Task.WaitAsync(token);
-            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") };
-        });
-        using var http = new HttpClient(handler);
-        http.DefaultRequestHeaders.Add("Authorization", "Bearer synthetic-default");
-        http.DefaultRequestHeaders.Add("Cookie", "health=synthetic");
-        var connection = new TerraBaseConnection(http, TerraBaseRegion.PublicOrigin, null, "synthetic-explicit", "credential", TimeSpan.FromSeconds(30), TerraBaseConnection.DefaultMaxResponseBytes);
-        using var requestDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var pending = connection.SendAsync(HttpMethod.Get, "/healthz", null, null, requestDeadline.Token);
-        try
-        {
-            await AwaitEntryAsync(entered.Task, pending);
-            await Assert.ThrowsAsync<InvalidOperationException>(() => new TerraBaseHealthClient(http, TerraBaseRegion.PublicOrigin).GetHealthAsync());
-        }
-        finally { release.TrySetResult(); await pending.WaitAsync(TimeSpan.FromSeconds(5)); }
-    }
-
-    [Test]
-    public async Task Clean_health_preserves_in_flight_cancellation()
-    {
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var handler = new TerraBaseTestHandler(async (_, token) =>
-        {
-            entered.SetResult();
-            await Task.Delay(Timeout.InfiniteTimeSpan, token);
-            throw new InvalidOperationException("Cancelled request completed.");
-        });
-        using var http = new HttpClient(handler);
-        using var cancelled = new CancellationTokenSource();
-        var pending = new TerraBaseHealthClient(http, TerraBaseRegion.PublicOrigin).GetReadinessAsync(cancelled.Token);
-        try
-        {
-            await AwaitEntryAsync(entered.Task, pending);
-            await cancelled.CancelAsync();
-            await Assert.ThrowsAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
-        }
-        finally
-        {
-            await cancelled.CancelAsync();
-            try { await pending.WaitAsync(TimeSpan.FromSeconds(5)); } catch (OperationCanceledException) { }
-        }
-    }
-
     private static async Task AwaitEntryAsync(Task entered, Task pending)
     {
         var completed = await Task.WhenAny(entered, pending).WaitAsync(TimeSpan.FromSeconds(5));

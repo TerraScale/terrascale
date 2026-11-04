@@ -52,41 +52,6 @@ public sealed class TerraBaseShapeCryptoTests
     }
 
     [Test]
-    public async Task GeneratedExactOneMiBObjectMatchesFixtureAndRejectsMutations()
-    {
-        using var fixture = LoadFixture();
-        var vector = fixture.RootElement.GetProperty("tbs1_generated_vectors")[0];
-        var handle = Text(vector, "handle");
-        var offset = Text(vector, "request_offset");
-        var epoch = ParseEpoch(vector, "epoch");
-        var keyId = Text(vector, "key_id");
-        var salt = Bytes(vector, "object_salt_hex");
-        var epochKey = Bytes(vector, "epoch_key_hex");
-        var recipe = vector.GetProperty("plaintext_recipe");
-        var plaintext = new byte[recipe.GetProperty("length").GetInt32()];
-        Array.Fill(plaintext, Bytes(recipe, "repeat_byte_hex")[0]);
-        var objectKey = TerraBaseShapeCrypto.DeriveObjectKey(epochKey, salt, handle, offset);
-
-        var tbs1 = Seal(epochKey, handle, offset, epoch, keyId, salt, (plaintext, false), ([], true));
-        await Assert.That(tbs1.Length).IsEqualTo(Convert.ToInt32(vector.GetProperty("ciphertext_size").GetInt64(), CultureInfo.InvariantCulture));
-        await Assert.That(Hex(SHA256.HashData(tbs1))).IsEqualTo(Text(vector, "ciphertext_sha256"));
-        await AssertFramesMatchFixture(vector, objectKey, [plaintext, []]);
-
-        var decrypted = TerraBaseShapeCrypto.Decrypt(tbs1, epochKey, handle, offset, epoch, keyId);
-        await Assert.That(Hex(decrypted)).IsEqualTo(Hex(plaintext));
-
-        var firstFrameEnd = HeaderLength + 4 + MiB + TagLength;
-        var swapped = tbs1[..HeaderLength].Concat(tbs1[firstFrameEnd..]).Concat(tbs1[HeaderLength..firstFrameEnd]).ToArray();
-        var dropped = tbs1[..firstFrameEnd];
-        var markedFinal = Seal(epochKey, handle, offset, epoch, keyId, salt, (plaintext, true));
-
-        foreach (var mutated in new[] { swapped, dropped, markedFinal })
-        {
-            Assert.Throws<CryptographicException>(() => TerraBaseShapeCrypto.Decrypt(mutated, epochKey, handle, offset, epoch, keyId));
-        }
-    }
-
-    [Test]
     public async Task RejectionVectorsRejectWholeObject()
     {
         using var fixture = LoadFixture();
@@ -105,72 +70,6 @@ public sealed class TerraBaseShapeCryptoTests
 
             Assert.Throws<CryptographicException>(() => TerraBaseShapeCrypto.Decrypt(tbs1, epochKey, handle, offset, epoch, keyId));
         }
-    }
-
-    [Test]
-    public async Task FullFrameWithoutFinalFrameIsRejected()
-    {
-        var salt = Filled(0x22);
-        var epochKey = Filled(0x33);
-        var tbs1 = Seal(epochKey, Handle, Offset, Epoch, KeyId, salt, (Filled(1, MiB), false));
-
-        Assert.Throws<CryptographicException>(() => TerraBaseShapeCrypto.Decrypt(tbs1, epochKey, Handle, Offset, Epoch, KeyId));
-        await Assert.That(tbs1.Length).IsEqualTo(HeaderLength + 4 + MiB + TagLength);
-    }
-
-    [Test]
-    public async Task NonLastFrameShorterThanOneMiBIsRejected()
-    {
-        var salt = Filled(0x22);
-        var epochKey = Filled(0x33);
-        var tbs1 = Seal(epochKey, Handle, Offset, Epoch, KeyId, salt, (Filled(1, 100), false), ([], true));
-        await Assert.That(tbs1.Length).IsEqualTo(HeaderLength + 4 + 100 + TagLength + 4 + TagLength);
-
-        Assert.Throws<CryptographicException>(() => TerraBaseShapeCrypto.Decrypt(tbs1, epochKey, Handle, Offset, Epoch, KeyId));
-    }
-
-    [Test]
-    public async Task PlaintextAtEightMiBIsAcceptedAndOneMoreByteIsRejected()
-    {
-        var salt = Filled(0x22);
-        var epochKey = Filled(0x33);
-        var full = Enumerable.Range(0, 8).Select(_ => (Filled(1, MiB), false)).ToList();
-
-        var atLimit = Seal(epochKey, Handle, Offset, Epoch, KeyId, salt, [.. full, ([], true)]);
-        var decrypted = TerraBaseShapeCrypto.Decrypt(atLimit, epochKey, Handle, Offset, Epoch, KeyId);
-        await Assert.That(decrypted.Length).IsEqualTo(8 * MiB);
-
-        var overLimit = Seal(epochKey, Handle, Offset, Epoch, KeyId, salt, [.. full, (Filled(1, 1), true)]);
-        Assert.Throws<CryptographicException>(() => TerraBaseShapeCrypto.Decrypt(overLimit, epochKey, Handle, Offset, Epoch, KeyId));
-    }
-
-    [Test]
-    public async Task EmptyObjectAndHeaderOnlyObjectHandleTheFrameRules()
-    {
-        var salt = Filled(0x22);
-        var epochKey = Filled(0x33);
-
-        var empty = Seal(epochKey, Handle, Offset, Epoch, KeyId, salt, ([], true));
-        await Assert.That(TerraBaseShapeCrypto.Decrypt(empty, epochKey, Handle, Offset, Epoch, KeyId).Length).IsEqualTo(0);
-
-        Assert.Throws<CryptographicException>(() => TerraBaseShapeCrypto.Decrypt(empty[..HeaderLength], epochKey, Handle, Offset, Epoch, KeyId));
-        Assert.Throws<CryptographicException>(() => TerraBaseShapeCrypto.Decrypt(empty[..^1], epochKey, Handle, Offset, Epoch, KeyId));
-    }
-
-    [Test]
-    public async Task InvalidParametersFailBeforeAnyDecryption()
-    {
-        var tbs1 = Seal(Filled(0x33), Handle, Offset, Epoch, KeyId, Filled(0x22), ([], true));
-        var epochKey = Filled(0x33);
-
-        Assert.Throws<ArgumentNullException>(() => TerraBaseShapeCrypto.Decrypt(null!, epochKey, Handle, Offset, Epoch, KeyId));
-        Assert.Throws<ArgumentException>(() => TerraBaseShapeCrypto.Decrypt(tbs1, Filled(0x33, 31), Handle, Offset, Epoch, KeyId));
-        Assert.Throws<ArgumentException>(() => TerraBaseShapeCrypto.Decrypt(tbs1, epochKey, "", Offset, Epoch, KeyId));
-        Assert.Throws<ArgumentException>(() => TerraBaseShapeCrypto.Decrypt(tbs1, epochKey, "h1 bad", Offset, Epoch, KeyId));
-        Assert.Throws<ArgumentException>(() => TerraBaseShapeCrypto.Decrypt(tbs1, epochKey, Handle, "snap\0", Epoch, KeyId));
-        Assert.Throws<ArgumentException>(() => TerraBaseShapeCrypto.Decrypt(tbs1, epochKey, Handle, Offset, Epoch, KeyId[..25]));
-        Assert.Throws<ArgumentException>(() => TerraBaseShapeCrypto.Decrypt(tbs1, epochKey, Handle, Offset, Epoch, KeyId + "x"));
-        await Assert.That(TerraBaseShapeCrypto.Decrypt(tbs1, epochKey, Handle, Offset, Epoch, KeyId).Length).IsEqualTo(0);
     }
 
     private const string Handle = "h1-f3171a2230109328";

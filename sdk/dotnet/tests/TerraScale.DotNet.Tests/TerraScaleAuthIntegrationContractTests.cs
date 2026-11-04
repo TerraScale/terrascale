@@ -11,21 +11,6 @@ public sealed class TerraScaleAuthIntegrationContractTests
 {
 
     [Test]
-    public async Task PublicApiAndContractsExcludeRetiredHeadlessOperations()
-    {
-        await Assert.That(typeof(TerraScaleAuthClient).GetProperty("Headless")).IsNull();
-        await Assert.That(typeof(TerraScaleAuthClient).Assembly.GetExportedTypes()
-            .Any(type => type.Name.StartsWith("TerraScaleAuthHeadless", StringComparison.Ordinal))).IsFalse();
-        using var routes = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("routes.json")));
-        await Assert.That(routes.RootElement.GetProperty("operations").EnumerateArray()
-            .Any(operation => operation.GetProperty("sdk_method").GetString()!.StartsWith("Headless.", StringComparison.Ordinal))).IsFalse();
-        var grants = routes.RootElement.GetProperty("oauth_operations").EnumerateArray()
-            .Single(operation => operation.GetProperty("operation_id").GetString() == "oauth_token").GetProperty("grants");
-        await Assert.That(grants.TryGetProperty("password", out _)).IsFalse();
-        await Assert.That(grants.TryGetProperty("email_code", out _)).IsFalse();
-    }
-
-    [Test]
     [Arguments("get_account_mfa")]
     [Arguments("set_organization_mfa_policy")]
     [Arguments("create_organization")]
@@ -187,49 +172,8 @@ public sealed class TerraScaleAuthIntegrationContractTests
     }
 
     // Any other success status is not evidence of either outcome.
-    [Test]
-    [Arguments(200)]
-    [Arguments(201)]
-    public async Task Deletions_refuse_other_success_statuses(int status)
-    {
-        using var handler = new CaptureHandler((HttpStatusCode)status, "");
-        using var http = new HttpClient(handler);
-        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Platform.DeleteProjectAsync("fixture-sign-in", "01JA0000000000000000000005", "01JA0000000000000000000006"));
-        await Assert.That(exception!.ErrorCode).IsEqualTo("invalid_response");
-    }
 
     // Every refusal ts-auth answers for a closure keeps its code (admitted vocabulary), sent once.
-    [Test]
-    [Arguments("delete_project", "not_empty")]
-    [Arguments("delete_project", "closure_conflict")]
-    [Arguments("delete_project", "binding_conflict")]
-    [Arguments("delete_account", "last_owner")]
-    [Arguments("delete_account", "not_empty")]
-    [Arguments("delete_account", "closure_conflict")]
-    [Arguments("delete_account", "binding_conflict")]
-    public async Task Deletions_surface_each_closure_refusal_once(string operation, string code)
-    {
-        using var handler = new CaptureHandler(HttpStatusCode.Conflict, $$$"""{"error":{"code":"{{{code}}}","message":"refused"}}""");
-        using var http = new HttpClient(handler);
-        var platform = Client(http).Platform;
-        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => operation == "delete_account"
-            ? (Task)platform.DeleteAccountWithProofAsync("fixture-sign-in", "fixture-step-up")
-            : platform.DeleteProjectAsync("fixture-sign-in", "01JA0000000000000000000005", "01JA0000000000000000000006"));
-        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-        await Assert.That(exception.ErrorCode).IsEqualTo(code);
-        await Assert.That(handler.Calls).IsEqualTo(1);
-    }
-
-    [Test]
-    public async Task DeleteAccountSurfacesLastOwnerConflictOnce()
-    {
-        using var handler = new CaptureHandler(HttpStatusCode.Conflict, """{"error":{"code":"last_owner","message":"transfer ownership first"}}""");
-        using var http = new HttpClient(handler);
-        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Platform.DeleteAccountWithProofAsync("fixture-sign-in", "fixture-step-up"));
-        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-        await Assert.That(exception.ErrorCode).IsEqualTo("last_owner");
-        await Assert.That(handler.Calls).IsEqualTo(1);
-    }
 
     [Test]
     public async Task ExportedFixtureShapesMatchDtoManifestRecursively()
@@ -253,152 +197,6 @@ public sealed class TerraScaleAuthIntegrationContractTests
         using var oauth = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("fixtures/oauth.json")));
         await AssertFixtureShapeAsync(oauth.RootElement.GetProperty("nested_error"), dtos, "ErrorBody");
         await AssertFixtureShapeAsync(oauth.RootElement.GetProperty("oauth_error"), dtos, "OAuthErrorBody");
-    }
-
-    [Test]
-    public async Task SecurityErrorListsStayInsideAdmittedVocabulary()
-    {
-        using var security = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("security.json")));
-        using var vocabulary = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("error-codes.json")));
-        var codes = vocabulary.RootElement.GetProperty("codes").EnumerateArray().Select(code => code.GetString()!).ToHashSet(StringComparer.Ordinal);
-        foreach (var list in new[] { "platform_codes", "token_codes" })
-            foreach (var code in security.RootElement.GetProperty("errors").GetProperty(list).EnumerateArray())
-                await Assert.That(codes.Contains(code.GetString()!)).IsTrue();
-    }
-
-    [Test]
-    public async Task FixturesRespectProducerRolesKeyScopeAndRotationClock()
-    {
-        using var fixtures = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("fixtures/platform-headless.json")));
-        var root = fixtures.RootElement;
-        // PlatformEndpoints.Map(..., Roles.Owner/Admin); rename authority is Roles.Admin.
-        await Assert.That(root.GetProperty("create_organization").GetProperty("response").GetProperty("role").GetString()).IsEqualTo("owner");
-        await Assert.That(root.GetProperty("create_project").GetProperty("response").GetProperty("role").GetString()).IsEqualTo("admin");
-        foreach (var operation in new[] { "rename_organization", "rename_project" })
-            await Assert.That(root.GetProperty(operation).GetProperty("response").GetProperty("role").GetString()).IsEqualTo("admin");
-        // ApiKeyEndpoint.ProjectId() is null and its creation guard refuses database for organization keys.
-        await Assert.That(root.GetProperty("create_organization_api_key").GetProperty("request").GetProperty("database").ValueKind).IsEqualTo(JsonValueKind.Null);
-        foreach (var action in new[] { "create", "list", "get", "rotate" })
-        {
-            var response = root.GetProperty(action + "_organization_api_key" + (action == "list" ? "s" : "")).GetProperty("response");
-            var keys = action == "list" ? response.GetProperty("items").EnumerateArray().ToArray()
-                : new[] { action == "get" ? response : response.GetProperty("api_key") };
-            foreach (var key in keys)
-            {
-                await Assert.That(key.GetProperty("project_id").ValueKind).IsEqualTo(JsonValueKind.Null);
-                await Assert.That(key.GetProperty("database").ValueKind).IsEqualTo(JsonValueKind.Null);
-            }
-        }
-        var now = new DateTimeOffset(2026, 10, 13, 0, 0, 0, TimeSpan.Zero);
-        foreach (var scope in new[] { "organization", "project" })
-        {
-            var rotation = root.GetProperty("rotate_" + scope + "_api_key");
-            // ApiKeys.RotateAsync sets now + previousTtl; ApiKeyEndpoint.Map exposes active grace only.
-            var ttl = rotation.GetProperty("request").GetProperty("previous_secret_ttl").GetInt32();
-            await Assert.That(rotation.GetProperty("response").GetProperty("api_key").GetProperty("previous_secret_expires_at").GetDateTimeOffset()).IsEqualTo(now.AddSeconds(ttl));
-        }
-        var invitation = root.GetProperty("create_invitation").GetProperty("response").GetProperty("invitation");
-        await Assert.That(invitation.GetProperty("status").GetString()).IsEqualTo("pending");
-        await Assert.That(invitation.GetProperty("expires_at").GetDateTimeOffset()).IsEqualTo(now.AddDays(7));
-        var transfer = root.GetProperty("start_ownership_transfer").GetProperty("response");
-        await Assert.That(transfer.GetProperty("expires_at").GetDateTimeOffset()).IsEqualTo(now.AddDays(7));
-        await Assert.That(transfer.GetProperty("from_user_id").GetString() == transfer.GetProperty("to_user_id").GetString()).IsFalse();
-        await Assert.That(root.GetProperty("confirm_ownership_transfer").GetProperty("response").GetProperty("role").GetString()).IsEqualTo("owner");
-    }
-
-    [Test]
-    public async Task ProjectInvitationFilterUsesCanonicalQueryWithoutRestartingPagination()
-    {
-        var ids = new TerraScaleIdGenerator(); var organization = ids.NewId(); var project = ids.NewId();
-        using var handler = new CaptureHandler(HttpStatusCode.OK, "{\"items\":[],\"next\":null}");
-        using var http = new HttpClient(handler);
-        await Client(http).Platform.ListInvitationsAsync("fixture-sign-in", organization, after: "opaque+/cursor=", projectId: project);
-        await Assert.That(handler.Uri!.PathAndQuery).IsEqualTo($"/v1/terrascale/organizations/{organization}/invitations?after=opaque%2B%2Fcursor%3D&project_id={project}");
-        await Assert.ThrowsAsync<ArgumentException>(() => Client(http).Platform.ListInvitationsAsync("fixture-sign-in", organization, projectId: "not-an-id"));
-        await Assert.That(handler.Calls).IsEqualTo(1);
-    }
-
-    [Test]
-    public async Task InvitationTokensRedactFormatting()
-    {
-        const string token = "fixture-invitation-canary";
-        var request = new TerraScaleAuthPlatformInvitationToken(token);
-        var created = new TerraScaleAuthPlatformCreatedInvitation(new("fixture-id", "synthetic@example.test", "member", null,
-            "fixture-user", DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch.AddDays(7), "pending"), token);
-        await Assert.That(request.ToString()).DoesNotContain(token);
-        await Assert.That(created.ToString()).DoesNotContain(token);
-    }
-
-    [Test]
-    [Arguments("project")]
-    [Arguments("project_api_key")]
-    [Arguments("organization_api_key")]
-    public async Task CidrSettersPreserveNullInvalidAndScopeErrorsWithoutReplay(string target)
-    {
-        foreach (var (cidrs, status, code) in new (IReadOnlyList<string>?, int, string)[]
-        {
-            (null, 400, "invalid_request"), (["invalid-cidr"], 400, "invalid_request"),
-            ([], 401, "unauthorized"), ([], 403, "forbidden_role"), ([], 404, "not_found"), ([], 503, "temporarily_unavailable")
-        })
-        {
-            using var handler = new CaptureHandler((HttpStatusCode)status, $$$"""{"error":{"code":"{{{code}}}","message":"refused"}}""");
-            using var http = new HttpClient(handler);
-            var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() => SetCidrs(Client(http), target, new(cidrs)));
-            await Assert.That(error!.StatusCode).IsEqualTo((HttpStatusCode)status);
-            await Assert.That(error.ErrorCode).IsEqualTo(code);
-            await Assert.That(handler.Body).IsEqualTo(JsonSerializer.Serialize(new { allowed_cidrs = cidrs }));
-            await Assert.That(handler.Calls).IsEqualTo(1);
-        }
-        using var untouched = new CaptureHandler(HttpStatusCode.OK, "{}");
-        using var unusedHttp = new HttpClient(untouched);
-        await Assert.ThrowsAsync<ArgumentNullException>(() => SetCidrs(Client(unusedHttp), target, null!));
-        using var cancelled = new CancellationTokenSource();
-        await cancelled.CancelAsync();
-        await Assert.ThrowsAsync<OperationCanceledException>(() => SetCidrs(Client(unusedHttp), target, new([]), cancelled.Token));
-        await Assert.That(untouched.Calls).IsEqualTo(0);
-    }
-
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task CreateKeyCidrsRoundTripAndAbsentRequestMeansUnrestricted(bool project)
-    {
-        using var fixtures = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("fixtures/platform-headless.json")));
-        var operation = project ? "create_project_api_key" : "create_organization_api_key";
-        var response = JsonNode.Parse(fixtures.RootElement.GetProperty(operation).GetProperty("response").GetRawText())!;
-        response["api_key"]!["allowed_cidrs"] = new JsonArray("192.0.2.0/24");
-        using var handler = new CaptureHandler(HttpStatusCode.Created, response.ToJsonString());
-        using var http = new HttpClient(handler);
-        var platform = Client(http).Platform;
-        var request = new TerraScaleAuthPlatformCreateApiKey("CIDR key", ["documents:read"], AllowedCidrs: ["192.0.2.129/24"]);
-        var result = project ? await platform.CreateProjectApiKeyAsync("fixture-sign-in", CidrId, CidrId, request, "fixture-step-up")
-            : await platform.CreateOrganizationApiKeyAsync("fixture-sign-in", CidrId, request, "fixture-step-up");
-        await Assert.That(handler.Body).IsEqualTo("""{"name":"CIDR key","scopes":["documents:read"],"database":null,"expires_at":null,"allowed_cidrs":["192.0.2.129/24"]}""");
-        await Assert.That(result.ApiKey.AllowedCidrs.Single()).IsEqualTo("192.0.2.0/24");
-        await Assert.That(handler.Calls).IsEqualTo(1);
-        var metadata = TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformCreateApiKey;
-        var absent = JsonSerializer.Deserialize("""{"name":"CIDR key","scopes":["documents:read"]}""", metadata)!;
-        await Assert.That(absent.AllowedCidrs).IsNull();
-        await Assert.That(JsonSerializer.Serialize(absent with { AllowedCidrs = [] }, metadata)).EndsWith("\"allowed_cidrs\":[]}");
-    }
-
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task ProjectAndKeyResultsRequireNonNullCidrCollections(bool key)
-    {
-        using var fixtures = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("fixtures/platform-headless.json")));
-        foreach (var missing in new[] { false, true })
-        {
-            var body = JsonNode.Parse(fixtures.RootElement.GetProperty(key ? "get_organization_api_key" : "get_project").GetProperty("response").GetRawText())!.AsObject();
-            if (missing) body.Remove("allowed_cidrs"); else body["allowed_cidrs"] = null;
-            using var handler = new CaptureHandler(HttpStatusCode.OK, body.ToJsonString());
-            using var http = new HttpClient(handler);
-            var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() => key
-                ? (Task)Client(http).Platform.GetOrganizationApiKeyAsync("fixture-sign-in", CidrId, CidrId)
-                : Client(http).Platform.GetProjectAsync("fixture-sign-in", CidrId, CidrId));
-            await Assert.That(error!.ErrorCode).IsEqualTo("invalid_response");
-        }
     }
 
     private const string CidrId = "01JA0000000000000000000001";

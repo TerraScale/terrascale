@@ -1,0 +1,30 @@
+{
+  "source": "src/TerraBase/Features/Sql/SqlErrors.cs (PIVOT E3, branch wrk/e3-sql-ws 8169fa185)",
+  "codes": [
+    {"code": "sql_error", "sqlstate": "0A000", "status": 400},
+    {"code": "syntax_error", "sqlstate": "42601", "status": 400},
+    {"code": "undefined_table", "sqlstate": "42P01", "status": 400},
+    {"code": "undefined_column", "sqlstate": "42703", "status": 400},
+    {"code": "duplicate_object", "sqlstate": "42P07", "status": 400},
+    {"code": "primary_key_violation", "sqlstate": "23505", "status": 400},
+    {"code": "unique_violation", "sqlstate": "23505", "status": 400},
+    {"code": "not_null_violation", "sqlstate": "23502", "status": 400},
+    {"code": "check_violation", "sqlstate": "23514", "status": 400},
+    {"code": "foreign_key_violation", "sqlstate": "23503", "status": 400},
+    {"code": "constraint_violation", "sqlstate": "23000", "status": 400},
+    {"code": "forbidden_scope", "sqlstate": "42501", "status": 403},
+    {"code": "serialization_conflict", "sqlstate": "40001", "status": 409},
+    {"code": "too_large", "sqlstate": "54000", "status": 413},
+    {"code": "query_canceled", "sqlstate": "57014", "status": 400},
+    {"code": "transaction_rolled_back", "sqlstate": "40000", "status": 400},
+    {"code": "transaction_aborted", "sqlstate": "25P02", "status": 400},
+    {"code": "read_only_transaction", "sqlstate": "25006", "status": 400},
+    {"code": "quota_exceeded", "sqlstate": "53100", "status": 429},
+    {"code": "invalid_request", "sqlstate": "22023", "status": 400},
+    {"code": "transaction_state", "sqlstate": "25000", "status": 400},
+    {"code": "tenant_busy", "sqlstate": "53300", "status": 429},
+    {"code": "unavailable", "sqlstate": "57P03", "status": 503},
+    {"code": "unauthorized", "sqlstate": "28000", "status": 401},
+    {"code": "internal_error", "sqlstate": "XX000", "status": 500}
+  ]
+}

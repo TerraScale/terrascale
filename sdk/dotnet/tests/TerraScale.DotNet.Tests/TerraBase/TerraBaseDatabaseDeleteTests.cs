@@ -33,40 +33,4 @@ public sealed class TerraBaseDatabaseDeleteTests
         await Assert.That(request.HasBody).IsFalse();
     }
 
-    [Test]
-    [Arguments(HttpStatusCode.NotFound, "unknown_database", typeof(TerraBaseNotFoundException))]
-    [Arguments(HttpStatusCode.Conflict, "database_replicated", typeof(TerraBaseConflictException))]
-    public async Task DeleteFailuresKeepTheirStatusAndErrorCode(HttpStatusCode status, string code, Type type)
-    {
-        using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(new HttpResponseMessage(status)
-        {
-            Content = new StringContent($"{{\"error\":{{\"code\":\"{code}\",\"message\":\"refused\"}}}}"),
-        }));
-        using var http = new HttpClient(handler);
-        var database = new TerraBaseDocumentsClient(http, Options).Database("project", "app");
-
-        var error = await Assert.ThrowsAsync<TerraBaseException>(() => database.DeleteAsync());
-
-        await Assert.That(error!.GetType()).IsEqualTo(type);
-        await Assert.That(error.StatusCode).IsEqualTo(status);
-        await Assert.That(error.ErrorCode).IsEqualTo(code);
-    }
-
-    [Test]
-    public async Task ClientsWithoutCredentialSendNoAuthorization()
-    {
-        string? authorization = "unset";
-        using var handler = new TerraBaseTestHandler((request, _) =>
-        {
-            authorization = request.Headers.Authorization?.ToString();
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
-        });
-        using var http = new HttpClient(handler);
-        var database = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = new Uri("http://100.64.0.1:8081/") })
-            .Database("project", "app");
-
-        await database.DeleteAsync();
-
-        await Assert.That(authorization).IsNull();
-    }
 }

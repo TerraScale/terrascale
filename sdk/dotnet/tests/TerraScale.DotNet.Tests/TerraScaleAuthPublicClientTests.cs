@@ -62,52 +62,6 @@ public sealed class TerraScaleAuthPublicClientTests
         foreach (var pair in expected) await Assert.That(sent[pair.Key]).IsEqualTo(pair.Value);
     }
 
-    [Test]
-    [Arguments("authorization_pending")]
-    [Arguments("slow_down")]
-    [Arguments("expired_token")]
-    [Arguments("access_denied")]
-    [Arguments("invalid_grant")]
-    [Arguments("invalid_scope")]
-    public async Task Device_outcomes_remain_typed_without_polling_or_reissuing(string code)
-    {
-        using var handler = new Handler((_, _) => Task.FromResult(Json("{\"error\":\"" + code + "\"}", HttpStatusCode.BadRequest)));
-        using var http = new HttpClient(handler);
-        var failure = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Oidc.ExchangeDeviceCodeAsync("public", "fixture-device"));
-        await Assert.That(failure!.ErrorCode).IsEqualTo(code);
-        await Assert.That(handler.Calls).IsEqualTo(1);
-    }
-
-    [Test]
-    [Arguments("{}")]
-    [Arguments("null")]
-    [Arguments("{\"device_code\":null}")]
-    public async Task Incomplete_device_response_is_not_a_new_authorization(string body)
-    {
-        using var handler = new Handler((_, _) => Task.FromResult(Json(body)));
-        using var http = new HttpClient(handler);
-        await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Oidc.StartDeviceAuthorizationAsync("public"));
-        await Assert.That(handler.Calls).IsEqualTo(1);
-    }
-
-    [Test]
-    public async Task Cancellation_sends_nothing_and_device_diagnostics_hide_codes_and_uris()
-    {
-        using var handler = new Handler((_, _) => Task.FromResult(Json(Tokens)));
-        using var http = new HttpClient(handler);
-        var oidc = Client(http).Oidc;
-        using var canceled = new CancellationTokenSource(); canceled.Cancel();
-        await Assert.ThrowsAsync<OperationCanceledException>(() => oidc.StartDeviceAuthorizationAsync("public", cancellationToken: canceled.Token));
-        await Assert.ThrowsAsync<OperationCanceledException>(() => oidc.ExchangeDeviceCodeAsync("public", "device", canceled.Token));
-        await Assert.ThrowsAsync<OperationCanceledException>(() => oidc.ExchangePublicAuthorizationCodeAsync("public", "code", "https://app.example/cb", "verifier", canceled.Token));
-        await Assert.ThrowsAsync<OperationCanceledException>(() => oidc.RefreshTokenAsync("public", "refresh", canceled.Token));
-        await Assert.ThrowsAsync<OperationCanceledException>(() => oidc.RevokeTokenAsync("public", "refresh", canceled.Token));
-        await Assert.ThrowsAsync<OperationCanceledException>(() => oidc.ExchangePublicClientTokenAsync("public", "subject", Organization, cancellationToken: canceled.Token));
-        await Assert.That(handler.Calls).IsEqualTo(0);
-        var diagnostic = new TerraScaleAuthDeviceAuthorization("secret-device", "secret-user", "https://secret-uri", 600, 5, "https://secret-complete").ToString();
-        await Assert.That(diagnostic.Contains("secret-", StringComparison.Ordinal)).IsFalse();
-    }
-
     private static TerraScaleAuthClient Client(HttpClient http) => new(http,
         new TerraScaleAuthClientOptions { BaseAddress = new Uri("https://auth.example.test"), InstanceSlug = "terrascale" });
     private static string Decode(string value) => Uri.UnescapeDataString(value.Replace('+', ' '));

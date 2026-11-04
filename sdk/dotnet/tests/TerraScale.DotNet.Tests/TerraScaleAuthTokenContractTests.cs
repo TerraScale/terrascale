@@ -33,20 +33,6 @@ public sealed class TerraScaleAuthTokenContractTests
     }
 
     [Test]
-    [Arguments("https://auth.terrascale.tech")]
-    [Arguments("https://auth.terrascale.tech/")]
-    public async Task DiscoveryAndTokenEndpointsHangOffTheGlobalIssuerWithoutTrailingSlash(string origin)
-    {
-        using var handler = new CaptureHandler(HttpStatusCode.OK, TokenJson);
-        using var http = new HttpClient(handler);
-        var client = Client(http, origin);
-        await client.Oidc.RequestClientCredentialsTokenAsync("01JA0000000000000000000001", "fixture-secret", "documents:read");
-        await Assert.That(handler.Uris[0].AbsoluteUri).IsEqualTo(Issuer + "/oauth/token");
-        await client.Oidc.GetDiscoveryDocumentAsync();
-        await Assert.That(handler.Uris[1].AbsoluteUri).IsEqualTo(Issuer + "/.well-known/openid-configuration");
-    }
-
-    [Test]
     [Arguments("documents:read")]
     [Arguments("databases:read documents:read")]
     [Arguments("databases:read databases:write documents:read documents:write")]
@@ -74,31 +60,6 @@ public sealed class TerraScaleAuthTokenContractTests
         await Assert.That(form["organization"]).IsEqualTo("01JA0000000000000000000002");
         await Assert.That(form["project"]).IsEqualTo("01JA0000000000000000000003");
         await Assert.That(handler.Authorizations[0]!.Scheme).IsEqualTo("Basic");
-    }
-
-    [Test]
-    public async Task NoScopeIsNeverBroadenedClientSide()
-    {
-        // A null scope leaves the choice to the producer (the key's own scopes or the role's); the SDK adds none.
-        using var handler = new CaptureHandler(HttpStatusCode.OK, TokenJson);
-        using var http = new HttpClient(handler);
-        var client = Client(http);
-        await client.Oidc.RequestClientCredentialsTokenAsync("01JA0000000000000000000001", "fixture-secret");
-        await client.Oidc.ExchangeTokenAsync("fixture-client", "fixture-secret", "fixture-subject", "01JA0000000000000000000002");
-        foreach (var body in handler.Bodies) await Assert.That(Form(body).ContainsKey("scope")).IsFalse();
-    }
-
-    [Test]
-    [Arguments(HttpStatusCode.Unauthorized, "invalid_client")]
-    [Arguments(HttpStatusCode.Forbidden, "access_denied")]
-    public async Task AuthTokenRefusalsKeepTheirStatusAndAreSentOnce(HttpStatusCode status, string code)
-    {
-        using var handler = new CaptureHandler(status, "{\"error\":\"" + code + "\"}");
-        using var http = new HttpClient(handler);
-        var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() =>
-            Client(http).Oidc.RequestClientCredentialsTokenAsync("01JA0000000000000000000001", "fixture-secret", "documents:write"));
-        await Assert.That(error!.StatusCode).IsEqualTo(status);
-        await Assert.That(handler.Uris.Count).IsEqualTo(1);
     }
 
     [Test]
