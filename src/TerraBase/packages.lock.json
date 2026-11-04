@@ -117,6 +117,15 @@
           "NATS.NKeys": "1.0.1"
         }
       },
+      "NATS.Client.JetStream": {
+        "type": "Direct",
+        "requested": "[3.3.2, )",
+        "resolved": "3.3.2",
+        "contentHash": "JF2xH52Fjj/KTpiCqLgOvFGoJl92eKlgT62X02oEkff/TphWjoXG1s26I7ySIwiScHgToW/fAuM0HW/76k7J4Q==",
+        "dependencies": {
+          "NATS.Client.Core": "3.3.2"
+        }
+      },
       "NUlid": {
         "type": "Direct",
         "requested": "[1.7.3, )",

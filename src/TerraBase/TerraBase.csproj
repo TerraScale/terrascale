@@ -28,6 +28,7 @@
     <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
     <PackageReference Include="NATS.Client.Core" />
     <PackageReference Include="K4os.Compression.LZ4.Streams" />
+    <PackageReference Include="NATS.Client.JetStream" />
     <PackageReference Include="NativeCompressions" />
     <PackageReference Include="Ulid" />
     <PackageReference Include="NUlid" />
