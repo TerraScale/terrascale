@@ -24,7 +24,7 @@ public sealed class TransportSecurityTests
     [Arguments("postgres")]
     public async Task A_token_opens_the_surface_through_the_tls_edge(string surface)
     {
-        await using var db = await SqlNativeDatabase.StartAsync();
+        await using var db = await SqlNativeDatabase.StartSharedAsync();
 
         if (surface == "rest")
         {
