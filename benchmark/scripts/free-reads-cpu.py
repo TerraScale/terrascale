@@ -57,13 +57,15 @@ def main():
             cores, affinity = capacity(path)
             used = (int(fields[11]) + int(fields[12])) / os.sysconf('SC_CLK_TCK')
             now = time.monotonic()
+            age = float(Path('/proc/uptime').read_text().split()[0]) - start / os.sysconf('SC_CLK_TCK')
             if previous is not None:
                 elapsed, delta = now - previous[0], used - previous[1]
                 if delta < 0 or cores != previous[2]:
                     raise ValueError('CPU_PROCESS_OR_CAPACITY_CHANGED')
                 print(json.dumps({'at': time.time(), 'cores': cores, 'affinity_cpus': affinity,
                                   'cpu_percent': 100 * delta / elapsed / cores, 'core_percent': 100 * delta / elapsed,
-                                  'pid': int(path.name), 'start_ticks': start, 'source': 'proc_cgroup_v2'}), flush=True)
+                                  'pid': int(path.name), 'start_ticks': start, 'process_age_seconds': age,
+                                  'source': 'proc_cgroup_v2'}), flush=True)
             previous = now, used, cores
         except (OSError, ValueError) as error:
             print(json.dumps({'error': 'CPU process or capacity unavailable or changed',

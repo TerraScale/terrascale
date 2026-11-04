@@ -45,6 +45,13 @@ async function monitor() {
         reject(controller.signal.reason);
         return;
       }
+      if (!ready && sample.process_age_seconds < 120) {
+        emit({ type: "guard", ...sample });
+        controller.abort(new Error("CPU_PROCESS_WARMUP"));
+        clearTimeout(deadline);
+        reject(controller.signal.reason);
+        return;
+      }
       cpu.push(sample);
       if (!ready) { ready = true; emit({ type: "cpu_capacity", ...sample }); clearTimeout(deadline); resolve(); }
     });
@@ -200,6 +207,8 @@ async function main({ readerCounts = [1, 10, 100, 1000], regions = ["gru", "sjc"
           const subscriptions = [];
           const waiters = [];
           let tailStarted = 0;
+          let flightReady;
+          let flightPreWrite;
           let live = 0;
           let outcome = "complete";
           let rejectReader;
@@ -296,8 +305,10 @@ async function main({ readerCounts = [1, 10, 100, 1000], regions = ["gru", "sjc"
             await Promise.race([Promise.all(waiters.map(waiter => waiter.ready)), failed, readerFailed]);
             for (let attempt = 0; live < 1 && attempt < 100; attempt++) { deadline.throwIfAborted(); await delay(10); }
             if (live < 1) throw new Error("LIVE_NOT_READY");
+            flightReady = flightMetrics ? await shapeFlights() : undefined;
             if (holdMs) await delay(holdMs);
             deadline.throwIfAborted();
+            flightPreWrite = flightMetrics ? await shapeFlights() : undefined;
             tailStarted = performance.now();
             await db.execute(`UPDATE ${table} SET version = 2 WHERE id = 1`, undefined, { signal: deadline });
             await Promise.race([Promise.all(waiters.map(waiter => waiter.tail)), failed, readerFailed]);
@@ -315,6 +326,7 @@ async function main({ readerCounts = [1, 10, 100, 1000], regions = ["gru", "sjc"
           const samples = cpu.filter(sample => sample.at * 1000 >= started && sample.at * 1000 <= ended);
           emit({ type: "cell", sha, outcome, region, shape, readers, repeat, start: new Date(started).toISOString(), end: new Date(ended).toISOString(),
             shared_flights_started: flightBefore === undefined ? undefined : flightAfter - flightBefore,
+            flight_phases: flightBefore === undefined ? undefined : { staging: flightReady - flightBefore, hold: flightPreWrite - flightReady, update: flightAfter - flightPreWrite },
             snapshot: stats(snapshot, readers), catchup: stats(caughtUp, readers), tail: stats(tail, readers), requests, statuses, origin_statuses: originStatuses, colos,
             tail_only: tailOnly, cdn_hit_ratio: requests.cdn ? (statuses.HIT ?? 0) / requests.cdn : null,
             cpu_samples: samples.length, cpu_max_percent: samples.length ? Math.max(...samples.map(sample => sample.cpu_percent)) : null,
