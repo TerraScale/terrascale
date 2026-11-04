@@ -57,6 +57,7 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
         }
 
         _session = _services.GetRequiredService<ISqlService>().Open(Database, _canWrite);
+        _session.Prefer(SqlExecuteEndpoint.Preference(context.Request.Headers[SqlExecuteEndpoint.WriteHeader]) ?? Routing.WriteOverride.Auto);
         await using (_session.ConfigureAwait(false))
         {
             await ServeAsync(cancellationToken).ConfigureAwait(false);

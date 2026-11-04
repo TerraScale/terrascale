@@ -94,7 +94,7 @@ internal static class HomeForwarding
         context.RequestServices.GetRequiredService<InternalCredential>().Sign(request.Headers);
     }
 
-    private static async Task ForwardAsync(HttpContext context, HomeNode home)
+    internal static async Task ForwardAsync(HttpContext context, HomeNode home, byte[]? body = null)
     {
         var services = context.RequestServices;
         using var request = new HttpRequestMessage(new HttpMethod(context.Request.Method),
@@ -103,9 +103,9 @@ internal static class HomeForwarding
             Version = HttpVersion.Version20,
             VersionPolicy = HttpVersionPolicy.RequestVersionExact,
         };
-        if (context.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true)
+        if (body is not null || context.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true)
         {
-            request.Content = new StreamContent(context.Request.Body);
+            request.Content = body is null ? new StreamContent(context.Request.Body) : new ByteArrayContent(body);
             if (context.Request.ContentType is { } contentType)
             {
                 request.Content.Headers.TryAddWithoutValidation("Content-Type", contentType);
@@ -114,6 +114,7 @@ internal static class HomeForwarding
 
         Sign(context, request, home.Region);
         HttpResponseMessage response;
+        var started = TimeProvider.System.GetTimestamp();
         try
         {
             response = await services.GetRequiredService<IHttpClientFactory>().CreateClient(HomeLocator.HttpClientName)
@@ -139,8 +140,12 @@ internal static class HomeForwarding
                 }
             }
 
-            await using var body = await response.Content.ReadAsStreamAsync(context.RequestAborted).ConfigureAwait(false);
-            await body.CopyToAsync(context.Response.Body, context.RequestAborted).ConfigureAwait(false);
+            var elapsed = TimeProvider.System.GetElapsedTime(started).TotalMilliseconds;
+            context.Response.Headers.Append("Server-Timing",
+                string.Create(System.Globalization.CultureInfo.InvariantCulture, $"home;dur={elapsed:0.0};desc=\"{home.Region}\""));
+
+            await using var answer = await response.Content.ReadAsStreamAsync(context.RequestAborted).ConfigureAwait(false);
+            await answer.CopyToAsync(context.Response.Body, context.RequestAborted).ConfigureAwait(false);
         }
     }
 }
