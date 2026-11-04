@@ -10,6 +10,26 @@ namespace TerraScale.Dashboard.Features.Data
     [McpServerToolType]
     public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, SavedQueryService saved, AccountService accounts)
     {
+        [McpServerTool(Name = "execute_sql", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Execute one read-only SQL statement against relational tables, which are separate from document collections. SQL is limited to 16 KiB; bound parameters are unsupported.")]
+        public Task<DatabaseSqlResult> Sql(string databaseId, string sql, string? organizationId = null, string? projectId = null)
+        {
+            return data.SqlAsync(Scope(organizationId, projectId), databaseId, sql, false, Cancellation);
+        }
+
+        [McpServerTool(Name = "check_sql", Title = "Check SQL", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Check SQL input limits without running it: blank input, size, statement boundaries, parameters and transaction commands. Does not validate SQL syntax, tables or permissions.")]
+        public SqlAnalysis CheckSql(string databaseId, string sql, string? organizationId = null, string? projectId = null)
+        {
+            DatabaseService.Database(Scope(organizationId, projectId), databaseId);
+            return SqlValidation.Analyze(sql);
+        }
+
+        [McpServerTool(Name = "run_sql", Title = "Run SQL", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Run one read-only SQL query against relational tables, which are separate from document collections. SQL is limited to 16 KiB; bound parameters are unsupported.")]
+        public async Task<McpSqlResponse> RunSql(string databaseId, string sql, string? organizationId = null, string? projectId = null)
+        {
+            var result = await data.SqlAsync(Scope(organizationId, projectId), databaseId, sql, false, Cancellation);
+            return new(new(result.Columns, result.Rows));
+        }
+
         [McpServerTool(Name = "list_collections", Title = "List collections", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List the collection names in a database.")]
         public async Task<McpCollectionList> Collections(string databaseId, string? organizationId = null, string? projectId = null)
         {
@@ -95,26 +115,6 @@ namespace TerraScale.Dashboard.Features.Data
         public async Task<McpCollectionSchema> Schema(string databaseId, string collection, string? organizationId = null, string? projectId = null)
         {
             return new(collection, await data.SchemaAsync(Scope(organizationId, projectId), databaseId, collection, Cancellation));
-        }
-
-        [McpServerTool(Name = "execute_sql", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Execute one read-only SQL statement against relational tables, which are separate from document collections. SQL is limited to 16 KiB; bound parameters are unsupported.")]
-        public Task<DatabaseSqlResult> Sql(string databaseId, string sql, string? organizationId = null, string? projectId = null)
-        {
-            return data.SqlAsync(Scope(organizationId, projectId), databaseId, sql, false, Cancellation);
-        }
-
-        [McpServerTool(Name = "check_sql", Title = "Check SQL", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Check SQL input limits without running it: blank input, size, statement boundaries, parameters and transaction commands. Does not validate SQL syntax, tables or permissions.")]
-        public SqlAnalysis CheckSql(string databaseId, string sql, string? organizationId = null, string? projectId = null)
-        {
-            DatabaseService.Database(Scope(organizationId, projectId), databaseId);
-            return SqlValidation.Analyze(sql);
-        }
-
-        [McpServerTool(Name = "run_sql", Title = "Run SQL", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Run one read-only SQL query against relational tables, which are separate from document collections. SQL is limited to 16 KiB; bound parameters are unsupported.")]
-        public async Task<McpSqlResponse> RunSql(string databaseId, string sql, string? organizationId = null, string? projectId = null)
-        {
-            var result = await data.SqlAsync(Scope(organizationId, projectId), databaseId, sql, false, Cancellation);
-            return new(new(result.Columns, result.Rows));
         }
 
         [McpServerTool(Name = "list_indexes", Title = "List indexes", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a collection's indexed fields and their build state.")]
