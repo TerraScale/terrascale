@@ -8,10 +8,11 @@ using TUnit.Core.Interfaces;
 
 namespace TerraScale.Authentication.Tests;
 
-/// <summary>One real TerraBase process per suite, built from this commit; every test gets its own tenant and database.</summary>
+/// <summary>One real TerraBase process per suite, built from this commit; every test gets its own project, scoped key and database.</summary>
 public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
 {
     private TerraBaseTestServer? server;
+    private TerraBaseTestTenant? organizationOwner;
 
     public TerraBaseTestServer Server => this.server ?? throw new InvalidOperationException("TerraBase fixture has not started.");
 
@@ -19,11 +20,17 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     {
         var (running, unavailable) = await TerraBaseTestServer.StartAsync();
         this.server = running ?? throw new InvalidOperationException($"Real TerraBase integration tests need TerraBase: {unavailable}");
+        this.organizationOwner = await this.Server.CreateTenantAsync();
     }
 
     public async Task<(TerraBaseTestTenant Tenant, TerraBaseSqlDatabase Database)> CreateDatabaseAsync(bool provision = true)
     {
-        var tenant = await this.Server.CreateTenantAsync();
+        var owner = this.organizationOwner ?? throw new InvalidOperationException("TerraBase fixture has not started.");
+        // The fixture owns one enterprise organization; each test owns a project and a key restricted to it.
+        // This preserves storage isolation without repeating organization creation and plan changes per test.
+        var project = await this.Server.Management().CreateProjectAsync(owner.UserId, owner.Organization.Id, "Test " + Guid.NewGuid().ToString("N"));
+        var tenant = new TerraBaseTestTenant(owner.UserId, owner.Organization, project,
+            await this.Server.CreateApiKeyAsync(owner.Organization.Id, projectId: project.Id));
         await this.Server.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth").CreateAsync();
         var database = this.Server.Sql(tenant.ApiKey).Database(tenant.Project.Id, "auth");
         if (provision)
