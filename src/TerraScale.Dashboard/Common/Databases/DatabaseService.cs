@@ -335,7 +335,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 var seen = project.Databases.Values.ToArray();
                 // Copy placement before awaiting the provider; mutable record references are not a concurrency snapshot.
                 var observed = seen.ToDictionary(record => record.Id, record =>
-                    (record.Name, record.ProjectId, record.PreviousName, record.ConflictOf, record.Region, Regions: Regions(record).ToArray(), record.AllRegions, record.PlacementRevision));
+                    (record.Name, record.ProjectId, record.PreviousName, record.ConflictOf, record.ExpiresAt, record.Region, Regions: Regions(record).ToArray(), record.AllRegions, record.PlacementRevision));
                 // TerraBase homes a database in whichever region accepted its creation, whatever created it: a project's
                 // preferred region is only a preference, and a project made outside the dashboard has none. Listing every
                 // serving region is the complete catalog; the regions answer in parallel and converge on the same list.
