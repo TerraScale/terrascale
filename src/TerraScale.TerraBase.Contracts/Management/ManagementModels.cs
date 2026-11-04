@@ -14,7 +14,6 @@ namespace TerraScale.TerraBase.Contracts.Management
     [MessagePackObject(true)]
     public sealed record TerraBaseDatabasePlacement(string? Name = null, string? HomeRegion = null, IReadOnlyList<string>? ReplicaRegions = null, bool? AllRegions = null, long? TtlSeconds = null);
 
-    /// <summary>The TTL request for the database expiry endpoint.</summary>
     [MessagePackObject(true)]
     public sealed record TerraBaseDatabaseTtl(long TtlSeconds);
 
