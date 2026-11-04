@@ -43,8 +43,7 @@
     </span>
 
     <h1 class="hero__headline">
-      {$dict.hero.headlineLead}<br />
-      {$dict.hero.headlineAccent}
+      {$dict.hero.headline}
     </h1>
 
     <div class="hero__cta">

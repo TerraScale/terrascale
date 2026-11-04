@@ -68,8 +68,7 @@ export const en = {
   },
 
   hero: {
-    headlineLead: 'SQL database,',
-    headlineAccent: 'with regional read replicas.',
+    headline: 'Multi-region database',
     cta: 'Start free',
   },
 

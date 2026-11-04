@@ -70,8 +70,7 @@ export const es: Messages = {
   },
 
   hero: {
-    headlineLead: 'Base de datos SQL,',
-    headlineAccent: 'con réplicas de lectura regionales.',
+    headline: 'Base de datos multirregión',
     cta: 'Empieza gratis',
   },
 

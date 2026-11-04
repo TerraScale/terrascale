@@ -70,8 +70,7 @@ export const ptBr: Messages = {
   },
 
   hero: {
-    headlineLead: 'Banco de dados SQL,',
-    headlineAccent: 'com réplicas de leitura regionais.',
+    headline: 'Banco de dados multirregião',
     cta: 'Comece grátis',
   },
 
