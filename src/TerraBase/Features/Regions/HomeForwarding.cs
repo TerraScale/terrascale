@@ -51,6 +51,12 @@ internal static class HomeForwarding
         }
 
         var database = context.Request.RouteValues["database"] as string;
+        if (database is null && HttpMethods.IsPost(context.Request.Method)
+            && context.Request.Path.Value?.TrimEnd('/') == $"/v1/projects/{project}/databases")
+        {
+            return null;
+        }
+
         var services = context.RequestServices;
         var organization = await services.GetRequiredService<IProjectCatalog>().ProjectOrganizationAsync(project, context.RequestAborted).ConfigureAwait(false);
         if (organization is string found)
