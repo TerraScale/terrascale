@@ -3,6 +3,7 @@ using System.Net;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using TerraBase.Features.Management;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Testing;
