@@ -93,15 +93,14 @@ namespace TerraScale.Dashboard.Features.Databases
 
                 try
                 {
-                    // TerraBase serves each database only in its home region until replicas are available, so a
-                    // create names the home region alone. API callers that omit it get the project's region.
                     var home = form.ContainsKey("homeRegion") ? form["homeRegion"].ToString().Trim() : context.Project?.Region ?? "";
                     if (home.Length == 0)
                     {
                         throw new AccountAccessException("Choose a home region.", 422);
                     }
 
-                    var database = await databases.CreateAsync(context, form["name"].ToString(), home, http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()));
+                    var database = await databases.CreateAsync(context, form["name"].ToString(), home, http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()),
+                        [.. form["replicaRegions"].OfType<string>()], form["allRegions"].ToString() is "on" or "true");
                     return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : Results.Json(DatabaseOutput(database), statusCode: 201);
                 }
                 catch (Exception error) when (KnownFailure(error))
@@ -151,6 +150,7 @@ namespace TerraScale.Dashboard.Features.Databases
             }
             endpoints.MapDatabaseSettings();
             endpoints.MapDatabaseGrants();
+            endpoints.MapDatabasePlacement();
             endpoints.MapDataFeatures();
             endpoints.MapDatabaseLogs();
             endpoints.MapDatabaseFunctions();
@@ -161,7 +161,7 @@ namespace TerraScale.Dashboard.Features.Databases
         }
 
         // Keep the storage revision private; database responses retain their existing fields.
-        private static object DatabaseOutput(DatabaseRecord database, bool restricted = false)
+        internal static object DatabaseOutput(DatabaseRecord database, bool restricted = false)
         {
             return new
             {
@@ -262,7 +262,7 @@ namespace TerraScale.Dashboard.Features.Databases
             var tablesRead = tab is "overview" or "tables" or "grants" ? TablesAsync() : null;
             var grantsRead = tab == "grants" ? DatabaseGrants.ListAsync(context, database, backend, databases, http.RequestAborted) : null;
             // An all-regions database serves every catalog region; without the catalog it shows its recorded regions.
-            if (tab == "overview" && database.AllRegions)
+            if (tab == "replication" || tab == "overview" && database.AllRegions)
             {
                 try { choices = await backend.RegionsAsync(http.RequestAborted); }
                 catch (HttpRequestException) { }
