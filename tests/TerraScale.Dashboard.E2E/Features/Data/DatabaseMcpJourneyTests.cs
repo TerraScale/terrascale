@@ -64,7 +64,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 }
                 // Invoice reads reach Stripe, unlike tools confined to TerraScale-owned state.
                 await Assert.That(tools["list_invoices"].GetProperty("annotations").GetProperty("openWorldHint").GetBoolean()).IsTrue();
-                var names = new[] { "list_databases", "get_database", "create_database", "set_database_regions", "branch_database", "delete_database", "list_collections", "create_collection", "list_documents", "get_document", "create_document", "replace_document", "patch_document", "delete_document", "get_collection_schema", "get_collection_validation", "set_collection_schema", "list_indexes", "create_index", "check_sql", "run_sql", "list_saved_queries", "save_query", "delete_saved_query", "list_api_keys", "create_api_key", "rotate_api_key", "revoke_api_key", "set_api_key_allowed_cidrs" };
+                var names = new[] { "list_databases", "get_database", "create_database", "branch_database", "delete_database", "list_collections", "create_collection", "list_documents", "get_document", "create_document", "replace_document", "patch_document", "delete_document", "get_collection_schema", "get_collection_validation", "set_collection_schema", "list_indexes", "create_index", "check_sql", "run_sql", "list_saved_queries", "save_query", "delete_saved_query", "list_api_keys", "create_api_key", "rotate_api_key", "revoke_api_key", "set_api_key_allowed_cidrs" };
                 await Assert.That(names.All(tools.ContainsKey)).IsTrue();
                 await Assert.That(tools["revoke_api_key"].GetProperty("description").GetString()).IsEqualTo("Revoking stops this key everywhere within 2 seconds: new requests are refused and open connections (including Postgres) are closed within 3 seconds.");
                 var rotationDescription = tools["rotate_api_key"].GetProperty("description").GetString();
@@ -89,16 +89,15 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 var patchSchema = patchInputs.GetProperty("patch");
                 await Assert.That(patchSchema.GetProperty("type").ToString().Contains("object", StringComparison.Ordinal)).IsTrue();
 
-                var created = await CallAsync(client, "create_database", new() { ["name"] = databaseName, ["regions"] = new[] { "GRU", "SJC" } });
+                var created = await CallAsync(client, "create_database", new() { ["name"] = databaseName, ["region"] = "SJC" });
                 databaseId = created.GetProperty("id").GetString()!;
                 await Assert.That(created.GetProperty("name").GetString()).IsEqualTo(databaseName);
-                await Assert.That(created.GetProperty("placement").GetArrayLength()).IsEqualTo(2);
+                await Assert.That(created.GetProperty("placement").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(new[] { "SJC" });
                 await Assert.That(created.TryGetProperty("projectId", out _)).IsFalse();
                 var listed = await CallAsync(replica, "list_databases");
                 await Assert.That(listed.GetProperty("databases").EnumerateArray().Any(db => db.GetProperty("id").GetString() == databaseId)).IsTrue();
                 await ErrorAsync(replica, "create_database", new() { ["name"] = "Invalid_Name" });
                 await ErrorAsync(replica, "get_database", new() { ["databaseId"] = databaseId, ["projectId"] = Guid.NewGuid().ToString() });
-                await ErrorAsync(replica, "set_database_regions", new() { ["databaseId"] = databaseId, ["regions"] = new[] { "SJC" } });
                 var csrf = await HttpJourney.CsrfAsync(client, "/databases/" + databaseId + "/documents");
                 await ErrorAsync(client, "create_document", new() { ["databaseId"] = databaseId, ["collection"] = "users", ["document"] = new { name = "Before collection" } });
                 var createdCollection = await CallAsync(client, "create_collection", new() { ["databaseId"] = databaseId, ["name"] = "users" });
@@ -186,7 +185,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 var detail = await CallAsync(replica, "get_database", new() { ["databaseId"] = databaseId });
                 await Assert.That(detail.GetProperty("documents").GetInt64()).IsEqualTo(31);
                 await Assert.That(detail.GetProperty("bytes").GetInt64()).IsGreaterThan(0);
-                await Assert.That(detail.GetProperty("regions").GetArrayLength()).IsEqualTo(2);
+                await Assert.That(detail.GetProperty("regions").GetArrayLength()).IsEqualTo(1);
                 var analysis = await CallAsync(replica, "check_sql", new() { ["databaseId"] = databaseId, ["sql"] = "SELECT * FROM users WHERE score > $1 ORDER BY name LIMIT 20" });
                 await Assert.That(analysis.GetProperty("ok").GetBoolean()).IsFalse();
                 await Assert.That(analysis.GetProperty("error").GetString()).Contains("cannot bind parameters");

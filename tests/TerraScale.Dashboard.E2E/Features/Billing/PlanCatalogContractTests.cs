@@ -120,9 +120,9 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
 
             if (key == "free")
             {
-                using var first = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "catalog-first", ["region"] = "GRU" });
+                using var first = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "catalog-first", ["homeRegion"] = "GRU" });
                 await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.Created);
-                using var second = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "catalog-second", ["region"] = "GRU" });
+                using var second = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "catalog-second", ["homeRegion"] = "GRU" });
                 await Assert.That(second.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
                 await Assert.That(await second.Content.ReadAsStringAsync()).Contains("plan's database limit");
                 using var project = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/organization/projects", new() { ["_csrf"] = csrf, ["name"] = "Second project", ["region"] = "GRU", ["regions"] = "GRU" });

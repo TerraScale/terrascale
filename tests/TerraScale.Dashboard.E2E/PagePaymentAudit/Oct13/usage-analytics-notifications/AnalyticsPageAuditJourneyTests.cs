@@ -167,7 +167,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13
             }
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
-            { ["_csrf"] = csrf, ["name"] = name, ["region"] = "GRU" });
+            { ["_csrf"] = csrf, ["name"] = name, ["homeRegion"] = "GRU" });
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
             using var body = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
             return body.RootElement.GetProperty("id").GetString()!;

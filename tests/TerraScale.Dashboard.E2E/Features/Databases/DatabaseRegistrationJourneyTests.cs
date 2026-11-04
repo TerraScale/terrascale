@@ -25,7 +25,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var refusedCreates = 0;
             var forbiddenCommits = 0;
             var unauthorizedCreates = 0;
-            string[] regions = ["GRU", "SFO"];
+            const string home = "GRU";
             const string name = "catalog-recovery";
             TestAuth auth = null!;
             await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, DatabaseSdkJourneyTests.CaptureAuth(value => auth = value), http =>
@@ -93,13 +93,13 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var baseline = await ReadAsync(producer, "/__test/observations");
             var baselineProjects = ProjectIdentities(baseline);
             Volatile.Write(ref armed, true);
-            using (var refused = await CreateAsync(client, csrf, name, regions))
+            using (var refused = await CreateAsync(client, csrf, name, home))
             {
                 await Assert.That((int)refused.StatusCode).IsEqualTo(status).Because(await EvidenceAsync(refused, producer));
                 await Assert.That(refused.Headers.Location is null).IsTrue();
             }
             var rpc = await HttpJourney.McpAsync(replica, secret, "tools/call", new
-            { name = "create_database", arguments = new { organizationId, projectId, name, regions } });
+            { name = "create_database", arguments = new { organizationId, projectId, name, region = home } });
             await Assert.That(rpc.TryGetProperty("error", out _) ||
                 rpc.GetProperty("result").TryGetProperty("isError", out var error) && error.GetBoolean()).IsTrue().Because(rpc.GetRawText());
             await Assert.That(refusedCreates).IsEqualTo(2).Because("Native and MCP creation each send one canonical create; nothing retries it.");
@@ -117,7 +117,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             // ordinary account can proceed without creating another project.
             Volatile.Write(ref armed, false);
             string databaseId;
-            using (var created = await CreateAsync(client, csrf, name, regions))
+            using (var created = await CreateAsync(client, csrf, name, home))
             {
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await EvidenceAsync(created, producer));
                 databaseId = (await BodyAsync(created)).GetProperty("id").GetString()!;
@@ -125,7 +125,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var canonical = (await ManagementListJourney.ReadListAllAsync(replica, "/api/v1/dashboard/databases"))[0];
             await Assert.That(canonical.GetProperty("id").GetString()).IsEqualTo(databaseId);
             await Assert.That(canonical.GetProperty("projectId").GetString()).IsEqualTo(projectId);
-            await Assert.That(string.Join(',', canonical.GetProperty("regions").EnumerateArray().Select(value => value.GetString()))).IsEqualTo("GRU,SFO").Because("The successful retry keeps the explicitly requested two-region placement");
+            await Assert.That(string.Join(',', canonical.GetProperty("regions").EnumerateArray().Select(value => value.GetString()))).IsEqualTo("GRU").Because("The successful retry places the database in its home region only");
             if (fault == "project-missing")
             {
                 using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()
@@ -172,11 +172,10 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
                     .Select(value => value.GetProperty("organizationId").GetString() + "/" + value.GetProperty("id").GetString() + "/" + value.GetProperty("name").GetString()).Order(StringComparer.Ordinal));
         }
 
-        private static async Task<HttpResponseMessage> CreateAsync(HttpClient client, string csrf, string name, string[] regions)
+        private static async Task<HttpResponseMessage> CreateAsync(HttpClient client, string csrf, string name, string home)
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/databases");
-            request.Content = new FormUrlEncodedContent(new[] { new KeyValuePair<string, string>("_csrf", csrf), new("name", name) }
-                .Concat(regions.Select(region => new KeyValuePair<string, string>("region", region))));
+            request.Content = new FormUrlEncodedContent([new("_csrf", csrf), new("name", name), new("homeRegion", home)]);
             request.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
             return await client.SendAsync(request);
         }

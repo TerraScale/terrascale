@@ -19,11 +19,10 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             var rawNullObserved = false;
             var confirmedRequests = 0;
             var pending = 0;
-            var writeBearer = "";
             HttpClient? producer = null;
             await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
             {
-                if (RestoreRequest(http, projectId)) { writeBearer = http.Request.Headers.Authorization.ToString(); Volatile.Write(ref pending, 1); return null; }
+                if (RestoreRequest(http, projectId)) { Volatile.Write(ref pending, 1); return null; }
                 var name = ConfirmationName(http, projectId);
                 if (name is null || Interlocked.Exchange(ref pending, 0) == 0)
                 {
@@ -37,9 +36,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
                     Volatile.Write(ref placeOnConfirmation, false);
                     var stored = await StoredAsync(producer!, name);
                     rawNullObserved = stored.GetProperty("replicaRegions").ValueKind == JsonValueKind.Null;
-                    using var request = ScopedRequest(http, HttpMethod.Patch, CanonicalDatabasePath(projectId, name), writeBearer);
-                    request.Content = JsonContent.Create(new { replicaRegions = new[] { "sfo" } });
-                    using var changed = await producer!.SendAsync(request, http.RequestAborted);
+                    using var changed = await producer!.PostAsJsonAsync("/__test/control", new { command = "add-replica", value = "sfo", name }, http.RequestAborted);
                     changed.EnsureSuccessStatusCode();
                 }
                 return null;
@@ -320,13 +317,6 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
                 throw new InvalidOperationException("Restore confirmation must cross the home-region RPC listener with an admitted project bearer.");
             }
         }
-        private static HttpRequestMessage ScopedRequest(HttpContext http, HttpMethod method, string path, string bearer)
-        {
-            var request = new HttpRequestMessage(method, path);
-            request.Headers.Host = http.Request.Host.Host;
-            request.Headers.Add("Authorization", bearer);
-            return request;
-        }
         private static async Task<JsonElement> StoredAsync(HttpClient producer, string name)
         {
             using var response = await producer.GetAsync("/__test/observations");
@@ -348,7 +338,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
         private static async Task<string> CreateAsync(HttpClient client, string csrf, string name)
         {
             using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
-            { ["_csrf"] = csrf, ["name"] = name, ["region"] = "GRU" });
+            { ["_csrf"] = csrf, ["name"] = name, ["homeRegion"] = "GRU" });
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await response.Content.ReadAsStringAsync());
             return (await BodyAsync(response)).GetProperty("id").GetString()!;
         }

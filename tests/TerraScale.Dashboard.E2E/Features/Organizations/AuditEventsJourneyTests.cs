@@ -23,7 +23,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             }
 
             var csrf = await HttpJourney.CsrfAsync(replica, "/databases");
-            using var created = await HttpJourney.PostFormAsync(replica, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "audited", ["region"] = "GRU" });
+            using var created = await HttpJourney.PostFormAsync(replica, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "audited", ["homeRegion"] = "GRU" });
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
             var databaseId = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetString()!;
             using var key = await HttpJourney.PostConfirmedFormAsync(replica, "/api/v1/dashboard/credentials/key", new()

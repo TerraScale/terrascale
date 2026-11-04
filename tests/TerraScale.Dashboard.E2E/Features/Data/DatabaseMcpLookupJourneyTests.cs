@@ -139,7 +139,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
 
             public async Task<string> CreateDatabaseAsync(string name)
             {
-                var created = await CallAsync("create_database", new() { ["name"] = name, ["regions"] = new[] { "GRU", "SJC" } });
+                var created = await CallAsync("create_database", new() { ["name"] = name, ["region"] = "GRU" });
                 return created.GetProperty("result").GetProperty("structuredContent").GetProperty("id").GetString()!;
             }
 

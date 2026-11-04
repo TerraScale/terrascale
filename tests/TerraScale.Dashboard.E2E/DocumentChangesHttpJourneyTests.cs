@@ -167,7 +167,7 @@ namespace TerraScale.Dashboard.E2E
         private static async Task<string> CreateDatabaseAsync(HttpClient client, string csrf, string name)
         {
             using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
-            { ["_csrf"] = csrf, ["name"] = name, ["region"] = "GRU" });
+            { ["_csrf"] = csrf, ["name"] = name, ["homeRegion"] = "GRU" });
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
             using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             return body.RootElement.GetProperty("id").GetString()!;

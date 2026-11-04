@@ -44,7 +44,7 @@ namespace TerraScale.Dashboard.E2E
             { BaseAddress = new(host.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)), Timeout = TimeSpan.FromSeconds(20) };
             await DatabaseSdkJourneyTests.NativeWorkspaceAsync(Client);
             Csrf = await HttpJourney.CsrfAsync(Client, "/databases");
-            using (var created = await HttpJourney.PostFormAsync(Client, "/api/v1/dashboard/databases", new() { ["_csrf"] = Csrf, ["name"] = "orders", ["region"] = "GRU" }))
+            using (var created = await HttpJourney.PostFormAsync(Client, "/api/v1/dashboard/databases", new() { ["_csrf"] = Csrf, ["name"] = "orders", ["homeRegion"] = "GRU" }))
             {
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
                 using var json = JsonDocument.Parse(await created.Content.ReadAsStringAsync());

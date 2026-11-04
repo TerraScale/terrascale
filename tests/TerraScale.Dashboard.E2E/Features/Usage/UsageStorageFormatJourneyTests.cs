@@ -30,7 +30,7 @@ namespace TerraScale.Dashboard.E2E.Features.Usage
             var secret = await HttpJourney.CreatePatAsync(first, "Storage unit boundary E2E", account.Password);
             var csrf = await HttpJourney.CsrfAsync(first, "/databases");
             using var created = await HttpJourney.PostFormAsync(first, "/api/v1/dashboard/databases", new()
-            { ["_csrf"] = csrf, ["name"] = "storage-boundaries", ["region"] = "GRU" });
+            { ["_csrf"] = csrf, ["name"] = "storage-boundaries", ["homeRegion"] = "GRU" });
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
             using var database = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
             var databaseId = database.RootElement.GetProperty("id").GetString()!;

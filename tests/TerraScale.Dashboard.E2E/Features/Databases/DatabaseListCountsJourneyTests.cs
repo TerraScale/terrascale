@@ -64,7 +64,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             foreach (var name in new[] { "count-first", "count-second" })
             {
                 using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
-                { ["_csrf"] = csrf, ["name"] = name, ["region"] = "GRU" });
+                { ["_csrf"] = csrf, ["name"] = name, ["homeRegion"] = "GRU" });
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
             }
             var knownPage = await PageAsync(replica);

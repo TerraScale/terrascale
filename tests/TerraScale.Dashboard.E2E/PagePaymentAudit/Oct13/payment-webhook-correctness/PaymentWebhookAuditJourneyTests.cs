@@ -135,7 +135,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
             await CompleteCheckoutAsync(owner, "starter");
             var csrf = await HttpJourney.CsrfAsync(owner, "/organization?tab=billing");
             using var first = await HttpJourney.PostFormAsync(owner, "/api/v1/dashboard/databases", new()
-            { ["_csrf"] = csrf, ["name"] = "payment-audit-first", ["region"] = "GRU" });
+            { ["_csrf"] = csrf, ["name"] = "payment-audit-first", ["homeRegion"] = "GRU" });
             await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.Created);
             scenario.Stripe.Status = "active";
             scenario.Stripe.PriceCurrency = "eur";
@@ -144,7 +144,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
             await Assert.That(delivery.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That((await OrganizationAsync(owner)).GetProperty("billingStatus").GetString()).IsEqualTo("billing_required");
             using var second = await HttpJourney.PostFormAsync(owner, "/api/v1/dashboard/databases", new()
-            { ["_csrf"] = csrf, ["name"] = "payment-audit-second", ["region"] = "GRU" });
+            { ["_csrf"] = csrf, ["name"] = "payment-audit-second", ["homeRegion"] = "GRU" });
             await Assert.That(second.StatusCode).IsEqualTo(HttpStatusCode.Conflict)
                 .Because("An unqualified Stripe price must not retain Starter's five-database allowance above Personal Free's one database.");
         }

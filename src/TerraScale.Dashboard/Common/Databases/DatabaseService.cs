@@ -7,16 +7,6 @@ namespace TerraScale.Dashboard.Common.Databases
 {
     public sealed partial class DatabaseService(AccountService accounts, IDatabaseBackend backend)
     {
-        public const string MinimumRegionsMessage = "Choose at least two regions, or select All regions to include current and future regions.";
-        public const string HomePlacementMessage = "Select the home region in placement, or choose a home region from the selected regions.";
-        public static void RequireReplicas(IEnumerable<string> regions)
-        {
-            if (regions.Where(code => !string.IsNullOrWhiteSpace(code)).Select(code => code.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() < 2)
-            {
-                throw new AccountAccessException(MinimumRegionsMessage, 422);
-            }
-        }
-
         public static DatabaseScope Scope(AccountContext context)
         {
             return new(context.UserId, context.Session.AccessToken,
@@ -55,30 +45,6 @@ namespace TerraScale.Dashboard.Common.Databases
                 ?? throw new HttpRequestException("This database's home region is not a TerraBase region.");
         }
 
-        // kept: the database's current regions, which stay choosable though the catalog does not list them.
-        public async Task<IReadOnlyList<DatabaseRegion>> PlacementAsync(IEnumerable<string> codes, CancellationToken cancellationToken, IReadOnlyList<string>? kept = null)
-        {
-            var catalog = await backend.RegionsAsync(cancellationToken);
-            var placement = new List<DatabaseRegion>();
-            foreach (var code in codes)
-            {
-                var region = kept?.Contains(code.Trim(), StringComparer.OrdinalIgnoreCase) == true
-                    ? DatabaseRegion.Resolve(catalog, code.Trim()) ?? ResolveRegion(catalog, code) : ResolveRegion(catalog, code);
-                if (placement.Any(selected => selected.Id.Length > 0 && selected.Id == region.Id || selected.Code.Equals(region.Code, StringComparison.OrdinalIgnoreCase)))
-                {
-                    throw new AccountAccessException("Choose each region once.", 422);
-                }
-
-                placement.Add(region);
-            }
-            if (placement.Count == 0)
-            {
-                throw new AccountAccessException("Choose at least one region.", 422);
-            }
-
-            return placement;
-        }
-
         internal async Task<IReadOnlyList<DatabaseRegion>> ConfiguredPlacementAsync(IEnumerable<string> codes, CancellationToken cancellationToken)
         {
             var catalog = await backend.RegionsAsync(cancellationToken);
@@ -107,7 +73,8 @@ namespace TerraScale.Dashboard.Common.Databases
                 ?? throw new AccountAccessException("Choose regions listed by TerraScale discovery.", 422);
         }
 
-        public async Task<DatabaseRecord> CreateAsync(AccountContext context, string name, IEnumerable<string> regions, bool allRegions, CancellationToken cancellationToken)
+        // TerraBase serves a database only in its home region until replicas are available, so a create names only that region.
+        public async Task<DatabaseRecord> CreateAsync(AccountContext context, string name, string homeRegion, CancellationToken cancellationToken)
         {
             name = ValidName(name);
             context = await CurrentAsync(context, cancellationToken);
@@ -115,15 +82,15 @@ namespace TerraScale.Dashboard.Common.Databases
             DemandProvision(context.Organization!, context.UserId);
             DemandName(context.Project!, name);
             DemandRoom(context.Organization!);
-            var placement = await PlacementAsync(AllRegionsPlacement(regions, allRegions, context.Project!.Region), cancellationToken);
+            var home = ResolveRegion(await backend.RegionsAsync(cancellationToken), homeRegion);
             ManagedDatabase remote;
             var recovered = false;
-            try { remote = await backend.CreateAsync(scope, name, placement, allRegions, cancellationToken); }
+            try { remote = await backend.CreateAsync(scope, name, home, cancellationToken); }
             catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken")
             {
                 // A prior provision whose dashboard commit failed is recovered by name. Other conflicts (database_limit, a
                 // plan allowance held in an unreachable region) reach the caller with TerraBase's own code and message.
-                remote = (await backend.ListAsync(scope, placement[0], cancellationToken)).FirstOrDefault(database => database.Name == name)
+                remote = (await backend.ListAsync(scope, home, cancellationToken)).FirstOrDefault(database => database.Name == name)
                     ?? throw new AccountAccessException("A database with this name already exists.", 409);
                 recovered = true;
             }
@@ -132,19 +99,17 @@ namespace TerraScale.Dashboard.Common.Databases
                 throw new HttpRequestException("Database provisioning returned an invalid identity.");
             }
 
-            if (recovered && remote.HomeRegion != placement[0].Id)
+            if (recovered && remote.HomeRegion != home.Id)
             {
                 throw new AccountAccessException("A database with this name already exists in another home region.", 409);
             }
 
-            var actualPlacement = await RemotePlacementAsync(remote, cancellationToken);
-            // Only the home chosen: TerraBase picked the replicas (every other serving region), so any it returns is the placement.
-            if (!recovered && (actualPlacement[0].Id != placement[0].Id || (placement.Count > 1 && !SameReplicas(actualPlacement, placement)) || remote.AllRegions != allRegions))
+            var placement = await RemotePlacementAsync(remote, cancellationToken);
+            if (!recovered && placement[0].Id != home.Id)
             {
                 throw new HttpRequestException("Database provisioning returned a different placement.");
             }
 
-            placement = actualPlacement;
             var record = Record(remote, placement, "ready");
             await accounts.UpdateOrganizationAsync(context, org =>
             {
@@ -224,58 +189,6 @@ namespace TerraScale.Dashboard.Common.Databases
             return record;
         }
 
-        // allRegions replaces the replica choice: regions may then name only the home region, or nothing.
-        public async Task SetRegionsAsync(AccountContext context, string id, IEnumerable<string> regions, bool allRegions, CancellationToken cancellationToken)
-        {
-            context = await CurrentAsync(context, cancellationToken);
-            var database = Database(context, id);
-            if (!context.CanManage)
-            {
-                throw new AccountAccessException("Organization management access is required.");
-            }
-
-            var scope = Scope(context);
-            var home = await HomeAsync(context, database, cancellationToken);
-            var selected = regions.ToArray();
-            if (!allRegions)
-            {
-                RequireReplicas(selected);
-            }
-
-            var placement = (await PlacementAsync(AllRegionsPlacement(selected, allRegions, home.Code), cancellationToken, Regions(database))).ToList();
-            if (!placement.Remove(home))
-            {
-                throw new AccountAccessException("The home region must stay selected.", 422);
-            }
-
-            placement.Insert(0, home);
-            var remote = await backend.SetRegionsAsync(scope, home, id, placement, allRegions, cancellationToken);
-            if (remote.Id != id || remote.ProjectId != scope.ProjectId || remote.Name != database.Name || remote.HomeRegion != home.Id)
-            {
-                throw new HttpRequestException("The placement update returned an invalid database identity.");
-            }
-
-            var actualPlacement = await RemotePlacementAsync(remote, cancellationToken);
-            if (!SameReplicas(actualPlacement, placement) || remote.AllRegions != allRegions)
-            {
-                throw new HttpRequestException("The placement update returned a different replica set.");
-            }
-
-            await accounts.UpdateOrganizationAsync(context, org =>
-            {
-                if (!org.CanManage(context.UserId))
-                {
-                    throw new AccountAccessException("Organization management access is required.");
-                }
-
-                var current = org.Projects.GetValueOrDefault(scope.ProjectId)?.Databases.GetValueOrDefault(id) ?? throw new AccountAccessException("Database is unavailable.", 404);
-                current.Region = home.Code;
-                current.Regions = [.. placement.Select(region => region.Code)];
-                current.AllRegions = allRegions;
-                current.PlacementRevision = checked(current.PlacementRevision + 1);
-            }, cancellationToken);
-        }
-
         public async Task<DatabaseRecord> RenameAsync(AccountContext context, string id, string name, string confirmation, CancellationToken cancellationToken)
         {
             context = await CurrentAsync(context, cancellationToken);
@@ -344,23 +257,6 @@ namespace TerraScale.Dashboard.Common.Databases
             database.PreviousName = remote.PreviousName;
             database.ConflictOf = remote.ConflictOf;
             return database;
-        }
-
-        // All regions keeps one home region (the chosen one, else home) and no replica regions.
-        private static IEnumerable<string> AllRegionsPlacement(IEnumerable<string> regions, bool allRegions, string home)
-        {
-            if (!allRegions)
-            {
-                return regions;
-            }
-
-            var chosen = regions.Where(code => !string.IsNullOrWhiteSpace(code)).ToArray();
-            return chosen.Length switch
-            {
-                0 => [home],
-                1 => chosen,
-                _ => throw new AccountAccessException("All regions copies the database to every region automatically; choose either all regions or replica regions, not both.", 422)
-            };
         }
 
         public async Task DeleteAsync(AccountContext context, string id, string confirmation, CancellationToken cancellationToken)
@@ -623,11 +519,6 @@ namespace TerraScale.Dashboard.Common.Databases
             var catalog = knownCatalog ?? await backend.RegionsAsync(cancellationToken);
             return [.. ids.Select(id => (catalog.SingleOrDefault(region => region.Id == id) ?? DatabaseRegion.FromId(id))
                 ?? throw new HttpRequestException("The database service returned an invalid region."))];
-        }
-        private static bool SameReplicas(IReadOnlyList<DatabaseRegion> left, IReadOnlyList<DatabaseRegion> right)
-        {
-            return left.Skip(1).Select(region => region.Id).Order(StringComparer.Ordinal)
-                .SequenceEqual(right.Skip(1).Select(region => region.Id).Order(StringComparer.Ordinal), StringComparer.Ordinal);
         }
 
         [GeneratedRegex(@"\A" + NameInputPattern + @"\z", RegexOptions.CultureInvariant)]

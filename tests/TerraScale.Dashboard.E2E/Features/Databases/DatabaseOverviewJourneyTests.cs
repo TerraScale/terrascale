@@ -39,7 +39,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await Assert.That(replicaLogin.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
-            { ["_csrf"] = csrf, ["name"] = "measured-overview", ["region"] = "GRU" });
+            { ["_csrf"] = csrf, ["name"] = "measured-overview", ["homeRegion"] = "GRU" });
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
             using var database = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
             var id = database.RootElement.GetProperty("id").GetString()!;
@@ -48,11 +48,8 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var known = await PageAsync(client);
             await Assert.That(Counts(known)).IsEquivalentTo(new[] { "0", "0" });
             var placement = await PageAsync(client, "/replication");
-            await Assert.That(placement).Contains("<span class=\"ts-badge ts-badge-neutral\">Home</span>");
-            await Assert.That(placement).Contains("<dt>Configured regions</dt><dd>gru · São Paulo, sfo · San Francisco</dd>");
-            var home = Regex.Match(placement, "<input[^>]+type=\"checkbox\"[^>]+value=\"GRU\"[^>]*>").Value;
-            await Assert.That(home).Contains("required");
-            await Assert.That(home.Contains("disabled", StringComparison.Ordinal)).IsFalse();
+            await Assert.That(placement).Contains("<dt>Home region</dt><dd>gru · São Paulo</dd>");
+            await Assert.That(placement).Contains("<dt>Configured regions</dt><dd>gru · São Paulo</dd>");
             var knownTool = await DetailAsync();
             foreach (var field in new[] { "collections", "documents", "bytes" })
             {
