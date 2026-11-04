@@ -167,6 +167,6 @@ PIVOT F5, tied to the shape floor and the backup position.
 
 ## 12. Proof
 
-`tests/TerraBase.Fast/Shapes/TableShapeTests.cs`: a shape equals its table after 100,000 random inserts, upserts,
+`tests/TerraBase.Slow/Shapes/TableShapeEqualityTests.cs`: a shape equals its table after 100,000 random inserts, upserts,
 updates, row id changes, replaces and deletes, for a client that synced before the workload, one that bootstrapped in
 the middle, and a fresh snapshot afterwards.
