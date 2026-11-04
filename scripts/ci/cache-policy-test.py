@@ -21,7 +21,7 @@ assert "mode=max" not in workflow, "Published binaries and source snapshots must
 # setup-dotnet saves its NuGet cache after any successful job, pull requests included: no job may enable it.
 assert "cache: true" not in workflow
 assert not re.search(r"uses: actions/cache@", workflow), "Use explicit restore/save to restrict writers"
-assert "actions/cache/save@" not in workflow, "Checked outputs are retained in source-bound OCI receipts"
+assert "actions/cache/save@" not in workflow, "Checked outputs are retained in source-bound private R2 receipts"
 assert "DeterministicSourcePaths: false" in workflow, "CallerFilePath fixtures need their real source path"
 assert "ContinuousIntegrationBuild: false" not in workflow
 assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workflow.split("\npermissions:", 1)[0]
@@ -29,8 +29,8 @@ assert "terrabase-shard" not in workflow and "terrabase-build:" not in workflow
 assert "timeout-minutes: 2" in workflow
 assert "qualified-build.py" in workflow
 assert "run-budget.py" in workflow
-assert "docker/build-push-action" not in workflow, "CI must reuse the checked OCI images without compiling them"
-assert "imagetools create" in workflow
+assert "docker/build-push-action" in workflow
+assert "runner.temp }}/image-payloads" in workflow, "CI wraps the checked runtime payload without compilation"
 assert "no-cache-filters: slow-${{ env.AREA }}-run" in slow_workflow
 assert "steps: *slow-steps" in slow_workflow
 qualified = (root / "scripts/ci/qualified-build.py").read_text()
@@ -41,7 +41,8 @@ assert "'ts-ship/' + area" in qualified
 assert "manifest digest mismatch" in qualified
 assert "float(timing[1]) >= 120" in qualified
 assert "['creator']['login'].lower() == 'mariogk'" in qualified
-assert "publish_image" in qualified and "--password-stdin" in qualified
+assert "retain_payload" in qualified and "cf_command" in qualified
+assert "fast-ci/{sha}/{area}/image-payloads.tar.gz" in qualified
 assert "dotnet build tests/TerraScale.Authentication.Fast/" in (root / "scripts/ci/auth-build.sh").read_text()
 assert "terrabase-e2e-local" in qualified and "image-payloads.sh" in qualified
 for area in ("libs", "auth", "terrabase"):
