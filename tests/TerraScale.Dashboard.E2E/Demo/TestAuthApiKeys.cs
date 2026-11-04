@@ -131,7 +131,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                     using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
                     var value = body.RootElement;
                     var access = value.GetProperty("access").GetString()!;
-                    string[] scopes = access == "read" ? ["documents:read"] : ["documents:read", "documents:write"];
+                    string[] scopes = access == "read" ? ["sql:read"] : ["sql:read", "sql:write"];
                     if (scopes.Except(parent.Key.Scopes).Any()) return Error(HttpStatusCode.Forbidden, "forbidden");
                     var ttl = value.GetProperty("ttl_seconds").GetInt32();
                     var id = ids.NewId();
