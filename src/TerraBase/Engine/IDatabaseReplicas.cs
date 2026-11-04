@@ -38,6 +38,21 @@ internal interface IDatabaseReplicas
     ValueTask<IReplicaShapeReader?> BeginShapeReadAsync(TenantContext database, CancellationToken cancellationToken);
 
     ValueTask<IReplicaReader?> BeginReadAsync(TenantContext database, long position, CancellationToken cancellationToken);
+
+    ValueTask<IReplicaWriter?> BeginWriteAsync(TenantContext database, CancellationToken cancellationToken);
+
+    ReplicaOverlay? Overlay { get; set; }
+}
+
+internal delegate ValueTask<bool> ReplicaOverlay(TenantContext database, DatabaseRevision? pulled, IReplicaWriter writer, CancellationToken cancellationToken);
+
+internal interface IReplicaWriter : IAsyncDisposable
+{
+    ValueTask<SqlStatementResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken);
+
+    ValueTask<IReadOnlyList<CapturedRowChange>> CaptureAsync(CancellationToken cancellationToken);
+
+    ValueTask CommitAsync(CancellationToken cancellationToken);
 }
 
 internal interface IReplicaReader : IAsyncDisposable
