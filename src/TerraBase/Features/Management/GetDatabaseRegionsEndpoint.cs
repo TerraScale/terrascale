@@ -3,6 +3,7 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Regions;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -11,7 +12,7 @@ using TerraScale.TerraBase.Contracts.Management;
 namespace TerraBase.Features.Management;
 
 /// <summary>Placement and successful page pulls observed by this database's home.</summary>
-internal sealed class GetDatabaseRegionsEndpoint(IManagementService management, IDatabaseRevisions revisions, IRegionCatalog regions,
+internal sealed class GetDatabaseRegionsEndpoint(IManagementService management, IDatabaseRevisions revisions, IRegionCatalog regions, IReplicaStatus status,
     TerraBaseOptions options, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
@@ -58,8 +59,10 @@ internal sealed class GetDatabaseRegionsEndpoint(IManagementService management, 
 
         var tenant = new TenantContext(ManagementRoute.OrganizationId(HttpContext), PlanTier.Hobby, record.ProjectId, record.Id);
         var observations = await revisions.ReplicaStatusAsync(tenant, replicas, cancellationToken).ConfigureAwait(false);
+        var verification = status.Local(tenant, replicas).ToDictionary(row => row.Region, row => row.VerifiedAt, StringComparer.Ordinal);
         return TypedResults.Json(new TerraBaseDatabaseRegions(record.Id, home, time.GetUtcNow(),
-            [.. observations.Select(row => new TerraBaseReplicaStatus(row.Region, row.LagMs, row.LastPulledAt, Revision: row.Revision))]),
+            [.. observations.Select(row => new TerraBaseReplicaStatus(row.Region, row.LagMs, row.LastPulledAt,
+                verification.GetValueOrDefault(row.Region), row.Revision))]),
             ManagementJson.Default.TerraBaseDatabaseRegions);
     }
 }
