@@ -27,6 +27,7 @@
     <PackageReference Include="JsonSchema.Net" />
     <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
     <PackageReference Include="NATS.Client.Core" />
+    <PackageReference Include="K4os.Compression.LZ4.Streams" />
     <PackageReference Include="NativeCompressions" />
     <PackageReference Include="Ulid" />
     <PackageReference Include="NUlid" />
@@ -53,7 +54,9 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Google.Protobuf" />
+    <PackageReference Include="Grpc.Net.Client" />
     <PackageReference Include="Grpc.Tools" PrivateAssets="all" />
+    <Protobuf Include="Features/Clock/Protos/*.proto" GrpcServices="Both" Access="Internal" />
     <Protobuf Include="Features/Sync/Protos/*.proto" ProtoRoot="Features/Sync/Protos" GrpcServices="None" Access="Internal" />
   </ItemGroup>
   <ItemGroup>

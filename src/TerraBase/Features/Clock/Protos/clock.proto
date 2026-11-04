@@ -1,0 +1,16 @@
+syntax = "proto3";
+package terrabase.clock.v1;
+option csharp_namespace = "TerraBase.Features.Clock";
+service NodeClock {
+  rpc Sample (ClockRequest) returns (ClockSample);
+  rpc Next (ClockRequest) returns (ClockSample);
+}
+message ClockRequest {}
+message ClockSample {
+  int64 utc_milliseconds = 1;
+  int64 hlc_physical_milliseconds = 2;
+  uint32 hlc_logical = 3;
+  double skew_milliseconds = 4;
+  bool local_writes_allowed = 5;
+  string hlc_node_id = 6;
+}
