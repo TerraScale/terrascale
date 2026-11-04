@@ -8,11 +8,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -218,10 +220,12 @@ type clusterConfig struct {
 	caFile    string
 }
 
-// cluster is gru-1 (home, A) and sjc-1 (replica, B). Each node's peers file names itself at its own address and the
-// other node at a forwarder address, so the harness can partition the internal (peer) path in both directions.
+// cluster is gru-1 (home, A) and sjc-1 (replica, B), plus each region's second node gru-2 and sjc-2, which hold
+// their partner's local writes (PIVOT R10). Each peers file lists all four nodes, each region's founder first; gru-1 and sjc-1 see
+// each other at a forwarder address, so the harness can partition the internal (peer) path in both directions.
 type cluster struct {
 	a, b      *node
+	a2, b2    *node
 	nats      *nats
 	toA, toB  *forwarder // b→a and a→b peer paths
 	natsToken string
@@ -232,7 +236,20 @@ const (
 	ipB     = "127.0.0.3" // sjc-1 internal listener
 	ipAviaB = "127.0.0.4" // gru-1 as sjc-1 sees it (forwarder)
 	ipBviaA = "127.0.0.5" // sjc-1 as gru-1 sees it (forwarder)
+	ipA2    = "127.0.0.6" // gru-2 internal listener
+	ipB2    = "127.0.0.7" // sjc-2 internal listener
 )
+
+// nodes are the cluster's started or configured nodes, region by region.
+func (c *cluster) nodes() []*node {
+	var all []*node
+	for _, n := range []*node{c.a, c.a2, c.b, c.b2} {
+		if n != nil {
+			all = append(all, n)
+		}
+	}
+	return all
+}
 
 func newCluster(ctx context.Context, cfg clusterConfig) (*cluster, error) {
 	c := &cluster{natsToken: randomHex(24)}
@@ -240,9 +257,9 @@ func newCluster(ctx context.Context, cfg clusterConfig) (*cluster, error) {
 	if c.nats, err = newNATS(cfg.dir, cfg.logDir, c.natsToken); err != nil {
 		return c, err
 	}
-	internal, err := sharedPort(ipA, ipB, ipAviaB, ipBviaA)
+	internal, err := sharedPort(ipA, ipB, ipAviaB, ipBviaA, ipA2, ipB2)
 	if err != nil {
-		return c, fmt.Errorf("internal port (needs 127.0.0.2-5 on loopback): %w", err)
+		return c, fmt.Errorf("internal port (needs 127.0.0.2-7 on loopback): %w", err)
 	}
 	if c.toA, err = startForwarder(net.JoinHostPort(ipAviaB, itoa(internal)), net.JoinHostPort(ipA, itoa(internal))); err != nil {
 		return c, err
@@ -287,13 +304,21 @@ func newCluster(ctx context.Context, cfg clusterConfig) (*cluster, error) {
 	if strings.HasSuffix(cfg.terrabase, ".dll") {
 		argv = []string{filepath.Join(root, "dotnet"), cfg.terrabase}
 	}
-	mk := func(name, region, self, peerName, peerRegion, peerIP string) (*node, error) {
+	mk := func(name, region, self string, peerIPs map[string]string) (*node, error) {
 		dir := filepath.Join(cfg.dir, name)
 		if err := os.MkdirAll(filepath.Join(dir, "data"), 0o700); err != nil {
 			return nil, err
 		}
 		peers := filepath.Join(dir, "peers")
-		if err := writeFile0600(peers, fmt.Appendf(nil, "%s %s %s\n%s %s %s\n", name, region, self, peerName, peerRegion, peerIP)); err != nil {
+		var lines []byte
+		for _, peer := range []string{"gru-1", "gru-2", "sjc-1", "sjc-2"} {
+			ip := peerIPs[peer]
+			if peer == name {
+				ip = self
+			}
+			lines = fmt.Appendf(lines, "%s %s %s\n", peer, peer[:3], ip)
+		}
+		if err := writeFile0600(peers, lines); err != nil {
 			return nil, err
 		}
 		n := &node{name: name, region: region, ip: self, dir: dir, logPath: filepath.Join(cfg.logDir, name+".log"), argv: argv}
@@ -328,19 +353,33 @@ func newCluster(ctx context.Context, cfg clusterConfig) (*cluster, error) {
 		n.env = append(n.env, "DOTNET_ROOT="+root)
 		return n, nil
 	}
-	if c.a, err = mk("gru-1", "gru", ipA, "sjc-1", "sjc", ipBviaA); err != nil {
+	direct := map[string]string{"gru-1": ipA, "gru-2": ipA2, "sjc-1": ipB, "sjc-2": ipB2}
+	with := func(name, ip string) map[string]string {
+		peers := maps.Clone(direct)
+		peers[name] = ip
+		return peers
+	}
+	if c.a, err = mk("gru-1", "gru", ipA, with("sjc-1", ipBviaA)); err != nil {
 		return c, err
 	}
-	if c.b, err = mk("sjc-1", "sjc", ipB, "gru-1", "gru", ipAviaB); err != nil {
+	if c.a2, err = mk("gru-2", "gru", ipA2, direct); err != nil {
+		return c, err
+	}
+	if c.b, err = mk("sjc-1", "sjc", ipB, with("gru-1", ipAviaB)); err != nil {
+		return c, err
+	}
+	if c.b2, err = mk("sjc-2", "sjc", ipB2, direct); err != nil {
 		return c, err
 	}
 	if err := c.nats.start(ctx); err != nil {
 		return c, err
 	}
-	if err := c.a.start(ctx); err != nil {
-		return c, err
+	for _, n := range c.nodes() {
+		if err := n.start(ctx); err != nil {
+			return c, err
+		}
 	}
-	return c, c.b.start(ctx)
+	return c, nil
 }
 
 // dotnetRoot is the install root of the newest Microsoft.NETCore.App that `dotnet` lists. Dev hosts wrap dotnet
@@ -368,10 +407,8 @@ func (c *cluster) close() {
 	if c == nil {
 		return
 	}
-	for _, n := range []*node{c.b, c.a} {
-		if n != nil {
-			n.stop()
-		}
+	for _, n := range slices.Backward(c.nodes()) {
+		n.stop()
 	}
 	if c.nats != nil {
 		c.nats.stop()

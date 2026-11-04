@@ -33,8 +33,9 @@ unconfirmed local write lives outside it, in the push stream.
 4. The home applies the transaction (R6) and answers with an `applied` notice. With `durability=home` the client's
    acknowledgement waits for that notice instead of step 3.
 
-The push stream is the outbox: it is durable before the acknowledgement and never held only in memory. Once R10
-lands, the stream message is stored on two nodes of the region before the acknowledgement (D16).
+The push stream is the outbox: it is durable before the acknowledgement and never held only in memory. The region's
+second node also holds the transaction before the acknowledgement, so it is on two nodes ([in-region ack](in-region-ack.md),
+D16).
 
 ## Push stream
 
@@ -120,16 +121,17 @@ pages do not hold yet, in stream order.
 
 ## `durability=home`
 
-Until in-region quorum acks land (R10, D16), a region commits a write locally only when the request asks for the
-home's acknowledgement, so no acknowledged write depends on one node:
+A region commits a write locally when the request asks for the home's acknowledgement, or when its second node
+holds local writes ([in-region ack](in-region-ack.md), D16). Either way no acknowledged write depends on one node:
 
 - SQL REST: send `TerraScale-Durability: home` with `/sql/execute`. When the router (R4) routes the request local, the
   region runs it on its replica, publishes it to its push stream and answers only after the `applied` notice: the
   results for `confirmed`, the home's constraint error (`unique_violation`, `foreign_key_violation`, `check_violation`,
   …, or `transaction_rolled_back`) for `reverted`, in which case the transaction is applied nowhere. The answer carries
   `TerraScale-Write-Route: …; commit=local`.
-- A request without the header (or `TerraScale-Durability: local`), a request the router sends home, and every write
-  over SQL WebSocket and the Postgres wire is forwarded to the home whole, as before.
+- A request without the header (or `TerraScale-Durability: local`) commits locally only while the region's second
+  node answers; it is acknowledged once that node holds it. Otherwise it, a request the router sends home, and every
+  write over SQL WebSocket and the Postgres wire are forwarded to the home whole.
 - A refused local transaction (a shape the capture cannot carry, a busy replica, a full push stream) is forwarded home
   instead; a commit whose outcome is unknown answers `503 unavailable`.
 
