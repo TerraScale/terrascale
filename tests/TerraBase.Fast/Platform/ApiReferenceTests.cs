@@ -36,6 +36,7 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/logs TsAuth(databases:read) listDatabaseLogs Logs
         GET /v1/projects/{project}/databases/{database}/point-in-time TsAuth(databases:read) getRestoreWindow Backups
         GET /v1/projects/{project}/databases/{database}/read-grants TsAuth(databases:read) listReadGrants Live
+        GET /v1/projects/{project}/databases/{database}/regions TsAuth(databases:read) getDatabaseRegions Databases
         GET /v1/projects/{project}/databases/{database}/sql/ws TsAuth(documents:read) connectSql Queries
         GET /v1/projects/{project}/databases/{database}/tables/{table}/read-grant TsAuth(databases:read) getReadGrant Live
         GET /v1/projects/{project}/databases/{database}/tables/{table}/shape TsAuth(documents:read) getShape Live
