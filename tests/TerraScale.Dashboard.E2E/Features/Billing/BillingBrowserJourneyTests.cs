@@ -124,7 +124,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
                 var csrf = await HttpJourney.CsrfAsync(client, "/databases/" + sourceId + "/sql");
                 await SqlAsync("CREATE TABLE customers (id TEXT PRIMARY KEY, name TEXT)");
                 await SqlAsync("INSERT INTO customers VALUES ('01K78D0C000000000000000012', 'Before branch')");
-                var branch = await ToolAsync("branch_database", new { databaseId = sourceId, name = name + "-copy" });
+                var branch = await ToolAsync("fork_database", new { databaseId = sourceId, name = name + "-copy" });
                 branchId = branch.GetProperty("id").GetString()!;
                 await SqlAsync("UPDATE customers SET name = 'After branch'");
                 var branchRows = await ToolAsync("execute_sql", new { databaseId = branchId, sql = "SELECT name FROM customers" });

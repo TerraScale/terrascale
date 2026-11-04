@@ -1014,7 +1014,7 @@ namespace TerraScale.Dashboard.E2E
                 {
                     Require(method == "POST", "Canonical database create");
                     var body = await JsonAsync(http);
-                    Require(body.EnumerateObject().All(field => field.Name is "name" or "homeRegion" or "replicaRegions" or "allRegions"), "Create sends only name and placement");
+                    Require(body.EnumerateObject().All(field => field.Name is "name" or "homeRegion" or "replicaRegions" or "allRegions" or "ttlSeconds"), "Create sends only name and placement");
                     // As production TerraBase until replicas are available: a database serves only its home region.
                     if (body.TryGetProperty("replicaRegions", out _) || body.TryGetProperty("allRegions", out var every) && every.GetBoolean())
                     {
@@ -1042,7 +1042,7 @@ namespace TerraScale.Dashboard.E2E
                             return Error(409, createConflict);
                         }
 
-                        var database = new ManagedDatabase(ids.NewId(), project, name, DateTimeOffset.UtcNow, HomeRegion: home, ReplicaRegions: replicas);
+                        var database = new ManagedDatabase(ids.NewId(), project, name, DateTimeOffset.UtcNow, HomeRegion: home, ReplicaRegions: replicas) { ExpiresAt = Expiry(body) };
                         databases[database.Id] = database;
                         Interlocked.Increment(ref creates);
                         return Results.Json(Wire(database, answering), statusCode: 201);
@@ -1065,10 +1065,49 @@ namespace TerraScale.Dashboard.E2E
                 }
 
                 var atHome = current.HomeRegion == answering;
+                if (parts.Length == 7 && parts[5] == "point-in-time" && parts[6] == "restore" && method == "POST")
+                {
+                    if (callerRole is not ("owner" or "admin")) { return Error(403, "role_too_low"); }
+                    if (!atHome) { return WrongRegion(http, current); }
+                    var request = await JsonAsync(http);
+                    Require(request.EnumerateObject().All(field => field.Name is "name" or "pointInTime" or "ttlSeconds"), "Fork at a time uses platform history");
+                    var point = request.GetProperty("pointInTime").GetDateTimeOffset();
+                    var name = request.GetProperty("name").GetString()!;
+                    lock (gate)
+                    {
+                        var snapshot = snapshots.Values.Where(item => item.Backup.DatabaseId == current.Id && item.Backup.CreatedAt <= point)
+                            .OrderByDescending(item => item.Backup.CreatedAt).FirstOrDefault();
+                        if (snapshot is null) { return Error(409, "restore_point_unproven"); }
+                        if (databases.Values.Any(item => item.ProjectId == project && item.Name == name)) { return Error(409, "name_taken"); }
+                        var fork = new ManagedDatabase(ids.NewId(), project, name, DateTimeOffset.UtcNow, current.Id, current.HomeRegion, []) { ExpiresAt = Expiry(request) };
+                        databases.Add(fork.Id, fork);
+                        foreach (var collection in snapshot.Collections)
+                        {
+                            collections.Add(project + "/" + name + "/" + collection.Key, new Dictionary<string, TerraBaseDocument>(collection.Value));
+                        }
+                        return Results.Json(Wire(fork, answering), statusCode: 201);
+                    }
+                }
                 switch (parts.Length, method, parts.ElementAtOrDefault(5))
                 {
                     // The managed GET normalizes the replica list even though raw restore 201 permits null.
                     case (5, "GET", _): return Results.Json(Wire(backupFailure == "foreign-confirm" && current.BranchedFrom is not null ? current with { ProjectId = ids.NewId() } : current, answering));
+                    case (6, "PUT" or "DELETE", "ttl"):
+                        if (callerRole is not ("owner" or "admin")) { return Error(403, "role_too_low"); }
+                        if (!atHome) { return WrongRegion(http, current); }
+                        DateTimeOffset? expiry = null;
+                        if (method == "PUT")
+                        {
+                            var ttl = await JsonAsync(http);
+                            Require(ttl.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "ttlSeconds" }), "TTL update body");
+                            expiry = Expiry(ttl);
+                        }
+                        lock (gate)
+                        {
+                            var updated = current with { ExpiresAt = expiry };
+                            databases[current.Id] = updated;
+                            return Results.Json(Wire(updated, answering));
+                        }
                     case (5, "PATCH", _):
                         if (callerRole is not ("owner" or "admin"))
                         {
@@ -1126,13 +1165,13 @@ namespace TerraScale.Dashboard.E2E
                         }
 
                         var request = await JsonAsync(http);
-                        Require(request.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "name" }), "The branch body accepts only its new database name");
+                        Require(request.EnumerateObject().All(field => field.Name is "name" or "ttlSeconds"), "The fork body accepts name and TTL");
                         var branchName = request.GetProperty("name").GetString()!;
                         lock (gate)
                         {
                             if (databases.Values.Any(database => database.ProjectId == project && database.Name == branchName))
                             { Interlocked.Increment(ref branchConflicts); return Error(409, "name_taken"); }
-                            var branch = new ManagedDatabase(ids.NewId(), project, branchName, DateTimeOffset.UtcNow, current.Id, current.HomeRegion, []);
+                            var branch = new ManagedDatabase(ids.NewId(), project, branchName, DateTimeOffset.UtcNow, current.Id, current.HomeRegion, []) { ExpiresAt = Expiry(request) };
                             databases.Add(branch.Id, branch);
                             Interlocked.Increment(ref branchCreates);
                             return Results.Json(Wire(branch, answering), statusCode: 201);
@@ -1238,6 +1277,14 @@ namespace TerraScale.Dashboard.E2E
             }
 
             // I2 ManagedDatabaseBody: camelCase, answering region and complete placement.
+            private static DateTimeOffset? Expiry(JsonElement request)
+            {
+                if (!request.TryGetProperty("ttlSeconds", out var ttl)) { return null; }
+                var seconds = ttl.GetInt64();
+                Require(seconds is >= 60 and <= 31_536_000, "TTL seconds range");
+                return DateTimeOffset.UtcNow.AddSeconds(seconds);
+            }
+
             private static object Wire(ManagedDatabase database, string region)
             {
                 return new
@@ -1250,6 +1297,7 @@ namespace TerraScale.Dashboard.E2E
                     region,
                     homeRegion = database.HomeRegion,
                     replicaRegions = database.ReplicaRegions ?? Array.Empty<string>(),
+                    expiresAt = database.ExpiresAt,
                     allRegions = database.AllRegions
                 };
             }
