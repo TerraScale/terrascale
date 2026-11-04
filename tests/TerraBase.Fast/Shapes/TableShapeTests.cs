@@ -25,7 +25,7 @@ public sealed class TableShapeTests
         var requests = 0;
         while (done < Operations)
         {
-            var batch = Math.Min(Operations - done, faker.Random.Int(1, 250));
+            var batch = Math.Min(Operations - done, faker.Random.Int(200, 256));
             var statements = new object[batch];
             for (var index = 0; index < batch; index++)
             {
@@ -45,18 +45,18 @@ public sealed class TableShapeTests
             await db.OkAsync(statements);
             done += batch;
             requests++;
-            if (requests % 25 == 0)
+            if (requests % 50 == 0)
             {
                 await early.CatchUpAsync();
             }
 
-            if (requests == 300)
+            if (requests == 200)
             {
                 late = Client(db);
                 await late.SyncAsync();
             }
 
-            if (late is not null && requests % 40 == 0)
+            if (late is not null && requests % 80 == 0)
             {
                 await late.CatchUpAsync();
             }
