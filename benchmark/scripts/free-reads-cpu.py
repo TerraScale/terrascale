@@ -11,16 +11,16 @@ while True:
         cpu = sum(float(value) for value in re.findall(r"^dotnet_process_cpu_time_seconds_total\{[^\n]*\} ([0-9.eE+-]+)$", text, re.M))
         count = re.search(r"^dotnet_process_cpu_count\{[^\n]*\} ([0-9.eE+-]+)$", text, re.M)
         if count is None or not cpu:
-            raise ValueError()
+            raise ValueError("CPU_METRICS_MISSING")
         cores = float(count.group(1))
         now = time.monotonic()
         if previous is not None:
             elapsed, used = now - previous[0], cpu - previous[1]
             if used < 0:
-                raise ValueError()
+                raise ValueError("CPU_COUNTER_RESET")
             print(json.dumps({"at": time.time(), "cores": cores, "cpu_percent": 100 * used / elapsed / cores, "core_percent": 100 * used / elapsed}), flush=True)
         previous = now, cpu
-    except (OSError, ValueError):
-        print(json.dumps({"error": "CPU telemetry unavailable or process restarted"}), flush=True)
+    except (OSError, ValueError) as error:
+        print(json.dumps({"error": "CPU telemetry unavailable or process restarted", "reason": str(error) if isinstance(error, ValueError) else type(error).__name__, "http_status": getattr(error, "code", None)}), flush=True)
         break
     time.sleep(1)
