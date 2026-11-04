@@ -24,7 +24,6 @@ public sealed class ManagementApi : IAsyncDisposable
 
     private ManagementApi(TerraBaseTestServer server, ClientTls tls, TestIssuer issuer, string user, bool ownsIssuer, bool ownsServer = true)
     {
-        _ownsServer = ownsServer;
         Server = server;
         Tls = tls;
         Issuer = issuer;
@@ -114,14 +113,6 @@ public sealed class ManagementApi : IAsyncDisposable
 
             throw;
         }
-    }
-
-    /// <summary>Leases the assembly's default host with a separate user and client for this test.</summary>
-    public static async Task<ManagementApi> StartSharedAsync()
-    {
-        var shared = await SharedServer.GetAsync(CancellationToken.None);
-        return new ManagementApi(shared.Server, shared.Tls, shared.Issuer, EntityIds.New().ToString(),
-            ownsIssuer: false, ownsServer: false);
     }
 
     /// <summary>Verifies a fixture's catalog even when its frozen clock cannot schedule a retry after the startup deadline.</summary>
@@ -250,12 +241,6 @@ public sealed class ManagementApi : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (!_ownsServer)
-        {
-            Client.Dispose();
-            return;
-        }
-
         try
         {
             Client.Dispose();
