@@ -24,7 +24,7 @@ namespace TerraScale.Dashboard.E2E.Platform
             var environment = new DemoEnvironment();
             await environment.InitializeAsync();
             FailingStripe stripe = null!;
-            await using var app = environment.CreateTestHost(fixture.Root, 0, "http://127.0.0.1", builder =>
+            await using var app = await environment.CreateTestHostAsync(fixture.Root, 0, "http://127.0.0.1", builder =>
             {
                 builder.Logging.ClearProviders();
                 builder.Logging.SetMinimumLevel(LogLevel.Trace);

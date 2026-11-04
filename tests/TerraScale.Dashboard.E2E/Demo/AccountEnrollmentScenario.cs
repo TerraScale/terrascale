@@ -34,7 +34,7 @@ namespace TerraScale.Dashboard.E2E
             var scenario = new AccountEnrollmentScenario();
             await scenario.environment.InitializeAsync();
             scenario.stateServer = await StateSdkScenario.PrepareAsync(root);
-            scenario.app = scenario.environment.CreateTestHost(root, 0, "http://127.0.0.1", builder =>
+            scenario.app = await scenario.environment.CreateTestHostAsync(root, 0, "http://127.0.0.1", builder =>
             {
                 scenario.stateServer.ConfigureState(builder);
                 builder.Services.AddSingleton<TerraBaseDashboardState>();

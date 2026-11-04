@@ -51,7 +51,7 @@ namespace TerraScale.Dashboard.E2E.Platform
         {
             await environment.InitializeAsync();
             // ts-orch sets TS_REGION in the environment; per-host configuration keeps parallel hosts apart.
-            var app = environment.CreateTestHost(fixture.Root, 0, "http://127.0.0.1", builder => builder.Configuration["TS_REGION"] = "gru");
+            var app = await environment.CreateTestHostAsync(fixture.Root, 0, "http://127.0.0.1", builder => builder.Configuration["TS_REGION"] = "gru");
             await app.StartAsync();
             return app;
         }

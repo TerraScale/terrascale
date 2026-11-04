@@ -42,8 +42,8 @@ namespace TerraScale.Dashboard.E2E
                 builder.Services.Replace(ServiceDescriptor.Singleton<IBackupBackend>(databaseFacts));
                 configure?.Invoke(builder);
             }
-            first = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
-            second = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
+            first = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1", Configure);
+            second = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1", Configure);
             await first.StartAsync();
             await second.StartAsync();
             Origin = Address(first);

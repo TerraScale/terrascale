@@ -11,9 +11,9 @@ namespace TerraScale.Dashboard.E2E
     public static class DemoTestHost
     {
         private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<DemoEnvironment, TestStepUpGateway> StepUps = new();
-        public static WebApplication CreateTestHost(this DemoEnvironment environment, string root, int port, string origin, Action<WebApplicationBuilder>? configureScenario = null)
+        public static async Task<WebApplication> CreateTestHostAsync(this DemoEnvironment environment, string root, int port, string origin, Action<WebApplicationBuilder>? configureScenario = null)
         {
-            var app = environment.CreateHost(Path.Combine(root, "src", "TerraScale.Dashboard"), port, origin, builder =>
+            var app = await environment.CreateHostAsync(Path.Combine(root, "src", "TerraScale.Dashboard"), port, origin, builder =>
             {
                 TestHttps.Configure(builder);
                 builder.Services.AddSingleton<TestInitializerDiagnostics>();
