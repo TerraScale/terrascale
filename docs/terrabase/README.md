@@ -182,3 +182,5 @@ Feature-sliced: `src/TerraBase/Features/<Feature>/` holds everything
 a slice needs. See `AGENTS.md` for the full structure and rules.
 
 Database region observations and dashboard lag: [`replica-status.md`](replica-status.md).
+
+CI: [Fast timing budgets and checked builds](fast-ci-budgets.md).
