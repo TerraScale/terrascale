@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { spawn, execFileSync } from "node:child_process";
-import { createServer } from "node:net";
+import { createServer, createConnection } from "node:net";
 import { createInterface } from "node:readline";
 import { hostname } from "node:os";
 import { ProxyAgent } from "../../sdk/js/node_modules/undici/index.js";
@@ -66,6 +66,20 @@ async function egress(region) {
   const tunnel = spawn("ssh", ["-N", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-o", "ConnectTimeout=5", "-L", `127.0.0.1:${local}:127.0.0.1:${port}`, host], { stdio: ["ignore", "ignore", "pipe"] });
   children.push(tunnel);
   tunnel.stderr.resume();
+  const forwardingDeadline = performance.now() + 10_000;
+  for (;;) {
+    controller.signal.throwIfAborted();
+    if (tunnel.exitCode !== null) throw new Error("EGRESS_TUNNEL_EXITED");
+    const ready = await new Promise(resolve => {
+      const socket = createConnection({ host: "127.0.0.1", port: local });
+      socket.once("connect", () => { socket.destroy(); resolve(true); });
+      socket.once("error", () => { socket.destroy(); resolve(false); });
+      socket.setTimeout(1000, () => { socket.destroy(); resolve(false); });
+    });
+    if (ready) break;
+    if (performance.now() >= forwardingDeadline) throw new Error("EGRESS_FORWARD_NOT_READY");
+    await delay(100);
+  }
   const agent = new ProxyAgent({ uri: `http://127.0.0.1:${local}`, connections: 1024 });
   for (let attempt = 0; ; attempt++) {
     try {
@@ -127,6 +141,7 @@ async function main() {
   };
   try {
     for (const readers of [1, 10, 100, 1000]) for (const region of ["gru", "sjc", "fra"]) {
+      phase = `egress_${region}_${readers}`;
       const route = await egress(region);
       try {
         for (const shape of ["table", "where_columns"]) for (let repeat = 1; repeat <= 3; repeat++) {
@@ -258,6 +273,7 @@ async function main() {
 
 try { await main(); }
 catch (error) { emit({ type: "failure", phase, error: controller.signal.aborted ? controller.signal.reason.message : /^[A-Z][A-Z0-9_]+$/.test(error.message) ? error.message : error.name,
+  cause: typeof error.cause?.code === "string" && /^[A-Z0-9_]+$/.test(error.cause.code) ? error.cause.code : undefined,
   frames: error.stack?.split("\n").slice(1).filter(line => line.includes("/benchmark/") || line.includes("/sdk/js/")).slice(0, 5) }); process.exitCode = 1; }
 finally {
   for (const child of children) { child.stdin?.end(); child.kill(); }
