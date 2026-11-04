@@ -7,8 +7,6 @@ RUNTIME ?= linux-x64
 PUBLISH_DIR ?= artifacts/publish
 # Extra arguments for every TUnit runner, e.g. TEST_ARGS="--treenode-filter /*/*/Name/*".
 TEST_ARGS ?=
-# Match Fast concurrency to the available CPUs on dev hosts and CI runners.
-AUTH_TEST_PARALLEL ?= $(shell nproc)
 # Build revision shown by ts-auth /healthz (CI passes the commit SHA).
 TS_AUTH_REVISION ?=
 export TS_AUTH_REVISION
@@ -117,7 +115,7 @@ auth-openapi-check: auth-build
 auth-test-fast: restore turso-native
 	dotnet build src/TerraBase/TerraBase.csproj --configuration $(CONFIGURATION) --no-restore --nologo
 	dotnet build tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj --configuration $(CONFIGURATION) --no-restore --nologo
-	TERRABASE_BINARY=$(TERRABASE_BINARY) dotnet run --project tests/TerraScale.Authentication.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(AUTH_TEST_PARALLEL) $(TEST_ARGS)
+	TERRABASE_BINARY=$(TERRABASE_BINARY) dotnet run --project tests/TerraScale.Authentication.Fast --configuration $(CONFIGURATION) --no-build -- $(TEST_ARGS)
 
 auth-test-slow: auth-build turso-native
 	dotnet build src/TerraBase/TerraBase.csproj --configuration $(CONFIGURATION) --no-restore --nologo
