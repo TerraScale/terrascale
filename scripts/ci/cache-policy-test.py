@@ -50,7 +50,7 @@ for area in ("libs", "auth", "terrabase"):
     assert "timeout-minutes: 2" in block
     assert f"qualified-build.py verify {area}" in block
     assert "dotnet build" not in block
-    assert "needs: [changes, native]" in block
+    assert "needs: changes" in block, "Receipt checks run alongside native verification; aggregate test still gates both"
     assert "needs.changes.outputs.fast" in block
 
 # Guard behavior at the build graph boundary: publishing and Slow must never rerun checked Fast stages.
