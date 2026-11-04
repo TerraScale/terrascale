@@ -54,6 +54,13 @@ public sealed class ManagementApi : IAsyncDisposable
         return new(shared.Server, new ClientTls(), shared.Issuer, EntityIds.New().ToString(), ownsIssuer: false, ownsServer: false);
     }
 
+    /// <summary>Borrows the assembly server as an existing fixture-owned tenant.</summary>
+    internal static async Task<ManagementApi> StartSharedAsAsync(string user)
+    {
+        var shared = await SharedServer.GetAsync(CancellationToken.None);
+        return new(shared.Server, new ClientTls(), shared.Issuer, user, ownsIssuer: false, ownsServer: false);
+    }
+
     /// <summary>
     /// Starts a server; <paramref name="configure"/> edits its settings after the issuer is configured, <paramref name="time"/>
     /// replaces its clock and <paramref name="services"/> its other services.
