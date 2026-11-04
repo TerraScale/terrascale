@@ -1,0 +1,23 @@
+{
+  "request": {
+    "method": "DELETE",
+    "path": "/v1/projects/01JA0000000000000000000001/databases/01JA0000000000000000000004/ttl",
+    "headers": {
+      "Accept": "application/json"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "01JA0000000000000000000004",
+      "projectId": "01JA0000000000000000000001",
+      "name": "agent",
+      "branchedFrom": null,
+      "createdAt": "2026-11-04T12:00:00+00:00",
+      "region": "gru",
+      "homeRegion": "gru",
+      "expiresAt": null
+    }
+  }
+}

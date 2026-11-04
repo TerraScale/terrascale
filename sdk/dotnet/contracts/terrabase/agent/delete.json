@@ -1,0 +1,14 @@
+{
+  "request": {
+    "method": "DELETE",
+    "path": "/v1/projects/01JA0000000000000000000001/databases/01JA0000000000000000000004",
+    "headers": {
+      "Accept": "application/json"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 204,
+    "body": null
+  }
+}

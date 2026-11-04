@@ -1,0 +1,26 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/terrascale/api-keys/self/scoped-keys",
+    "headers": {
+      "Accept": "application/json",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "project": "01JA0000000000000000000001",
+      "database": "01JA0000000000000000000004",
+      "access": "read_write",
+      "ttl_seconds": 3600
+    },
+    "origin": "https://auth.terrascale.tech"
+  },
+  "response": {
+    "status": 403,
+    "body": {
+      "error": {
+        "code": "forbidden",
+        "message": "The requested database or scopes exceed the parent key's authority."
+      }
+    }
+  }
+}
