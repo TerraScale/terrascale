@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Tests;
@@ -20,6 +21,17 @@ public static class PlatformCalls
     {
         var (user, _, tokens) = await oidc.SignInAndRedeemAsync(email);
         return (user, tokens.GetProperty("access_token").GetString()!);
+    }
+
+    /// <summary>Seeds a real session for management setup, then obtains a token through HTTP authorization and PKCE redemption.</summary>
+    public static async Task<(UserRecord User, string Token)> CreateUserTokenAsync(this OidcHarness oidc, string email)
+    {
+        var user = await oidc.CreateUserAsync(email);
+        var session = await oidc.Server.App.Services.GetRequiredService<Sessions>().CreateAsync(user);
+        var (verifier, challenge) = OidcHarness.Pkce();
+        using var response = await oidc.RedeemCodeAsync(await oidc.CodeAsync(session.Token, challenge), verifier);
+        response.EnsureSuccessStatusCode();
+        return (user, (await OidcHarness.JsonAsync(response)).GetProperty("access_token").GetString()!);
     }
 
     /// <summary>Sends <paramref name="body"/> (as JSON, unless null) with <paramref name="token"/> as the bearer.</summary>

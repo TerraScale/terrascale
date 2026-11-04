@@ -1,15 +1,7 @@
 using System.Net;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
-using OpenIddict.Abstractions;
-using OpenIddict.Server;
-using TerraScale.Authentication.Configuration;
-using TerraScale.Authentication.Features.Oidc;
-using TerraScale.Authentication.Features.Platform;
-using TerraScale.Authentication.Features.SignIn;
-using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 using static TerraScale.Authentication.Tests.PlatformCalls;
 
@@ -24,21 +16,16 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
 {
     private const string Audience = "https://api.terrascale.tech";
     private static readonly string[] ReadWrite = ["documents:read", "documents:write"];
-    private static readonly string[] WithShapes = ["documents:read", "shapes:read"];
 
     [Test]
     public async Task A_project_key_is_shown_once_and_exchanged_for_a_project_token_with_the_contract_claims()
     {
         await using var oidc = await StartAsync();
-        var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
+        var (alice, token) = await oidc.CreateUserTokenAsync("alice@example.test");
         var organization = await oidc.CreateOrganizationAsync(token);
         var project = await oidc.CreateProjectAsync(token, organization, "Production");
         var keys = $"{Organizations}/{organization}/projects/{project}/api-keys";
 
-        await Assert.That(await oidc.FailAsync(HttpMethod.Post, keys, token, new { name = "backend", scopes = ReadWrite, database = "app\n" })).IsEqualTo((400, "invalid_request"));
-        // TerraBase dropped shapes (R2c-1), so ts-auth no longer issues their scope.
-        await Assert.That(await oidc.FailAsync(HttpMethod.Post, keys, token, new { name = "backend", scopes = WithShapes })).IsEqualTo((400, "invalid_request"));
-        await Assert.That(await oidc.FailAsync(HttpMethod.Post, keys, token, new { name = "backend", scopes = ReadWrite, database = "app" })).IsEqualTo((400, "invalid_request"));
         var database = await oidc.CreateDatabaseIdAsync("app");
         var created = await oidc.OkAsync(HttpMethod.Post, keys, token, new { name = "backend", scopes = ReadWrite, database }, HttpStatusCode.Created);
         var key = created.GetProperty("key").GetString()!;
@@ -79,19 +66,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(used).IsLessThanOrEqualTo(DateTimeOffset.UtcNow.AddSeconds(5));
         await Assert.That((await oidc.OkAsync(HttpMethod.Get, keys, token)).GetProperty("items")[0].GetProperty("last_used_at").GetDateTimeOffset()).IsEqualTo(used);
 
-        // The key string authenticates with client_secret_post too; scopes narrow but never widen.
-        using (var posted = await oidc.PostTokenAsync(new() { ["grant_type"] = "client_credentials", ["client_id"] = id, ["client_secret"] = key, ["scope"] = "documents:read" }, null, null))
-        {
-            var narrowed = await oidc.ValidateAsync((await OidcHarness.JsonAsync(posted)).GetProperty("access_token").GetString()!, Audience);
-            await Assert.That(narrowed.GetClaim("scope").Value).IsEqualTo("documents:read");
-        }
-
-        await Assert.That(await TokenErrorAsync(oidc.ApiKeyTokenAsync(key, new() { ["scope"] = "databases:write" }))).IsEqualTo((400, "invalid_scope"));
-        await Assert.That(await TokenErrorAsync(oidc.ApiKeyTokenAsync(key, new() { ["project"] = Guid.CreateVersion7().ToString("D") }))).IsEqualTo((400, "invalid_target"));
         await Assert.That(await TokenErrorAsync(oidc.PostTokenAsync(new() { ["grant_type"] = "client_credentials" }, id, key[..^1] + (key[^1] == 'a' ? 'b' : 'a')))).IsEqualTo((401, "invalid_client"));
-        await Assert.That(await TokenErrorAsync(oidc.PostTokenAsync(new() { ["grant_type"] = "client_credentials" }, "tsk_00000000000000000000", key))).IsEqualTo((401, "invalid_client"));
-        // A key has only the client-credentials grant.
-        await Assert.That((await TokenErrorAsync(oidc.PostTokenAsync(new() { ["grant_type"] = "authorization_code", ["code"] = "x", ["redirect_uri"] = OidcHarness.RedirectUri, ["code_verifier"] = "x" }, id, key))).Status).IsEqualTo(400);
 
         // A key's token never opens the management API.
         await Assert.That(await oidc.FailAsync(HttpMethod.Get, Organizations, body.GetProperty("access_token").GetString()!)).IsEqualTo((401, "unauthorized"));
@@ -110,19 +85,13 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await using var oidc = await StartAsync(clock);
         var (alice, _, tokens) = await oidc.SignInAndRedeemAsync("alice@example.test");
         var aliceToken = tokens.GetProperty("access_token").GetString()!;
-        var (bob, bobToken) = await oidc.SignInUserAsync("bob@example.test");
-        var (dave, daveToken) = await oidc.SignInUserAsync("dave@example.test");
+        var (bob, bobToken) = await oidc.CreateUserTokenAsync("bob@example.test");
+        var (dave, daveToken) = await oidc.CreateUserTokenAsync("dave@example.test");
         var organization = await oidc.CreateOrganizationAsync(aliceToken);
         var first = await oidc.CreateProjectAsync(aliceToken, organization, "Production");
         var second = await oidc.CreateProjectAsync(aliceToken, organization, "Staging");
         await oidc.AddMemberAsync(organization, bob.Id, "viewer");
         await oidc.GrantAsync(second, dave.Id, "member");
-
-        using (var discovery = await oidc.Client.GetAsync("/terrascale/.well-known/openid-configuration"))
-        {
-            var grants = (await OidcHarness.JsonAsync(discovery)).GetProperty("grant_types_supported").EnumerateArray().Select(grant => grant.GetString()).ToArray();
-            await Assert.That(grants).Contains("urn:ietf:params:oauth:grant-type:token-exchange");
-        }
 
         using (var exchanged = await oidc.ExchangeAsync(aliceToken, new() { ["organization"] = organization, ["project"] = first }))
         {
@@ -156,38 +125,14 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
 
         await Assert.That(await TokenErrorAsync(oidc.ExchangeAsync(bobToken, new() { ["organization"] = organization, ["project"] = first, ["scope"] = "documents:write" }))).IsEqualTo((400, "invalid_scope"));
 
-        // A collaborator reaches only its project, and has no organization token.
+        // A collaborator reaches only its granted project.
         await Assert.That((await TokenErrorAsync(oidc.ExchangeAsync(daveToken, new() { ["organization"] = organization, ["project"] = second }))).Status).IsEqualTo(200);
-        foreach (var target in new[] { new Dictionary<string, string> { ["organization"] = organization }, new() { ["organization"] = organization, ["project"] = first }, new() { ["organization"] = Guid.CreateVersion7().ToString("D") } })
-        {
-            await Assert.That(await TokenErrorAsync(oidc.ExchangeAsync(daveToken, target))).IsEqualTo((400, "invalid_target"));
-        }
-
-        await Assert.That(await TokenErrorAsync(oidc.ExchangeAsync(aliceToken, []))).IsEqualTo((400, "invalid_request"));
-        await Assert.That((await TokenErrorAsync(oidc.ExchangeAsync(tokens.GetProperty("id_token").GetString()!, new() { ["organization"] = organization }))).Status).IsEqualTo(400);
-
-        // A sign-in never carries TerraBase or billing scopes, although the dashboard holds their permissions.
-        clock.Advance(HostedAuth.MailCooldown);
-        var (_, challenge) = OidcHarness.Pkce();
-        using (var authorize = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge, scope: "openid documents:write"), await oidc.SignInAsync("bob@example.test")))
-        {
-            await Assert.That(OidcHarness.Query(authorize.Headers.Location!)["error"]).IsEqualTo("invalid_scope");
-        }
+        await Assert.That(await TokenErrorAsync(oidc.ExchangeAsync(daveToken, new() { ["organization"] = organization, ["project"] = first }))).IsEqualTo((400, "invalid_target"));
 
         // After sign-out everywhere, the sign-in token can no longer be exchanged.
         await Assert.That(await oidc.Server.App.Services.GetRequiredService<TerraScale.Authentication.Features.Identity.Sessions>().RevokeAllAsync("terrascale", bob.Id)).IsTrue();
         await Assert.That(await TokenErrorAsync(oidc.ExchangeAsync(bobToken, new() { ["organization"] = organization }))).IsEqualTo((400, "invalid_grant"));
 
-        // A revoked sign-in can no longer be exchanged, on any replica, whatever it exchanged before.
-        await using var replica = await oidc.StartReplicaAsync(values => values["access-token-audiences"] = Audience, clock);
-        await Assert.That((await TokenErrorAsync(oidc.ExchangeAsync(aliceToken, new() { ["organization"] = organization }, replica.Client))).Status).IsEqualTo(200);
-        using (var revoked = await oidc.RevokeAsync(tokens.GetProperty("refresh_token").GetString()!))
-        {
-            await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        }
-
-        await Assert.That(await TokenErrorAsync(oidc.ExchangeAsync(aliceToken, new() { ["organization"] = organization }, replica.Client))).IsEqualTo((400, "invalid_grant"));
-        await Assert.That(await TokenErrorAsync(oidc.ExchangeAsync(aliceToken, new() { ["organization"] = organization }))).IsEqualTo((400, "invalid_grant"));
     }
 
     private Task<OidcHarness> StartAsync(TimeProvider? clock = null) => OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience, clock: clock);

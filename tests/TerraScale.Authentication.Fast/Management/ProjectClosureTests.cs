@@ -29,7 +29,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     public async Task A_project_is_removed_only_after_terrabase_accepts_and_a_lost_answer_is_retried_with_the_same_closure()
     {
         await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false);
-        var (owner, token) = await oidc.SignInUserAsync("owner@example.test");
+        var (owner, token) = await oidc.CreateUserTokenAsync("owner@example.test");
         var organization = await oidc.CreateOrganizationAsync(token);
         var first = await oidc.CreateProjectAsync(token, organization, "First");
         var second = await oidc.CreateProjectAsync(token, organization, "Second");
