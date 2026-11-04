@@ -91,7 +91,7 @@ func runSchema(ctx context.Context, db *v1.Database, command, path string, optio
 			batch = append(batch, v1.Statement{SQL: statement})
 		}
 		if _, err := db.Batch(ctx, batch); err != nil {
-			return fmt.Errorf("schema apply rolled back: %w", err)
+			return fmt.Errorf("schema apply: %w", err)
 		}
 		plan.Applied = true
 	}
