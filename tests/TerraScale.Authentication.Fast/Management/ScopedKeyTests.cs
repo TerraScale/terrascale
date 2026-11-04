@@ -20,12 +20,12 @@ public sealed class ScopedKeyTests(TerraBaseFixture fixture)
     public async Task A_project_key_mints_a_read_only_key_for_one_database_whose_token_reaches_only_it()
     {
         await using var oidc = await StartAsync();
-        var (_, token) = await oidc.CreateUserTokenAsync("alice@example.test");
+        var (_, token) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("alice"));
         var organization = await oidc.CreateOrganizationAsync(token);
         var project = await oidc.CreateProjectAsync(token, organization, "Agents");
         var parent = (await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{organization}/projects/{project}/api-keys", token,
             new { name = "orchestrator", scopes = Orchestrator }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
-        var database = await oidc.CreateDatabaseIdAsync("agent-1");
+        var database = await oidc.CreateDatabaseIdAsync(oidc.UniqueName("agent-1"));
 
         using var minted = await MintAsync(oidc.Client, parent, new { database, access = "read", ttl_seconds = 600 });
         var body = await minted.Content.ReadFromJsonAsync<JsonElement>();
@@ -44,16 +44,16 @@ public sealed class ScopedKeyTests(TerraBaseFixture fixture)
     public async Task A_scoped_key_mints_nothing_cannot_widen_its_parent_and_dies_with_it()
     {
         await using var oidc = await StartAsync();
-        var (_, token) = await oidc.CreateUserTokenAsync("bob@example.test");
+        var (_, token) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("bob"));
         var organization = await oidc.CreateOrganizationAsync(token);
         var project = await oidc.CreateProjectAsync(token, organization, "Agents");
         var keys = $"{Organizations}/{organization}/projects/{project}/api-keys";
-        var database = await oidc.CreateDatabaseIdAsync("agent-2");
+        var database = await oidc.CreateDatabaseIdAsync(oidc.UniqueName("agent-2"));
         var created = await oidc.OkAsync(HttpMethod.Post, keys, token, new { name = "reader", scopes = ReadOnly, database }, HttpStatusCode.Created);
         var parent = created.GetProperty("key").GetString()!;
 
         using var widened = await MintAsync(oidc.Client, parent, new { database, access = "read_write" });
-        using var elsewhere = await MintAsync(oidc.Client, parent, new { database = await oidc.CreateDatabaseIdAsync("other"), access = "read" });
+        using var elsewhere = await MintAsync(oidc.Client, parent, new { database = await oidc.CreateDatabaseIdAsync(oidc.UniqueName("other")), access = "read" });
         using var minted = await MintAsync(oidc.Client, parent, new { database, access = "read" });
         var child = (await minted.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("key").GetString()!;
         using var grandchild = await MintAsync(oidc.Client, child, new { database, access = "read" });
@@ -71,7 +71,7 @@ public sealed class ScopedKeyTests(TerraBaseFixture fixture)
         await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
-    private Task<OidcHarness> StartAsync() => OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience);
+    private Task<OidcHarness> StartAsync() => OidcHarness.StartSharedManagementAsync(fixture);
 
     private static async Task<HttpResponseMessage> MintAsync(HttpClient client, string key, object body)
     {

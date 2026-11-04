@@ -14,9 +14,9 @@ public sealed class OrganizationTests(TerraBaseFixture fixture)
     [Test]
     public async Task An_owner_creates_renames_and_deletes_an_organization_and_outsiders_see_nothing()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
-        var (alice, aliceToken) = await oidc.CreateUserTokenAsync("alice@example.test");
-        var (_, bobToken) = await oidc.CreateUserTokenAsync("bob@example.test");
+        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
+        var (alice, aliceToken) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("alice"));
+        var (_, bobToken) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("bob"));
 
         using var created = await oidc.CallAsync(HttpMethod.Post, Organizations, aliceToken, new { name = "  Acme  " });
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
@@ -52,10 +52,10 @@ public sealed class OrganizationTests(TerraBaseFixture fixture)
     [Test]
     public async Task Roles_gate_every_change_and_an_organization_keeps_an_owner()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
-        var (alice, aliceToken) = await oidc.CreateUserTokenAsync("alice@example.test");
-        var (bob, bobToken) = await oidc.CreateUserTokenAsync("bob@example.test");
-        var (carol, carolToken) = await oidc.CreateUserTokenAsync("carol@example.test");
+        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
+        var (alice, aliceToken) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("alice"));
+        var (bob, bobToken) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("bob"));
+        var (carol, carolToken) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("carol"));
         var id = await oidc.CreateOrganizationAsync(aliceToken);
         await Assert.That(await oidc.AddMemberAsync(id, bob.Id, "viewer")).IsTrue();
         await Assert.That(await oidc.AddMemberAsync(id, carol.Id, "admin")).IsTrue();
@@ -64,7 +64,7 @@ public sealed class OrganizationTests(TerraBaseFixture fixture)
         // Members list in user id order.
         var members = (await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{id}/members", bobToken)).GetProperty("items").EnumerateArray()
             .Select(member => $"{member.GetProperty("user_id").GetString()} {member.GetProperty("email").GetString()} {member.GetProperty("role").GetString()}").ToList();
-        var expected = new[] { $"{alice.Id} alice@example.test owner", $"{bob.Id} bob@example.test viewer", $"{carol.Id} carol@example.test admin" }.Order(StringComparer.Ordinal).ToList();
+        var expected = new[] { $"{alice.Id} {alice.Email} owner", $"{bob.Id} {bob.Email} viewer", $"{carol.Id} {carol.Email} admin" }.Order(StringComparer.Ordinal).ToList();
         await Assert.That(members.SequenceEqual(expected)).IsTrue();
 
         // A viewer cannot change the organization; an admin can manage non-owners.
