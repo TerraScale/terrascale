@@ -34,6 +34,9 @@ def check(report, elapsed):
             print(f'WARN Fast test exceeded 10s (warn-only until #1084): {name} ({seconds:.3f}s)', file=sys.stderr, flush=True)
     if elapsed >= 30:
         print(f'WARN Fast suite exceeded 30s (warn-only until #1084): {report.stem} ({elapsed:.3f}s)', file=sys.stderr, flush=True)
+    if elapsed >= 120:
+        print(f'FAILED Fast suite exceeded 120s: {report.stem} ({elapsed:.3f}s)', file=sys.stderr, flush=True)
+        return True
     return False
 
 
@@ -67,7 +70,10 @@ def main():
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, cancel)
     try:
-        code = process.wait()
+        code = process.wait(timeout=120)
+    except subprocess.TimeoutExpired:
+        print(f'FAILED Fast suite exceeded 120s: {suite}', file=sys.stderr, flush=True)
+        code = 124
     finally:
         try:
             os.killpg(process.pid, signal.SIGKILL)
