@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -9,15 +10,13 @@ using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Platform.Rpc;
 using TerraScale.Dashboard.Platform.TsAuth;
-using TerraScale.DotNet.TerraBase;
-using TerraScale.TerraBase.Contracts.Backups;
 using TerraScale.TerraBase.Contracts.Management;
 
 namespace TerraScale.Dashboard.Platform.Mcp
 {
     // Machine credentials never become dashboard users. Every operation retains the original
     // ts-auth project/database scopes and TerraBase authorizes the RPC with that same token.
-    public sealed class McpApiKeyTools(IHttpClientFactory http, IDatabaseBackend databases, TerraBaseRpcClient rpc)
+    public sealed class McpApiKeyTools(IHttpClientFactory http, IDatabaseBackend databases, IBackupBackend backups, TerraBaseRpcClient rpc)
     {
         internal const string ContextKey = "TerraScale.Dashboard/mcp-api-key";
         internal static readonly HashSet<string> Tools = new(StringComparer.Ordinal)
@@ -48,7 +47,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 return new(key, new("", result.AccessToken, organizationId, "", projectId, "") { IsApiKey = true },
                     databaseId, (claims.GetProperty("scope").GetString() ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries));
             }
-            catch (TsAuthException error) when ((int)error.StatusCode is 400 or 401 or 403) { return null; }
+            catch (TsAuthException error) when (error.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden) { return null; }
             catch (Exception error) when (error is JsonException or FormatException or KeyNotFoundException) { return null; }
         }
 
@@ -71,8 +70,15 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 var ttl = Number("ttlSeconds") ?? 3600;
                 if (!TerraScaleIds.IsValid(databaseId) || access is not ("read" or "read_write") || ttl is < 60 or > 2_592_000)
                     throw new AccountAccessException("Pass a database ULID, access read or read_write, and ttlSeconds between 60 and 2,592,000.", 422);
-                var client = new TerraBaseSqlClient(http.CreateClient("platform"), new TerraBaseSqlClientOptions { ApiKey = credential.Key });
-                return Reply(await client.CreateScopedKeyAsync(databaseId, access, scope.ProjectId, (int)ttl, ct), McpAgentJson.Default.TerraBaseScopedKey);
+                var client = new TsAuthClient(http.CreateClient("platform"));
+                try
+                {
+                    return Reply(await client.CreateScopedKeyAsync(credential.Key, new(scope.ProjectId, databaseId, access, (int)ttl), ct), McpAgentJson.Default.TsAuthScopedKey);
+                }
+                catch (TsAuthException error)
+                {
+                    throw new AccountAccessException("Scoped key minting was refused. The parent key must be active, unscoped and grant the requested database and access.", (int)(error.StatusCode ?? HttpStatusCode.BadGateway));
+                }
             }
             var write = tool is "create_database" or "branch_database" or "delete_database" or "create_backup" or "restore_backup";
             var dataTool = tool is "execute_sql" or "run_sql" or "check_sql" or "get_database_schema";
@@ -142,17 +148,19 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 await management.DeleteDatabaseAsync(scope.ProjectId, databaseId);
                 return Reply(new McpDeleted(true), McpAgentJson.Default.McpDeleted);
             }
-            var backups = rpc.User<IBackupsService>(scope.AccessToken, region.Id).WithCancellationToken(ct);
             if (tool == "create_backup")
             {
-                var backup = await backups.CreateAsync(scope.ProjectId, databaseId);
-                var recorded = backup.Deserialize(BackupBackendJson.Default.ProducerBackup)
-                    ?? throw new HttpRequestException("TerraBase returned an invalid backup.");
-                return Reply(new BackupView(recorded.Id, recorded.Status, recorded.CreatedAt, recorded.SizeBytes), McpAgentJson.Default.BackupView);
+                var backup = await backups.CreateAsync(scope, region, databaseId, ct);
+                return Reply(new BackupView(backup.Id, backup.Status, backup.CreatedAt, backup.SizeBytes), McpAgentJson.Default.BackupView);
             }
-            var request = JsonSerializer.SerializeToElement(new McpRestoreRequest(Text("name")), McpAgentJson.Default.McpRestoreRequest);
-            var restored = await backups.RestoreBackupAsync(scope.ProjectId, databaseId, Text("backupId"), request);
-            return Reply(new BackupRestoreResult(restored.GetProperty("id").GetString()!, restored.GetProperty("name").GetString()!, "ready"), McpAgentJson.Default.BackupRestoreResult);
+            var backupId = Text("backupId");
+            if (backupId.Length == 0)
+            {
+                backupId = (await backups.ListAsync(scope, region, databaseId, ct)).OrderByDescending(backup => backup.CreatedAt).FirstOrDefault()?.Id
+                    ?? throw new AccountAccessException("That restore point is no longer available.", 404);
+            }
+            var restored = await backups.RestoreAsync(scope, region, databaseId, backupId, Text("name") is { Length: > 0 } name ? name : null, ct);
+            return Reply(new BackupRestoreResult(restored.Id, restored.Name, "ready"), McpAgentJson.Default.BackupRestoreResult);
         }
 
         private static McpDatabase Output(TerraBaseManagedDatabase db) => new(db.Id, db.Name, "ready", db.HomeRegion.Length > 0 ? db.HomeRegion : db.Region,
@@ -170,10 +178,8 @@ namespace TerraScale.Dashboard.Platform.Mcp
     }
 
     internal sealed record McpKeyContext(string OrganizationId, string ProjectId, string? DatabaseId, IReadOnlyList<string> Scopes);
-    internal sealed record McpRestoreRequest(string Name);
     [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
     [JsonSerializable(typeof(McpKeyContext))]
-    [JsonSerializable(typeof(McpRestoreRequest))]
     [JsonSerializable(typeof(McpDatabase))]
     [JsonSerializable(typeof(McpDatabaseList))]
     [JsonSerializable(typeof(McpDeleted))]
@@ -181,7 +187,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
     [JsonSerializable(typeof(SqlCatalog))]
     [JsonSerializable(typeof(DatabaseSqlResult))]
     [JsonSerializable(typeof(McpSqlResponse))]
-    [JsonSerializable(typeof(TerraBaseScopedKey))]
+    [JsonSerializable(typeof(TsAuthScopedKey))]
     [JsonSerializable(typeof(BackupRestoreResult))]
     [JsonSerializable(typeof(BackupView))]
     [JsonSerializable(typeof(JsonElement))]
