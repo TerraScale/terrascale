@@ -50,11 +50,11 @@ public sealed class SqlNativeRestTests
 
         await Assert.That(plan[0].GetProperty("rows").EnumerateArray().Any(row => row[3].GetString()!.Contains("people_city", StringComparison.Ordinal))).IsTrue();
         await Assert.That(columns[0].GetProperty("rows").EnumerateArray().Select(row => row[1].GetString()!).ToList()).IsEquivalentTo(["id", "name", "city"]);
-        await Assert.That(dropped.Code).IsEqualTo("SQLITE_ERROR");
+        await Assert.That(dropped.Code).IsEqualTo("undefined_table");
     }
 
     [Test]
-    public async Task Constraints_answer_their_sqlite_codes_and_foreign_keys_cascade()
+    public async Task Constraints_answer_their_error_codes_and_foreign_keys_cascade()
     {
         await using var db = await StartAsync();
         await db.OkAsync(
@@ -72,11 +72,11 @@ public sealed class SqlNativeRestTests
         var enforced = await db.OkAsync("PRAGMA foreign_keys");
         await db.OkAsync("DELETE FROM teams WHERE id = 1");
 
-        await Assert.That(primaryKey.Code).IsEqualTo("SQLITE_CONSTRAINT_PRIMARYKEY");
-        await Assert.That(unique.Code).IsEqualTo("SQLITE_CONSTRAINT_UNIQUE");
-        await Assert.That(notNull.Code).IsEqualTo("SQLITE_CONSTRAINT_NOTNULL");
-        await Assert.That(check.Code).IsEqualTo("SQLITE_CONSTRAINT_CHECK");
-        await Assert.That(orphan.Code).IsEqualTo("SQLITE_CONSTRAINT_FOREIGNKEY");
+        await Assert.That(primaryKey.Code).IsEqualTo("primary_key_violation");
+        await Assert.That(unique.Code).IsEqualTo("unique_violation");
+        await Assert.That(notNull.Code).IsEqualTo("not_null_violation");
+        await Assert.That(check.Code).IsEqualTo("check_violation");
+        await Assert.That(orphan.Code).IsEqualTo("foreign_key_violation");
         await Assert.That(enforced[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(1);
         await Assert.That(await db.CountAsync("players")).IsEqualTo(0);
     }
@@ -93,7 +93,7 @@ public sealed class SqlNativeRestTests
             Stmt("ROLLBACK TO s"), Stmt("SELECT count(*) FROM notes"));
         var control = await db.RefusedAsync("BEGIN");
 
-        await Assert.That((failed.Code, failed.Statement)).IsEqualTo(("SQLITE_CONSTRAINT_NOTNULL", 1));
+        await Assert.That((failed.Code, failed.Statement)).IsEqualTo(("not_null_violation", 1));
         await Assert.That(committed[4].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(1);
         await Assert.That(await db.CountAsync("notes")).IsEqualTo(1);
         await Assert.That(control.Status).IsEqualTo(HttpStatusCode.BadRequest);
@@ -109,8 +109,8 @@ public sealed class SqlNativeRestTests
         var schema = await db.RefusedAsync(db.Reader, Stmt("DROP TABLE notes"));
         var (status, body) = await db.PostAsync(db.Reader, Stmt("SELECT body FROM notes"));
 
-        await Assert.That((write.Status, write.Code)).IsEqualTo((HttpStatusCode.Forbidden, "SQLITE_AUTH"));
-        await Assert.That(schema.Code).IsEqualTo("SQLITE_AUTH");
+        await Assert.That((write.Status, write.Code)).IsEqualTo((HttpStatusCode.Forbidden, "forbidden_scope"));
+        await Assert.That(schema.Code).IsEqualTo("forbidden_scope");
         await Assert.That(status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(body.GetProperty("results")[0].GetProperty("rows")[0][0].GetString()).IsEqualTo("kept");
     }
@@ -131,7 +131,7 @@ public sealed class SqlNativeRestTests
 
         foreach (var refused in new[] { state, quoted, info, catalog, attach, off, unsupported })
         {
-            await Assert.That((refused.Status, refused.Code)).IsEqualTo((HttpStatusCode.BadRequest, "SQLITE_ERROR"));
+            await Assert.That((refused.Status, refused.Code)).IsEqualTo((HttpStatusCode.BadRequest, "sql_error"));
         }
 
         await Assert.That(schema[0].GetProperty("rows")[0][0].GetInt64()).IsGreaterThan(0);

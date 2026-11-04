@@ -219,7 +219,7 @@ namespace TerraScale.TerraBase.Rpc
         public static TerraBaseFault FaultOf(RestAnswer answer)
         {
             ArgumentNullException.ThrowIfNull(answer);
-            string? code = null, message = null, region = null, sqliteCode = null;
+            string? code = null, message = null, region = null, sqlstate = null;
             int? op = null;
             List<TerraBaseFaultDetail>? details = null;
             try
@@ -232,7 +232,7 @@ namespace TerraScale.TerraBase.Rpc
                         code = Text(error, "code");
                         message = Text(error, "message");
                         region = Text(error, "region");
-                        sqliteCode = Text(error, "sqlite_code");
+                        sqlstate = Text(error, "sqlstate");
                         op = error.TryGetProperty("op", out var index) && index.ValueKind == JsonValueKind.Number && index.TryGetInt32(out var value) ? value : null;
                         if (error.TryGetProperty("details", out var issues) && issues.ValueKind == JsonValueKind.Array)
                         {
@@ -252,7 +252,7 @@ namespace TerraScale.TerraBase.Rpc
             var regions = Header(answer, "X-TerraBase-Database-Regions")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             var retry = Header(answer, HeaderNames.RetryAfter) is { } seconds && int.TryParse(seconds, NumberStyles.None, CultureInfo.InvariantCulture, out var wait) ? wait : (int?)null;
             return new TerraBaseFault(answer.Status, code ?? "http_" + answer.Status.ToString(CultureInfo.InvariantCulture),
-                message ?? $"TerraBase answered HTTP {answer.Status}", region ?? Header(answer, "X-TerraBase-Region"), home, regions, op, retry, details, sqliteCode);
+                message ?? $"TerraBase answered HTTP {answer.Status}", region ?? Header(answer, "X-TerraBase-Region"), home, regions, op, retry, details, sqlstate);
         }
 
         /// <summary>The gRPC refusal that carries the answer's fault in <see cref="TerraBaseRpc.FaultTrailer"/>.</summary>

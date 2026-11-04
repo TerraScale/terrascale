@@ -55,7 +55,7 @@ public sealed class SharedProcessTests
             await Task.WhenAll(runaway);
         }
 
-        var interrupted = outcomes.Where(outcome => outcome.Body.Contains("SQLITE_INTERRUPT", StringComparison.Ordinal)).ToList();
+        var interrupted = outcomes.Where(outcome => outcome.Body.Contains("\"query_canceled\"", StringComparison.Ordinal)).ToList();
         var (_, throttled, _) = outcomes.First(outcome => outcome.Status == HttpStatusCode.TooManyRequests);
 
         await Assert.That(interrupted.Count).IsGreaterThan(0);

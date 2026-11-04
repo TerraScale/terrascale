@@ -77,8 +77,8 @@ internal sealed class SqlSession(
     private static readonly SqlError UnknownDatabase = SqlErrors.Error("the database does not exist");
     private static readonly SqlError TooManyChanges = SqlErrors.TooBig("a transaction changes at most 1024 rows and grows the database by at most 8 MiB");
     private static readonly SqlError TooManyRows = SqlErrors.TooBig("a result holds at most 10000 rows and 8 MiB; add a LIMIT");
-    private static readonly SqlError Expired = new("SQLITE_INTERRUPT", "the transaction expired: it was open for more than 5 seconds and was rolled back");
-    private static readonly SqlError Aborted = new("SQLITE_ABORT", "the transaction was rolled back after a failed statement; end it with ROLLBACK");
+    private static readonly SqlError Expired = new(SqlErrors.QueryCanceled, "the transaction expired: it was open for more than 5 seconds and was rolled back");
+    private static readonly SqlError Aborted = new(SqlErrors.TransactionRolledBack, "the transaction was rolled back after a failed statement; end it with ROLLBACK");
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private long? _transportStarted;
@@ -349,7 +349,7 @@ internal sealed class SqlSession(
             case SqlStatementKind.Write when !canWrite:
                 return SqlErrors.Auth;
             case SqlStatementKind.Write when _inTransaction && _readOnlyTransaction:
-                return new SqlError("SQLITE_READONLY", "a READ ONLY transaction cannot write");
+                return new SqlError(SqlErrors.ReadOnlyTransaction, "a READ ONLY transaction cannot write");
             case SqlStatementKind.Noop or SqlStatementKind.Begin or SqlStatementKind.Commit or SqlStatementKind.Rollback when admit?.Invoke(Empty) is { } refused:
                 return refused;
             case SqlStatementKind.Noop:
@@ -644,7 +644,7 @@ internal sealed class SqlSession(
                 switch (await lease.CheckAsync(growth, cancellationToken).ConfigureAwait(false))
                 {
                     case QuotaExceeded:
-                        return new SqlError("SQLITE_FULL", "the organization's storage quota is exhausted");
+                        return new SqlError(SqlErrors.QuotaExceeded, "the organization's storage quota is exhausted");
                     case Unavailable:
                         return SqlErrors.Busy("storage accounting is unavailable; retry");
                 }
@@ -865,16 +865,20 @@ internal sealed class SqlSession(
 
     private SqlError Map(SqlStatementException error) => error.Failure switch
     {
-        SqlFailure.PrimaryKey => SqlErrors.Constraint("PRIMARYKEY", error.Message),
-        SqlFailure.Unique => SqlErrors.Constraint("UNIQUE", error.Message),
-        SqlFailure.NotNull => SqlErrors.Constraint("NOTNULL", error.Message),
-        SqlFailure.Check => SqlErrors.Constraint("CHECK", error.Message),
-        SqlFailure.ForeignKey => SqlErrors.Constraint("FOREIGNKEY", error.Message),
-        SqlFailure.Constraint => new SqlError("SQLITE_CONSTRAINT", error.Message),
+        SqlFailure.PrimaryKey => new SqlError(SqlErrors.PrimaryKeyViolation, error.Message),
+        SqlFailure.Unique => new SqlError(SqlErrors.UniqueViolation, error.Message),
+        SqlFailure.NotNull => new SqlError(SqlErrors.NotNullViolation, error.Message),
+        SqlFailure.Check => new SqlError(SqlErrors.CheckViolation, error.Message),
+        SqlFailure.ForeignKey => new SqlError(SqlErrors.ForeignKeyViolation, error.Message),
+        SqlFailure.Constraint => new SqlError(SqlErrors.ConstraintViolation, error.Message),
+        SqlFailure.Syntax => new SqlError(SqlErrors.SyntaxError, error.Message),
+        SqlFailure.NoSuchTable => new SqlError(SqlErrors.UndefinedTable, error.Message),
+        SqlFailure.NoSuchColumn => new SqlError(SqlErrors.UndefinedColumn, error.Message),
+        SqlFailure.AlreadyExists => new SqlError(SqlErrors.DuplicateObject, error.Message),
         SqlFailure.Busy => SqlErrors.Busy(error.Message),
         SqlFailure.TooBig => SqlErrors.TooBig(error.Message),
         SqlFailure.Interrupted => SqlErrors.Interrupt,
-        SqlFailure.ReadOnly => canWrite ? new SqlError("SQLITE_READONLY", error.Message) : SqlErrors.Auth,
+        SqlFailure.ReadOnly => canWrite ? new SqlError(SqlErrors.ReadOnlyTransaction, error.Message) : SqlErrors.Auth,
         _ => SqlErrors.Error(error.Message),
     };
 

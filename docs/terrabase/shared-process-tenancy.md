@@ -23,7 +23,7 @@ node and shared fairly between organizations.
 | Engine time burst | 3 s | 6 s | 15 s | unlimited |
 
 - Every SQL statement runs with a native timeout of min(the plan's statement timeout, the request's remaining time,
-  the transaction's remaining life) and answers `SQLITE_INTERRUPT` when it passes it.
+  the transaction's remaining life) and answers `query_canceled` (57014) when it passes it.
 - Each statement's execution time is charged to its organization. An organization whose engine time is spent gets
   `429 tenant_busy` with `Retry-After` (PostgreSQL wire: `53300`) until it replenishes.
 - One organization runs on at most `max(1, min(threads / 2, threads − 2))` storage I/O workers at once, so a runaway
