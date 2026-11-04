@@ -45,7 +45,7 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
         services.AddSingleton(apiKey is null ? this.Server.Http : this.Server.PublicHttp);
         services.AddSingleton(provider => new TerraBaseSqlClient(provider.GetRequiredService<HttpClient>(), apiKey is null
             ? new TerraBaseSqlClientOptions { BaseAddress = this.Server.InternalAddress }
-            : new TerraBaseSqlClientOptions { BaseAddress = this.Server.ClientAddress, ApiKey = apiKey }).Database(tenant.Project.Id, databaseName));
+            : new TerraBaseSqlClientOptions { BaseAddress = this.Server.ClientAddress, AccessTokenProvider = _ => ValueTask.FromResult(apiKey) }).Database(tenant.Project.Id, databaseName));
         // Project closures reach this same regional TerraBase: its internal listener, with the peer credential.
         services.AddKeyedSingleton(App.StorageAuthority, (_, _) => this.Server.Management());
     }
