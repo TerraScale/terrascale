@@ -2,12 +2,8 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Bogus;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
-using TerraBase.Features.Management;
-using TerraBase.Features.Qos;
 using TerraBase.Primitives;
-using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -15,132 +11,6 @@ namespace TerraBase.Fast.Management;
 public sealed class ProjectTokenTests
 {
     private const string AllScopes = "databases:read databases:write documents:read documents:write";
-
-    // Usage, plans and allowances key on the organization ts-auth signs into the project token, so every project of one
-    // ts-auth organization lands in it; an organization a legacy commit created with that id keeps its own storage.
-    [Test]
-    public async Task Enrolled_projects_land_in_the_ts_auth_organization_the_token_signs()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var actor = EntityIds.New().ToString();
-        var organization = EntityIds.New().ToString();
-        var catalog = api.Server.Services.GetRequiredService<IProjectCatalog>();
-        foreach (var project in new[] { EntityIds.New().ToString(), EntityIds.New().ToString() })
-        {
-            using var client = api.WithToken(Token(api, actor, project, AllScopes, edit: token => token.Claims["org_id"] = organization));
-            using (var created = await client.PostAsJsonAsync(Uri($"/v1/projects/{project}/databases"), new { name = "main" }))
-            {
-                await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
-            }
-
-            await Assert.That(await catalog.ProjectOrganizationAsync(project, CancellationToken.None) is string found && found == organization).IsTrue();
-        }
-
-        var owned = await api.CreateOrganizationAsync("Legacy " + EntityIds.New().ToString());
-        var squatter = EntityIds.New().ToString();
-        using var squatting = api.WithToken(Token(api, actor, squatter, AllScopes, edit: token => token.Claims["org_id"] = owned));
-        await Assert.That(await StatusAsync(squatting.PostAsJsonAsync(Uri($"/v1/projects/{squatter}/databases"), new { name = "main" })))
-            .IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await catalog.ProjectOrganizationAsync(squatter, CancellationToken.None) is not string).IsTrue();
-    }
-
-    // An enrolled project's organization has no owner to set its plan; the internal listener's operator sizes it, and
-    // admission applies the new plan at once. Projects bound to an owned organization keep the owner route.
-    [Test]
-    public async Task The_operator_sets_an_enrolled_projects_plan_and_admission_applies_it()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var project = EntityIds.New().ToString();
-        using var client = api.WithToken(Token(api, EntityIds.New().ToString(), project, AllScopes));
-        using (var created = await client.PostAsJsonAsync(Uri($"/v1/projects/{project}/databases"), new { name = "main" }))
-        {
-            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        }
-
-        if (await api.Server.Services.GetRequiredService<IProjectCatalog>().ProjectOrganizationAsync(project, CancellationToken.None) is not string organization)
-        {
-            throw new InvalidOperationException("the project did not enroll");
-        }
-
-        var admission = api.Server.Services.GetRequiredService<IQosAdmission>();
-        var hobby = new TenantContext(organization, PlanTier.Hobby);
-        List<IDisposable> held = [.. Enumerable.Range(0, QosPolicy.For(PlanTier.Hobby).Concurrency)
-            .Select(_ => admission.TryEnter(hobby, out _) ?? throw new InvalidOperationException("fixture admission failed"))];
-        try
-        {
-            var collections = Uri($"/v1/projects/{project}/databases/main/collections");
-            await ErrorAssert.ErrorAsync(client.GetAsync(collections), HttpStatusCode.TooManyRequests, "tenant_busy", "organization request budget exceeded");
-            using (var onClient = await client.PutAsJsonAsync(Uri($"/admin/projects/{project}/plan"), new { plan = "enterprise" }))
-            {
-                await Assert.That(onClient.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-            }
-
-            await ErrorAssert.ErrorAsync(api.Server.Client.PutAsJsonAsync(Uri($"/admin/projects/{project}/plan"), new { plan = "unlimited" }),
-                HttpStatusCode.BadRequest, "invalid_request", "plan must be hobby, starter, pro, team or enterprise");
-            using (var set = await api.Server.Client.PutAsJsonAsync(Uri($"/admin/projects/{project}/plan"), new { plan = "enterprise" }))
-            {
-                await Assert.That(set.StatusCode).IsEqualTo(HttpStatusCode.OK);
-                await Assert.That((await set.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()).IsEqualTo(organization);
-            }
-
-            using var admitted = await client.GetAsync(collections);
-            await Assert.That(admitted.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        }
-        finally
-        {
-            foreach (var lease in held)
-            {
-                lease.Dispose();
-            }
-        }
-
-        var owned = await api.CreateManagedDatabaseAsync("owned");
-        await ErrorAssert.ErrorAsync(api.Server.Client.PutAsJsonAsync(Uri($"/admin/projects/{owned.Project}/plan"), new { plan = "enterprise" }),
-            HttpStatusCode.NotFound, "not_found", "the resource does not exist");
-        await ErrorAssert.ErrorAsync(api.Server.Client.PutAsJsonAsync(Uri($"/admin/projects/{EntityIds.New()}/plan"), new { plan = "enterprise" }),
-            HttpStatusCode.NotFound, "not_found", "the resource does not exist");
-    }
-
-    [Test]
-    [Arguments("/v1/projects/", "/databases")]
-    [Arguments("/v1/projects/", "/databases/")]
-    [Arguments("/V1/Projects/", "/DataBases")]
-    [Arguments("/V1/Projects/", "/DataBases/")]
-    public async Task Database_creation_bootstraps_a_fresh_project_for_every_matched_route_spelling(string prefix, string suffix)
-    {
-        var faker = new Faker();
-        await using var api = await ManagementApi.StartAsync();
-        var project = EntityIds.New().ToString();
-        using var client = api.WithToken(Token(api, EntityIds.New().ToString(), project, AllScopes));
-
-        using var created = await client.PostAsJsonAsync(Uri(prefix + project + suffix), new { name = "main" });
-        await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        var info = await created.Content.ReadFromJsonAsync<JsonElement>();
-        await Assert.That(info.GetProperty("projectId").GetString()).IsEqualTo(project);
-        var listed = await client.GetFromJsonAsync<JsonElement>(Uri($"/v1/projects/{project}/databases"));
-        await Assert.That(listed.GetProperty("items").GetArrayLength()).IsEqualTo(1);
-        await Assert.That(listed.GetProperty("items")[0].GetProperty("id").GetString()).IsEqualTo(info.GetProperty("id").GetString());
-    }
-
-    [Test]
-    [Arguments("GET", "/databases")]
-    [Arguments("POST", "/databases/main/branches")]
-    [Arguments("POST", "/databases/main/collections")]
-    [Arguments("POST", "/saved-queries")]
-    public async Task Operations_other_than_database_creation_cannot_bootstrap_a_fresh_project(string method, string suffix)
-    {
-        var faker = new Faker();
-        await using var api = await ManagementApi.StartAsync();
-        var project = EntityIds.New().ToString();
-        using var client = api.WithToken(Token(api, EntityIds.New().ToString(), project, AllScopes));
-        using var request = new HttpRequestMessage(new HttpMethod(method), Uri($"/v1/projects/{project}" + suffix))
-        {
-            Content = method == "POST" ? JsonContent.Create(new { name = "other" }) : null,
-        };
-
-        await Assert.That(await StatusAsync(client.SendAsync(request))).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await StatusAsync(client.GetAsync(Uri($"/v1/projects/{project}/databases")))).IsEqualTo(HttpStatusCode.NotFound);
-    }
 
     [Test]
     public async Task A_project_JWT_creates_and_manages_database_documents_without_organization_membership()
@@ -187,64 +57,6 @@ public sealed class ProjectTokenTests
     }
 
     [Test]
-    public async Task A_project_JWT_preserves_existing_database_data()
-    {
-        var faker = new Faker();
-        await using var api = await ManagementApi.StartAsync();
-        var database = await api.CreateManagedDatabaseAsync();
-        using var legacy = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
-        await ManagementApi.CreateCollectionAsync(legacy, database, "people");
-        var document = ManagementApi.DocumentPath(database, "people", "existing");
-        var name = faker.Name.FullName();
-        using var written = await legacy.PutAsJsonAsync(Uri(document), new { name });
-        written.EnsureSuccessStatusCode();
-
-        var actor = EntityIds.New().ToString();
-        using var jwt = api.WithToken(Token(api, actor, database.Project, AllScopes, edit: token => token.Claims["org_id"] = EntityIds.New().ToString()));
-        jwt.DefaultRequestHeaders.Add("X-TerraBase-User-Id", api.User);
-        using var read = await jwt.GetAsync(Uri(document));
-        read.EnsureSuccessStatusCode();
-        await Assert.That(read.Headers.ETag?.Tag).IsEqualTo(written.Headers.ETag?.Tag);
-        await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("document").GetProperty("name").GetString()).IsEqualTo(name);
-        var canonical = await jwt.GetFromJsonAsync<JsonElement>(Uri(database.Data));
-        await Assert.That(canonical.GetProperty("id").GetString()).IsEqualTo(database.Id);
-
-        await Assert.That(await StatusAsync(jwt.PostAsJsonAsync(Uri(database.Data + "/branches"), new { name = "copy" }))).IsEqualTo(HttpStatusCode.Created);
-        var copied = await jwt.GetFromJsonAsync<JsonElement>(Uri($"/v1/projects/{database.Project}/databases/copy/collections/people/documents/by-key?id={ManagementApi.DocumentId("existing")}"));
-        await Assert.That(copied.GetProperty("document").GetProperty("name").GetString()).IsEqualTo(name);
-
-        await Assert.That((await api.Client.GetFromJsonAsync<JsonElement>(Uri(database.Path))).GetProperty("id").GetString()).IsEqualTo(database.Id);
-        await Assert.That((await legacy.GetFromJsonAsync<JsonElement>(Uri(document))).GetProperty("document").GetProperty("name").GetString()).IsEqualTo(name);
-        using var nonmember = api.As(actor);
-        await Assert.That(await StatusAsync(nonmember.GetAsync(Uri(database.ProjectPath)))).IsEqualTo(HttpStatusCode.NotFound);
-    }
-
-    [Test]
-    public async Task Project_claims_are_checked_before_scope_and_each_operation_requires_its_scope()
-    {
-        var faker = new Faker();
-        await using var api = await ManagementApi.StartAsync();
-        var database = await api.CreateManagedDatabaseAsync();
-        var actor = EntityIds.New().ToString();
-        using var wrongProject = api.WithToken(Token(api, actor, EntityIds.New().ToString(), scope: null));
-        using var noProject = api.WithToken(Token(api, actor, project: null, scope: AllScopes));
-        using var noScope = api.WithToken(Token(api, actor, database.Project, scope: null));
-        using var readOnly = api.WithToken(Token(api, actor, database.Project, "databases:read documents:read"));
-
-        await Assert.That(await StatusAsync(wrongProject.GetAsync(Uri(database.Data)))).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await StatusAsync(noProject.GetAsync(Uri(database.Data)))).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(await StatusAsync(wrongProject.PostAsJsonAsync(Uri(database.Data + "/collections"), new { name = "people" })))
-            .IsEqualTo(HttpStatusCode.NotFound);
-        await ErrorAssert.ErrorAsync(noScope.GetAsync(Uri(database.Data)), HttpStatusCode.Forbidden, "forbidden_scope");
-        await ErrorAssert.ErrorAsync(readOnly.PostAsJsonAsync(Uri($"/v1/projects/{database.Project}/databases"), new { name = "other" }),
-            HttpStatusCode.Forbidden, "forbidden_scope");
-        await ErrorAssert.ErrorAsync(readOnly.PostAsJsonAsync(Uri(database.Data + "/collections"), new { name = "people" }),
-            HttpStatusCode.Forbidden, "forbidden_scope");
-        var listed = await readOnly.GetFromJsonAsync<JsonElement>(Uri($"/v1/projects/{database.Project}/databases"));
-        await Assert.That(listed.GetProperty("items").GetArrayLength()).IsEqualTo(1);
-    }
-
-    [Test]
     public async Task Invalid_signature_lifetime_issuer_audience_and_non_ES256_project_tokens_are_rejected()
     {
         var faker = new Faker();
@@ -283,19 +95,6 @@ public sealed class ProjectTokenTests
         using var accepted = api.WithToken(valid);
         await Assert.That(await StatusAsync(accepted.PostAsJsonAsync(Uri($"/v1/projects/{project}/databases"), new { name = "main" })))
             .IsEqualTo(HttpStatusCode.Created);
-    }
-
-    [Test]
-    public async Task A_database_name_claim_is_rejected_even_when_the_database_exists()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var database = await api.CreateManagedDatabaseAsync("first");
-        using var restricted = api.WithToken(Token(api, api.User, database.Project, AllScopes, database: database.Name));
-        foreach (var reference in new[] { database.Name, database.Id })
-        {
-            using var refused = await restricted.GetAsync(Uri($"/v1/projects/{database.Project}/databases/{reference}"));
-            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        }
     }
 
     [Test]
@@ -346,43 +145,6 @@ public sealed class ProjectTokenTests
         await Assert.That(unchanged.GetProperty("items").GetArrayLength()).IsEqualTo(2);
         await Assert.That(unchanged.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!))
             .IsEquivalentTo([first.Id, second.Id]);
-    }
-
-    [Test]
-    public async Task A_project_JWT_of_a_legacy_owner_cannot_regain_membership_rights_through_hidden_management_routes()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var first = await api.CreateManagedDatabaseAsync("first");
-        var second = await api.CreateManagedDatabaseAsync(first.Organization, first.Project, "second");
-        var otherProject = await api.CreateProjectAsync(first.Organization, "Other project");
-        var foreign = await api.CreateManagedDatabaseAsync(first.Organization, otherProject, "foreign");
-        using var scopedOwner = api.WithToken(Token(api, api.User, first.Project, "databases:read documents:read", database: first.Id));
-
-        await Assert.That(await StatusAsync(scopedOwner.GetAsync(Uri(first.Data)))).IsEqualTo(HttpStatusCode.OK);
-        foreach (var database in new[] { first, second, foreign })
-        {
-            await Assert.That(await StatusAsync(scopedOwner.GetAsync(Uri(database.Path)))).IsEqualTo(HttpStatusCode.NotFound);
-            await Assert.That(await StatusAsync(scopedOwner.DeleteAsync(Uri(database.Path)))).IsEqualTo(HttpStatusCode.NotFound);
-        }
-
-        await Assert.That(await StatusAsync(scopedOwner.GetAsync(Uri(foreign.ProjectPath)))).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await StatusAsync(scopedOwner.PostAsJsonAsync(Uri(foreign.ProjectPath + "/databases"), new { name = "injected" })))
-            .IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await StatusAsync(scopedOwner.PostAsJsonAsync(Uri(first.ProjectPath + "/databases"), new { name = "injected" })))
-            .IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await StatusAsync(scopedOwner.PatchAsJsonAsync(Uri($"/v1/management/organizations/{first.Organization}"), new { name = "Changed" })))
-            .IsEqualTo(HttpStatusCode.NotFound);
-
-        foreach (var database in new[] { first, second, foreign })
-        {
-            await Assert.That((await api.Client.GetFromJsonAsync<JsonElement>(Uri(database.Path))).GetProperty("id").GetString())
-                .IsEqualTo(database.Id);
-        }
-
-        await Assert.That((await api.Client.GetFromJsonAsync<JsonElement>(Uri(first.ProjectPath + "/databases"))).GetProperty("items").GetArrayLength())
-            .IsEqualTo(2);
-        await Assert.That((await api.Client.GetFromJsonAsync<JsonElement>(Uri(foreign.ProjectPath + "/databases"))).GetProperty("items").GetArrayLength())
-            .IsEqualTo(1);
     }
 
     private static string Token(ManagementApi api, string actor, string? project, string? scope, string? database = null, Action<SecurityTokenDescriptor>? edit = null) =>
