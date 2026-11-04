@@ -110,7 +110,7 @@ func main() {
 	if !errors.As(err, &sqlErr) {
 		log.Fatal(err)
 	}
-	fmt.Println("refused:", sqlErr.Code, "statement", sqlErr.Statement, "sqlstate", sqlErr.SQLState)
+	fmt.Printf("refused: %s statement %d sqlstate %q\n", string(sqlErr.Code), sqlErr.Statement, sqlErr.SQLState)
 }
 
 func required(name string) string {
@@ -133,7 +133,7 @@ Expected output (ids vary):
 ```text
 query matched 01JDV7QZGK0DMB3W3QV2AB5CDM Ada
 batch inserted, people count: 2
-refused: unique_violation statement 0 sqlstate "23505"
+refused: primary_key_violation statement 0 sqlstate "23505"
 ```
 
 ## How it works
