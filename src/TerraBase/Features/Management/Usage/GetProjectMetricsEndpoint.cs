@@ -97,7 +97,7 @@ public sealed class GetProjectMetricsEndpoint(IUsageAnalytics analytics, TimePro
         var body = new StringBuilder();
         Family(body, "requests_per_second", "Client requests per second over the last 5 complete minutes.", requests);
         Family(body, "errors_per_second", "Error responses per second over the last 5 complete minutes.", errors);
-        Family(body, "operations_per_second", "Committed document operations per second by kind over the last 5 complete minutes.", operations);
+        Family(body, "operations_per_second", "Committed operations per second by kind over the last 5 complete minutes.", operations);
         Family(body, "latency_milliseconds", "Approximate request latency percentiles of the newest complete minute with requests.", latency);
         Family(body, "storage_bytes", "Newest sampled on-disk storage within the last hour.", storage);
         return body.ToString();
@@ -114,7 +114,7 @@ public sealed class GetProjectMetricsEndpoint(IUsageAnalytics analytics, TimePro
         }
     }
 
-    // Label values escape backslash, double quote and line feed (Prometheus text format 0.0.4).
+    // Label values escape backslash, double quote and newline (Prometheus text format 0.0.4).
     private static string Escape(string value) => value.Replace("\\", "\\\\", StringComparison.Ordinal)
         .Replace("\"", "\\\"", StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal);
 }

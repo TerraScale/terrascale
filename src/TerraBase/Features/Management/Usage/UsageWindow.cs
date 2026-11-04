@@ -7,22 +7,22 @@ namespace TerraBase.Features.Management.Usage;
 /// <param name="Name">The <c>granularity</c> query value.</param>
 /// <param name="Hours">Hours per bucket.</param>
 /// <param name="Kept">Buckets the catalog keeps, and one request reads at most.</param>
-/// <param name="Format">Bucket document id format, which sorts as the bucket's start.</param>
+/// <param name="Format">Bucket record id format, which sorts as the bucket's start.</param>
 public sealed record UsageGranularity(string Name, int Hours, int Kept, string Format)
 {
     /// <summary>Minutes per bucket, including the minute analytics granularity.</summary>
     public int Minutes { get; init; } = Hours * 60;
 
-    /// <summary>The state collection of a database that holds these buckets.</summary>
-    public string Collection => "usage-" + Name + "s";
+    /// <summary>The record kind of a database that holds these buckets.</summary>
+    public string Kind => "usage-" + Name + "s";
 
     /// <summary>The start of <paramref name="bucket"/>, counted in buckets since the Unix epoch.</summary>
     public DateTimeOffset Start(long bucket) => DateTimeOffset.UnixEpoch.AddMinutes(bucket * Minutes);
 
-    /// <summary>The document id of <paramref name="bucket"/>.</summary>
+    /// <summary>The record id of <paramref name="bucket"/>.</summary>
     public string Id(long bucket) => Start(bucket).ToString(Format, CultureInfo.InvariantCulture);
 
-    /// <summary>The bucket of a document id.</summary>
+    /// <summary>The bucket of a record id.</summary>
     public long Parse(string id) =>
         DateTimeOffset.ParseExact(id, Format, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal).ToUnixTimeSeconds() / 60 / Minutes;
 }

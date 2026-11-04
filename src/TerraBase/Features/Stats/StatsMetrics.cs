@@ -20,10 +20,10 @@ internal sealed class StatsMetrics
                 new Measurement<long>(window?.ReadsSinceStart ?? 0, new KeyValuePair<string, object?>("kind", "read")),
                 new Measurement<long>(window?.WritesSinceStart ?? 0, new KeyValuePair<string, object?>("kind", "write")),
             ];
-        }, "{operation}", "Document operations since start, counted per closed window.");
+        }, "{operation}", "Operations since start, counted per closed window.");
         meter.CreateObservableGauge<double>("terrabase.stats.top.operations", () => Ranked(stats.LastWindow,
             database => database.Counters.Reads + database.Counters.Writes), "{operation}/s",
-            "Document operations per second of the busiest databases in the last window.");
+            "Operations per second of the busiest databases in the last window.");
     }
 
 

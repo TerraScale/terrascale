@@ -18,7 +18,7 @@ internal sealed class ListDatabaseLogsEndpoint(IManagementService management, IR
         Name("listDatabaseLogs");
         Summary("Lists recent database requests and slow query requests");
         Description("Newest 100 recorded requests within 24 hours. status, when supplied, is 2xx, 3xx, 4xx or 5xx. " +
-            "Route templates contain no document keys, query text or credentials. Operations count committed document operations. " +
+            "Route templates contain no row keys, SQL text or credentials. Operations count committed operations. " +
             "Recording is best effort; pending observations can be lost on crash. " +
             "RecordingLimited reports capacity omissions on this server since startup; truncated reports a full recent window. " +
             "Expired records are excluded from reads and physically pruned on that database's next log flush. " +

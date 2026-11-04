@@ -10,36 +10,36 @@ using TerraBase.Hosting;
 namespace TerraBase.Features.ApiReference;
 
 /// <summary>
-/// The content of the public API reference document: client-listener operations, their security schemes, authentication
-/// failures and examples. TerraScale.Endpoints maps the document and Scalar.
+/// The content of the public OpenAPI document: client-listener operations, their security schemes, authentication
+/// failures and examples. TerraScale.Endpoints maps it and Scalar.
 /// </summary>
 public static class ApiReferenceExtensions
 {
     /// <summary>Security scheme of public operations: a ts-auth project access token as a bearer token.</summary>
     public const string TsAuthScheme = "TsAuth";
 
-    /// <summary>Shapes the OpenAPI document <paramref name="documentName"/>; register it before other operation transformers.</summary>
-    public static IServiceCollection AddTerraBaseApiReference(this IServiceCollection services, string documentName) =>
-        services.AddOpenApi(documentName, options =>
+    /// <summary>Shapes the OpenAPI document named <paramref name="name"/>; register it before other operation transformers.</summary>
+    public static IServiceCollection AddTerraBaseApiReference(this IServiceCollection services, string name) =>
+        services.AddOpenApi(name, options =>
         {
             options.ShouldInclude = description => description.ActionDescriptor.EndpointMetadata.OfType<ListenerMetadata>()
                 .Any(metadata => metadata.Listeners.Contains(TerraBaseListener.Client))
                 && description.RelativePath?.StartsWith("v1/management/", StringComparison.OrdinalIgnoreCase) != true
                 && description.RelativePath?.StartsWith("management/", StringComparison.OrdinalIgnoreCase) != true
                 && !(description.HttpMethod == "PUT" && description.RelativePath == "v1/projects/{project}/databases/{database}");
-            options.AddDocumentTransformer((document, context, _) =>
+            options.AddDocumentTransformer((openApi, context, _) =>
             {
                 var terrabase = context.ApplicationServices.GetRequiredService<TerraBaseOptions>();
-                document.Info.Version = ServiceVersion.Value;
-                document.Servers = [new OpenApiServer { Url = "/", Description = $"TerraBase node in region {terrabase.Region}" }];
-                document.Components ??= new OpenApiComponents();
-                document.Extensions ??= new Dictionary<string, IOpenApiExtension>(StringComparer.Ordinal);
-                document.Extensions["x-tagGroups"] = new JsonNodeExtension(JsonNode.Parse("""
-                    [{"name":"Management","tags":["Databases","Imports","Backups","Indexes","Schema","Usage","Platform"]},
-                     {"name":"Data","tags":["Collections","Documents","Queries","Transactions","Live","Functions","File storage","SQL"]},
+                openApi.Info.Version = ServiceVersion.Value;
+                openApi.Servers = [new OpenApiServer { Url = "/", Description = $"TerraBase node in region {terrabase.Region}" }];
+                openApi.Components ??= new OpenApiComponents();
+                openApi.Extensions ??= new Dictionary<string, IOpenApiExtension>(StringComparer.Ordinal);
+                openApi.Extensions["x-tagGroups"] = new JsonNodeExtension(JsonNode.Parse("""
+                    [{"name":"Management","tags":["Databases","Backups","Usage","Analytics","Logs","Platform"]},
+                     {"name":"Data","tags":["Queries","Live","Functions","File storage"]},
                      {"name":"System","tags":["Health","Regions"]}]
                     """)!);
-                document.Components.SecuritySchemes = new Dictionary<string, IOpenApiSecurityScheme>(StringComparer.Ordinal)
+                openApi.Components.SecuritySchemes = new Dictionary<string, IOpenApiSecurityScheme>(StringComparer.Ordinal)
                 {
                     [TsAuthScheme] = new OpenApiSecurityScheme
                     {
@@ -111,14 +111,14 @@ public static class ApiReferenceExtensions
         });
 
     /// <summary>Adds examples and error codes after request-body and region metadata have been generated.</summary>
-    public static IServiceCollection AddTerraBaseApiExamples(this IServiceCollection services, string documentName) =>
-        services.AddOpenApi(documentName, options => options.AddOperationTransformer((operation, _, _) =>
+    public static IServiceCollection AddTerraBaseApiExamples(this IServiceCollection services, string name) =>
+        services.AddOpenApi(name, options => options.AddOperationTransformer((operation, _, _) =>
         {
             ApiExamples.Apply(operation);
             return Task.CompletedTask;
-        }).AddDocumentTransformer((document, _, _) =>
+        }).AddDocumentTransformer((openApi, _, _) =>
         {
-            foreach (var path in document.Paths.Values)
+            foreach (var path in openApi.Paths.Values)
             {
                 if (path.Operations is not { } operations)
                 {

@@ -24,7 +24,7 @@ internal static class UserAuthExtensions
         services.AddHttpClient(TsAuthKeys.HttpClientName, client =>
         {
             client.Timeout = TsAuthKeys.FetchTimeout;
-            client.MaxResponseContentBufferSize = TsAuthKeys.MaxDocumentBytes;
+            client.MaxResponseContentBufferSize = TsAuthKeys.MaxResponseBytes;
         })
             .ConfigurePrimaryHttpMessageHandler((handler, _) => ((SocketsHttpHandler)handler).AllowAutoRedirect = false)
             .AddHttpMessageHandler(provider => RequestIdentity.CreatePropagationHandler(
@@ -222,8 +222,7 @@ internal static class UserAuthExtensions
 
             if (Identity(context.User, UserAuthenticationHandler.SchemeName)?.HasClaim("token_kind", "end_user") == true
                 && context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName is not
-                    ("getShape" or "getShapeKey" or "getShapeManifest" or "getDocument" or "listDocuments" or "queryDocuments" or "createDocument" or "putDocument"
-                    or "patchDocument" or "deleteDocument" or "runTransaction" or "streamDatabaseChanges"
+                    ("getShape" or "getShapeKey" or "getShapeManifest"
                     or "createFileUpload" or "completeFileUpload" or "listBucketFiles" or "createFileDownload" or "deleteBucketFile"))
             {
                 context.Response.StatusCode = StatusCodes.Status403Forbidden;

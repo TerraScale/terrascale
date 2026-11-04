@@ -26,19 +26,14 @@ internal readonly record struct DatabaseKey(string Organization, string Project,
 internal sealed class DatabaseStats(IMeterFactory meters) : IDatabaseStats
 {
     private const int MaxDatabases = 16_384;
-    private const int MaxCollections = 65_536;
-    private const int MaxCollectionsPerDatabase = 256;
     private static readonly TimeSpan Idle = TimeSpan.FromHours(3);
     private static readonly KeyValuePair<string, object?> KindDatabase = new("kind", "database");
-    private static readonly KeyValuePair<string, object?> KindCollection = new("kind", "collection");
-    private static readonly IReadOnlyList<CollectionWindow> NoCollections = [];
 
     private readonly ConcurrentDictionary<DatabaseKey, DatabaseEntry> _databases = new();
     private readonly DatabaseEntry _overflow = new(null);
     private readonly Counter<long> _dropped = meters.Create(Telemetry.MeterName).CreateCounter<long>(
         "terrabase.stats.dropped", "{event}", "Live statistics events refused by a cap.");
     private int _databaseCount;
-    private int _collectionCount;
     private DateTimeOffset? _closedAt;
     private long _readsSinceStart;
     private long _writesSinceStart;
@@ -93,21 +88,6 @@ internal sealed class DatabaseStats(IMeterFactory meters) : IDatabaseStats
         Volatile.Write(ref entry.StorageBytes, bytes);
         entry.Touch();
     }
-    public void CollectionRead(TenantContext database, string collection)
-    {
-        if (Find(database) is { } entry && Collection(entry, collection) is { } counts)
-        {
-            Interlocked.Increment(ref counts.Reads);
-        }
-    }
-
-    public void CollectionWrote(TenantContext database, string collection)
-    {
-        if (Find(database) is { } entry && Collection(entry, collection) is { } counts)
-        {
-            Interlocked.Increment(ref counts.Writes);
-        }
-    }
     internal StatsWindow Close(DateTimeOffset now)
     {
         var duration = _closedAt is { } previous ? now - previous : StatsService.Window;
@@ -124,12 +104,11 @@ internal sealed class DatabaseStats(IMeterFactory meters) : IDatabaseStats
                 entry.LastActive = now;
             }
 
-            var collections = DrainCollections(entry);
             var counters = DrainCounters(entry);
             totals.Add(counters);
             if (IsActive(counters))
             {
-                active.Add(new DatabaseWindow(entry.Database!, counters, collections));
+                active.Add(new DatabaseWindow(entry.Database!, counters));
             }
 
             if (now - entry.LastActive > Idle)
@@ -143,7 +122,6 @@ internal sealed class DatabaseStats(IMeterFactory meters) : IDatabaseStats
             if (_databases.TryRemove(key, out _))
             {
                 Interlocked.Decrement(ref _databaseCount);
-                Interlocked.Add(ref _collectionCount, -entry.CollectionCount);
             }
         }
 
@@ -182,37 +160,6 @@ internal sealed class DatabaseStats(IMeterFactory meters) : IDatabaseStats
         Interlocked.Decrement(ref _databaseCount);
         return _databases.TryGetValue(key, out var winner) ? winner : _overflow;
     }
-    private CollectionEntry? Collection(DatabaseEntry entry, string name)
-    {
-        var collections = entry.CollectionsOrCreate();
-        if (collections.TryGetValue(name, out var collection))
-        {
-            return collection;
-        }
-
-        if (!TryTake(ref _collectionCount, MaxCollections))
-        {
-            _dropped.Add(1, KindCollection);
-            return null;
-        }
-
-        if (!TryTake(ref entry.CollectionCount, MaxCollectionsPerDatabase))
-        {
-            Interlocked.Decrement(ref _collectionCount);
-            _dropped.Add(1, KindCollection);
-            return null;
-        }
-
-        var created = new CollectionEntry();
-        if (collections.TryAdd(name, created))
-        {
-            return created;
-        }
-
-        Interlocked.Decrement(ref _collectionCount);
-        Interlocked.Decrement(ref entry.CollectionCount);
-        return collections.TryGetValue(name, out var winner) ? winner : null;
-    }
     private static bool TryTake(ref int count, int limit)
     {
         if (Interlocked.Increment(ref count) <= limit)
@@ -222,36 +169,6 @@ internal sealed class DatabaseStats(IMeterFactory meters) : IDatabaseStats
 
         Interlocked.Decrement(ref count);
         return false;
-    }
-
-    private IReadOnlyList<CollectionWindow> DrainCollections(DatabaseEntry entry)
-    {
-        List<CollectionWindow>? collections = null;
-        if (entry.Collections is not { } table)
-        {
-            return NoCollections;
-        }
-
-        foreach (var (name, collection) in table)
-        {
-            var reads = Interlocked.Exchange(ref collection.Reads, 0);
-            var writes = Interlocked.Exchange(ref collection.Writes, 0);
-            if (reads == 0 && writes == 0)
-            {
-                if (table.TryRemove(name, out _))
-                {
-                    Interlocked.Decrement(ref _collectionCount);
-                    Interlocked.Decrement(ref entry.CollectionCount);
-                }
-
-                continue;
-            }
-
-            collections ??= [];
-            collections.Add(new CollectionWindow(name, reads, writes));
-        }
-
-        return collections ?? NoCollections;
     }
 
     private static StatsCounters DrainCounters(DatabaseEntry entry)
@@ -287,33 +204,7 @@ internal sealed class DatabaseStats(IMeterFactory meters) : IDatabaseStats
         internal long StorageBytes = -1;
         internal int Touched = 1;
         internal DateTimeOffset LastActive;
-        internal int CollectionCount;
-        private ConcurrentDictionary<string, CollectionEntry>? _collections;
-
-
-        internal ConcurrentDictionary<string, CollectionEntry>? Collections => Volatile.Read(ref _collections);
-
-
-        internal ConcurrentDictionary<string, CollectionEntry> CollectionsOrCreate() => Create(ref _collections);
-
         internal void Touch() => Volatile.Write(ref Touched, 1);
-        private static TTable Create<TTable>(ref TTable? table) where TTable : class, new()
-        {
-            var existing = Volatile.Read(ref table);
-            if (existing is not null)
-            {
-                return existing;
-            }
-
-            var created = new TTable();
-            return Interlocked.CompareExchange(ref table, created, null) ?? created;
-        }
-    }
-
-    private sealed class CollectionEntry
-    {
-        internal long Reads;
-        internal long Writes;
     }
 
     private sealed class Tally

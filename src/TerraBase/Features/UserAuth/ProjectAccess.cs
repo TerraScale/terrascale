@@ -11,7 +11,7 @@ namespace TerraBase.Features.UserAuth;
 /// <param name="DatabaseId">The catalog id of that restricted database, when present.</param>
 public sealed record ProjectAccess(string Actor, string ProjectId, string OrganizationId, string? DatabaseName, string? DatabaseId)
 {
-    /// <summary>Whether collection rules must authorize this scoped end user.</summary>
+    /// <summary>Whether read grants and bucket rules must authorize this scoped end user.</summary>
     public bool IsEndUser { get; init; }
 
     /// <summary>Trusted roles from ts-auth, compared ordinally; never project administrator scopes.</summary>

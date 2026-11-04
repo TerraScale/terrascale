@@ -177,7 +177,7 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         {
             // Deleting a database must not let a delayed observation recreate its state.
             if (await EngineManagementService.DatabaseTenantUncheckedAsync(transaction, owner.OrganizationId, owner.ProjectId, owner.DatabaseId, cancellationToken).ConfigureAwait(false) is null) { return true; }
-            var collection = Records(owner.DatabaseId);
+            var kind = Records(owner.DatabaseId);
             var previous = new List<DatabaseRequestLog>(Kept);
             var savedIds = new List<string>(MaxSaved);
             string? after = null;
@@ -186,27 +186,27 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
             {
                 // A page may include an oversized first row; admit its actual bytes before the engine copies it.
                 using var pageAdmission = QosContext.Enter(tenant: null, budget: memory);
-                page = await transaction.ListAsync(collection, after, FlushPageEntries, FlushPageBytes, cancellationToken).ConfigureAwait(false);
-                foreach (var document in page.Records)
+                page = await transaction.ListAsync(kind, after, FlushPageEntries, FlushPageBytes, cancellationToken).ConfigureAwait(false);
+                foreach (var stored in page.Records)
                 {
                     if (savedIds.Count == MaxSaved)
                     {
                         // Replication can temporarily join several bounded rings. Trim before admitting more.
-                        foreach (var id in savedIds.Take(Kept)) { await transaction.DeleteAsync(collection, id, cancellationToken).ConfigureAwait(false); }
+                        foreach (var id in savedIds.Take(Kept)) { await transaction.DeleteAsync(kind, id, cancellationToken).ConfigureAwait(false); }
                         return false;
                     }
-                    if (Decode(document) is not { } log) { return false; }
-                    savedIds.Add(document.Id);
+                    if (Decode(stored) is not { } log) { return false; }
+                    savedIds.Add(stored.Id);
                     previous.Add(log);
-                    after = document.Id;
+                    after = stored.Id;
                 }
                 previous = [.. Recent(previous).Take(Kept)];
             }
             while (page.HasMore);
             var kept = Recent(previous.Concat(batch)).Take(Kept).ToArray();
             var ids = kept.Select(log => log.Id).ToHashSet(StringComparer.Ordinal);
-            foreach (var id in savedIds.Where(id => !ids.Contains(id))) { await transaction.DeleteAsync(collection, id, cancellationToken).ConfigureAwait(false); }
-            foreach (var log in kept.Where(log => batch.Any(item => item.Id == log.Id))) { await PutAsync(transaction, collection, log.Id, new RequestLogRecord(Format, log), TerraBaseJsonContext.Default.RequestLogRecord, cancellationToken).ConfigureAwait(false); }
+            foreach (var id in savedIds.Where(id => !ids.Contains(id))) { await transaction.DeleteAsync(kind, id, cancellationToken).ConfigureAwait(false); }
+            foreach (var log in kept.Where(log => batch.Any(item => item.Id == log.Id))) { await PutAsync(transaction, kind, log.Id, new RequestLogRecord(Format, log), TerraBaseJsonContext.Default.RequestLogRecord, cancellationToken).ConfigureAwait(false); }
             return true;
         }, static _ => false, cancellationToken).ConfigureAwait(false);
         if (!saved) { return true; }
@@ -250,21 +250,21 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
     private static DatabaseRequestLog[]? Decode(RecordPage page)
     {
         var result = new List<DatabaseRequestLog>(page.Records.Count);
-        foreach (var document in page.Records)
+        foreach (var stored in page.Records)
         {
-            if (Decode(document) is not { } log) { return null; }
+            if (Decode(stored) is not { } log) { return null; }
             result.Add(log);
         }
         return [.. result];
     }
 
-    private static DatabaseRequestLog? Decode(StoredRecord document)
+    private static DatabaseRequestLog? Decode(StoredRecord stored)
     {
-        if (document.Json.Length > MaxRecordBytes) { return null; }
+        if (stored.Json.Length > MaxRecordBytes) { return null; }
         RequestLogRecord? record;
-        try { record = EntityPayload.Read(document, TerraBaseJsonContext.Default.RequestLogRecord); }
+        try { record = EntityPayload.Read(stored, TerraBaseJsonContext.Default.RequestLogRecord); }
         catch (Exception error) when (error is JsonException or InvalidOperationException) { return null; }
-        if (record is not { Format: Format, Request: { } log } || log.Id != document.Id || !EntityIds.IsValid(log.Id)
+        if (record is not { Format: Format, Request: { } log } || log.Id != stored.Id || !EntityIds.IsValid(log.Id)
             || log.Time == default || log.Route is not { Length: > 0 and <= 512 } || log.Route.Contains('?', StringComparison.Ordinal)
             || log.Status is < 100 or > 599 || !double.IsFinite(log.LatencyMs) || log.LatencyMs < 0 || log.Operations < 0) { return null; }
         return log;
