@@ -29,7 +29,13 @@ public static class RegionsExtensions
         services.AddSingleton<IRegionCatalog, ServingRegionCatalog>();
         services.AddSingleton<IRegionPeers, PeersFileRegionPeers>();
         services.AddSingleton<IHomeLocator, HomeLocator>();
-        services.AddHttpClient(HomeLocator.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan);
+        services.AddHttpClient(HomeLocator.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan)
+            .ConfigurePrimaryHttpMessageHandler((handler, _) =>
+            {
+                var sockets = (SocketsHttpHandler)handler;
+                sockets.AllowAutoRedirect = false;
+                sockets.UseCookies = false;
+            });
         return services;
     }
 }
