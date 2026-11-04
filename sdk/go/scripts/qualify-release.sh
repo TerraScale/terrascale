@@ -32,8 +32,10 @@ bash scripts/audit-dependencies.sh
 test -z "$(gofmt -l .)"
 go vet ./...
 go test -race -count=1 ./...
-mise exec go@1.25.0 -- bash scripts/check-consumer.sh
-mise exec goreleaser@2.19.0 go@"$pin" -- goreleaser release --snapshot --clean
+# Invoke resolved tools directly: mise exec can prepend the system profile's Go
+# ahead of the pinned PATH on dev hosts.
+PATH="$(mise where go@1.25.0)/bin:$PATH" bash scripts/check-consumer.sh
+"$(mise where goreleaser@2.19.0)/goreleaser" release --snapshot --clean
 python3 scripts/test-release.py
 cp dist/*.tar.gz dist/*.zip dist/checksums.txt dist/homebrew/Formula/ts.rb scripts/install.sh "$output/"
 printf '%s\n' "$version" > "$output/version.txt"
