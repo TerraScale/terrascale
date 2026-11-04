@@ -130,6 +130,8 @@ Monthly [operation allowances](operation-allowance.md) stop new puts and patches
 hard allowance; reads and deletes remain available.
 New databases stop at the plan's [database allowance](plan-database-allowance.md) (`409 database_limit`).
 [Point-in-time restore admission and retention](pitr-plan-entitlements-2026-10-24.md) use those same plan entitlements.
+One process serves many databases: [shared-process tenancy](shared-process-tenancy.md) bounds open writers and
+governs statement timeouts, engine time and I/O workers per organization.
 Usage document counts and bytes come from [maintained per-collection counts](collection-counts.md), never from scans.
 Customers scrape a project's analytics with Prometheus, and the dashboard reads analytics and logs internally: [metrics export](metrics-export.md).
 

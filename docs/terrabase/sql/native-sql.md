@@ -34,8 +34,8 @@ text.
 - A pinned transaction lives at most 5 seconds (`SqlLimits.MaxTransactionTime`). A timer then interrupts any running
   statement, rolls the transaction back and releases the writer even when the client is idle; the next statement, and
   `COMMIT`, answer `SQLITE_INTERRUPT`, and `ROLLBACK` ends it.
-- Every statement runs with a native query timeout of min(5 s, the request's remaining time, the transaction's
-  remaining life), and a cancelled request interrupts it (`turso_connection_interrupt`, sqlite3_interrupt semantics).
+- Every statement runs with a native query timeout of min(5 s, the plan's statement timeout, the request's remaining
+  time, the transaction's remaining life; [shared-process tenancy](../shared-process-tenancy.md)), and a cancelled request interrupts it (`turso_connection_interrupt`, sqlite3_interrupt semantics).
   An interrupted statement answers `SQLITE_INTERRUPT`. Turso clears the interrupt once the connection is idle, so a
   pooled connection runs its next statement normally.
 - A write transaction takes the organization's storage-quota lease before the database writer (the same order as
