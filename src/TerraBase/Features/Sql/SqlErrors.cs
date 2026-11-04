@@ -14,6 +14,7 @@ internal static class SqlErrors
     public const string ForeignKeyViolation = "foreign_key_violation";
     public const string ConstraintViolation = "constraint_violation";
     public const string ForbiddenScope = "forbidden_scope";
+    public const string Sandbox = "sql_sandbox";
     public const string SerializationConflict = "serialization_conflict";
     public const string TooLarge = "too_large";
     public const string QueryCanceled = "query_canceled";
@@ -39,7 +40,7 @@ internal static class SqlErrors
         CheckViolation => "23514",
         ForeignKeyViolation => "23503",
         ConstraintViolation => "23000",
-        ForbiddenScope => "42501",
+        ForbiddenScope or Sandbox => "42501",
         SerializationConflict => "40001",
         TooLarge => "54000",
         QueryCanceled => "57014",
@@ -59,7 +60,7 @@ internal static class SqlErrors
     public static int Status(string code) => code switch
     {
         Unauthorized => StatusCodes.Status401Unauthorized,
-        ForbiddenScope => StatusCodes.Status403Forbidden,
+        ForbiddenScope or Sandbox => StatusCodes.Status403Forbidden,
         SerializationConflict => StatusCodes.Status409Conflict,
         TooLarge => StatusCodes.Status413PayloadTooLarge,
         QuotaExceeded or TenantBusy => StatusCodes.Status429TooManyRequests,

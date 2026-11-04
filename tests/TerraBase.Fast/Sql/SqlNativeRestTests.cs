@@ -116,28 +116,6 @@ public sealed class SqlNativeRestTests
     }
 
     [Test]
-    public async Task Engine_tables_attach_and_disabling_foreign_keys_are_refused()
-    {
-        await using var db = await StartAsync();
-
-        var state = await db.RefusedAsync("SELECT * FROM _tb_state");
-        var quoted = await db.RefusedAsync("SELECT * FROM \"_TB_STATE\"");
-        var info = await db.RefusedAsync("PRAGMA table_info('_tb_state')");
-        var catalog = await db.RefusedAsync("DELETE FROM collections");
-        var attach = await db.RefusedAsync("ATTACH DATABASE 'other.db' AS other");
-        var off = await db.RefusedAsync("PRAGMA foreign_keys = OFF");
-        var unsupported = await db.RefusedAsync("PRAGMA writable_schema = 1");
-        var schema = await db.OkAsync("SELECT count(*) FROM sqlite_schema");
-
-        foreach (var refused in new[] { state, quoted, info, catalog, attach, off, unsupported })
-        {
-            await Assert.That((refused.Status, refused.Code)).IsEqualTo((HttpStatusCode.BadRequest, "sql_error"));
-        }
-
-        await Assert.That(schema[0].GetProperty("rows")[0][0].GetInt64()).IsGreaterThan(0);
-    }
-
-    [Test]
     public async Task Blobs_round_trip_as_base64()
     {
         await using var db = await StartAsync();

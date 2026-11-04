@@ -12,6 +12,7 @@ internal sealed class SqlNativeDatabase : IAsyncDisposable
     {
         Api = api;
         Database = database;
+        WriterKey = writer;
         Writer = api.DataClient(writer);
         Reader = api.DataClient(reader);
         Postgres = PostgresSql.Source(api, writer, database.Name);
@@ -21,6 +22,8 @@ internal sealed class SqlNativeDatabase : IAsyncDisposable
     public ManagementApi Api { get; }
 
     public ManagedDatabaseRef Database { get; }
+
+    public string WriterKey { get; }
 
     public HttpClient Writer { get; }
 
