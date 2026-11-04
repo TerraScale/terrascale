@@ -136,6 +136,7 @@ try
     app.UseTerraBaseBadRequests();
     app.UseTerraBaseLegacyRoutes();
     app.UseRouting();
+    app.UseWebSockets();
     app.UseTerraBaseClientCors();
     TerraBase.Features.Shapes.ShapesExtensions.UseTerraBaseShapeNoStore(app);
     app.UseTerraBaseListeners();

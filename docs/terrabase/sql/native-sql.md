@@ -1,8 +1,10 @@
 # Native SQL
 
 - Status: implemented, 2026-10-29 (PIVOT task E1, PR 1). Replaces the SQL-to-document bridge.
-- Surfaces: `POST /v1/projects/{project}/databases/{database}/sql/execute` and the PostgreSQL wire both run on
-  `ISqlService` (`src/TerraBase/Features/Sql/SqlService.cs`) and answer the same errors (`SqlErrors.cs`).
+- Surfaces: `POST /v1/projects/{project}/databases/{database}/sql/execute`, the [SQL WebSocket](websocket.md)
+  (`GET …/sql/ws`) and the PostgreSQL wire all run on `ISqlService` (`src/TerraBase/Features/Sql/SqlService.cs`).
+  REST and the WebSocket share one batch runner (`SqlBatch.cs`); all three answer the same results and the same
+  errors (`SqlErrors.cs`), proven by `tests/TerraBase.Fast/Sql/SqlSurfaceParityTests.cs`.
 
 ## Storage
 
@@ -68,8 +70,8 @@ Also refused: `ATTACH`, `DETACH`, `VACUUM`, `ANALYZE`, temporary and virtual tab
 
 - Values are null, 64-bit integers, doubles, text and blobs. Over HTTP a blob is `{"base64":"…"}` in arguments and
   rows; over the PostgreSQL wire it is `bytea`.
-- Errors carry a TerraScale code and its PostgreSQL SQLSTATE, never an engine name or an engine code. REST answers
-  `{"code","message","statement","sqlstate"}`; the PostgreSQL wire sends the same SQLSTATE and
+- Errors carry a TerraScale code and its PostgreSQL SQLSTATE, never an engine name or an engine code. REST and the
+  WebSocket answer `{"code","message","statement","sqlstate"}`; the PostgreSQL wire sends the same SQLSTATE and
   message in its `ErrorResponse`.
 
   | Code | SQLSTATE | HTTP |
@@ -96,6 +98,7 @@ Also refused: `ATTACH`, `DETACH`, `VACUUM`, `ANALYZE`, temporary and virtual tab
   | `tenant_busy` | 53300 | 429 |
   | `unauthorized` | 28000 | 401 |
   | `unavailable` | 57P03 | 503 |
+  | `wrong_region` (WebSocket auth frame) | 08004 | 421 |
   | `sql_error` (other refusals) | 0A000 | 400 |
 
 - Reads of tables are charged per returned row by bytes, once the protocol accepts the rows. Writes are charged after

@@ -58,6 +58,7 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/query-shapes TsAuth(databases:read) listQueryShapes Queries
         GET /v1/projects/{project}/databases/{database}/schema TsAuth(databases:read) getDatabaseSchema Schema
         GET /v1/projects/{project}/databases/{database}/schema/{collection} TsAuth(databases:read) getCollectionSchema Schema
+        GET /v1/projects/{project}/databases/{database}/sql/ws TsAuth(documents:read) connectSql Queries
         GET /v1/projects/{project}/databases/{database}/tables/{table}/shape TsAuth(documents:read) getShape Live
         GET /v1/projects/{project}/databases/{database}/tables/{table}/shape/keys TsAuth(documents:read) getShapeKey Live
         GET /v1/projects/{project}/databases/{database}/tables/{table}/shape/manifest TsAuth(documents:read) getShapeManifest Live
@@ -323,7 +324,10 @@ public sealed class ApiReferenceTests
                 var example = success.GetProperty("content").GetProperty("application/json").GetProperty("example");
                 await Assert.That(EntityIds.IsValid(example.GetProperty("id").GetString())).IsTrue().Because(line);
             }
-            await Assert.That(responses.Any(status => status.Name.StartsWith('2'))).IsTrue().Because(line);
+            var succeeds = operation.GetProperty("operationId").GetString() == "connectSql"
+                ? responses.Any(status => status.Name == "101")
+                : responses.Any(status => status.Name.StartsWith('2'));
+            await Assert.That(succeeds).IsTrue().Because(line);
             foreach (var error in responses.Where(status => string.CompareOrdinal(status.Name, "400") >= 0))
             {
                 await Assert.That(error.Value.GetProperty("content").GetProperty("application/json").TryGetProperty("example", out _)).IsTrue().Because($"{line} {error.Name}");

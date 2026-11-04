@@ -26,6 +26,7 @@ internal static class SqlErrors
     public const string TenantBusy = "tenant_busy";
     public const string Unavailable = "unavailable";
     public const string Unauthorized = "unauthorized";
+    public const string WrongRegion = "wrong_region";
     public const string InternalError = "internal_error";
 
     public static string Sqlstate(string code) => code switch
@@ -52,6 +53,7 @@ internal static class SqlErrors
         TenantBusy => "53300",
         Unavailable => "57P03",
         Unauthorized => "28000",
+        WrongRegion => "08004",
         InternalError => "XX000",
         _ => "0A000",
     };
@@ -64,6 +66,7 @@ internal static class SqlErrors
         TooLarge => StatusCodes.Status413PayloadTooLarge,
         QuotaExceeded or TenantBusy => StatusCodes.Status429TooManyRequests,
         Unavailable => StatusCodes.Status503ServiceUnavailable,
+        WrongRegion => StatusCodes.Status421MisdirectedRequest,
         InternalError => StatusCodes.Status500InternalServerError,
         _ => StatusCodes.Status400BadRequest,
     };

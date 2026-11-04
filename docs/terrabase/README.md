@@ -163,6 +163,9 @@ Export a database on a schedule to the project's own bucket: [scheduled exports]
 Import NDJSON (an export, or mongoexport-style documents) through the import pipeline: [NDJSON import](import-ndjson.md).
 
 SQL runs on real tables in each database's file (tables, indexes, views, triggers, foreign keys, transactions): [native SQL](sql/native-sql.md).
+
+SQL over WebSocket: [protocol](sql/websocket.md).
+
 Removed protocol surfaces and compatibility notes: [E4a](e4a-removal.md).
 
 Feature-sliced: `src/TerraBase/Features/<Feature>/` holds everything

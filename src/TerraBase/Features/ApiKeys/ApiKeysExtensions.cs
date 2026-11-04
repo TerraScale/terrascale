@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Authentication;
+
 namespace TerraBase.Features.ApiKeys;
 
 /// <summary>Registers API-key authentication and one authorization policy per scope.</summary>
@@ -8,14 +10,7 @@ public static class ApiKeysExtensions
     {
         services.AddSingleton<IApiKeyStore, EngineApiKeyStore>();
         services.AddAuthentication("TerraBaseBearer")
-            .AddPolicyScheme("TerraBaseBearer", "TerraBase bearer token", options => options.ForwardDefaultSelector = context =>
-            {
-                var header = context.Request.Headers.Authorization.ToString();
-                return header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-                    && header.AsSpan("Bearer ".Length).Trim().StartsWith("tb_", StringComparison.Ordinal)
-                        ? ApiKeyAuthenticationHandler.SchemeName
-                        : UserAuth.UserAuthExtensions.TokenScheme;
-            })
+            .AddPolicyScheme("TerraBaseBearer", "TerraBase bearer token", options => options.ForwardDefaultSelector = BearerScheme)
             .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
                 ApiKeyAuthenticationHandler.SchemeName, configureOptions: null);
         var authorization = services.AddAuthorizationBuilder();
@@ -33,5 +28,26 @@ public static class ApiKeysExtensions
         }
 
         return services;
+    }
+
+    internal static string BearerScheme(HttpContext context)
+    {
+        var header = context.Request.Headers.Authorization.ToString();
+        return header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+            && header.AsSpan("Bearer ".Length).Trim().StartsWith("tb_", StringComparison.Ordinal)
+                ? ApiKeyAuthenticationHandler.SchemeName
+                : UserAuth.UserAuthExtensions.TokenScheme;
+    }
+
+    internal static async Task<AuthenticateResult> AuthenticateAgainAsync(HttpContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        var scope = context.RequestServices.CreateAsyncScope();
+        await using (scope.ConfigureAwait(false))
+        {
+            var handler = await scope.ServiceProvider.GetRequiredService<IAuthenticationHandlerProvider>()
+                .GetHandlerAsync(context, BearerScheme(context)).ConfigureAwait(false);
+            return handler is null ? AuthenticateResult.NoResult() : await handler.AuthenticateAsync().ConfigureAwait(false);
+        }
     }
 }

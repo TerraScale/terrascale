@@ -12,6 +12,7 @@ internal sealed class SqlNativeDatabase : IAsyncDisposable
     {
         Api = api;
         Database = database;
+        WriterKey = writer;
         Writer = api.DataClient(writer);
         Reader = api.DataClient(reader);
         Postgres = PostgresSql.Source(api, writer, database.Name);
@@ -21,6 +22,8 @@ internal sealed class SqlNativeDatabase : IAsyncDisposable
     public ManagementApi Api { get; }
 
     public ManagedDatabaseRef Database { get; }
+
+    public string WriterKey { get; }
 
     public HttpClient Writer { get; }
 
@@ -79,6 +82,8 @@ internal sealed class SqlNativeDatabase : IAsyncDisposable
 
     public Task<SqlRefusal> RefusedAsync(params string[] statements) =>
         RefusedAsync(Writer, [.. statements.Select(sql => Stmt(sql))]);
+
+    public Task<SqlSocketClient> BrowserSocketAsync() => SqlSocketClient.ConnectAsync(Api, Database.Data, apiKey: null);
 
     public async Task<long> CountAsync(string table) =>
         (await OkAsync($"SELECT count(*) FROM {table}"))[0].GetProperty("rows")[0][0].GetInt64();

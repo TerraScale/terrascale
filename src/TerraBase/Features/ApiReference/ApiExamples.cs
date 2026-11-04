@@ -211,6 +211,7 @@ internal static class ApiExamples
         "400" when id == "listCollections" => "invalid_request, invalid_cursor",
         "400" when id == "listDocuments" => "invalid_request, invalid_cursor, invalid_query",
         "400" when id == "runTransaction" => "invalid_request, invalid_patch, nested_lattice_path, invalid_query, assert_requires_index, schema_validation_failed",
+        "400" when id == "connectSql" => "invalid_request, websocket_required",
         "400" when id == "executeSql" => "syntax_error, undefined_table, undefined_column, duplicate_object, primary_key_violation, unique_violation, not_null_violation, check_violation, foreign_key_violation, constraint_violation, query_canceled, read_only_transaction, transaction_state, sql_error, invalid_request",
         "400" => "invalid_request",
         "401" => "invalid_key",

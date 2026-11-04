@@ -77,7 +77,7 @@ internal static class DatabaseRegions
         return app;
     }
 
-    private static async ValueTask<FindDatabaseRecordResult> RecordAsync(HttpContext context, string project, string database)
+    internal static async ValueTask<FindDatabaseRecordResult> RecordAsync(HttpContext context, string project, string database)
     {
         var management = context.RequestServices.GetRequiredService<IManagementService>();
         if (context.Request.RouteValues.TryGetValue("organization", out var organization) && organization is string organizationId)

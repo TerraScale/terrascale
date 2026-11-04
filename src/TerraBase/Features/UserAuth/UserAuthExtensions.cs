@@ -57,6 +57,62 @@ internal static class UserAuthExtensions
     private static ClaimsIdentity? Identity(ClaimsPrincipal user, string scheme) =>
         user?.Identities.FirstOrDefault(identity => identity.IsAuthenticated && identity.AuthenticationType == scheme);
 
+    internal sealed record SocketRefusal(string Code, string Message);
+
+    internal static async ValueTask<SocketRefusal?> AdmitSocketAsync(HttpContext context, CancellationTokenSource revoked, Action<IDisposable> keep)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(revoked);
+        ArgumentNullException.ThrowIfNull(keep);
+        if (Identity(context.User, UserAuthenticationHandler.SchemeName) is not { } jwt)
+        {
+            return null;
+        }
+
+        if (jwt.HasClaim("token_kind", "end_user"))
+        {
+            return new SocketRefusal("forbidden", "end-user tokens cannot run SQL");
+        }
+
+        if (jwt.FindFirst("project_id")?.Value is not { } project)
+        {
+            return new SocketRefusal("invalid_key", "this token does not authorize project routes; use an API key or its project token");
+        }
+
+        if (context.Request.RouteValues["project"] as string != project)
+        {
+            return new SocketRefusal("unknown_database", "the database does not exist");
+        }
+
+        var token = context.Features.Get<ProjectToken>();
+        if (token is { Allowlists.Count: > 0 } && IpAllowlists.ClientOf(context) is var client && !IpAllowlists.Admits(token.Allowlists, client))
+        {
+            return new SocketRefusal("ip_not_allowed", IpAllowlists.Refusal(client));
+        }
+
+        if (token?.Key is not { } key)
+        {
+            return null;
+        }
+
+        var authority = context.RequestServices.GetRequiredService<IKeyAuthority>();
+        switch ((await authority.AdmitAsync(key, context.RequestAborted).ConfigureAwait(false)).Value)
+        {
+            case KeyActive active:
+                if (KeyWatch.Start(authority, watched: true, active.Until, _ => ValueTask.FromResult<KeyToken?>(key), revoked,
+                    context.RequestServices.GetRequiredService<TimeProvider>()) is { } watch)
+                {
+                    keep(watch);
+                }
+
+                return null;
+            case KeyRefused refused:
+                return new SocketRefusal(refused.Code, KeyAuthorityMessages.Refused(refused.Code));
+            default:
+                return new SocketRefusal("auth_unavailable", KeyAuthorityMessages.Unavailable);
+        }
+    }
+
     private const int Serving = 0;
     private const int Started = 1;
     private const int CutOff = 2;
