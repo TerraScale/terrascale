@@ -10,9 +10,9 @@ const catalog = JSON.parse(readFileSync(new URL('../static/pricing.json', import
 const locales = [['en', en], ['es', es], ['pt-BR', ptBr]];
 const billed = (plan) => ({ price: plan.priceMonthlyUsd, annualPrice: plan.priceAnnualUsd, available: plan.available, billingIntervals: plan.billingIntervals });
 const usageCaveats = {
-  en: /storage and client egress overages are not billed yet/i,
-  es: /excedentes de almacenamiento y salida a clientes aún no se facturan/i,
-  'pt-BR': /excedentes de armazenamento e saída para clientes ainda não são cobrados/i,
+  en: /storage over it is billed per GB-month; client egress overage is not billed yet/i,
+  es: /almacenamiento por encima de ella se factura por GB-mes; el excedente de salida a clientes aún no se factura/i,
+  'pt-BR': /armazenamento acima dela é cobrado por GB-mês; o excedente de saída para clientes ainda não é cobrado/i,
 };
 const overageRules = { en: /next (?:subscription )?invoice/i, es: /próxima factura/i, 'pt-BR': /próxima fatura/i };
 const staleClaims = /not yet collected|aún no se cobran|ainda não são coletadas|self-service purchase|compra directa|contratação direta|confirm (?:paid plan )?enrollment/i;
@@ -28,9 +28,9 @@ for (const [locale, messages] of locales) {
     }
     assert.doesNotMatch(JSON.stringify(messages), replication);
     assert.doesNotMatch(JSON.stringify(catalog), replication);
-    assert.ok(catalog.metering.operationUnit.rules.includes('Each database lives in one home region; reads and writes count there.'));
+    assert.ok(catalog.metering.operationUnit.rules.includes('Each database lives in one home region; writes count there.'));
   });
-  test(`${locale}: pricing states the overage rule and the storage and egress caveat`, () => {
+  test(`${locale}: pricing states the overage rule, storage billing and the egress caveat`, () => {
     const pricingCopy = JSON.stringify(messages.pricing);
     assert.doesNotMatch(pricingCopy, /propos|pending review|pendientes de revisión|pendentes de revisão|propõem|proponen/i);
     assert.doesNotMatch(JSON.stringify([messages.pricing, messages.cta, messages.about]), staleClaims);

@@ -48,6 +48,7 @@
 
   <ItemGroup>
     <None Update="THIRD-PARTY-NOTICES" CopyToPublishDirectory="PreserveNewest" />
+    <EmbeddedResource Include="../../landing-site/static/pricing.json" LogicalName="TerraBase.pricing.json" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Google.Protobuf" />

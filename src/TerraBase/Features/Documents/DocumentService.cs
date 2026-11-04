@@ -533,7 +533,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             return (new DocumentRejected(DocumentRoute.UnknownDatabase), null);
         }
         if (operations.Any(operation => operation is PutOperation or PatchOperation)
-            && await allowance.CheckAsync(database, cancellationToken).ConfigureAwait(false) is var allowed && allowed is not Done)
+            && await allowance.CheckAsync(database, MeteredOperation.Write, cancellationToken).ConfigureAwait(false) is var allowed && allowed is not Done)
         {
             return (allowed switch
             {

@@ -6,17 +6,27 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
-    // Hourly, every paid Stripe subscription's operation units over its plan allowance this UTC month
-    // become invoice items on the customer's next subscription invoice. Stripe holds the billed record.
     public sealed class UsageOverageReporter(IDashboardState state, IAllowanceNotificationBackend usage, StripeBilling billing, TimeProvider clock, ILogger<UsageOverageReporter> logger)
     {
+        private const int ClosingDays = 3;
+
         public async Task RunOnceAsync(CancellationToken cancellationToken)
+        {
+            if (clock.GetUtcNow().Day <= ClosingDays)
+            {
+                await RunMonthAsync(true, cancellationToken);
+            }
+
+            await RunMonthAsync(false, cancellationToken);
+        }
+
+        private async Task RunMonthAsync(bool previous, CancellationToken cancellationToken)
         {
             string? after = null;
             do
             {
-                var page = await usage.ReadAsync(after, cancellationToken);
-                var month = AllowanceNotifications.ValidatedMonth(page, after, clock.GetUtcNow());
+                var page = await usage.ReadAsync(after, previous, cancellationToken);
+                var month = AllowanceNotifications.ValidatedMonth(page, after, clock.GetUtcNow(), previous);
                 foreach (var item in page.Items)
                 {
                     if (item.Operations is not { } units)
@@ -24,7 +34,8 @@ namespace TerraScale.Dashboard.Features.Billing
                         continue;
                     }
 
-                    try { await ReportAsync(item.OrganizationId, units, month, cancellationToken); }
+                    var byteHours = page.StorageContract == AllowanceNotifications.StorageContract ? item.StorageByteHours : null;
+                    try { await ReportAsync(item.OrganizationId, units, byteHours, month, cancellationToken); }
                     catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or StripeException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                     {
                         logger.UsageOverageCouldNotBeReported(error.GetType().Name);
@@ -34,7 +45,7 @@ namespace TerraScale.Dashboard.Features.Billing
             } while (after is not null);
         }
 
-        public async Task ReportAsync(string organizationId, long units, DateTimeOffset month, CancellationToken cancellationToken)
+        public async Task ReportAsync(string organizationId, long units, long? storageByteHours, DateTimeOffset month, CancellationToken cancellationToken)
         {
             var document = await state.GetAsync(AccountService.OrganizationsCollection, organizationId, cancellationToken);
             if (document is null)
@@ -65,7 +76,11 @@ namespace TerraScale.Dashboard.Features.Billing
                 return;
             }
 
-            await billing.ReportOperationUnitOverageAsync(binding, plan, OperationUnitOverage.Units(plan, units), month, cancellationToken);
+            await billing.ReportOverageAsync(binding, StripeBilling.OperationUnits(plan), OperationUnitOverage.Units(plan, units), month, cancellationToken);
+            if (storageByteHours is { } byteHours)
+            {
+                await billing.ReportOverageAsync(binding, StripeBilling.Storage(plan), StorageOverage.MegabyteMonths(plan, byteHours, month), month, cancellationToken);
+            }
         }
     }
 
