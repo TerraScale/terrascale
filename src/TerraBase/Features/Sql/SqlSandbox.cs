@@ -21,7 +21,12 @@ internal static class SqlSandbox
         "sqlar_uncompress", "csv", "completion",
     ];
 
-    private static readonly HashSet<string> SchemaTables = [with(StringComparer.OrdinalIgnoreCase), "sqlite_schema", "sqlite_master"];
+    private static readonly Dictionary<string, string> SchemaTables = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["sqlite_schema"] = $"(SELECT * FROM sqlite_schema WHERE {Visible("name")} AND {Visible("tbl_name")} AND lower(name) <> 'sqlite_sequence')",
+        ["sqlite_master"] = $"(SELECT * FROM sqlite_schema WHERE {Visible("name")} AND {Visible("tbl_name")} AND lower(name) <> 'sqlite_sequence')",
+        ["sqlite_sequence"] = $"(SELECT * FROM sqlite_sequence WHERE {Visible("name")})",
+    };
 
     private static readonly HashSet<string> Clauses =
     [
@@ -30,8 +35,6 @@ internal static class SqlSandbox
     ];
 
     private static readonly HashSet<string> WriteTargets = [with(StringComparer.OrdinalIgnoreCase), "INTO", "UPDATE", "TABLE", "ON"];
-
-    private static readonly string VisibleSchema = BuildVisibleSchema();
 
     public static SqlError Reserved { get; } = Denied("names starting with _tb_, _ts_ or turso_, and the engine's own tables, are reserved");
 
@@ -78,7 +81,7 @@ internal static class SqlSandbox
         for (var i = 0; i < tokens.Count; i++)
         {
             var token = tokens[i];
-            if (!token.IsName || !SchemaTables.Contains(token.Value) || (i + 1 < tokens.Count && tokens[i + 1].Kind == SqlTokenKind.Dot))
+            if (!token.IsName || !SchemaTables.TryGetValue(token.Value, out var visible) || (i + 1 < tokens.Count && tokens[i + 1].Kind == SqlTokenKind.Dot))
             {
                 continue;
             }
@@ -111,7 +114,7 @@ internal static class SqlSandbox
             found = true;
             var aliased = i + 1 < end && tokens[i + 1] is var next
                 && (next.Is("AS") || (next.IsName && !(next.Kind == SqlTokenKind.Word && Clauses.Contains(next.Value))));
-            run.Append(sql, copied, tokens[first].Start - copied).Append(VisibleSchema);
+            run.Append(sql, copied, tokens[first].Start - copied).Append(visible);
             if (!aliased)
             {
                 run.Append(" AS \"").Append(token.Value.Replace("\"", "\"\"", StringComparison.Ordinal)).Append('"');
@@ -131,17 +134,12 @@ internal static class SqlSandbox
     }
 
     public static object?[][] HideRows(IReadOnlyList<object?[]> rows, IReadOnlyList<int> columns) =>
-        [.. rows.Where(row => !columns.Any(column => column < row.Length && row[column] is string name && (IsHidden(name) || DeniedNames.Contains(name))))];
+        [.. rows.Where(row => !columns.Any(column => column < row.Length && row[column] is string name && (IsHidden(name) || DeniedNames.Contains(name) || name.Equals("sqlite_sequence", StringComparison.OrdinalIgnoreCase))))];
 
-    private static string BuildVisibleSchema()
+    private static string Visible(string column)
     {
-        static string Visible(string column)
-        {
-            var names = string.Join(", ", HiddenTables.Order(StringComparer.Ordinal).Select(name => $"'{name}'"));
-            var prefixes = HiddenPrefixes.Select(prefix => $" AND substr(lower({column}), 1, {prefix.Length}) <> '{prefix}'");
-            return $"lower({column}) NOT IN ({names}){string.Concat(prefixes)}";
-        }
-
-        return $"(SELECT * FROM sqlite_schema WHERE {Visible("name")} AND {Visible("tbl_name")})";
+        var names = string.Join(", ", HiddenTables.Order(StringComparer.Ordinal).Select(name => $"'{name}'"));
+        var prefixes = HiddenPrefixes.Select(prefix => $" AND substr(lower({column}), 1, {prefix.Length}) <> '{prefix}'");
+        return $"lower({column}) NOT IN ({names}){string.Concat(prefixes)}";
     }
 }
