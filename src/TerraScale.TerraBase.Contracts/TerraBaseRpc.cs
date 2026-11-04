@@ -20,7 +20,7 @@ namespace TerraScale.TerraBase.Contracts
         /// <summary>The binary trailer that carries a <see cref="TerraBaseFault"/>.</summary>
         public const string FaultTrailer = "terrabase-fault-bin";
 
-        /// <summary>The largest message either side accepts: an 8 MiB document page plus envelope.</summary>
+        /// <summary>The largest message either side accepts: an 8 MiB result page plus envelope.</summary>
         public const int MaxMessageBytes = 16 * 1024 * 1024;
 
         /// <summary>The MessagePack options both sides use; JSON values travel as their UTF-8 text.</summary>
