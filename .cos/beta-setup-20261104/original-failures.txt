@@ -1,0 +1,18 @@
+ts-heavy-any: beta ~/remote-builds/terrascale/refs-ts-ship-9335a8fefc8e606151f0605bf6b-91890daa29e82336638a3b08b65089545a87322e0ad36c515c08612bba1a085f
+ts-slot: admitted terrabase-test-fast on beta after 1s (threads=426 mem=2.5G cpu=3)
+gh: API rate limit exceeded for user ID 8379079. If you reach out to GitHub Support for help, please include the request ID 834C:3ED970:9BD22C:F838BC:6AEBB9FE and timestamp 2026-11-04 23:04:30 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service) (HTTP 403)
+ts-ship: Command ['gh', 'api', 'user', '--jq', '.login'] returned non-zero exit status 1.
+ts-slot: terrabase-test-fast used peak threads=19 mem=0.1G cpu=2 in 7s
+@@TS_SHIP_AREA setup
+ts-heavy-any: beta ~/remote-builds/terrascale/refs-ts-ship-9335a8fefc8e606151f0605bf6b-db1331917c2c1bb78a14900ae0cec9e8e031f702638c59c38ab758bdc0c2eb20
+ts-slot: admitted sdk-dotnet-test-fast on beta after 1s (threads=182 mem=2.7G cpu=3)
+gh: API rate limit exceeded for user ID 8379079. If you reach out to GitHub Support for help, please include the request ID 8354:30E6F0:9BA3F1:F855FB:6AEBBA03 and timestamp 2026-11-04 23:04:35 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service) (HTTP 403)
+ts-ship: Command ['gh', 'api', 'user', '--jq', '.login'] returned non-zero exit status 1.
+ts-slot: sdk-dotnet-test-fast used peak threads=19 mem=0.1G cpu=1 in 11s
+@@TS_SHIP_AREA setup
+ts-heavy-any: beta ~/remote-builds/terrascale/refs-ts-ship-9335a8fefc8e606151f0605bf6b-7db400714268b5b9db6ecb297bc6ade49a462f950fc742146cc494e2facea6fa
+ts-slot: admitted libs-test on beta after 1s (threads=287 mem=1.2G cpu=2)
+gh: API rate limit exceeded for user ID 8379079. If you reach out to GitHub Support for help, please include the request ID D7E4:29A1EF:9B2291:F7B4D0:6AEBBA0A and timestamp 2026-11-04 23:04:42 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service) (HTTP 403)
+ts-ship: Command ['gh', 'api', 'user', '--jq', '.login'] returned non-zero exit status 1.
+ts-slot: libs-test used peak threads=19 mem=0.1G cpu=1 in 18s
+@@TS_SHIP_AREA setup

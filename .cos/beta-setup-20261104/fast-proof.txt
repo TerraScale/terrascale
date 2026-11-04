@@ -1,0 +1,55 @@
+JOB 1 libs exit=0
+ts-slot: admitted libs-test on beta after 1s (threads=287 mem=1.2G cpu=2)
+  total: 50
+  failed: 0
+  skipped: 0
+Fast suite: 50 tests. Slowest 10:
+  total: 42
+  failed: 0
+  skipped: 0
+Fast suite: 42 tests. Slowest 10:
+@@TS_SHIP_PASSED libs test=12.062s build=20.634s
+JOB 2 sdk-dotnet exit=0
+ts-slot: admitted sdk-dotnet-test-fast on beta after 1s (threads=182 mem=2.7G cpu=3)
+  total: 266
+  failed: 0
+  skipped: 0
+  total: 266
+  failed: 0
+  skipped: 0
+Fast suite: 266 tests. Slowest 10:
+Fast suite: 266 tests. Slowest 10:
+@@TS_SHIP_PASSED sdk-dotnet test=7.156s build=21.160s
+JOB 3 terrabase exit=0
+ts-slot: admitted terrabase-test-fast on beta after 127s (threads=426 mem=7.2G cpu=3)
+  total: 5
+  failed: 0
+  skipped: 0
+Fast suite: 5 tests. Slowest 10:
+  total: 92
+  failed: 0
+  skipped: 0
+Fast suite: 92 tests. Slowest 10:
+@@TS_SHIP_PASSED terrabase test=24.201s build=61.469s
+JOB 4 libs exit=0
+ts-slot: admitted libs-test on beta after 1s (threads=287 mem=1.2G cpu=2)
+  total: 50
+  failed: 0
+  skipped: 0
+Fast suite: 50 tests. Slowest 10:
+  total: 42
+  failed: 0
+  skipped: 0
+Fast suite: 42 tests. Slowest 10:
+@@TS_SHIP_PASSED libs test=12.276s build=20.624s
+JOB 5 sdk-dotnet exit=0
+ts-slot: admitted sdk-dotnet-test-fast on beta after 1s (threads=182 mem=2.8G cpu=3)
+  total: 266
+  failed: 0
+  skipped: 0
+  total: 266
+  failed: 0
+  skipped: 0
+Fast suite: 266 tests. Slowest 10:
+Fast suite: 266 tests. Slowest 10:
+@@TS_SHIP_PASSED sdk-dotnet test=7.235s build=13.342s
