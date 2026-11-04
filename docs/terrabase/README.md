@@ -93,6 +93,8 @@ Region replicas (read-only page-pull copies in replica regions, PIVOT R3): [`reg
 Catalog of organizations, projects and databases: [SQL catalog](sql-catalog.md).
 Renaming a database: [database rename](database-rename.md).
 
+Databases for agents (create with a TTL, fork, scoped keys): [agent databases](agent-databases.md).
+
 ## API reference
 
 Public operations follow the project hierarchy in [the route table](api.md). They accept ts-auth project

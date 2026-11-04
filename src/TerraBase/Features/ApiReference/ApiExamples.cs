@@ -8,7 +8,10 @@ namespace TerraBase.Features.ApiReference;
 internal static class ApiExamples
 {
     private const string Database = """
-        {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA1","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main","branchedFrom":null,"createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false}
+        {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA1","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main","branchedFrom":null,"createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false,"expiresAt":null}
+        """;
+    private const string Expiring = """
+        {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA1","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"run-42","branchedFrom":null,"createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false,"expiresAt":"2026-10-07T13:00:00Z"}
         """;
     private const string ReadGrant = """{"table":"notes","where":"owner_id = :sub","columns":["id","owner_id","body"],"updatedAt":"2026-11-04T12:00:00Z"}""";
     private const string DeclaredSchema = """{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["name"],"properties":{"name":{"type":"string"}}}""";
@@ -99,15 +102,16 @@ internal static class ApiExamples
         "createFileBucket" => "{\"name\":\"avatars\",\"rules\":" + CollectionRules + "}",
         "setFileBucketRules" => "{\"rules\":" + CollectionRules + "}",
         "createFileUpload" => """{"name":"hello.txt","contentType":"text/plain","size":5,"sha256":"LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=","metadata":{"userId":"01ARZ3NDEKTSV4RRFFQ69G5FAE"}}""",
-        "createDatabase" => """{"name":"main"}""",
+        "createDatabase" => """{"name":"run-42","ttlSeconds":3600}""",
+        "setDatabaseTtl" => """{"ttlSeconds":3600}""",
         "putReadGrant" => """{"where":"owner_id = :sub","columns":["id","owner_id","body"]}""",
-        "branchDatabase" or "branchDatabaseIfId" => """{"name":"main_branch"}""",
+        "branchDatabase" or "branchDatabaseIfId" => """{"name":"main_branch","ttlSeconds":3600}""",
         "updateDatabase" => """{"replicaRegions":[]}""",
         "restoreBackup" => """{"name":"restored"}""",
         "planPointInTime" => """{"pointInTime":"2026-10-07T12:00:13Z","destination":"platform"}""",
         "previewSelectiveRecovery" => """{"pointInTime":"2026-10-07T12:00:13Z","selections":[{"collection":"people","ids":["01ARZ3NDEKTSV4RRFFQ69G5FA3"]}]}""",
         "recoverHistoricalRecords" => """{"approval":"opaque-approval-from-preview","records":[{"collection":"people","id":"01ARZ3NDEKTSV4RRFFQ69G5FA3"}]}""",
-        "restorePointInTime" => """{"pointInTime":"2026-10-07T12:00:13Z","name":"restored","destination":"customer"}""",
+        "restorePointInTime" => """{"pointInTime":"2026-10-07T12:00:13Z","name":"restored","destination":"customer","ttlSeconds":3600}""",
         "setBackupDestination" => """{"endpoint":"https://s3.example.com","region":"us-east-1","bucket":"customer-backups","accessKeyId":"YOUR_ACCESS_KEY","secretKey":"YOUR_SECRET_KEY","mode":"both"}""",
         "setBackupPolicy" => """{"fullBackupCron":"0 2 * * *","retentionDays":7,"disabled":false}""",
         "setExportSchedule" => """{"cron":"0 3 * * *"}""",
@@ -146,10 +150,11 @@ internal static class ApiExamples
         "createFileDownload" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAD","url":"https://files.example/signed-capability","expiresAt":"2026-10-24T12:01:00Z","headers":{}}""",
         "healthz" => $$"""{"status":"{{(status == "503" ? "degraded" : "ok")}}","version":"{{ServiceVersion.Value}}","region":"gru-1"}""",
         "readyz" => $$"""{"status":"{{(status == "503" ? "unavailable" : "ready")}}","version":"{{ServiceVersion.Value}}","region":"gru-1"}""",
-        "createDatabase" or "getDatabase" or "updateDatabase" => Database,
+        "createDatabase" or "setDatabaseTtl" => Expiring,
+        "getDatabase" or "updateDatabase" or "clearDatabaseTtl" => Database,
         "putReadGrant" or "getReadGrant" => ReadGrant,
         "listReadGrants" => "{\"grants\":[" + ReadGrant + "]}",
-        "branchDatabase" or "branchDatabaseIfId" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA6","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main_branch","branchedFrom":"01ARZ3NDEKTSV4RRFFQ69G5FA1","createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false}""",
+        "branchDatabase" or "branchDatabaseIfId" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA6","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main_branch","branchedFrom":"01ARZ3NDEKTSV4RRFFQ69G5FA1","createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false,"expiresAt":"2026-10-07T13:00:00Z"}""",
         "listDatabases" => Page(Database),
         "createBackup" => Backup,
         "listBackups" => Page(Backup),
@@ -222,7 +227,7 @@ internal static class ApiExamples
         "404" when id is "getReadGrant" or "deleteReadGrant" => "unknown_database, no_read_grant",
         "400" => "invalid_request",
         "401" => "invalid_key",
-        "403" when id is "createDatabase" or "branchDatabase" or "branchDatabaseIfId" or "updateDatabase" or "deleteDatabase" or "deleteDatabaseIfId" or "restoreBackup" or "setBackupPolicy" or "setExportSchedule" or "createIndex" or "dropIndex" or "applyIndexRecommendation" or "createSavedQuery" or "updateSavedQuery" or "deleteSavedQuery" or "declareCollectionSchema" => "forbidden_scope, forbidden_role",
+        "403" when id is "createDatabase" or "setDatabaseTtl" or "clearDatabaseTtl" or "branchDatabase" or "branchDatabaseIfId" or "updateDatabase" or "deleteDatabase" or "deleteDatabaseIfId" or "restoreBackup" or "setBackupPolicy" or "setExportSchedule" or "createIndex" or "dropIndex" or "applyIndexRecommendation" or "createSavedQuery" or "updateSavedQuery" or "deleteSavedQuery" or "declareCollectionSchema" => "forbidden_scope, forbidden_role",
         "403" when id == "previewCollectionSchema" => "forbidden_scope, forbidden",
         "403" when id == "executeSql" => "forbidden_scope, sql_sandbox",
         "403" => "forbidden_scope",
@@ -232,7 +237,7 @@ internal static class ApiExamples
             or "getCollectionTtl" or "putCollectionTtl" or "deleteCollectionTtl"
             or "getCollectionRules" or "putCollectionRules" => "unknown_database, unknown_collection",
         "404" when id is "getCollection" or "dropCollection" or "listDocuments" or "createDocument" or "putDocument" or "queryDocuments" => "unknown_database, unknown_collection",
-        "404" when id is "createDatabase" or "getDatabase" or "listDatabases" or "updateDatabase" or "deleteDatabase" or "deleteDatabaseIfId" or "branchDatabase" or "branchDatabaseIfId" or "getDatabaseUsage" or "getProjectUsage" => "unknown_database, unknown_route",
+        "404" when id is "createDatabase" or "setDatabaseTtl" or "clearDatabaseTtl" or "getDatabase" or "listDatabases" or "updateDatabase" or "deleteDatabase" or "deleteDatabaseIfId" or "branchDatabase" or "branchDatabaseIfId" or "getDatabaseUsage" or "getProjectUsage" => "unknown_database, unknown_route",
         "404" when id == "createImport" => "unknown_database",
         "404" when id is "getImport" or "uploadImportSource" or "updateImport" or "startImport" or "cancelImport" or "resumeImport" => "unknown_database, unknown_import",
         "404" => "unknown_database, unknown_route, not_found",

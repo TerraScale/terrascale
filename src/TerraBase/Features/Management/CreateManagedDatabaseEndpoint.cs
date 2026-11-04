@@ -20,7 +20,7 @@ internal sealed class CreateManagedDatabaseEndpoint(IManagementService managemen
         Post(ProjectApiRoute.Databases);
         Name(OperationName);
         Summary("Creates a database in a project");
-        Description("Creates a database in its home region. replicaRegions names up to 8 other regions that hold read replicas: they pull the home's pages and serve SQL reads, while writes go to the home. allRegions is unavailable. " + ProjectApiRoute.IdentityDescription);
+        Description("Creates a database in its home region. replicaRegions names up to 8 other regions that hold read replicas: they pull the home's pages and serve SQL reads, while writes go to the home. allRegions is unavailable." + DatabaseTtl.Description + " " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -45,6 +45,11 @@ internal sealed class CreateManagedDatabaseEndpoint(IManagementService managemen
 
     private async ValueTask<IResult> CreateAsync(DatabaseRegionsRequest request, string name, CancellationToken cancellationToken)
     {
+        if (DatabaseTtl.Invalid(request.TtlSeconds) is { } invalidTtl)
+        {
+            return ErrorResponse.From(invalidTtl);
+        }
+
         if (request.AllRegions == true)
         {
             return ErrorResponse.From(new Validation("all-region placement is unavailable: name the replica regions", "replicas_unavailable"));
@@ -88,7 +93,7 @@ internal sealed class CreateManagedDatabaseEndpoint(IManagementService managemen
 
         if (HttpContext.Features.Get<LegacyManagementRoute>() is not null)
         {
-            return await CreateAsync(name, replicas, all, cancellationToken).ConfigureAwait(false);
+            return await CreateAsync(name, replicas, all, request.TtlSeconds, cancellationToken).ConfigureAwait(false);
         }
 
         var restricted = HttpContext.User.FindFirst("database")?.Value;
@@ -120,14 +125,14 @@ internal sealed class CreateManagedDatabaseEndpoint(IManagementService managemen
         var grant = new ProjectAccess(actor, project, organization, restricted, DatabaseId: null);
         HttpContext.Features.Set(grant);
         IResult result = null!;
-        await ProjectAccess.RunAsync(grant, async () => result = await CreateAsync(name, replicas, all, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+        await ProjectAccess.RunAsync(grant, async () => result = await CreateAsync(name, replicas, all, request.TtlSeconds, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
         return result;
     }
 
-    private async ValueTask<IResult> CreateAsync(string name, IReadOnlyList<string> replicas, bool all, CancellationToken cancellationToken)
+    private async ValueTask<IResult> CreateAsync(string name, IReadOnlyList<string> replicas, bool all, long? ttlSeconds, CancellationToken cancellationToken)
     {
         return await management.CreateDatabaseAsync(
-            ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), name, cancellationToken, replicas, all) switch
+            ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), name, cancellationToken, replicas, all, ttlSeconds) switch
         {
             ManagedDatabase value => TypedResults.Created(ManagementRoute.CreatedDatabasePath(HttpContext, value), ManagedDatabaseBody.From(value, Listeners.RegionOf(HttpContext))),
             NotFound error => ManagementRoute.DatabaseNotFound(error),

@@ -8,7 +8,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 /// <summary>Branches only the source identity the caller expected.</summary>
-internal sealed class BranchManagedDatabaseIfIdEndpoint(IManagementService management, TerraBaseOptions options) : Endpoint<NameRequest, IResult>
+internal sealed class BranchManagedDatabaseIfIdEndpoint(IManagementService management, TerraBaseOptions options) : Endpoint<ForkRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -31,7 +31,7 @@ internal sealed class BranchManagedDatabaseIfIdEndpoint(IManagementService manag
     }
 
     /// <inheritdoc />
-    public override ValueTask<IResult> HandleAsync(NameRequest request, CancellationToken cancellationToken)
+    public override ValueTask<IResult> HandleAsync(ForkRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         // A database-restricted token cannot create a sibling database; preserve its opaque refusal before the guard.

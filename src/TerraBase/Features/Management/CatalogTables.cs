@@ -219,6 +219,7 @@ internal static class CatalogTables
             database.Id, database.ProjectId, database.Name, database.BranchedFrom, database.CreatedAt.UtcTicks, database.HomeRegion, database.PlacementVersion,
             database.AllRegions ? 1L : 0L), cancellationToken).ConfigureAwait(false);
         _ = await ExecuteAsync(transaction, Sql("DELETE FROM catalog_database_replicas WHERE database_id = ?", database.Id), cancellationToken).ConfigureAwait(false);
+        await DatabaseTtl.WriteAsync(transaction, database.Id, database.ExpiresAt, cancellationToken).ConfigureAwait(false);
         foreach (var region in database.Replicas)
         {
             _ = await ExecuteAsync(transaction, Sql("INSERT OR IGNORE INTO catalog_database_replicas(database_id, region) VALUES (?, ?)", database.Id, region), cancellationToken)
@@ -230,6 +231,7 @@ internal static class CatalogTables
     {
         _ = await ExecuteAsync(transaction, Sql("DELETE FROM catalog_database_replicas WHERE database_id = ?", id), cancellationToken).ConfigureAwait(false);
         _ = await DeleteShapeGrantAsync(transaction, id, null, cancellationToken).ConfigureAwait(false);
+        await DatabaseTtl.WriteAsync(transaction, id, null, cancellationToken).ConfigureAwait(false);
         await RetireAsync(transaction, id, cancellationToken).ConfigureAwait(false);
         return await ExecuteAsync(transaction, Sql("DELETE FROM catalog_databases WHERE id = ?", id), cancellationToken).ConfigureAwait(false) > 0;
     }
@@ -290,7 +292,17 @@ internal static class CatalogTables
         var replicas = (await RowsAsync(transaction, Sql(
             $"SELECT database_id, region FROM catalog_database_replicas WHERE database_id IN ({string.Join(", ", ids.Select(_ => "?"))}) ORDER BY database_id, region", ids), cancellationToken)
             .ConfigureAwait(false)).ToLookup(row => (string)row[0]!, row => (string)row[1]!);
-        return [.. databases.Select(database => replicas.Contains(database.Id) ? database with { ReplicaRegions = [.. replicas[database.Id]] } : database)];
+        List<ManagedDatabase> placed = [];
+        foreach (var database in databases)
+        {
+            placed.Add(database with
+            {
+                ReplicaRegions = replicas.Contains(database.Id) ? [.. replicas[database.Id]] : database.ReplicaRegions,
+                ExpiresAt = await DatabaseTtl.ReadAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false),
+            });
+        }
+
+        return placed;
     }
 
     private static ManagementPage<T> Page<T>(List<T> items, int limit, Func<T, string> id)

@@ -30,7 +30,8 @@ public sealed record BackupPolicyRequest(string? FullBackupCron, int? RetentionD
 /// <param name="PointInTime">The time to restore the database as of, inside its restore window.</param>
 /// <param name="Destination"><c>platform</c> (default) or <c>customer</c>.</param>
 /// <param name="Name">The new database's name; the first free of <c>&lt;source&gt;-restore</c>, <c>-restore-2</c>, … without it.</param>
-public sealed record PointInTimeRestoreRequest(DateTimeOffset? PointInTime, string? Name, string? Destination = null);
+/// <param name="TtlSeconds">Seconds until the new database is deleted, 60 to 31,536,000; null keeps it until deleted.</param>
+public sealed record PointInTimeRestoreRequest(DateTimeOffset? PointInTime, string? Name, string? Destination = null, long? TtlSeconds = null);
 
 /// <summary>A page of a database's backups.</summary>
 public readonly union ListBackupsResult(ManagementPage<DatabaseBackup>, Unavailable);
@@ -80,7 +81,8 @@ public interface IManagedBackupService
     /// project, named like <see cref="RestoreAsync"/>; validates <paramref name="at"/> against its restore window before downloading.
     /// </summary>
     ValueTask<RestoreBackupResult> RestorePointInTimeAsync(
-        string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
+        string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform,
+        long? ttlSeconds = null);
 
     /// <summary>
     /// One scheduler pass: a page of the storage sweep, retention, then the scheduled backups that are due; none while the

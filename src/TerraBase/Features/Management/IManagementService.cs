@@ -12,7 +12,8 @@ public sealed record ManagedDatabase(
     string Id, string ProjectId, string Name, string? BranchedFrom, DateTimeOffset CreatedAt,
     string? HomeRegion = null, IReadOnlyList<string>? ReplicaRegions = null, long PlacementVersion = 0, bool AllRegions = false,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PreviousName = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ConflictOf = null)
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ConflictOf = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? ExpiresAt = null)
 {
     public string Home(string region) => HomeRegion ?? region;
 
@@ -100,7 +101,10 @@ internal interface IManagementService
 
     ValueTask<CreateDatabaseResult> CreateDatabaseAsync(
         string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken, IReadOnlyList<string>? replicaRegions = null,
-        bool allRegions = false);
+        bool allRegions = false, long? ttlSeconds = null);
+
+    ValueTask<SetDatabaseRegionsResult> SetDatabaseTtlAsync(
+        string userId, string organizationId, string projectId, string databaseId, long? ttlSeconds, CancellationToken cancellationToken);
 
     ValueTask<SetDatabaseRegionsResult> SetDatabaseRegionsAsync(
         string userId, string organizationId, string projectId, string databaseId, IReadOnlyList<string> replicaRegions, CancellationToken cancellationToken,
@@ -133,8 +137,8 @@ internal interface IManagementService
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
 
     ValueTask<BranchDatabaseResult> BranchDatabaseAsync(
-        string userId, string organizationId, string projectId, string databaseId, string name, CancellationToken cancellationToken);
+        string userId, string organizationId, string projectId, string databaseId, string name, CancellationToken cancellationToken, long? ttlSeconds = null);
 
     ValueTask<CopyDatabaseResult> CopyDatabaseAsync(
-        string userId, string organizationId, string projectId, string sourceId, string name, string? branchedFrom, CancellationToken cancellationToken);
+        string userId, string organizationId, string projectId, string sourceId, string name, string? branchedFrom, CancellationToken cancellationToken, long? ttlSeconds = null);
 }

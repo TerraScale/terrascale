@@ -6,7 +6,7 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Management;
 
-public sealed record DatabaseRegionsRequest(string? Name, string? HomeRegion, IReadOnlyList<string>? ReplicaRegions, bool? AllRegions = null);
+public sealed record DatabaseRegionsRequest(string? Name, string? HomeRegion, IReadOnlyList<string>? ReplicaRegions, bool? AllRegions = null, long? TtlSeconds = null);
 
 /// <summary>
 /// Per-database region placement (docs/cross-region.md): the checks of a requested placement, and the <c>421 wrong_region</c>

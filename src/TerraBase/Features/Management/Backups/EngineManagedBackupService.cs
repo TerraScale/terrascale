@@ -183,7 +183,8 @@ internal sealed class EngineManagedBackupService(
     /// process that stops between the two leaves the staging file, which startup reports as unknown and keeps.
     /// </remarks>
     public async ValueTask<RestoreBackupResult> RestorePointInTimeAsync(
-        string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform)
+        string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform,
+        long? ttlSeconds = null)
     {
         if (PlatformDatabases.IsPlatform(database.OrganizationId))
         {
@@ -215,7 +216,7 @@ internal sealed class EngineManagedBackupService(
         {
             return await pointInTime.RestoreAsync(database, at, staging, cancellationToken, destination).ConfigureAwait(false) switch
             {
-                Done => await CopyRestoredAsync(userId, organizationId, owner, source.Name, staging.DatabaseId!, name, cancellationToken).ConfigureAwait(false),
+                Done => await CopyRestoredAsync(userId, organizationId, owner, source.Name, staging.DatabaseId!, name, cancellationToken, ttlSeconds).ConfigureAwait(false),
                 NotFound error => error,
                 Conflict error => error,
                 Validation error => error,
@@ -233,11 +234,11 @@ internal sealed class EngineManagedBackupService(
 
     // Copies the engine database storageId of the project into a new database named name, or <source>-restore, -restore-2, ….
     private async ValueTask<RestoreBackupResult> CopyRestoredAsync(
-        string userId, string organizationId, DatabaseOwner owner, string sourceName, string storageId, string? name, CancellationToken cancellationToken)
+        string userId, string organizationId, DatabaseOwner owner, string sourceName, string storageId, string? name, CancellationToken cancellationToken, long? ttlSeconds = null)
     {
         if (name is not null)
         {
-            return Restored(await management.CopyDatabaseAsync(userId, organizationId, owner.ProjectId, storageId, name, owner.DatabaseId, cancellationToken).ConfigureAwait(false));
+            return Restored(await management.CopyDatabaseAsync(userId, organizationId, owner.ProjectId, storageId, name, owner.DatabaseId, cancellationToken, ttlSeconds).ConfigureAwait(false));
         }
 
         // A taken name fails on the registration precheck, before any copy is made.
@@ -245,7 +246,7 @@ internal sealed class EngineManagedBackupService(
         {
             var suffix = attempt == 1 ? "-restore" : "-restore-" + attempt.ToString(CultureInfo.InvariantCulture);
             var candidate = sourceName[..Math.Min(sourceName.Length, MaxDatabaseNameLength - suffix.Length)] + suffix;
-            var result = await management.CopyDatabaseAsync(userId, organizationId, owner.ProjectId, storageId, candidate, owner.DatabaseId, cancellationToken).ConfigureAwait(false);
+            var result = await management.CopyDatabaseAsync(userId, organizationId, owner.ProjectId, storageId, candidate, owner.DatabaseId, cancellationToken, ttlSeconds).ConfigureAwait(false);
             if (result is not Conflict taken || taken != ManagementErrors.NameTaken)
             {
                 return Restored(result);

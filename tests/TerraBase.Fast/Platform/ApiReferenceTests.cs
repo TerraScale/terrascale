@@ -21,6 +21,7 @@ public sealed class ApiReferenceTests
         DELETE /v1/projects/{project}/databases/{database}/if-id/{expectedId} TsAuth(databases:write) deleteDatabaseIfId Databases
         DELETE /v1/projects/{project}/databases/{database}/indexes/{index} TsAuth(databases:write) dropIndex Indexes
         DELETE /v1/projects/{project}/databases/{database}/tables/{table}/read-grant TsAuth(databases:write) deleteReadGrant Live
+        DELETE /v1/projects/{project}/databases/{database}/ttl TsAuth(databases:write) clearDatabaseTtl Databases
         DELETE /v1/projects/{project}/saved-queries/{query} TsAuth(databases:write) deleteSavedQuery Queries
         GET /backupz anonymous backupz Health
         GET /healthz anonymous healthz Health
@@ -116,6 +117,7 @@ public sealed class ApiReferenceTests
         PUT /v1/projects/{project}/databases/{database}/import/source TsAuth(databases:write,documents:write) uploadImportSource Imports
         PUT /v1/projects/{project}/databases/{database}/schema/{collection} TsAuth(databases:write) declareCollectionSchema Schema
         PUT /v1/projects/{project}/databases/{database}/tables/{table}/read-grant TsAuth(databases:write) putReadGrant Live
+        PUT /v1/projects/{project}/databases/{database}/ttl TsAuth(databases:write) setDatabaseTtl Databases
         PUT /v1/projects/{project}/saved-queries/{query} TsAuth(databases:write) updateSavedQuery Queries
         """;
 

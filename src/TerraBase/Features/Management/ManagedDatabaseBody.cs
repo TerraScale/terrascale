@@ -15,15 +15,16 @@ namespace TerraBase.Features.Management;
 /// under <paramref name="Name"/>; rename it to choose another name.
 /// </param>
 /// <param name="ConflictOf">Id of the database that kept <paramref name="PreviousName"/>, or null.</param>
+/// <param name="ExpiresAt">When the database is deleted by its TTL, or null when it has none.</param>
 public sealed record ManagedDatabaseBody(
     string Id, string ProjectId, string Name, string? BranchedFrom, DateTimeOffset CreatedAt, string Region, string HomeRegion, IReadOnlyList<string> ReplicaRegions,
-    bool AllRegions, string? PreviousName, string? ConflictOf)
+    bool AllRegions, string? PreviousName, string? ConflictOf, DateTimeOffset? ExpiresAt = null)
 {
     /// <summary>Adds the serving node's region to a catalog database.</summary>
     public static ManagedDatabaseBody From(ManagedDatabase database, string region)
     {
         ArgumentNullException.ThrowIfNull(database);
         return new(database.Id, database.ProjectId, database.Name, database.BranchedFrom, database.CreatedAt, region, database.Home(region), database.Replicas, database.AllRegions,
-            database.PreviousName, database.ConflictOf);
+            database.PreviousName, database.ConflictOf, database.ExpiresAt);
     }
 }

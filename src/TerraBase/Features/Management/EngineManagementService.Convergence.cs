@@ -15,6 +15,15 @@ internal sealed partial class EngineManagementService
 
         await ConvergePurgesAsync(cancellationToken).ConfigureAwait(false);
         await ConvergeClosuresAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await ExpireDatabasesAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.ZLogWarning(error, $"Deleting expired databases failed; the next pass tries again");
+        }
+
         if (time.GetUtcNow() >= _nextFileAudit)
         {
             try

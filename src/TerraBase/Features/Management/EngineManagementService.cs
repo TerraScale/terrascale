@@ -218,9 +218,10 @@ internal sealed partial class EngineManagementService(
 
     public async ValueTask<CreateDatabaseResult> CreateDatabaseAsync(
         string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken, IReadOnlyList<string>? replicaRegions = null,
-        bool allRegions = false) =>
+        bool allRegions = false, long? ttlSeconds = null) =>
         await AddDatabaseAsync(
             transaction => AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), name, sourceId: null, branchedFrom: null, cancellationToken,
+            ttlSeconds: ttlSeconds,
             placement: allRegions ? new DatabasePlacement(options.Region, [], 1, AllRegions: true)
                 : replicaRegions is null ? null : new DatabasePlacement(options.Region, replicaRegions, 1))
             .ConfigureAwait(false) switch
@@ -525,7 +526,7 @@ internal sealed partial class EngineManagementService(
     }
 
     public async ValueTask<BranchDatabaseResult> BranchDatabaseAsync(
-        string userId, string organizationId, string projectId, string databaseId, string name, CancellationToken cancellationToken)
+        string userId, string organizationId, string projectId, string databaseId, string name, CancellationToken cancellationToken, long? ttlSeconds = null)
     {
         var found = await GetDatabaseAsync(userId, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false);
         if (found is not ManagedDatabase source)
@@ -545,6 +546,7 @@ internal sealed partial class EngineManagementService(
 
         return await AddDatabaseAsync(
             transaction => AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), name, source.Id, source.Id, cancellationToken,
+            ttlSeconds: ttlSeconds,
             placement: source.Placement(options.Region) with { Version = 1 })
             .ConfigureAwait(false) switch
         {
@@ -558,7 +560,7 @@ internal sealed partial class EngineManagementService(
     }
 
     public async ValueTask<CopyDatabaseResult> CopyDatabaseAsync(
-        string userId, string organizationId, string projectId, string sourceId, string name, string? branchedFrom, CancellationToken cancellationToken)
+        string userId, string organizationId, string projectId, string sourceId, string name, string? branchedFrom, CancellationToken cancellationToken, long? ttlSeconds = null)
     {
         DatabasePlacement? placement = null;
         if (branchedFrom is not null)
@@ -583,7 +585,7 @@ internal sealed partial class EngineManagementService(
         }
 
         return await AddDatabaseAsync(
-            transaction => AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), name, sourceId, branchedFrom, cancellationToken, placement: placement)
+            transaction => AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), name, sourceId, branchedFrom, cancellationToken, placement: placement, ttlSeconds: ttlSeconds)
             .ConfigureAwait(false) switch
         {
             AddedDatabase added => added.Database,
@@ -597,7 +599,7 @@ internal sealed partial class EngineManagementService(
 
     private async ValueTask<AddDatabaseResult> AddDatabaseAsync(
         Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, string? sourceId, string? branchedFrom, CancellationToken cancellationToken,
-        string? id = null, DatabasePlacement? placement = null, DateTimeOffset? createdAt = null)
+        string? id = null, DatabasePlacement? placement = null, DateTimeOffset? createdAt = null, long? ttlSeconds = null)
     {
         var allowance = sourceId is not null || (placement?.Home ?? options.Region) == options.Region
             ? new AllowanceCheck(databaseAllowance.Limit)
@@ -631,7 +633,7 @@ internal sealed partial class EngineManagementService(
 
         var database = new ManagedDatabase(
             id ?? NewId(), tenant.ProjectId!, name, branchedFrom, createdAt ?? time.GetUtcNow(), placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version,
-            placement.AllRegions);
+            placement.AllRegions, ExpiresAt: DatabaseTtl.ExpiresAt(time.GetUtcNow(), ttlSeconds));
         var storage = tenant with { DatabaseId = database.Id };
         var preparation = await PrepareDatabaseAsync(storage, sourceId is null ? null : tenant with { DatabaseId = sourceId }, cancellationToken).ConfigureAwait(false);
         if (preparation is not bool created || !created)
