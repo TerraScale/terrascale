@@ -8,11 +8,14 @@ trap 'rm -rf "$scratch"' EXIT
 dotnet publish "$root/tests/Turso.Data.Sqlite.Tests" --configuration Release --runtime "$rid" \
   --self-contained true --output "$scratch/publish"
 test ! -f "$scratch/publish/libturso_sdk_kit.so"
+test ! -f "$scratch/publish/libterrascale_sql_parser.so"
 mkdir "$scratch/isolated"
 cp "$scratch/publish/Turso.Data.Sqlite.Tests" "$scratch/isolated/"
 export DOTNET_BUNDLE_EXTRACT_BASE_DIR="$scratch/extracted"
 (cd "$scratch/isolated" && ./Turso.Data.Sqlite.Tests --minimum-expected-tests 3)
-library=$(find "$scratch/extracted" -type f -name libturso_sdk_kit.so)
-test -n "$library"
-expected=$(awk -v asset="terrascale-turso-$rid.so" '$2 == asset { print $1 }' "$root/src/vendor/Turso.Native/SHA256SUMS")
-printf '%s  %s\n' "$expected" "$library" | sha256sum --check
+for library in terrascale-turso:libturso_sdk_kit.so terrascale-sql-parser:libterrascale_sql_parser.so; do
+  extracted=$(find "$scratch/extracted" -type f -name "${library#*:}")
+  test -n "$extracted"
+  expected=$(awk -v asset="${library%%:*}-$rid.so" '$2 == asset { print $1 }' "$root/src/vendor/Turso.Native/SHA256SUMS")
+  printf '%s  %s\n' "$expected" "$extracted" | sha256sum --check
+done

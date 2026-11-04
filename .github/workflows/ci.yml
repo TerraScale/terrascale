@@ -186,7 +186,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ needs.changes.outputs.sha }}
-      - name: Download and verify the pinned FTS + contract1 release
+      - name: Download and verify the pinned FTS + contract1 + SQL parser release
         run: scripts/vendor/download-turso-native.sh native-output
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -227,6 +227,7 @@ jobs:
           cd native-output
           sha256sum --check SHA256SUMS-*
           grep 'runtimes/.*libturso_sdk_kit.so$' SHA256SUMS-* >> "$GITHUB_STEP_SUMMARY"
+          (cd router-parser && sha256sum --check linux-*/SHA256SUMS && cat linux-*/SHA256SUMS >> "$GITHUB_STEP_SUMMARY")
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: turso-native-build-${{ matrix.arch }}-${{ matrix.repeat }}
@@ -254,6 +255,11 @@ jobs:
             done
             cmp "native-builds/turso-native-build-$arch-1/runtimes/$rid/native/libturso_sdk_kit.so" \
                 "native-builds/turso-native-build-$arch-2/runtimes/$rid/native/libturso_sdk_kit.so"
+            for repeat in 1 2; do
+              (cd "native-builds/turso-native-build-$arch-$repeat/router-parser" && sha256sum --check "$rid/SHA256SUMS")
+            done
+            cmp "native-builds/turso-native-build-$arch-1/router-parser/runtimes/$rid/native/libterrascale_sql_parser.so" \
+                "native-builds/turso-native-build-$arch-2/router-parser/runtimes/$rid/native/libterrascale_sql_parser.so"
           done
           scripts/vendor/prepare-turso-native-release.sh native-builds/turso-native-build-amd64-1 native-builds/turso-native-build-arm64-1 native-release
           for arch in amd64 arm64; do
