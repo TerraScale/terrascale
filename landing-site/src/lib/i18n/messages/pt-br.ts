@@ -187,8 +187,7 @@ export const ptBr: Messages = {
   },
 
   pricing: {
-    titleLead: 'Preços simples',
-    titleAccent: 'que escalam com VOCÊ',
+    titleLead: 'Preços',
     suffixMonthly: '/mês',
     suffixAnnual: '/ano',
     intervals: {
