@@ -123,16 +123,11 @@ jobs:
           [[ $GITHUB_EVENT_NAME == pull_request ]] || CHANGES=$(jq -c 'if index("auth-server") then . + ["auth"] else . end' <<< "$CHANGES")
           echo "fast=$(jq -c '[.[] | select(. == "libs" or . == "auth" or . == "terrabase")] | unique' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
 
-      - name: Scan for legacy terms
-        env:
-          BASE_SHA: ${{ github.event.before || github.event.pull_request.base.sha }}
+      - name: Scan for legacy terms (fail)
         run: |
-          args=()
-          if [[ -n $BASE_SHA && ! $BASE_SHA =~ ^0+$ ]]; then
-            git fetch --no-tags --depth=1 origin "$BASE_SHA"
-            args+=(--changed-from "$BASE_SHA")
-          fi
-          python3 scripts/legacy-scan/scan.py --repo terrascale --output legacy-hits.md "${args[@]}" > legacy-scan.log
+          python3 scripts/legacy-scan/scan.py --repo terrascale --mode fail \
+            --path-prefix src/TerraBase --term documents --term collections \
+            --term document-feeds --term lattices --output legacy-hits.md > legacy-scan.log
           head -1 legacy-scan.log
       - name: Retain legacy hits
         if: ${{ !cancelled() && hashFiles('legacy-hits.md') != '' }}

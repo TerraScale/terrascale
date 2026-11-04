@@ -8,13 +8,19 @@ python3 /path/to/pinned/terrascale/scripts/legacy-scan/scan.py --repo ts-js --ro
 
 The scanner reads tracked files, including dotfiles, examples, tests, workflows and active documentation. Untracked build outputs are outside its scope. Binary file contents are excluded. Symlinks are scanned as their destination text without following them; tracked target files are independently scanned. Filename hits use line 0. Reports count term occurrences, including filename hits, and assign the owning pivot task. Output includes only matched terms, never full source lines. This is a static lexical gate; E7/Q3 separately check running public responses for engine-name leaks.
 
-`terms.json` defines patterns and default owners. `allow-list.json` defines exceptions scoped by path, optional repository, term IDs, optional file-context expressions and optional matched spans. An exception on a line never permits other legacy text on that line. Engine branding is permitted only within named internal boundaries and required attribution files; active public docs and SDKs remain scanned. Historical measurement reports and explicitly archived history remain available. Retained HLC LWW terminology is scoped to new home-apply/conflict-resolution boundaries; it does not permit leaderless references. Tigris `flyctl storage` commands remain valid. Extend exceptions narrowly with a reason, and cover changes with process integration cases.
+`terms.json` defines patterns and default owners. `allow-list.json` defines exceptions scoped by path, optional repository, term IDs, optional file-context expressions and optional matched spans. An exception on a line never permits other legacy text on that line. Engine branding is permitted only within named internal boundaries and required attribution files; active public docs and SDKs remain scanned. Historical measurement reports remain available. Retained HLC LWW terminology is scoped to new home-apply/conflict-resolution boundaries; it does not permit leaderless references. Tigris `flyctl storage` commands remain valid. Extend exceptions narrowly with a reason, and cover changes with process integration cases.
 
 Every consuming repo pins the scanner checkout to a full commit SHA. Keep it outside the target checkout, so scanner files are never mistaken for target files. Update pins explicitly after scanner policy changes.
 
-## C7 transition
+## TerraBase SQL-only gate
 
-Each repo commits `.legacy-scan-mode` containing `report` while deletion work remains. Report mode lists all hits and returns 0. C7 changes this file to `fail` after confirming zero hits, without changing the workflow or scanner. Fail mode returns 1 on hits. Invalid mode, unreadable tracked files, missing Git metadata and policy errors return 2 in either mode. `--mode` overrides the tracked mode only for investigations and process tests; CI reads the file.
+Main CI scans all tracked files under `src/TerraBase/` with `--mode fail --path-prefix src/TerraBase --term documents --term collections --term document-feeds --term lattices`. Any unapproved occurrence fails CI, including occurrences in unchanged files. Standard JSON parser and BCL collection types retain their narrow exceptions. Other repository surfaces and legacy term families remain under the report-mode cleanup policy.
+
+`--path-prefix` limits scanning to a repository-relative directory. Repeat `--term` to select retired document API term families; omitting both options preserves the full repository scan.
+
+## Other repository scans
+
+Each repo commits `.legacy-scan-mode` containing `report` while deletion work remains. Report mode lists all hits and returns 0. C7 changes this file to `fail` after confirming zero hits, without changing the workflow or scanner. Fail mode returns 1 on hits. Invalid mode, unreadable tracked files, missing Git metadata and policy errors return 2 in either mode. `--mode` overrides the tracked mode only for investigations and process tests; the scoped TerraBase CI gate explicitly uses fail mode.
 
 Process integration verification uses isolated real Git repositories and concurrent scanner subprocesses:
 
