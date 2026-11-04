@@ -10,6 +10,8 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, ETAG,
 use reqwest::{Method, StatusCode, Url};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_tungstenite::tungstenite;
 
 use super::auth::{Auth, Credential};
 use super::documents::Database;
@@ -219,14 +221,14 @@ impl ClientBuilder {
         // Never send a bearer key over plain HTTP through a proxy taken from
         // the environment (HTTP_PROXY/ALL_PROXY): loopback HTTP and loopback
         // hosts always connect directly.
+        let user_agent = self
+            .user_agent
+            .unwrap_or_else(|| format!("terrascale-rust/{} v1", env!("CARGO_PKG_VERSION")));
         let mut http = reqwest::Client::builder()
             .use_rustls_tls()
             .min_tls_version(reqwest::tls::Version::TLS_1_3)
             .redirect(reqwest::redirect::Policy::none())
-            .user_agent(
-                self.user_agent
-                    .unwrap_or_else(|| format!("terrascale-rust/{} v1", env!("CARGO_PKG_VERSION"))),
-            );
+            .user_agent(user_agent.clone());
         http = http.no_proxy();
         if let Some(t) = self.timeout {
             http = http.timeout(t);
@@ -249,6 +251,7 @@ impl ClientBuilder {
         let http = http
             .build()
             .map_err(|e| Error::InvalidInput(format!("HTTP client: {e}")))?;
+        let socket_tls = socket_tls(&self.root_cas)?;
         Ok(Client {
             inner: Arc::new(Inner {
                 http,
@@ -259,6 +262,9 @@ impl ClientBuilder {
                 project: self.project,
                 region_pin: self.region_pin,
                 shape_keys: Default::default(),
+                socket_tls,
+                timeout: self.timeout,
+                user_agent,
             }),
         })
     }
@@ -327,7 +333,40 @@ struct Inner {
     project: Option<String>,
     region_pin: Option<String>,
     shape_keys: tokio::sync::Mutex<super::shapes::EpochKeys>,
+    socket_tls: Arc<rustls::ClientConfig>,
+    timeout: Option<Duration>,
+    user_agent: String,
 }
+
+/// TLS for WebSockets: the roots REST trusts (Mozilla's, plus any added CA),
+/// TLS 1.3 only, HTTP/1.1 for the upgrade.
+fn socket_tls(root_cas: &[Vec<u8>]) -> Result<Arc<rustls::ClientConfig>> {
+    use rustls::pki_types::{pem::PemObject, CertificateDer};
+    let mut roots = rustls::RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+    for pem in root_cas {
+        let certs = CertificateDer::pem_slice_iter(pem)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::InvalidInput(format!("root CA PEM: {e}")))?;
+        roots.add_parsable_certificates(certs);
+    }
+    let mut config = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_protocol_versions(&[&rustls::version::TLS13])
+    .map_err(|e| Error::InvalidInput(format!("TLS: {e}")))?
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    Ok(Arc::new(config))
+}
+
+/// The byte stream under a WebSocket: TCP, or TLS over TCP.
+pub(crate) trait SocketIo: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> SocketIo for T {}
+
+pub(crate) type WebSocket = tokio_tungstenite::WebSocketStream<Box<dyn SocketIo>>;
 
 /// A v1 client for one key. Cheap to clone; safe for concurrent use.
 #[derive(Clone)]
@@ -679,6 +718,150 @@ impl Client {
         response.check_status(&[StatusCode::OK])?;
         Err(response
             .invalid("changes requires HTTP 200, text/event-stream and the pinned region".into()))
+    }
+
+    /// Opens a project WebSocket at `segments` (ws/wss from the base URL's
+    /// http/https) with the bearer credential, the region pin and
+    /// `subprotocol`, which the server must select. A refused upgrade maps
+    /// to the same errors as a REST response with that status; a `401` to
+    /// an API-key client is retried once with a fresh token, as on REST.
+    pub(crate) async fn open_socket(
+        &self,
+        segments: Vec<&str>,
+        subprotocol: &'static str,
+        max_message: usize,
+    ) -> Result<WebSocket> {
+        if self.inner.project.is_none() {
+            return Err(Error::InvalidInput(
+                "this operation requires a C# TerraBase project client".into(),
+            ));
+        }
+        let mut url = self.url(&self.inner.base, &segments, &[])?;
+        let tls = url.scheme() == "https";
+        url.set_scheme(if tls { "wss" } else { "ws" })
+            .map_err(|()| Error::InvalidInput("base URL cannot carry a WebSocket".into()))?;
+        let open = async {
+            let mut rejected = None;
+            loop {
+                let token = self
+                    .inner
+                    .auth
+                    .bearer(&self.inner.http, rejected.as_ref(), &self.inner.retry)
+                    .await?;
+                let io = self.socket_io(&url, tls).await?;
+                let mut request =
+                    tungstenite::client::IntoClientRequest::into_client_request(url.as_str())
+                        .map_err(|e| Error::InvalidInput(format!("WebSocket request: {e}")))?;
+                let headers = request.headers_mut();
+                headers.insert(AUTHORIZATION, token.as_ref().clone());
+                headers.insert(
+                    "Sec-WebSocket-Protocol",
+                    HeaderValue::from_static(subprotocol),
+                );
+                if let Ok(agent) = HeaderValue::from_str(&self.inner.user_agent) {
+                    headers.insert("User-Agent", agent);
+                }
+                if let Some(region) = &self.inner.region_pin {
+                    if let Ok(region) = HeaderValue::from_str(region) {
+                        headers.insert("X-TerraScale-Region-Pin", region);
+                    }
+                }
+                let config = tungstenite::protocol::WebSocketConfig::default()
+                    .max_message_size(Some(max_message));
+                let response =
+                    match tokio_tungstenite::client_async_with_config(request, io, Some(config))
+                        .await
+                    {
+                        Ok((socket, response)) => {
+                            let selected = response
+                                .headers()
+                                .get("Sec-WebSocket-Protocol")
+                                .and_then(|v| v.to_str().ok());
+                            if selected != Some(subprotocol) {
+                                return Err(Error::Decode(format!(
+                                    "TerraBase did not select the {subprotocol} subprotocol"
+                                )));
+                            }
+                            return Ok(socket);
+                        }
+                        Err(tungstenite::Error::Http(response)) => response,
+                        Err(e) => return Err(Error::Transport(format!("WebSocket: {e}"))),
+                    };
+                let header =
+                    |name: &str| response.headers().get(name).and_then(|v| v.to_str().ok());
+                let retry_after = header("Retry-After")
+                    .and_then(|v| parse_retry_after(v, std::time::SystemTime::now()));
+                let error = errors::from_project_response(
+                    response.status().as_u16(),
+                    header("ETag"),
+                    retry_after,
+                    header("X-Request-ID"),
+                    response.body().as_deref().unwrap_or_default(),
+                );
+                if response.status() == StatusCode::UNAUTHORIZED
+                    && self.inner.auth.refreshable()
+                    && rejected.is_none()
+                {
+                    let decoded = match &error {
+                        Error::Response { error, .. } => error.as_ref(),
+                        other => other,
+                    };
+                    match decoded {
+                        Error::KeyRevoked { message } => {
+                            self.inner.auth.reject("key_revoked", message.clone()).await;
+                        }
+                        Error::KeyExpired { message } => {
+                            self.inner.auth.reject("key_expired", message.clone()).await;
+                        }
+                        _ => {
+                            rejected = Some(token);
+                            continue;
+                        }
+                    }
+                }
+                return Err(error);
+            }
+        };
+        match self.inner.timeout {
+            Some(limit) => tokio::time::timeout(limit, open)
+                .await
+                .map_err(|_| Error::Transport("WebSocket upgrade timed out".into()))?,
+            None => open.await,
+        }
+    }
+
+    async fn socket_io(&self, url: &Url, tls: bool) -> Result<Box<dyn SocketIo>> {
+        use rustls::pki_types::ServerName;
+        let transport = |e: std::io::Error| Error::Transport(format!("WebSocket connect: {e}"));
+        let port = url
+            .port_or_known_default()
+            .unwrap_or(if tls { 443 } else { 80 });
+        let (tcp, name) = match url.host() {
+            Some(url::Host::Domain(domain)) => (
+                tokio::net::TcpStream::connect((domain, port)).await,
+                ServerName::try_from(domain.to_owned())
+                    .map_err(|e| Error::InvalidInput(format!("TLS server name: {e}")))?,
+            ),
+            Some(url::Host::Ipv4(ip)) => (
+                tokio::net::TcpStream::connect((ip, port)).await,
+                ServerName::IpAddress(IpAddr::V4(ip).into()),
+            ),
+            Some(url::Host::Ipv6(ip)) => (
+                tokio::net::TcpStream::connect((ip, port)).await,
+                ServerName::IpAddress(IpAddr::V6(ip).into()),
+            ),
+            None => return Err(Error::InvalidInput("base URL has no host".into())),
+        };
+        let tcp = tcp.map_err(transport)?;
+        tcp.set_nodelay(true).map_err(transport)?;
+        if !tls {
+            return Ok(Box::new(tcp));
+        }
+        let stream = tokio_rustls::TlsConnector::from(self.inner.socket_tls.clone())
+            .connect(name, tcp)
+            .await
+            .map_err(transport)?;
+        Ok(Box::new(stream))
     }
 
     pub(crate) async fn probe(&self, segments: Vec<&str>) -> Result<Resp> {

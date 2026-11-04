@@ -92,9 +92,13 @@ pub enum Error {
     /// `500 internal_error`: a mutation may have taken effect.
     #[error("terrabase: 500 internal_error")]
     InternalError,
-    /// A refused SQL statement from `sql/execute`; the whole request rolled back.
-    #[error("terrabase: {status} {error}")]
-    Sql { status: u16, error: SqlError },
+    /// A refused SQL statement; the request rolled back. `status` is the HTTP
+    /// status over REST (`sql/execute`) and `None` over a SQL session.
+    #[error("terrabase: {}{error}", status.map(|s| format!("{s} ")).unwrap_or_default())]
+    Sql {
+        status: Option<u16>,
+        error: SqlError,
+    },
     /// `410 cursor_expired`: the changes cursor fell out of retention;
     /// restart from a fresh position.
     #[error("terrabase: 410 cursor_expired")]
@@ -223,7 +227,8 @@ impl Error {
             Self::InvalidKey | Self::KeyRevoked { .. } | Self::KeyExpired { .. } => 401,
             Self::InternalError => 500,
             Self::CursorExpired => 410,
-            Self::Api { status, .. } | Self::Sql { status, .. } => *status,
+            Self::Api { status, .. } => *status,
+            Self::Sql { status, .. } => return *status,
             Self::InvalidTxOp { .. }
             | Self::Transport(_)
             | Self::InvalidInput(_)
@@ -348,7 +353,9 @@ impl Error {
             Self::ResponseTooLarge {
                 may_have_applied, ..
             } => *may_have_applied,
-            Self::Api { status, .. } | Self::Sql { status, .. } => !(400..500).contains(status),
+            Self::Api { status, .. } => !(400..500).contains(status),
+            // A session error frame is a refusal the server reported.
+            Self::Sql { status, .. } => status.is_some_and(|s| !(400..500).contains(&s)),
             _ => false,
         }
     }
@@ -438,7 +445,10 @@ pub(crate) fn from_response(
         .as_ref()
         .and_then(|r| serde_json::from_str::<SqlError>(r.get()).ok());
     if let Some(error) = sql {
-        return Error::Sql { status, error };
+        return Error::Sql {
+            status: Some(status),
+            error,
+        };
     }
     match (status, code.as_str()) {
         (412, "precondition_failed") => Error::PreconditionFailed { op },

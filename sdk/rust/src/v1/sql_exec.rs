@@ -464,14 +464,7 @@ impl Sql {
     /// back and returns [`Error::Sql`] naming it.
     pub async fn batch(&self, statements: Vec<SqlStatement>) -> Result<Vec<SqlStatementResult>> {
         check_database_selector(self.db.name())?;
-        if statements.is_empty() || statements.len() > MAX_SQL_STATEMENTS {
-            return Err(Error::InvalidInput(format!(
-                "a SQL batch holds 1..={MAX_SQL_STATEMENTS} statements"
-            )));
-        }
-        for (index, statement) in statements.iter().enumerate() {
-            statement.validate(index)?;
-        }
+        validate_batch(&statements)?;
         let body = serde_json::json!({ "statements": statements });
         let mut attempt = 0;
         loop {
@@ -508,21 +501,37 @@ impl Sql {
             results: Vec<SqlStatementResult>,
         }
         let Envelope { results } = response.decode_status(&[StatusCode::OK])?;
-        if results.len() != expected
-            || results.iter().any(|result| {
-                result
-                    .rows
-                    .iter()
-                    .any(|row| row.len() != result.columns.len())
-            })
-        {
+        if !results_match(&results, expected) {
             return Err(response.invalid("SQL results do not match the statements".into()));
         }
         Ok(results)
     }
 }
 
-fn with_named<K: Into<String>, V: Into<SqlValue>>(
+pub(super) fn validate_batch(statements: &[SqlStatement]) -> Result<()> {
+    if statements.is_empty() || statements.len() > MAX_SQL_STATEMENTS {
+        return Err(Error::InvalidInput(format!(
+            "a SQL batch holds 1..={MAX_SQL_STATEMENTS} statements"
+        )));
+    }
+    for (index, statement) in statements.iter().enumerate() {
+        statement.validate(index)?;
+    }
+    Ok(())
+}
+
+/// One result per statement, each row as wide as its columns.
+pub(super) fn results_match(results: &[SqlStatementResult], expected: usize) -> bool {
+    results.len() == expected
+        && results.iter().all(|result| {
+            result
+                .rows
+                .iter()
+                .all(|row| row.len() == result.columns.len())
+        })
+}
+
+pub(super) fn with_named<K: Into<String>, V: Into<SqlValue>>(
     sql: &str,
     named: impl IntoIterator<Item = (K, V)>,
 ) -> SqlStatement {

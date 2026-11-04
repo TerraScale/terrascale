@@ -64,7 +64,27 @@ A refused statement is `Error::Sql`; `Error::sql()` returns its `code` (constant
 `message`, zero-based `statement` and `sqlstate`, and `is_transient()` is true for `serialization_conflict`
 and `tenant_busy`. A `409 serialization_conflict` rolled back and is resent at most twice with jitter; other
 refusals return at once. Failures before execution keep the generic error variants (401, 404, 421, 429, 503).
-The WebSocket session for interactive transactions ships once TerraBase serves it.
+
+### Sessions: interactive transactions
+
+`database.connect().await?` opens a `SqlSession` on
+`GET /v1/projects/{project}/databases/{database}/sql/ws` (subprotocol `terrascale.sql.v1`, `Authorization: Bearer`,
+the region pin when set). It has the same `execute`/`query`/`query_as`/`batch` methods as REST, plus `begin`,
+`commit`, `rollback`, `transaction(|s| async move { … })` (begin, run, commit; on error roll back if still open and
+return the error), `in_transaction()` and `close()`. Outside a transaction each call is its own transaction; a
+transaction lasts at most 5 seconds. Calls may overlap and are matched by frame id; a session is `Send + Sync` and
+clones share it. Frames are at most 1 MiB, checked before sending.
+
+An error frame is `Error::Sql` with `status: None`. A refused upgrade returns the same errors as REST. Nothing on a
+session is resent, including `serialization_conflict`. When the socket drops, calls in flight fail with
+`Error::Transport` and the next call opens a new socket with a fresh credential; if a transaction was open, every call
+except `rollback` returns `transaction_rolled_back` (40000) until `rollback()`, which only clears local state. After
+`close()` the session stays closed.
+
+Gaps: the session is qualified against recorded exchanges
+(`sdk/dotnet/contracts/terrabase/sql/websocket-session.json`) on a local socket, not yet against a live TerraBase. It
+connects directly, without an HTTP proxy, and reads an upgrade refusal's body only as far as it arrived with the
+headers.
 
 ## Documents
 

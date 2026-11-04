@@ -49,6 +49,7 @@ mod shape_manifest;
 mod shapes;
 mod sql;
 mod sql_exec;
+mod sql_session;
 mod system;
 mod tooling;
 mod tx;
@@ -93,6 +94,7 @@ pub use sql_exec::{
     sql_error_codes, Sql, SqlColumn, SqlColumnIndex, SqlRecord, SqlStatement, SqlStatementResult,
     SqlValue, MAX_SQL_BYTES, MAX_SQL_STATEMENTS,
 };
+pub use sql_session::{SqlSession, MAX_SQL_FRAME_BYTES, SQL_SUBPROTOCOL};
 pub use system::HealthResponse;
 pub use tooling::{Index, IndexKind, IndexRequest};
 pub use tx::{CountBounds, OpResult, Tx, TxResult, MAX_ASSERT_COUNT_OPS, MAX_TX_OPS};

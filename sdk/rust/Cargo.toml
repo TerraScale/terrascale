@@ -9,7 +9,7 @@ exclude = ["AGENTS.md", "CLAUDE.md", ".agents/"]
 
 [features]
 default = []
-postgres = ["dep:tokio-postgres", "dep:tokio-rustls", "dep:rustls", "tokio/net"]
+postgres = ["dep:tokio-postgres"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -27,11 +27,14 @@ sha2 = "0.10"
 ring = "0.17"
 zeroize = "1"
 reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls", "stream", "http2"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "net"] }
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring"] }
+# The Mozilla roots that reqwest's rustls-tls trusts for REST.
+webpki-roots = "1"
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 
 tokio-postgres = { version = "=0.7.18", optional = true }
-tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring"], optional = true }
-rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring"], optional = true }
 
 [[example]]
 name = "postgres_journey"
