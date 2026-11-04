@@ -33,6 +33,9 @@ public sealed class TerraBaseSdkContractTests(TerraBaseFixture fixture)
         "listAuditEvents",
     };
 
+    // Shared-history erasure and closure cancellation kept their state as records in the auth database (E4b).
+    private static readonly HashSet<string> RetiredByE4b = new(StringComparer.Ordinal) { "cancelClosure", "requestHistoryErasure" };
+
     [Test]
     public async Task TerraBase_serves_retained_sdk_routes_and_rejects_removed_collection_hooks()
     {
@@ -41,6 +44,7 @@ public sealed class TerraBaseSdkContractTests(TerraBaseFixture fixture)
         await Assert.That(operations.Count).IsGreaterThan(0);
         var manifestNames = operations.Select(operation => operation.GetProperty("operation").GetString()!).ToHashSet(StringComparer.Ordinal);
         await Assert.That(RetiredByPivotE2.Except(manifestNames)).IsEmpty();
+        await Assert.That(RetiredByE4b.Except(manifestNames)).IsEmpty();
         var missing = new List<string>();
         foreach (var operation in operations)
         {
@@ -60,6 +64,7 @@ public sealed class TerraBaseSdkContractTests(TerraBaseFixture fixture)
 
             using var response = await (internalRoute ? fixture.Server.Http : fixture.Server.PublicHttp).SendAsync(request);
             if (RetiredByPivotE2.Contains(operation.GetProperty("operation").GetString()!)
+                || RetiredByE4b.Contains(operation.GetProperty("operation").GetString()!)
                 || template.Contains("/webhooks", StringComparison.Ordinal)
                 || template == "/v1/projects/{project}/databases/{database}/functions/{function}/deliveries")
             {
