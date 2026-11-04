@@ -42,14 +42,16 @@ namespace TerraScale.Dashboard.E2E.Demo
             return reads.WaitAsync(cancellationToken);
         }
 
-        public Task<AllowanceUsagePage> ReadAsync(string? after, CancellationToken cancellationToken)
+        public Task<AllowanceUsagePage> ReadAsync(string? after, bool previous, CancellationToken cancellationToken)
         {
             AllowanceUsagePage page;
             lock (gate)
             {
                 var now = clock.GetUtcNow();
-                page = new(new(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero), now,
-                    observation is { } value ? [value] : [], null, operationsContract, storageContract);
+                var month = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
+                page = previous
+                    ? new(month.AddMonths(-1), now, [], null, operationsContract, storageContract)
+                    : new(month, now, observation is { } value ? [value] : [], null, operationsContract, storageContract);
             }
             reads.Release();
             return Task.FromResult(page);

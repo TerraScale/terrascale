@@ -175,6 +175,31 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
         return (await UsageAsync(store, cancellationToken).ConfigureAwait(false)).Bytes;
     }
 
+    public async ValueTask<OrganizationBytesResult> ReadOrganizationsAsync(CancellationToken cancellationToken)
+    {
+        var bytes = new Dictionary<string, long>(StringComparer.Ordinal);
+        await foreach (var candidate in _engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var registered = await _directory.RegisteredAsync(candidate, cancellationToken).ConfigureAwait(false);
+            if (registered is not bool known)
+            {
+                return registered switch
+                {
+                    Unavailable error => error,
+                    bool => throw new UnreachableException(),
+                };
+            }
+
+            if (known && await _engine.OpenDatabaseAsync(candidate, cancellationToken).ConfigureAwait(false) is { } store)
+            {
+                var used = (await UsageAsync(store, cancellationToken).ConfigureAwait(false)).Bytes;
+                bytes[candidate.OrganizationId] = checked(bytes.GetValueOrDefault(candidate.OrganizationId) + used);
+            }
+        }
+
+        return bytes;
+    }
+
     private int Stripe(string organizationId) => (int)((uint)StringComparer.Ordinal.GetHashCode(organizationId) % (uint)_gates.Length);
 
     private async ValueTask<StorageQuotaBytesResult> OrganizationUsageAsync(string organizationId, CancellationToken cancellationToken)

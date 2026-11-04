@@ -156,7 +156,7 @@ export const es: Messages = {
       },
       {
         q: '¿Cuánto cuesta empezar?',
-        a: 'Free no requiere tarjeta. Starter, Pro y Team se facturan mensual o anualmente. Las unidades de operación por encima de una asignación pagada van en la próxima factura; los excedentes de almacenamiento y salida a clientes aún no se facturan.',
+        a: 'Free no requiere tarjeta. Starter, Pro y Team se facturan mensual o anualmente. Las unidades de operación por encima de una asignación pagada van en la próxima factura y el almacenamiento por encima de ella se factura por GB-mes; el excedente de salida a clientes aún no se factura.',
       },
       {
         q: '¿Puedo exportar mis datos e irme?',
@@ -246,7 +246,7 @@ export const es: Messages = {
       },
       {
         title: 'Asignaciones y uso adicional',
-        text: 'Las unidades de operación sobre la asignación pagada van a la próxima factura; los excedentes de almacenamiento y salida a clientes aún no se facturan',
+        text: 'Las unidades de operación sobre la asignación pagada van a la próxima factura y el almacenamiento por encima de ella se factura por GB-mes; el excedente de salida a clientes aún no se factura',
       },
     ],
     compare: {
@@ -284,7 +284,7 @@ export const es: Messages = {
     detailed: {
       titleLead: 'Tarifas de uso',
       titleAccent: 'aprobadas',
-      text: 'Los planes pagados incluyen las asignaciones. Las unidades de operación por encima de la asignación se suman a la próxima factura de la suscripción a esta tarifa; los excedentes de almacenamiento y salida a clientes aún no se facturan. Free detiene las nuevas escrituras al llegar a su asignación de operaciones y no tiene cargos por excedentes.',
+      text: 'Los planes pagados incluyen las asignaciones. Las unidades de operación por encima de la asignación se suman a la próxima factura de la suscripción a esta tarifa y el almacenamiento por encima de ella se factura por GB-mes; el excedente de salida a clientes aún no se factura. Free detiene las nuevas escrituras al llegar a su asignación de operaciones y no tiene cargos por excedentes.',
       headItem: 'Item',
       headPricing: 'Precio',
       headDetails: 'Detalles',
@@ -317,7 +317,7 @@ export const es: Messages = {
         },
         {
           q: '¿Qué ocurre si necesito más operaciones, almacenamiento o salida?',
-          a: 'Los planes pagados incluyen asignaciones mensuales. Las unidades de operación por encima de la asignación se suman a la próxima factura de la suscripción a la tarifa de excedentes; los excedentes de almacenamiento y salida a clientes aún no se facturan. Free detiene las nuevas escrituras al llegar a su asignación de operaciones y no tiene cargos por excedentes.',
+          a: 'Los planes pagados incluyen asignaciones mensuales. Las unidades de operación por encima de la asignación se suman a la próxima factura de la suscripción a la tarifa de excedentes y el almacenamiento por encima de ella se factura por GB-mes; el excedente de salida a clientes aún no se factura. Free detiene las nuevas escrituras al llegar a su asignación de operaciones y no tiene cargos por excedentes.',
         },
         {
           q: '¿Cómo se facturan las suscripciones?',
@@ -371,7 +371,7 @@ export const es: Messages = {
       },
       {
         title: 'Facturación consciente del uso',
-        text: 'Free no requiere tarjeta. Los planes pagados facturan en la próxima factura las unidades de operación por encima de la asignación; los excedentes de almacenamiento y salida a clientes aún no se facturan.',
+        text: 'Free no requiere tarjeta. Los planes pagados facturan en la próxima factura las unidades de operación por encima de la asignación y el almacenamiento por encima de ella se factura por GB-mes; el excedente de salida a clientes aún no se factura.',
       },
     ],
     bandTitle: 'Precios regionales planos, medidos por el uso real.',

@@ -43,7 +43,7 @@ namespace TerraScale.Dashboard.Common.Accounts
         public const string Price = "Default price as the dashboard shows it, such as $3.00 / month.";
     }
 
-    public sealed record PlanAllowances(long MonthlyOperations, long StorageBytes, long MonthlyEgressBytes = 0);
+    public sealed record PlanAllowances(long MonthlyOperations, long StorageBytes, long MonthlyEgressBytes = 0, long MonthlyWriteCap = long.MaxValue, long MonthlySqlReads = long.MaxValue);
     public sealed record PlanResourceLimits(int Databases, int Members, int Projects);
 
     public sealed record PlanComparison(string Key, string Name, long PriceCents, string Price, string PriceUnit, string BillingDescription, IReadOnlyList<string> Features);
@@ -55,6 +55,7 @@ namespace TerraScale.Dashboard.Common.Accounts
         public static int OperationUnitBytes => catalog.GetProperty("metering").GetProperty("operationUnit").GetProperty("bytes").GetInt32();
         public static string OperationUnitName => catalog.GetProperty("metering").GetProperty("operationUnit").GetProperty("name").GetString()!;
         public static decimal OperationUnitsPerMillionUsd => catalog.GetProperty("metering").GetProperty("overageRates").GetProperty("operationUnitsPerMillionUsd").GetDecimal();
+        public static decimal StorageGbMonthUsd => catalog.GetProperty("metering").GetProperty("overageRates").GetProperty("storageGbRegionMonthUsd").GetDecimal();
         public static string AllowanceDefinition => catalog.GetProperty("metering").GetProperty("allowances").GetProperty("definition").GetString()!;
         public static string EnterpriseBilling => catalog.GetProperty("plans").EnumerateArray().Single(plan => plan.GetProperty("id").GetString() == "enterprise").GetProperty("billing").GetString()!;
         public static string OperationUnitDefinition => catalog.GetProperty("metering").GetProperty("operationUnit").GetProperty("definition").GetString()!;
@@ -76,7 +77,8 @@ namespace TerraScale.Dashboard.Common.Accounts
                     checked((long)(plan.GetProperty("priceMonthlyUsd").GetDecimal() * 100)),
                     plan.GetProperty("priceAnnualUsd").ValueKind == JsonValueKind.Null ? 0 : checked((long)(plan.GetProperty("priceAnnualUsd").GetDecimal() * 100)),
                     plan.GetProperty("trialDays").ValueKind == JsonValueKind.Null ? 0 : plan.GetProperty("trialDays").GetInt32(),
-                    new(limits.GetProperty("operationUnitsPerMonth").GetInt64(), checked((long)(limits.GetProperty("storageGb").GetDecimal() * 1_000_000_000)), checked((long)(limits.GetProperty("egressGbPerMonth").GetDecimal() * 1_000_000_000))),
+                    new(limits.GetProperty("operationUnitsPerMonth").GetInt64(), checked((long)(limits.GetProperty("storageGb").GetDecimal() * 1_000_000_000)), checked((long)(limits.GetProperty("egressGbPerMonth").GetDecimal() * 1_000_000_000)),
+                        Ceiling(limits.GetProperty("operationUnitCapPerMonth")), Ceiling(limits.GetProperty("sqlReadUnitsPerMonth"))),
                     new(limits.GetProperty("databases").GetInt32(), limits.GetProperty("members").GetInt32(), limits.GetProperty("projects").GetInt32()), Array.AsReadOnly(plan.GetProperty("billingIntervals").EnumerateArray().Select(interval => interval.GetString()!).ToArray()));
             }).ToArray());
 
@@ -102,6 +104,11 @@ namespace TerraScale.Dashboard.Common.Accounts
                     limits.GetProperty("egressGbPerMonth").GetDecimal().ToString("0.##", CultureInfo.InvariantCulture) + " GB client egress/month",
                     Resource("projects", "project", "projects"), Resource("databases", "database", "databases"), Resource("members", "team member", "team members") ]));
         }).ToArray());
+
+        private static long Ceiling(JsonElement value)
+        {
+            return value.ValueKind == JsonValueKind.Null ? long.MaxValue : value.GetInt64();
+        }
 
         private static string ReadPublishedJson()
         {
