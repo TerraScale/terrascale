@@ -35,6 +35,12 @@ internal interface IDatabaseReplicas
     /// <summary>Closes and deletes a replica's files; <see langword="false"/> when none existed.</summary>
     ValueTask<bool> DeleteAsync(TenantContext database, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Closes an open replica and turns its files into a database file at the returned path, keyed by a home-format key record,
+    /// for <see cref="IWalBackup.ImportDatabaseAsync"/>; <see langword="null"/> when no pulled replica is open.
+    /// </summary>
+    ValueTask<string?> DetachAsync(TenantContext database, CancellationToken cancellationToken);
+
     /// <summary>Whether this node holds or is opening a replica of <paramref name="database"/>; an in-memory check.</summary>
     bool Holds(TenantContext database);
 

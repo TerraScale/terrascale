@@ -41,7 +41,7 @@ internal sealed class SqlReadCharge(Action accept)
     public void Accept() => Interlocked.Exchange(ref _accept, null)?.Invoke();
 }
 
-internal sealed record SqlError(string Code, string Message)
+internal sealed record SqlError(string Code, string Message, string? Home = null)
 {
     public string Sqlstate => SqlErrors.Sqlstate(Code);
 
