@@ -1073,20 +1073,20 @@ namespace TerraScale.Dashboard.E2E
                     Require(request.EnumerateObject().All(field => field.Name is "name" or "pointInTime" or "ttlSeconds"), "Fork at a time uses platform history");
                     var point = request.GetProperty("pointInTime").GetDateTimeOffset();
                     var name = request.GetProperty("name").GetString()!;
+                    ManagedDatabase fork;
+                    IReadOnlyList<TestSqlStatement> replay;
                     lock (gate)
                     {
                         var snapshot = snapshots.Values.Where(item => item.Backup.DatabaseId == current.Id && item.Backup.CreatedAt <= point)
                             .OrderByDescending(item => item.Backup.CreatedAt).FirstOrDefault();
                         if (snapshot is null) { return Error(409, "restore_point_unproven"); }
                         if (databases.Values.Any(item => item.ProjectId == project && item.Name == name)) { return Error(409, "name_taken"); }
-                        var fork = new ManagedDatabase(ids.NewId(), project, name, DateTimeOffset.UtcNow, current.Id, current.HomeRegion, []) { ExpiresAt = Expiry(request) };
+                        fork = new ManagedDatabase(ids.NewId(), project, name, DateTimeOffset.UtcNow, current.Id, current.HomeRegion, []) { ExpiresAt = Expiry(request) };
                         databases.Add(fork.Id, fork);
-                        foreach (var collection in snapshot.Collections)
-                        {
-                            collections.Add(project + "/" + name + "/" + collection.Key, new Dictionary<string, TerraBaseDocument>(collection.Value));
-                        }
-                        return Results.Json(Wire(fork, answering), statusCode: 201);
+                        replay = snapshot.Statements;
                     }
+                    if (replay.Count > 0) { await SqlEngine(fork.Id).ExecuteAsync(replay, http.RequestAborted); }
+                    return Results.Json(Wire(fork, answering), statusCode: 201);
                 }
                 switch (parts.Length, method, parts.ElementAtOrDefault(5))
                 {
@@ -1167,15 +1167,18 @@ namespace TerraScale.Dashboard.E2E
                         var request = await JsonAsync(http);
                         Require(request.EnumerateObject().All(field => field.Name is "name" or "ttlSeconds"), "The fork body accepts name and TTL");
                         var branchName = request.GetProperty("name").GetString()!;
+                        var branchSnapshot = SqlEngine(current.Id).Snapshot();
+                        ManagedDatabase branch;
                         lock (gate)
                         {
                             if (databases.Values.Any(database => database.ProjectId == project && database.Name == branchName))
                             { Interlocked.Increment(ref branchConflicts); return Error(409, "name_taken"); }
-                            var branch = new ManagedDatabase(ids.NewId(), project, branchName, DateTimeOffset.UtcNow, current.Id, current.HomeRegion, []) { ExpiresAt = Expiry(request) };
+                            branch = new ManagedDatabase(ids.NewId(), project, branchName, DateTimeOffset.UtcNow, current.Id, current.HomeRegion, []) { ExpiresAt = Expiry(request) };
                             databases.Add(branch.Id, branch);
                             Interlocked.Increment(ref branchCreates);
-                            return Results.Json(Wire(branch, answering), statusCode: 201);
                         }
+                        if (branchSnapshot.Count > 0) { await SqlEngine(branch.Id).ExecuteAsync(branchSnapshot, http.RequestAborted); }
+                        return Results.Json(Wire(branch, answering), statusCode: 201);
                     case (7, "POST", "sql") when parts[6] == "execute":
                         // TerraBase's relational SQL API: statements run in one transaction on the database's own SQL engine.
                         var statements = (await JsonAsync(http)).GetProperty("statements").EnumerateArray().Select(item => item.GetProperty("sql").GetString()!).ToArray();
