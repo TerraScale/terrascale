@@ -9,7 +9,10 @@ namespace TerraScale.DotNet.TerraBase;
 /// <summary>
 /// A SQL WebSocket session (<c>terrascale.sql.v1</c>). Outside a transaction every call runs as its own transaction;
 /// <see cref="BeginAsync"/> opens one that lasts at most 5 seconds. Calls may overlap; the server answers them in order.
-/// Nothing is resent. Dispose closes the socket and rolls back an open transaction.
+/// Nothing is resent. When the socket drops, calls in flight fail and the next call opens a new socket; a transaction
+/// open at the drop rolled back, and every call but <see cref="RollbackAsync"/> throws
+/// <see cref="TerraBaseSqlErrorCodes.TransactionRolledBack"/> until the caller rolls back. Dispose closes the socket,
+/// rolls back an open transaction and ends the session.
 /// </summary>
 public sealed class TerraBaseSqlSession : IAsyncDisposable
 {
@@ -18,28 +21,33 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
 
     private const int MaxFrameBytes = 1024 * 1024;
 
-    private readonly WebSocket socket;
+    private static readonly TerraBaseSqlSocketAnswer Cleared = new(null, "result", false, []);
+
+    private readonly TerraBaseConnection connection;
+    private readonly string path;
     private readonly int maxAnswerBytes;
     private readonly SemaphoreSlim sending = new(1, 1);
-    private readonly ConcurrentDictionary<long, TaskCompletionSource<TerraBaseSqlSocketAnswer>> pending = new();
+    private readonly SemaphoreSlim connecting = new(1, 1);
     private readonly CancellationTokenSource closing = new();
-    private readonly Task receiving;
+    private Link link;
     private long nextId;
     private volatile bool transaction;
-    private Exception? failure;
+    private volatile bool lostTransaction;
+    private volatile bool disposed;
 
-    private TerraBaseSqlSession(WebSocket socket, int maxAnswerBytes)
+    private TerraBaseSqlSession(TerraBaseConnection connection, string path, WebSocket socket)
     {
-        this.socket = socket;
-        this.maxAnswerBytes = maxAnswerBytes;
-        receiving = Task.Run(ReceiveAsync);
+        this.connection = connection;
+        this.path = path;
+        maxAnswerBytes = connection.MaxResponseBytes;
+        link = Start(socket);
     }
 
     /// <summary>Whether a transaction is open, as of the last answer.</summary>
     public bool InTransaction => transaction;
 
     internal static async Task<TerraBaseSqlSession> ConnectAsync(TerraBaseConnection connection, string path, CancellationToken cancellationToken) =>
-        new(await connection.ConnectWebSocketAsync(path, Subprotocol, cancellationToken).ConfigureAwait(false), connection.MaxResponseBytes);
+        new(connection, path, await connection.ConnectWebSocketAsync(path, Subprotocol, cancellationToken).ConfigureAwait(false));
 
     /// <summary>Runs one statement with positional arguments.</summary>
     public Task<TerraBaseSqlStatementResult> ExecuteAsync(string sql, IReadOnlyList<TerraBaseSqlValue>? args = null, CancellationToken cancellationToken = default) =>
@@ -99,7 +107,18 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
         }
         catch
         {
-            if (transaction && socket.State == WebSocketState.Open) await RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            if (transaction || lostTransaction)
+            {
+                try
+                {
+                    await RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception error) when (error is TerraBaseException or WebSocketException or TimeoutException)
+                {
+                    // The work's own exception explains the failure; the server rolls back a transaction it loses.
+                }
+            }
+
             throw;
         }
 
@@ -118,16 +137,20 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
         }, cancellationToken);
     }
 
-    /// <summary>Closes the socket normally; an open transaction rolls back on the server.</summary>
+    /// <summary>Closes the socket normally; an open transaction rolls back on the server. The session stays closed.</summary>
     public async ValueTask DisposeAsync()
     {
-        if (socket.State == WebSocketState.Open)
+        if (disposed) return;
+        disposed = true;
+        await connecting.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        var current = link;
+        if (current.Socket.State == WebSocketState.Open)
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             try
             {
-                await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, null, timeout.Token).ConfigureAwait(false);
-                await receiving.WaitAsync(timeout.Token).ConfigureAwait(false);
+                await current.Socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, null, timeout.Token).ConfigureAwait(false);
+                await current.Receiving.WaitAsync(timeout.Token).ConfigureAwait(false);
             }
             catch (Exception error) when (error is WebSocketException or OperationCanceledException)
             {
@@ -135,34 +158,82 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
         }
 
         await closing.CancelAsync().ConfigureAwait(false);
-        socket.Abort();
-        await receiving.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-        socket.Dispose();
+        current.Socket.Abort();
+        await current.Receiving.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        current.Dispose();
         closing.Dispose();
         sending.Dispose();
+        connecting.Dispose();
+    }
+
+    private Link Start(WebSocket socket)
+    {
+        var started = new Link(socket);
+        started.Receiving = Task.Run(() => ReceiveAsync(started));
+        return started;
+    }
+
+    private async Task<Link> CurrentAsync(CancellationToken cancellationToken)
+    {
+        var current = Volatile.Read(ref link);
+        if (Volatile.Read(ref current.Failure) is null) return current;
+        await connecting.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            current = link;
+            if (Volatile.Read(ref current.Failure) is null) return current;
+            var socket = await connection.ConnectWebSocketAsync(path, Subprotocol, cancellationToken).ConfigureAwait(false);
+            await current.Receiving.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            current.Dispose();
+            var next = Start(socket);
+            Volatile.Write(ref link, next);
+            return next;
+        }
+        finally
+        {
+            connecting.Release();
+        }
     }
 
     private async Task<TerraBaseSqlSocketAnswer> SendAsync(string type, IReadOnlyList<TerraBaseSqlStatement>? statements, CancellationToken cancellationToken)
     {
-        if (Volatile.Read(ref failure) is { } failed) throw Closed(failed);
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (lostTransaction)
+        {
+            if (type != "rollback")
+            {
+                throw new TerraBaseSqlException(null, "The SQL session lost its connection during a transaction, which rolled back; call RollbackAsync.",
+                    TerraBaseSqlErrorCodes.TransactionRolledBack, 0, "40000");
+            }
+
+            lostTransaction = false;
+            return Cleared;
+        }
+
         var id = Interlocked.Increment(ref nextId);
         var frame = TerraBaseRequestJson.Serialize(new TerraBaseSqlSocketRequest(id, type, statements), TerraBaseSqlJsonContext.Wire.TerraBaseSqlSocketRequest);
         if (frame.Length > MaxFrameBytes) throw new ArgumentException("A SQL frame is at most 1 MiB.", nameof(statements));
+        var current = await CurrentAsync(cancellationToken).ConfigureAwait(false);
         var answer = new TaskCompletionSource<TerraBaseSqlSocketAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
-        pending[id] = answer;
+        current.Pending[id] = answer;
         try
         {
             await sending.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                await socket.SendAsync(frame, WebSocketMessageType.Text, true, cancellationToken).ConfigureAwait(false);
+                await current.Socket.SendAsync(frame, WebSocketMessageType.Text, true, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception sendError) when (sendError is WebSocketException or ObjectDisposedException && Volatile.Read(ref current.Failure) is { } dropped)
+            {
+                throw Closed(dropped);
             }
             finally
             {
                 sending.Release();
             }
 
-            if (Volatile.Read(ref failure) is { } lost) answer.TrySetException(Closed(lost));
+            if (Volatile.Read(ref current.Failure) is { } lost) answer.TrySetException(Closed(lost));
             var received = await answer.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             return received.Error is { } error
                 ? throw new TerraBaseSqlException(null, error.Message, error.Code, error.Statement, error.Sqlstate)
@@ -170,13 +241,14 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
         }
         finally
         {
-            pending.TryRemove(id, out _);
+            current.Pending.TryRemove(id, out _);
         }
     }
 
-    private async Task ReceiveAsync()
+    private async Task ReceiveAsync(Link current)
     {
         var buffer = new ArrayBufferWriter<byte>();
+        var socket = current.Socket;
         try
         {
             while (true)
@@ -209,15 +281,16 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
                 }
 
                 transaction = answer.Transaction;
-                if (answer.Id is { } id && pending.TryGetValue(id, out var waiter)) waiter.TrySetResult(answer);
+                if (answer.Id is { } id && current.Pending.TryGetValue(id, out var waiter)) waiter.TrySetResult(answer);
                 else if (answer.Error is { } error) throw new TerraBaseSqlException(null, error.Message, error.Code, error.Statement, error.Sqlstate);
             }
         }
         catch (Exception error)
         {
-            Volatile.Write(ref failure, error);
+            if (transaction) lostTransaction = true;
             transaction = false;
-            foreach (var waiter in pending.Values) waiter.TrySetException(Closed(error));
+            Volatile.Write(ref current.Failure, error);
+            foreach (var waiter in current.Pending.Values) waiter.TrySetException(Closed(error));
         }
     }
 
@@ -227,4 +300,14 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
         OperationCanceledException => new ObjectDisposedException(nameof(TerraBaseSqlSession)),
         _ => new WebSocketException(WebSocketError.ConnectionClosedPrematurely, cause.Message, cause),
     };
+
+    private sealed class Link(WebSocket socket) : IDisposable
+    {
+        public readonly WebSocket Socket = socket;
+        public readonly ConcurrentDictionary<long, TaskCompletionSource<TerraBaseSqlSocketAnswer>> Pending = new();
+        public Task Receiving = Task.CompletedTask;
+        public Exception? Failure;
+
+        public void Dispose() => Socket.Dispose();
+    }
 }

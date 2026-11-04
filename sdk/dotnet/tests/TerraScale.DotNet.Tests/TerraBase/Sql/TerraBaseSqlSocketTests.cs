@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.WebSockets;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
 using TerraScale.DotNet.TerraBase;
@@ -16,11 +17,12 @@ public sealed class TerraBaseSqlSocketTests
     }
 
     [Test]
-    public async Task A_session_runs_transactions_aborts_rolls_back_and_reads_blobs_like_the_recorded_server()
+    public async Task A_session_runs_transactions_aborts_rolls_back_reads_blobs_and_reconnects_like_the_recorded_server()
     {
-        await using var server = await TerraBaseSqlSocketServer.StartAsync(Recorded());
+        await using var server = await TerraBaseSqlSocketServer.StartAsync(Recorded(), WebSocketCloseStatus.EndpointUnavailable);
         await using var session = await server.Database(region: "gru").ConnectAsync();
         var upgrade = (await server.Upgraded).Request;
+        var (authorization, pin, upgradePath) = (upgrade.Headers.Authorization.ToString(), upgrade.Headers[TerraBaseRegion.PinHeader].ToString(), upgrade.Path.Value);
 
         var amount = await session.TransactionAsync(async (tx, token) =>
         {
@@ -44,17 +46,34 @@ public sealed class TerraBaseSqlSocketTests
 
         var results = await session.BatchAsync([new("SELECT ? AS data, ? AS name", [TerraBaseSqlValue.FromBytes([1, 2, 3]), "Ada"]), new("SELECT count(*) AS n FROM ledger")]);
 
+        var afterBatch = session.InTransaction;
+
+        // The server restarts (1001) after the recording: a call that meets the drop fails and is not resent, a later one reconnects.
+        var reconnected = false;
+        for (var attempt = 0; attempt < 3 && !reconnected; attempt++)
+        {
+            try
+            {
+                await session.BeginAsync();
+                reconnected = session.InTransaction;
+            }
+            catch (WebSocketException)
+            {
+            }
+        }
+
         await Assert.That(server.Mismatches).IsEmpty();
-        await Assert.That(upgrade.Headers.Authorization.ToString()).IsEqualTo("Bearer tb_test_key");
-        await Assert.That(upgrade.Headers[TerraBaseRegion.PinHeader].ToString()).IsEqualTo("gru");
-        await Assert.That(upgrade.Path.Value).IsEqualTo($"/v1/projects/{TerraBaseIntegrationFixture.ProjectId}/databases/app/sql/ws");
+        await Assert.That(reconnected).IsTrue();
+        await Assert.That(authorization).IsEqualTo("Bearer tb_test_key");
+        await Assert.That(pin).IsEqualTo("gru");
+        await Assert.That(upgradePath).IsEqualTo($"/v1/projects/{TerraBaseIntegrationFixture.ProjectId}/databases/app/sql/ws");
         await Assert.That(amount).IsEqualTo(25);
         await Assert.That(afterCommit).IsFalse();
         await Assert.That((duplicate!.Code, duplicate.Sqlstate, duplicate.Statement, duplicate.StatusCode)).IsEqualTo(("primary_key_violation", "23505", 0, (HttpStatusCode?)null));
         await Assert.That((aborted!.Code, aborted.Sqlstate)).IsEqualTo((TerraBaseSqlErrorCodes.TransactionAborted, "25P02"));
         await Assert.That((rolledBack!.Code, rolledBack.Sqlstate)).IsEqualTo((TerraBaseSqlErrorCodes.TransactionRolledBack, "40000"));
         await Assert.That(afterFailedCommit).IsFalse();
-        await Assert.That(session.InTransaction).IsFalse();
+        await Assert.That(afterBatch).IsFalse();
         await Assert.That(results[0].Rows[0].GetBytes("data")).IsEquivalentTo(new byte[] { 1, 2, 3 });
         await Assert.That(results[0].Rows[0].GetString("name")).IsEqualTo("Ada");
         await Assert.That(results[1].Rows[0].GetInt64("n")).IsEqualTo(2);
