@@ -15,7 +15,7 @@ public sealed class ShapeOverlayTests
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var nats = await JetStreamServer.StartAsync(token);
-        await using var world = await HomePushTests.World.StartAsync(nats);
+        await using var world = await LocalWriteWorld.StartAsync(nats);
         var (tails, shape, offset) = await TailAsync(world, token);
 
         var parked = tails.WaitAsync(shape.Scope, shape.Lineage, offset, ShapeProvisional.Empty, token).AsTask();
@@ -49,7 +49,7 @@ public sealed class ShapeOverlayTests
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var nats = await JetStreamServer.StartAsync(token);
-        await using var world = await HomePushTests.World.StartAsync(nats);
+        await using var world = await LocalWriteWorld.StartAsync(nats);
         var (tails, shape, offset) = await TailAsync(world, token);
         await world.HomeSqlAsync("INSERT INTO items (id, v) VALUES ('x', 'gru')");
 
@@ -72,7 +72,7 @@ public sealed class ShapeOverlayTests
         await Assert.That(reverted.GetProperty("provisional").GetArrayLength()).IsEqualTo(0);
     }
 
-    private static async Task<(ReplicaShapeTails Tails, ResolvedShape Shape, long Offset)> TailAsync(HomePushTests.World world, CancellationToken cancellationToken)
+    private static async Task<(ReplicaShapeTails Tails, ResolvedShape Shape, long Offset)> TailAsync(LocalWriteWorld world, CancellationToken cancellationToken)
     {
         // Opens the replica's writer before a tail polls: the first sync connect of a writer is refused while another connects.
         _ = await world.LocalAsync(homeDurable: false, [], cancellationToken);

@@ -13,6 +13,15 @@ internal sealed class PeersFile(TerraBaseOptions options)
         return [.. Parse(lines).Select(peer => new ServingNode(peer.Node, peer.Region, peer.Address))];
     }
 
+    /// <summary>
+    /// Whether this node is a holder: another node of its region comes before it in the peers file, so that node, the
+    /// region's founder, owns the region's data. A holder keeps the region's local-write acknowledgements (docs/terrabase/in-region-ack.md) and stores
+    /// no customer data: it follows no replica, runs no push and commits no local write.
+    /// </summary>
+    public async Task<bool> IsHolderAsync(CancellationToken cancellationToken) =>
+        options.PeersFile is not null && (await ListAsync(cancellationToken).ConfigureAwait(false))
+            .FirstOrDefault(node => node.Region == options.Region) is { } owner && owner.Name != options.MachineId;
+
     public static IPAddress SelfAddress(TerraBaseOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
