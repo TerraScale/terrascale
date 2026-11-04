@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -30,24 +31,30 @@ internal sealed class AdminListProjectDatabasesEndpoint(IManagementService manag
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var project = ManagementRoute.Value(HttpContext, "project");
-        var check = ManagementRoute.CheckPage(HttpContext);
-        if (!EntityIds.IsValid(project) || check is Validation error)
+        if (!EntityIds.IsValid(project))
         {
-            return ErrorResponse.From(!EntityIds.IsValid(project)
-                ? new Validation("project must be a canonical uppercase ULID") : error);
+            return ValueTask.FromResult(ErrorResponse.From(new Validation("project must be a canonical uppercase ULID")));
         }
 
-        return await management.ListProjectDatabasesAsync(project, ((PageQuery)check).After, MaxDatabases, cancellationToken).ConfigureAwait(false) switch
+        return ValueTask.FromResult(ManagementRoute.CheckPage(HttpContext) switch
         {
-            ManagementPage<ManagedDatabase> page => TypedResults.Ok(new ManagementPage<ManagedDatabaseBody>(
-                [.. page.Items.Select(item => ManagedDatabaseBody.From(item, Listeners.RegionOf(HttpContext)))], page.Next)),
-            Unavailable error => ErrorResponse.From(error),
+            Validation error => ErrorResponse.From(error),
+            PageQuery page => PageAsync(project, page, cancellationToken).AsTask(),
+            _ => throw new UnreachableException(),
+        });
+    }
+
+    private async ValueTask<IResult> PageAsync(string project, PageQuery page, CancellationToken cancellationToken) =>
+        await management.ListProjectDatabasesAsync(project, page.After, MaxDatabases, cancellationToken).ConfigureAwait(false) switch
+        {
+            ManagementPage<ManagedDatabase> local => TypedResults.Ok(new ManagementPage<ManagedDatabaseBody>(
+                [.. local.Items.Select(item => ManagedDatabaseBody.From(item, Listeners.RegionOf(HttpContext)))], local.Next)),
+            Unavailable unavailable => ErrorResponse.From(unavailable),
             _ => throw new InvalidOperationException(),
         };
-    }
 
     private const int MaxDatabases = 100;
 }

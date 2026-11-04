@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.UserAuth;
@@ -30,15 +31,16 @@ internal sealed class ListManagedDatabasesEndpoint(
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
-    {
-        var check = ManagementRoute.CheckPage(HttpContext);
-        if (check is Validation error)
+    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        ValueTask.FromResult(ManagementRoute.CheckPage(HttpContext) switch
         {
-            return ErrorResponse.From(error);
-        }
+            Validation error => ErrorResponse.From(error),
+            PageQuery page => ListAsync(page, cancellationToken).AsTask(),
+            _ => throw new UnreachableException(),
+        });
 
-        var page = (PageQuery)check;
+    private async ValueTask<IResult> ListAsync(PageQuery page, CancellationToken cancellationToken)
+    {
         var project = ManagementRoute.Value(HttpContext, "project");
         var actor = ManagementRoute.UserId(HttpContext);
         var organization = HttpContext.Request.RouteValues.TryGetValue("organization", out var bound) && bound is string known ? known : null;
@@ -51,7 +53,7 @@ internal sealed class ListManagedDatabasesEndpoint(
                 {
                     Unavailable unavailable => unavailable,
                     NotFound => Unknown(),
-                    string => throw new InvalidOperationException(),
+                    string => throw new UnreachableException(),
                 });
             }
 
@@ -87,7 +89,7 @@ internal sealed class ListManagedDatabasesEndpoint(
     private async ValueTask<IResult> ListAsync(ProjectAccess grant, string organization, string project, PageQuery page, CancellationToken cancellationToken) =>
         await management.ListDatabasesAsync(grant.Actor, organization, project, page.After, page.Limit, cancellationToken).ConfigureAwait(false) switch
         {
-            ManagementPage<ManagedDatabase> local => await MergedAsync(local, grant, page, project, cancellationToken).ConfigureAwait(false),
+            ManagementPage<ManagedDatabase> local => TypedResults.Ok(await MergedAsync(local, grant, page, project, cancellationToken).ConfigureAwait(false)),
             NotFound => ErrorResponse.From(Unknown()),
             Unavailable unavailable => ErrorResponse.From(unavailable),
             _ => throw new InvalidOperationException(),
