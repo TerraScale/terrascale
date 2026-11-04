@@ -88,6 +88,7 @@ Point load balancers and reverse proxies (Caddy) at the client listener's `/read
 Each database is served by its home region only ([cross-region.md](cross-region.md),
 [decision](decisions/2026-10-29-single-region-until-sync.md)). The leaderless replication engine, its peer streams,
 anti-entropy and `GET /replication` status are removed. Superseded designs are kept in [archive/](archive/README.md).
+Region replicas (read-only page-pull copies in replica regions, PIVOT R3): [`region-replicas.md`](region-replicas.md).
 
 Catalog of organizations, projects and databases: [SQL catalog](sql-catalog.md).
 Renaming a database: [database rename](database-rename.md).
