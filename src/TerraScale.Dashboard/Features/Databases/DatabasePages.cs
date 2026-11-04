@@ -134,6 +134,7 @@ namespace TerraScale.Dashboard.Features.Databases
         string Error = "", bool OpenDelete = false, bool Created = false, TerraScale.Dashboard.Features.Backups.BackupPage? Backups = null,
         string Range = "24h", DatabaseActivity? Activity = null)
     {
+        public DatabaseConflictsPage? Conflicts { get; init; }
         public DatabaseReplication? Replication { get; init; }
         public string? BranchName { get; init; }
         public string TtlHours { get; init; } = "";
