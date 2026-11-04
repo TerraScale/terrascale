@@ -264,6 +264,7 @@ func TestMultipleClientRamps(t *testing.T) {
 		{"one client has no passing phase", "ramp safety threshold exceeded", true, "FAIL", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			var inputs []string
 			var w Workload
 			for i := 0; i < 2; i++ {
