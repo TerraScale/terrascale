@@ -11,7 +11,7 @@
     <PackageVersion Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="4.14.0" />
   </ItemGroup>
   <!-- Roslyn for src/TerraBase.Analyzers and the Endpoints generator: keep at or below the compiler in the
-       pinned SDK (5.11 on 11.0.100-rc.1), or the analyzer fails to load (CS8032). -->
+       pinned SDK (5.11 on 11.0.100-rc.3), or the analyzer fails to load (CS8032). -->
   <ItemGroup Label="Analyzer authoring">
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="5.9.0-1.26328.17" />
@@ -35,17 +35,17 @@
     <PackageVersion Include="Grpc.Net.Common" Version="2.84.0" />
   </ItemGroup>
   <ItemGroup Label="Microsoft Extensions (Core)">
-    <PackageVersion Include="Microsoft.Extensions.Configuration" Version="11.0.0-rc.1.26425.128" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="11.0.0-rc.1.26425.128" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="11.0.0-rc.1.26425.128" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="11.0.0-rc.1.26425.128" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="11.0.0-rc.1.26425.128" />
-    <PackageVersion Include="Microsoft.Extensions.FileProviders.Physical" Version="11.0.0-rc.1.26425.128" />
-    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="11.0.0-rc.1.26425.128" />
-    <PackageVersion Include="Microsoft.Extensions.Http" Version="11.0.0-rc.1.26425.128" />
-    <PackageVersion Include="Microsoft.Extensions.Logging" Version="11.0.0-rc.1.26425.128" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Configuration" Version="11.0.0-rc.1.26425.128" />
-    <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="11.0.0-rc.1.26425.128" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration" Version="11.0.0-rc.3.26522.148" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="11.0.0-rc.3.26522.148" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="11.0.0-rc.3.26522.148" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="11.0.0-rc.3.26522.148" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="11.0.0-rc.3.26522.148" />
+    <PackageVersion Include="Microsoft.Extensions.FileProviders.Physical" Version="11.0.0-rc.3.26522.148" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="11.0.0-rc.3.26522.148" />
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="11.0.0-rc.3.26522.148" />
+    <PackageVersion Include="Microsoft.Extensions.Logging" Version="11.0.0-rc.3.26522.148" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Configuration" Version="11.0.0-rc.3.26522.148" />
+    <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="11.0.0-rc.3.26522.148" />
   </ItemGroup>
   <!-- Interpolated log calls (src/TerraBase, src/TerraScale.Logging) and allocation-light strings on hot paths:
        Cysharp, the same release train as ZLogger. -->
@@ -54,7 +54,7 @@
     <PackageVersion Include="ZString" Version="2.6.0" />
   </ItemGroup>
   <ItemGroup Label="API and hosting">
-    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="11.0.0-rc.1.26425.128" />
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="11.0.0-rc.3.26522.148" />
     <PackageVersion Include="Scalar.AspNetCore" Version="2.17.13" />
     <PackageVersion Include="RazorSlices" Version="0.12.1" />
   </ItemGroup>
@@ -113,7 +113,7 @@
   <ItemGroup Label="Integration tests">
     <PackageVersion Include="TUnit" Version="1.73.19" />
     <PackageVersion Include="Microsoft.Playwright" Version="1.63.0" />
-    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="11.0.0-rc.1.26425.128" />
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="11.0.0-rc.3.26522.148" />
     <PackageVersion Include="Bogus" Version="35.6.5" />
     <!-- A real PostgreSQL client for TerraBase's wire listener (Fast). -->
     <PackageVersion Include="Npgsql" Version="10.0.3" />

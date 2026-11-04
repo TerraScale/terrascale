@@ -6,7 +6,7 @@
 
 # Match global.json and keep the SDK's targeting packs aligned with locked NuGet dependencies.
 # Build stages run on the builder's platform; the arm64 images cross-publish (publish-* stages).
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0.100-rc.1-resolute@sha256:d0a39ca4acefe992f26030f8fb8c60e1b14ac088822cb3fdfbe536ecf843a675 AS sdk
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0.100-rc.3-resolute@sha256:3a9175b6c54b2f076817af1360f691c9994447b192faa48a1a1f112a516844c7 AS sdk
 
 FROM sdk AS base
 # Test hosts retain the eight-CPU .NET budget across runner types.
@@ -150,7 +150,7 @@ RUN case "$TARGETARCH" in amd64) runtime=linux-x64; machine=3e00 ;; arm64) runti
     && test "$(od -An -tx1 -j18 -N2 /out/ts-auth | tr -d ' \n')" = "$machine"
 
 # TerraBase stores its volume at /data.
-FROM mcr.microsoft.com/dotnet/runtime-deps:11.0-resolute-chiseled AS terrabase
+FROM mcr.microsoft.com/dotnet/runtime-deps:11.0.0-rc.3-resolute-chiseled@sha256:0a70ecd3350d11f4a5377be3a9e44372ef28281ee162b71f498ed69fea901745 AS terrabase
 COPY --from=publish-terrabase /out /app
 USER 0
 # The base image's ASPNETCORE_HTTP_PORTS=8080 only makes Kestrel warn: the services bind their own listeners.
@@ -158,7 +158,7 @@ ENV ASPNETCORE_HTTP_PORTS=
 WORKDIR /data
 ENTRYPOINT ["/app/terrabase"]
 
-FROM mcr.microsoft.com/dotnet/runtime-deps:11.0-resolute-chiseled AS ts-auth
+FROM mcr.microsoft.com/dotnet/runtime-deps:11.0.0-rc.3-resolute-chiseled@sha256:0a70ecd3350d11f4a5377be3a9e44372ef28281ee162b71f498ed69fea901745 AS ts-auth
 COPY --from=publish-ts-auth /out /app
 USER 0
 ENV ASPNETCORE_HTTP_PORTS=
