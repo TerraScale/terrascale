@@ -1300,7 +1300,6 @@ namespace TerraScale.Dashboard.E2E
                     name = database.Name,
                     branchedFrom = database.BranchedFrom,
                     createdAt = database.CreatedAt,
-                    expiresAt = database.ExpiresAt,
                     region,
                     homeRegion = database.HomeRegion,
                     replicaRegions = database.ReplicaRegions ?? Array.Empty<string>(),
