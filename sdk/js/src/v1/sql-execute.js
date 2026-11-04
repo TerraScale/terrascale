@@ -85,7 +85,7 @@ export function sqlStatement(sql, args) {
 }
 
 /** @param {JsonValue | undefined} value @returns {V1SqlValue} */
-function decodeValue(value) {
+export function decodeSqlValue(value) {
   if (value === null || typeof value === "number" || typeof value === "string" || value instanceof ExactDecimal) return value;
   if (typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 1 && typeof value.base64 === "string") {
     try {
@@ -106,7 +106,7 @@ export function decodeSqlResult(value) {
     return Object.freeze({ name: string(column.name, "SQL column name"), decltype });
   });
   const rows = array(raw.rows, "SQL rows").map(entry => {
-    const row = array(entry, "SQL row").map(decodeValue);
+    const row = array(entry, "SQL row").map(decodeSqlValue);
     if (row.length !== columns.length) malformed("SQL row width");
     return Object.freeze(row);
   });

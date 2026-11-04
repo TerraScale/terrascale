@@ -270,7 +270,26 @@ The exported collection `shape()` reads the current free shape protocol using
 qualify that current protocol. SSE changes are a separate database
 feed, not authorized bounded-query snapshots or the planned reactive WebSocket API.
 
-## Free shape subscriptions (protocol v1)
+## Live SQL table shapes
+
+```js
+const todos = db.shape("todos").subscribe(({ rows, upToDate }) => {
+  render([...rows.values()]);
+});
+todos.close();
+```
+
+`shape(table).subscribe()` loads every row of the table, then keeps it current with each committed change. The
+listener runs after the snapshot and after every change, with `rows` keyed by row id (a decimal string) and
+`upToDate` once the shape reached the table's head. Row values decode like SQL results (`Uint8Array` blobs).
+A schema change of the table restarts the shape from a new snapshot; transient refusals and lost connections retry
+with backoff; authentication, scope and unknown-table errors reject `done`. It needs `documents:read`; end-user
+tokens are not accepted yet, and filters and column lists are not available yet.
+
+## Collection shape subscriptions (retired)
+
+TerraBase no longer serves collection shapes; use SQL table shapes above. This section describes the old API.
+
 
 `collection.subscribeShape({ where? }, { onUpdate?, signal?, replica? })` follows a collection's
 sealed snapshot, log chunks, and live long-polls. Its `state` is a map from document

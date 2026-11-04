@@ -44,7 +44,7 @@ const tokenPattern = /^(?!tbk1\.)(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-
  * @property {URLSearchParams | undefined} [query]
  * @property {AbortSignal | undefined} [signal]
  * @property {"no-store" | undefined} [cache] Authenticated shape epoch keys must bypass caches.
- * @property {"follow" | undefined} [redirect] Only the shape bootstrap, after a browser hides its 307 behind an opaque redirect.
+ * @property {"follow" | undefined} [redirect] Only shape bootstraps.
  */
 
 /**
@@ -478,7 +478,7 @@ const readDeadlineMs = 60_000;
 /** Resends after the first attempt, for replay-safe requests only. */
 const maximumReadRetries = 3;
 /** Shape reads with their own stale-state publication and resume. */
-const selfRecovering = new Set(["readFreeShape", "readShape", "getShapeKey"]);
+const selfRecovering = new Set(["readFreeShape", "readShape", "getShapeKey", "readTableShape"]);
 /** Read-only POST operations; every other non-GET operation may mutate and is sent once. */
 const readOnlyPosts = new Set(["queryDocuments", "runSql", "checkSql", "explainSql"]);
 /** Producer refusals before execution that clear on their own (429 budgets, 503 busy/unavailable). */

@@ -13,6 +13,7 @@ import { V1ShapeSubscription } from "./shape-subscription.js";
 import { decryptSealedShapePage, readShapePage, readShapeKey } from "./shape-reader.js";
 import { runSql, checkSql } from "./sql.js";
 import { executeSql, sqlRowObjects, sqlStatement } from "./sql-execute.js";
+import { V1TableShape } from "./table-shape.js";
 import { streamChanges } from "./changes.js";
 import { exportDocuments } from "./export.js";
 import { V1Databases, getCollectionSchema, putCollectionSchema, previewCollectionSchema, deleteCollectionSchema, getCollectionTtl, putCollectionTtl, deleteCollectionTtl } from "./catalog.js";
@@ -985,6 +986,15 @@ export class V1Database {
    */
   batch(statements, options = {}) {
     return executeSql(this.#transport, this.name, statements, options);
+  }
+
+  /**
+   * A SQL table's shape: `shape("todos").subscribe(({ rows }) => …)` syncs every row, then live changes.
+   * @param {string} table
+   * @returns {V1TableShape}
+   */
+  shape(table) {
+    return new V1TableShape(this.#transport, this.name, table);
   }
 
   /** @param {import("./changes.js").V1ChangeStreamRequest} [request] @param {V1RequestOptions} [options] */

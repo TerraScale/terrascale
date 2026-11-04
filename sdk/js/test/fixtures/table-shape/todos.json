@@ -1,0 +1,17 @@
+{
+  "source": "docs/terrabase/shape-reads.md sections 3, 6 and 7 at dcd3fce5d and 33d326bce",
+  "exchanges": [
+    { "query": "offset=-1", "status": 307, "location": "?handle=h1-0123456789abcdef&offset=snap.2.0" },
+    { "query": "handle=h1-0123456789abcdef&offset=snap.2.0", "status": 200, "body": { "shape_id": "0123456789abcdef0123456789abcdef", "handle": "h1-0123456789abcdef", "offset": "snap.2.0", "next_offset": "2", "values_at": "2", "up_to_date": false,
+      "changes": [{ "offset": "2", "ops": [
+        { "op": "insert", "key": "3", "row": { "id": 3, "title": "Old", "data": null } },
+        { "op": "insert", "key": "5", "row": { "id": 5, "title": "Gone", "data": null } }] }] } },
+    { "query": "handle=h1-0123456789abcdef&offset=2", "status": 200, "cursor": "88400000", "body": { "shape_id": "0123456789abcdef0123456789abcdef", "handle": "h1-0123456789abcdef", "offset": "2", "next_offset": "4", "values_at": "4", "up_to_date": true,
+      "changes": [{ "offset": "4", "ops": [
+        { "op": "insert", "key": "7", "row": { "id": 7, "title": "New", "data": { "base64": "AAE=" } } },
+        { "op": "update", "key": "3", "row": { "id": 3, "title": "Renamed", "data": null } },
+        { "op": "delete", "key": "5" }] }] } },
+    { "query": "handle=h1-0123456789abcdef&offset=4&live=true&cursor=88400000", "status": 200, "cursor": "88400001", "body": { "shape_id": "0123456789abcdef0123456789abcdef", "handle": "h1-0123456789abcdef", "offset": "4", "next_offset": "6", "values_at": "6", "up_to_date": true,
+      "changes": [{ "offset": "6", "ops": [{ "op": "update", "key": "7", "row": { "id": 7, "title": "Live", "data": null } }] }] } }
+  ]
+}
