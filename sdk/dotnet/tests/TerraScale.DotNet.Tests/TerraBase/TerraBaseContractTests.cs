@@ -1,3 +1,5 @@
+using System.Net;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraScale.DotNet.TerraBase;
@@ -7,7 +9,7 @@ namespace TerraScale.DotNet.Tests.TerraBase;
 /// <summary>
 /// Every client operation sends exactly the method and route that <c>contracts/terrabase/routes.json</c> records, and every
 /// recorded route is used. The monorepo checks that the TerraBase built from the same commit serves each recorded route,
-/// so a drift on either side fails a test. No TerraBase runs here: a recording handler answers nothing.
+/// so a drift on either side fails a test. No TerraBase runs here: a recording handler returns a permanent refusal.
 /// </summary>
 public sealed class TerraBaseContractTests
 {
@@ -99,14 +101,19 @@ public sealed class TerraBaseContractTests
         yield return ("management", "listAuditEvents", client => M(client).ListAuditEventsAsync(User, Organization));
     }
 
-    // Sends one call through a handler that records the request and then fails it, so no response is ever parsed.
+    // A permanent HTTP refusal records the route without exercising read retries.
     private static async Task<(HttpMethod Method, string Path, string Query)> RecordAsync(string client, Func<object, Task> call)
     {
         HttpRequestMessage? sent = null;
+        var requests = 0;
         using var handler = new TerraBaseTestHandler((request, _) =>
         {
             sent = request;
-            throw new HttpRequestException("recorded");
+            requests++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent("""{"error":{"code":"recorded","message":"recorded"}}""", Encoding.UTF8, "application/json"),
+            });
         });
         using var http = new HttpClient(handler);
         var origin = new Uri("https://terrabase.example.test/");
@@ -124,9 +131,10 @@ public sealed class TerraBaseContractTests
         }
         catch (Exception error) when (error is HttpRequestException or TerraBaseException or TimeoutException)
         {
-            // Expected: the handler fails every request after recording it.
+            // Expected: the handler refuses every request after recording it.
         }
 
+        await Assert.That(requests).IsEqualTo(1);
         var uri = sent?.RequestUri ?? throw new InvalidOperationException("the call sent no request");
         if (client == "management" && (sent.Version != System.Net.HttpVersion.Version20 || sent.VersionPolicy != HttpVersionPolicy.RequestVersionExact))
         {
