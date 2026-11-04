@@ -174,6 +174,12 @@ const ERROR_CODES = new Set([
   "invalid_request",
   // TerraBase's SQL errors.
   "sql_error",
+  "syntax_error",
+  "undefined_table",
+  "undefined_column",
+  "primary_key_violation",
+  "serialization_conflict",
+  "quota_exceeded",
   "sql_sandbox",
   "sql_conflict",
   "sql_too_large",
@@ -272,7 +278,9 @@ export async function canaryText(
       } catch {
         // Not JSON: the status alone names it.
       }
-      if (response.status === 429 && code === " operation_allowance") throw new CanaryQuotaError();
+      // A spent plan allowance (quota_exceeded on SQL) leaves the canary unmeasured, not down.
+      if (response.status === 429 && (code === " operation_allowance" || code === " quota_exceeded"))
+        throw new CanaryQuotaError();
       throw new CanaryError(`HTTP ${response.status}${code}`, response.status);
     }
     return text;

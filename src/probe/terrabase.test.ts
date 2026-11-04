@@ -120,6 +120,8 @@ describe("TerraBase probes", () => {
       error: "Canary quota exhausted",
     });
     expect(String(fetcher.mock.calls.at(-1)![1]?.body)).toContain("DELETE FROM");
+    const spent = fake({ INSERT: Response.json({ error: { code: "quota_exceeded" } }, { status: 429 }) });
+    expect(await runTerraBase("documents", canary, "round", spent)).toMatchObject({ ok: null, error: "Canary quota exhausted" });
     const busy = fake({ INSERT: Response.json({ error: { code: "tenant_busy" } }, { status: 429 }) });
     expect(await runTerraBase("documents", canary, "round", busy)).toMatchObject({
       ok: false,
