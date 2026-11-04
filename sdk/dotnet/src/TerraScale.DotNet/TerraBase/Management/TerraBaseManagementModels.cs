@@ -108,9 +108,15 @@ public sealed record TerraBaseManagedDatabase(string Id, string ProjectId, strin
     [JsonRequired]
     public string Region { get; init; } = null!;
 
-    /// <summary>The one region that holds and serves the database.</summary>
+    /// <summary>The region that commits the database's writes.</summary>
     [JsonRequired]
     public string HomeRegion { get; init; } = null!;
+
+    /// <summary>Sorted regions holding read replicas; with <see cref="AllRegions"/>, every serving region other than the home.</summary>
+    public IReadOnlyList<string> ReplicaRegions { get; init; } = [];
+
+    /// <summary>Whether every serving region, including regions that join later, holds a replica.</summary>
+    public bool AllRegions { get; init; }
 
     /// <summary>The name lost during a cross-region name conflict, or null when no conflict is reported.</summary>
     public string? PreviousName { get; init; }
