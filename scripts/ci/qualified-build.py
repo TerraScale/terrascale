@@ -145,7 +145,7 @@ def prepare(area, sha, directory):
     # Auth pins the SDK reference's framework, which bypasses MSBuild's normal
     # RID-agnostic negotiation; retain its existing portable locked assets.
     env['_GlobalPropertiesToRemoveFromProjectReferences'] = ';RuntimeIdentifier;SelfContained'
-    # Use the real CLI after phased tests; all checks and packaging run once.
+    # Leave Fast's planning phase; the CLI wrapper still bounds compilation.
     env.pop('TS_SHIP_PHASE', None)
     env.pop('TS_SHIP_MANIFEST', None)
     log = directory / 'checks.log'
@@ -155,9 +155,11 @@ def prepare(area, sha, directory):
         'terrabase': 'bash scripts/ci/test-area.sh build terrabase && make -j2 -o restore -o terrabase-build terrabase-e2e-local CONFIGURATION=Release && bash scripts/ci/image-payloads.sh terrabase amd64 && bash scripts/ci/image-payloads.sh terrabase arm64',
     }[area]
     with log.open('w') as stream:
-        result = subprocess.run(['bash', '-euo', 'pipefail', '-c', command], env=env,
-                                stdout=stream, stderr=subprocess.STDOUT)
-    print(log.read_text(), end='', flush=True)
+        with subprocess.Popen(['bash', '-euo', 'pipefail', '-c', command], env=env,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as result:
+            for line in result.stdout:
+                stream.write(line)
+                print(line, end='', flush=True)
     if result.returncode:
         raise ValueError(f'{area} checked build failed (exit {result.returncode})')
     payload = None
