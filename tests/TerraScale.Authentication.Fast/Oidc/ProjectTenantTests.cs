@@ -94,7 +94,7 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
     [Test]
     public async Task Project_refresh_rotation_and_revocation_end_only_the_project_grant()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
         var (_, project, clientId) = await CreateClientAsync(oidc, new Faker());
         var issuer = $"{OidcHarness.PublicOrigin}/{project}";
         var users = oidc.Server.App.Services.GetRequiredService<Users>();
@@ -151,7 +151,7 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
 
     private static async Task<(string OwnerSession, string Project, string ClientId)> CreateClientAsync(OidcHarness oidc, Faker faker)
     {
-        var owner = faker.Internet.Email().ToLowerInvariant();
+        var owner = oidc.UniqueEmail("project-owner");
         var ownerUser = await oidc.CreateUserAsync(owner);
         var (ownerSession, ownerTokens) = await oidc.CreateSessionAndRedeemAsync(ownerUser);
         var ownerToken = ownerTokens.GetProperty("access_token").GetString()!;

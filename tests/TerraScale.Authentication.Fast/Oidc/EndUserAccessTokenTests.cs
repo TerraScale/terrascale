@@ -68,11 +68,11 @@ public sealed class EndUserAccessTokenTests(TerraBaseFixture fixture)
         await Assert.That((await oidc.ValidateAsync(encoded, Audience)).Subject).IsEqualTo(user);
     }
 
-    private Task<OidcHarness> StartAsync(TimeProvider? clock = null) => OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience, clock: clock);
+    private Task<OidcHarness> StartAsync() => OidcHarness.StartSharedManagementAsync(fixture);
 
     private static async Task<(string Owner, string Organization, string Project)> SetupAsync(OidcHarness oidc)
     {
-        var (_, owner) = await oidc.CreateUserTokenAsync("owner@example.test");
+        var (_, owner) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("owner"));
         var organization = await oidc.CreateOrganizationAsync(owner);
         return (owner, organization, await oidc.CreateProjectAsync(owner, organization, "Production"));
     }
