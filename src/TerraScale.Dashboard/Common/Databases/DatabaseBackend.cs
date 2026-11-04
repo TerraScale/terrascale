@@ -284,7 +284,7 @@ namespace TerraScale.Dashboard.Common.Databases
             catch (TerraBaseWrongRegionException error) { throw new DatabaseWrongRegionException(error.Region, error.HomeRegion, error.Regions); }
             catch (TerraBaseException error) when (error.Status is 400 or 403 or 409 or 413)
             {
-                throw new DatabaseSqlException((HttpStatusCode)error.Status, error.ErrorCode == "forbidden_scope" ? "Write access is required to change data or schema." : error.Message, error.Fault.SqliteCode);
+                throw new DatabaseSqlException((HttpStatusCode)error.Status, error.ErrorCode == "forbidden_scope" ? "Write access is required to change data or schema." : error.Message, error.ErrorCode, error.Fault.Sqlstate);
             }
             if (body?.Results is not { } results || results.Count != statements.Count || results.Any(result => result is null || result.Columns is null || result.Rows is null ||
                 result.Columns.Any(column => column is null) || result.Rows.Any(row => row is null || row.Count != result.Columns.Count)))
@@ -406,10 +406,12 @@ namespace TerraScale.Dashboard.Common.Databases
     }
 
     // TerraBase refused a SQL statement; its message names the rule that failed and never quotes the statement.
-    public sealed class DatabaseSqlException(HttpStatusCode status, string message, string? sqliteCode = null)
-        : DatabaseProviderException(status, message + (sqliteCode is { Length: > 0 and <= 64 } ? " (" + sqliteCode + ")" : ""))
+    public sealed class DatabaseSqlException(HttpStatusCode status, string message, string? code = null, string? sqlstate = null)
+        : DatabaseProviderException(status, message + (code is { Length: > 0 and <= 64 } && code != "forbidden_scope" ? " (" + code + ")" : ""))
     {
-        public string? SqliteCode { get; } = sqliteCode is { Length: > 0 and <= 64 } ? sqliteCode : null;
+        public string? Code { get; } = code is { Length: > 0 and <= 64 } ? code : null;
+
+        public string? Sqlstate { get; } = sqlstate is { Length: 5 } ? sqlstate : null;
     }
 
     // A SQL write whose answer was lost may have committed; the dashboard never resends it.
@@ -424,7 +426,7 @@ namespace TerraScale.Dashboard.Common.Databases
     internal sealed record SqlExecuteResponse(IReadOnlyList<SqlExecuteResult>? Results, SqlExecuteError? Error);
     internal sealed record SqlExecuteResult(IReadOnlyList<DatabaseSqlColumn> Columns, IReadOnlyList<IReadOnlyList<JsonElement>> Rows,
         [property: JsonPropertyName("rows_affected")] long RowsAffected, [property: JsonPropertyName("last_insert_rowid")] long? LastInsertRowid);
-    internal sealed record SqlExecuteError(string Code, string Message, [property: JsonPropertyName("sqlite_code")] string? SqliteCode = null);
+    internal sealed record SqlExecuteError(string Code, string Message, string? Sqlstate = null);
 
     [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
     [JsonSerializable(typeof(SqlExecuteRequest))]

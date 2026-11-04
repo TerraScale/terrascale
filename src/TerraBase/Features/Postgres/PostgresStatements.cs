@@ -453,28 +453,7 @@ internal static partial class PostgresStatements
 
     public static bool RollsBackTo(string text) => text.StartsWith("ROLLBACK", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>The SQLSTATE of a <see cref="SqlError"/>; SQLITE_BUSY is always 40001, which drivers and ORMs retry.</summary>
-    public static PgError Error(SqlError error) => new(error.Code switch
-    {
-        "SQLITE_CONSTRAINT_PRIMARYKEY" or "SQLITE_CONSTRAINT_UNIQUE" => "23505",
-        "SQLITE_CONSTRAINT_NOTNULL" => "23502",
-        "SQLITE_CONSTRAINT_CHECK" => "23514",
-        "SQLITE_CONSTRAINT_FOREIGNKEY" => "23503",
-        var code when code.StartsWith("SQLITE_CONSTRAINT", StringComparison.Ordinal) => "23000",
-        "SQLITE_AUTH" => "42501",
-        "SQLITE_BUSY" => "40001",
-        "SQLITE_TOOBIG" => "54000",
-        "SQLITE_INTERRUPT" => "57014",
-        "SQLITE_ABORT" => "40000",
-        _ => error.Kind switch
-        {
-            "no_such_table" => "42P01",
-            "no_such_column" => "42703",
-            "already_exists" => "42P07",
-            "syntax" => "42601",
-            _ => "0A000",
-        },
-    }, error.Message);
+    public static PgError Error(SqlError error) => new(error.Sqlstate, error.Message);
 
     /// <summary>Whether a column of the type is sent in binary when the client asks; others are always text.</summary>
     public static bool Binary(int oid) => oid is 16 or 17 or 20 or 21 or 23 or TextOid or 114 or 701 or 1043 or 1082 or 1114 or 1184 or 3802;

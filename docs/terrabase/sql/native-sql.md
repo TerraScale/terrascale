@@ -1,8 +1,8 @@
 # Native SQL
 
 - Status: implemented, 2026-10-29 (PIVOT task E1, PR 1). Replaces the SQL-to-document bridge.
-- Surfaces: `POST /v1/projects/{project}/databases/{database}/sql/execute`, the PostgreSQL wire and Hrana all run on
-  `ISqlService` (`src/TerraBase/Features/Sql/SqlService.cs`).
+- Surfaces: `POST /v1/projects/{project}/databases/{database}/sql/execute` and the PostgreSQL wire both run on
+  `ISqlService` (`src/TerraBase/Features/Sql/SqlService.cs`) and answer the same errors (`SqlErrors.cs`).
 
 ## Storage
 
@@ -33,10 +33,10 @@ text.
   after `BEGIN`: a write transaction unless the key cannot write or the transaction is read-only.
 - A pinned transaction lives at most 5 seconds (`SqlLimits.MaxTransactionTime`). A timer then interrupts any running
   statement, rolls the transaction back and releases the writer even when the client is idle; the next statement, and
-  `COMMIT`, answer `SQLITE_INTERRUPT`, and `ROLLBACK` ends it.
+  `COMMIT`, answer `query_canceled` (57014), and `ROLLBACK` ends it.
 - Every statement runs with a native query timeout of min(5 s, the plan's statement timeout, the request's remaining
   time, the transaction's remaining life; [shared-process tenancy](../shared-process-tenancy.md)), and a cancelled request interrupts it (`turso_connection_interrupt`, sqlite3_interrupt semantics).
-  An interrupted statement answers `SQLITE_INTERRUPT`. Turso clears the interrupt once the connection is idle, so a
+  An interrupted statement answers `query_canceled` (57014). Turso clears the interrupt once the connection is idle, so a
   pooled connection runs its next statement normally.
 - A write transaction takes the organization's storage-quota lease before the database writer (the same order as
   every other writer), holds it until commit, rollback or expiry, and never waits for the lease while holding the
@@ -44,13 +44,13 @@ text.
 - Inside a transaction every write runs under a savepoint: a failed statement undoes only itself. `SAVEPOINT`,
   `RELEASE` and `ROLLBACK TO` pass through inside a transaction, also over the PostgreSQL wire, where `ROLLBACK TO`
   clears the aborted state. If the engine itself ends the transaction after a failure, the session answers
-  `SQLITE_ABORT` until `ROLLBACK`.
+  `transaction_rolled_back` (40000) until `ROLLBACK`.
 - A transaction's statements change at most 1024 rows and grow the file by at most 8 MiB in total, rolled-back
-  work included (`SQLITE_TOOBIG`). A result holds at most 10,000 rows and 8 MiB: value sizes are read natively before a
+  work included (`too_large`, 54000). A result holds at most 10,000 rows and 8 MiB: value sizes are read natively before a
   value is copied, and the connection's native value-length bound (`turso_connection_set_max_value_length`) refuses
   `zeroblob`, `randomblob`, `||` and function results past 8 MiB before or as they are built.
 - A deferred foreign key (`DEFERRABLE INITIALLY DEFERRED`) violated at `COMMIT` is a definite rejection: the
-  transaction rolls back without faulting the copy, and the commit answers `SQLITE_CONSTRAINT_FOREIGNKEY` (23503).
+  transaction rolls back without faulting the copy, and the commit answers `foreign_key_violation` (23503).
 
 ## Guard
 
@@ -68,17 +68,43 @@ Also refused: `ATTACH`, `DETACH`, `VACUUM`, `ANALYZE`, temporary and virtual tab
 
 - Values are null, 64-bit integers, doubles, text and blobs. Over HTTP a blob is `{"base64":"…"}` in arguments and
   rows; over the PostgreSQL wire it is `bytea`.
-- Errors keep SQLite codes: `SQLITE_CONSTRAINT_PRIMARYKEY`, `_UNIQUE`, `_NOTNULL`, `_CHECK`, `_FOREIGNKEY`,
-  `SQLITE_BUSY`, `SQLITE_TOOBIG`, `SQLITE_INTERRUPT`, `SQLITE_AUTH`, `SQLITE_READONLY`, `SQLITE_FULL` and
-  `SQLITE_ERROR`. The PostgreSQL wire maps them to `23505`, `23502`, `23514`, `23503`, `40001`, `54000`, `57014` and
-  `42501`.
+- Errors carry a TerraScale code and its PostgreSQL SQLSTATE, never an engine name or an engine code. REST answers
+  `{"code","message","statement","sqlstate"}`; the PostgreSQL wire sends the same SQLSTATE and
+  message in its `ErrorResponse`.
+
+  | Code | SQLSTATE | HTTP |
+  |---|---|---|
+  | `syntax_error` | 42601 | 400 |
+  | `undefined_table` | 42P01 | 400 |
+  | `undefined_column` | 42703 | 400 |
+  | `duplicate_object` | 42P07 | 400 |
+  | `primary_key_violation`, `unique_violation` | 23505 | 400 |
+  | `not_null_violation` | 23502 | 400 |
+  | `check_violation` | 23514 | 400 |
+  | `foreign_key_violation` | 23503 | 400 |
+  | `constraint_violation` | 23000 | 400 |
+  | `forbidden_scope` | 42501 | 403 |
+  | `serialization_conflict` (retry) | 40001 | 409 |
+  | `too_large` | 54000 | 413 |
+  | `query_canceled` | 57014 | 400 |
+  | `transaction_rolled_back` | 40000 | 400 |
+  | `transaction_aborted` | 25P02 | 400 |
+  | `read_only_transaction` | 25006 | 400 |
+  | `transaction_state` | 25000 | 400 |
+  | `invalid_request` | 22023 | 400 |
+  | `quota_exceeded` | 53100 | 429 |
+  | `tenant_busy` | 53300 | 429 |
+  | `unauthorized` | 28000 | 401 |
+  | `unavailable` | 57P03 | 503 |
+  | `sql_error` (other refusals) | 0A000 | 400 |
+
 - Reads of tables are charged per returned row by bytes, once the protocol accepts the rows. Writes are charged after
   commit for surviving rows only: `ROLLBACK TO` restores the billing state of its savepoint (client savepoints and
   the per-statement ones). One write unit and one operation per row a statement inserted, updated or deleted; rows a
   trigger or a cascade changes are not billed separately.
 - SQL storage counts against the organization's storage quota. A write transaction measures the file's used bytes
   ((page_count − freelist_count) × page_size) when it opens and at commit; the net change is checked against the quota
-  (`SQLITE_FULL` past it) and kept in the database's `_tb_collection_stats` row `_sql`, committed with the
+  (`quota_exceeded` past it) and kept in the database's `_tb_collection_stats` row `_sql`, committed with the
   transaction, so it survives restarts, never counts rolled-back work, and shrinks when deletes free pages. SQL commits
   advance the database's commit sequence, which keeps the accounting cache current.
 

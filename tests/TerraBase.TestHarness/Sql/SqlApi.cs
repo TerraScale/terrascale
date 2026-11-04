@@ -26,9 +26,9 @@ internal static class SqlApi
         return [.. response.Json.GetProperty("results").EnumerateArray()];
     }
 
-    /// <summary>The SQLite code of a refused request, with its statement index.</summary>
-    public static (HttpStatusCode Status, string? Code, string? Sqlite, int? Statement) Error(ApiResponse response) =>
-        response.Json.TryGetProperty("error", out var error) && error.TryGetProperty("sqlite_code", out var sqlite)
-            ? (response.Status, response.Code, sqlite.GetString(), error.GetProperty("statement").GetInt32())
+    /// <summary>The SQLSTATE of a refused request, with its statement index.</summary>
+    public static (HttpStatusCode Status, string? Code, string? Sqlstate, int? Statement) Error(ApiResponse response) =>
+        response.Json.TryGetProperty("error", out var error) && error.TryGetProperty("sqlstate", out var sqlstate)
+            ? (response.Status, response.Code, sqlstate.GetString(), error.GetProperty("statement").GetInt32())
             : (response.Status, response.Code, null, null);
 }

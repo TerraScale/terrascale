@@ -74,7 +74,7 @@ internal sealed class SqlNativeDatabase : IAsyncDisposable
         await Assert.That(status).IsNotEqualTo(HttpStatusCode.OK).Because(body.GetRawText());
         var error = body.GetProperty("error");
         var statement = error.TryGetProperty("statement", out var index) || error.TryGetProperty("op", out index) ? index.GetInt32() : -1;
-        return new SqlRefusal(status, error.TryGetProperty("sqlite_code", out var code) ? code.GetString() : null, statement);
+        return new SqlRefusal(status, error.TryGetProperty("code", out var code) ? code.GetString() : null, statement);
     }
 
     public Task<SqlRefusal> RefusedAsync(params string[] statements) =>
