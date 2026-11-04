@@ -1015,15 +1015,14 @@ namespace TerraScale.Dashboard.E2E
                     Require(method == "POST", "Canonical database create");
                     var body = await JsonAsync(http);
                     Require(body.EnumerateObject().All(field => field.Name is "name" or "homeRegion" or "replicaRegions" or "allRegions" or "ttlSeconds"), "Create sends only name and placement");
-                    // As production TerraBase until replicas are available: a database serves only its home region.
-                    if (body.TryGetProperty("replicaRegions", out _) || body.TryGetProperty("allRegions", out var every) && every.GetBoolean())
-                    {
-                        return Error(400, "replicas_unavailable");
-                    }
-
                     var name = body.GetProperty("name").GetString()!;
                     var home = body.TryGetProperty("homeRegion", out var named) ? named.GetString()! : answering;
-                    string[] replicas = [];
+                    if (Placement(body, home) is not { } created)
+                    {
+                        return Error(400, "invalid_request");
+                    }
+
+                    var replicas = created.Replicas;
                     if (home != answering)
                     {
                         return WrongRegion(http, new(ids.NewId(), project, name, DateTimeOffset.UtcNow, HomeRegion: home, ReplicaRegions: replicas));
@@ -1042,7 +1041,7 @@ namespace TerraScale.Dashboard.E2E
                             return Error(409, createConflict);
                         }
 
-                        var database = new ManagedDatabase(ids.NewId(), project, name, DateTimeOffset.UtcNow, HomeRegion: home, ReplicaRegions: replicas) { ExpiresAt = Expiry(body) };
+                        var database = new ManagedDatabase(ids.NewId(), project, name, DateTimeOffset.UtcNow, HomeRegion: home, ReplicaRegions: replicas, AllRegions: created.AllRegions) { ExpiresAt = Expiry(body) };
                         databases[database.Id] = database;
                         Interlocked.Increment(ref creates);
                         return Results.Json(Wire(database, answering), statusCode: 201);
@@ -1140,8 +1139,47 @@ namespace TerraScale.Dashboard.E2E
                                 return Results.Json(Wire(renamed, answering));
                             }
                         }
-                        // As production TerraBase until replicas are available: placement updates are refused.
-                        return Error(400, "replicas_unavailable");
+                        if ((!body.TryGetProperty("replicaRegions", out _) && !body.TryGetProperty("allRegions", out _)) || Placement(body, current.HomeRegion) is not { } placement)
+                        {
+                            return Error(400, "invalid_request");
+                        }
+
+                        lock (gate)
+                        {
+                            var replaced = current with { ReplicaRegions = placement.Replicas, AllRegions = placement.AllRegions };
+                            databases[current.Id] = replaced;
+                            return Results.Json(Wire(replaced, answering));
+                        }
+                    case (6, "POST", "move-home"):
+                        if (callerRole is not ("owner" or "admin"))
+                        {
+                            return Error(403, "role_too_low");
+                        }
+
+                        if (!atHome)
+                        {
+                            return WrongRegion(http, current);
+                        }
+
+                        var move = await JsonAsync(http);
+                        Require(move.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "homeRegion" }), "The move body names only the new home region");
+                        var target = move.GetProperty("homeRegion").GetString()!;
+                        if (target == current.HomeRegion)
+                        {
+                            return Results.Json(Wire(current, answering));
+                        }
+
+                        if (current.ReplicaRegions?.Contains(target, StringComparer.Ordinal) != true)
+                        {
+                            return Error(400, "invalid_request");
+                        }
+
+                        lock (gate)
+                        {
+                            var moved = current with { HomeRegion = target, ReplicaRegions = [.. current.ReplicaRegions.Where(region => region != target).Append(current.HomeRegion).Order(StringComparer.Ordinal)] };
+                            databases[current.Id] = moved;
+                            return Results.Json(Wire(moved, answering));
+                        }
                     case (5, "DELETE", _):
                         if (!atHome)
                         {
@@ -1312,6 +1350,20 @@ namespace TerraScale.Dashboard.E2E
                     throw new InvalidOperationException(message);
                 }
             }
+            private (string[] Replicas, bool AllRegions)? Placement(JsonElement body, string home)
+            {
+                var serving = Catalog ?? [home];
+                var all = body.TryGetProperty("allRegions", out var every) && every.ValueKind == JsonValueKind.True;
+                if (body.TryGetProperty("replicaRegions", out var listed))
+                {
+                    var named = listed.EnumerateArray().Select(value => value.GetString()!).ToArray();
+                    return all || named.Length > 8 || named.Distinct(StringComparer.Ordinal).Count() != named.Length || named.Any(region => region == home || !serving.Contains(region, StringComparer.Ordinal))
+                        ? null : ([.. named.Order(StringComparer.Ordinal)], false);
+                }
+
+                return all ? ([.. serving.Where(region => region != home).Order(StringComparer.Ordinal)], true) : ([], false);
+            }
+
             // TerraBase DatabaseRegions.Misdirected: 421 wrong_region naming the home and every serving region.
             private static IResult WrongRegion(HttpContext http, ManagedDatabase database)
             {
