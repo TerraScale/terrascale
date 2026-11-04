@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Text;
+using Microsoft.AspNetCore.WebUtilities;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -14,6 +16,20 @@ namespace TerraScale.Dashboard.E2E.Demo
     // tokens, other hosts and regional fanout are refused. One instance per environment; nothing is static.
     sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?> resolveSession, Func<string, string, string, string> role)
     {
+        private readonly Dictionary<string, Key> machineTokens = new(StringComparer.Ordinal);
+        private readonly HashSet<string> children = new(StringComparer.Ordinal);
+        public (string UserId, string OrganizationId, string ProjectId, IReadOnlyList<string> Scopes)? ResolveMachineToken(string token)
+        {
+            lock (gate)
+            {
+                return machineTokens.TryGetValue(token, out var key) && keys.ContainsKey(key.Id) && key.ExpiresAt > DateTimeOffset.UtcNow
+                    ? (key.CreatedBy, key.OrganizationId, key.ProjectId, key.Scopes) : null;
+            }
+        }
+        public string? MachineDatabase(string token)
+        {
+            lock (gate) return machineTokens.GetValueOrDefault(token)?.Database;
+        }
         public IAuthStepUpGateway? StepUp { get; set; }
         private int createdKeys, rotatedKeys;
         public int CreatedKeys => Volatile.Read(ref createdKeys);
@@ -88,6 +104,40 @@ namespace TerraScale.Dashboard.E2E.Demo
                 return Ready ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("ok") } : Error(HttpStatusCode.ServiceUnavailable, "not_ready");
             }
 
+            if (request.Headers.Authorization is { Scheme: "Basic", Parameter: { } encoded })
+            {
+                var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
+                var secret = decoded[(decoded.IndexOf(':', StringComparison.Ordinal) + 1)..];
+                (Key Key, string Secret) parent;
+                lock (gate) parent = keys.Values.SingleOrDefault(value => value.Secret == secret);
+                if (parent.Key is null || parent.Key.ExpiresAt <= DateTimeOffset.UtcNow) return Error(HttpStatusCode.Unauthorized, "invalid_client");
+                if (uri.AbsolutePath == "/terrascale/oauth/token")
+                {
+                    var claims = new { org_id = parent.Key.OrganizationId, project_id = parent.Key.ProjectId, database = parent.Key.Database,
+                        scope = string.Join(' ', parent.Key.Scopes), nonce = Guid.NewGuid().ToString("N") };
+                    var machineToken = "e30." + WebEncoders.Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(claims)) + ".synthetic";
+                    lock (gate) machineTokens[machineToken] = parent.Key with { ExpiresAt = parent.Key.ExpiresAt ?? DateTimeOffset.UtcNow.AddHours(1) };
+                    return Json(new { access_token = machineToken, token_type = "Bearer", expires_in = 60 });
+                }
+                if (uri.AbsolutePath == "/v1/terrascale/api-keys/self/scoped-keys")
+                {
+                    lock (gate) if (children.Contains(parent.Key.Id)) return Error(HttpStatusCode.Forbidden, "forbidden");
+                    using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+                    var value = body.RootElement;
+                    var access = value.GetProperty("access").GetString()!;
+                    string[] scopes = access == "read" ? ["documents:read"] : ["documents:read", "documents:write"];
+                    if (scopes.Except(parent.Key.Scopes).Any()) return Error(HttpStatusCode.Forbidden, "forbidden");
+                    var ttl = value.GetProperty("ttl_seconds").GetInt32();
+                    var id = ids.NewId();
+                    var key = id + "_" + new string('a', 52);
+                    var expires = DateTimeOffset.UtcNow.AddSeconds(ttl);
+                    var database = value.GetProperty("database").GetString()!;
+                    var child = parent.Key with { Id = id, Database = database, Scopes = scopes, ExpiresAt = expires };
+                    lock (gate) { keys[id] = (child, key); children.Add(id); }
+                    return Json(new { key, id, project_id = child.ProjectId, database, access, expires_at = expires }, HttpStatusCode.Created);
+                }
+                return Error(HttpStatusCode.NotFound, "not_found");
+            }
             if (request.Headers.Authorization is not { Scheme: "Bearer", Parameter: { } token } || resolveSession(token) is not { } actor)
             {
                 return Error(HttpStatusCode.Unauthorized, "invalid_token");

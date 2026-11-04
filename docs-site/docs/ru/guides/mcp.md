@@ -23,6 +23,15 @@ claude
 
 Run `/mcp`, select **terrascale** and choose **Authenticate**. Your browser opens a TerraScale page that names the client and where the sign-in returns. Choose **Sign in and allow**, then sign in to TerraScale, or sign up. The browser hands control back to Claude Code, which lists the TerraScale tools.
 
+In Codex, add the server and sign in:
+
+```bash
+codex mcp add terrascale --url https://mcp.terrascale.tech/
+codex mcp login terrascale
+```
+
+See [Codex MCP setup](https://developers.openai.com/codex/mcp/).
+
 Other clients that support MCP authorization, such as claude.ai custom connectors and Cursor, start the same sign-in when you add the URL `https://mcp.terrascale.tech/`.
 
 Sign-in creates a personal access token named `MCP: <client name>`. It lasts up to 90 days, counts toward the 25-token limit, and appears on **Profile → Access tokens**, where you can revoke it. The client's registration can expire sooner after inactivity, as described below. When access expires, the client asks you to sign in again.
@@ -51,7 +60,7 @@ Use this for clients without MCP sign-in, or for automation.
 3. Create a named token, choose its expiry and complete the sign-in redirect.
 4. Save the token securely when it is shown. Its secret is displayed only once.
 
-Tokens expire after 7, 30, 90 or 365 days. An account can hold up to 25 live tokens. A database API key is not a substitute. Assistants cannot create personal access tokens or change your password, email, MFA or passkeys; those actions require the browser.
+Tokens expire after 7, 30, 90 or 365 days. An account can hold up to 25 live tokens. Project API keys support the [agent database tools](/ru/guides/agent-databases#use-mcp-from-claude-code-or-codex); personal access tokens are required for the wider dashboard tools. Assistants cannot create personal access tokens or change your password, email, MFA or passkeys; those actions require the browser.
 
 In Bash, enter the token without recording its value in shell history:
 
@@ -80,6 +89,9 @@ Supplying only `projectId` requires that project to belong to your saved organiz
 
 Use your client's tool discovery (`tools/list`) for the current names, parameters and descriptions. A listed tool is not a grant of permission: calls still enforce membership, roles, resource access and availability. Current tools include:
 
-Database content tools are being updated for SQL. Use your client's tool discovery to see which tools your key can call.
+`execute_sql` runs reads, writes and schema changes; `run_sql` accepts reads only.
+`get_database_schema` lists SQL tables and their declared columns. `create_database` and `branch_database`
+accept `ttlSeconds`. Backup and restore tools preserve the source database. See the complete
+[agent database workflow](/ru/guides/agent-databases#agent-workflow), including scoped-key minting over an API key connection.
 
 </div>

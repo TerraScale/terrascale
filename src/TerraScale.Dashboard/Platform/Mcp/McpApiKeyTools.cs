@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.WebUtilities;
@@ -86,7 +87,8 @@ namespace TerraScale.Dashboard.Platform.Mcp
             var permission = dataTool ? write ? "documents:write" : "documents:read" : write ? "databases:write" : "databases:read";
             if (!credential.Scopes.Contains(permission, StringComparer.Ordinal)) throw new AccountAccessException("The API key does not grant " + permission + ".");
             if (tool == "check_sql") return Reply(SqlValidation.Analyze(sql), McpAgentJson.Default.SqlAnalysis);
-            var region = DatabaseRegion.Resolve(await databases.RegionsAsync(ct), Text("region", Environment.GetEnvironmentVariable("TS_REGION") ?? (await databases.RegionsAsync(ct))[0].Id))
+            var regions = await databases.RegionsAsync(ct);
+            var region = DatabaseRegion.Resolve(regions, Text("region", Environment.GetEnvironmentVariable("TS_REGION") ?? regions[0].Id))
                 ?? throw new AccountAccessException("Choose a region listed by TerraScale discovery.", 422);
             var management = rpc.User<IManagementService>(scope.AccessToken, region.Id).WithCancellationToken(ct);
             if (tool == "create_database")
@@ -105,15 +107,24 @@ namespace TerraScale.Dashboard.Platform.Mcp
             // Scoped data keys have no catalog scope. SQL routes accept ULIDs, so no privileged listing is needed.
             if (dataTool)
             {
-                if (tool == "get_database_schema")
+                async Task<CallToolResult> ExecuteAsync(DatabaseRegion home)
                 {
-                    var catalog = await databases.SqlTablesAsync(scope, region, databaseId, ct);
-                    return Reply(new SqlCatalog([], [.. catalog.Tables.Select(table => new SqlCatalogTable(table.Name,
-                        [.. table.Columns.Select(column => new SqlCatalogField(column.Name, column.Decltype ?? "No declared type"))]))], catalog.Truncated), McpAgentJson.Default.SqlCatalog);
+                    if (tool == "get_database_schema")
+                    {
+                        var catalog = await databases.SqlTablesAsync(scope, home, databaseId, ct);
+                        return Reply(new SqlCatalog([], [.. catalog.Tables.Select(table => new SqlCatalogTable(table.Name,
+                            [.. table.Columns.Select(column => new SqlCatalogField(column.Name, column.Decltype ?? "No declared type"))]))], catalog.Truncated), McpAgentJson.Default.SqlCatalog);
+                    }
+                    var result = await databases.SqlAsync(scope, home, databaseId, sql, write, ct);
+                    return tool == "run_sql" ? Reply(new McpSqlResponse(new(result.Columns, result.Rows)), McpAgentJson.Default.McpSqlResponse)
+                        : Reply(result, McpAgentJson.Default.DatabaseSqlResult);
                 }
-                var result = await databases.SqlAsync(scope, region, databaseId, sql, write, ct);
-                return tool == "run_sql" ? Reply(new McpSqlResponse(new(result.Columns, result.Rows)), McpAgentJson.Default.McpSqlResponse)
-                    : Reply(result, McpAgentJson.Default.DatabaseSqlResult);
+                try { return await ExecuteAsync(region); }
+                catch (DatabaseWrongRegionException wrong) when (DatabaseRegion.Resolve(regions, wrong.HomeRegion) is { } home && home.Id != region.Id)
+                {
+                    // A 421 definitively refused execution. Never retry an ambiguous write failure.
+                    return await ExecuteAsync(home);
+                }
             }
             var database = await management.GetDatabaseAsync(scope.ProjectId, databaseId);
             region = DatabaseRegion.Resolve(await databases.RegionsAsync(ct), database.HomeRegion.Length > 0 ? database.HomeRegion : database.Region)
@@ -135,7 +146,9 @@ namespace TerraScale.Dashboard.Platform.Mcp
             if (tool == "create_backup")
             {
                 var backup = await backups.CreateAsync(scope.ProjectId, databaseId);
-                return Reply(backup, McpAgentJson.Default.JsonElement);
+                var recorded = backup.Deserialize(BackupBackendJson.Default.ProducerBackup)
+                    ?? throw new HttpRequestException("TerraBase returned an invalid backup.");
+                return Reply(new BackupView(recorded.Id, recorded.Status, recorded.CreatedAt, recorded.SizeBytes), McpAgentJson.Default.BackupView);
             }
             var request = JsonSerializer.SerializeToElement(new McpRestoreRequest(Text("name")), McpAgentJson.Default.McpRestoreRequest);
             var restored = await backups.RestoreBackupAsync(scope.ProjectId, databaseId, Text("backupId"), request);
@@ -170,6 +183,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
     [JsonSerializable(typeof(McpSqlResponse))]
     [JsonSerializable(typeof(TerraBaseScopedKey))]
     [JsonSerializable(typeof(BackupRestoreResult))]
+    [JsonSerializable(typeof(BackupView))]
     [JsonSerializable(typeof(JsonElement))]
     internal sealed partial class McpAgentJson : JsonSerializerContext;
 }
