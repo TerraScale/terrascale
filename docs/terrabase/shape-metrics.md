@@ -1,7 +1,7 @@
 # Shape metrics and memory admission
 
 All instruments use the host-scoped `TerraScale.TerraBase` meter and the existing administrative `/metrics` scrape.
-Shape telemetry has no labels: organization, project, database, collection, shape and handle identifiers are never
+Shape telemetry has no labels: organization, project, database, table, shape and handle identifiers are never
 recorded. This recorder is the FR-17 contract; FR-10 owns production registration and FR-20 owns component calls.
 
 `IShapeMetrics` records successful 200/304 response reads (`terrabase.shape.reads`), waiting requests
@@ -37,8 +37,8 @@ reads and collection-metadata documents fetched through the document helper also
 independently of the rows returned; an additional sort-budget pre-scan counts separately. Query body-fetch SELECTs
 also count individually under `path="query"`, so a query can perform more than one backend read.
 
-Shape sealing and snapshots count their collection generation/existence, feed enumeration, size projections,
-document materialization, CDC validation and resume-prefix SELECTs under `path="shape"`, as do persisted chunk/page
+Shape sealing and snapshots count their table definition and generation checks, change capture scans, head and
+boundary lookups and table row reads under `path="shape"`, as do persisted chunk/page
 metadata reads and shape retention's floor/candidate SELECTs. Persisted payload
 SELECTs use `path="shape_body"`, so a shared flight's one body read can be distinguished from its metadata and
 proof reads. One payload read does not mean one total SQL statement. Reusing a stored

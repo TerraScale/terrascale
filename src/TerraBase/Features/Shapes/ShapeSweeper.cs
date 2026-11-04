@@ -11,7 +11,7 @@ namespace TerraBase.Features.Shapes;
 /// <summary>How the sweep found a shape handle; only <see cref="Retired"/> is ever deleted.</summary>
 internal enum ShapeHandleState
 {
-    /// <summary>Its lineage record names the current collection generation, database incarnation and replica.</summary>
+    /// <summary>Its lineage record names the current table generation, database incarnation and replica.</summary>
     Current,
 
     /// <summary>Its lineage record names a lineage that is no longer current.</summary>
@@ -120,7 +120,7 @@ internal sealed class ShapeSweeper(IStorageEngine engine, IShapeStorage storage,
     {
         var totals = new Totals();
         // Once per pass, as a request's retention pass computes it.
-        var before = (time.GetUtcNow() - FeedCursor.Retention).ToUnixTimeMilliseconds();
+        var before = (time.GetUtcNow() - ShapeRetention.Age).ToUnixTimeMilliseconds();
         HashSet<(string, string?, string?)> seen = [];
         await foreach (var database in engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {

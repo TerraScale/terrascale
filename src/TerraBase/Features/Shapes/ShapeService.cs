@@ -1,8 +1,6 @@
-using System.Security.Cryptography;
-using System.Text;
+using System.Globalization;
 using TerraBase.Engine;
 using TerraBase.Errors;
-using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
@@ -11,24 +9,44 @@ using ZLogger;
 namespace TerraBase.Features.Shapes;
 
 internal sealed class ShapeService(
-    IStorageEngine engine, IDocumentService documents, IShapeSealer sealer, IShapeSnapshotSealer snapshots,
-    IShapeStorage storage, IShapeRetention retention, IShapeFilterRegistry filters, ShapeRegistry registry, ShapeLiveGate gate,
-    IShapeFlights<ShapeRead> flights, IMemoryBudget memory, IHostApplicationLifetime lifetime, ILogger<ShapeService> logger) : IShapeLineages, IShapeSnapshots, IShapeChunks, IShapeLiveTail, IShapeResume
+    IStorageEngine engine, IShapeSealer sealer, IShapeSnapshotSealer snapshots, IShapeStorage storage, IShapeRetention retention,
+    ShapeRegistry registry, ShapeLiveGate gate, IShapeFlights<ShapeRead> flights, IMemoryBudget memory, IHostApplicationLifetime lifetime,
+    ILogger<ShapeService> logger) : IShapeLineages, IShapeSnapshots, IShapeChunks, IShapeLiveTail
 {
     private int _maintaining;
     private readonly ClosedChunks _closed = new(memory);
     private static readonly QuotaExceeded Busy = new("shape reads are at capacity; retry later", "shape_busy");
     private static readonly NotFound UnknownDatabase = new("the database does not exist", "unknown_database");
-    internal static byte[] ResumeScope(TenantContext tenant, CollectionInfo collection, string canonical)
-    {
-        var fields = string.Join('\0', tenant.OrganizationId, tenant.ProjectId, tenant.DatabaseId, collection.Name, collection.Id, canonical, "1");
-        return SHA256.HashData(Encoding.UTF8.GetBytes("TB-SHAPE-RESUME-V1\0" + fields)).AsSpan(0, 16).ToArray();
-    }
-    public async ValueTask<LineageResult> ResolveAsync(ShapeScope scope, CancellationToken cancellationToken)
+    private static readonly NotFound UnknownTable = new("the table does not exist", "unknown_table");
+    private static readonly Validation UnsupportedTable = new("shapes read ordinary rowid tables", "unsupported_table");
+
+    public async ValueTask<LineageResult> ResolveAsync(TenantContext database, string table, CancellationToken cancellationToken)
     {
         try
         {
-            return await ResolveCoreAsync(scope, cancellationToken).ConfigureAwait(false);
+            if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+            {
+                return UnknownDatabase;
+            }
+
+            var resolved = await CurrentAsync(store, database, table, cancellationToken).ConfigureAwait(false);
+            if (resolved is not ResolvedShape shape)
+            {
+                return resolved;
+            }
+
+            var definition = ShapeHandle.Definition(store, shape.Scope);
+            if (registry.CurrentHandle(database, table) != definition.Handle)
+            {
+                var head = await ReadHeadAsync(store, cancellationToken).ConfigureAwait(false);
+                if (registry.Track(database, definition, head) is { } full)
+                {
+                    return full;
+                }
+            }
+
+            ScheduleMaintenance(shape.Scope, store, shape.Lineage);
+            return shape;
         }
         catch (Exception error) when (error is ShapeSealOffsetException or ObjectDisposedException or StorageBusyException or QosMemoryException)
         {
@@ -36,95 +54,47 @@ internal sealed class ShapeService(
         }
     }
 
-    private async ValueTask<LineageResult> ResolveCoreAsync(ShapeScope scope, CancellationToken cancellationToken)
+    private async ValueTask<LineageResult> CurrentAsync(IDatabaseStore store, TenantContext database, string table, CancellationToken cancellationToken)
     {
-        if (await engine.OpenDatabaseAsync(scope.Database, cancellationToken).ConfigureAwait(false) is not { } store)
+        ShapeTableState state;
+        await using (var reader = await storage.BeginTransactionAsync(store, write: false, cancellationToken).ConfigureAwait(false))
         {
-            return UnknownDatabase;
+            state = await Tables(reader).ReadShapeTableAsync(table, cancellationToken).ConfigureAwait(false);
         }
 
-        var identity = ShapeHandle.ComputeCanonical(store, scope.Collection, scope.CanonicalFilter);
-        var lineage = new ShapeLineage(identity.ShapeId, identity.Handle);
-        var collection = scope.Collection.Name;
-        if (scope.Filter.Canonical.Length > 0)
+        if (state.Status == ShapeTableStatus.Stale)
         {
-            if (!scope.Bootstrap && filters.Check(scope.Database, collection, scope.Filter) is not null)
-            {
-                return new Evicted(lineage);
-            }
-
-            switch (filters.Admit(scope.Database, collection, scope.Filter))
-            {
-                case QuotaExceeded refused:
-                    return refused;
-                case ShapeAdmitted admitted:
-                    registry.Forget(admitted.Evicted);
-                    break;
-            }
+            await using var writer = await storage.BeginTransactionAsync(store, write: true, cancellationToken).ConfigureAwait(false);
+            state = await Tables(writer).RenewShapeTableAsync(table, cancellationToken).ConfigureAwait(false);
+            _ = await writer.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        if (await CurrentAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false) is { } stale)
+        return state switch
         {
-            return stale switch
-            {
-                MustRefetch changed => new Evicted(changed.Lineage ?? lineage),
-                Forbidden forbidden => forbidden,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
-                _ => throw new System.Diagnostics.UnreachableException(),
-            };
-        }
-
-        if (registry.CurrentHandle(scope.Database, collection, scope.CanonicalFilter) != lineage.Handle)
-        {
-            var head = await ReadHeadAsync(store, cancellationToken).ConfigureAwait(false);
-            if (registry.Track(scope.Database, collection, scope.Filter, Definition(store, scope, lineage), head) is { } full)
-            {
-                return full;
-            }
-        }
-
-        ScheduleMaintenance(scope, store, lineage);
-        return lineage;
-    }
-    public async ValueTask<LineageResult> ResolveHandleAsync(TenantContext database, CollectionInfo collection, string handle, CancellationToken cancellationToken)
-    {
-        try
-        {
-            return await ResolveHandleCoreAsync(database, collection, handle, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception error) when (error is ShapeSealOffsetException or ObjectDisposedException or StorageBusyException or QosMemoryException)
-        {
-            return new Unavailable("shape storage changed or is busy; retry later");
-        }
+            { Status: ShapeTableStatus.Missing } => UnknownTable,
+            { Status: ShapeTableStatus.Unsupported } => UnsupportedTable,
+            { Status: ShapeTableStatus.Current, Generation: { } generation } => Resolved(store, new ShapeScope(database, table, generation)),
+            _ => new Unavailable("the table changed while resolving its shape; retry later"),
+        };
     }
 
-    private async ValueTask<LineageResult> ResolveHandleCoreAsync(TenantContext database, CollectionInfo collection, string handle, CancellationToken cancellationToken)
+    private static ResolvedShape Resolved(IDatabaseStore store, ShapeScope scope)
     {
-        if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
-        {
-            return UnknownDatabase;
-        }
-
-        if (CollectionRuleAccess.EndUser)
-        {
-            return ShapeAccess.Denied;
-        }
-
-        var unfiltered = ShapeHandle.ComputeCanonical(store, collection, string.Empty);
-        var current = new ShapeLineage(unfiltered.ShapeId, unfiltered.Handle);
-        if (registry.FilteredShape(database, collection.Name, handle) is not { } filter)
-        {
-            return current;
-        }
-        if (filters.Check(database, collection.Name, filter) is not null)
-        {
-            return new Evicted(current);
-        }
-
-        var filtered = ShapeHandle.ComputeCanonical(store, collection, filter.Canonical);
-        return filtered.Handle == handle ? new ShapeLineage(filtered.ShapeId, filtered.Handle) : current;
+        var handle = ShapeHandle.Compute(store, scope.Table, scope.Generation);
+        return new ResolvedShape(scope, new ShapeLineage(handle.ShapeId, handle.Handle));
     }
+
+    private async ValueTask<ShapeRead?> StaleAsync(IDatabaseStore store, ShapeScope scope, ShapeLineage lineage, CancellationToken cancellationToken) =>
+        await CurrentAsync(store, scope.Database, scope.Table, cancellationToken).ConfigureAwait(false) switch
+        {
+            ResolvedShape current when current.Lineage.Handle == lineage.Handle => null,
+            ResolvedShape current => new MustRefetch("the shape lineage changed", current.Lineage),
+            NotFound missing => missing,
+            Unavailable unavailable => unavailable,
+            Validation => new MustRefetch("the table no longer supports shapes"),
+            QuotaExceeded busy => busy,
+        };
+
     public async ValueTask<SnapshotResult> NewestAsync(ShapeScope scope, ShapeLineage lineage, CancellationToken cancellationToken)
     {
         if (await engine.OpenDatabaseAsync(scope.Database, cancellationToken).ConfigureAwait(false) is not { } store)
@@ -134,28 +104,15 @@ internal sealed class ShapeService(
 
         try
         {
-            if (await CurrentAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false) is { } stale)
+            if (await StaleAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false) is { } stale)
             {
-                return stale switch
-                {
-                    MustRefetch staleLineage => staleLineage,
-                    Forbidden forbidden => forbidden,
-                    NotFound missing => missing,
-                    Unavailable unavailable => unavailable,
-                    _ => throw new System.Diagnostics.UnreachableException(),
-                };
+                return Snapshot(stale);
             }
-            var snapshot = await snapshots.SealIfDueAsync(store, SnapshotDefinition(store, scope, lineage), cancellationToken).ConfigureAwait(false);
-            if (await CurrentAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false) is { } changed)
+
+            var snapshot = await snapshots.SealIfDueAsync(store, ShapeHandle.Definition(store, scope), cancellationToken).ConfigureAwait(false);
+            if (await StaleAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false) is { } changed)
             {
-                return changed switch
-                {
-                    MustRefetch refetch => refetch,
-                    Forbidden forbidden => forbidden,
-                    NotFound missing => missing,
-                    Unavailable unavailable => unavailable,
-                    _ => throw new System.Diagnostics.UnreachableException(),
-                };
+                return Snapshot(changed);
             }
 
             return snapshot.Offset;
@@ -163,6 +120,10 @@ internal sealed class ShapeService(
         catch (ShapeSealOffsetException)
         {
             return new MustRefetch("the shape lineage changed while sealing the snapshot");
+        }
+        catch (ShapeTooLargeException)
+        {
+            return new Unavailable("a snapshot row exceeds 8 MiB", "shape_too_large");
         }
         catch (ObjectDisposedException)
         {
@@ -173,66 +134,53 @@ internal sealed class ShapeService(
             return Busy;
         }
     }
-    public async ValueTask<ShapeRead> PageAsync(ShapeScope scope, ShapeLineage lineage, long snapshot, string? afterId, CancellationToken cancellationToken)
+
+    private static SnapshotResult Snapshot(ShapeRead read) => read switch
     {
-        if (await engine.OpenDatabaseAsync(scope.Database, cancellationToken).ConfigureAwait(false) is not { } store)
+        MustRefetch refetch => refetch,
+        NotFound missing => missing,
+        Unavailable unavailable => unavailable,
+        QuotaExceeded busy => busy,
+        _ => throw new System.Diagnostics.UnreachableException(),
+    };
+
+    public async ValueTask<ShapeRead> PageAsync(ShapeScope scope, ShapeLineage lineage, long snapshot, int page, CancellationToken cancellationToken)
+    {
+        if (await engine.OpenDatabaseAsync(scope.Database, cancellationToken).ConfigureAwait(false) is null)
         {
             return UnknownDatabase;
         }
 
-        var request = new ShapeFlightRequest(scope.Database, lineage.Handle, ShapeSnapshots.PageOffset(snapshot, afterId), false);
-        var read = Join(await flights.ReadAsync(request, NotParked, Read, cancellationToken).ConfigureAwait(false));
-        return await RecheckAsync(store, scope, lineage, read, cancellationToken).ConfigureAwait(false);
+        var request = new ShapeFlightRequest(scope.Database, lineage.Handle, ShapeSnapshots.PageOffset(snapshot, page), false);
+        return Join(await flights.ReadAsync(request, NotParked, Read, cancellationToken).ConfigureAwait(false));
 
         async ValueTask<ShapeRead> Read(IDatabaseStore current, CancellationToken token)
         {
-            return Detach(await ReadPageAtAsync(current, scope, lineage, snapshot, afterId, token).ConfigureAwait(false));
+            return Detach(await ReadPageAtAsync(current, scope, lineage, snapshot, page, token).ConfigureAwait(false));
         }
     }
-    private async ValueTask<ShapeRead> ReadPageAtAsync(IDatabaseStore store, ShapeScope scope, ShapeLineage lineage, long snapshot, string? afterId, CancellationToken cancellationToken)
+
+    private async ValueTask<ShapeRead> ReadPageAtAsync(IDatabaseStore store, ShapeScope scope, ShapeLineage lineage, long snapshot, int page, CancellationToken cancellationToken)
     {
         try
         {
-            if (await CurrentAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false) is { } stale)
+            if (await StaleAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false) is { } stale)
             {
                 return stale;
             }
+
             if (await retention.CheckOffsetAsync(store, lineage.Handle, snapshot, cancellationToken).ConfigureAwait(false) is { } below)
             {
                 return new MustRefetch(below.Message);
             }
-            var frontier = await sealer.FrontierAsync(store, cancellationToken).ConfigureAwait(false);
-            if (await snapshots.ReadPageAsync(store, lineage.Handle, snapshot, afterId, cancellationToken).ConfigureAwait(false) is not { } page)
-            {
-                if (snapshot > frontier && snapshot <= await ReadHeadAsync(store, cancellationToken).ConfigureAwait(false))
-                {
-                    return new Unavailable("the snapshot is above the local committed head; retry later");
-                }
 
+            if (await snapshots.ReadPageAsync(store, lineage.Handle, snapshot, page, cancellationToken).ConfigureAwait(false) is not { } body)
+            {
                 return new MustRefetch("the snapshot page is not sealed for this handle");
             }
 
-            try
-            {
-                if (await retention.CheckOffsetAsync(store, lineage.Handle, snapshot, cancellationToken).ConfigureAwait(false) is { } raised)
-                {
-                    page.Dispose();
-                    return new MustRefetch(raised.Message);
-                }
-
-                if (await CurrentAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false) is { } changed)
-                {
-                    page.Dispose();
-                    return changed;
-                }
-                var next = page.NextId is null ? DocumentRoute.Decimal(snapshot) : ShapeSnapshots.PageOffset(snapshot, page.NextId);
-                return new ShapeBody(page.Body, next, false, page);
-            }
-            catch
-            {
-                page.Dispose();
-                throw;
-            }
+            var next = body.NextRowid is null ? Decimal(snapshot) : ShapeSnapshots.PageOffset(snapshot, page + 1);
+            return new ShapeBody(body.Body, next, false, body);
         }
         catch (ShapeSealOffsetException)
         {
@@ -247,25 +195,26 @@ internal sealed class ShapeService(
             return Busy;
         }
     }
+
     public async ValueTask<ShapeRead> ReadAsync(ShapeScope scope, ShapeLineage lineage, long offset, CancellationToken cancellationToken)
     {
-        if (await engine.OpenDatabaseAsync(scope.Database, cancellationToken).ConfigureAwait(false) is not { } store)
+        if (await engine.OpenDatabaseAsync(scope.Database, cancellationToken).ConfigureAwait(false) is null)
         {
             return UnknownDatabase;
         }
 
-        var request = new ShapeFlightRequest(scope.Database, lineage.Handle, DocumentRoute.Decimal(offset), false);
-        var read = Join(await flights.ReadAsync(request, NotParked, Read, cancellationToken).ConfigureAwait(false));
-        return await RecheckAsync(store, scope, lineage, read, cancellationToken).ConfigureAwait(false);
+        var request = new ShapeFlightRequest(scope.Database, lineage.Handle, Decimal(offset), false);
+        return Join(await flights.ReadAsync(request, NotParked, Read, cancellationToken).ConfigureAwait(false));
 
         async ValueTask<ShapeRead> Read(IDatabaseStore current, CancellationToken token)
         {
             return Detach(await ReadAtAsync(current, scope, lineage, offset, fresh: false, token).ConfigureAwait(false));
         }
     }
+
     public async ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, CancellationToken cancellationToken)
     {
-        if (await engine.OpenDatabaseAsync(scope.Database, cancellationToken).ConfigureAwait(false) is not { } store)
+        if (await engine.OpenDatabaseAsync(scope.Database, cancellationToken).ConfigureAwait(false) is null)
         {
             return UnknownDatabase;
         }
@@ -276,13 +225,12 @@ internal sealed class ShapeService(
         var admitted = false;
         try
         {
-            var request = new ShapeFlightRequest(scope.Database, lineage.Handle, DocumentRoute.Decimal(offset), true, () =>
+            var request = new ShapeFlightRequest(scope.Database, lineage.Handle, Decimal(offset), true, () =>
             {
                 admitted = true;
                 gate.Admit(group);
             });
-            var read = Join(await flights.ReadAsync(request, Probe, Read, cancellationToken).ConfigureAwait(false));
-            return await RecheckAsync(store, scope, lineage, read, cancellationToken).ConfigureAwait(false);
+            return Join(await flights.ReadAsync(request, Probe, Read, cancellationToken).ConfigureAwait(false));
 
             async ValueTask<bool> Probe(IDatabaseStore current, CancellationToken token)
             {
@@ -294,9 +242,10 @@ internal sealed class ShapeService(
                 {
                     return false;
                 }
+
                 if (parked)
                 {
-                    registry.Advance(scope.Database, scope.Collection.Name, scope.CanonicalFilter, offset);
+                    registry.Advance(scope.Database, scope.Table, offset);
                     gate.Park(group);
                 }
 
@@ -314,28 +263,21 @@ internal sealed class ShapeService(
             gate.Leave(key, group, admitted);
         }
     }
-    public ValueTask<ResumeResult> ResolveAsync(ShapeScope scope, ShapeLineage lineage, ReadOnlyMemory<byte> scope16, FeedCursor cursor, CancellationToken cancellationToken) =>
-        ValueTask.FromResult<ResumeResult>(new MustRefetch("resume prefix cannot be proven"));
+
     private async ValueTask<ShapeRead> ReadAtAsync(IDatabaseStore store, ShapeScope scope, ShapeLineage lineage, long offset, bool fresh, CancellationToken cancellationToken)
     {
         try
         {
-            if (await CurrentAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false) is { } stale)
+            if (await StaleAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false) is { } stale)
             {
                 return stale;
             }
 
-            var definition = Definition(store, scope, lineage);
-            var frontier = await sealer.FrontierAsync(store, cancellationToken).ConfigureAwait(false);
-            var head = await ReadHeadAsync(store, cancellationToken).ConfigureAwait(false);
+            var definition = ShapeHandle.Definition(store, scope);
+            var head = await sealer.FrontierAsync(store, cancellationToken).ConfigureAwait(false);
             if (offset > head)
             {
-                return new MustRefetch("the offset is above the sealed head");
-            }
-
-            if (offset > frontier)
-            {
-                return new Unavailable("the offset is above the local committed head; retry later", "unavailable");
+                return new MustRefetch("the offset is above the head");
             }
 
             if (await retention.CheckOffsetAsync(store, lineage.Handle, offset, cancellationToken).ConfigureAwait(false) is { } below)
@@ -343,130 +285,36 @@ internal sealed class ShapeService(
                 return new MustRefetch(below.Message);
             }
 
-            var read = fresh || offset == frontier
+            var read = fresh || offset == head
                 ? await FreshAsync(store, definition, offset, cancellationToken).ConfigureAwait(false)
                 : await ClosedAsync(store, definition, offset, cancellationToken).ConfigureAwait(false);
-            if (read is ShapeBody body)
+            if (read is ShapeBody body && await StaleAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false) is { } changed)
             {
-                try
-                {
-                    if (await retention.CheckOffsetAsync(store, lineage.Handle, offset, cancellationToken).ConfigureAwait(false) is { } raised)
-                    {
-                        body.Lease?.Dispose();
-                        return new MustRefetch(raised.Message);
-                    }
-                    if (await CurrentAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false) is { } changed)
-                    {
-                        body.Lease?.Dispose();
-                        return changed;
-                    }
-                }
-                catch
-                {
-                    body.Lease?.Dispose();
-                    throw;
-                }
+                body.Lease?.Dispose();
+                return changed;
             }
 
             return read;
         }
         catch (ShapeSealOffsetException)
         {
-            return new MustRefetch("the offset is not a retained commit boundary");
+            return await StaleAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false)
+                ?? new MustRefetch("the offset is not a retained commit boundary");
         }
         catch (ShapeTooLargeException)
         {
-            return new Unavailable("a materialized commit exceeds 8 MiB", "shape_too_large");
+            return new Unavailable("a commit exceeds 8 MiB of shape operations", "shape_too_large");
         }
         catch (ObjectDisposedException)
         {
-            return new Unavailable("the database is closing; retry later", "unavailable");
+            return new Unavailable("the database is closing; retry later");
         }
         catch (Exception error) when (error is StorageBusyException or QosMemoryException)
         {
             return Busy;
         }
     }
-    private async ValueTask<ShapeRead> RecheckAsync(IDatabaseStore store, ShapeScope scope, ShapeLineage lineage, ShapeRead read,
-        CancellationToken cancellationToken)
-    {
-        if (scope.Filter.Access is null && !CollectionRuleAccess.EndUser)
-        {
-            return read;
-        }
 
-        try
-        {
-            if (await CurrentAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false) is { } changed)
-            {
-                if (read is ShapeBody body)
-                {
-                    body.Lease?.Dispose();
-                }
-                return changed;
-            }
-            if (read is ShapeBody retained && scope.Filter.Access?.Owner is { } owner)
-            {
-                await using var transaction = await storage.BeginTransactionAsync(store, write: false, cancellationToken).ConfigureAwait(false);
-                var authorization = transaction as IShapeOwnerAuthorization
-                    ?? throw new NotSupportedException("the storage transaction does not support shape ownership checks");
-                if (!await authorization.AuthorizeShapeBodyAsync(scope.Collection.Name, owner, retained.Json, cancellationToken).ConfigureAwait(false))
-                {
-                    retained.Lease?.Dispose();
-                    return ShapeAccess.Denied;
-                }
-            }
-            return read;
-        }
-        catch
-        {
-            if (read is ShapeBody body)
-            {
-                body.Lease?.Dispose();
-            }
-            throw;
-        }
-    }
-    private async ValueTask<ShapeRead?> CurrentAsync(IDatabaseStore store, ShapeScope scope, ShapeLineage lineage, CancellationToken cancellationToken)
-    {
-        var resolved = await documents.GetCollectionAsync(scope.Database, scope.Collection.Name, cancellationToken).ConfigureAwait(false);
-        if (resolved is not CollectionInfo current)
-        {
-            return resolved switch
-            {
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
-                Conflict conflict => new Unavailable(conflict.Message),
-                _ => throw new System.Diagnostics.UnreachableException(),
-            };
-        }
-
-        var canonical = scope.CanonicalFilter;
-        if (scope.Filter.Access is { } access)
-        {
-            var bound = await ShapeAccess.BindAsync(engine, scope, access.Identity, cancellationToken).ConfigureAwait(false);
-            if (bound is not ShapeScope authorized)
-            {
-                return bound switch
-                {
-                    Forbidden denied => denied,
-                    NotFound missing => missing,
-                    Unavailable unavailable => unavailable,
-                    ShapeScope => throw new System.Diagnostics.UnreachableException(),
-                };
-            }
-
-            current = authorized.Collection;
-            canonical = authorized.CanonicalFilter;
-        }
-        else if (CollectionRuleAccess.EndUser)
-        {
-            return ShapeAccess.Denied;
-        }
-
-        var identity = ShapeHandle.ComputeCanonical(store, current, canonical);
-        return identity.Handle == lineage.Handle ? (ShapeRead?)null : new MustRefetch("the shape lineage changed", new ShapeLineage(identity.ShapeId, identity.Handle));
-    }
     private async ValueTask<ShapeRead> ClosedAsync(IDatabaseStore store, ShapeSealDefinition definition, long offset, CancellationToken cancellationToken)
     {
         if (_closed.Get(definition.Handle, offset) is { } cached)
@@ -486,10 +334,11 @@ internal sealed class ShapeService(
             return new MustRefetch("the offset is not a retained commit boundary");
         }
 
-        var body = new ShapeBody(chunk.Body, DocumentRoute.Decimal(chunk.EndOffset), false, chunk);
+        var body = new ShapeBody(chunk.Body, Decimal(chunk.EndOffset), false, chunk);
         _closed.Add(definition.Handle, offset, body);
         return body;
     }
+
     private async ValueTask<ShapeRead> FreshAsync(IDatabaseStore store, ShapeSealDefinition definition, long offset, CancellationToken cancellationToken)
     {
         var fresh = await ReadFreshAsync(store, definition, offset, cancellationToken).ConfigureAwait(false);
@@ -499,12 +348,7 @@ internal sealed class ShapeService(
             fresh = await ReadFreshAsync(store, definition, offset, cancellationToken).ConfigureAwait(false);
         }
 
-        if (fresh is null)
-        {
-            return new MustRefetch("the offset is not a retained commit boundary");
-        }
-
-        return fresh;
+        return fresh is null ? new MustRefetch("the offset is not a retained commit boundary") : fresh;
     }
 
     private async ValueTask<ShapeBody?> ReadFreshAsync(IDatabaseStore store, ShapeSealDefinition definition, long offset, CancellationToken cancellationToken)
@@ -521,6 +365,12 @@ internal sealed class ShapeService(
 
     private static IShapeFreshStorage Fresh(IStorageTransaction transaction) =>
         transaction as IShapeFreshStorage ?? throw new NotSupportedException("the storage transaction does not support shape fresh bodies");
+
+    private static IShapeTableStorage Tables(IStorageTransaction transaction) =>
+        transaction as IShapeTableStorage ?? throw new NotSupportedException("the storage transaction does not support shape tables");
+
+    private static string Decimal(long value) => value.ToString(CultureInfo.InvariantCulture);
+
     private static ShapeRead Detach(ShapeRead read)
     {
         if (read is not ShapeBody body)
@@ -542,6 +392,7 @@ internal sealed class ShapeService(
             return new ShapeBody(body.Json.ToArray(), body.NextOffset, body.UpToDate);
         }
     }
+
     private static ShapeRead Hold(ShapeFlight<ShapeRead> flight)
     {
         if (flight.Value is not ShapeBody body)
@@ -552,6 +403,7 @@ internal sealed class ShapeService(
 
         return new ShapeBody(body.Json, body.NextOffset, body.UpToDate, flight);
     }
+
     private static readonly ShapeHeadProbe NotParked = static (_, _) => ValueTask.FromResult(false);
 
     private static ShapeRead Join(ShapeFlightResult<ShapeRead> result) => result switch
@@ -561,18 +413,21 @@ internal sealed class ShapeService(
         NotFound => UnknownDatabase,
         Unavailable stuck => stuck,
     };
+
     private void ScheduleMaintenance(ShapeScope scope, IDatabaseStore store, ShapeLineage lineage)
     {
         if (Interlocked.CompareExchange(ref _maintaining, 1, 0) != 0)
         {
             return;
         }
+
         var admission = memory.TryReserve(MemoryLane.Bulk, 64 * 1024, scope.Database);
         if (admission is null)
         {
             Volatile.Write(ref _maintaining, 0);
             return;
         }
+
         _ = Task.Run(async () =>
         {
             using (admission)
@@ -582,7 +437,7 @@ internal sealed class ShapeService(
             {
                 try
                 {
-                    if (await CurrentAsync(store, scope, lineage, stop.Token).ConfigureAwait(false) is null)
+                    if (await StaleAsync(store, scope, lineage, stop.Token).ConfigureAwait(false) is null)
                     {
                         await MaintainAsync(scope, store, lineage, stop.Token).ConfigureAwait(false);
                     }
@@ -609,18 +464,12 @@ internal sealed class ShapeService(
             var requeued = false;
             try
             {
-                var current = await documents.GetCollectionAsync(scope.Database, retired.Collection, cancellationToken).ConfigureAwait(false);
-                if (current is CollectionInfo collection
-                    && ShapeHandle.ComputeCanonical(store, collection, retired.Canonical).Handle == retired.Handle)
+                if (await CurrentAsync(store, scope.Database, retired.Table, cancellationToken).ConfigureAwait(false) is ResolvedShape current
+                    && current.Lineage.Handle == retired.Handle)
                 {
                     return;
                 }
-                if (current is not CollectionInfo and not NotFound)
-                {
-                    registry.Retire(retired);
-                    requeued = true;
-                    return;
-                }
+
                 if (await retention.DropHandleAsync(store, retired.Handle, cancellationToken).ConfigureAwait(false) > 0)
                 {
                     registry.Retire(retired);
@@ -642,7 +491,7 @@ internal sealed class ShapeService(
             }
         }
 
-        if (registry.ClaimTrim(scope.Database, scope.Collection.Name, scope.CanonicalFilter))
+        if (registry.ClaimTrim(scope.Database, scope.Table))
         {
             try
             {
@@ -653,16 +502,8 @@ internal sealed class ShapeService(
             }
         }
     }
-    private static ShapeSealDefinition Definition(IDatabaseStore store, ShapeScope scope, ShapeLineage lineage) =>
-        new(lineage.ShapeId, lineage.Handle, scope.Collection.Name, scope.Collection.Id, ResumeScope(scope.Database, scope.Collection, scope.CanonicalFilter),
-            store.Incarnation, Predicate(scope), scope.Filter.Access?.Owner);
-
-    private static ShapeSnapshotDefinition SnapshotDefinition(IDatabaseStore store, ShapeScope scope, ShapeLineage lineage) =>
-        new(lineage.Handle, lineage.ShapeId, scope.Collection.Name, scope.Collection.Id, ResumeScope(scope.Database, scope.Collection, scope.CanonicalFilter),
-            store.Incarnation, Predicate(scope), scope.Filter.Access is { Owner: not null } access ? access.Rules.OwnerFilter(access.Identity.Actor) : null);
-
-    private static Func<StoredDocument, bool>? Predicate(ShapeScope scope) => scope.Filter.Filter is null && scope.Filter.Access?.Owner is null ? null : scope.Filter.Matches;
 }
+
 internal sealed class ClosedChunks(IMemoryBudget memory)
 {
     private const int MaxEntries = 512;

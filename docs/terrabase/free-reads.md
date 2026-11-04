@@ -1,11 +1,11 @@
 # Free replication reads for TerraBase (the ElectricSQL trick)
 
-- **Status:** plan, checked against `main` at `519c9ff9` (2026-10-13). Shape reads remain proposed; merged prerequisites are listed in section 2.
-  Decisions are in section 7. No CDN (T2) is selected.
-- **Protocol:** v1. Handle domain `TB-SHAPE-HANDLE-V1`, handle prefix `h1-`, shape id domain `TB-SHAPE-V1`.
-- **Normative contract:** [`shape-reads.md`](shape-reads.md) defines the wire protocol and exact byte layouts.
-  [`shape-vectors.json`](shape-vectors.json) holds the conformance vectors (`shape-reads.md` section 16). Where this plan
-  and those files differ, those files win.
+- **Status:** the 2026-10-13 design of protocol v1 over document collections and `_tb_feed`. Since PIVOT F1
+  (2026-11-03) shapes are SQL tables read from the home database's `turso_cdc`, protocol v2
+  ([`shape-reads.md`](shape-reads.md)); sections 3.2 to 3.7 and 3.10 below describe v1 only. The transport tiers,
+  encrypt-then-cache and bounds (3.8, 3.9, 3.11) still hold, with R2 behind Cloudflare as the shared tier
+  ([`free-reads-cdn.md`](free-reads-cdn.md)).
+- **Normative contract:** [`shape-reads.md`](shape-reads.md). Where this plan and it differ, it wins.
 - **Goal:** N clients that read or follow the same data cost TerraBase about **one storage read per change per cache
   location**, not N. Reads stay authorized, region-local and durable-only: in a cell, remote-acked (FR-25).
 - **Source plan:** `.cos/FREE_REPLICATION_READ.md`, with section 4 decisions in `.cos/replication-improvement-plan.md`.

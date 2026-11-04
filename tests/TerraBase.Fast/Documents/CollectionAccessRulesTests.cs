@@ -392,8 +392,6 @@ public sealed partial class CollectionAccessRulesTests
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { value = "private-project" })).Status.ShouldBe(HttpStatusCode.Created);
         using var client = crossProject ? Reader(api, DocumentApi.NewId()) : api.Management.WithToken(null);
-        var shape = $"{api.Collections}/items/shape";
-        var handle = "h1-0000000000000000";
         var requests = new (HttpMethod Method, string Path, object? Body, string? Patch)[]
         {
             (HttpMethod.Get, api.Documents, null, null),
@@ -405,9 +403,6 @@ public sealed partial class CollectionAccessRulesTests
             (HttpMethod.Post, api.Query, new { count = true }, null),
             (HttpMethod.Post, api.Transactions, new { ops = new[] { new { op = "delete", collection = "items", id } } }, null),
             (HttpMethod.Get, api.DatabasePath() + "/changes", null, null),
-            (HttpMethod.Get, shape + "?offset=-1", null, null),
-            (HttpMethod.Get, shape + $"/manifest?handle={handle}&offset=0", null, null),
-            (HttpMethod.Get, shape + $"/keys?handle={handle}&epoch=0&key_id={DocumentApi.NewId()}", null, null),
         };
         var otherProject = DocumentApi.NewId();
         foreach (var request in requests)

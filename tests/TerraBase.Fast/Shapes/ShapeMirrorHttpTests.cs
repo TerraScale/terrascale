@@ -9,38 +9,18 @@ using TerraBase.Testing;
 namespace TerraBase.Fast.Shapes;
 
 /// <summary>
-/// The shape mirror (FR-22) over the real FR-20 read path: every shape service, flight, sealer, snapshot store, retention
+/// The shape mirror over the real table shape read path: every shape service, flight, sealer, snapshot store, retention
 /// pass, crypto and mirror is the server's own registration, and only the platform bucket is the in-memory fake. Objects
 /// appear only through the services' seal callbacks, are listed by the manifest route, and open with the key route's key.
 /// </summary>
 public sealed class ShapeMirrorHttpTests
 {
-    private const string Where = """{"eq":["/status","open"]}""";
-    private const int LargeBody = 600_000;
-
-    [Test]
-    public async Task Shape_objects_use_their_own_transport_while_backup_key_material_stays_in_the_backup_store()
-    {
-        var shapes = new FakeS3();
-        var backups = new FakeS3();
-        await using var host = await MirrorHost.StartAsync(shapes, backups);
-        await host.PutAsync(new { status = "open" });
-        var shape = await host.BootstrapAsync(where: null);
-        var objects = await host.ManifestAsync(shape, shape.FirstPage, count: 1);
-        var key = objects[0].GetProperty("object").GetString()!;
-        await Assert.That(shapes.Objects.ContainsKey(key)).IsTrue();
-        await Assert.That(backups.Objects.Keys.Any(key => key.StartsWith("v1/shapes/", StringComparison.Ordinal))).IsFalse();
-        await Assert.That(shapes.Objects.Keys.All(key => key.StartsWith("v1/shapes/", StringComparison.Ordinal))).IsTrue();
-        await Assert.That(backups.Objects.Count).IsGreaterThan(0);
-        await Assert.That((await host.OpenAsync(shape, objects[0])).SequenceEqual(shape.PageBytes)).IsTrue();
-    }
-
     [Test]
     public async Task Real_http_snapshot_and_chunk_reads_are_mirrored_by_the_service_callbacks_and_decrypt_to_the_origin_bytes()
     {
         await using var host = await MirrorHost.StartAsync();
         await host.PutAsync(new { status = "open" });
-        var shape = await host.BootstrapAsync(where: null);
+        var shape = await host.BootstrapAsync();
         await host.PutAsync(new { status = "open" });
         using var chunk = await host.GetAsync(shape.Uri(shape.Snapshot));
         await Assert.That(chunk.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -67,47 +47,6 @@ public sealed class ShapeMirrorHttpTests
             .Because("a listed offset is answered from the mirror's metadata");
     }
 
-    [Test]
-    public async Task A_filtered_manifest_and_key_follow_the_filtered_handle_and_release_every_read_lease()
-    {
-        await using var host = await MirrorHost.StartAsync();
-        await host.PutAsync(new { status = "open" });
-        await host.PutAsync(new { status = "closed" });
-        var shape = await host.BootstrapAsync(Where);
-        var unfiltered = await host.BootstrapAsync(where: null);
-        await Assert.That(shape.Handle).IsNotEqualTo(unfiltered.Handle);
-        // About 600 KB, so one leaked read lease is far larger than the server's background reservations.
-        await host.PutAsync(new { status = "open", pad = new string('x', LargeBody) });
-        using (var chunk = await host.GetAsync(shape.Uri(shape.Snapshot)))
-        {
-            await Assert.That(chunk.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            var objects = await host.ManifestAsync(shape, shape.Snapshot, count: 1);
-            var decrypted = await host.OpenAsync(shape, objects[0]);
-            var chunkBytes = await chunk.Content.ReadAsByteArrayAsync();
-            await Assert.That(decrypted.SequenceEqual(chunkBytes)).IsTrue()
-                .Because("the key route releases the filtered handle's key, which opens its mirrored chunk");
-        }
-
-        // The filtered handle without its where names another lineage.
-        using (var stale = await host.GetAsync(unfiltered.ManifestUri(shape.Snapshot, handle: shape.Handle)))
-        {
-            await Assert.That(stale.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-            await Assert.That(Header(stale, "TB-Shape-Handle")).IsEqualTo(unfiltered.Handle);
-            using var error = JsonDocument.Parse(await stale.Content.ReadAsByteArrayAsync());
-            await Assert.That(error.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("must_refetch");
-        }
-
-        var baseline = await host.SettledReservedBytesAsync();
-        for (var request = 0; request < 4; request++)
-        {
-            using var listed = await host.GetAsync(shape.ManifestUri(shape.Snapshot));
-            await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        }
-
-        await TerraBaseTestServer.EventuallyAsync(async token => await host.Api.ReservedBytesAsync(token) < baseline + LargeBody,
-            TimeSpan.FromSeconds(30));
-    }
-
     private static void Require(bool condition, string because)
     {
         if (!condition)
@@ -127,15 +66,13 @@ public sealed class ShapeMirrorHttpTests
         .Sum(line => double.Parse(line.Split(' ')[^1], CultureInfo.InvariantCulture));
 
     /// <summary>One bootstrapped lineage: its handle, the snapshot's first page as served, and the decimal snapshot offset.</summary>
-    private sealed record Shape(string Base, string? Where, string Handle, string ShapeId, string FirstPage, string Snapshot, byte[] PageBytes)
+    private sealed record Shape(string Base, string Handle, string ShapeId, string FirstPage, string Snapshot, byte[] PageBytes)
     {
         public Uri Uri(string offset, bool live = false) =>
-            new($"{Base}/shape?handle={Handle}&offset={offset}{(live ? "&live=true" : "")}{Filter}", UriKind.Relative);
+            new($"{Base}/shape?handle={Handle}&offset={offset}{(live ? "&live=true" : "")}", UriKind.Relative);
 
         public Uri ManifestUri(string offset, string? handle = null) =>
-            new($"{Base}/shape/manifest?handle={handle ?? Handle}&offset={offset}{Filter}", UriKind.Relative);
-
-        private string Filter => Where is null ? "" : "&where=" + System.Uri.EscapeDataString(Where);
+            new($"{Base}/shape/manifest?handle={handle ?? Handle}&offset={offset}", UriKind.Relative);
     }
 
     /// <summary>One stock server whose platform bucket is the in-memory fake; nothing in the shape slice is replaced.</summary>
@@ -147,7 +84,7 @@ public sealed class ShapeMirrorHttpTests
 
         public CancellationToken Cancellation { get; } = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
 
-        private string Base => $"{Api.Collections}/{DocumentApi.Collection}";
+        private string Base => $"{Api.DatabasePath()}/tables/notes";
 
         public static async Task<MirrorHost> StartAsync(FakeS3? shapes = null, FakeS3? backups = null)
         {
@@ -159,22 +96,28 @@ public sealed class ShapeMirrorHttpTests
                 shapes.RouteShapes(services);
                 ManualBackupHosting.Configure(services);
             });
+            var created = await api.SendRawAsync(HttpMethod.Post, api.DatabasePath() + "/sql/execute",
+                """{"statements":[{"sql":"CREATE TABLE notes (id INTEGER PRIMARY KEY, status TEXT, pad TEXT)"}]}""", "application/json");
+            created.Status.ShouldBe(HttpStatusCode.OK);
             return new MirrorHost(api, shapes);
         }
 
         public ValueTask DisposeAsync() => Api.DisposeAsync();
 
-        public async Task PutAsync(object document) =>
-            (await Api.PutAsync(DocumentApi.NewId(), document)).Status.ShouldBe(HttpStatusCode.Created);
+        public async Task PutAsync(object row)
+        {
+            var body = JsonSerializer.Serialize(new { statements = new[] { new { sql = "INSERT INTO notes (status, pad) SELECT json_extract(?1, '$.status'), json_extract(?1, '$.pad')", args = new object[] { JsonSerializer.Serialize(row) } } } });
+            (await Api.SendRawAsync(HttpMethod.Post, Api.DatabasePath() + "/sql/execute", body, "application/json")).Status.ShouldBe(HttpStatusCode.OK);
+        }
 
         public Task<HttpResponseMessage> GetAsync(Uri target) => Api.Client.GetAsync(target, Cancellation);
 
         public Task<string> ScrapeAsync() => Api.Server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative), Cancellation);
 
         /// <summary>offset=-1, then the 307's single snapshot page, whose next_offset is the decimal snapshot offset.</summary>
-        public async Task<Shape> BootstrapAsync(string? where)
+        public async Task<Shape> BootstrapAsync()
         {
-            var target = $"{Base}/shape?offset=-1" + (where is null ? "" : "&where=" + Uri.EscapeDataString(where));
+            var target = $"{Base}/shape?offset=-1";
             using var bootstrap = await GetAsync(new Uri(target, UriKind.Relative));
             bootstrap.StatusCode.ShouldBe(HttpStatusCode.TemporaryRedirect);
             var handle = Header(bootstrap, "TB-Shape-Handle")!;
@@ -190,7 +133,7 @@ public sealed class ShapeMirrorHttpTests
                 throw new InvalidOperationException("the test's snapshot must fit one page");
             }
 
-            return new Shape(Base, where, handle, json.RootElement.GetProperty("shape_id").GetString()!, firstPage, snapshot, bytes);
+            return new Shape(Base, handle, json.RootElement.GetProperty("shape_id").GetString()!, firstPage, snapshot, bytes);
         }
 
         /// <summary>Polls the manifest route until it lists <paramref name="count"/> objects from <paramref name="offset"/>.</summary>
@@ -222,19 +165,6 @@ public sealed class ShapeMirrorHttpTests
             using var released = JsonDocument.Parse(await key.Content.ReadAsByteArrayAsync());
             return ShapeObjects.Open(bytes, shape.Handle, entry.GetProperty("offset").GetString()!, long.Parse(epoch, CultureInfo.InvariantCulture), keyId,
                 Base64Url.DecodeFromChars(released.RootElement.GetProperty("key").GetString()!));
-        }
-
-        /// <summary>The reserved-bytes gauge once two consecutive scrapes agree.</summary>
-        public async Task<double> SettledReservedBytesAsync()
-        {
-            var previous = -1d;
-            var current = 0d;
-            await TerraBaseTestServer.EventuallyAsync(async token =>
-            {
-                (previous, current) = (current, await Api.ReservedBytesAsync(token));
-                return previous == current;
-            }, TimeSpan.FromSeconds(30));
-            return current;
         }
     }
 }

@@ -14,17 +14,16 @@ public static class ShapesExtensions
     private static readonly Dictionary<string, (string Description, string? Example, string[] Headers)> Responses = new(StringComparer.Ordinal)
     {
         ["200"] = ("A snapshot page, closed chunk or fresh body; the exact bytes the ETag hashes.", $$$"""
-            {"shape_id":"a07ef7c2873b7b4c4fcbb88c9e682ca5","handle":"{{{Handle}}}","offset":"2","next_offset":"4","covered_offset":"4","values_at":"4","up_to_date":false,"cursor_resume":"opaque-cursor-from-server","changes":[{"offset":"4","ops":[{"op":"upsert","id":"01ARZ3NDEKTSV4RRFFQ69G5FB0","version":"opaque-version-from-server","document":{"title":"Updated"}},{"op":"delete","id":"01ARZ3NDEKTSV4RRFFQ69G5FB1"}]}]}
+            {"shape_id":"a07ef7c2873b7b4c4fcbb88c9e682ca5","handle":"{{{Handle}}}","offset":"2","next_offset":"4","values_at":"4","up_to_date":false,"changes":[{"offset":"4","ops":[{"op":"update","key":"7","row":{"id":7,"title":"Updated"}},{"op":"delete","key":"8"}]}]}
             """, ["ETag", "TB-Shape-Handle", "TB-Shape-Next-Offset", "TB-Shape-Up-To-Date", "TB-Shape-Cursor"]),
         ["304"] = ("If-None-Match matched; reuse the cached body.", null, ["ETag", "TB-Shape-Handle", "TB-Shape-Next-Offset", "TB-Shape-Up-To-Date", "TB-Shape-Cursor"]),
-        ["307"] = ("offset=-1: Location names snap.<S>.0 of the newest published snapshot, or a resume's local commit boundary.", null, ["Location", "TB-Shape-Handle"]),
-        ["400"] = ("Error codes: invalid_request, invalid_query.", Error("invalid_request", "resume cursor is malformed"), []),
+        ["307"] = ("offset=-1: Location names snap.<S>.0 of the newest snapshot.", null, ["Location", "TB-Shape-Handle"]),
+        ["400"] = ("Error codes: invalid_request, unsupported_table.", Error("unsupported_table", "shapes read ordinary rowid tables"), []),
         ["401"] = ("Error codes: invalid_key.", Error("invalid_key", "The request cannot be served."), []),
-        ["403"] = ("Error codes: forbidden_scope, forbidden.", Error("forbidden_scope", "The request cannot be served."), []),
-        ["404"] = ("Error codes: unknown_database, unknown_collection.", Error("unknown_collection", "the collection does not exist"), []),
+        ["403"] = ("Error codes: forbidden_scope.", Error("forbidden_scope", "The request cannot be served."), []),
+        ["404"] = ("Error codes: unknown_database, unknown_table.", Error("unknown_table", "the table does not exist"), []),
         ["409"] = ("Error codes: must_refetch; the body and TB-Shape-Handle name the current handle. Restart at offset=-1.",
             $$$"""{"error":{"code":"must_refetch","message":"shape lineage changed","handle":"{{{Handle}}}"}}""", ["TB-Shape-Handle"]),
-        ["414"] = ("Error codes: uri_too_long.", Error("uri_too_long", "the continuation URL would not fit the 8 KiB request line"), []),
         ["429"] = ("Error codes: shape_busy. Keep state and retry with backoff.", Error("shape_busy", "too many shape flights"), []),
         ["503"] = ("Error codes: unavailable, shape_too_large. Keep state and retry with backoff.", Error("unavailable", "shape storage changed or is busy; retry later"), []),
     };
@@ -32,7 +31,7 @@ public static class ShapesExtensions
     private static readonly Dictionary<string, string> Headers = new(StringComparer.Ordinal)
     {
         ["ETag"] = "\"<shape_id>:<handle>:<offset>:<next_offset>:<digest>\"",
-        ["Location"] = "The continuation: where (canonical), then handle, then offset.",
+        ["Location"] = "The continuation: handle, then offset.",
         ["TB-Shape-Handle"] = "The current handle.",
         ["TB-Shape-Next-Offset"] = "next_offset of the body.",
         ["TB-Shape-Up-To-Date"] = "true or false.",
@@ -96,7 +95,6 @@ public static class ShapesExtensions
                 provider.GetRequiredService<ShapeMirror>().SnapshotSealed, provider.GetRequiredService<ILogger<ShapeSnapshots>>()))
             .AddSingleton<IShapeRetention>(provider => new ShapeRetention(provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<IShapeStorage>(),
                 provider.GetRequiredService<ShapeMirror>().FloorTrimmedAsync))
-            .AddSingleton<IShapeFilterRegistry>(provider => new ShapeFilterRegistry(provider.GetRequiredService<IMemoryBudget>()))
             .AddSingleton<IShapeFlights<ShapeRead>>(provider => new ShapeFlights<ShapeRead>(provider.GetRequiredService<IStorageEngine>(),
                 provider.GetRequiredService<IShapeFlightSealer>(), provider.GetRequiredService<IMemoryBudget>(),
                 provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<IHostApplicationLifetime>(), provider.GetRequiredService<IShapeMetrics>()))
@@ -105,7 +103,6 @@ public static class ShapesExtensions
             .AddSingleton<IShapeSnapshots>(provider => provider.GetRequiredService<ShapeService>())
             .AddSingleton<IShapeChunks>(provider => provider.GetRequiredService<ShapeService>())
             .AddSingleton<IShapeLiveTail>(provider => provider.GetRequiredService<ShapeService>())
-            .AddSingleton<IShapeResume>(provider => provider.GetRequiredService<ShapeService>())
             .AddSingleton<ShapeMirror>(provider => new ShapeMirror(provider.GetRequiredService<IStorageEngine>(),
                 provider.GetRequiredService<IShapeStorage>(), provider.GetRequiredService<IShapeMetrics>(), provider.GetRequiredService<IMemoryBudget>(), provider.GetRequiredService<TimeProvider>(),
                 () => provider.GetRequiredService<IShapeCrypto>(),

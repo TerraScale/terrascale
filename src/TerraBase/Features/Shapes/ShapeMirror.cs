@@ -96,7 +96,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         }
     }
 
-    internal void SnapshotSealed(IDatabaseStore store, ShapeSnapshotDefinition shape, ShapeSnapshot snapshot)
+    internal void SnapshotSealed(IDatabaseStore store, ShapeSealDefinition shape, ShapeSnapshot snapshot)
     {
         if (store.Tenant is { } tenant)
         {
@@ -162,7 +162,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         Validate(shapeId, handle, offset);
         if (_objects is null || sealedBody.Length > ShapeCrypto.MaxPlainBytes || nextOffset.Length > 1100
             || coveredOffset < 0 || valuesAt < coveredOffset || sealedAt > _time.GetUtcNow()
-            || sealedAt < _time.GetUtcNow() - FeedCursor.Retention)
+            || sealedAt < _time.GetUtcNow() - ShapeRetention.Age)
         {
             return false;
         }
@@ -536,7 +536,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
 
                     after = stored.Key;
                     var head = await RetentionHeadAsync(stored.Key, linked.Token).ConfigureAwait(false);
-                    if (head is not null && head.SealedAt < (_time.GetUtcNow() - FeedCursor.Retention).ToUnixTimeMilliseconds()
+                    if (head is not null && head.SealedAt < (_time.GetUtcNow() - ShapeRetention.Age).ToUnixTimeMilliseconds()
                         && await _objects.DeleteAsync(stored.Key, linked.Token).ConfigureAwait(false))
                     {
                         Remove(stored.Key);
@@ -606,8 +606,9 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
             return;
         }
 
-        string? after = null;
-        do
+        var index = 0;
+        var more = true;
+        while (more)
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30), _time);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
@@ -615,7 +616,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
             await using (var transaction = await _storage.BeginTransactionAsync(store, write: false, linked.Token).ConfigureAwait(false))
             {
                 page = await ((IShapeSnapshotStorage)transaction).ReadShapeSnapshotPageAsync(pending.Handle,
-                    pending.CoveredOffset, after, _memory, linked.Token).ConfigureAwait(false);
+                    pending.CoveredOffset, index, _memory, linked.Token).ConfigureAwait(false);
             }
 
             if (page is null)
@@ -625,13 +626,13 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
 
             using (page)
             {
-                var offset = ShapeSnapshots.PageOffset(pending.CoveredOffset, after);
-                var next = page.NextId is null ? Number(pending.CoveredOffset) : ShapeSnapshots.PageOffset(pending.CoveredOffset, page.NextId);
+                more = page.NextRowid is not null;
+                var offset = ShapeSnapshots.PageOffset(pending.CoveredOffset, index);
+                var next = more ? ShapeSnapshots.PageOffset(pending.CoveredOffset, index + 1) : Number(pending.CoveredOffset);
                 await MirrorBodyAsync(pending with { Offset = offset, NextOffset = next, Body = page.Body }, linked.Token).ConfigureAwait(false);
-                after = page.NextId;
+                index++;
             }
         }
-        while (after is not null);
     }
 
     private async Task MirrorBodyAsync(Pending pending, CancellationToken cancellationToken)
@@ -644,7 +645,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         var key = ShapeObjectStore.Key(pending.ShapeId, pending.Handle, pending.Offset);
         var floor = await FloorAsync(pending.Database, pending.Handle, cancellationToken).ConfigureAwait(false);
         var floorOffset = long.TryParse(pending.Offset, NumberStyles.None, CultureInfo.InvariantCulture, out var at) ? at : pending.CoveredOffset;
-        if (!pending.AdoptOnly && (floorOffset < floor || pending.SealedAt < _time.GetUtcNow() - FeedCursor.Retention))
+        if (!pending.AdoptOnly && (floorOffset < floor || pending.SealedAt < _time.GetUtcNow() - ShapeRetention.Age))
         {
             return;
         }
@@ -734,7 +735,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
     }
 
     private bool Retained(ShapeObjectHead head, long floor) => head.FloorOffset >= floor
-        && head.SealedAt >= (_time.GetUtcNow() - FeedCursor.Retention).ToUnixTimeMilliseconds();
+        && head.SealedAt >= (_time.GetUtcNow() - ShapeRetention.Age).ToUnixTimeMilliseconds();
 
     private void RememberProof(string key, ShapeObjectHead head, TenantContext database)
     {

@@ -1,59 +1,29 @@
-# Shape chunk sealer (FR-12)
+# Shape chunk sealer
 
-`IShapeSealer` seals a collection's local apply order into immutable bodies in
-`_tb_shape_chunk`. Its implementation and SQLite transaction operations live in
-`Features/Shapes/ShapeSealer.cs` and
-`Engine/Sqlite/SqliteStorageTransaction.Shapes.cs`. The storage format remains v7.
+`IShapeSealer` (`Features/Shapes/ShapeSealer.cs`, `Engine/Turso/TursoStorageTransaction.Shapes.cs`) seals a table's
+captured changes into immutable bodies in `_tb_shape_chunk`. The protocol is [shape-reads.md](shape-reads.md).
 
-The caller supplies a `ShapeSealDefinition`: lineage-bound shape id and handle,
-collection and generation, 16-byte resume scope, and an optional
-`Func<StoredDocument, bool>` predicate over the materialized document, including its
-id. This seam is intended to accept FR-15's `Matches(StoredDocument)` delegate.
-The identity and predicate must remain fixed for that handle. The writer verifies
-the collection generation before sealing, so a stale handle cannot seal a re-created
-collection. An absent predicate includes every visible document. Registration and endpoint wiring belong to FR-10
-and FR-20.
+The caller supplies a `ShapeSealDefinition`: shape id, handle, table, generation and incarnation. In its write
+transaction, with capture suspended, the sealer first checks that the table's `sqlite_schema` SQL and recorded
+generation still match, so a stale handle never seals.
 
-1. `SealUpToHeadAsync(store, shape, offset, cancellationToken)` returns the sealed
-   feed sequence. It observes the committed head on entry and seals whole commits
-   through that head. Each chunk uses a standalone write-lane transaction, avoiding
-   capture suspension inside another request's group commit.
-2. `ReadChunkAsync(store, handle, offset, cancellationToken)` returns only persisted
-   bytes, or null when there is no sealed chunk. Dispose the returned
-   `ShapeSealedChunk` after sending or retaining its bytes: it owns memory admission.
-3. `RunDatabaseAsync(store, shapes, cancellationToken)` runs one database's
-   background worker. The owner supplies current active shape requests and cancels
-   the worker when the store or host closes. The worker seals on committed writes;
-   live flights may call `SealUpToHeadAsync` directly to seal on wake. The worker
-   retains each active request's sealed boundary so new commits do not replay the
-   previous chunk chain.
+1. `SealUpToHeadAsync(store, shape, offset, cancellationToken)` seals whole commits from `offset` through the head it
+   observed on entry, one write transaction per chunk, and returns the sealed boundary.
+2. `ReadChunkAsync(store, handle, offset, cancellationToken)` returns persisted bytes only, or null. The returned
+   `ShapeSealedChunk` owns its memory admission.
+3. `RunDatabaseAsync` runs one database's background worker for the tracked shapes; live flights seal on wake.
 
-A chunk covers `(offset, end_offset]` by `_tb_feed.seq`. Feed rows sharing a
-`commit_offset` stay together, including joined writes. The normal limits are 4096
-feed rows and 1 MiB of complete response body; a larger single commit travels alone
-up to 8 MiB. Commits outside the selected collection advance the range without
-adding a change. Each selected commit lists an id once, in ordinal order, using its
-last touch in that commit. Values come from current visible documents in the same
-transaction, and `values_at` records that transaction's committed feed head. Absent
-documents, hidden uniqueness contenders and nonmatching documents produce delete ops. A deleted document re-created before sealing carries its current value.
-Upserts preserve stored document bytes and use the Document API version token.
+A chunk covers `(offset, end_offset]` of `turso_cdc.change_id`. It reads changes in id order: a commit record
+(`change_type = 2`) closes a commit; row changes of the table become `insert`, `update` or `delete` ops decoded from
+the captured after-image, with every stored column; changes of other tables only advance the range. Limits: 4096
+row operations, 1 MiB of body, 65536 scanned changes, or one commit of up to 8 MiB (`ShapeTooLargeException`,
+`shape_too_large`).
 
-Bodies include the protocol-v1 resume envelope, frozen at seal time. A body is
-inserted once, with `SuspendCaptureAsync`, and subsequent reads do not reconstruct
-it. The derived tables remain excluded from replication, copies and backups.
-Memory is reserved before CDC decoding, body materialization and result reads;
-refusal, rollback and cancellation release transient reservations.
+A captured `sqlite_schema` change whose `tbl_name` is the table, or an image whose column count differs from the
+current definition, ends the lineage: the chunk closes before that commit, and a chunk that would start with it
+retires the generation instead, so the next read answers `409 must_refetch` with the new handle. An offset that is
+not a retained commit record raises `ShapeSealOffsetException` (`must_refetch`).
 
-Retained CDC is validated with the sender's existing state/image decoder and row
-shape checks before a new seal. Admission covers one captured transaction at a
-time and is released before the next transaction.
-A damaged log refuses that database; other database workers continue. Invalid or
-missing feed boundaries raise `ShapeSealOffsetException` (`must_refetch`). A
-materialized singleton body over 8 MiB raises `ShapeTooLargeException`
-(`shape_too_large`), leaving that commit unsealed. Memory admission raises the
-existing `QosMemoryException`. Endpoint status and cache headers belong to FR-20.
-
-The frontier is the local committed head: every write already syncs its WAL. This
-does not claim survival of host or volume loss. FR-25 must gate publication by both
-the covered offset and `values_at` once the remote acknowledgement frontier is
-available. A seal adds no durability barrier and serves no open tail.
+Sealed bodies are inserted once with `SuspendCaptureAsync` and never rebuilt. Shape tables are derived data: copies,
+backups and rewrites omit their rows, and every shape restarts under a new incarnation. Memory is reserved before
+decoding images and before returning bodies; refusal, rollback and cancellation release it.

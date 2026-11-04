@@ -10,18 +10,14 @@ internal sealed partial class TursoStorageTransaction : IShapeFreshStorage
 
     private const long FreshEnvelopeBytes = 32 * 1024;
 
-    public ValueTask<long> ReadShapeHeadAsync(CancellationToken cancellationToken) => RunAsync(() =>
-    {
-        CountRead("shape");
-        return (long)Command("SELECT seq FROM _tb_feed_sequence WHERE id = 1;").ExecuteScalar()!;
-    }, cancellationToken);
+    public ValueTask<long> ReadShapeHeadAsync(CancellationToken cancellationToken) => RunAsync(ShapeHead, cancellationToken);
 
     public ValueTask<ShapeBody?> ReadShapeFreshAsync(ShapeSealDefinition shape, long offset, IMemoryBudget memory,
-        CancellationToken cancellationToken) => RunAsync(() => ShapeFresh(shape, offset, memory, cancellationToken), cancellationToken);
+        CancellationToken cancellationToken) => RunAsync(() => ShapeFresh(shape, offset, memory), cancellationToken);
 
-    private ShapeBody? ShapeFresh(ShapeSealDefinition shape, long offset, IMemoryBudget memory, CancellationToken cancellationToken)
+    private ShapeBody? ShapeFresh(ShapeSealDefinition shape, long offset, IMemoryBudget memory)
     {
-        var head = ShapeFeedHead();
+        var head = ShapeHead();
         if (offset > head)
         {
             return null;
@@ -32,7 +28,7 @@ internal sealed partial class TursoStorageTransaction : IShapeFreshStorage
             var empty = memory.TryReserve(MemoryLane.Foreground, FreshEnvelopeBytes, store.Tenant) ?? throw new QosMemoryException();
             try
             {
-                var body = ShapeEnvelope(shape, offset, head, head, ShapeResume(shape.ResumeScope.Span, head, cancellationToken), [], upToDate: true);
+                var body = ShapeEnvelope(shape, offset, head, [], upToDate: true);
                 return new ShapeBody(body, ShapeNumber(head), true, empty);
             }
             catch
@@ -51,7 +47,7 @@ internal sealed partial class TursoStorageTransaction : IShapeFreshStorage
             return null;
         }
 
-        if (bytes is <= 0 or > ShapeCommitBytes)
+        if (bytes is <= 0 or > ShapeCommitBytes + ShapeBodyBytes)
         {
             throw new InvalidDataException("a sealed shape chunk exceeds its body bound");
         }
@@ -76,19 +72,14 @@ internal sealed partial class TursoStorageTransaction : IShapeFreshStorage
                 stored = TursoSession.Bytes(reader, 1);
             }
 
-            var sealedAt = ReadShapeValuesAt(stored);
-            if (Math.Max(end, sealedAt) > head)
+            if (end > head)
             {
-
                 admission.Dispose();
                 return null;
             }
 
             var upToDate = end == head;
-
-            var values = upToDate ? head : sealedAt;
-            var body = ShapeEnvelope(shape, offset, end, values, ShapeResume(shape.ResumeScope.Span, end, cancellationToken),
-                ShapeChangesOf(stored), upToDate);
+            var body = ShapeEnvelope(shape, offset, end, ShapeChangesOf(stored), upToDate);
             return new ShapeBody(body, ShapeNumber(end), upToDate, admission);
         }
         catch

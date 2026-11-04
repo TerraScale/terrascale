@@ -19,14 +19,13 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
     private readonly Lock _gate = new();
     private readonly Dictionary<RegistryKey, Entry> _entries = [];
     private readonly LinkedList<Entry> _lru = new();
-    private readonly Dictionary<ShapeFilterKey, RegistryKey> _filtered = [];
     private readonly Dictionary<DatabaseKey, int> _counts = [];
     private readonly LinkedList<RetiredShape> _retired = new();
-    public string? CurrentHandle(TenantContext database, string collection, string canonical)
+    public string? CurrentHandle(TenantContext database, string table)
     {
         lock (_gate)
         {
-            if (!_entries.TryGetValue(new RegistryKey(database, collection, canonical), out var entry))
+            if (!_entries.TryGetValue(new RegistryKey(database, table), out var entry))
             {
                 return null;
             }
@@ -35,25 +34,9 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
             return entry.Handle;
         }
     }
-    public ShapeFilter? FilteredShape(TenantContext database, string collection, string handle)
+    public QuotaExceeded? Track(TenantContext database, ShapeSealDefinition definition, long head)
     {
-        var owner = DatabaseKey.Of(database);
-        lock (_gate)
-        {
-            foreach (var (key, entry) in _entries)
-            {
-                if (entry.Handle == handle && key.Database == owner && key.Collection == collection && entry.Filter.Canonical.Length > 0)
-                {
-                    return entry.Filter;
-                }
-            }
-
-            return null;
-        }
-    }
-    public QuotaExceeded? Track(TenantContext database, string collection, ShapeFilter filter, ShapeSealDefinition definition, long head)
-    {
-        var key = new RegistryKey(database, collection, filter.Canonical);
+        var key = new RegistryKey(database, definition.Table);
         lock (_gate)
         {
             var existing = _entries.GetValueOrDefault(key);
@@ -63,7 +46,7 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
                 return null;
             }
 
-            var bytes = EntryBytes(database, collection, filter, definition.Handle);
+            var bytes = EntryBytes(database, definition.Table, definition.Handle);
             if (budget.TryReserve(MemoryLane.Foreground, bytes, database) is not { } reservation)
             {
                 return new QuotaExceeded("the memory budget cannot hold another shape; retry later", "shape_busy");
@@ -72,7 +55,7 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
             if (existing is not null)
             {
                 Remove(existing, release: false);
-                Enqueue(new RetiredShape(existing.Database, collection, filter.Canonical, existing.Handle, existing.Reservation));
+                Enqueue(new RetiredShape(existing.Database, definition.Table, existing.Handle, existing.Reservation));
             }
             else
             {
@@ -87,46 +70,29 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
                 }
             }
 
-            var entry = new Entry(key, database, definition.Handle, filter, definition, head, reservation);
+            var entry = new Entry(key, database, definition.Handle, definition, head, reservation);
             entry.Node = _lru.AddFirst(entry);
             _entries[key] = entry;
             _counts[key.Database] = _counts.GetValueOrDefault(key.Database) + 1;
-            if (filter.Canonical.Length > 0)
-            {
-                _filtered[new ShapeFilterKey(database.DatabaseId!, collection, filter.Canonical)] = key;
-            }
 
             return null;
         }
     }
-    public void Advance(TenantContext database, string collection, string canonical, long offset)
+    public void Advance(TenantContext database, string table, long offset)
     {
         lock (_gate)
         {
-            if (_entries.TryGetValue(new RegistryKey(database, collection, canonical), out var entry))
+            if (_entries.TryGetValue(new RegistryKey(database, table), out var entry))
             {
                 entry.Cursor = Math.Max(entry.Cursor, offset);
             }
         }
     }
-    public void Forget(IReadOnlyList<ShapeFilterKey> evicted)
+    public bool ClaimTrim(TenantContext database, string table)
     {
         lock (_gate)
         {
-            foreach (var filtered in evicted)
-            {
-                if (_filtered.TryGetValue(filtered, out var key) && _entries.TryGetValue(key, out var entry))
-                {
-                    Remove(entry);
-                }
-            }
-        }
-    }
-    public bool ClaimTrim(TenantContext database, string collection, string canonical)
-    {
-        lock (_gate)
-        {
-            if (!_entries.TryGetValue(new RegistryKey(database, collection, canonical), out var entry))
+            if (!_entries.TryGetValue(new RegistryKey(database, table), out var entry))
             {
                 return false;
             }
@@ -244,7 +210,6 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
 
             _entries.Clear();
             _lru.Clear();
-            _filtered.Clear();
             _counts.Clear();
             foreach (var retired in _retired)
             {
@@ -263,11 +228,6 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
     {
         _lru.Remove(entry.Node);
         _entries.Remove(entry.Key);
-        if (entry.Filter.Canonical.Length > 0)
-        {
-            _filtered.Remove(new ShapeFilterKey(entry.Key.Database.Database!, entry.Key.Collection, entry.Key.Canonical));
-        }
-
         if (--_counts[entry.Key.Database] == 0)
         {
             _counts.Remove(entry.Key.Database);
@@ -300,9 +260,9 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
         _retired.AddLast(retired);
     }
 
-    private static long EntryBytes(TenantContext database, string collection, ShapeFilter filter, string handle) =>
-        EntryOverhead + filter.AuthorizationBytes + 2L * (Length(database.OrganizationId) + Length(database.ProjectId) + Length(database.DatabaseId)
-            + collection.Length + filter.Canonical.Length + handle.Length);
+    private static long EntryBytes(TenantContext database, string table, string handle) =>
+        EntryOverhead + 2L * (Length(database.OrganizationId) + Length(database.ProjectId) + Length(database.DatabaseId)
+            + table.Length + handle.Length);
 
     private static int Length(string? value) => value?.Length ?? 0;
 
@@ -311,15 +271,15 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
         public static DatabaseKey Of(TenantContext tenant) => new(tenant.OrganizationId, tenant.ProjectId, tenant.DatabaseId);
     }
 
-    private readonly record struct RegistryKey(DatabaseKey Database, string Collection, string Canonical)
+    private readonly record struct RegistryKey(DatabaseKey Database, string Table)
     {
-        public RegistryKey(TenantContext database, string collection, string canonical)
-            : this(DatabaseKey.Of(database), collection, canonical)
+        public RegistryKey(TenantContext database, string table)
+            : this(DatabaseKey.Of(database), table)
         {
         }
     }
 
-    private sealed class Entry(RegistryKey key, TenantContext database, string handle, ShapeFilter filter, ShapeSealDefinition definition,
+    private sealed class Entry(RegistryKey key, TenantContext database, string handle, ShapeSealDefinition definition,
         long cursor, IMemoryReservation reservation)
     {
         public RegistryKey Key { get; } = key;
@@ -327,8 +287,6 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
         public TenantContext Database { get; } = database;
 
         public string Handle { get; } = handle;
-
-        public ShapeFilter Filter { get; } = filter;
 
         public ShapeSealDefinition Definition { get; } = definition;
 
@@ -340,7 +298,7 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
         public DateTimeOffset LastTrim { get; set; } = DateTimeOffset.MinValue;
     }
 }
-internal sealed record RetiredShape(TenantContext Database, string Collection, string Canonical, string Handle, IMemoryReservation Reservation) : IDisposable
+internal sealed record RetiredShape(TenantContext Database, string Table, string Handle, IMemoryReservation Reservation) : IDisposable
 {
     public void Dispose() => Reservation.Dispose();
 }

@@ -1,688 +1,172 @@
-# Shape reads, protocol v1
+# Shape reads, protocol v2 (SQL tables)
 
-- Status: **proposed contract, not implemented.** Shape endpoints are not on `main`. Each rule names the lane that builds it
-  (FR-xx, B1, A3, A4; see [free-reads.md](free-reads.md)).
-- Conformance: [shape-vectors.json](shape-vectors.json) (section 16). Where this text and a vector disagree, both are
-  wrong until fixed together.
-- Predecessor: TS-474 shape reads (`7842731a`, removed by #77). Rules kept from it are marked **(TS-474)**. Its
-  `change_log`, commit-clock offsets and edge-authorization gate are not part of v1.
+A shape is every row of one SQL table of a database. Clients sync it over plain HTTP GET as a sealed snapshot, then
+sealed change chunks, then a live tail, Electric style (PIVOT D8). Every response is addressed by `(handle, offset)`,
+so identical URLs return identical bytes and any cache can serve many readers for the cost of one.
 
-## 1. Contract
+Filters, column lists and move-in/move-out (PIVOT F2), table-level read grants and end-user tokens (F4), the local
+overlay (F7) and region-to-region provisional changes (F8) are later tasks. Protocol v1 (document collections over
+`_tb_feed`) is gone.
 
-A shape is one collection plus an optional filter. It syncs as a sealed snapshot, then log chunks, then a live
-tail. Every response is addressed by `(handle, offset)`.
+## 1. Source: the home database's change capture
 
-1. **Lineage.** A handle names one machine's feed of one collection incarnation (section 5). Offsets are positions in
-   that machine's `_tb_feed.seq` (section 3). Two machines never share a handle.
-2. **Immutability.** Snapshot pages and closed chunks are sealed objects. Their bytes are fixed when they are sealed,
-   including `cursor_resume` and `values_at`. They are never recomputed.
-3. **Atomicity.** All of one commit's operations on the collection arrive in one change, in one response. Commits are
-   never split.
-4. **Values at seal time.** An operation carries the document as materialized at `values_at`. That value is never
-   older than the event and can be newer. Clients converge by applying changes in order.
-5. **Freshness.** Only fresh responses (section 4) can say `up_to_date: true`. Sealed objects never do.
-6. **Durable-only publication.** A response is served only when the durable frontier covers both its `covered_offset`
-   and its values (section 10).
-7. **Fail closed.** A resume or continuation that cannot be proven complete answers `409 must_refetch`.
+- Every TerraBase write connection runs Turso change capture (`PRAGMA capture_data_changes_conn('after')`). Each
+  committed transaction appends its row changes, with after-images, to the database file's `turso_cdc` table in the
+  same transaction, then one commit record (`change_type = 2`).
+- PIVOT D8 asks for `full` mode (before images too, for F2 move-in/move-out). On the pinned Turso 0.8.2, `full`
+  breaks every `INSERT … ON CONFLICT DO UPDATE` with an I/O error, because the upsert reads its before image after
+  the write; upstream fixed this in `26dbb464` (in v0.9.0-pre.2). Capture moves to `full` once that fix is in the
+  pinned native build. Shapes need only after-images: keys are row ids, a row id change is captured as delete then
+  insert, and a re-created table's `CREATE` is captured with its after-image.
+- Shapes read only `turso_cdc` and the table itself. The document feed (`_tb_feed`) is not read.
+- Only the database's home serves and seals shapes. Region replicas are not served yet (`replicas_unavailable`), so
+  every sealed chunk holds only home-committed, home-confirmed changes. When region writes arrive (PIVOT R4 to R7),
+  they reach shapes through the home apply, which commits through the same capture.
+- `turso_cdc` uses `AUTOINCREMENT` change ids, so ids are never reused, also after retention trims old rows.
 
-Nothing is promised across collections, across handles (beyond section 9), or about read-your-writes (section 15).
+## 2. Route
 
-## 2. Route and validation
+`GET /v1/projects/{project}/databases/{database}/tables/{table}/shape?handle=&offset=&live=&cursor=`
 
-`GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape?where=&handle=&offset=&live=&cursor=`
-
-Served on the client listener (TLS) and built on `TerraScale.Endpoints`. The bearer token must grant
-`documents:read`, and its project and database claims must match the path. OpenAPI tag `Live`.
+Client listener, TLS, `documents:read`, OpenAPI tag `Live`. End-user tokens are refused until F4.
 
 | Parameter | Value |
 | --- | --- |
-| `where` | Optional filter (below). Absent means every document. |
-| `offset` | Required: `-1`, `snap.<S>.<P>`, or a decimal commit boundary `O` (section 3). |
-| `handle` | Required unless `offset=-1`. Bootstrap with a handle is `409`; a cursor query with a handle is `400`. |
+| `offset` | Required: `-1`, `snap.<S>.<P>`, or a decimal commit boundary `O`. |
+| `handle` | Required unless `offset=-1`. A bootstrap with a handle is `409 must_refetch`. |
 | `live` | `true`, only with a decimal `O`. |
-| `cursor` | With `live=true`: the decimal live bucket (section 4). With `offset=-1`, no `handle` and no `live`: an opaque resume cursor (section 9). Any other use is `400`. |
+| `cursor` | Only with `live=true`: the decimal live bucket. |
 
-Header `TB-Shape-Resume: <opaque>` carries the same resume cursor when the request target would not fit (an R8
-cursor reaches about 19 KiB). The server reads it only when `offset=-1` and no `handle` is sent; on every other
-request it ignores the header, including after a client follows a same-origin `307` and preserves custom headers.
-A resume request with `live` or both the header and `cursor` is `400 invalid_request`. SDKs pass the token byte for
-byte and never parse it. They use the query form when the full target fits and the header otherwise.
+Validation answers `400 invalid_request`: unknown or repeated parameters, non-canonical decimals (no sign or leading
+zeros, at most `9223372036854775807`), a malformed handle, `live` without a decimal offset, `cursor` without `live`.
 
-**Filter.** `where` is a JSON filter in the grammar and limits of the `filter` member of `POST …/query`
-(`QueryDocumentsEndpoint`): `{"and"|"or":[F…]}` with 1 to 64 children, `{"not":F}`,
-`{"eq"|"ne"|"lt"|"lte"|"gt"|"gte":[P,V]}`, `{"in"|"nin":[P,[V…]]}` with 1 to 256 values, `{"exists":P}`,
-`{"prefix":[P,"str"]}`, `{"contains":[P,V]}`. At most 8 levels and 256 nodes. `P` is a JSON Pointer or `"$id"`;
-`V` is a JSON scalar. There is no sort, limit, cursor, projection or count. Both the raw `where` string (after URL
-decoding) and its canonical filter must be at most 8 KiB of UTF-8, and both must satisfy the query v1 grammar and
-its depth/node limits. Validate the input before normalization; normalization does not admit an invalid input.
-Absent `where` has the empty canonical string; a present empty string is `400 invalid_request`, and JSON `null`
-is `400 invalid_query`. **(TS-474; canonicalization updated by FR-15)**
+`table` names an ordinary rowid table: 1 to 63 ASCII letters, digits and underscores, not starting with a digit,
+`_tb_`, `turso_` or `sqlite_`, matched exactly against `sqlite_schema`. Errors:
 
-**Canonical filter (FR-15).** Normalize the parsed query v1 filter recursively, then emit compact UTF-8 JSON with
-`Utf8JsonWriter` and `JavaScriptEncoder.UnsafeRelaxedJsonEscaping` (so `<` stays literal). These are the identity rules:
+| Status | Code | When |
+| --- | --- | --- |
+| `400` | `invalid_request` | The table name is malformed or reserved. |
+| `400` | `unsupported_table` | `WITHOUT ROWID` tables and virtual tables. |
+| `404` | `unknown_database`, `unknown_table` | The database or table does not exist, or the credential cannot reach it. |
 
-1. For `and` and `or`, normalize children, flatten children with the same operator, sort by each child's emitted
-   canonical UTF-8 bytes (unsigned lexicographic order), and remove byte-identical duplicates. A single remaining
-   child replaces the group. Input child order and same-operator nesting do not affect identity.
-2. If flattening leaves `n > 64` children, emit `g = ceil((n - 64) / 63)` additional groups of the same operator.
-   Order children by descending emitted subtree depth (a leaf has depth 1), breaking ties by emitted UTF-8 bytes.
-   Keep the first `64 - g` children at the root; partition the remainder into consecutive groups of at most 64.
-   Sort each new group's children by emitted bytes, then sort the root children, including the new groups, by
-   emitted bytes. This deterministic regrouping keeps every group within 64 children and preserves the grammar's
-   depth and node bounds; revalidate the emitted filter under the same query limits.
-3. For `in` and `nin`, normalize scalar values, sort by each value's emitted canonical UTF-8 bytes, and remove
-   byte-identical duplicates. One remaining value emits `eq` or `ne`, respectively. Treat `ne` as `not(eq)` and
-   `nin` as `not(in)` during normalization; cancel double `not`, and emit `not(eq)` as `ne` and `not(in)` as `nin`.
-   Other `not` expressions retain `not`.
-4. Preserve literal JSON types and parsed values. Parse exact signed 64-bit integers without converting them to
-   double, including `9007199254740993`; other accepted numbers use the query parser's finite binary64 value.
-   A whole binary64 value in `[-2^63, 2^63)` emits as an integer (`1.0` → `1`, `-0` → `0`), including values in
-   `contains`. Strings, booleans and null remain distinct from numbers. Numeric token spelling is not preserved.
-5. Re-emit paths from their decoded JSON Pointer segments, escaping `~` as `~0` and `/` as `~1`; `$id` stays `$id`.
-   JSON string escaping follows the compact relaxed writer above. Whitespace and original JSON escaping are not
-   preserved.
-
-Only the normalization rules above define equivalent filter spellings for identity. They do not promise that every
-pair of predicates with the same results has the same canonical filter (for example, no distributive or De Morgan
-rewrites). Member order is not an identity input: each valid filter object has exactly one operator. The canonical
-filter is itself a valid `where` and canonicalizing it again yields the same bytes.
-
-Validation, `400 invalid_request` unless noted **(TS-474)**:
-
-- Only the parameters above, each at most once and non-empty.
-- Decimals are canonical: no sign, no leading zeros, at most `9223372036854775807`. `P` is `0` or the canonical
-  unpadded base64url of a document id's UTF-8 bytes.
-- A `where` that is not JSON or not a valid filter, or whose raw or canonical UTF-8 exceeds 8 KiB, is
-  `400 invalid_query`. So is a filter over the query budget (5 million SQLite VM instructions or 5 seconds).
-- A resume envelope that does not decode canonically, or whose inner R8 cursor fails `ChangeCursor.Decode`, is
-  `400 invalid_request`.
-- Unknown database, or one the credential cannot reach: `404 unknown_database`. Unknown collection:
-  `404 unknown_collection`. Both are checked before the query string.
-- Each continuation target, percent-encoded with the longest snapshot offset and handle, must fit the 8 KiB request
-  line with 64 bytes reserved. Otherwise `414 uri_too_long`, before any redirect.
-
-## 3. Offsets, snapshots and chunks
+## 3. Offsets
 
 | Offset | Meaning |
 | --- | --- |
-| `-1` | `307` to `snap.<S>.0` of the newest published snapshot. With a resume cursor: section 9. |
-| `snap.<S>.<P>` | Snapshot page of snapshot `S` after document `P` (`0` = first page). |
-| `O` | Every feed row with `seq ≤ O` was delivered. `O` is always a commit boundary. |
+| `-1` | `307` to `snap.<S>.0` of the newest snapshot. `Location` carries `handle`, then `offset`. |
+| `snap.<S>.<P>` | Page `P` (from 0) of snapshot `S`. |
+| `O` | Every change with `change_id ≤ O` was delivered. `O` is `0` or the `change_id` of a commit record. |
 
-`Location` carries `where` (canonical, when present), then `handle`, then `offset`, so clients converge on identical
-URLs.
+The **head** is the newest commit record's `change_id` (`0` before the first captured write). Offsets are shared by
+every table of the database file; commits that do not touch the table still advance the offset.
 
-### 3.1 Feed sequence
+## 4. Snapshots
 
-- `seq` is a new `_tb_feed` column allocated from a persisted counter row in the same transaction as the feed insert
-  (B1). It is never `rowid` or `AUTOINCREMENT`: on Turso 0.8.2 an emptied table restarts at 1 after reopen
-  ([historical engine spike](https://github.com/TerraScale/terrascale/blob/e7fa366ddb289f5612c93d316b316fb92c568151/docs/terrabase/turso-spike.md)), and retention can empty the feed.
-- The counter is per database file, shared by every collection, positive, and never reused within an incarnation.
-- One commit's rows get consecutive `seq` values. The commit's last value is its `commit_seq`. A **commit boundary**
-  is any `commit_seq`, or `0`.
-- `seq` is not `commit_offset` (the write response's `offset`) and not an HLC stamp. Section 15 explains why they
-  cannot be compared.
-- The **sealed head** is the largest commit boundary at or below the durable frontier `F` (section 10).
+- A snapshot `S` holds the table's rows at head `S`. All its pages are built in one read transaction whose head is
+  `S`, then stored in `_tb_shape_snapshot`. A snapshot is visible only when its last page is stored.
+- A page holds up to 1000 rows or 1 MiB of body in row id order; one larger row travels alone, up to 8 MiB.
+  A page also closes after 5 s. `next_offset` is `snap.<S>.<P+1>`; the last page's is the decimal `S`.
+- A new snapshot is sealed when the newest one is older than an hour, or has 16 chunks per page past it (at most
+  4096), or is below the retention floor. Older snapshots stay servable until retention removes them.
+- Snapshot ops are `insert`.
 
-### 3.2 Snapshots
+## 5. Chunks
 
-- A snapshot `S` holds the collection's live documents matching the filter. Every page of `S` is built in **one read
-  transaction** whose feed head is `S`, so bodies are frozen at `S`. Its `values_at` is `S`. Past states are never
-  reconstructed from current rows.
-- Pages hold up to 1000 documents or 1 MiB of body, in ordinal id order. A page examines at most 10000 ids within a
-  5 s deadline. It may have no ops and still advance. A single larger document is an allowed singleton page, bounded by
-  8 MiB. **(TS-474)**
-- `next_offset` is `snap.<S>.<base64url(last examined id)>`. The last page's `next_offset` is the decimal `S`.
-- A new snapshot is sealed when 4096 chunks have been sealed since the last one or an hour has passed (constants).
-  Older snapshots stay servable until retention removes them.
-- `-1` redirects to the newest snapshot that is published (`F ≥ S`). If the handle has none, the request seals one at
-  the current feed head. A reseal that is due while the head is above `F` answers with the newest published snapshot at
-  or above the retention floor instead, when there is one. With no published snapshot and the head above `F`, it answers
-  `429 shape_busy` with `no-store`; the client retains its state and retries with backoff.
-- A `snap.<S>.<P>` that names no sealed page of this handle answers `409 must_refetch`. One whose `S` is above `F` but
-  at or below the feed head answers `503 unavailable` with `no-store`; the client keeps its state and retries.
-
-### 3.3 Chunks
-
-- A request at decimal `O` below the sealed head returns the **closed chunk** that starts at `O`. If none is sealed
-  yet, the sealer seals it now. From then on that URL always returns those bytes.
-- A closed chunk covers a non-empty, commit-boundary prefix of `(O, sealed head]`. It holds at most 4096 feed rows and
-  stops before the commit that would take the body past 1 MiB. A single larger commit travels alone, bounded by
-  8 MiB. Within those bounds, the sealer may close at any commit boundary. Its `next_offset` is the boundary where it
-  stopped.
-- Commits with no row in this collection are omitted, but `next_offset` still advances past them. A commit whose
-  documents no longer match the filter appears as `delete` ops.
-- Each change is one commit: `offset` is its `commit_seq`. It lists each document the commit touched once, in ordinal
-  id order, with the value at `values_at`.
-- **Oversized commit.** If one commit's materialized change exceeds 8 MiB, the read answers `503 shape_too_large`
-  with `no-store`. Nothing is sealed and no offset advances. The client keeps its state and offset and retries with
-  backoff. Section 15 covers the escape path.
-- A decimal `O` that is not a commit boundary, is below the retention floor, or is above the committed feed head
-  answers `409 must_refetch`. One above `F` but at or below the feed head is committed here and not yet held by another
-  region: it answers `503 unavailable` with `no-store`, and the client keeps its state and retries.
-
-Chunk sealing runs with change capture suspended and refuses damaged rows as #152 does (FR-12). Sealed bytes are
-derived data: not shipped, not backed up, dropped with their handle, and kept for 7 days (FR-16).
-
-## 4. Fresh responses, live mode and collapsing
-
-A **fresh** response is built per flight and never persisted or mirrored. Fresh responses are:
-
-- a non-live request at `O` = sealed head: no changes, `next_offset = O`, `up_to_date: true`;
-- every live response at the sealed head.
-
-A live request behind the sealed head returns the closed chunk at once **(TS-474)**.
-
-- At the head, a live request waits up to 20 s for a commit. The read takes the store's commit count before its
-  snapshot, and `WaitForCommitAsync` waits for it to grow, so a racing commit is never missed **(TS-474)**.
-- **Seal-on-wake:** a woken flight asks the sealer to advance up to the committed head, then answers. A fresh body
-  covers `(O, next_offset]` under the chunk bounds of section 3.3. `up_to_date` is `true` only when `next_offset` is
-  the sealed head. It carries a fresh `values_at` and a fresh `cursor_resume`.
-  Re-framed sealed changes retain their materializing read's `values_at`; the reached cursor is rebuilt for the covered offset.
-- On timeout the body is `200`, with no changes, `next_offset = O` and `up_to_date: true`.
-- `TB-Shape-Cursor` = `max(floor(unix_seconds / 20), input cursor + 1)`, or the current bucket without an input. An
-  input of `9223372036854775807` is `400 invalid_request` **(TS-474)**.
-- One flight per `(handle, offset, live)`; the cursor never splits a flight, since every cursor gets the same answer. At most
-  32 running flights and 4096 joined requests per machine (8 and 1024 per organization). A new flight
-  beyond 32 answers `429 shape_busy` with `no-store`. There is no queue. An abandoned flight keeps its slot until its
-  work ends. A disconnecting client cancels only its own wait. The last requester to leave cancels the flight.
-  Application stop cancels every flight **(TS-474)**.
-  Within the machine limit, one organization can hold at most eight running flights and 64 joined requesters;
-  crossing either share returns the same `429 shape_busy` response.
-- Validated live decimal-offset requests release the organization's ordinary concurrent-request slot before joining
-  the bounded flight. They still use normal request-rate admission; parked readers do not prevent writes.
-- Every seal, page, fresh body and flight reserves memory through `IMemoryBudget` (FR-17).
-
-## 5. Identity
-
-Inputs, all UTF-8, in this order:
-
-| # | Field | Value |
-| --- | --- | --- |
-| 1 | `organization_id` | Tenant organization, canonical uppercase ULID |
-| 2 | `project_id` | Project id |
-| 3 | `database_id` | Database id |
-| 4 | `incarnation` | `IDatabaseStore.Incarnation`, 26-character ULID, drawn on every create, copy, restore and rebuild |
-| 5 | `replica_id` | Serving machine's `ReplicaId.Value`, decimal uint64 |
-| 6 | `replica_epoch` | That `ReplicaId`'s epoch (its low 16 bits), decimal |
-| 7 | `collection` | Collection name |
-| 8 | `collection_generation` | `collections.entity_id`, 26 characters; it changes when a collection is re-created |
-| 9 | `canonical_filter` | Section 2; empty when absent |
-| 10 | `wire_format` | `1` |
-
-`fields` = the ten values joined by single NUL bytes, with no trailing NUL.
-
-- `shape_id` = lowercase hex of the first **16** bytes of `SHA-256("TB-SHAPE-V1" ‖ 0x00 ‖ fields)` (32 characters).
-- `handle` = `"h1-"` ‖ lowercase hex of the first **8** bytes of `SHA-256("TB-SHAPE-HANDLE-V1" ‖ 0x00 ‖ fields)`
-  (16 characters).
-
-`wire_format` names this body and TBS1 contract. It is not `StorageFormat.Id`.
-
-Any input change rotates both values: database copy, restore or re-create; collection drop or re-create; a machine
-change or unclean start (new `replica_epoch`); a filter-encoding change. **Handles are per machine, not per region.**
-Ingress can send two requests from one client to different machines in the same region. A handle unknown to the
-receiving machine answers `409 must_refetch`; the client may make one resume attempt (section 7, rule 6).
+- A chunk at `O` covers whole commits `(O, E]`. It closes before 4096 row operations or 1 MiB of body, or after
+  65536 scanned changes; a single commit up to 8 MiB travels alone. A larger commit answers
+  `503 shape_too_large`.
+- A chunk is sealed once into `_tb_shape_chunk` by the first reader or the background sealer, and never recomputed.
+  Its values are the captured after-images, so `values_at` equals `next_offset`.
+- An offset that is not a retained commit boundary (`turso_cdc` trimmed below it, or not a commit record) answers
+  `409 must_refetch`.
 
 ## 6. Body
 
 ```json
-{"shape_id":"…","handle":"h1-…","offset":"2","next_offset":"4","covered_offset":"4","values_at":"4","up_to_date":false,
- "cursor_resume":"AQAA…",
+{"shape_id":"…32 hex…","handle":"h1-…16 hex…","offset":"2","next_offset":"4","values_at":"4","up_to_date":false,
  "changes":[{"offset":"4","ops":[
-   {"op":"upsert","id":"01ARZ3NDEKTSV4RRFFQ69G5FB0","version":"tbv1-…","document":{"title":"Updated","read":true}},
-   {"op":"delete","id":"01ARZ3NDEKTSV4RRFFQ69G5FB1"}]}]}
+   {"op":"insert","key":"7","row":{"id":7,"title":"New","data":{"base64":"AAE="}}},
+   {"op":"update","key":"3","row":{"id":3,"title":"Renamed","data":null}},
+   {"op":"delete","key":"5"}]}]}
 ```
 
-- UTF-8, no BOM, compact, members in the order shown. Document bytes are the stored bytes, unchanged. These exact
-  bytes are hashed for the `ETag` and sealed by TBS1. Clients never re-serialize them for comparison.
-- `offset` echoes the request. `offset` and `next_offset` use section 3's grammar. `covered_offset`, `values_at` and stamps are decimal strings.
-- `covered_offset`: the decimal offset this body covers. Chunks and fresh bodies: `next_offset`. Every snapshot page:
-  `S`. The publication gate uses it (section 10).
-- `values_at`: the feed head of the read transaction that materialized the values (`S` for snapshots).
-- `cursor_resume`: section 9.
-- `version` is the Document API v1 version of the materialized row: `ETags.Version(scope, collection, id, stamp,
-  body)`. That is `tbv1-` plus the first 16 bytes of SHA-256 over `scope` (`IStorageTransaction.Scope`, Guid format
-  `N`) ‖ NUL ‖ `collection` ‖ NUL ‖ `id` ‖ NUL ‖ decimal row stamp ‖ NUL ‖ `0` ‖ NUL, followed by the raw body. It is
-  the same token a document read returns, so SDKs may pass it to conditional writes. Clients treat it as opaque.
-- `delete` carries no version. It is sent when the document is absent at `values_at` or no longer matches the
-  filter. Clients may receive deletes for ids they never had.
-- Snapshot pages hold one change at `offset = S` with only `upsert` ops. An empty snapshot is one page with
-  `ops: []`.
+- One `changes` entry per commit that touched the table, in commit order; its `offset` is the commit's boundary.
+- `key` is the row id as a decimal string. `row` holds every stored column in declaration order (virtual generated
+  columns are omitted): null, numbers, strings, or blobs as `{"base64":"…"}` (standard base64), as SQL over REST
+  returns them. A non-finite real cannot be served and answers `503 unavailable`.
+- An `UPDATE` that changes the row id arrives as `delete` of the old key, then `insert` of the new one.
+  On the pinned Turso 0.8.2 that insert is captured without an after-image, so the sealer reads the row's values as
+  of sealing (or emits `delete` when the row is gone by then). Later changes to that key follow in order, so the
+  client converges at every later offset.
+- **Apply rule:** apply ops in order. `insert` and `update` set `rows[key] = row`; `delete` removes `rows[key]`.
+  A client that applies a snapshot and then every chunk holds exactly the table at `next_offset`.
 
-## 7. Client apply rules
+## 7. Fresh responses and live mode
 
-1. Apply each change atomically, in order. Upsert replaces the document. Delete removes it; an unknown id is a no-op.
-2. After the whole response is applied, persist `handle`, `next_offset` and `cursor_resume` atomically with the
-   state.
-3. A `-1` bootstrap without a resume cursor starts from empty state. After a proven resume redirect (section 9), keep
-   the state and apply the new lineage's operations in order.
-4. Never deduplicate by event identity `(origin, stamp, collection, id)`. A repeated event can carry a newer
-   materialized value, and skipping it loses that value.
-5. A snapshot's `cursor_resume` is usable only after **every** page of that snapshot is applied. An interrupted
-   snapshot either continues paging the same snapshot on the same handle, or restarts at `-1`. It never resumes on
-   another lineage from a page's cursor.
-6. On a continuation `409 must_refetch` whose `TB-Shape-Handle` differs from the saved handle, a client with a
-   usable `cursor_resume` (rule 5) may make **one** resume attempt. The attempt is the `offset=-1` cursor request and
-   the single `307` follow-up it returns. Any `409` on that attempt, any other `409`, or no usable cursor: discard
-   state and restart at `-1` without a handle or resume token. Never start a second attempt against the same saved
-   state. `503 shape_too_large`, `503 unavailable`, `429 shape_busy`: keep state and offset, retry with backoff.
+- A request at the head answers a fresh body: no changes, `next_offset = O`, `up_to_date: true`.
+- A chunk whose end is the head is re-framed with `up_to_date: true`.
+- `live=true` at the head waits up to 20 s for a commit, then answers the new chunk, or an empty up-to-date body on
+  timeout. Behind the head it answers the chunk at once. `TB-Shape-Cursor` is
+  `max(floor(unix_seconds / 20), input cursor + 1)`.
+- One flight per `(handle, offset, live)`. At most 32 running flights and 4096 joined requests per machine (8 and 1024
+  per organization); beyond that `429 shape_busy`. Live requests release the organization's concurrent-request slot
+  before they wait.
 
-## 8. Must-refetch
+## 8. Identity and must-refetch
 
-`409`, `Cache-Control: no-store`, header `TB-Shape-Handle`, body
-`{"error":{"code":"must_refetch","message":"…","handle":"<current>"}}`. Raised for:
+- A `~table:<name>` sentinel row in `_tb_shape_chunk` ([shape-storage.md](shape-storage.md)) records a ULID generation
+  per table: the `sqlite_schema` SQL it was issued for, the head it was issued at (`since`), and the database's
+  `PRAGMA schema_version`. A different SQL, or
+  no row, issues a new generation. A different schema version rechecks the captured `sqlite_schema` changes after
+  `since`: one that names the table (`DROP TABLE` followed by an identical `CREATE TABLE`, `CREATE INDEX` on it)
+  issues a new generation; otherwise the row only records the new schema version.
+- `fields = organization ‖ 0x00 ‖ project ‖ 0x00 ‖ database ‖ 0x00 ‖ incarnation ‖ 0x00 ‖ table ‖ 0x00 ‖ generation ‖ 0x00 ‖ "2"`;
+  `handle = "h1-" ‖ hex(SHA-256("TB-SHAPE-HANDLE-V2" ‖ 0x00 ‖ fields))[0..16]`,
+  `shape_id = hex(SHA-256("TB-SHAPE-V2" ‖ 0x00 ‖ fields))[0..32]`.
+- Any DDL that names the table ends the lineage, so rows captured under one definition are never decoded under
+  another: every request resolves the current generation first, and a chunk being sealed stops before a captured
+  `sqlite_schema` change for the table.
+- A copy, restore or rewrite renews the incarnation and so every handle.
+- `409 must_refetch` answers carry the current handle in `TB-Shape-Handle` and in
+  `{"error":{"code":"must_refetch","message":…,"handle":…}}`. Restart at `offset=-1`.
 
-- a stale or unknown handle, including `offset=-1` sent with a handle;
-- an offset below the retention floor (7 days), above the sealed head, not a commit boundary, or naming no sealed
-  snapshot page;
-- a resume that is unproven, expired, mismatched or behind (section 9);
-- filtered-shape eviction (at most 64 filtered shapes per database, FR-15).
-
-With `offset=-1`, a handle plus a `cursor` query is `400 invalid_request`. A handle without that query is
-`409 must_refetch`; `TB-Shape-Resume` is ignored when a handle is present (section 2).
-
-A dropped collection that was not re-created is `404 unknown_collection` **(TS-474)**.
-
-## 9. Resume across machines
-
-Every body carries `cursor_resume`, an opaque envelope: `base64url(0x01 ‖ resume_scope16 ‖ R8)`. `R8` is the R8 changes
-cursor (`ChangeCursor`, #207) that a feed read with `collections=<this collection>` would issue after delivering exactly
-the rows with `seq ≤ covered_offset`.
-
-- `resume_scope16` = first 16 bytes of `SHA-256("TB-SHAPE-RESUME-V1" ‖ 0x00 ‖ fields)`, where `fields` = organization,
-  project, database, collection, collection generation, canonical filter and `wire_format`, joined by NUL with no trailing
-  NUL. It excludes incarnation, replica id and replica epoch, so it is the same on every machine.
-- Rows the `where` filter drops still advance it, so the proof chain stays complete.
-- Sealed objects freeze it at seal time; its issue stamp is the seal stamp. Fresh responses compute a new one.
-- Layout (for vectors only; clients never parse it): the envelope is `0x01`, then the 16 scope bytes, then `R8`. `R8` is
-  marker `0x01`, issue stamp, issuer `ReplicaId`, a one-byte machine length and that many ASCII machine bytes (at most 63),
-  then per origin in ascending order the origin, stamp, retention floor
-  and 32-byte prefix hash. Integers are 8-byte big-endian; the token is unpadded base64url; at most 256 origins.
-
-A resume is `offset=-1`, no handle, and the cursor in `cursor` or `TB-Shape-Resume`. The receiving machine:
-
-0. Decodes the envelope and compares `resume_scope16` with its own. A malformed envelope or `R8` is `400 invalid_request`.
-   A scope mismatch (another organization, project, database, collection, collection generation, filter or wire format)
-   is `409 must_refetch`.
-1. Checks `R8` under the R8 rules. Cases where R8 answers `410 cursor_expired` answer `409 must_refetch` here: retention
-   deleted a promised event, the cursor is older than 7 days, or the prefix cannot be verified.
-2. Answers `409 must_refetch` when it is **behind**: its highest stamp for any named origin is below the cursor's.
-3. Marks a local feed row **covered** when the cursor names its origin and its stamp is at or below that origin's
-   stamp.
-4. Computes the target as the earlier of two offsets: the commit boundary just before the first uncovered local row's
-   commit, and the local sealed head. With no uncovered row, the target is the local sealed head. It answers `307` to the
-   local handle at that target. A target below this machine's retention floor answers `409 must_refetch`.
-
-Delivery is at least once: covered rows after the target are delivered again, with destination values (section 7,
-rule 4). Never skip on a stamp comparison alone.
-
-**Planned gate.** Rules 1 and 2 need proofs persisted and resumes replayed to the issuing machine (#211, open). FR-23
-lands after #211. There is no runtime switch. Until then, every resume answers `409 must_refetch`.
-
-## 10. Durability and publication
-
-- **Durable frontier `F`.**
-  - A cell of one, without a member directory, uses the committed feed head, matching its write path. Every write
-    transaction syncs its WAL at commit (#181), so a seal needs no extra barrier (D4).
-  - In a cell, `F` is the largest `seq` such that **every** commit with `commit_seq ≤ F` has its change group
-    remotely acknowledged under the current incarnation. It is a contiguous prefix, not the highest isolated
-    acknowledged row.
-  - Acknowledgement comes from A3 (remote ack wait) and A4 (incarnation-scoped acks). The mapping from
-    `CommitMarker(Incarnation, ChangeId)` to `seq` is incarnation-scoped; a stored resume cursor or a later isolated
-    acknowledgement never proves a missing earlier commit.
-- **Gate.** A sealed object or fresh body is served only when `F ≥ max(covered_offset, values_at)`. Its values may be
-  newer than its range, so it waits until those newer values are durable too. The gate is evaluated on every serve.
-  In a cell, the sealer never persists a chunk head that `F` does not cover (see Chunk seal). During a partition the
-  gate may never clear; `-1` keeps answering the newest published snapshot. A live read at `F` waits up to 20 s for a
-  commit; when the woken seal's head is still not covered 20 s later, it answers `503 unavailable`. Reads above `F`,
-  including snapshot pages, answer `503 unavailable` at once.
-- **No new mechanism.** There is no copy-on-overwrite, no pre-image table, and no reconstruction of past values.
-- **Walk.** `F` advances over captured change-log rows in commit order, from the last walked change id, reading only this
-  incarnation's capture. Each state row's origin decides it:
-  - **Own** (this machine's replica id, any epoch): held only by an eligible live acknowledgement range `(From, To]` of
-    this incarnation, over change-log ids.
-  - **Joined, held origin:** the exact replica id that a live link of another placed region welcomed the stream with
-    (`Welcome.Node`). The link's region must be the one the membership names for that machine, and the current placement
-    must include it. A node that two links name with different regions is trusted for neither. Past the origin bound, and
-    in a cell of one, none is trusted. Remote eligibility never comes from replica-id region bits.
-  - **Anything else** stops the walk.
-
-  A held origin is trusted as holding the commit it committed first. Whether that machine's copy was replaced since is
-  not checked. A commit whose state rows are all origin 0 or deletes (repairs, collection clears and drops) is not held.
-  Each feed seq must also continue `F + 1`.
-- **Persisted proof.** `F` lives in the existing derived `_tb_shape_chunk` table: sentinel handle `~frontier`, offset 0,
-  `sealed_at` 0, `end_offset` = `F`. Its body is `2 <incarnation> <scanned> <from>:<to> ...`: the last change id walked,
-  then the eligible own acknowledgement ranges `(From, To]` of this incarnation that end after it. Every proof
-  transaction that commits persists its range there, even when the walk did not move (an origin not held yet, a pass's
-  page budget, memory admission). A later pass, from any seal or snapshot request or a later ack, proves own commits
-  with them, so a range covering an own commit behind an unheld joined commit still proves it once that origin is held.
-  Ranges are kept as their exact disjoint union with the remote ack waiter's rule (`RemoteAckWaiter.Keep`): overlapping
-  or touching ranges merge, nothing widens across a gap, a refill or a stored ack, and past 16 ranges the lowest is
-  dropped. A dropped range is not recovered: its own commits wait for a new live ack that covers them, which a later ack
-  of the same run does, and otherwise hold `F` for good in this incarnation. A canonical `h1-` handle never starts with
-  `~`, and a row of another incarnation or of another body format counts as absent, so a copy, restore or rebuild never
-  reuses it. The proof and its ranges survive restart. No schema or `StorageFormat` change.
-- **Chunk seal.** In a cell, no chunk is persisted at a head `F` does not cover, so no new chunk is sealed with
-  `values_at` ahead of `F`. Persisted chunks are checked against `F` on every read and stay servable once covered,
-  because valid proof only advances within an incarnation. Missing or damaged proof fails closed at `F = 0`, including
-  reads of previously sealed objects; availability after proof loss is not guaranteed.
-- **Wake.** A seal that waits for `F` wakes on the next commit or after 1 second, whichever comes first, then retries,
-  for at most 20 s; a read whose seal is still waiting then answers `503 unavailable`, and the background sealer backs
-  off before its next pass. A stall on a joined commit also moves when a link to its origin connects, which signals no
-  commit, so the 1 second poll
-  is what sees it.
-- **Retention.** Three paths apply the hold: the replication tailer's trim, the continuous-backup tap's truncate, and the
-  peer-ack path. Each keeps every row after the walked point while the first unwalked row is younger than 24 hours, once
-  any peer has been heard from (`_tb_peers.seen > 0`), else 60 seconds. The hold also ends if the unwalked
-  backlog exceeds 65,536 rows or 1 GiB of after-images, and when the first unwalked feed seq is not `F + 1` (a copy's or
-  a restore's feed), which the walk can never pass. Each measurement streams only image sizes (`octet_length`), at
-  most 65,537 rows, and stops at the first row past either bound; the feed seq check then reads only the first 128 bytes
-  of one feed row's image (its record header and seq). A live ack is proved before it is recorded, so the cut it makes
-  already sees the frontier its proof moved. The tailer's trim resolves the remote durability service when the pass
-  runs (the peer streams depend on the tailer, so it is not a constructor dependency) and walks with the origins held at
-  that moment, so a replica that only joins another region's writes releases them without an ack of its own. These bounds
-  constrain this hold; other retention anchors can still retain more capture. Expiration or eviction can make an
-  unproven prefix permanently unavailable; it never certifies it.
-- **Fail closed.** For this incarnation, the walk stops and holds `F` where it is until a digest match (below). Exact cases:
-  - **Own commit, no proof.** An own commit advances only from a live acknowledgement range `(From, To]` whose
-    `ProveAsync` commits. `ProveAsync` runs before `AckAsync` records the ack, and checks the incarnation under the writer
-    itself. A range goes unproven when: the process crashes after the ack is received and before the proof transaction
-    commits (the ack is not recorded either, so the batch is sent and acknowledged again); `ProveAsync` throws (logged; the
-    ack is still recorded, and the next ack of the run covers the same range); or the placement check before recording
-    fails (no proof is sent). A proof whose ack recording is then refused (the copy in place changed) names the
-    incarnation it checked, so it never proves another file. Refill and non-live acks never prove. A range whose proof
-    transaction committed survives a crash or restart in the sentinel, whether or not `F` moved, unless the 16-range
-    bound dropped it.
-  - **Origin-0 repair or delete-only commit.** Not held, so the walk stops there. Retention runs the walk before it trims,
-    with the origins held when the pass starts, but it cannot pass an unheld commit. If retention then trims rows past the
-    stop, the gap is unprovable and the stop is
-    permanent for this incarnation.
-  - **Unknown origin.** A state row whose origin is not a held origin stops the walk: another machine of this region, an
-    old epoch of a held machine, or an id that no live link of another region welcomed. It proves nothing about a second
-    region. Held origins are read again by every ack's proof, every seal or snapshot request and every retention pass (5 s),
-    so a stall moves once a link to that origin connects; meanwhile the hold keeps the rows within its bounds.
-  - **Missing capture.** No `turso_cdc` table: no advance. Rows after the walked point trimmed (`oldest > scanned + 1`):
-    permanent stop for this incarnation.
-  - **Corrupt capture.** A damaged change-log row, or a captured state or feed row whose columns do not decode, holds `F`
-    at that row and retries it on each pass. Seals wait for the frontier and snapshots remain unpublished.
-  - **Feed seq gap.** A seq that does not continue `F + 1`, as with a copied or restored feed whose capture does not
-    continue from `F`. Permanent for this incarnation, so retention holds nothing for it.
-- **Digest match.** The walk's stops above end once an anti-entropy round (every 60 s) finds a machine of another placed
-  region answering bucket digests equal to this copy's: that machine holds every value of the snapshot the digests were
-  read in, so `F` rises to that snapshot's feed head and the walk goes on from its last change id. Only forward, only for
-  the incarnation compared, and only while the change log still holds the rows after that snapshot. Writes that never
-  stop arriving can keep the digests from matching.
-- **Starvation.** A head ahead of `F` is never persisted. In a cell, a seal waits for `F` to cover the head it
-  materializes at, and a snapshot publishes only when `F ≥ S`. While any case above holds `F`, seals and snapshot
-  publication wait. `-1` keeps answering the newest published snapshot, and a snapshot request with no published
-  snapshot answers `429 shape_busy` for the client to retry. Under sustained writes the head can stay ahead of `F`, so seals and
-  snapshots can starve for as long as the lag lasts. This plan does not measure how long that takes.
-- **Recovery limits.** No guarantee says a restored, copied or rebuilt database regains its frontier. That database starts
-  at `F = 0` and rises only as its own capture proves commits. A missing or trimmed capture can hold `F` there
-  indefinitely. `F` is per database incarnation, not per handle or epoch. A new handle, epoch or collection re-create
-  does not reset `F` or clear a stall, and no recovery path is documented or tested for a database-wide missing proof.
-- **Live latency.** Seal-on-wake waits for the durable frontier, including the head at which values are materialized.
-  A locally committed write awaiting a remote acknowledgement appears in no shape response. Live tails therefore
-  include remote acknowledgement latency.
-- **Limits.** A cell of one reports `local_durable` and has no remote copy: losing its sole host or volume can erase a
-  published write. Whether Turso 0.8.2 FULL survives power loss for tenant databases remains subject to B3 evidence.
-
-## 11. Headers, ETag and transport tiers
-
-| Response | `Cache-Control` |
-| --- | --- |
-| Sealed object, fresh body, `304`, bootstrap `307` (origin) | `private, max-age=0, must-revalidate`, with `Vary: Authorization` |
-| Resume `307` | `no-store` |
-| Errors (`400`, `404`, `409`, `414`, `429`, `503`) | `no-store` |
-| Keys and manifest | `private, no-store` |
-| TBS1 objects in Tigris | `public, max-age=31536000, immutable` (FR-24, after A1 and FR-21) |
-
-Downloaded or cached ciphertext can remain available after seven-day source deletion or URL expiry; retention blocks new manifests and key grants, but cannot erase those copies.
+## 9. Headers, ETag and caching
 
 | Header | On | Value |
 | --- | --- | --- |
-| `ETag` | `200`, `304` | `"<shape_id>:<handle>:<offset>:<next_offset>:<digest>"`, digest = hex of the first 8 bytes of SHA-256 over the body bytes |
+| `ETag` | `200`, `304` | `"<shape_id>:<handle>:<offset>:<next_offset>:<digest>"`, digest = hex of the first 8 bytes of SHA-256 over the body |
 | `TB-Shape-Handle` | `200`, `304`, `307`, `409` | Current handle |
 | `TB-Shape-Next-Offset` | `200`, `304` | `next_offset` |
 | `TB-Shape-Up-To-Date` | `200`, `304` | `true` / `false` |
-| `TB-Shape-Cursor` | live | Section 4 |
+| `TB-Shape-Cursor` | live | Section 7 |
 
-`If-None-Match` uses the strict list parser of document reads. Matching weak tags and a bare `*` give `304`. A
-malformed list is `400 invalid_request`. A quoted `"*"` is an ordinary tag **(TS-474)**. Authorization is checked on
-every request, including conditional reads.
+Every origin answer is `Cache-Control: private, no-store` with `Vary: Authorization`. `If-None-Match` matching the
+tag answers `304`. Shared caching uses only sealed TBS1 ciphertext in R2 behind Cloudflare
+([free-reads-cdn.md](free-reads-cdn.md), [pivot/r2-shape-runtime.md](pivot/r2-shape-runtime.md)).
 
-Tiers (D1):
+## 10. Encrypted objects, keys and manifest
 
-- **T0, origin.** Plaintext JSON, private, with flights and `ETag`/`304`. The origin never serves TBS1 bytes and never
-  marks a response shared-cacheable. Fresh bodies hold freshness and resume tokens, so they stay private.
-- **T1, Tigris.** Only sealed objects, only as TBS1 ciphertext, found through the manifest (section 14).
-- No CDN.
+Sealed snapshot pages and chunks are mirrored as TBS1 ciphertext, unchanged from v1: AES-256-GCM frames under a
+per-object key derived from the project data key, a 10-minute epoch and the binding `handle ‖ 0x00 ‖ offset`
+([shape-storage.md](shape-storage.md)).
 
-## 12. TBS1 sealed bytes
+- `GET …/tables/{table}/shape/keys?handle=&epoch=&key_id=` releases the epoch key for the current handle, under the
+  same scope and tenancy checks; `private, no-store`. Stale handles and unretained pairs answer `409 must_refetch`;
+  an unverified catalog answers `503 catalog_stale`.
+- `GET …/tables/{table}/shape/manifest?handle=&offset=` lists up to 8 mirrored objects starting at `offset`, each with
+  `offset`, `next_offset`, `binding`, `object`, `url`, `expires_at`, `epoch`, `key_id`, `sha256` and `size`. An
+  empty list means read the origin. Clients check size, digest, header, key and body before applying anything, and
+  fall back to the origin on any failure.
 
-TBS1 seals one sealed object's exact body bytes for Tigris (FR-21, FR-22).
+## 11. Retention and sweep
 
-**Keys.** HKDF is HKDF-SHA256 (RFC 5869), output 32 bytes. An empty salt means 32 zero bytes.
+Chunks and snapshots older than seven days leave in bounded passes and raise the handle's floor; the newest complete
+snapshot always keeps every page. Handles of retired generations are swept
+([shape-retention.md](shape-retention.md), [shape-sweep.md](shape-sweep.md)). Trimming `turso_cdc` itself belongs to
+PIVOT F5, tied to the shape floor and the backup position.
 
-1. `K_d`: the project data key named `KID` (26 ASCII characters) in scope `<organization_id>/<project_id>`
-   (`DataKeys`, `BackupLayout.KeyScope`).
-2. `E = floor(unix_seconds / 600)` on the sealing machine (D3).
-3. `K_e = HKDF(ikm = K_d, salt = empty, info = "TBS1 epoch" ‖ 0x00 ‖ handle ‖ 0x00 ‖ decimal(E))`.
-4. `binding = handle ‖ 0x00 ‖ request_offset`, where `request_offset` is the canonical offset of the object's URL (for
-   example `2` or `snap.0.0`).
-5. `K_o = HKDF(ikm = K_e, salt = salt_obj, info = "TBS1 object" ‖ 0x00 ‖ binding)`.
+## 12. Proof
 
-Backup objects derive from the same `K_d` with a random 32-byte salt and a bucket key as info. TBS1's empty-salt
-epoch step and `TBS1 ` info prefix keep the two apart.
-
-**Header (70 bytes).**
-
-| Bytes | Field |
-| --- | --- |
-| 0–3 | Magic `TBS1` (`54 42 53 31`) |
-| 4–11 | `E`, uint64 big-endian |
-| 12–37 | `KID`, 26 ASCII bytes |
-| 38–69 | `salt_obj`, 32 bytes from a CSPRNG, fresh for every object |
-
-**Frames.** Frame `i` (from 0) is a 4-byte big-endian length word, then `n` ciphertext bytes, then a 16-byte GCM tag.
-The low 31 bits hold the plaintext length `n`. Bit 31 marks the last frame. There is no stored-length word and no
-compression.
-
-- Plaintext is cut into 1 MiB (1048576-byte) pieces. Every non-last frame has `n = 1048576` exactly. The last frame
-  has `0 ≤ n < 1048576`.
-- A plaintext whose length is a multiple of 1 MiB (including empty) ends with an empty last frame. Exactly 1 MiB is a
-  full non-last frame plus an empty last frame.
-- Total plaintext is at most 8 MiB (8388608 bytes), so at most 9 frames.
-
-**AES-256-GCM per frame.** Key `K_o`. Nonce (12 bytes) = 4 zero bytes ‖ `i` as uint64 big-endian. Associated data =
-the 70-byte header ‖ `i` as uint64 big-endian ‖ the length word.
-
-Every object has its own random salt, so every `K_o` is distinct and a (key, nonce) pair never repeats. Objects are
-sealed once. Production never uses a deterministic salt; the vectors fix salts only to stay reproducible.
-
-**Decryption.** The client derives `binding` from its own authorized request (handle and requested offset), never
-from the object. A mismatched object fails its tags. Reject the whole object, applying nothing, when:
-
-- the header is short, the magic differs, or `E` or `KID` differ from what the client expected;
-- any frame has `n > 1048576`, a non-last frame has `n ≠ 1048576`, or a last frame has `n = 1048576`;
-- the total exceeds 8 MiB;
-- the object ends before a last frame, or has bytes after it;
-- any tag fails (this covers reordered, swapped or tampered frames and a wrong key, handle, offset or epoch).
-
-## 13. Key endpoint
-
-`GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape/keys?handle=&epoch=&key_id=`
-
-- Scope `documents:read`, client listener, same tenancy checks as the shape route. All three parameters are required
-  and canonical. Otherwise `400 invalid_request`.
-- `epoch` greater than the current `E` is `400 invalid_request`. Future keys are never released.
-- Served pairs: the current `E` with the current `KID`, and any `(E, KID)` that a retained TBS1 object of this handle
-  names. A retired key that no retained object names is never released. An epoch below retention, or a pair that is
-  not served, answers `409 must_refetch`. So does a stale or unknown handle.
-- `200` body: `{"handle":"h1-…","epoch":"<E>","key_id":"<KID>","key":"<unpadded base64url K_e>"}`.
-- New objects always use the current `E` and `KID`. A cached old object keeps its old epoch. Newly selected data is
-  never sealed under an old epoch.
-
-**Revocation bound.** A key is released only to a credential accepted at that moment.
-
-- **API key:** once its revocation reaches the serving machine, no key is released for any epoch. Peer streams
-  usually deliver it in about a second, but a partition can hold it back. So the endpoint releases a key only while
-  this machine's catalog is fresh: checked before any tenancy check, and again just before the key is returned.
-  Otherwise it answers `503 catalog_stale` with `Retry-After` and `no-store`, and releases nothing. After that last
-  check, an API key is looked up again in the catalog, which authentication may have read before a healed partition
-  delivered its revocation; a key no longer found answers `401 invalid_key`. The catalog is
-  fresh when all of these hold, within one epoch (600 s, `ShapeCrypto.EpochSeconds`):
-  - the last directory read listed this machine. An empty directory response alone proves
-    nothing;
-  - every machine the directory lists was proved. A proof is a completed anti-entropy comparison of the system
-    database into the copy still in place, timed from when it began. The system catalog runs its own anti-entropy
-    rounds, every 60 s, apart from tenant databases;
-  - every other region the catalog records (`cluster_members`, written by each machine before it serves) has a proved
-    machine, listed or not. So a directory that drops a region, or lists only this machine, never lifts the bound.
-  - Bound: a revocation committed at `R`, in epoch `E`, is held by the serving machine, or that machine stops releasing
-    keys before `R + 600 s`, which falls inside epoch `E + 1`. So a revoked API key gets no object sealed after epoch
-    `E + 1` (at most 20 minutes after `R`), partition included. The 600 s is measured on the serving machine's
-    monotonic clock; epoch numbers come from machine wall clocks, assumed in sync.
-  - Availability: a region that cannot be reached for an epoch stops key release on every machine that cannot reach
-    it. So does a region recorded in the catalog with no running machine: retiring a region means removing its
-    `cluster_members` records through reviewed recovery. Shape reads continue; clients keep their keys and retry.
-  - Limits: a revocation commits to the catalog of the machine that served it and streams from there; its `204` does
-    not wait for another region. If that machine stops before the revocation streams out, no running machine holds it
-    until the machine returns, and every authorization check, not only this one, misses it. A machine of this machine's
-    own region that the directory stops listing is not required (one machine per region today).
-- **JWT:** TerraBase validates ts-auth JWTs offline, so an upstream-revoked token is accepted until it expires plus the
-  allowed clock skew (30 s, `UserAuthenticationHandler.ClockSkew`). Its holder may already hold the current `K_e`, which
-  opens objects sealed in the rest of that epoch. The worst case from upstream revocation is: remaining token lifetime +
-  30 s + remaining epoch (≤ 10 min).
-
-Whatever the client already read stays readable.
-
-**FR-21 integration.** `IShapeCrypto.EncryptAsync` accepts a tenant, handle, canonical request offset and the exact
-sealed plaintext bytes. It returns a disposable `ShapeCiphertext` owning memory admission, with its bytes, epoch and
-project data-key id. It always selects the current epoch; callers cannot supply an old epoch or a deterministic salt.
-`CurrentEpoch` and `CurrentKeyAsync` expose the current epoch and its handle-scoped key. Keys reuse the platform backup
-`DataKeys` and `BackupLayout.KeyScope`; a development host without that key store answers `503 unavailable`.
-
-The key endpoint uses `IShapeLineages` to validate the collection's current handle. Filtered handles resolve through
-the bounded shape registry and require current filter admission and collection lineage. The registry is in memory, so a
-filtered handle it no longer tracks (LRU eviction or a restart) answers `409 must_refetch` until a shape read tracks it
-again. Historical `(epoch, key_id)` pairs require `IShapeKeyRetention.HasObjectAsync` proof from the retained T1
-objects; FR-22 supplies that proof. Before T1 objects exist the default refuses historical pairs with
-`409 must_refetch`, rather than releasing unproven keys.
-
-## 14. Manifest (presigned, D2)
-
-`GET …/collections/{collection}/shape/manifest?handle=&offset=`, with the same scope, tenancy and errors as section 13.
-
-### 14.1 SDK transport contract (presigned manifest; no 302)
-
-D2 selects the **presigned manifest**, not a `302` redirect to ciphertext. `GET …/shape` continues to return
-plaintext (`200`) or revalidate that plaintext (`304`); its bootstrap and resume redirects remain `307` (sections 3
-and 9). It never redirects an origin fallback to Tigris. SDKs fetch `…/shape/manifest` explicitly after resolving a
-concrete handle and offset; `-1`, `live`, `cursor` and resume parameters are not accepted by that route. Forward
-the canonical `where` filter when present. Manifest requests require the same `documents:read` authorization as
-origin reads, and answer `200 application/json` with `Cache-Control: private, no-store`.
-The manifest uses the same filter parser and normalized identity as origin reads: an empty `where` answers
-`400 invalid_request`; malformed filter JSON or a value over 8 KiB answers `400 invalid_query`.
-
-Fetch each manifest URL as an opaque bearer URL, without forwarding origin authorization or cookies. The downloaded
-body is TBS1 ciphertext, never shape JSON. An empty manifest, expired URL, download failure or any verification
-failure means read that object's offset from the plaintext origin; do not apply ciphertext or partially verified
-plaintext. The origin never answers `302`; SDKs must not treat any redirect as a ciphertext transport.
-
-### 14.2 Objects and lifecycle
-
-- Body: `{"handle":"h1-…","objects":[…]}`. At most **8** entries in total. The first entry's `offset` is the
-  requested offset; each later entry's `offset` is the previous `next_offset`. The list stops at the first object that
-  is unpublished (section 10) or not yet mirrored, so it may be empty. The client then reads that offset from the
-  origin.
-- Entry: `offset`, `next_offset`, `binding` (JSON string `handle + "\u0000" + offset`), `object`
-  (`v1/shapes/<handle>/<hex SHA-256(shape_id ‖ 0x00 ‖ binding)>`, where `shape_id` is its 32 lowercase hex characters as ASCII and
-  `binding` is the UTF-8 string above), `url` (presigned GET), `expires_at`, `epoch`, `key_id`, `sha256` (hex of the
-  exact TBS1 bytes) and `size` (bytes, integer).
-- `expires_at` is RFC 3339 UTC at the start of the next epoch, `(E_now + 1) × 600`. The presigned URL expires no
-  later than that.
-- Tigris keys hold no tenant names: only hashes of `shape_id` and binding (the binding carries the handle and offset).
-- Client order, applying nothing until every step passes:
-  1. Check the offset chain and that `binding` equals the binding derived from the client's own request.
-  2. Download the object and check `size` and `sha256`.
-  3. Check header `E` and `KID` against `epoch` and `key_id`.
-  4. Fetch `K_e` (section 13) and decrypt.
-  5. Check that the body's `handle`, `offset` and `next_offset` match.
-
-  Any failure discards that object and falls back to the origin for its offset.
-- The mirror never replaces a stored object with different bytes (FR-22).
-- FR-22 uses the platform backup bucket and credentials, with conditional `If-None-Match: *` PUTs. The object holds
-  TBS1 ciphertext and hash/key/epoch/seal-time metadata; a numeric retention position supports floor cleanup. Plaintext
-  document ids, snapshot continuation ids, and tenant names never enter object metadata.
-- T1 delivery uses the authenticated manifest for integrity metadata and the next eight objects. Origin reads keep
-  returning plaintext, including when the client falls back after an object fails integrity checks. Conditional origin
-  `304` responses continue to revalidate plaintext.
-- Successful chunk and complete snapshot publication enqueue a bounded background mirror. Chunk publication retains
-  the encoded admitted bytes through commit and performs no post-commit payload read. Snapshot pages are read after
-  publication by the bounded background mirror worker, one admitted page at a time; these reads are separate from
-  the one-payload-read live wake path. Failed or refused work leaves origin delivery available. After a restart,
-  reading immutable origin bytes warms the metadata cache with HEAD from the existing remote object. Warming never
-  uploads missing objects or renews the original seal timestamp.
-- Historical key proof first checks warmed objects, then scans at most 1024 remote objects with a two-second
-  deadline. An unproven pair answers `409 must_refetch`; reading its immutable offset from the origin warms the proof
-  without rewriting ciphertext. Successful remote proofs are cached and rechecked against retention; absent-object
-  HEAD results back off for 30 seconds. This bounds remote request amplification after a restart.
-- Floor cleanup deletes mirrors below the floor; an hourly bounded sweep also collects objects older than seven days,
-  including retired handles. Expired objects stop appearing in manifests and key proofs immediately, even while a
-  refused remote delete waits for a later pass. Physical deletion can lag the retention cutoff by a sweep interval and
-  the bounded scan backlog.
-
-## 15. Limitations
-
-- **Local-only durability in a cell of one:** section 10.
-- **Oversized commits.** One transaction holds at most 1024 changes and 2 MiB of change content, but values at seal
-  time can grow each document to 1 MiB. A commit whose materialized change exceeds 8 MiB stays `503 shape_too_large`.
-  It clears when its documents shrink, or when a newer snapshot past that commit is published and the client restarts
-  at `-1`.
-- **No read-your-writes.** Writes return `commit_offset`, a different counter from `seq`. No rule maps one to the
-  other yet. A later lane can map `CommitMarker` to `seq`.
-- **Resume regressions.** After a cross-machine resume, a document can briefly show the destination's older value.
-  It catches up when the destination receives the same events. A source write lost before replication can stay in the
-  client for good (host-loss limit above).
-- **Per-machine handles:** section 5.
-
-## 16. Conformance vectors
-
-[shape-vectors.json](shape-vectors.json) is self-contained: synthetic keys, tokens, URLs and data. It needs no
-TerraBase process. Top level: `format` (`TB-SHAPE-VECTORS-V1`), `protocol_version` (`1`), `description`,
-`conventions`, `fixture`, and the vector groups below.
-
-- **Conventions.** Hex is lowercase with no prefix. Binary strings are unpadded base64url unless the field name ends
-  `_hex`. Offsets, epochs, replica ids and stamps are decimal strings; byte counts are JSON integers.
-- **`fixture`.** The shared scope, its `shape_id` and `handle`, a second machine's (`destination`), the
-  `version_scope_guid_n`, `retention_floor`, `committed_head` and `sealed_head`.
-
-| Group | Checks |
-| --- | --- |
-| `identity_vectors` | Section 5 inputs → `shape_id`, `handle` |
-| `filter_vectors` | Section 2 raw `where` → canonical filter and section 5/9 identities, using `fixture.scope` |
-| `offset_vectors` | Offset grammar, valid and invalid |
-| `cursor_vectors` | Opaque R8 token bytes and verbatim passthrough; live-bucket arithmetic and the max rejection |
-| `http_vectors` | Request → status, required header subset, `body` (parsed JSON), `body_utf8` (exact JSON bytes as a string) or `body_hex` (binary bytes), `expected_action`, plus per-vector `fixture` state |
-| `apply_vectors` | Initial state + body → expected state and offset (atomic commit, unseen delete, cross-lineage newer value) |
-| `durability_vectors` | `F`, `covered_offset`, `values_at` → publish or not |
-| `tbs1_vectors` | Positive decryptions with every intermediate: `K_e`, `K_o`, binding, header, per-frame word, nonce, AAD and tag |
-| `tbs1_rejection_vectors` | Whole-object rejections (section 12) |
-| `tbs1_generated_vectors` | `plaintext_recipe` (`repeat_byte_hex`, `length`): encrypt with fixed keys and salt, compare `ciphertext_size`, `ciphertext_sha256` and frame tags, decrypt, then apply the mutations |
-
-Each `filter_vectors` row has an `id`, `input_where_utf8` (the exact raw JSON string, or JSON `null` for an absent
-parameter), `equivalence_group`, and `expected` with `canonical_filter`, `handle`, `shape_id` and `resume_scope_hex`.
-The string `"null"` is a present invalid filter, not an absent parameter. Canonicalize the input, replace only
-`fixture.scope.canonical_filter` with the result, and derive the identities by sections 5 and 9. Compare canonical
-UTF-8 bytes and every expected identity. Rows with the same `equivalence_group` must have equal canonical bytes and
-identities; the group labels cover the specified normalization rules, not arbitrary semantic equivalence.
-
-A failed negative vector means the client rejects the complete object or response, applies nothing, and keeps its
-offset.
-
-## 17. Out of scope
-
-- SDK shape clients (separate repositories).
-- Tier B per-origin delta chunks (D7).
-- Projections, server-sent events, edge Workers, CDN caching, and in-memory origin caches of sealed bytes.
+`tests/TerraBase.Fast/Shapes/TableShapeTests.cs`: a shape equals its table after 100,000 random inserts, upserts,
+updates, row id changes, replaces and deletes, for a client that synced before the workload, one that bootstrapped in
+the middle, and a fresh snapshot afterwards.

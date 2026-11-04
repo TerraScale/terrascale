@@ -14,12 +14,11 @@ Each handle with local objects has one reserved `_tb_shape_chunk` row, next to t
 | --- | --- |
 | `handle` | `~lineage:` + canonical `h1-` handle |
 | `offset`, `end_offset`, `sealed_at` | `0` |
-| `body` | ASCII `1 <incarnation> <replica> <generation> <collection>`, at most 256 bytes |
+| `body` | ASCII `1 <incarnation> <replica> <generation> <table>`, at most 256 bytes |
 
 `1` is the record version. `incarnation` is `commit_offset.incarnation`, `replica` the decimal
-replica id (member and epoch) of the serving process, `generation` the collection's `entity_id`.
-These are the lineage fields `ShapeHandle.ComputeCanonical` hashes; the filter is not stored, because
-eviction does not change a filtered handle whose lineage fields are current.
+replica id (member and epoch) of the serving process, `generation` the table's shape generation (its `~table:` sentinel).
+These are the lineage fields `ShapeHandle.Compute` hashes, with the table name.
 
 Both object writers publish the record in the write transaction that inserts their object: the chunk
 sealer and every snapshot page insert. Each reads the current generation and incarnation in that
@@ -36,7 +35,7 @@ checks and pages, retention trim, the mirror (`ShapeMirror` reads chunks, pages 
 the durable frontier (`~frontier` only). Storage-quota usage sums document bodies only. Shape writes,
 records included, run with capture suspended, so they are never replicated or shipped to backup.
 Copies, backups and restores skip both tables (`TursoCopy`), so records never leave the file. Deleting a
-collection or database leaves derived rows for the sweep, or removes the file. No canonical body or URL
+table or database leaves derived rows for the sweep, or removes the file. No canonical body or URL
 changes.
 
 ## Inventory
@@ -60,7 +59,7 @@ scheduler wraps its cursor instead of repeating the page. No such key is ever de
 | Unclassified | No lineage record (objects written before records existed) | Kept, counted |
 | Malformed | Record over 256 bytes, nonzero columns, or not a valid version 1 body | Kept, counted |
 | Current | Record equals the lineage read now | One bounded ordinary retention trim |
-| Retired | Valid record, and its collection is gone or its generation, incarnation or replica changed | One bounded drop batch |
+| Retired | Valid record, and its table is gone or its generation, incarnation or replica changed | One bounded drop batch |
 
 Absence from the registry or age never retires anything; an unreadable incarnation fails the step. A
 retired batch deletes objects first, then the floor sentinel once no object is left, then the record once
@@ -76,12 +75,12 @@ older records name another replica, so their handles retire in the same bounded 
 ## Ordinary retention of current handles
 
 A current handle gets the same trim a shape request runs (`TrimShapeAsync`, which now shares its body),
-in the writer that classified it: chunks sealed before `now - 7 days` (the feed retention, computed once
+in the writer that classified it: chunks sealed before `now - 7 days` (the shape retention, computed once
 per pass) or below the floor go after the floor is raised over them, then snapshots below the floor and
 that old, except every page of the newest *complete* snapshot (`next_id IS NULL`), so an incomplete newer
 offset never exposes the last complete one. Retention therefore no longer depends on requests.
 
-When the trim raised the floor, including through feed holes with no row deleted, the sweep hands the floor
+When the trim raised the floor, the sweep hands the floor
 to the mirror (`ShapeMirror.FloorTrimmedAsync`) after the writer commits and is disposed, as a request
 pass does; the mirror only queues it, bounded by count and memory, and its worker rereads the floor before
 deleting mirrored objects. Retired handles are never handed to the mirror: their Tigris objects stay.
@@ -130,16 +129,6 @@ request's do.
 
 ## Evidence
 
-`tests/TerraBase.Fast/Shapes/ShapeSweepTests.cs` drives real servers with their own clock and storage:
-restart with an empty registry after a drop with no later request; 1,025 durable retired handles (one
-real seal, the rest written with its lineage record and never tracked by the registry) in passes of
-exactly one shared 1,024-row budget; scheduled retention of a current handle with no request (expired chunk
-removed, floor raised, older complete snapshot trimmed, every page of the newest complete one kept beside a
-newer incomplete one); a damaged handle protected while the sweep retires the next one; filtered-shape
-eviction then drop and recreate; protected missing, damaged, oversized and unknown lineage; floor-only and
-lineage-only discovery; stale chunk and snapshot writers rejected after a drop; cancellation rollback and
-memory refusal. `ShapeRetentionTests` covers the complete-snapshot fix on the request path. The affected
-Fast classes ran five fresh times on the exact commit, as the maintainer directed.
 
 ## Gaps
 

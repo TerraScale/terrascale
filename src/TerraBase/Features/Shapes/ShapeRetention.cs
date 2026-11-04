@@ -32,6 +32,7 @@ internal sealed class ShapeRetention(TimeProvider time, IShapeStorage storage,
     private static readonly SearchValues<char> HandleHex = SearchValues.Create("0123456789abcdef");
     internal const int BatchRows = 1024;
     internal const long BatchBytes = 8 * 1024 * 1024;
+    internal static readonly TimeSpan Age = TimeSpan.FromDays(7);
 
     public async ValueTask<long> GetFloorAsync(IDatabaseStore store, string handle, CancellationToken cancellationToken)
     {
@@ -48,7 +49,7 @@ internal sealed class ShapeRetention(TimeProvider time, IShapeStorage storage,
     public async ValueTask<int> RunPassAsync(IDatabaseStore store, string handle, CancellationToken cancellationToken)
     {
         Validate(store, handle);
-        var before = (time.GetUtcNow() - FeedCursor.Retention).ToUnixTimeMilliseconds();
+        var before = (time.GetUtcNow() - ShapeRetention.Age).ToUnixTimeMilliseconds();
         int deleted;
         await using (var transaction = await storage.BeginTransactionAsync(store, write: true, cancellationToken).ConfigureAwait(false))
         {
@@ -82,7 +83,7 @@ internal sealed class ShapeRetention(TimeProvider time, IShapeStorage storage,
         if (store.Tenant is null || handle.Length != 19 || !handle.StartsWith("h1-", StringComparison.Ordinal)
             || handle.AsSpan(3).ContainsAnyExcept(HandleHex))
         {
-            throw new ArgumentException("Shape retention requires a client database and a canonical v1 handle.", nameof(handle));
+            throw new ArgumentException("Shape retention requires a client database and a canonical handle.", nameof(handle));
         }
     }
 }

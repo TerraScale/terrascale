@@ -41,6 +41,7 @@ internal static class ClientCors
             && string.Equals(segments[4], "databases", StringComparison.OrdinalIgnoreCase)
             && (string.Equals(segments[6], "collections", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(segments[6], "transactions", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(segments[6], "changes", StringComparison.OrdinalIgnoreCase));
+                || string.Equals(segments[6], "changes", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(segments[6], "tables", StringComparison.OrdinalIgnoreCase));
     }
 }

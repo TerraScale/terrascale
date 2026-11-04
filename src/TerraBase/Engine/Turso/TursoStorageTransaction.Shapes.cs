@@ -1,41 +1,218 @@
 using System.Buffers;
-using System.Buffers.Text;
 using System.Globalization;
 using System.Text.Json;
-using TerraBase.Engine.Lattices;
-using TerraBase.Features.Documents;
+using System.Text.RegularExpressions;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Shapes;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Engine.Turso;
 
-internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
+internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction, IShapeTableStorage
 {
     private const int ShapeRows = 4096;
+    private const int ShapeScanRows = 65_536;
+    private const int ShapeScanBatch = 1024;
     private const int ShapeBodyBytes = 1024 * 1024;
     private const int ShapeCommitBytes = 8 * 1024 * 1024;
+    private const string SchemaTable = "sqlite_schema";
+    private const string ShapeTablePrefix = "~table:";
 
-    private const int ShapeIdMemoryPerByte = 6 * 8;
+    public ValueTask<ShapeTableState> ReadShapeTableAsync(string table, CancellationToken cancellationToken) =>
+        RunAsync(() => ShapeTable(table), cancellationToken);
 
-    private const int ShapeCaptureMemoryPerByte = 16;
+    public async ValueTask<ShapeTableState> RenewShapeTableAsync(string table, CancellationToken cancellationToken)
+    {
+        await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
+        return await RunAsync(() =>
+        {
+            var state = ShapeTable(table);
+            if (state.Status != ShapeTableStatus.Stale)
+            {
+                return state;
+            }
 
-    private const int ShapeCaptureStateMemoryPerByte = 64;
+            var cookie = SchemaCookie();
+            if (StoredShapeTable(table) is { } stored && stored.Sql == state.Sql && !SchemaChangedSince(table, stored.Since))
+            {
+                var touch = Command("UPDATE _tb_shape_chunk SET sealed_at = $cookie WHERE handle = $key AND offset = 0;");
+                touch.Parameters.AddWithValue("$cookie", cookie);
+                touch.Parameters.AddWithValue("$key", ShapeTablePrefix + table);
+                touch.ExecuteNonQuery();
+                touch.Parameters.Clear();
+                return state with { Status = ShapeTableStatus.Current, Generation = stored.Generation, Since = stored.Since };
+            }
 
-    private const int ShapeCaptureMemoryPerToken = 12 * 3;
+            var generation = EntityIds.New().ToString();
+            var since = ShapeHead();
+            RetireShapeTable(table, null);
+            var upsert = Command("INSERT INTO _tb_shape_chunk (handle, offset, end_offset, body, sealed_at) VALUES ($key, 0, $since, $body, $cookie);");
+            upsert.Parameters.AddWithValue("$key", ShapeTablePrefix + table);
+            upsert.Parameters.AddWithValue("$body", System.Text.Encoding.UTF8.GetBytes(generation + "\n" + state.Sql));
+            upsert.Parameters.AddWithValue("$since", since);
+            upsert.Parameters.AddWithValue("$cookie", cookie);
+            upsert.ExecuteNonQuery();
+            upsert.Parameters.Clear();
+            return state with { Status = ShapeTableStatus.Current, Generation = generation, Since = since };
+        }, cancellationToken, mutation: true).ConfigureAwait(false);
+    }
+
+    private ShapeTableState ShapeTable(string table)
+    {
+        if (store.IsSystem || !ShapeTables.IsValidName(table))
+        {
+            return new ShapeTableState(ShapeTableStatus.Missing, null, null);
+        }
+
+        var schema = Command("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = $name;");
+        schema.Parameters.AddWithValue("$name", table);
+        CountRead("shape");
+        if (schema.ExecuteScalar() is not string sql)
+        {
+            return new ShapeTableState(ShapeTableStatus.Missing, null, null);
+        }
+
+        if (!sql.StartsWith("CREATE TABLE", StringComparison.OrdinalIgnoreCase) || WithoutRowid().IsMatch(sql))
+        {
+            return new ShapeTableState(ShapeTableStatus.Unsupported, sql, null);
+        }
+
+        return StoredShapeTable(table) is { } stored && stored.Sql == sql && stored.Cookie == SchemaCookie()
+            ? new ShapeTableState(ShapeTableStatus.Current, sql, stored.Generation, stored.Since)
+            : new ShapeTableState(ShapeTableStatus.Stale, sql, null);
+    }
+
+    private (string Sql, string Generation, long Since, long Cookie)? StoredShapeTable(string table)
+    {
+        var stored = Command("SELECT body, end_offset, sealed_at FROM _tb_shape_chunk WHERE handle = $key AND offset = 0;");
+        stored.Parameters.AddWithValue("$key", ShapeTablePrefix + table);
+        CountRead("shape");
+        using var reader = stored.ExecuteReader();
+        if (!reader.Read())
+        {
+            return null;
+        }
+
+        var body = System.Text.Encoding.UTF8.GetString(TursoSession.Bytes(reader, 0));
+        var split = body.IndexOf('\n', StringComparison.Ordinal);
+        return split == 26 && EntityIds.IsValid(body[..split])
+            ? (body[(split + 1)..], body[..split], reader.GetInt64(1), reader.GetInt64(2))
+            : throw new InvalidDataException("a shape table record is damaged");
+    }
+
+    private long SchemaCookie()
+    {
+        CountRead("shape");
+        return Command("PRAGMA schema_version;").ExecuteScalar() is long cookie ? cookie : throw new InvalidDataException("the database has no schema version");
+    }
+
+    private bool SchemaChangedSince(string table, long since)
+    {
+        if (!HasChangeTable())
+        {
+            return false;
+        }
+
+        var changes = Command("SELECT before, after FROM turso_cdc WHERE table_name = 'sqlite_schema' AND change_id > $since ORDER BY change_id;");
+        changes.Parameters.AddWithValue("$since", since);
+        CountRead("shape");
+        using var reader = changes.ExecuteReader();
+        while (reader.Read())
+        {
+            if (SchemaChangeNames(reader, 0, table))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    [GeneratedRegex(@"\bWITHOUT\s+ROWID\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex WithoutRowid();
+
+    private (string[] Columns, long Since)? CurrentShapeColumns(string table, string generation)
+    {
+        if (ShapeTable(table) is not { Status: ShapeTableStatus.Current } state || state.Generation != generation)
+        {
+            return null;
+        }
+
+        var command = session.TableCommand($"PRAGMA table_xinfo(\"{table}\");", transaction);
+        List<string> columns = [];
+        CountRead("shape");
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                if (reader.GetInt64(6) is not (1 or 2))
+                {
+                    columns.Add(reader.GetString(1));
+                }
+            }
+        }
+
+        return columns.Count > 0 ? ([.. columns], state.Since) : throw new InvalidDataException("a shape table has no stored columns");
+    }
+
+    private void RetireShapeTable(string table, string? generation)
+    {
+        if (generation is not null && StoredShapeTable(table)?.Generation != generation)
+        {
+            return;
+        }
+
+        var retire = Command("DELETE FROM _tb_shape_chunk WHERE handle = $key AND offset = 0;");
+        retire.Parameters.AddWithValue("$key", ShapeTablePrefix + table);
+        retire.ExecuteNonQuery();
+        retire.Parameters.Clear();
+    }
+
+    private bool HasChangeTable()
+    {
+        CountRead("shape");
+        return Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is not null;
+    }
+
+    private long ShapeHead()
+    {
+        if (!HasChangeTable())
+        {
+            return 0;
+        }
+
+        CountRead("shape");
+        return Command("SELECT coalesce((SELECT change_id FROM turso_cdc WHERE change_type = 2 ORDER BY change_id DESC LIMIT 1), 0);")
+            .ExecuteScalar() is long head ? head : 0;
+    }
+
+    private bool ShapeBoundary(long offset)
+    {
+        if (!HasChangeTable())
+        {
+            return offset == 0;
+        }
+
+        if (offset == 0)
+        {
+            CountRead("shape");
+            return Command("SELECT coalesce((SELECT change_id FROM turso_cdc ORDER BY change_id LIMIT 1), 1);").ExecuteScalar() is 1L;
+        }
+
+        var command = Command("SELECT change_type FROM turso_cdc WHERE change_id = $offset;");
+        command.Parameters.AddWithValue("$offset", offset);
+        CountRead("shape");
+        return command.ExecuteScalar() is 2L;
+    }
 
     public async ValueTask<(long Offset, long Head, ShapeSealedChunk? Chunk)> SealShapeChunkAsync(ShapeSealDefinition shape, long offset, long? through,
         IMemoryBudget memory, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(offset);
-        if (shape.ResumeScope.Length != 16 || shape.ShapeId.Length != 32 || shape.Handle.Length != 19
-            || !EntityIds.IsValid(shape.CollectionGeneration) || !DatabaseName.TryParse(shape.Collection, out _))
-        {
-            throw new ArgumentException("a shape needs its lineage identity, collection and 16-byte resume scope", nameof(shape));
-        }
-
+        ShapeTables.Validate(shape);
         await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
         return await RunAsync(() => SealShapeChunk(shape, offset, through, memory, cancellationToken), cancellationToken,
             mutation: true).ConfigureAwait(false);
@@ -44,14 +221,8 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
     private (long Offset, long Head, ShapeSealedChunk? Chunk) SealShapeChunk(ShapeSealDefinition shape, long offset, long? through,
         IMemoryBudget memory, CancellationToken cancellationToken)
     {
-        CountRead("shape");
-        if (Command("SELECT entity_id FROM collections WHERE name = $collection;", shape.Collection).ExecuteScalar()
-            is not string generation || generation != shape.CollectionGeneration)
-        {
-            throw new ShapeSealOffsetException();
-        }
-        CountRead("shape");
-        var head = (long)Command("SELECT seq FROM _tb_feed_sequence WHERE id = 1;").ExecuteScalar()!;
+        var (columns, since) = CurrentShapeColumns(shape.Table, shape.Generation) ?? throw new ShapeSealOffsetException();
+        var head = ShapeHead();
         var stored = Command("SELECT end_offset FROM _tb_shape_chunk WHERE handle = $handle AND offset = $offset;");
         stored.Parameters.AddWithValue("$handle", shape.Handle);
         stored.Parameters.AddWithValue("$offset", offset);
@@ -60,80 +231,123 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         {
             return (existing, head, null);
         }
+
         if (offset == head)
         {
             return (offset, head, null);
         }
 
-        var frontier = head;
-        var end = Math.Min(through ?? head, frontier);
+        var end = Math.Min(through ?? head, head);
         if (offset > end || !ShapeBoundary(offset))
         {
             throw new ShapeSealOffsetException();
         }
 
-        ValidateShapeCapture(memory, cancellationToken);
         using var admission = new ShapeMemory(memory, store.Tenant);
         admission.Reserve(256 * 1024);
         var changes = new ArrayBufferWriter<byte>();
+        var commit = new ArrayBufferWriter<byte>();
         var covered = offset;
-        var count = 0;
-        var emitted = 0;
-
-        var resumeSize = new string('0', Base64Url.GetEncodedLength(17 + ChangeCursor.MaxBytes));
-        var envelopeBytes = ShapeEnvelope(shape, offset, head, frontier, resumeSize, []).Length;
-        while (covered < end)
+        var rows = 0;
+        var commitRows = 0;
+        var scanned = 0;
+        var after = offset;
+        var envelopeBytes = ShapeEnvelope(shape, offset, end, []).Length;
+        var stop = false;
+        var retired = false;
+        while (!stop && after < end)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var next = ShapeCommit(covered, end, cancellationToken);
-            if (count > 0 && count + next.Rows > ShapeRows)
+            var batch = Command("""
+                SELECT change_id, change_type, table_name, id, before, after FROM turso_cdc
+                WHERE change_id > $after AND change_id <= $end AND (change_type = 2 OR table_name = $table OR table_name = 'sqlite_schema')
+                ORDER BY change_id LIMIT $limit;
+                """);
+            batch.Parameters.AddWithValue("$table", shape.Table);
+            batch.Parameters.AddWithValue("$after", after);
+            batch.Parameters.AddWithValue("$end", end);
+            batch.Parameters.AddWithValue("$limit", ShapeScanBatch);
+            CountRead("shape");
+            var read = 0;
+            using (var reader = batch.ExecuteReader())
             {
-                break;
-            }
-            using var candidate = new ShapeMemory(memory, store.Tenant);
-            byte[] change;
-            try
-            {
-                candidate.Reserve(ShapeChangeBytes(shape, covered, next.End));
-                change = ShapeChange(shape, covered, next.End, cancellationToken);
-            }
-            catch (Exception error) when (count > 0 && error is ShapeTooLargeException or QosMemoryException)
-            {
-
-                break;
-            }
-
-            var size = envelopeBytes + changes.WrittenCount + change.Length + (emitted > 0 && change.Length > 0 ? 1 : 0);
-            if (count > 0 && size > ShapeBodyBytes)
-            {
-                break;
-            }
-            if (count == 0 && size > ShapeCommitBytes)
-            {
-
-                var exact = ShapeEnvelope(shape, offset, next.End, frontier, ShapeResume(shape.ResumeScope.Span, next.End, cancellationToken),
-                    change);
-                if (exact.Length > ShapeCommitBytes)
+                while (reader.Read())
                 {
-                    throw new ShapeTooLargeException();
+                    cancellationToken.ThrowIfCancellationRequested();
+                    read++;
+                    scanned++;
+                    after = reader.GetInt64(0);
+                    var type = reader.GetInt64(1);
+                    if (type == 2)
+                    {
+                        if (commitRows > 0)
+                        {
+                            var size = envelopeBytes + changes.WrittenCount + commit.WrittenCount + 32;
+                            if (rows > 0 && (rows + commitRows > ShapeRows || size > ShapeBodyBytes))
+                            {
+                                stop = true;
+                                break;
+                            }
+
+                            AppendShapeCommit(changes, commit, after);
+                            rows += commitRows;
+                        }
+
+                        commit.ResetWrittenCount();
+                        commitRows = 0;
+                        covered = after;
+                        if (rows >= ShapeRows || envelopeBytes + changes.WrittenCount >= ShapeBodyBytes || scanned >= ShapeScanRows)
+                        {
+                            stop = true;
+                            break;
+                        }
+
+                        continue;
+                    }
+
+                    var table = reader.IsDBNull(2) ? null : reader.GetString(2);
+                    if (table == SchemaTable && after > since && SchemaChangeNames(reader, 4, shape.Table))
+                    {
+                        retired = covered == offset;
+                        stop = true;
+                        break;
+                    }
+
+                    if (table != shape.Table)
+                    {
+                        continue;
+                    }
+
+                    if (!WriteShapeOperation(commit, reader, type, shape.Table, columns, admission))
+                    {
+                        retired = covered == offset;
+                        stop = true;
+                        break;
+                    }
+
+                    commitRows++;
+                    if (commit.WrittenCount > ShapeCommitBytes)
+                    {
+                        if (rows == 0)
+                        {
+                            throw new ShapeTooLargeException();
+                        }
+
+                        stop = true;
+                        break;
+                    }
                 }
-                size = exact.Length;
             }
-            candidate.TransferTo(admission);
-            if (change.Length > 0)
-            {
-                if (emitted++ > 0)
-                {
-                    changes.Write(","u8);
-                }
-                changes.Write(change);
-            }
-            count += next.Rows;
-            covered = next.End;
-            if (count >= ShapeRows || size >= ShapeBodyBytes)
+
+            if (read == 0)
             {
                 break;
             }
+        }
+
+        if (retired)
+        {
+            RetireShapeTable(shape.Table, shape.Generation);
+            return (offset, head, null);
         }
 
         if (covered == offset)
@@ -141,9 +355,9 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
             return (offset, head, null);
         }
 
-        var body = ShapeEnvelope(shape, offset, covered, frontier, ShapeResume(shape.ResumeScope.Span, covered, cancellationToken),
-            changes.WrittenSpan);
-        PublishShapeLineage(shape.Handle, shape.Collection, shape.CollectionGeneration, shape.Incarnation);
+        var body = ShapeEnvelope(shape, offset, covered, changes.WrittenSpan);
+        admission.Reserve(body.Length);
+        PublishShapeLineage(shape.Handle, shape.Table, shape.Generation, shape.Incarnation);
         var insert = Command("INSERT INTO _tb_shape_chunk (handle, offset, end_offset, body, sealed_at) VALUES ($handle, $offset, $end, $body, $at);");
         insert.Parameters.AddWithValue("$handle", shape.Handle);
         insert.Parameters.AddWithValue("$offset", offset);
@@ -156,214 +370,156 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
 
         var retained = new ShapeMemory(memory, store.Tenant);
         admission.TransferTo(retained);
-        return (covered, head, new ShapeSealedChunk(offset, covered, frontier, body, retained, sealedAt));
+        return (covered, head, new ShapeSealedChunk(offset, covered, covered, body, retained, sealedAt));
     }
 
-    private bool ShapeBoundary(long offset)
+    private static void AppendShapeCommit(ArrayBufferWriter<byte> changes, ArrayBufferWriter<byte> commit, long offset)
     {
-        var command = Command("""
-            SELECT seq, commit_offset FROM _tb_feed WHERE seq >= $offset ORDER BY seq LIMIT 2;
-            """);
-        command.Parameters.AddWithValue("$offset", offset);
-        CountRead("shape");
-        using var reader = command.ExecuteReader();
-        if (!reader.Read())
+        if (changes.WrittenCount > 0)
         {
-            return false;
+            changes.Write(","u8);
         }
-        var seq = reader.GetInt64(0);
-        var commit = reader.GetInt64(1);
-        if (seq != offset)
-        {
 
-            return offset == 0 && seq == 1;
-        }
-        return !reader.Read() || reader.GetInt64(1) != commit;
+        changes.Write("{\"offset\":\""u8);
+        changes.Write(System.Text.Encoding.ASCII.GetBytes(ShapeNumber(offset)));
+        changes.Write("\",\"ops\":["u8);
+        changes.Write(commit.WrittenSpan);
+        changes.Write("]}"u8);
     }
 
-    private (long Commit, long End, int Rows) ShapeCommit(long offset, long through, CancellationToken cancellationToken)
+    private static bool SchemaChangeNames(SqliteDataReader reader, int first, string table)
     {
-        var command = Command("""
-            SELECT seq, commit_offset, stamp, deleted, octet_length(collection), octet_length(id), origin
-            FROM _tb_feed WHERE seq > $offset ORDER BY seq;
-            """);
-        command.Parameters.AddWithValue("$offset", offset);
-        CountRead("shape");
-        using var reader = command.ExecuteReader();
-        var end = offset;
-        var commit = -1L;
-        var count = 0;
-        var successor = false;
-        while (reader.Read())
+        foreach (var column in (ReadOnlySpan<int>)[first, first + 1])
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var seq = reader.GetInt64(0);
-            var at = reader.GetInt64(1);
-            if (seq != end + 1)
+            if (!reader.IsDBNull(column) && SqliteRecord.Decode(TursoSession.Bytes(reader, column), columns: 3) is [_, _, string name]
+                && string.Equals(name, table, StringComparison.OrdinalIgnoreCase))
             {
-                throw new ShapeSealOffsetException();
+                return true;
             }
-            if (commit >= 0 && at != commit)
+        }
+
+        return false;
+    }
+
+    private bool WriteShapeOperation(ArrayBufferWriter<byte> commit, SqliteDataReader reader, long type, string table, string[] columns, ShapeMemory admission)
+    {
+        if (reader.IsDBNull(3) || reader.GetValue(3) is not long key)
+        {
+            throw new InvalidDataException("a captured row change has no integer row id");
+        }
+
+        object?[]? values = null;
+        if (type is 0 or 1)
+        {
+            if (reader.IsDBNull(5))
             {
-                if (at <= commit)
+                values = CurrentShapeRow(table, columns, key, admission);
+                type = values is null ? -1 : type;
+            }
+            else
+            {
+                var image = TursoSession.Bytes(reader, 5);
+                admission.Reserve(checked(image.Length * 6L + 256));
+                values = SqliteRecord.Decode(image, columns: columns.Length + 1);
+                if (values.Length != columns.Length)
                 {
-                    throw new InvalidDataException("shape feed commits are not in local apply order");
+                    return false;
                 }
-                successor = true;
-                break;
-            }
-            if (seq > through || at <= 0)
-            {
-                throw new ShapeSealOffsetException();
-            }
-            if (reader.GetInt64(2) <= 0 || reader.GetInt64(3) is not (0 or 1) || reader.GetInt64(6) == 0
-                || reader.GetInt64(4) is < 1 or > 63 || reader.GetInt64(5) is < 1 or > MaxIdBytes)
-            {
-                throw new InvalidDataException("a shape feed row has invalid event columns");
-            }
-            commit = at;
-            end = seq;
-            count++;
-        }
-        if (!successor && end != through)
-        {
-            throw new ShapeSealOffsetException();
-        }
-        return count > 0 ? (commit, end, count) : throw new ShapeSealOffsetException();
-    }
-
-    private byte[] ShapeChange(ShapeSealDefinition shape, long start, long end, CancellationToken cancellationToken)
-    {
-        var command = Command("""
-            SELECT id, access_before, access_after FROM _tb_feed
-            WHERE seq > $start AND seq <= $end AND collection = $collection;
-            """, shape.Collection);
-        command.Parameters.AddWithValue("$start", start);
-        command.Parameters.AddWithValue("$end", end);
-        Dictionary<string, bool> rows = [with(StringComparer.Ordinal)];
-        CountRead("shape");
-        using (var reader = command.ExecuteReader())
-        {
-            while (reader.Read())
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var id = reader.GetString(0);
-                rows[id] = rows.GetValueOrDefault(id) || shape.OwnerAuthorization is null
-                    || MatchesOwnerProof(reader.IsDBNull(1) ? null : reader.GetString(1), shape.OwnerAuthorization)
-                    || MatchesOwnerProof(reader.IsDBNull(2) ? null : reader.GetString(2), shape.OwnerAuthorization);
             }
         }
-        if (rows.Count == 0)
+        else if (type != -1)
         {
-            return [];
+            throw new InvalidDataException($"a captured change has change type {type}, which no capture writes");
         }
 
-        var buffer = new ArrayBufferWriter<byte>();
-        using var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { MaxDepth = DocumentJson.MaxStoredDepth + 4 });
+        if (commit.WrittenCount > 0)
+        {
+            commit.Write(","u8);
+        }
+
+        using var writer = new Utf8JsonWriter(commit);
         writer.WriteStartObject();
-        writer.WriteString("offset", ShapeNumber(end));
-        writer.WriteStartArray("ops");
-        var emitted = 0;
-        foreach (var (id, owned) in rows.OrderBy(row => row.Key, StringComparer.Ordinal))
+        writer.WriteString("op", type switch { 1 => "insert", 0 => "update", _ => "delete" });
+        writer.WriteString("key", ShapeNumber(key));
+        if (values is not null)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var document = ReadShapeDocument(shape.Collection, id);
-            if (document is not null)
+            writer.WriteStartObject("row");
+            for (var index = 0; index < columns.Length; index++)
             {
-                DocumentJson.ValidateStored(document.Json.Span);
-                if (shape.OwnerAuthorization is { } owner && new CollectionAccessRules(owner.Path, null, null).Subject(document.Json) != owner.Subject
-                    || shape.Predicate is not null && !shape.Predicate(document))
-                {
-                    document = null;
-                }
+                writer.WritePropertyName(columns[index]);
+                WriteShapeValue(writer, values[index]);
             }
 
-            if (document is null && !owned)
-            {
-                continue;
-            }
-            emitted++;
-            writer.WriteStartObject();
-            writer.WriteString("op", document is null ? "delete" : "upsert");
-            writer.WriteString("id", id);
-            if (document is not null)
-            {
-                writer.WriteString("version", ETags.Version(Scope, shape.Collection, id, document.Version, document.Json));
-                writer.WritePropertyName("document");
-                writer.WriteRawValue(document.Json.Span, skipInputValidation: true);
-            }
             writer.WriteEndObject();
-            if (writer.BytesCommitted + writer.BytesPending > ShapeCommitBytes)
-            {
-                throw new ShapeTooLargeException();
-            }
         }
-        writer.WriteEndArray();
+
         writer.WriteEndObject();
         writer.Flush();
-        return emitted == 0 ? [] : buffer.WrittenSpan.ToArray();
+        return true;
     }
 
-    private static bool MatchesOwnerProof(string? json, DocumentOwnerProof owner) =>
-        json is not null && JsonSerializer.Deserialize(json, ShapeJsonContext.Default.DocumentOwnerProof) == owner;
-
-    private long ShapeChangeBytes(ShapeSealDefinition shape, long start, long end)
+    private object?[]? CurrentShapeRow(string table, string[] columns, long key, ShapeMemory admission)
     {
-        var collection = shape.Collection;
-        var command = Command("""
-            SELECT coalesce(sum(octet_length(id)), 0), count(*),
-                coalesce(sum(coalesce(octet_length(access_before), 0) + coalesce(octet_length(access_after), 0)), 0) FROM _tb_feed
-            WHERE seq > $start AND seq <= $end AND collection = $collection;
-            """, collection);
-        command.Parameters.AddWithValue("$start", start);
-        command.Parameters.AddWithValue("$end", end);
-        long bytes;
+        var size = session.TableCommand($"SELECT {string.Join(" + ", columns.Select(column => $"coalesce(length(CAST({Quote(column)} AS BLOB)), 0)"))} FROM {Quote(table)} WHERE rowid = $key;", transaction);
+        size.Parameters.Clear();
+        size.Parameters.AddWithValue("$key", key);
         CountRead("shape");
-        using (var reader = command.ExecuteReader())
-        {
-            reader.Read();
-            bytes = checked(reader.GetInt64(0) * ShapeIdMemoryPerByte + reader.GetInt64(1) * 1024 + reader.GetInt64(2) * 8);
-        }
-        if (HasTable(collection, "shape"))
-        {
-            var bodies = TableCommand("""
-                SELECT coalesce(sum(octet_length(doc)), 0), coalesce(max(octet_length(doc)), 0) FROM {0}
-                WHERE id IN (SELECT id FROM _tb_feed WHERE seq > $start AND seq <= $end AND collection = $collection);
-                """, collection);
-            bodies.Parameters.AddWithValue("$start", start);
-            bodies.Parameters.AddWithValue("$end", end);
-            CountRead("shape");
-            using var reader = bodies.ExecuteReader();
-            reader.Read();
-            if (reader.GetInt64(1) > DocumentJson.MaxBytes)
-            {
-                throw new InvalidDataException("a shape document exceeds the stored document bound");
-            }
-            if (shape.Predicate is null && reader.GetInt64(0) > ShapeCommitBytes)
-            {
-                throw new ShapeTooLargeException();
-            }
-            bytes = checked(bytes + Math.Min(reader.GetInt64(0), ShapeCommitBytes + MaxDocumentBytes) * 8);
-        }
-        return bytes;
-    }
-
-    private StoredDocument? ReadShapeDocument(string collection, string id)
-    {
-        if (!HasTable(collection, "shape"))
+        if (size.ExecuteScalar() is not long bytes)
         {
             return null;
         }
 
+        admission.Reserve(checked(bytes * 6L + 256));
+        var row = session.TableCommand($"SELECT {string.Join(", ", columns.Select(Quote))} FROM {Quote(table)} WHERE rowid = $key;", transaction);
+        row.Parameters.Clear();
+        row.Parameters.AddWithValue("$key", key);
         CountRead("shape");
-        using var reader = TableCommand("""
-            SELECT (SELECT stamp FROM _tb_state WHERE collection = $collection AND id = $id), doc FROM {0} WHERE id = $id;
-            """, collection, id).ExecuteReader();
-        return reader.Read() ? new StoredDocument(id, Version(collection, id, reader, 0), TursoSession.Bytes(reader, 1), Scope) : null;
+        using var reader = row.ExecuteReader();
+        if (!reader.Read())
+        {
+            return null;
+        }
+
+        var values = new object?[columns.Length];
+        for (var index = 0; index < columns.Length; index++)
+        {
+            values[index] = reader.IsDBNull(index) ? null : reader.GetValue(index);
+        }
+
+        return values;
     }
 
-    private static byte[] ShapeEnvelope(ShapeSealDefinition shape, long offset, long covered, long head, string resume,
-        ReadOnlySpan<byte> changes, bool upToDate = false)
+    private static string Quote(string identifier) => "\"" + identifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+
+    internal static void WriteShapeValue(Utf8JsonWriter writer, object? value)
+    {
+        switch (value)
+        {
+            case null or DBNull:
+                writer.WriteNullValue();
+                break;
+            case long integer:
+                writer.WriteNumberValue(integer);
+                break;
+            case double real when double.IsFinite(real):
+                writer.WriteNumberValue(real);
+                break;
+            case double:
+                throw new InvalidDataException("a shape value is not a finite number");
+            case string text:
+                writer.WriteStringValue(text);
+                break;
+            case byte[] blob:
+                writer.WriteStartObject();
+                writer.WriteBase64String("base64", blob);
+                writer.WriteEndObject();
+                break;
+            default:
+                throw new InvalidDataException("a shape value has an unknown storage class");
+        }
+    }
+
+    private static byte[] ShapeEnvelope(ShapeSealDefinition shape, long offset, long covered, ReadOnlySpan<byte> changes, bool upToDate = false)
     {
         var buffer = new ArrayBufferWriter<byte>();
         using var writer = new Utf8JsonWriter(buffer);
@@ -372,265 +528,15 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         writer.WriteString("handle", shape.Handle);
         writer.WriteString("offset", ShapeNumber(offset));
         writer.WriteString("next_offset", ShapeNumber(covered));
-        writer.WriteString("covered_offset", ShapeNumber(covered));
-        writer.WriteString("values_at", ShapeNumber(head));
+        writer.WriteString("values_at", ShapeNumber(covered));
         writer.WriteBoolean("up_to_date", upToDate);
-        writer.WriteString("cursor_resume", resume);
         writer.WriteStartArray("changes");
         writer.Flush();
-
         buffer.Write(changes);
         writer.WriteEndArray();
         writer.WriteEndObject();
         writer.Flush();
         return buffer.WrittenSpan.ToArray();
-    }
-
-    private string ShapeResume(ReadOnlySpan<byte> scope, long covered, CancellationToken cancellationToken)
-    {
-
-        var command = Command("""
-            SELECT f.origin, max(f.stamp), min(f.stamp) FROM _tb_feed f
-            LEFT JOIN (SELECT origin, min(stamp) AS stamp FROM _tb_feed WHERE seq > $covered GROUP BY origin) u ON u.origin = f.origin
-            WHERE f.seq <= $covered AND (u.stamp IS NULL OR f.stamp < u.stamp) GROUP BY f.origin;
-            """);
-        command.Parameters.AddWithValue("$covered", covered);
-        Dictionary<ReplicaId, Hlc> stamps = [];
-        CountRead("shape");
-        using (var reader = command.ExecuteReader())
-        {
-            while (reader.Read())
-            {
-                if (stamps.Count == ChangeCursor.MaxOrigins)
-                {
-                    throw new InvalidDataException("a shape cursor exceeds the origin bound");
-                }
-                if (reader.GetInt64(0) == 0 || reader.GetInt64(2) <= 0)
-                {
-                    throw new InvalidDataException("a shape resume prefix has invalid event columns");
-                }
-                stamps.Add(new ReplicaId(unchecked((ulong)reader.GetInt64(0))), new Hlc(checked((ulong)reader.GetInt64(1))));
-            }
-        }
-        var prefixes = stamps.ToDictionary(pair => pair.Key, pair =>
-        {
-            var floor = ShapeFloor(pair.Key);
-            if (floor.Value > pair.Value.Value)
-            {
-                throw new InvalidDataException("a shape resume floor exceeds its origin head");
-            }
-            return PrefixThrough(pair.Key, floor, pair.Value, cancellationToken, "shape");
-        });
-        var cursor = new FeedCursor(stamps, FeedCursor.At(Member.Clock.UtcNow)) { Issuer = Member.Id, Prefixes = prefixes };
-        var r8 = Base64Url.DecodeFromChars(ChangeCursor.Encode(cursor));
-        var bytes = new byte[17 + r8.Length];
-        bytes[0] = 1;
-        scope.CopyTo(bytes.AsSpan(1));
-        r8.CopyTo(bytes, 17);
-        return Base64Url.EncodeToString(bytes);
-    }
-
-    private Hlc ShapeFloor(ReplicaId origin)
-    {
-        var command = Command("SELECT stamp FROM _tb_feed_floor WHERE origin = $origin;");
-        command.Parameters.AddWithValue("$origin", unchecked((long)origin.Value));
-        CountRead("shape");
-        return command.ExecuteScalar() is long floor
-            ? floor >= 0 ? new Hlc((ulong)floor) : throw new InvalidDataException("a shape resume floor is negative")
-            : default;
-    }
-
-    private void ValidateShapeCapture(IMemoryBudget memory, CancellationToken cancellationToken)
-    {
-        CountRead("shape");
-        if (Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null)
-        {
-            return;
-        }
-        CountRead("shape");
-        var head = Command(TursoStatements.NewestChange).ExecuteScalar() is long last ? last : 0;
-        for (var after = 0L; after < head;)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var boundary = Command("SELECT min(change_id) FROM turso_cdc WHERE change_id > $after AND change_type = 2;");
-            boundary.Parameters.AddWithValue("$after", after);
-            CountRead("shape");
-            if (boundary.ExecuteScalar() is not long end)
-            {
-                throw new InvalidDataException("a captured transaction has no intact commit boundary");
-            }
-            var size = Command("""
-                SELECT coalesce(sum(coalesce(octet_length(after), 0) * CASE WHEN table_name = '_tb_state' THEN $stateMemory ELSE $imageMemory END
-                    + coalesce(octet_length(table_name), 0) * $imageMemory), 0), count(*),
-                    coalesce(max(octet_length(table_name)), 0) FROM turso_cdc
-                WHERE change_id > $after AND change_id <= $end;
-                """);
-            size.Parameters.AddWithValue("$after", after);
-            size.Parameters.AddWithValue("$end", end);
-            size.Parameters.AddWithValue("$stateMemory", ShapeCaptureStateMemoryPerByte);
-            size.Parameters.AddWithValue("$imageMemory", ShapeCaptureMemoryPerByte);
-            long bytes;
-            CountRead("shape");
-            using (var reader = size.ExecuteReader())
-            {
-                reader.Read();
-                if (reader.GetInt64(2) > 128)
-                {
-                    throw new InvalidDataException("a captured table name exceeds the engine's name bound");
-                }
-                bytes = checked(reader.GetInt64(0) + reader.GetInt64(1) * 2048);
-            }
-            using var admission = memory.TryReserve(MemoryLane.Bulk, bytes, store.Tenant) ?? throw new QosMemoryException();
-            using var tokenAdmission = new ShapeMemory(memory, store.Tenant);
-            long tokenBytes = 0;
-            var capture = new ShapeCaptureTransaction();
-            var rows = Command("""
-                SELECT change_type, table_name, after FROM turso_cdc
-                WHERE change_id > $after AND change_id <= $end ORDER BY change_id;
-                """);
-            rows.Parameters.AddWithValue("$after", after);
-            rows.Parameters.AddWithValue("$end", end);
-            CountRead("shape");
-            using (var reader = rows.ExecuteReader())
-            {
-                while (reader.Read())
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var type = reader.GetInt64(0);
-
-                    if ((type == 2 && (!reader.IsDBNull(1) || !reader.IsDBNull(2))) || (type == -1 && !reader.IsDBNull(2)))
-                    {
-                        throw new InvalidDataException($"a captured change of type {type} has the shape of another type");
-                    }
-                    if (type == 2)
-                    {
-                        continue;
-                    }
-                    if (type is not (-1 or 0 or 1))
-                    {
-                        throw new InvalidDataException($"a captured change has change type {type}, which no capture writes");
-                    }
-                    if (type is 0 or 1 && reader.GetString(1) is var table && !ChangeLog.EngineTable(table)
-                        && table is not ("_tb_feed" or "_tb_feed_floor"))
-                    {
-                        if (reader.IsDBNull(2))
-                        {
-                            throw new InvalidDataException("a captured insert or update has no after-image");
-                        }
-                        var image = TursoSession.Bytes(reader, 2);
-                        var required = MeasureShapeRecord(image, table, cancellationToken);
-                        if (required > tokenBytes)
-                        {
-                            tokenAdmission.Reserve(required - tokenBytes);
-                            tokenBytes = required;
-                        }
-                        capture.Add(table, image);
-                    }
-                }
-            }
-            after = end;
-        }
-    }
-
-    private static long MeasureShapeRecord(ReadOnlySpan<byte> image, string table, CancellationToken cancellationToken)
-    {
-        var size = ShapeRecordVarint(image, out var used);
-        if (size < used || size > image.Length)
-        {
-            throw new InvalidDataException("a captured record header is out of range");
-        }
-        var header = image[used..(int)size];
-        var body = image[(int)size..];
-        ReadOnlySpan<byte> second = [];
-        ReadOnlySpan<byte> third = [];
-        var allText = true;
-        var columns = 0;
-        while (!header.IsEmpty)
-        {
-            if (++columns > 9)
-            {
-                throw new InvalidDataException("a captured record exceeds the engine column bound");
-            }
-            var type = ShapeRecordVarint(header, out var read);
-            header = header[read..];
-            var bytes = type switch
-            {
-                0 or 8 or 9 => 0,
-                1 => 1,
-                2 => 2,
-                3 => 3,
-                4 => 4,
-                5 => 6,
-                6 or 7 => 8,
-                >= 12 => (type - 12) / 2,
-                _ => throw new InvalidDataException("a captured record uses a reserved serial type"),
-            };
-            if (bytes > body.Length)
-            {
-                throw new InvalidDataException("a captured record value runs past its end");
-            }
-            allText &= type >= 13 && type % 2 == 1;
-            if (allText && columns == 2)
-            {
-                second = body[..(int)bytes];
-            }
-            if (allText && columns == 3)
-            {
-                third = body[..(int)bytes];
-            }
-            body = body[(int)bytes..];
-        }
-        if (table == "_tb_state" && columns != 8)
-        {
-            throw new InvalidDataException("a captured state record has the wrong column count");
-        }
-        if (!allText || !(columns == 2 || columns == 3 && table == "documents"))
-        {
-            return 0;
-        }
-
-        var document = columns == 2 ? second : third;
-
-        if (!(DatabaseName.TryParse(table, out _) || IsMetadata(table)))
-        {
-            return checked((long)document.Length * ShapeCaptureMemoryPerToken);
-        }
-        try
-        {
-            var json = new Utf8JsonReader(document, new JsonReaderOptions { MaxDepth = DocumentJson.MaxStoredDepth });
-            long tokens = 0;
-            while (json.Read())
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                tokens++;
-            }
-            return checked(tokens * ShapeCaptureMemoryPerToken);
-        }
-        catch (JsonException error)
-        {
-            throw new InvalidDataException("a captured document is not valid JSON", error);
-        }
-    }
-
-    private static long ShapeRecordVarint(ReadOnlySpan<byte> bytes, out int read)
-    {
-        long value = 0;
-        for (read = 0; read < 9 && read < bytes.Length; read++)
-        {
-            var next = bytes[read];
-            if (read == 8)
-            {
-                read++;
-                return (value << 8) | next;
-            }
-            value = (value << 7) | (long)(next & 0x7f);
-            if ((next & 0x80) == 0)
-            {
-                read++;
-                return value;
-            }
-        }
-        throw new InvalidDataException("a captured record varint is truncated");
     }
 
     public ValueTask<ShapeSealedChunk?> ReadShapeChunkAsync(string handle, long offset, IMemoryBudget memory,
@@ -644,27 +550,27 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         {
             return null;
         }
-        if (bytes is <= 0 or > ShapeCommitBytes)
+
+        if (bytes is <= 0 or > ShapeCommitBytes + ShapeBodyBytes)
         {
             throw new InvalidDataException("a sealed shape chunk exceeds its body bound");
         }
+
         var admission = memory.TryReserve(MemoryLane.Foreground, checked(bytes + 4096), store.Tenant) ?? throw new QosMemoryException();
         try
         {
             var command = Command("SELECT end_offset, body, sealed_at FROM _tb_shape_chunk WHERE handle = $handle AND offset = $offset;");
             command.Parameters.AddWithValue("$handle", handle);
             command.Parameters.AddWithValue("$offset", offset);
-
             CountRead("shape_body");
             using var reader = command.ExecuteReader();
             if (!reader.Read())
             {
                 throw new InvalidDataException("a sealed shape chunk disappeared within a read transaction");
             }
+
             var end = reader.GetInt64(0);
-            var body = TursoSession.Bytes(reader, 1);
-            var valuesAt = ReadShapeValuesAt(body);
-            return new ShapeSealedChunk(offset, end, valuesAt, body, admission, reader.GetInt64(2));
+            return new ShapeSealedChunk(offset, end, end, TursoSession.Bytes(reader, 1), admission, reader.GetInt64(2));
         }
         catch
         {
@@ -674,21 +580,6 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
     }, cancellationToken);
 
     private static string ShapeNumber(long offset) => offset.ToString(CultureInfo.InvariantCulture);
-
-    private static long ReadShapeValuesAt(ReadOnlySpan<byte> body)
-    {
-        var reader = new Utf8JsonReader(body);
-        while (reader.Read())
-        {
-            if (reader.TokenType == JsonTokenType.PropertyName && reader.ValueTextEquals("values_at"u8) && reader.Read()
-                && reader.TokenType == JsonTokenType.String && reader.ValueSpan.Length <= 19
-                && Utf8Parser.TryParse(reader.ValueSpan, out long head, out var consumed) && consumed == reader.ValueSpan.Length && head >= 0)
-            {
-                return head;
-            }
-        }
-        throw new InvalidDataException("a sealed shape chunk has no materialization head");
-    }
 
     private sealed class ShapeMemory(IMemoryBudget memory, TenantContext? tenant) : IMemoryReservation
     {
@@ -725,6 +616,7 @@ internal sealed class TursoShapeStorage(TursoStorageEngine engine) : IShapeStora
         {
             throw new ShapeSealOffsetException();
         }
+
         return await underlying.BeginTransactionAsync(write, cancellationToken).ConfigureAwait(false);
     }
 }

@@ -10,7 +10,7 @@ notifications and the public endpoint's error response.
   `must_refetch`, which maps to HTTP 409 with `Cache-Control: no-store`.
 - `RunPassAsync` commits one batch, at most 1024 rows and 8 MiB of sealed bodies
   across both tables. It uses the injected `TimeProvider` and the existing
-  `FeedCursor.Retention` (7 days). Call again on a later maintenance turn when
+  `ShapeRetention.Age` (7 days). Call again on a later maintenance turn when
   work remains; a partially completed pass is safe. A positive deletion count
   schedules another pass: a byte-limited batch can stop below 1024 rows.
 - Chunks older than 7 days or starting below the floor are deleted. Superseded
@@ -23,13 +23,8 @@ notifications and the public endpoint's error response.
   the old handle has no rows. Rotation never raises another handle's floor.
 
 The engine adapter runs through a write transaction with capture suspended.
-Retention changes neither `_tb_feed` nor its hourly garbage collection. Floor
-reads use indexed retained-prefix and head lookups and the persisted per-handle
-floor. A maintenance pass also scans the sequence index for interior holes left
-by per-origin feed trimming and persists the highest hole before deleting rows.
-An empty feed uses the persisted sequence counter as its floor. Sealers must
-still refuse a range containing missing feed rows: a floor is not a density
-proof for feed GC that ran after the shape maintenance pass.
+Retention never trims `turso_cdc`. The floor is the persisted per-handle floor only; a sealer still refuses an
+offset whose commit record `turso_cdc` no longer retains, answering `409 must_refetch`.
 
 Before deleting a chunk, the transaction persists the greatest deleted end
 offset for that handle. This bookkeeping uses a reserved `_tb_shape_chunk` key:
@@ -58,6 +53,6 @@ endpoint boundary.
 
 FR-20 invokes bounded passes for served handles and retires observed rotations
 in a bounded, memory-admitted queue. Restart, queue overflow, registry eviction
-and collection drops without a later shape request can leave derived chunks and
+and table drops without a later shape request can leave derived chunks and
 snapshots behind. A durable database-wide retirement sweep is still needed;
 the current per-handle retention pass cannot discover these forgotten handles.

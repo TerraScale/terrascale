@@ -107,7 +107,6 @@ builder.Services.AddTerraBasePressure();
 builder.Services.AddTerraBaseStats();
 builder.Services.AddTerraBaseImport();
 TerraBase.Features.Shapes.ShapesExtensions.AddTerraBaseShapes(builder.Services);
-TerraBase.Features.Shapes.ShapeResumeExtensions.AddTerraBaseShapeResume(builder.Services);
 builder.Services.AddTerraBaseCatalog();
 builder.Services.AddTerraBaseRpc();
 

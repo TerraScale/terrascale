@@ -34,8 +34,11 @@ public sealed class PrivateResponseCacheTests
     public async Task Explicit_shape_and_stream_policies_and_public_region_caching_are_preserved()
     {
         await using var api = await DocumentApi.StartAsync();
-        await Assert.That((await api.PutAsync(DocumentApi.NewId(), new { name = new Faker().Name.FirstName() })).Status).IsEqualTo(HttpStatusCode.Created);
-        using var bootstrap = await api.Client.GetAsync(new Uri($"{api.Collections}/{DocumentApi.Collection}/shape?offset=-1", UriKind.Relative));
+        var created = await api.SendRawAsync(HttpMethod.Post, api.DatabasePath() + "/sql/execute",
+            $$"""{"statements":[{"sql":"CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT)"},{"sql":"INSERT INTO people (name) VALUES (?)","args":["{{new Faker().Name.FirstName()}}"]}]}""",
+            "application/json");
+        await Assert.That(created.Status).IsEqualTo(HttpStatusCode.OK);
+        using var bootstrap = await api.Client.GetAsync(new Uri($"{api.DatabasePath()}/tables/people/shape?offset=-1", UriKind.Relative));
         await Assert.That(bootstrap.StatusCode).IsEqualTo(HttpStatusCode.TemporaryRedirect);
         await CacheControlAssert.EqualAsync(bootstrap.Headers.CacheControl?.ToString());
         using var page = await api.Client.GetAsync(bootstrap.Headers.Location);

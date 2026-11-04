@@ -1,13 +1,7 @@
 using System.Buffers;
-using System.Buffers.Text;
-using System.Text;
-using System.Text.Encodings.Web;
 using System.Text.Json;
-using TerraBase.Engine.Lattices;
-using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Shapes;
-using TerraBase.Primitives;
 
 namespace TerraBase.Engine.Turso;
 
@@ -30,21 +24,16 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
         return reader.Read() ? new ShapeSnapshot(reader.GetInt64(0), reader.GetInt64(1)) : null;
     }
 
-    public ValueTask<long> ShapeSnapshotFloorAsync(string handle, CancellationToken cancellationToken) =>
-        RunAsync(() => ShapeFloor(handle), cancellationToken);
-
     public ValueTask<bool> ShapeSnapshotDueAsync(string handle, long now, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
             var latest = NewestShapeSnapshot(handle);
-
-            if (latest is null || latest.Offset < ShapeFloor(handle))
+            if (latest is null || latest.Offset < StoredShapeFloor(handle))
             {
                 return true;
             }
 
-            CountRead("shape");
-            if ((long)Command("SELECT seq FROM _tb_feed_sequence WHERE id = 1;").ExecuteScalar()! == latest.Offset)
+            if (ShapeHead() == latest.Offset)
             {
                 return false;
             }
@@ -70,142 +59,93 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
             return (long)command.ExecuteScalar()! >= threshold;
         }, cancellationToken);
 
-    public ValueTask<(long Offset, string Cursor)> ShapeSnapshotHeadAsync(
-        ReadOnlyMemory<byte> resumeScope, DateTimeOffset now, CancellationToken cancellationToken) =>
-        RunAsync(() =>
-        {
-            CountRead("shape");
-            var offset = (long)Command("SELECT seq FROM _tb_feed_sequence WHERE id = 1;").ExecuteScalar()!;
-
-            Dictionary<ReplicaId, Hlc> stamps = [];
-            Dictionary<ReplicaId, FeedPrefix> prefixes = [];
-            List<(ReplicaId Origin, Hlc Floor)> floors = [];
-            CountRead("shape");
-            using (var reader = Command("SELECT origin, stamp FROM _tb_feed_floor LIMIT 257;").ExecuteReader())
-            {
-                while (reader.Read())
-                {
-                    if (floors.Count == ChangeCursor.MaxOrigins)
-                    {
-                        throw new InvalidDataException("a shape snapshot cursor has too many origins");
-                    }
-
-                    floors.Add((new ReplicaId(unchecked((ulong)reader.GetInt64(0))), new Hlc((ulong)reader.GetInt64(1))));
-                }
-            }
-
-            foreach (var (origin, floor) in floors)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var command = Command(FeedHead);
-                command.Parameters.AddWithValue("$origin", unchecked((long)origin.Value));
-                CountRead("shape");
-                if (command.ExecuteScalar() is not long stamp)
-                {
-                    continue;
-                }
-
-                var at = new Hlc((ulong)stamp);
-                stamps[origin] = at;
-                prefixes[origin] = PrefixThrough(origin, floor, at, cancellationToken, "shape");
-            }
-
-            var cursor = ChangeCursor.Encode(new FeedCursor(stamps, FeedCursor.At(now)) { Issuer = Member.Id, Prefixes = prefixes });
-            var proof = Base64Url.DecodeFromChars(cursor);
-            var envelope = new byte[17 + proof.Length];
-            envelope[0] = 1;
-            resumeScope.Span.CopyTo(envelope.AsSpan(1, 16));
-            proof.CopyTo(envelope, 17);
-            return (offset, Base64Url.EncodeToString(envelope));
-        }, cancellationToken);
+    public ValueTask<long> ShapeSnapshotHeadAsync(CancellationToken cancellationToken) => RunAsync(ShapeHead, cancellationToken);
 
     public ValueTask<ShapeSnapshotPage> BuildShapeSnapshotPageAsync(
-        ShapeSnapshotDefinition shape, long offset, string? afterId, string cursor, IMemoryBudget memory, TimeProvider time,
+        ShapeSealDefinition shape, long offset, int page, long? afterRowid, IMemoryBudget memory, TimeProvider time,
         CancellationToken cancellationToken) =>
-        RunAsync(() => BuildShapeSnapshotPage(shape, offset, afterId, cursor, memory, time, cancellationToken), cancellationToken);
+        RunAsync(() => BuildShapeSnapshotPage(shape, offset, page, afterRowid, memory, time, cancellationToken), cancellationToken);
 
     private ShapeSnapshotPage BuildShapeSnapshotPage(
-        ShapeSnapshotDefinition shape, long offset, string? afterId, string cursor, IMemoryBudget memory, TimeProvider time,
+        ShapeSealDefinition shape, long offset, int page, long? afterRowid, IMemoryBudget memory, TimeProvider time,
         CancellationToken cancellationToken)
     {
-        if (store.IsSystem)
-        {
-            throw new InvalidDataException("a shape snapshot requires an existing client collection");
-        }
-        CountRead("shape");
-        if (Command("SELECT entity_id FROM collections WHERE name = $collection;", shape.Collection).ExecuteScalar()
-            is not string generation || generation != shape.CollectionGeneration)
+        if (CurrentShapeColumns(shape.Table, shape.Generation) is not { } current || ShapeHead() != offset)
         {
             throw new ShapeSealOffsetException();
         }
 
+        var columns = current.Columns;
+
         var workspace = memory.TryReserve(MemoryLane.Bulk, ShapeSnapshots.WorkspaceBytes, store.Tenant) ?? throw new StorageBusyException();
-        IMemoryReservation? singletonMemory = null;
+        IMemoryReservation? rowMemory = null;
         try
         {
             var operations = new ArrayBufferWriter<byte>(ShapeSnapshots.PageBytes);
-            operations.Write("["u8);
             var count = 0;
-            var examined = 0;
-            var last = afterId;
+            var last = afterRowid;
             var started = time.GetTimestamp();
-            var envelopeBytes = ShapeSnapshots.EncodePage(shape, offset, afterId, "", cursor, "[]"u8).Length;
+            var envelopeBytes = ShapeSnapshots.EncodePage(shape, offset, page, more: true, []).Length;
             var more = false;
+            var select = $"SELECT rowid, {string.Join(", ", columns.Select(Quote))} FROM {Quote(shape.Table)}";
             while (!more)
             {
-
-                var batch = ShapeSnapshotRows(shape.Collection, shape.OwnerFilter, last,
-                    count == ShapeSnapshots.PageDocuments ? 1 : Math.Min(128, ShapeSnapshots.PageExamined - examined + 1), cancellationToken);
-                if (batch.Count == 0)
+                var rows = session.TableCommand(last is null
+                    ? select + " ORDER BY rowid LIMIT $limit;"
+                    : select + " WHERE rowid > $after ORDER BY rowid LIMIT $limit;", transaction);
+                rows.Parameters.Clear();
+                rows.Parameters.AddWithValue("$limit", 128);
+                if (last is { } after)
                 {
-                    break;
+                    rows.Parameters.AddWithValue("$after", after);
                 }
 
-                foreach (var (id, size, version) in batch)
+                var read = 0;
+                CountRead("shape");
+                using (var reader = rows.ExecuteReader())
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    if (examined == ShapeSnapshots.PageExamined || count == ShapeSnapshots.PageDocuments
-                        || (examined > 0 && time.GetElapsedTime(started) >= ShapeSnapshots.PageDeadline))
+                    while (reader.Read())
                     {
-                        more = true;
-                        break;
-                    }
-
-                    using var rowMemory = memory.TryReserve(MemoryLane.Bulk, checked(size * 8 + 32 * 1024), store.Tenant) ?? throw new StorageBusyException();
-                    var bodyQuery = TableCommand("SELECT CAST(doc AS BLOB) FROM {0} WHERE id = $id;", shape.Collection, id);
-                    StoredDocument document;
-                    CountRead("shape");
-                    using (var bodyReader = bodyQuery.ExecuteReader())
-                    {
-                        if (!bodyReader.Read())
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (count == ShapeSnapshots.PageRows || (count > 0 && time.GetElapsedTime(started) >= ShapeSnapshots.PageDeadline))
                         {
-                            throw new InvalidDataException("a snapshot document has no materialized value");
+                            more = true;
+                            break;
                         }
 
-                        document = new StoredDocument(id, version, TursoSession.Bytes(bodyReader, 0), Scope);
-                    }
-
-                    DocumentJson.ValidateStored(document.Json.Span);
-                    if (document.Version <= 0)
-                    {
-                        throw new InvalidDataException("a snapshot document has no live state version");
-                    }
-
-                    var matches = shape.Predicate?.Invoke(document) ?? true;
-                    var operation = matches ? ShapeSnapshots.Upsert(shape.Collection, document) : [];
-                    var candidateBytes = envelopeBytes + Base64Url.GetEncodedLength(Encoding.UTF8.GetByteCount(id))
-                        + operations.WrittenCount - 1 + operation.Length + (matches && count > 0 ? 1 : 0);
-                    if (count > 0 && candidateBytes > ShapeSnapshots.PageBytes)
-                    {
-                        more = true;
-                        break;
-                    }
-
-                    if (matches)
-                    {
-                        if (candidateBytes > ShapeSnapshots.SingletonBytes)
+                        read++;
+                        var operation = new ArrayBufferWriter<byte>();
+                        using (var writer = new Utf8JsonWriter(operation))
                         {
-                            throw new InvalidDataException("a snapshot singleton page exceeds 8 MiB");
+                            writer.WriteStartObject();
+                            writer.WriteString("op", "insert");
+                            writer.WriteString("key", ShapeNumber(reader.GetInt64(0)));
+                            writer.WriteStartObject("row");
+                            for (var index = 0; index < columns.Length; index++)
+                            {
+                                writer.WritePropertyName(columns[index]);
+                                WriteShapeValue(writer, reader.IsDBNull(index + 1) ? null : reader.GetValue(index + 1));
+                            }
+
+                            writer.WriteEndObject();
+                            writer.WriteEndObject();
+                        }
+
+                        var candidate = envelopeBytes + operations.WrittenCount + operation.WrittenCount + 1;
+                        if (count > 0 && candidate > ShapeSnapshots.PageBytes)
+                        {
+                            more = true;
+                            break;
+                        }
+
+                        if (candidate > ShapeSnapshots.SingletonBytes)
+                        {
+                            throw new ShapeTooLargeException();
+                        }
+
+                        if (candidate > ShapeSnapshots.PageBytes)
+                        {
+                            rowMemory = memory.TryReserve(MemoryLane.Bulk, checked(candidate * 2L), store.Tenant) ?? throw new StorageBusyException();
                         }
 
                         if (count > 0)
@@ -213,129 +153,44 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
                             operations.Write(","u8);
                         }
 
-                        if (candidateBytes > ShapeSnapshots.PageBytes)
-                        {
-                            singletonMemory = memory.TryReserve(MemoryLane.Bulk, checked(size * 8 + 32 * 1024), store.Tenant)
-                                ?? throw new StorageBusyException();
-                        }
-
-                        operations.Write(operation);
+                        operations.Write(operation.WrittenSpan);
                         count++;
+                        last = reader.GetInt64(0);
                     }
+                }
 
-                    last = id;
-                    examined++;
+                if (read == 0)
+                {
+                    break;
                 }
             }
 
-            operations.Write("]"u8);
-            var next = more ? last : null;
-            var bytes = ShapeSnapshots.EncodePage(shape, offset, afterId, next, cursor, "[]"u8).Length + operations.WrittenCount - 2;
-            if (bytes > ShapeSnapshots.SingletonBytes || (count > 1 && bytes > ShapeSnapshots.PageBytes))
-            {
-                throw new InvalidDataException("a shape snapshot page exceeds its byte limit");
-            }
-
-            var resultMemory = memory.TryReserve(MemoryLane.Bulk, checked(bytes * 3L + 4096), store.Tenant) ?? throw new StorageBusyException();
-            try
-            {
-                return new ShapeSnapshotPage(ShapeSnapshots.EncodePage(shape, offset, afterId, next, cursor, operations.WrittenSpan), next, resultMemory);
-            }
-            catch
-            {
-                resultMemory.Dispose();
-                throw;
-            }
+            var body = ShapeSnapshots.EncodePage(shape, offset, page, more, operations.WrittenSpan);
+            var resultMemory = memory.TryReserve(MemoryLane.Bulk, checked(body.Length * 3L + 4096), store.Tenant) ?? throw new StorageBusyException();
+            return new ShapeSnapshotPage(body, more ? last : null, resultMemory);
         }
         finally
         {
-            singletonMemory?.Dispose();
+            rowMemory?.Dispose();
             workspace.Dispose();
         }
     }
 
-    private List<(string Id, long Bytes, long Version)> ShapeSnapshotRows(
-        string collection, DocumentFilter? ownerFilter, string? afterId, int limit, CancellationToken cancellationToken)
-    {
-        var sql = afterId is null ? """
-            SELECT CAST(d.id AS BLOB), octet_length(d.doc),
-                (SELECT s.stamp FROM _tb_state s WHERE s.collection = $collection AND s.id = d.id), octet_length(d.id)
-            FROM {0} d ORDER BY d.id LIMIT $limit;
-            """ : """
-            SELECT CAST(d.id AS BLOB), octet_length(d.doc),
-                (SELECT s.stamp FROM _tb_state s WHERE s.collection = $collection AND s.id = d.id), octet_length(d.id)
-            FROM {0} d WHERE d.id > $after ORDER BY d.id LIMIT $limit;
-            """;
-        string? ownerPath = null;
-        string? ownerSubject = null;
-        if (ownerFilter is not null)
-        {
-            if (ownerFilter is not CompareFilter { Op: Comparison.Equal, Path.Segments: { } segments, Value: { Kind: ScalarKind.Text, Value: string actor } })
-            {
-                throw new InvalidDataException("snapshot ownership requires a trusted subject equality");
-            }
-
-            ownerPath = "$" + string.Concat(segments.Select(segment => ".\""
-                + JsonEncodedText.Encode(segment, JavaScriptEncoder.UnsafeRelaxedJsonEscaping).Value + "\""));
-            ownerSubject = actor;
-            var owner = "json_type(d.doc, $ownerPath) IS 'text' AND json_extract(d.doc, $ownerPath) = $ownerSubject";
-            sql = sql.Replace(" ORDER BY", afterId is null ? $" WHERE {owner} ORDER BY" : $" AND {owner} ORDER BY", StringComparison.Ordinal);
-        }
-
-        var rows = TableCommand(sql, collection);
-        rows.Parameters.AddWithValue("$limit", limit);
-        if (afterId is not null)
-        {
-            rows.Parameters.AddWithValue("$after", afterId);
-        }
-        if (ownerPath is not null)
-        {
-            rows.Parameters.AddWithValue("$ownerPath", ownerPath);
-            rows.Parameters.AddWithValue("$ownerSubject", ownerSubject!);
-        }
-
-        List<(string, long, long)> batch = [];
-        CountRead("shape");
-        using var reader = rows.ExecuteReader();
-        while (reader.Read())
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var size = reader.GetInt64(1);
-            if (size is < 0 or > ShapeSnapshots.SingletonBytes || reader.IsDBNull(2)
-                || reader.GetInt64(3) is < 1 or > 1024)
-            {
-                throw new InvalidDataException("a snapshot document is oversized or has no state version");
-            }
-
-            var id = StrictUtf8.GetString(TursoSession.Bytes(reader, 0));
-            if (id.Length is < 1 or > 256 || id.Any(char.IsControl))
-            {
-                throw new InvalidDataException("a snapshot document has an invalid id");
-            }
-
-            batch.Add((id, size, reader.GetInt64(2)));
-        }
-
-        return batch;
-    }
-
     public async ValueTask InsertShapeSnapshotPageAsync(
-        ShapeSnapshotDefinition shape, long offset, int page, ShapeSnapshotPage body, long sealedAt, CancellationToken cancellationToken)
+        ShapeSealDefinition shape, long offset, int page, ShapeSnapshotPage body, long sealedAt, CancellationToken cancellationToken)
     {
         await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
         _ = await RunAsync(() =>
         {
-
-            var handle = shape.Handle;
-            PublishShapeLineage(handle, shape.Collection, shape.CollectionGeneration, shape.Incarnation);
+            PublishShapeLineage(shape.Handle, shape.Table, shape.Generation, shape.Incarnation);
             var command = Command("""
                 INSERT INTO _tb_shape_snapshot (handle, offset, page, next_id, body, sealed_at)
                 VALUES ($handle, $offset, $page, $next, $body, $sealed);
                 """);
-            command.Parameters.AddWithValue("$handle", handle);
+            command.Parameters.AddWithValue("$handle", shape.Handle);
             command.Parameters.AddWithValue("$offset", offset);
             command.Parameters.AddWithValue("$page", page);
-            command.Parameters.AddWithValue("$next", (object?)body.NextId ?? DBNull.Value);
+            command.Parameters.AddWithValue("$next", body.NextRowid is { } next ? ShapeNumber(next) : DBNull.Value);
             command.Parameters.AddWithValue("$body", body.Body.ToArray());
             command.Parameters.AddWithValue("$sealed", sealedAt);
             try
@@ -364,22 +219,19 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
     }
 
     public ValueTask<ShapeSnapshotPage?> ReadShapeSnapshotPageAsync(
-        string handle, long offset, string? afterId, IMemoryBudget memory, CancellationToken cancellationToken) =>
+        string handle, long offset, int page, IMemoryBudget memory, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
             var command = Command("""
-                SELECT page, octet_length(body), next_id, coalesce(octet_length(next_id), 0) FROM _tb_shape_snapshot
-                WHERE handle = $handle AND offset = $offset
-                    AND page = CASE WHEN $after IS NULL THEN 0 ELSE
-                        (SELECT page + 1 FROM _tb_shape_snapshot WHERE handle = $handle AND offset = $offset AND next_id = $after LIMIT 1) END
+                SELECT octet_length(body), next_id IS NOT NULL FROM _tb_shape_snapshot
+                WHERE handle = $handle AND offset = $offset AND page = $page
                     AND EXISTS (SELECT 1 FROM _tb_shape_snapshot WHERE handle = $handle AND offset = $offset AND next_id IS NULL);
                 """);
             command.Parameters.AddWithValue("$handle", handle);
             command.Parameters.AddWithValue("$offset", offset);
-            command.Parameters.AddWithValue("$after", (object?)afterId ?? DBNull.Value);
-            int page;
+            command.Parameters.AddWithValue("$page", page);
             long bytes;
-            string? next;
+            bool more;
             CountRead("shape");
             using (var reader = command.ExecuteReader())
             {
@@ -388,14 +240,8 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
                     return null;
                 }
 
-                page = reader.GetInt32(0);
-                bytes = reader.GetInt64(1);
-                if (reader.GetInt64(3) is < 0 or > 1024)
-                {
-                    throw new InvalidDataException("a stored snapshot keyset exceeds its byte limit");
-                }
-
-                next = reader.IsDBNull(2) ? null : reader.GetString(2);
+                bytes = reader.GetInt64(0);
+                more = reader.GetInt64(1) != 0;
             }
 
             if (bytes is < 0 or > ShapeSnapshots.SingletonBytes)
@@ -413,7 +259,7 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
                 CountRead("shape_body");
                 using var reader = body.ExecuteReader();
                 reader.Read();
-                return new ShapeSnapshotPage(TursoSession.Bytes(reader, 0), next, reservation);
+                return new ShapeSnapshotPage(TursoSession.Bytes(reader, 0), more ? 0 : null, reservation);
             }
             catch
             {

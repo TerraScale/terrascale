@@ -157,7 +157,6 @@ internal static class UserAuthExtensions
                 && context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName is not
                     ("getDocument" or "listDocuments" or "queryDocuments" or "createDocument" or "putDocument"
                     or "patchDocument" or "deleteDocument" or "runTransaction" or "streamDatabaseChanges"
-                    or "getShape" or "getShapeKey" or "getShapeManifest"
                     or "createFileUpload" or "completeFileUpload" or "listBucketFiles" or "createFileDownload" or "deleteBucketFile"))
             {
                 context.Response.StatusCode = StatusCodes.Status403Forbidden;

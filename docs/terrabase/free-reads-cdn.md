@@ -84,5 +84,5 @@ never links a CDN it cannot purge.
   Opening the bytes still needs the epoch key from the authenticated key route.
 - Live polls at the head stay on the origin (`private, no-store`). T2 serves only catch-up reads of sealed objects.
 
-Proof: `tests/TerraBase.Slow/Shapes/S3ShapeMirrorTests.cs` checks on Tigris (T1) and on R2 (T1 plus a cached T2 read).
+Proof: `tests/TerraBase.Fast/Shapes/ShapeMirrorHttpTests.cs` checks that mirrored objects decrypt to the origin bytes.
 Measurements are in `benchmark/bench/2026-10-23-free-reads.md`.

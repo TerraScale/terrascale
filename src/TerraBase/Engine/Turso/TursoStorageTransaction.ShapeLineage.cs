@@ -7,14 +7,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Engine.Turso;
 
-/// <summary>
-/// Durable shape lineage (#277, docs/terrabase/shape-sweep.md): each handle with objects keeps a sentinel <c>_tb_shape_chunk</c>
-/// row under <c>~lineage:</c> plus the handle (offset 0, end_offset 0, sealed_at 0), whose body is the ASCII text
-/// <c>1 incarnation replica generation collection</c>, at most <see cref="LineageBodyBytes"/> bytes. Both object writers publish
-/// it in the transaction that inserts their object, after reading the lineage they write under in that transaction; the sweep
-/// reads it the same way to tell a retired handle from a current one. Every other reader keys rows by an exact canonical
-/// <c>h1-</c> handle, which never starts with <c>~</c>; copies skip the table.
-/// </summary>
 internal sealed partial class TursoStorageTransaction : IShapeSweepTransaction
 {
     private const string ShapeLineagePrefix = "~lineage:";
@@ -25,12 +17,10 @@ internal sealed partial class TursoStorageTransaction : IShapeSweepTransaction
     private const string Sweep = "shape_sweep";
     private static readonly SearchValues<char> ShapeHandleHex = SearchValues.Create("0123456789abcdef");
 
-    // Each object writer, before inserting: the lineage it names must be the current one, read in this writer transaction.
-    // The replica is this process's own (Member.Id), fixed for its lifetime, so only the incarnation comes from the caller.
-    private void PublishShapeLineage(string handle, string collection, string generation, Ulid incarnation)
+    private void PublishShapeLineage(string handle, string table, string generation, Ulid incarnation)
     {
-        var expected = ShapeLineageBody(incarnation, Member.Id, generation, collection);
-        if (CurrentShapeLineage(collection, "shape") is not { } current || !current.AsSpan().SequenceEqual(expected))
+        var expected = ShapeLineageBody(incarnation, Member.Id, generation, table);
+        if (CurrentShapeLineage(table, "shape") is not { } current || !current.AsSpan().SequenceEqual(expected))
         {
             throw new ShapeSealOffsetException();
         }
@@ -49,31 +39,28 @@ internal sealed partial class TursoStorageTransaction : IShapeSweepTransaction
             return;
         }
 
-        // An oversized record makes the insert fail on the unique key, so it is never replaced.
         var insert = Command("INSERT INTO _tb_shape_chunk (handle, offset, end_offset, body, sealed_at) VALUES ($key, 0, 0, $body, 0);");
         insert.Parameters.AddWithValue("$key", ShapeLineagePrefix + handle);
         insert.Parameters.AddWithValue("$body", expected);
         insert.ExecuteNonQuery();
     }
 
-    // The lineage a handle of this collection is computed from now; null once the collection's deletion is visible.
-    private byte[]? CurrentShapeLineage(string collection, string path)
+    private byte[]? CurrentShapeLineage(string table, string path)
     {
         CountRead(path);
-        if (Command("SELECT entity_id FROM collections WHERE name = $collection;", collection).ExecuteScalar() is not string generation)
+        if (ShapeTable(table) is not { Status: ShapeTableStatus.Current, Generation: { } generation })
         {
             return null;
         }
 
         CountRead(path);
-        // An unreadable incarnation proves nothing about any handle: fail rather than call every lineage retired.
         return Command(TursoStatements.Incarnation).ExecuteScalar() is string incarnation && EntityIds.IsValid(incarnation)
-            ? ShapeLineageBody(Ulid.Parse(incarnation), Member.Id, generation, collection)
+            ? ShapeLineageBody(Ulid.Parse(incarnation), Member.Id, generation, table)
             : throw new InvalidDataException("the database has no valid incarnation");
     }
 
-    private static byte[] ShapeLineageBody(Ulid incarnation, ReplicaId replica, string generation, string collection) =>
-        Encoding.ASCII.GetBytes(string.Create(CultureInfo.InvariantCulture, $"1 {incarnation} {replica.Value} {generation} {collection}"));
+    private static byte[] ShapeLineageBody(Ulid incarnation, ReplicaId replica, string generation, string table) =>
+        Encoding.ASCII.GetBytes(string.Create(CultureInfo.InvariantCulture, $"1 {incarnation} {replica.Value} {generation} {table}"));
 
     public ValueTask<IReadOnlyList<string>> ListShapeHandlesAsync(string? after, int limit, CancellationToken cancellationToken) =>
         RunAsync<IReadOnlyList<string>>(() =>
@@ -196,13 +183,13 @@ internal sealed partial class TursoStorageTransaction : IShapeSweepTransaction
             body = TursoSession.Bytes(reader, 0);
         }
 
-        if (body.AsSpan().ContainsAnyExceptInRange((byte)' ', (byte)'~') || Encoding.ASCII.GetString(body).Split(' ') is not ["1", var incarnation, var replica, var generation, var collection]
+        if (body.AsSpan().ContainsAnyExceptInRange((byte)' ', (byte)'~') || Encoding.ASCII.GetString(body).Split(' ') is not ["1", var incarnation, var replica, var generation, var table]
             || !EntityIds.IsValid(incarnation) || !ulong.TryParse(replica, NumberStyles.None, CultureInfo.InvariantCulture, out var replicaId)
-            || replicaId.ToString(CultureInfo.InvariantCulture) != replica || !EntityIds.IsValid(generation) || !DatabaseName.TryParse(collection, out _))
+            || replicaId.ToString(CultureInfo.InvariantCulture) != replica || !EntityIds.IsValid(generation) || !ShapeTables.IsValidName(table))
         {
             return ShapeHandleState.Malformed;
         }
 
-        return CurrentShapeLineage(collection, Sweep) is { } current && current.AsSpan().SequenceEqual(body) ? ShapeHandleState.Current : ShapeHandleState.Retired;
+        return CurrentShapeLineage(table, Sweep) is { } current && current.AsSpan().SequenceEqual(body) ? ShapeHandleState.Current : ShapeHandleState.Retired;
     }
 }

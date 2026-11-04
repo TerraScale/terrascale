@@ -29,11 +29,7 @@ internal sealed partial class TursoStorageTransaction : IShapeRetentionTransacti
     private (int Rows, long Bytes, long Raised, bool More) TrimShape(string handle, long before, int maxRows, long maxBytes, CancellationToken cancellationToken)
     {
         var stored = StoredShapeFloor(handle);
-        var floor = Math.Max(stored, FeedHoleFloor());
-        if (floor > 0)
-        {
-            RaiseShapeFloor(handle, floor);
-        }
+        var floor = stored;
         var chunks = Command("""
             SELECT rowid, end_offset, octet_length(body) FROM _tb_shape_chunk
             WHERE handle = $handle AND (sealed_at < $before OR offset < $floor) ORDER BY offset LIMIT $limit;
@@ -136,27 +132,7 @@ internal sealed partial class TursoStorageTransaction : IShapeRetentionTransacti
         return !left;
     }
 
-    // Worker-only: the handle's sentinel floor, or the feed's when higher.
-    private long ShapeFloor(string handle)
-    {
-        var floor = StoredShapeFloor(handle);
-        CountRead("shape");
-        var counter = Command("SELECT seq FROM _tb_feed_sequence WHERE id = 1;").ExecuteScalar() is long seq ? seq : 0;
-        var head = Command("SELECT 1 FROM _tb_feed WHERE seq = $seq;");
-        head.Parameters.AddWithValue("$seq", counter);
-        if (counter > 0)
-        {
-            CountRead("shape");
-            if (head.ExecuteScalar() is null)
-            {
-                return Math.Max(floor, counter);
-            }
-        }
-
-        CountRead("shape");
-        var first = Command("SELECT min(seq) FROM _tb_feed;").ExecuteScalar();
-        return Math.Max(floor, first is long start ? start - 1 : counter);
-    }
+    private long ShapeFloor(string handle) => StoredShapeFloor(handle);
 
     // Worker-only: the handle's sentinel floor alone.
     private long StoredShapeFloor(string handle)
@@ -165,33 +141,6 @@ internal sealed partial class TursoStorageTransaction : IShapeRetentionTransacti
         sentinel.Parameters.AddWithValue("$sentinel", ShapeFloorPrefix + handle);
         CountRead("shape");
         return sentinel.ExecuteScalar() is long end ? end : 0;
-    }
-
-    // Worker-only: the highest feed sequence no longer retained. A missing head is the counter itself; otherwise the
-    // highest retained seq whose predecessor is gone names the hole below it (a trimmed prefix included).
-    private long FeedHoleFloor()
-    {
-        CountRead("shape");
-        var counter = Command("SELECT seq FROM _tb_feed_sequence WHERE id = 1;").ExecuteScalar() is long seq ? seq : 0;
-        var head = Command("SELECT 1 FROM _tb_feed WHERE seq = $seq;");
-        head.Parameters.AddWithValue("$seq", counter);
-        if (counter > 0)
-        {
-            CountRead("shape");
-            if (head.ExecuteScalar() is null)
-            {
-                return counter;
-            }
-        }
-
-        // shortcut: maintenance scans the seq index for interior holes; persist the floor in feed GC when this scan costs
-        // too much. Request floor reads use the handle's persisted floor and indexed prefix/head lookups instead.
-        var hole = Command("""
-            SELECT seq FROM _tb_feed f WHERE seq > 1 AND NOT EXISTS (SELECT 1 FROM _tb_feed p WHERE p.seq = f.seq - 1)
-            ORDER BY seq DESC LIMIT 1;
-            """);
-        CountRead("shape");
-        return hole.ExecuteScalar() is long above ? above - 1 : 0;
     }
 
     // Worker-only: the candidates' longest prefix within maxBytes, its body bytes, its highest second column, and whether a

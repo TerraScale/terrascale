@@ -44,9 +44,6 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:read) getDocument Documents
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/rules TsAuth(documents:read) getCollectionRules Collections
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:read) getDeclaredCollectionSchema Collections
-        GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape TsAuth(documents:read) getShape Live
-        GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape/keys TsAuth(documents:read) getShapeKey Live
-        GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape/manifest TsAuth(documents:read) getShapeManifest Live
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/ttl TsAuth(documents:read) getCollectionTtl Collections
         GET /v1/projects/{project}/databases/{database}/export TsAuth(documents:read) exportDatabase Documents
         GET /v1/projects/{project}/databases/{database}/export-schedule TsAuth(databases:read) getExportSchedule Backups
@@ -61,6 +58,9 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/query-shapes TsAuth(databases:read) listQueryShapes Queries
         GET /v1/projects/{project}/databases/{database}/schema TsAuth(databases:read) getDatabaseSchema Schema
         GET /v1/projects/{project}/databases/{database}/schema/{collection} TsAuth(databases:read) getCollectionSchema Schema
+        GET /v1/projects/{project}/databases/{database}/tables/{table}/shape TsAuth(documents:read) getShape Live
+        GET /v1/projects/{project}/databases/{database}/tables/{table}/shape/keys TsAuth(documents:read) getShapeKey Live
+        GET /v1/projects/{project}/databases/{database}/tables/{table}/shape/manifest TsAuth(documents:read) getShapeManifest Live
         GET /v1/projects/{project}/databases/{database}/usage TsAuth(databases:read) getDatabaseUsage Usage
         GET /v1/projects/{project}/metrics TsAuth(databases:read) getProjectMetrics Analytics
         GET /v1/projects/{project}/saved-queries TsAuth(databases:read) listSavedQueries Queries

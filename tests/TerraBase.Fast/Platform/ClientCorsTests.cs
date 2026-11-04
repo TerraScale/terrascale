@@ -79,7 +79,7 @@ public sealed class ClientCorsTests
             ("/collections/todos/query", "POST"),
             ("/transactions", "POST"),
             ("/changes", "GET"),
-            ("/collections/todos/shape", "GET"),
+            ("/tables/todos/shape", "GET"),
             ("/COLLECTIONS/todos/query", "POST"),
         ];
 
