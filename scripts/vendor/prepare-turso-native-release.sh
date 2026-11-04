@@ -24,9 +24,22 @@ for rid in linux-x64 linux-arm64; do
     if [[ -f "$target" ]]; then cmp "$source" "$target"; else cp "$source" "$target"; fi
   done
   cp "$library" "$output/terrascale-turso-$rid.so"
+  # The router's SQL parser builds into the same output; its receipts keep a per-RID prefix.
+  parser="$input/router-parser/runtimes/$rid/native/libterrascale_sql_parser.so"
+  (cd "$input/router-parser" && sha256sum --check "$rid/SHA256SUMS")
+  test "$(od -An -tx1 -N6 "$parser" | tr -d ' \n')" = 7f454c460201
+  test "$(od -An -tx1 -j18 -N2 "$parser" | tr -d ' \n')" = "$machine"
+  grep -qx 'parser ABI integration: SET, WHERE, UTF-8, invalid suffix, bracket names, arrays and budget bypasses passed' "$input/router-parser/$rid/smoke.txt"
+  for symbol in ts_sql_abi_version ts_sql_next ts_sql_free; do
+    grep -qE " T $symbol\$" "$input/router-parser/$rid/exports.txt"
+  done
+  for source in "$input/router-parser/$rid"/*; do
+    [[ $(basename "$source") == SHA256SUMS ]] || cp "$source" "$output/sql-parser-$rid-$(basename "$source")"
+  done
+  cp "$parser" "$output/terrascale-sql-parser-$rid.so"
 done
 {
-  printf 'release=turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-upsertcdc1-20261104\n'
+  printf 'release=turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-upsertcdc1-sqlparser1-20261104\n'
   printf 'repository_commit=%s\n' "$(git rev-parse HEAD)"
   printf 'workflow_run=%s\n' "${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-TerraScale/terrascale}/actions/runs/${GITHUB_RUN_ID:-not-a-CI-run}"
   printf 'Source, patches, Cargo.lock, recipe, compiler, ABI exports, ELF dependencies and successful smoke logs accompany each architecture.\n'

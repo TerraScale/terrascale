@@ -8,8 +8,8 @@ The required `native` job still gates `test`. Native maintenance is an explicit
 One maintenance dispatch runs two independent clean builds per real architecture
 and compares their library bytes before preparing an artifact for parent publication; they do not qualify Fast, publish images or upload a release.
 
-Release: [`turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-upsertcdc1-20261104`](https://github.com/TerraScale/terrascale/releases/tag/turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-upsertcdc1-20261104) (run https://github.com/TerraScale/terrascale/actions/runs/41767214589). It adds two patches to the 2026-10-29 build (the WAL revision contract, [2026-10-29-wal-revision.md](2026-10-29-wal-revision.md); the interrupt, query timeout and value length exports, patch 0005; the sync client's own CDC table, patch 0006): sync engine local encryption, patch 0007 ([2026-11-03-sync-local-encryption.md](2026-11-03-sync-local-encryption.md)), and the upstream Turso 26dbb464 backport, patch 0008, which keeps a correct CDC before image for UPSERT in `full` mode. `turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-20261104` is superseded and was never pinned.
-`SHA256SUMS` pins both qualified libraries; downloads and managed builds reject
+Release: [`turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-upsertcdc1-sqlparser1-20261104`](https://github.com/TerraScale/terrascale/releases/tag/turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-upsertcdc1-sqlparser1-20261104) (run https://github.com/TerraScale/terrascale/actions/runs/41855905197). Its Turso libraries are rebuilt from the same inputs as `turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-upsertcdc1-20261104` (run https://github.com/TerraScale/terrascale/actions/runs/41767214589): patches 0001-0006 of the 2026-10-29 build (the WAL revision contract, [2026-10-29-wal-revision.md](2026-10-29-wal-revision.md); the interrupt, query timeout and value length exports, patch 0005; the sync client's own CDC table, patch 0006), sync engine local encryption, patch 0007 ([2026-11-03-sync-local-encryption.md](2026-11-03-sync-local-encryption.md)), and the upstream Turso 26dbb464 backport, patch 0008, which keeps a correct CDC before image for UPSERT in `full` mode. It adds TerraBase's SQL router parser, `libterrascale_sql_parser.so` (crate `sql/`, header `sql/ts_sql.h`, exports `ts_sql_abi_version`, `ts_sql_next` and `ts_sql_free`), published as `terrascale-sql-parser-<rid>.so` with its smoke, exports, Cargo.lock, compiler and license receipts prefixed `sql-parser-<rid>-`. The parser builds from the same pinned Turso archive with `sql/parser-limits.patch` (`scripts/vendor/Dockerfile.router-parser`); each build checks its ELF machine and runs `scripts/vendor/router-parser-smoke.c`. The download installs it next to `libturso_sdk_kit.so` in `runtimes/<rid>/native/`; managed builds copy it beside the app and single-file publishes bundle it as a native library. The earlier releases stay immutable.
+`SHA256SUMS` pins the four qualified libraries (Turso and SQL parser per architecture); downloads and managed builds reject
 missing or mismatched bytes. Never replace or append assets to encryption-only
 `turso-native-v1` or overwrite the combined release.
 
@@ -150,7 +150,7 @@ tag and reviewed pins; the published tag above is immutable.
    build recipe/helper, C smoke sources, upstream LICENSE/NOTICE and per-arch
    dependency-license archives with package manifests/checksum receipts. All
    release files are covered by `SHA256SUMS`; `NATIVE-SHA256SUMS` contains just the
-   two published library names and real hashes.
+   four published library names and real hashes.
 
 3. Require the dispatch’s two independent builds per architecture to produce
    byte-identical libraries. Assembly verifies all four manifests and compares
@@ -158,8 +158,9 @@ tag and reviewed pins; the published tag above is immutable.
    job receipts with the publication evidence; ordinary downstream PRs always reuse the release.
 
    Before release publication, copy `NATIVE-SHA256SUMS` to the checked-in pin
-   file and install the two candidate libraries under
-   `src/vendor/Turso.Data.Sqlite/native/runtimes/<rid>/native/libturso_sdk_kit.so`.
+   file and install the four candidate libraries under
+   `src/vendor/Turso.Data.Sqlite/native/runtimes/<rid>/native/` as `libturso_sdk_kit.so` and
+   `libterrascale_sql_parser.so`.
    Parent must run the admitted Release/Fast and published single-file loading
    qualification with these exact candidate bytes and the integrated managed
    changes. This supplies pre-publication Fast proof without an unpublished
