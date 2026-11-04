@@ -1570,7 +1570,7 @@ namespace TerraScale.Dashboard.E2E
                 catch (FormatException) { return null; }
             }
 
-            private static DateTimeOffset? Expiry(JsonElement request)
+            private DateTimeOffset? Expiry(JsonElement request)
             {
                 if (!request.TryGetProperty("ttlSeconds", out var ttl)) { return null; }
                 var seconds = ttl.GetInt64();
