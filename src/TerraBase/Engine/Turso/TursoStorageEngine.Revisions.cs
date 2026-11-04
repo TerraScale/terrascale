@@ -74,6 +74,11 @@ internal sealed partial class TursoStorageEngine : IDatabaseRevisions
 
     public async ValueTask RetainReplicaCdcAsync(TenantContext database, DatabasePlacement placement, string? region, string? revision, CancellationToken cancellationToken)
     {
+        if (database.DatabaseId is { } id && Fences.Holds(id))
+        {
+            return;
+        }
+
         if (await OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is TursoDatabaseStore store)
         {
             await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
