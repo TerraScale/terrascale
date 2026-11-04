@@ -203,6 +203,8 @@ internal sealed partial class TursoDatabaseStore(
 
     internal StorageFaultLedger? Ledger { get; init; }
 
+    internal DatabaseFences? Fences { get; init; }
+
     internal string? CopyFault
     {
         get => Volatile.Read(ref field);
@@ -235,6 +237,10 @@ internal sealed partial class TursoDatabaseStore(
         ThrowIfRefused(maintenance: false);
         return await BeginOperationAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    private string? FencedId(bool maintenance) => !maintenance && !IsSystem && Fences is not null ? Tenant?.DatabaseId : null;
+
+    internal Task DrainWritersAsync(CancellationToken cancellationToken) => WithWriterAsync(static _ => 0, "a home move", cancellationToken);
 
     private void ThrowIfRefused(bool maintenance)
     {
@@ -298,6 +304,10 @@ internal sealed partial class TursoDatabaseStore(
             }
 
             ThrowIfRefused(maintenance);
+            if (FencedId(maintenance) is { } fenced)
+            {
+                await Fences!.WaitAsync(fenced, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         durable |= write && !maintenance;
@@ -322,6 +332,10 @@ internal sealed partial class TursoDatabaseStore(
                 writing = true;
 
                 ThrowIfRefused(maintenance);
+                if (FencedId(maintenance) is { } fenced)
+                {
+                    Fences!.ThrowIfFenced(fenced);
+                }
             }
 
             session = write ? await WriterSessionAsync(cancellationToken).ConfigureAwait(false) : await RentAsync(runner, cancellationToken).ConfigureAwait(false);

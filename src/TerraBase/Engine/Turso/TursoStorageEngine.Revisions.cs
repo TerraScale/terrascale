@@ -62,6 +62,17 @@ internal sealed partial class TursoStorageEngine : IDatabaseRevisions
         }
     }
 
+    public async ValueTask<bool> DrainWritersAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        if (await OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not TursoDatabaseStore store)
+        {
+            return false;
+        }
+
+        await store.DrainWritersAsync(cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
     public async ValueTask<bool> StartIncarnationAsync(TenantContext database, CancellationToken cancellationToken)
     {
         if (await OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not TursoDatabaseStore store)
