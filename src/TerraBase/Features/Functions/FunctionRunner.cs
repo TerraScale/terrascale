@@ -1,25 +1,18 @@
-using System.Text;
-using System.Text.Json;
 using Jint;
 using Jint.Runtime;
-using TerraBase.Engine;
-using TerraBase.Features.Documents;
-using TerraBase.Primitives;
 using JsEngine = Jint.Engine;
 
 namespace TerraBase.Features.Functions;
 
-/// <summary>A finished run: its JSON result or error, console lines and the document writes it recorded.</summary>
-internal sealed record FunctionRun(string? Result, string? Error, List<string> Lines, List<DocumentOperation> Writes);
-/// <summary>Runs one invocation in a fresh Jint engine without CLR, file, network or environment access.</summary>
+internal sealed record FunctionRun(string? Result, string? Error, List<string> Lines);
+
 internal static class FunctionRunner
 {
     public const int MaxSourceChars = 256 * 1024;
     public const long MemoryBytes = 32 * 1024 * 1024;
+    private static readonly TimeSpan MaxRunTime = TimeSpan.FromSeconds(2);
     private const int MaxLines = 50;
     private const int MaxLineChars = 1024;
-    private const int MaxWrites = 25;
-    private const int MaxDocumentBytes = 256 * 1024;
     private const int MaxResultChars = 1024 * 1024;
 
     private const string Prelude = """
@@ -31,10 +24,42 @@ internal static class FunctionRunner
             warn: (...a) => __log(a.map(__text).join(" ")),
             error: (...a) => __log(a.map(__text).join(" ")),
         });
-        const db = Object.freeze({
-            insert: (collection, doc) => __write("put", String(collection), null, JSON.stringify(doc)),
-            put: (collection, id, doc) => __write("put", String(collection), String(id), JSON.stringify(doc)),
-            delete: (collection, id) => __write("delete", String(collection), String(id), null),
+        const __sqlCall = async (op, statements) => {
+            const answer = JSON.parse(await __sql(op, statements === undefined ? "" : JSON.stringify({ statements })));
+            if (answer.error) {
+                const error = new Error(answer.error.message);
+                error.name = "SqlError";
+                error.code = answer.error.code;
+                error.statement = answer.error.statement;
+                error.sqlstate = answer.error.sqlstate;
+                throw error;
+            }
+            return answer.results;
+        };
+        const __statement = (text, args) => typeof text === "string"
+            ? (Array.isArray(args) || args === undefined || args === null ? { sql: text, args: args || [] } : { sql: text, named: args })
+            : { sql: text.sql, args: text.args, named: text.named };
+        const __result = r => ({ columns: r.columns.map(c => c.name), rows: r.rows, rowsAffected: r.rows_affected, lastInsertRowid: r.last_insert_rowid });
+        const __objects = r => r.rows.map(row => Object.fromEntries(r.columns.map((c, i) => [c.name, row[i]])));
+        const __binding = Object.freeze({
+            execute: async (text, args) => __result((await __sqlCall("execute", [__statement(text, args)]))[0]),
+            query: async (text, args) => __objects((await __sqlCall("execute", [__statement(text, args)]))[0]),
+            batch: async statements => (await __sqlCall("execute", Array.from(statements, s => __statement(s)))).map(__result),
+        });
+        const sql = Object.freeze({
+            ...__binding,
+            transaction: async work => {
+                await __sqlCall("begin");
+                let value;
+                try {
+                    value = await work(__binding);
+                } catch (error) {
+                    try { await __sqlCall("rollback"); } catch (ignored) { }
+                    throw error;
+                }
+                await __sqlCall("commit");
+                return value;
+            },
         });
         function __run(e) {
             if (typeof handler !== "function") throw new Error("the source must define function handler(event)");
@@ -42,7 +67,6 @@ internal static class FunctionRunner
         }
         """;
 
-    /// <summary>Null when <paramref name="source"/> parses; otherwise the parser's message.</summary>
     public static string? Check(string source)
     {
         try
@@ -56,17 +80,21 @@ internal static class FunctionRunner
         }
     }
 
-    public static FunctionRun Run(string source, string eventJson, CancellationToken cancellationToken)
+    public static async Task<FunctionRun> RunAsync(string source, string eventJson, FunctionSql sql, CancellationToken cancellationToken)
     {
         var lines = new List<string>();
-        var writes = new List<DocumentOperation>();
-        using var engine = new JsEngine(options => options
-            .Strict()
-            .TimeoutInterval(TimeSpan.FromSeconds(2))
-            .MaxStatements(10_000_000)
-            .LimitMemory(MemoryBytes)
-            .LimitRecursion(256)
-            .CancellationToken(cancellationToken));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(MaxRunTime);
+        using var engine = new JsEngine(options =>
+        {
+            options.ExperimentalFeatures = ExperimentalFeature.TaskInterop;
+            _ = options.Strict()
+                .TimeoutInterval(MaxRunTime)
+                .MaxStatements(10_000_000)
+                .LimitMemory(MemoryBytes)
+                .LimitRecursion(256)
+                .CancellationToken(deadline.Token);
+        });
         engine.SetValue("__log", new Action<string>(line =>
         {
             if (lines.Count < MaxLines)
@@ -74,23 +102,22 @@ internal static class FunctionRunner
                 lines.Add(line.Length > MaxLineChars ? line[..MaxLineChars] : line);
             }
         }));
-        engine.SetValue("__write", new Func<string, string, string?, string?, string>((kind, collection, id, json) =>
-            Record(writes, kind, collection, id, json)));
+        engine.SetValue("__sql", new Func<string, string, Task<string>>((op, json) => sql.CallAsync(op, json, deadline.Token)));
         try
         {
             engine.Execute(Prelude);
             engine.Execute(source);
-            var result = engine.Invoke("__run", eventJson).UnwrapIfPromise(cancellationToken).AsString();
+            var result = (await engine.Invoke("__run", eventJson).UnwrapIfPromiseAsync(deadline.Token).ConfigureAwait(false)).AsString();
             return result.Length > MaxResultChars
-                ? new FunctionRun(null, "the result exceeds 1 MiB", lines, [])
-                : new FunctionRun(result, null, lines, writes);
+                ? new FunctionRun(null, "the result exceeds 1 MiB", lines)
+                : new FunctionRun(result, null, lines);
         }
         catch (JavaScriptException error)
         {
-            return new FunctionRun(null, error.Message, lines, []);
+            return new FunctionRun(null, error.Message, lines);
         }
         catch (Exception error) when (error is TimeoutException or MemoryLimitExceededException or StatementsCountOverflowException
-            or RecursionDepthOverflowException or ExecutionCanceledException or PromiseRejectedException or JavaScriptLimitException)
+            or RecursionDepthOverflowException or ExecutionCanceledException or OperationCanceledException or PromiseRejectedException)
         {
             return new FunctionRun(null, error switch
             {
@@ -98,65 +125,18 @@ internal static class FunctionRunner
                 MemoryLimitExceededException => "the function exceeded 32 MiB",
                 StatementsCountOverflowException => "the function exceeded 10,000,000 statements",
                 RecursionDepthOverflowException => "the function exceeded recursion depth 256",
-                ExecutionCanceledException => "the invocation was cancelled",
+                ExecutionCanceledException or OperationCanceledException => cancellationToken.IsCancellationRequested
+                    ? "the invocation was cancelled" : "the function exceeded 2 s",
                 _ => error.Message,
-            }, lines, []);
+            }, lines);
         }
         catch (Exception error) when (error is not OutOfMemoryException)
         {
-            return new FunctionRun(null, error.Message, lines, []);
+            return new FunctionRun(null, error.Message, lines);
         }
-    }
-
-    private static string Record(List<DocumentOperation> writes, string kind, string collection, string? id, string? json)
-    {
-        if (writes.Count >= MaxWrites)
+        finally
         {
-            throw new JavaScriptLimitException($"at most {MaxWrites} writes per invocation");
+            await sql.DrainAsync().ConfigureAwait(false);
         }
-
-        if (!DatabaseName.TryParse(collection, out _))
-        {
-            throw new JavaScriptLimitException("collection must be a lowercase name of at most 63 characters");
-        }
-
-        id ??= EntityIds.New().ToString();
-        if (!EntityIds.IsValid(id))
-        {
-            throw new JavaScriptLimitException("id must be a canonical uppercase ULID");
-        }
-
-        if (kind == "delete")
-        {
-            writes.Add(new DeleteOperation(collection, id, new Precondition(null, IfMatchAny: false, IfNoneMatch: false)));
-            return id;
-        }
-
-        var bytes = Encoding.UTF8.GetBytes(json ?? "null");
-        if (bytes.Length > MaxDocumentBytes)
-        {
-            throw new JavaScriptLimitException("a document is at most 256 KiB");
-        }
-
-        try
-        {
-            using var parsed = JsonDocument.Parse(bytes);
-            if (parsed.RootElement.ValueKind != JsonValueKind.Object)
-            {
-                throw new JavaScriptLimitException("a document must be a JSON object");
-            }
-
-            DocumentJson.ValidateValue(parsed.RootElement);
-        }
-        catch (Exception error) when (error is JsonException or DocumentValidationException)
-        {
-            throw new JavaScriptLimitException("the document is not valid: " + error.Message);
-        }
-
-        writes.Add(new PutOperation(collection, id, bytes, new Precondition(null, IfMatchAny: false, IfNoneMatch: false)));
-        return id;
     }
 }
-
-/// <summary>A host-side refusal surfaced to the function as its error.</summary>
-internal sealed class JavaScriptLimitException(string message) : Exception(message);

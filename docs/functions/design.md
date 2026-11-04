@@ -1,7 +1,7 @@
 # TerraScale Functions: design (v1)
 
 Customers deploy small JavaScript functions next to a database. A function runs on an HTTPS call or on a cron schedule,
-and can write documents to its own database.
+and reads and writes its own database with SQL.
 
 ## Where functions run
 
@@ -18,10 +18,21 @@ per-database storage and usage metering. Running functions there adds no new ser
 
 v1 runs **JavaScript** (ES2023, one source file) in [Jint](https://github.com/sebastienros/jint), a pure managed
 interpreter: no native dependency, single-file compatible, and no CLR, file, network or environment access (CLR interop
-stays off). Each invocation gets a fresh engine. The function defines `handler(event)`. It cannot do I/O; it returns a
-response and records effects through `db.insert(collection, doc)`, `db.put(collection, id, doc)` and
-`db.delete(collection, id)`. TerraBase applies the effects atomically after a successful return, with the function's
-database as the only scope.
+stays off). Each invocation gets a fresh engine. The function defines `handler(event)`, usually `async`. Its only I/O is
+the `sql` binding on its own database, which runs through the same SQL session as `POST .../sql/execute`: the same
+dialect, SQL sandbox, per-tenant limits, metering and errors.
+
+| Call | Answers |
+| --- | --- |
+| `await sql.execute(text, args?)` | `{columns, rows, rowsAffected, lastInsertRowid}`; rows are arrays |
+| `await sql.query(text, args?)` | Rows as objects keyed by column name |
+| `await sql.batch([{sql, args?, named?}, ...])` | One result per statement, all in one transaction |
+| `await sql.transaction(async tx => ...)` | Runs `tx.execute`, `tx.query` and `tx.batch` in one transaction; commits when the callback returns, rolls back when it throws |
+
+`args` is an array of positional values or an object of named values (`:name`, `@name` or `$name` in the text). Values
+are null, numbers, booleans (1 or 0), strings or `{base64}` blobs; blobs come back the same way. A call outside
+`sql.transaction` commits on its own. A refused statement throws an `SqlError` with `code`, `message`, `statement` and
+`sqlstate`, the REST error body's fields (for example `sql_sandbox`, `42501` for `ATTACH`).
 
 Wasm (wazero worker in ts-orchestrator `internal/functions`, or Wasmtime) is the follow-up for compiled languages and
 for moving execution onto dedicated function hosts; v1 shares the TerraBase process, bounded by the limits below.
@@ -35,16 +46,16 @@ for moving execution onto dedicated function hosts; v1 shares the TerraBase proc
 | Wall time | 2 s per invocation; 10,000,000 statements; recursion depth 256 |
 | Memory | 32 MiB allocated per invocation (Jint memory limit) |
 | Input / output | 1 MiB request body; 1 MiB response |
-| Effects | 25 document writes per invocation, 256 KiB per document |
+| SQL | 256 `sql` calls per invocation; each statement has the REST statement, row and transaction limits |
 | Logs | 50 lines of 1 KiB per invocation; last 100 invocations kept per function |
 | Cron | at most once per minute |
 
 ## Auth, billing, secrets and logs
 
 - **Auth**: deploy, list, logs and delete need a project API key with `documents:read` and `documents:write`; invoke
-  needs `documents:read`. Effects run with the function's authority, like a backend endpoint.
-- **Billing**: every invocation counts one `invoke` operation in the database's usage, next to reads and writes, and its
-  effects count as normal document writes. Pricing treats invocations as operations.
+  needs `documents:read`. SQL runs with the function's authority (reads and writes), like a backend endpoint.
+- **Billing**: every invocation counts one `invoke` operation in the database's usage, next to reads and writes, and its SQL
+  counts as normal SQL reads and writes. Pricing treats invocations as operations.
 - **Secrets**: v1 has none. Per-function secrets will be stored encrypted with the database key (`secrets` map, write-only)
   and exposed as `event.secrets`; until then do not put credentials in function source.
 - **Logs**: `console.log` lines, status, duration and error of each invocation are kept per function and read through
