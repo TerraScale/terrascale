@@ -22,6 +22,9 @@ def fingerprint(area, revision="HEAD"):
     if area == "auth":
         paths += ["src/TerraScale.Authentication*", "tests/TerraScale.Authentication*",
                   "scripts/auth", "docs/auth/*.yaml"]
+    elif area == "dashboard":
+        paths += ["src/TerraScale.Dashboard*", "tests/TerraScale.Dashboard*", "scripts/dashboard",
+                  "src/TerraScale.TerraBase.Contracts", "src/TerraScale.TerraBase.Rpc"]
     else:
         paths += ["tests/TerraBase*", "tests/Turso.Data.Sqlite.Tests", "scripts/terrabase",
                   "tests/TerraScale.Authentication.TestHarness/FakeGitHubActions.cs",
@@ -73,7 +76,7 @@ def main():
             output.write(f"fingerprint={value}\n")
         return
     changed = []
-    for area in ("auth", "terrabase"):
+    for area in ("auth", "terrabase", "dashboard"):
         try:
             last = previous(area)
         except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:

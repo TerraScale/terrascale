@@ -160,3 +160,20 @@ jobs:
       contents: read
       issues: write
     steps: *slow-steps
+
+  slow-dashboard-main:
+    needs: [changes, native]
+    if: >-
+      !cancelled() && needs.native.result == 'success'
+      && contains(fromJSON(needs.changes.outputs.slow), 'dashboard')
+    concurrency:
+      group: scheduled-slow-dashboard
+      cancel-in-progress: false
+    env:
+      AREA: dashboard
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      issues: write
+    steps: *slow-steps

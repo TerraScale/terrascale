@@ -68,7 +68,8 @@ on the dev host, publishing the `dashboard/qualified-<sha>` release and the
 commit's CI, publishes the image and releases it to every region automatically, with
 no manual step and no deploy switch. The regions' release verifier accepts a run's
 GitHub OIDC token only from push and dispatch events, so the workflow_run-triggered
-run never deploys; the push run is the deployer. Slow failures remain visible and
+run never deploys; the push run is the deployer. The monorepo Slow workflow runs
+`make dashboard-test-slow` as its `dashboard` area; failures remain visible and
 create or update a matching GitHub issue.
 CI does not run the explicit hot-reload journey. For changes to `scripts/dashboard/demo.sh`, `scripts/dashboard/dev.sh`, the asset scripts or the demo host,
 use `nice -n 19 make -f scripts/dashboard/Makefile test-hot-reload` on a tailnet machine when investigating hot reload locally.

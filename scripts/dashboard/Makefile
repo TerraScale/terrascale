@@ -4,6 +4,7 @@ NPM ?= npm
 WEB = src/TerraScale.Dashboard/web
 SOLUTION = scripts/dashboard/TerraScale.Dashboard.slnx
 E2E = $(DOTNET) run --configuration Release --project tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj --
+SLOW_FILTER = /*/*/*/*[Category=Slow]
 RESULTS = --report-trx --results-directory "$(CURDIR)/test-results/tunit"
 
 .PHONY: build lint security check css check-css js dev demo test-e2e test-fast test-slow test-hot-reload test-live-readiness perf check-e2e-shards
@@ -55,7 +56,7 @@ test-fast:
 	$(E2E) --treenode-filter '/*/*/*/*[Category!=Slow]' $(RESULTS) --report-trx-filename fast.trx
 
 test-slow:
-	$(E2E) --treenode-filter '/*/*/*/*[Category=Slow]' $(RESULTS) --report-trx-filename slow.trx
+	$(E2E) --treenode-filter '$(SLOW_FILTER)' $(RESULTS) --report-trx-filename slow.trx $(TEST_ARGS)
 
 test-hot-reload:
 	$(E2E) --treenode-filter '/*/*/HotReloadJourneyTests/*' $(RESULTS) --report-trx-filename hot-reload.trx

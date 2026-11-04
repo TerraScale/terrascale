@@ -101,9 +101,9 @@ COPY --from=test-libs /passed /libs
 COPY --from=test-auth /passed /auth
 COPY --from=test-terrabase /passed /terrabase
 
-# Slow exports each suite's log and exit code for CI to report; `test-slow` exports both area directories.
+# Slow exports each suite's log and exit code for CI to report; `test-slow` exports every area directory.
 # Plain text: TUnit colours its output here, and the report parses lines like "failed <test> (<duration>)".
-# Each area runs independently so an auth failure cannot prevent TerraBase Slow from executing.
+# Each area runs independently so one area's failure cannot prevent another area's Slow from executing.
 # Slow compiles its test graph without repeating Fast's whitespace, security, OpenAPI or packaging checks.
 FROM source AS slow-auth-build
 ARG TS_AUTH_REVISION
@@ -131,9 +131,19 @@ RUN --mount=type=secret,id=tigris-ci,required=true \
 FROM scratch AS test-slow-terrabase
 COPY --from=slow-terrabase-run /slow /
 
+FROM source AS slow-dashboard-build
+RUN make dashboard-build
+
+FROM slow-dashboard-build AS slow-dashboard-run
+RUN mkdir /slow && { make dashboard-test-slow TEST_ARGS=--no-ansi; echo $? > /slow/exit; } 2>&1 | tee /slow/log
+
+FROM scratch AS test-slow-dashboard
+COPY --from=slow-dashboard-run /slow /
+
 FROM scratch AS test-slow
 COPY --from=slow-auth-run /slow /auth/
 COPY --from=slow-terrabase-run /slow /terrabase/
+COPY --from=slow-dashboard-run /slow /dashboard/
 
 # Production publication compiles only its service graph, once per architecture. Checked builds above retain
 # pre-merge packaging validation; main does not repeat whitespace, analyzer-negative or OpenAPI checks.

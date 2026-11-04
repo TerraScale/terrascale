@@ -26,7 +26,7 @@ for start in (record_start, upload_start):
 required = (workflow.parent / "ci.yml").read_text().split("\n  test:\n", 1)[1]
 needs = re.search(r"^    needs: \[(.+)\]$", required, re.M)
 assert needs and not any("slow" in job for job in needs[1].split(",")), "Slow must not block required test"
-assert workflow_text.count("steps: *slow-steps") == 1, "Both main Slow jobs must share the reporter"
+assert workflow_text.count("steps: *slow-steps") == 2, "Every main Slow job must share the reporter"
 script = (workflow.parents[2] / "scripts/ci/slow-report.sh").read_text()
 assert "${{" not in script, "Unhandled workflow expression"
 
@@ -55,7 +55,8 @@ def check(case):
             slow.mkdir()
             (slow / "exit").write_text(f"{code}\n")
             log = "".join(f"failed case_{index} (1ms)\n  Exception: Bearer fixture-credential secret=fixture-secret\n" for index in range(tests))
-            (slow / "log").write_text(log + "Test run summary: fixture Authentication.Slow\n  total: 25\n")
+            suite = "TerraScale.Dashboard.E2E" if name.startswith("dashboard") else "Authentication.Slow"
+            (slow / "log").write_text(log + f"Test run summary: fixture {suite}\n  total: 25\n")
         calls_path = root / "calls"
         output_path = root / "output"
         env = {**os.environ, "PATH": f"{bin_path}:{os.environ['PATH']}", "CALLS": str(calls_path),
@@ -78,6 +79,10 @@ def check(case):
             assert "fixture-credential" not in body and "fixture-secret" not in body, f"{name}: credentials leaked"
             assert "fixture-sha" in body and "https://example.invalid/run" in body
             assert "Reproduce:" in body and "Expected:" in body and "Actual:" in body
+            if name.startswith("dashboard"):
+                assert "make dashboard-test-slow SLOW_FILTER='/*/*/*/case_" in body, f"{name}: wrong reproducer"
+            elif code is not None:
+                assert "make auth-test-slow TEST_ARGS=" in body, f"{name}: wrong reproducer"
         if main and tests:
             assert any(args[:3] == ["issue", "comment", "42"] for args in reports), f"{name}: did not update existing issue"
         if code is None:
@@ -88,6 +93,7 @@ def check(case):
 cases = [("passed", 0, 0, True, 0, True, False),
          ("failures-and-redaction", 2, 2, True, 2, True, False),
          ("all-eleven-failures", 2, 11, True, 11, True, False),
+         ("dashboard-failures", 2, 2, True, 2, True, False),
          ("missing-build-output", None, 0, True, 1, False, False),
          ("branch-summary-only", 2, 2, False, 0, False, False),
          ("issue-api-failure-after-partial-report", 2, 3, True, 2, False, True)]

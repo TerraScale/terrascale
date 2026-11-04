@@ -104,7 +104,7 @@ for check in ("path-filter-test.py", "slow-report-test.py", "cache-policy-test.p
               "turso-native-pipeline-test.py", "storage-format-check-test.sh", "e2e-summary-test.sh",
               "storage-format-check.sh"):
     assert check in changes, f"{check} must run before builds"
-for area in ("auth", "terrabase"):
+for area in ("auth", "terrabase", "dashboard"):
     slow = re.split(r"\n  [a-z][a-z0-9-]*:\n", slow_workflow.split(f"\n  slow-{area}-main:\n", 1)[1], maxsplit=1)[0]
     assert "needs: [changes, native]" in slow, "Slow must not wait for image publication or rollout"
     assert "cancel-in-progress: true" not in slow, "Main results must survive superseding pushes"

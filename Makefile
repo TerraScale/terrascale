@@ -70,7 +70,7 @@ lint: fmt-check build
 
 test-fast: libs-test auth-test-fast terrabase-test-fast
 
-test-slow: auth-test-slow terrabase-test-slow
+test-slow: auth-test-slow terrabase-test-slow dashboard-test-slow
 
 test: test-fast test-slow
 
