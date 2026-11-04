@@ -29,6 +29,8 @@ public static class SharedServer
         return await Server.Value.WaitAsync(linked.Token);
     }
 
+    public static async Task InitializeAsync() => _ = await Server.Value;
+
     private static Task<ManagementApi> StartAsync()
     {
         // The host belongs to the assembly, so its background work must not inherit the first test's context or timeout.
