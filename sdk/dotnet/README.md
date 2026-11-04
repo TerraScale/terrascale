@@ -54,6 +54,9 @@ IReadOnlyList<Person> people = await db.QueryAsync("SELECT id, name FROM people"
   A REST request refused with `serialization_conflict` is resent at most twice; nothing else is resent.
 - Primary keys are ULIDs from `TerraScaleIdGenerator`; tables that take local writes avoid `AUTOINCREMENT`.
 
+[`samples/sql-quickstart.cs`](samples/sql-quickstart.cs) runs this flow against a live region with a ts CLI sign-in:
+`dotnet run samples/sql-quickstart.cs -- <refresh-token-file> <organization> <project> <database> <region>`.
+
 Interactive transactions use the WebSocket session. The caller owns it; dispose closes it and rolls back an open
 transaction. A transaction lasts at most 5 seconds. Calls on one session may overlap; answers are matched by id.
 
@@ -73,9 +76,6 @@ every call throws `transaction_aborted` until rollback; commit then rolls back a
 Session errors have a null `StatusCode`. A refused upgrade throws the usual `TerraBaseException` subclass (401, 404,
 421 `TerraBaseWrongRegionException`). The session connects with its own `ClientWebSocket`, not the caller's
 `HttpClient`, and is never resent.
-
-[`samples/sql-quickstart.cs`](samples/sql-quickstart.cs) runs this flow against a live region with a ts CLI sign-in:
-`dotnet run samples/sql-quickstart.cs -- <refresh-token-file> <organization> <project> <database> <region>`.
 
 ## Database request observations
 

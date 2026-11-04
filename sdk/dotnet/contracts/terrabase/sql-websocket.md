@@ -1,8 +1,8 @@
 # SQL over WebSocket
 
 Producer contract for `TerraBaseSqlSession`, from `docs/terrabase/sql/websocket.md`,
-`src/TerraBase/Features/Sql/SqlSocketEndpoint.cs`, `SqlSocket.cs` and `SqlSocketModels.cs` (PIVOT E3, `wrk/e3-sql-ws`
-at `8169fa185`). Recorded exchanges: [sql/websocket-session.json](sql/websocket-session.json).
+`src/TerraBase/Features/Sql/SqlSocketEndpoint.cs`, `SqlSocket.cs` and `SqlSocketModels.cs` (PIVOT E3, main
+at `2020a18ee`). Recorded exchanges: [sql/websocket-session.json](sql/websocket-session.json).
 
 `GET wss://…/v1/projects/{project}/databases/{database}/sql/ws` with `Authorization: Bearer …` and subprotocol
 `terrascale.sql.v1`; same scopes as `sql/execute`. Refusals before the upgrade: 400 `websocket_required`, 401, 404,

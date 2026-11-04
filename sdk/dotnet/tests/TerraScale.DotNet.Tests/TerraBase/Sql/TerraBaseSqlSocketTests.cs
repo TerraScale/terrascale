@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.WebSockets;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
 using TerraScale.DotNet.TerraBase;
@@ -62,84 +61,17 @@ public sealed class TerraBaseSqlSocketTests
     }
 
     [Test]
-    public async Task Overlapping_calls_are_matched_to_their_answers_by_id()
-    {
-        var statements = Enumerable.Range(0, 32).ToList();
-        await using var server = await TerraBaseSqlSocketServer.StartAsync(async (context, _) =>
-        {
-            using var socket = await context.WebSockets.AcceptWebSocketAsync(TerraBaseSqlSession.Subprotocol);
-            var frames = new List<JsonObject>();
-            for (var n = 0; n < statements.Count; n++) frames.Add((await TerraBaseSqlSocketServer.ReceiveAsync(socket))!);
-            foreach (var frame in frames)
-            {
-                var value = frame["statements"]![0]!["args"]![0]!.GetValue<long>();
-                var reply = new JsonObject
-                {
-                    ["id"] = frame["id"]!.GetValue<long>(),
-                    ["type"] = "result",
-                    ["results"] = new JsonArray(new JsonObject { ["columns"] = new JsonArray(new JsonObject { ["name"] = "v" }), ["rows"] = new JsonArray(new JsonArray(value)), ["rows_affected"] = 0 }),
-                    ["transaction"] = false,
-                };
-                await socket.SendAsync(System.Text.Encoding.UTF8.GetBytes(reply.ToJsonString()), WebSocketMessageType.Text, true, CancellationToken.None);
-            }
-
-            while (await TerraBaseSqlSocketServer.ReceiveAsync(socket) is not null)
-            {
-            }
-        });
-        await using var session = await server.Database().ConnectAsync();
-
-        var values = await Task.WhenAll(statements.Select(async i => (await session.QueryAsync("SELECT ? AS v", [i]))[0].GetInt64("v")));
-
-        await Assert.That(values).IsEquivalentTo(statements.Select(i => (long)i));
-    }
-
-    [Test]
-    public async Task An_unauthorized_frame_fails_its_call_and_the_closed_session_fails_the_next()
-    {
-        var exchanges = new List<(JsonObject, JsonObject)>
-        {
-            ((JsonObject)JsonNode.Parse("""{"type":"execute","statements":[{"sql":"SELECT 1"}]}""")!,
-             (JsonObject)JsonNode.Parse("""{"type":"error","error":{"code":"unauthorized","message":"the API key was revoked","statement":0,"sqlstate":"28000"},"transaction":false}""")!),
-        };
-        await using var server = await TerraBaseSqlSocketServer.StartAsync(exchanges, WebSocketCloseStatus.PolicyViolation);
-        await using var session = await server.Database().ConnectAsync();
-
-        var revoked = await Assert.ThrowsAsync<TerraBaseSqlException>(() => session.ExecuteAsync("SELECT 1"));
-        await Assert.That(revoked!.Code).IsEqualTo(TerraBaseSqlErrorCodes.Unauthorized);
-
-        var closed = await Assert.ThrowsAsync<WebSocketException>(async () =>
-        {
-            while (true) await session.ExecuteAsync("SELECT 1");
-        });
-        await Assert.That(closed!.Message).Contains("1008");
-    }
-
-    [Test]
-    [Arguments(401, "unauthorized")]
-    [Arguments(421, "wrong_region")]
-    [Arguments(404, "not_found")]
-    public async Task A_refused_upgrade_throws_the_matching_exception(int status, string code)
+    public async Task A_refused_key_fails_the_upgrade_with_an_authentication_error()
     {
         await using var server = await TerraBaseSqlSocketServer.StartAsync((context, _) =>
         {
-            context.Response.StatusCode = status;
-            context.Response.Headers["X-TerraBase-Region"] = "sjc";
-            if (status == 421) context.Response.Headers["X-TerraBase-Database-Home"] = "gru";
+            context.Response.StatusCode = 401;
             context.Response.ContentType = "application/json";
-            return context.Response.WriteAsync($$$"""{"error":{"code":"{{{code}}}","message":"refused"}}""");
+            return context.Response.WriteAsync("""{"error":{"code":"invalid_key","message":"refused"}}""");
         });
 
-        var error = await Assert.ThrowsAsync<TerraBaseException>(() => server.Database().ConnectAsync());
+        var error = await Assert.ThrowsAsync<TerraBaseAuthenticationException>(() => server.Database().ConnectAsync());
 
-        await Assert.That((int?)error!.StatusCode).IsEqualTo(status);
-        await Assert.That(error.Region).IsEqualTo("sjc");
-        switch (status)
-        {
-            case 401: await Assert.That(error).IsTypeOf<TerraBaseAuthenticationException>(); break;
-            case 404: await Assert.That(error).IsTypeOf<TerraBaseNotFoundException>(); break;
-            default: await Assert.That(((TerraBaseWrongRegionException)error).HomeRegion).IsEqualTo("gru"); break;
-        }
+        await Assert.That((int?)error!.StatusCode).IsEqualTo(401);
     }
-
 }

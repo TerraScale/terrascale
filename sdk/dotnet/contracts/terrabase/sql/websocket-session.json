@@ -1,5 +1,5 @@
 {
-  "source": "docs/terrabase/sql/websocket.md and tests/TerraBase.Fast/Sql/SqlSurfaceParityTests.cs (PIVOT E3, branch wrk/e3-sql-ws 8169fa185)",
+  "source": "docs/terrabase/sql/websocket.md and tests/TerraBase.Fast/Sql/SqlSurfaceParityTests.cs (PIVOT E3, main 2020a18ee)",
   "exchanges": [
     {"client": {"type": "begin"}, "server": {"type": "result", "results": [], "transaction": true}},
     {"client": {"type": "execute", "statements": [{"sql": "INSERT INTO ledger VALUES (?, ?)", "args": [2, 25]}]},
