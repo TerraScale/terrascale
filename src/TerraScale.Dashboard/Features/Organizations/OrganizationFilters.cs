@@ -65,7 +65,6 @@ namespace TerraScale.Dashboard.Features.Organizations
                 "session.created" => "Signed in",
                 "api_key.created" => "API key created",
                 "member.role_changed" => "Member role changed",
-                "document.batch_upsert" => "Documents batch upserted",
                 "database.deleted" => "Database deleted",
                 "backup.restore_completed" => "Backup restore completed",
                 "organization.mfa_required" => "Two-factor required for members",

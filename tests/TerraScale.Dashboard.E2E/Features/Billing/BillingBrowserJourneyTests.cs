@@ -121,18 +121,22 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             {
                 var source = await ToolAsync("create_database", new { name, region = "GRU" });
                 sourceId = source.GetProperty("id").GetString()!;
-                var csrf = await HttpJourney.CsrfAsync(client, "/databases/" + sourceId + "/documents");
-                using var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()
-                { ["_csrf"] = csrf, ["databaseId"] = sourceId, ["name"] = "customers" });
-                await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
-                await ToolAsync("create_document", new { databaseId = sourceId, collection = "customers", documentId = "01K78D0C000000000000000012", document = new { name = "Before branch" } });
+                var csrf = await HttpJourney.CsrfAsync(client, "/databases/" + sourceId + "/sql");
+                await SqlAsync("CREATE TABLE customers (id TEXT PRIMARY KEY, name TEXT)");
+                await SqlAsync("INSERT INTO customers VALUES ('01K78D0C000000000000000012', 'Before branch')");
                 var branch = await ToolAsync("branch_database", new { databaseId = sourceId, name = name + "-copy" });
                 branchId = branch.GetProperty("id").GetString()!;
-                await ToolAsync("replace_document", new { databaseId = sourceId, collection = "customers", documentId = "01K78D0C000000000000000012", document = new { name = "After branch" } });
-                var branchDocument = await ToolAsync("get_document", new { databaseId = branchId, collection = "customers", documentId = "01K78D0C000000000000000012" });
-                await Assert.That(branchDocument.GetProperty("value").GetProperty("name").GetString()).IsEqualTo("Before branch");
-                var sourceDocument = await ToolAsync("get_document", new { databaseId = sourceId, collection = "customers", documentId = "01K78D0C000000000000000012" });
-                await Assert.That(sourceDocument.GetProperty("value").GetProperty("name").GetString()).IsEqualTo("After branch");
+                await SqlAsync("UPDATE customers SET name = 'After branch'");
+                var branchRows = await ToolAsync("execute_sql", new { databaseId = branchId, sql = "SELECT name FROM customers" });
+                await Assert.That(branchRows.GetProperty("rows")[0][0].GetString()).IsEqualTo("Before branch");
+                var sourceRows = await ToolAsync("execute_sql", new { databaseId = sourceId, sql = "SELECT name FROM customers" });
+                await Assert.That(sourceRows.GetProperty("rows")[0][0].GetString()).IsEqualTo("After branch");
+
+                async Task SqlAsync(string sql)
+                {
+                    using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/sql", new() { ["_csrf"] = csrf, ["databaseId"] = sourceId, ["sql"] = sql });
+                    await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(sql);
+                }
             }
             finally
             {

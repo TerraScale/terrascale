@@ -78,7 +78,7 @@ namespace TerraScale.Dashboard.E2E.Platform
             await Assert.That(disconnected).IsTrue();
 
             // Test-only identity/Stripe providers: no production users, emails or external network calls.
-            var account = await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+            var account = await DatabaseJourney.NativeWorkspaceAsync(client);
             var pat = await HttpJourney.CreatePatAsync(client, password: account.Password);
             var result = await HttpJourney.McpAsync(client, pat, "tools/call", new { name = "get_overview", arguments = new { } });
             await Assert.That(result.GetProperty("result").GetProperty("isError").GetBoolean()).IsTrue();

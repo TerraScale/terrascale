@@ -94,7 +94,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 await Assert.That(discoveredWithoutState.StatusCode).IsEqualTo(HttpStatusCode.OK);
                 await Assert.That(await discoveredWithoutState.Content.ReadAsStringAsync()).Contains(database);
             }
-            await Assert.That(await platform.StoredAsync(AccountService.OrganizationsCollection, org)).IsFalse();
+            await Assert.That(await platform.StoredAsync(AccountService.OrganizationsTable, org)).IsFalse();
 
             var saved = new OrganizationRecord
             {
@@ -182,10 +182,10 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 }
             }
 
-            using (var write = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections" + scope,
-                new() { ["_csrf"] = csrf, ["databaseId"] = database, ["name"] = "granted-items" }))
+            using (var write = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/sql" + scope,
+                new() { ["_csrf"] = csrf, ["databaseId"] = database, ["sql"] = "CREATE TABLE granted_items (id INTEGER PRIMARY KEY)" }))
             {
-                await Assert.That(write.StatusCode).IsEqualTo(role == "viewer" ? HttpStatusCode.Forbidden : HttpStatusCode.Created);
+                await Assert.That(write.StatusCode).IsEqualTo(role == "viewer" ? HttpStatusCode.Forbidden : HttpStatusCode.OK);
             }
 
             foreach (var resource in new[] { "members", "ownership-transfer", "invitations", "audit-events" })
@@ -582,29 +582,29 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             });
             }
 
-            public async Task<bool> StoredAsync(string collection, string key)
+            public async Task<bool> StoredAsync(string table, string key)
             {
-                return await state!.GetAsync(collection, key, default) is not null;
+                return await state!.GetAsync(table, key, default) is not null;
             }
 
             public Task StoreAsync(OrganizationRecord org)
             {
-                return state!.PutAsync(AccountService.OrganizationsCollection, org.Id,
+                return state!.PutAsync(AccountService.OrganizationsTable, org.Id,
                             JsonSerializer.SerializeToElement(org), StatePrecondition.Absent, default);
             }
 
             public async Task<string?> VersionAsync(string org)
             {
-                return (await state!.GetAsync(AccountService.OrganizationsCollection, org, default))?.Version;
+                return (await state!.GetAsync(AccountService.OrganizationsTable, org, default))?.Version;
             }
 
             public async Task AccountAsync(string user, Action<AccountRecord> change)
             {
                 var key = AccountService.AccountStorageKey(user);
-                var stored = (await state!.GetAsync(AccountService.AccountsCollection, key, default))!;
+                var stored = (await state!.GetAsync(AccountService.AccountsTable, key, default))!;
                 var account = stored.Body.Deserialize<AccountRecord>()!;
                 change(account);
-                await state.PutAsync(AccountService.AccountsCollection, key, JsonSerializer.SerializeToElement(account), StatePrecondition.Matches(stored.Version), default);
+                await state.PutAsync(AccountService.AccountsTable, key, JsonSerializer.SerializeToElement(account), StatePrecondition.Matches(stored.Version), default);
             }
             public Task FenceAsync(string org)
             {
@@ -618,12 +618,12 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
 
             public async Task<bool> ErasedAccountAsync(string key)
             {
-                return AccountService.IsDeletionFence((await state!.GetAsync(AccountService.AccountsCollection, key, default))!);
+                return AccountService.IsDeletionFence((await state!.GetAsync(AccountService.AccountsTable, key, default))!);
             }
 
             public async Task<bool> ErasedOrganizationAsync(string key)
             {
-                return AccountService.IsDeletionFence((await state!.GetAsync(AccountService.OrganizationsCollection, key, default))!);
+                return AccountService.IsDeletionFence((await state!.GetAsync(AccountService.OrganizationsTable, key, default))!);
             }
 
             public Task PlanAsync(string organizationId, string planId)
@@ -633,7 +633,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
 
             public async Task<OrganizationRecord> ProjectionAsync(string organizationId, Action<OrganizationRecord>? change = null)
             {
-                var current = await state!.GetAsync(AccountService.OrganizationsCollection, organizationId, default)
+                var current = await state!.GetAsync(AccountService.OrganizationsTable, organizationId, default)
                     ?? throw new InvalidOperationException("The fixture targets an existing organization");
                 var organization = current.Body.Deserialize<OrganizationRecord>()!;
                 if (change is null)
@@ -642,7 +642,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 }
 
                 change(organization);
-                await state.PutAsync(AccountService.OrganizationsCollection, organizationId, JsonSerializer.SerializeToElement(organization),
+                await state.PutAsync(AccountService.OrganizationsTable, organizationId, JsonSerializer.SerializeToElement(organization),
                     StatePrecondition.Matches(current.Version), default);
                 return organization;
             }

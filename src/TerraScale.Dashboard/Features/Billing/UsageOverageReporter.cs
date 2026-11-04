@@ -47,14 +47,14 @@ namespace TerraScale.Dashboard.Features.Billing
 
         public async Task ReportAsync(string organizationId, long units, long? storageByteHours, DateTimeOffset month, CancellationToken cancellationToken)
         {
-            var document = await state.GetAsync(AccountService.OrganizationsCollection, organizationId, cancellationToken);
-            if (document is null)
+            var row = await state.GetAsync(AccountService.OrganizationsTable, organizationId, cancellationToken);
+            if (row is null)
             {
                 return;
             }
 
-            var organization = AccountService.Read<OrganizationRecord>(document);
-            if (document.Id != organizationId || organization.Id != organizationId)
+            var organization = AccountService.Read<OrganizationRecord>(row);
+            if (row.Id != organizationId || organization.Id != organizationId)
             {
                 throw new IOException("Overage organization identity is invalid.");
             }
@@ -64,13 +64,13 @@ namespace TerraScale.Dashboard.Features.Billing
                 return;
             }
 
-            var bindingDocument = await state.GetAsync(StripeBilling.Collection, organizationId, cancellationToken);
-            if (bindingDocument is null)
+            var bindingRow = await state.GetAsync(StripeBilling.Table, organizationId, cancellationToken);
+            if (bindingRow is null)
             {
                 return;
             }
 
-            var binding = StripeBilling.ReadBinding(bindingDocument, organizationId);
+            var binding = StripeBilling.ReadBinding(bindingRow, organizationId);
             if (binding.Kind != "stripe" || binding.CustomerId.Length == 0 || binding.SubscriptionId.Length == 0 || binding.Status is not ("active" or "trialing" or "past_due"))
             {
                 return;

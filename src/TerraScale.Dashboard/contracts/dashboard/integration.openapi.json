@@ -130,108 +130,6 @@
         ]
       }
     },
-    "/v1/dashboard/databases/{databaseId}/changes": {
-      "get": {
-        "tags": [
-          "DocumentChangesEndpoints"
-        ],
-        "summary": "Stream document changes for one collection",
-        "description": "Requires the current session and project membership. Last-Event-ID overrides cursor; retain the same collection on resume. Events are change, cursor, reconnect and resync_required. On resync_required discard the checkpoint, connect with cursor=now before rereading documents, and report unavailable retained history. This is not a live SQL subscription. Reconnecting exchanges fresh project authority; mutations are never replayed.",
-        "operationId": "ReadDocumentChanges",
-        "parameters": [
-          {
-            "name": "databaseId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "collection",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "Last-Event-ID",
-            "in": "header",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "text/event-stream": {
-                "schema": {
-                  "$ref": "#/components/schemas/DocumentChangesUpdate"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Service Unavailable",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "dashboardSession": [ ]
-          }
-        ]
-      }
-    },
     "/api/v1/dashboard/credentials": {
       "get": {
         "tags": [
@@ -887,41 +785,6 @@
           }
         }
       },
-      "DocumentChangesUpdate": {
-        "required": [
-          "state",
-          "cursor"
-        ],
-        "type": "object",
-        "properties": {
-          "state": {
-            "type": "string"
-          },
-          "cursor": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "change": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/TerraBaseChange"
-              }
-            ]
-          },
-          "region": {
-            "type": [
-              "null",
-              "string"
-            ]
-          }
-        }
-      },
-      "JsonElement": { },
       "ProblemDetails": {
         "type": "object",
         "properties": {
@@ -1224,45 +1087,6 @@
             ]
           }
         }
-      },
-      "TerraBaseChange": {
-        "required": [
-          "collection",
-          "id",
-          "op",
-          "version",
-          "origin",
-          "document"
-        ],
-        "type": "object",
-        "properties": {
-          "collection": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "op": {
-            "type": "string"
-          },
-          "version": {
-            "type": "string"
-          },
-          "origin": {
-            "type": "string"
-          },
-          "document": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/JsonElement"
-              }
-            ]
-          }
-        },
-        "description": "A committed mutation; deduplicate by origin, version, collection and id."
       }
     },
     "securitySchemes": {
@@ -1280,9 +1104,6 @@
     },
     {
       "name": "Credentials"
-    },
-    {
-      "name": "DocumentChangesEndpoints"
     },
     {
       "name": "Session"

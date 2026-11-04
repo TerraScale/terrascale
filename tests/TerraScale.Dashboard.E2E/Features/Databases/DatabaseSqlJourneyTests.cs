@@ -11,7 +11,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
         {
             await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
             using var client = scenario.CreateClient();
-            await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+            await DatabaseJourney.NativeWorkspaceAsync(client);
             var id = await HttpJourney.CreateDatabaseAsync(client, "sql-journey");
             var csrf = await HttpJourney.CsrfAsync(client, "/databases/" + id + "/sql");
             async Task<string> RunAsync(string sql)

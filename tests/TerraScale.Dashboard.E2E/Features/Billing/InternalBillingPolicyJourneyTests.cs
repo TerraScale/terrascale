@@ -128,7 +128,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
                     "The full public command fails closed when the producer key differs from the requested organization despite a correct payload ID");
                 using var context = await browser.GetAsync("/api/v1/dashboard/context");
                 await CheckAsync(context.StatusCode == HttpStatusCode.ServiceUnavailable,
-                    "Native account context rejects a well-formed organization payload returned under a foreign producer document key");
+                    "Native account context rejects a well-formed organization payload returned under a foreign producer json key");
                 using var spending = await HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/usage/internal-spending-cap", new()
                 { ["_csrf"] = csrf, ["spendCap"] = "200.00" });
                 await CheckAsync(spending.StatusCode == HttpStatusCode.ServiceUnavailable,
@@ -398,7 +398,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
         private static JsonElement Organization(JsonElement observed, string organization)
         {
             return observed.GetProperty("billing").GetProperty("organizations").EnumerateArray()
-            .Single(row => row.GetProperty("id").GetString() == organization).GetProperty("document");
+            .Single(row => row.GetProperty("id").GetString() == organization).GetProperty("row");
         }
 
         private static JsonElement[] Alerts(JsonElement observed, string organization)

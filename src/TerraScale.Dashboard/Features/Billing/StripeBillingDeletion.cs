@@ -16,9 +16,9 @@ namespace TerraScale.Dashboard.Features.Billing
 
             var client = await ClientAsync(cancellationToken);
             var customers = new HashSet<string>(retainedCustomers, StringComparer.Ordinal);
-            if (await state.GetAsync(Collection, organizationId, cancellationToken) is { } document && !AccountService.IsDeletionFence(document))
+            if (await state.GetAsync(Table, organizationId, cancellationToken) is { } row && !AccountService.IsDeletionFence(row))
             {
-                var binding = ReadBinding(document, organizationId);
+                var binding = ReadBinding(row, organizationId);
                 if (binding.CustomerId.Length > 0)
                 {
                     customers.Add(binding.CustomerId);

@@ -48,13 +48,13 @@ namespace TerraScale.Dashboard.E2E.Demo
                         return Results.BadRequest();
                     }
 
-                    var document = await underlying.GetAsync(StripeBilling.CheckoutsCollection, binding.CheckoutId, http.RequestAborted);
-                    if (document is null || document.Id != binding.CheckoutId || AccountService.Read<CheckoutBinding>(document).OrganizationId != context.Organization.Id)
+                    var row = await underlying.GetAsync(StripeBilling.CheckoutsTable, binding.CheckoutId, http.RequestAborted);
+                    if (row is null || row.Id != binding.CheckoutId || AccountService.Read<CheckoutBinding>(row).OrganizationId != context.Organization.Id)
                     {
                         return Results.BadRequest();
                     }
 
-                    if (form["scenario"] == "wrong-document-id")
+                    if (form["scenario"] == "wrong-row-id")
                     {
                         corruptReads[binding.CheckoutId] = context.Organization.Id;
                     }
@@ -83,7 +83,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                 }
 
                 var binding = await billing.ReadBindingAsync(context, http.RequestAborted);
-                var index = binding?.CheckoutId is { Length: > 0 } id ? await underlying.GetAsync(StripeBilling.CheckoutsCollection, id, http.RequestAborted) : null;
+                var index = binding?.CheckoutId is { Length: > 0 } id ? await underlying.GetAsync(StripeBilling.CheckoutsTable, id, http.RequestAborted) : null;
                 return Results.Json(new
                 {
                     checkoutId = binding?.CheckoutId,
@@ -105,21 +105,21 @@ namespace TerraScale.Dashboard.E2E.Demo
             return underlying.CheckReadyAsync(cancellationToken);
         }
 
-        public async Task<StateRecord?> GetAsync(string collection, string id, CancellationToken cancellationToken)
+        public async Task<StateRecord?> GetAsync(string table, string id, CancellationToken cancellationToken)
         {
-            var document = await underlying.GetAsync(collection, id, cancellationToken);
-            if (collection == StripeBilling.CheckoutsCollection && document is not null && corruptReads.ContainsKey(id))
+            var row = await underlying.GetAsync(table, id, cancellationToken);
+            if (table == StripeBilling.CheckoutsTable && row is not null && corruptReads.ContainsKey(id))
             {
-                return new("foreign-checkout-document", document.Version, document.Body.Clone());
+                return new("foreign-checkout-row", row.Version, row.Body.Clone());
             }
 
-            return document;
+            return row;
         }
-        public Task PutAsync(string collection, string id, JsonElement document, StatePrecondition precondition, CancellationToken cancellationToken)
+        public Task PutAsync(string table, string id, JsonElement row, StatePrecondition precondition, CancellationToken cancellationToken)
         {
-            if (collection == StripeBilling.CheckoutsCollection && ReferenceEquals(precondition, StatePrecondition.Absent))
+            if (table == StripeBilling.CheckoutsTable && ReferenceEquals(precondition, StatePrecondition.Absent))
             {
-                var binding = document.Deserialize<CheckoutBinding>() ?? throw new IOException("Invalid checkout index fixture write.");
+                var binding = row.Deserialize<CheckoutBinding>() ?? throw new IOException("Invalid checkout index fixture write.");
                 if (binding.CheckoutId != id)
                 {
                     throw new IOException("Checkout index fixture identity mismatch.");
@@ -131,21 +131,21 @@ namespace TerraScale.Dashboard.E2E.Demo
                     throw new IOException("Test-only interrupted checkout index persistence.");
                 }
             }
-            return underlying.PutAsync(collection, id, document, precondition, cancellationToken);
+            return underlying.PutAsync(table, id, row, precondition, cancellationToken);
         }
-        public Task<IReadOnlyList<StateRecord>> ListAsync(string collection, CancellationToken cancellationToken)
+        public Task<IReadOnlyList<StateRecord>> ListAsync(string table, CancellationToken cancellationToken)
         {
-            return underlying.ListAsync(collection, cancellationToken);
-        }
-
-        public Task<StatePage> PageAsync(string collection, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken cancellationToken)
-        {
-            return underlying.PageAsync(collection, scope, fields, limit, cursor, cancellationToken);
+            return underlying.ListAsync(table, cancellationToken);
         }
 
-        public Task DeleteAsync(string collection, string id, string version, CancellationToken cancellationToken)
+        public Task<StatePage> PageAsync(string table, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken cancellationToken)
         {
-            return underlying.DeleteAsync(collection, id, version, cancellationToken);
+            return underlying.PageAsync(table, scope, fields, limit, cursor, cancellationToken);
+        }
+
+        public Task DeleteAsync(string table, string id, string version, CancellationToken cancellationToken)
+        {
+            return underlying.DeleteAsync(table, id, version, cancellationToken);
         }
     }
 }

@@ -4,8 +4,7 @@ using TerraScale.TerraBase.Contracts.Logs;
 
 namespace TerraScale.Dashboard.Features.Logs
 {
-    public sealed record DatabaseLogPage(ShellModel Shell, DatabaseRecord Database, string Status, DatabaseLogBatch? Logs, string Error, LogDrain? Drain = null, string DrainError = "",
-        IReadOnlyList<TerraBaseQueryShape>? QueryShapes = null, string QueryShapesError = "")
+    public sealed record DatabaseLogPage(ShellModel Shell, DatabaseRecord Database, string Status, DatabaseLogBatch? Logs, string Error, LogDrain? Drain = null, string DrainError = "")
     {
         public bool CanManageDrain => Shell.Context.Role == "owner";
     }
@@ -81,7 +80,6 @@ namespace TerraScale.Dashboard.Features.Logs
             var message = "";
             var code = 200;
             LogDrain? drain = null;
-            DatabaseRegion? home = null;
             try
             {
                 if (http.Request.Query["status"].Count > 1 || status is not ("" or "2xx" or "3xx" or "4xx" or "5xx"))
@@ -90,7 +88,7 @@ namespace TerraScale.Dashboard.Features.Logs
                 }
 
                 drain = await drains.ReadAsync(database.ProjectId, http.RequestAborted);
-                home = await databases.HomeAsync(context, database, http.RequestAborted);
+                var home = await databases.HomeAsync(context, database, http.RequestAborted);
                 logs = await backend.ReadAsync(DatabaseService.Scope(context), home, databaseId, status, http.RequestAborted);
             }
             catch (Exception error) when (error is HttpRequestException or JsonException or IOException or AccountAccessException || DatabaseResults.KnownFailure(error) ||
@@ -99,20 +97,7 @@ namespace TerraScale.Dashboard.Features.Logs
                 code = error is AccountAccessException { StatusCode: 400 } ? 400 : 503;
                 message = code == 400 ? "Choose a valid status filter." : "Request logs are unavailable. Retry to load this database’s recorded requests.";
             }
-            IReadOnlyList<TerraBaseQueryShape>? shapes = null;
-            var shapesError = "Slow queries are unavailable. Retry to load query shapes.";
-            if (home is not null && code != 400)
-            {
-                try
-                {
-                    shapes = await backend.ReadQueryShapesAsync(DatabaseService.Scope(context), home, databaseId, http.RequestAborted);
-                    shapesError = "";
-                }
-                catch (Exception error) when (error is HttpRequestException or JsonException or IOException || DatabaseResults.KnownFailure(error) ||
-                    error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
-                { }
-            }
-            var page = DatabaseLogView.Create(new(ShellModel.For(http, context, database.Name + " · Logs"), database, status, logs, message, drain, drainError, shapes, shapesError));
+            var page = DatabaseLogView.Create(new(ShellModel.For(http, context, database.Name + " · Logs"), database, status, logs, message, drain, drainError));
             page.StatusCode = drainStatus != 200 ? drainStatus : code;
             return (IResult)page;
         }

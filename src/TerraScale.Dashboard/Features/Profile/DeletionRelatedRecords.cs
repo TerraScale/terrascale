@@ -12,26 +12,26 @@ namespace TerraScale.Dashboard.Features.Profile
         public async Task CleanAccountAsync(string subject, CancellationToken cancellationToken)
         {
             await Features.Data.SqlWorkspace.EraseAsync(state, new Dictionary<string, string> { ["UserId"] = subject }, cancellationToken);
-            foreach (var document in await state.ListAsync(McpOAuth.CodeCollection, cancellationToken))
+            foreach (var row in await state.ListAsync(McpOAuth.CodeTable, cancellationToken))
             {
-                if (!document.Body.TryGetProperty("UserId", out var owner) || owner.GetString() != subject)
+                if (!row.Body.TryGetProperty("UserId", out var owner) || owner.GetString() != subject)
                 {
                     continue;
                 }
 
-                if (!document.Body.TryGetProperty("CredentialId", out var credential) || credential.GetString() is not { } id)
+                if (!row.Body.TryGetProperty("CredentialId", out var credential) || credential.GetString() is not { } id)
                 {
                     throw new IOException("Pending MCP credential reference is invalid.");
                 }
 
                 await sessions.DeleteCredentialAsync(id, subject, cancellationToken);
-                await state.DeleteAsync(McpOAuth.CodeCollection, document.Id, document.Version, cancellationToken);
+                await state.DeleteAsync(McpOAuth.CodeTable, row.Id, row.Version, cancellationToken);
             }
         }
 
         public async Task CleanOrganizationAsync(string organizationId, CancellationToken cancellationToken)
         {
-            if (await state.GetAsync(InternalBillingService.Collection, InternalBillingService.SingletonId, cancellationToken) is { } singleton)
+            if (await state.GetAsync(InternalBillingService.Table, InternalBillingService.SingletonId, cancellationToken) is { } singleton)
             {
                 if (singleton.Id != InternalBillingService.SingletonId)
                 {
@@ -40,11 +40,11 @@ namespace TerraScale.Dashboard.Features.Profile
 
                 if (AccountService.Read<InternalBillingSingleton>(singleton).OrganizationId == organizationId)
                 {
-                    await state.DeleteAsync(InternalBillingService.Collection, InternalBillingService.SingletonId, singleton.Version, cancellationToken);
+                    await state.DeleteAsync(InternalBillingService.Table, InternalBillingService.SingletonId, singleton.Version, cancellationToken);
                 }
             }
-            await DropAsync<BillingChangeReceipt>(StripeBilling.ChangesCollection, organizationId, row => row.OrganizationId == organizationId, cancellationToken);
-            await DropAsync<AllowanceNotificationState>(AllowanceNotifications.Collection, organizationId, row => row.OrganizationId == organizationId, cancellationToken);
+            await DropAsync<BillingChangeReceipt>(StripeBilling.ChangesTable, organizationId, row => row.OrganizationId == organizationId, cancellationToken);
+            await DropAsync<AllowanceNotificationState>(AllowanceNotifications.Table, organizationId, row => row.OrganizationId == organizationId, cancellationToken);
             await Features.Data.DatabaseWorkspaceCleanup.EraseMarkersAsync(state, organizationId, null, cancellationToken);
             await CleanNotificationsAsync(organizationId, null, cancellationToken);
         }
@@ -56,7 +56,7 @@ namespace TerraScale.Dashboard.Features.Profile
 
         private async Task CleanNotificationsAsync(string organizationId, string? projectId, CancellationToken cancellationToken)
         {
-            foreach (var listed in await state.ListAsync(AccountService.AccountsCollection, cancellationToken))
+            foreach (var listed in await state.ListAsync(AccountService.AccountsTable, cancellationToken))
             {
                 if (AccountService.IsDeletionFence(listed))
                 {
@@ -72,14 +72,14 @@ namespace TerraScale.Dashboard.Features.Profile
                 var key = AccountService.AccountStorageKey(known.UserId);
                 for (var attempt = 0; ; attempt++)
                 {
-                    var document = await state.GetAsync(AccountService.AccountsCollection, key, cancellationToken);
-                    if (document is null || AccountService.IsDeletionFence(document))
+                    var row = await state.GetAsync(AccountService.AccountsTable, key, cancellationToken);
+                    if (row is null || AccountService.IsDeletionFence(row))
                     {
                         break;
                     }
 
-                    var account = AccountService.Read<AccountRecord>(document);
-                    if (document.Id != key || account.UserId != known.UserId)
+                    var account = AccountService.Read<AccountRecord>(row);
+                    if (row.Id != key || account.UserId != known.UserId)
                     {
                         throw new IOException("Notification owner changed.");
                     }
@@ -91,7 +91,7 @@ namespace TerraScale.Dashboard.Features.Profile
 
                     try
                     {
-                        await state.PutAsync(AccountService.AccountsCollection, key, JsonSerializer.SerializeToElement(account), StatePrecondition.Matches(document.Version), cancellationToken);
+                        await state.PutAsync(AccountService.AccountsTable, key, JsonSerializer.SerializeToElement(account), StatePrecondition.Matches(row.Version), cancellationToken);
                         break;
                     }
                     catch (StateConflictException) when (attempt < 3) { }
@@ -99,19 +99,19 @@ namespace TerraScale.Dashboard.Features.Profile
             }
         }
 
-        private async Task DropAsync<T>(string collection, string key, Func<T, bool> owns, CancellationToken cancellationToken)
+        private async Task DropAsync<T>(string table, string key, Func<T, bool> owns, CancellationToken cancellationToken)
         {
-            if (await state.GetAsync(collection, key, cancellationToken) is not { } document)
+            if (await state.GetAsync(table, key, cancellationToken) is not { } row)
             {
                 return;
             }
 
-            if (document.Id != key || !owns(AccountService.Read<T>(document)))
+            if (row.Id != key || !owns(AccountService.Read<T>(row)))
             {
                 throw new IOException("Related deletion record ownership changed.");
             }
 
-            await state.DeleteAsync(collection, key, document.Version, cancellationToken);
+            await state.DeleteAsync(table, key, row.Version, cancellationToken);
         }
     }
 }

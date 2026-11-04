@@ -8,7 +8,6 @@ using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Features.Onboarding;
 using TerraScale.Dashboard.Features.Home;
-using TerraScale.Dashboard.Features.Importing;
 using TerraScale.Dashboard.Features.Notifications;
 using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Features.Support;
@@ -18,7 +17,6 @@ using TerraScale.Dashboard.Features.Admin;
 using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Features.Usage;
 using TerraScale.Dashboard.Features.Settings;
-using TerraScale.Dashboard.Features.QuerySubscriptions;
 using TerraScale.Dashboard.Features.FileStorage;
 using TerraScale.Dashboard.Platform.Assets;
 using TerraScale.Dashboard.Platform.Development;
@@ -83,14 +81,12 @@ namespace TerraScale.Dashboard
             builder.Services.AddAlerts();
             builder.Services.AddAuth();
             builder.Services.AddDatabaseFeatures();
-            builder.Services.AddImportFeatures();
             builder.Services.AddOnboarding();
             builder.Services.AddBillingFeatures();
             builder.Services.AddHomeFeatures();
             builder.Services.AddAnalyticsFeatures();
             builder.Services.AddUsageFeatures();
             builder.Services.AddSettingsFeatures();
-            builder.Services.AddQuerySubscriptions();
             builder.Services.AddFileStorage();
             builder.Services.AddOrganizationFeatures();
             builder.Services.AddSingleton<AccessTokens>();
@@ -138,9 +134,7 @@ namespace TerraScale.Dashboard
                 context.Items["nonce"] = nonce;
                 var path = context.Request.Path.Value ?? "";
                 var editorStyles = path.StartsWith("/api/v1/dashboard/data/", StringComparison.Ordinal) ||
-                    path.StartsWith("/api/v1/dashboard/indexes", StringComparison.Ordinal) ||
-                    path.StartsWith("/databases/", StringComparison.Ordinal) &&
-                    (path.Contains("/documents", StringComparison.Ordinal) || path.EndsWith("/sql", StringComparison.Ordinal) || path.EndsWith("/schema", StringComparison.Ordinal));
+                    path.StartsWith("/databases/", StringComparison.Ordinal) && path.EndsWith("/sql", StringComparison.Ordinal);
                 var reference = context.Request.Path.StartsWithSegments("/reference");
                 var fileStorage = path == "/storage" || path.StartsWith("/api/v1/dashboard/storage/", StringComparison.Ordinal);
                 var fileOrigins = fileStorage ? " https://*.r2.cloudflarestorage.com" : "";
@@ -281,14 +275,12 @@ namespace TerraScale.Dashboard
             app.MapAccountFeatures();
             app.MapOnboarding();
             app.MapDatabaseFeatures();
-            app.MapImports();
             app.MapAuthenticationManagement();
             app.MapAdmin();
             app.MapHome();
             app.MapAnalytics();
             app.MapUsage();
             app.MapSettings();
-            app.MapQuerySubscriptions();
             app.MapFileStorage();
             app.MapProfile();
             app.MapProfileAccessTokens();

@@ -19,7 +19,7 @@ namespace TerraScale.Dashboard.Features.Backups
             return new(listing.Policy, page.Items, page.NextCursor, page.HasMore, page.Limit);
         }
 
-        [McpServerTool(Name = "create_backup", Title = "Create backup", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Take an on-demand backup of a database's documents, schemas, and indexes. Requires an owner or admin role.")]
+        [McpServerTool(Name = "create_backup", Title = "Create backup", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Take an on-demand backup of a database. Requires an owner or admin role.")]
         public Task<BackupView> CreateBackup(string databaseId, string? organizationId = null, string? projectId = null)
         {
             return backups.CreateAsync(Scope(organizationId, projectId), databaseId, Cancellation);
@@ -39,18 +39,6 @@ namespace TerraScale.Dashboard.Features.Backups
         public Task<BackupRestoreResult> RestoreBackup(string databaseId, string name = "", string backupId = "", string? organizationId = null, string? projectId = null)
         {
             return backups.RestoreAsync(Scope(organizationId, projectId), databaseId, backupId, name, Cancellation);
-        }
-
-        [McpServerTool(Name = "get_export_schedule", Title = "Get export schedule", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read the project's own backup bucket (endpoint and bucket; credentials are never returned) and a database's scheduled NDJSON export to it, with the last run.")]
-        public Task<BackupExportView> GetExportSchedule(string databaseId, string? organizationId = null, string? projectId = null)
-        {
-            return backups.ExportAsync(Scope(organizationId, projectId), databaseId, Cancellation);
-        }
-
-        [McpServerTool(Name = "set_export_schedule", Title = "Set export schedule", Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Schedule a database's NDJSON export to the project's bucket: a 5-field UTC cron such as 0 3 * * * (daily) or 0 3 * * 0 (weekly), or empty to turn it off. The bucket is saved in the dashboard first. Requires an owner or admin role.")]
-        public Task<ExportScheduleView> SetExportSchedule(string databaseId, string cron, string? organizationId = null, string? projectId = null)
-        {
-            return backups.SetExportScheduleAsync(Scope(organizationId, projectId), databaseId, cron, Cancellation);
         }
 
         [McpServerTool(Name = "get_point_in_time_window", Title = "Read retained PITR window", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read actual retained UTC bounds from platform or customer backup history, with database allowance. Destination selects the source bucket, not target database configuration. Requires management access.")]

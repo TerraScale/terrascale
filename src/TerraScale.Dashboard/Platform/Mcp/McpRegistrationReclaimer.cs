@@ -3,7 +3,7 @@ using TerraScale.Dashboard.Platform.Persistence;
 namespace TerraScale.Dashboard.Platform.Mcp
 {
     // One bounded page per tick. The cursor is opaque and retained across iterations;
-    // a bad row cannot block later rows or the rest of the collection.
+    // a bad row cannot block later rows or the rest of the table.
     public sealed class McpRegistrationReclaimer(IDashboardState state, TimeProvider clock,
         ILogger<McpRegistrationReclaimer> logger) : BackgroundService
     {
@@ -26,11 +26,11 @@ namespace TerraScale.Dashboard.Platform.Mcp
             await gate.WaitAsync(cancellationToken);
             try
             {
-                var page = await state.PageAsync(McpOAuth.ClientCollection, new Dictionary<string, string>(), null, 32, cursor, cancellationToken);
-                foreach (var document in page.Items)
+                var page = await state.PageAsync(McpOAuth.ClientTable, new Dictionary<string, string>(), null, 32, cursor, cancellationToken);
+                foreach (var row in page.Items)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    try { await McpRegistrations.ReclaimUnfinishedAsync(state, clock, document, cancellationToken); }
+                    try { await McpRegistrations.ReclaimUnfinishedAsync(state, clock, row, cancellationToken); }
                     catch (Exception error) when (!cancellationToken.IsCancellationRequested) { Retry(error); }
                 }
                 cursor = page.NextCursor;

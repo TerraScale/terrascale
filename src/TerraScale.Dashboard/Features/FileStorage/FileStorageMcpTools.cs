@@ -8,7 +8,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
     [McpServerToolType]
     public sealed class FileStorageMcpTools(IHttpContextAccessor http, FileStorageService files)
     {
-        [McpServerTool(Name = "list_file_storage", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List project buckets and completed files in the selected bucket (or first bucket). Pass buckets.next as bucketAfter and files.next as after to continue each listing. Requires document read access.")]
+        [McpServerTool(Name = "list_file_storage", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List project buckets and completed files in the selected bucket (or first bucket). Pass buckets.next as bucketAfter and files.next as after to continue each listing. Requires data read access.")]
         public Task<FileStorageListing> List(string? bucketId = null, string? after = null, string? bucketAfter = null, string? organizationId = null, string? projectId = null)
         {
             return Request(() => files.ListAsync(Scope(organizationId, projectId), bucketId, after, bucketAfter, Cancellation));
@@ -53,7 +53,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
             return Save(() => files.DeleteAsync(context, bucketId, fileId, Cancellation));
         }
 
-        [McpServerTool(Name = "create_file_download", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Return a private short-lived attachment download capability for a completed file. Never log or share the URL or headers. Requires document read access and the file's read rule.")]
+        [McpServerTool(Name = "create_file_download", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Return a private short-lived attachment download capability for a completed file. Never log or share the URL or headers. Requires data read access and the file's read rule.")]
         public Task<TerraBaseFileUrl> Download(string bucketId, string fileId, string? organizationId = null, string? projectId = null)
         {
             return Request(() => files.DownloadAsync(Scope(organizationId, projectId), bucketId, fileId, Cancellation));

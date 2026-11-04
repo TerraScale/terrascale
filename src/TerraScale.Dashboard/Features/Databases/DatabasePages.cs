@@ -6,9 +6,8 @@ using TerraScale.Dashboard.Common.UI;
 namespace TerraScale.Dashboard.Features.Databases
 {
     public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecord> Databases, IReadOnlyList<DatabaseRegion> Choices,
-        IReadOnlyList<CollectionStats> Contents, string Search = "", string Error = "", bool OpenCreate = false, string Name = "", string RegionsError = "")
+        string Search = "", string Error = "", bool OpenCreate = false, string Name = "", string RegionsError = "")
     {
-        public bool ContentsAvailable { get; init; }
         public AccountContext Context => Shell.Context;
         public IReadOnlyList<DatabaseRecord> All => Context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
         public int Ready => All.Count(database => database.Status == "ready");
@@ -16,7 +15,7 @@ namespace TerraScale.Dashboard.Features.Databases
         public int Failed => All.Count(database => database.Status == "failed");
         public IReadOnlyList<string> Serving(DatabaseRecord database)
         {
-            return DatabaseService.ServingRegions(database, Choices);
+            return DatabaseService.ServingRegions(database);
         }
 
         public IReadOnlyList<string> Regions => [.. All.SelectMany(Serving).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(TerraScale.Dashboard.Common.UI.Regions.Rank).ThenBy(code => code, StringComparer.OrdinalIgnoreCase)];
@@ -42,7 +41,6 @@ namespace TerraScale.Dashboard.Features.Databases
         }
 
         // Retrying the counts reloads the same filter and range.
-        public string RetryPath => "/databases?" + (Search.Length > 0 ? "q=" + Uri.EscapeDataString(Search) + "&" : "") + "range=" + Range;
         // Clearing the search keeps the selected range.
         public string ClearPath => "/databases?range=" + Range + "#project-databases";
         public IEnumerable<(string Label, string? Value, string Title, AnalyticsLinePlot? Trend, string Hue)> Cells(string databaseId)
@@ -157,7 +155,7 @@ namespace TerraScale.Dashboard.Features.Databases
         public AccountContext Context => Shell.Context;
         public IReadOnlyList<DatabaseRecord> Branches => [.. Context.Project!.Databases.Values.Where(database => database.BranchedFrom == Database.Id).OrderBy(database => database.Name, StringComparer.Ordinal)];
         // An all-regions database serves every region in TerraBase's catalog (Choices); its record names only the home.
-        public IReadOnlyList<string> Serving => DatabaseService.ServingRegions(Database, Choices);
+        public IReadOnlyList<string> Serving => DatabaseService.ServingRegions(Database);
         public string Placement => Serving.Count == 0 ? DatabasesPage.RegionDisplay("")
             : string.Join(", ", Serving.Select(DatabasesPage.RegionDisplay));
         public (string Tone, string Title, string Body) CreatedState => DatabasesPage.Tone(Database.Status) switch
@@ -175,7 +173,7 @@ namespace TerraScale.Dashboard.Features.Databases
     public sealed record DatabaseActivity(IReadOnlyList<DatabaseActivityCard> Cards, IReadOnlyList<AnalyticsRegionRow> Regions)
     {
         public static readonly (string Key, string Title)[] Kinds = [("reads", "Reads"), ("writes", "Writes (put, patch, delete)"), ("storage", "Storage (bytes)"), ("latency", "p95 latency (ms)")];
-        // TerraBase meters committed document operations as read, put, patch and delete.
+        // Analytics reports writes as put, patch and delete operations.
         private static readonly string[] WriteOperations = ["put", "patch", "delete"];
 
         // rangeFor returns an already normalized range for each card key.

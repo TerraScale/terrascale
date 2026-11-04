@@ -43,10 +43,10 @@ namespace TerraScale.Dashboard.Features.Data
             var attempt = 0;
             while (true)
             {
-                var current = await state.GetAsync(SqlWorkspace.Collection, key, cancellationToken);
+                var current = await state.GetAsync(SqlWorkspace.Table, key, cancellationToken);
                 try
                 {
-                    await state.PutAsync(SqlWorkspace.Collection, key, JsonSerializer.SerializeToElement(record),
+                    await state.PutAsync(SqlWorkspace.Table, key, JsonSerializer.SerializeToElement(record),
                         current is null ? StatePrecondition.Absent : StatePrecondition.Matches(current.Version), cancellationToken);
                     return receipt.Id;
                 }
@@ -64,12 +64,12 @@ namespace TerraScale.Dashboard.Features.Data
         // Null when the receipt expired, was replaced by a newer run or belongs to another user, project or database.
         public async Task<SqlWorkspaceRecord?> ReadAsync(AccountContext context, string databaseId, string receiptId, CancellationToken cancellationToken)
         {
-            if (await state.GetAsync(SqlWorkspace.Collection, Key(context, databaseId), cancellationToken) is not { } document)
+            if (await state.GetAsync(SqlWorkspace.Table, Key(context, databaseId), cancellationToken) is not { } row)
             {
                 return null;
             }
 
-            var record = AccountService.Read<SqlWorkspaceRecord>(document);
+            var record = AccountService.Read<SqlWorkspaceRecord>(row);
             var scope = DatabaseService.Scope(context);
             return record.Receipt is { } receipt && receipt.Id == receiptId && time.GetUtcNow() - receipt.CreatedAt < Lifetime &&
                 record.OrganizationId == scope.OrganizationId && record.ProjectId == scope.ProjectId && record.DatabaseId == databaseId && record.UserId == context.UserId

@@ -8,7 +8,6 @@ namespace TerraScale.Dashboard.Features.Data
     public sealed record SqlSuggestion(string Field, string Reason);
     public sealed record SqlAnalysis(bool Ok,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Error = null,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Collection = null,
         int ParameterSlots = 0, bool HasLimit = false,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Explain = null,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<SqlSuggestion>? Suggestions = null, bool Write = false);

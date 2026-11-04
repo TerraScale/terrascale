@@ -112,8 +112,8 @@ namespace TerraScale.Dashboard.E2E.Features.Onboarding
 
             using var response = await client.SendAsync(request);
             Check(response.StatusCode == HttpStatusCode.OK, "The running native app endpoint succeeds: " + path);
-            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            return document.RootElement.Clone();
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            return json.RootElement.Clone();
         }
         private static string SessionCookie(HttpResponseMessage response)
         {

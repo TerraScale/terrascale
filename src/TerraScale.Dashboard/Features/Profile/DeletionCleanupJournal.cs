@@ -9,12 +9,12 @@ namespace TerraScale.Dashboard.Features.Profile
     // Local CAS fences are not a finite barrier against later regional LWW joins.
     public sealed class DeletionCleanupJournal(IDashboardState state)
     {
-        public const string Collection = "dashboard_deletion_cleanup";
+        public const string Table = "dashboard_deletion_cleanup";
         public sealed record Entry(TsAuthDeletionProof Proof, string[] ProjectIds, string[] CustomerIds);
 
         public async Task<Entry> RememberAsync(TsAuthDeletionProof proof, CancellationToken cancellationToken)
         {
-            if (await state.GetAsync(Collection, proof.Id, cancellationToken) is { } existing)
+            if (await state.GetAsync(Table, proof.Id, cancellationToken) is { } existing)
             {
                 return Match(existing, proof);
             }
@@ -23,7 +23,7 @@ namespace TerraScale.Dashboard.Features.Profile
             HashSet<string> customers = [];
             if (proof.Scope == "organization")
             {
-                if (await state.GetAsync(AccountService.OrganizationsCollection, proof.SubjectId, cancellationToken) is { } org && !AccountService.IsDeletionFence(org))
+                if (await state.GetAsync(AccountService.OrganizationsTable, proof.SubjectId, cancellationToken) is { } org && !AccountService.IsDeletionFence(org))
                 {
                     var value = AccountService.Read<OrganizationRecord>(org);
                     if (org.Id != proof.SubjectId || value.Id != proof.SubjectId)
@@ -34,7 +34,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     projects.UnionWith(value.Projects.Keys);
                     projects.UnionWith(value.DeletedProjectIds);
                 }
-                if (await state.GetAsync(StripeBilling.Collection, proof.SubjectId, cancellationToken) is { } billing && !AccountService.IsDeletionFence(billing))
+                if (await state.GetAsync(StripeBilling.Table, proof.SubjectId, cancellationToken) is { } billing && !AccountService.IsDeletionFence(billing))
                 {
                     var binding = StripeBilling.ReadBinding(billing, proof.SubjectId);
                     if (binding.CustomerId.Length > 0)
@@ -42,9 +42,9 @@ namespace TerraScale.Dashboard.Features.Profile
                         customers.Add(binding.CustomerId);
                     }
                 }
-                foreach (var document in await state.ListAsync(StripeBilling.CheckoutsCollection, cancellationToken))
+                foreach (var row in await state.ListAsync(StripeBilling.CheckoutsTable, cancellationToken))
                 {
-                    var checkout = AccountService.Read<CheckoutBinding>(document);
+                    var checkout = AccountService.Read<CheckoutBinding>(row);
                     if (checkout.OrganizationId != proof.SubjectId)
                     {
                         continue;
@@ -62,31 +62,31 @@ namespace TerraScale.Dashboard.Features.Profile
                 }
             }
             var entry = new Entry(proof, [.. projects.Order(StringComparer.Ordinal)], [.. customers.Order(StringComparer.Ordinal)]);
-            try { await state.PutAsync(Collection, proof.Id, JsonSerializer.SerializeToElement(entry), StatePrecondition.Absent, cancellationToken); }
+            try { await state.PutAsync(Table, proof.Id, JsonSerializer.SerializeToElement(entry), StatePrecondition.Absent, cancellationToken); }
             catch (StateConflictException)
             {
-                return Match(await state.GetAsync(Collection, proof.Id, cancellationToken) ?? throw new IOException("Cleanup journal disappeared."), proof);
+                return Match(await state.GetAsync(Table, proof.Id, cancellationToken) ?? throw new IOException("Cleanup journal disappeared."), proof);
             }
             return entry;
         }
 
-        public async Task<Entry> ReadAsync(StateRecord document, CancellationToken cancellationToken)
+        public async Task<Entry> ReadAsync(StateRecord row, CancellationToken cancellationToken)
         {
-            var entry = AccountService.Read<Entry>(document);
+            var entry = AccountService.Read<Entry>(row);
             if (entry.Proof is null || !TerraScaleIds.IsValid(entry.Proof.Id) || entry.ProjectIds is null || entry.CustomerIds is null ||
                 entry.ProjectIds.Any(id => !TerraScaleIds.IsValid(id)) || entry.CustomerIds.Any(string.IsNullOrEmpty))
             {
                 throw new IOException("Cleanup journal is invalid.");
             }
 
-            var stored = await state.GetAsync(Collection, entry.Proof.Id, cancellationToken) ?? throw new IOException("Cleanup journal disappeared.");
+            var stored = await state.GetAsync(Table, entry.Proof.Id, cancellationToken) ?? throw new IOException("Cleanup journal disappeared.");
             return Match(stored, entry.Proof);
         }
 
-        private static Entry Match(StateRecord document, TsAuthDeletionProof proof)
+        private static Entry Match(StateRecord row, TsAuthDeletionProof proof)
         {
-            var entry = AccountService.Read<Entry>(document);
-            if (document.Id != proof.Id || entry.Proof is null || entry.Proof.Id != proof.Id || entry.Proof.Scope != proof.Scope || entry.Proof.SubjectId != proof.SubjectId || entry.Proof.OrganizationId != proof.OrganizationId || entry.ProjectIds is null || entry.CustomerIds is null)
+            var entry = AccountService.Read<Entry>(row);
+            if (row.Id != proof.Id || entry.Proof is null || entry.Proof.Id != proof.Id || entry.Proof.Scope != proof.Scope || entry.Proof.SubjectId != proof.SubjectId || entry.Proof.OrganizationId != proof.OrganizationId || entry.ProjectIds is null || entry.CustomerIds is null)
             {
                 throw new IOException("Cleanup journal proof changed.");
             }

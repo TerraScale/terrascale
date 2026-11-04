@@ -106,7 +106,7 @@ namespace TerraScale.Dashboard.Features.Functions
         {
             return Status(error) switch
             {
-                401 or 403 => "Functions need a role that can read and write documents in this project.",
+                401 or 403 => "Functions need a role that can read and write data in this project.",
                 _ when error is AccountAccessException => error.Message,
                 _ => "Functions are unavailable. Retry to load this database’s functions."
             };

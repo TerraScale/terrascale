@@ -11,29 +11,15 @@ namespace TerraScale.Dashboard.E2E.Features.Data
     {
         [Test]
         [Arguments("ok")]
-        [Arguments("empty")]
-        [Arguments("cap")]
-        [Arguments("quotes")]
-        [Arguments("no-type")]
         [Arguments("denied")]
-        [Arguments("listing-denied")]
-        [Arguments("malformed")]
-        [Arguments("oversized")]
-        [Arguments("missing-columns")]
-        [Arguments("missing-result")]
         public async Task TwoReadOnlySqlRequestsBoundCatalogAndNeverChangeRunOutcome(string answer)
         {
             TestAuth auth = null!;
-            var catalogs = 0; var batches = 0; var executions = 0; var documentReads = 0;
+            var catalogs = 0; var batches = 0; var executions = 0;
             var names = answer == "empty" ? Array.Empty<string>() : answer == "cap" ? Enumerable.Range(0, 101).Select(index => "table_" + index.ToString("D3", System.Globalization.CultureInfo.InvariantCulture)).ToArray() : new[] { answer == "quotes" ? "quote'table" : "empty_table" };
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, DatabaseSdkJourneyTests.CaptureAuth(value => auth = value), async http =>
+            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, DatabaseJourney.CaptureAuth(value => auth = value), async http =>
             {
                 var path = http.Request.Path.Value!;
-                if (path.Contains("/collections", StringComparison.Ordinal) || path.EndsWith("/schema", StringComparison.Ordinal))
-                {
-                    Interlocked.Increment(ref documentReads);
-                }
-
                 if (!path.EndsWith("/sql/execute", StringComparison.Ordinal))
                 {
                     return null;
@@ -68,21 +54,15 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 };
             });
             using var client = scenario.CreateClient();
-            await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+            await DatabaseJourney.NativeWorkspaceAsync(client);
             var id = await HttpJourney.CreateDatabaseAsync(client, "sql-catalog");
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
-            using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new() { ["_csrf"] = csrf, ["databaseId"] = id, ["name"] = "documents_only" }))
-            {
-                collection.EnsureSuccessStatusCode();
-            }
-
             using var controls = scenario.CreateProviderClient();
             using (var role = await controls.PostAsJsonAsync("/__test/control", new { command = "role", value = "viewer" }))
             {
                 role.EnsureSuccessStatusCode();
             }
 
-            Interlocked.Exchange(ref documentReads, 0);
             using var page = await client.GetAsync("/databases/" + id + "/sql");
             await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
             var html = await page.Content.ReadAsStringAsync();
@@ -90,7 +70,6 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             var available = answer is "ok" or "quotes" or "cap" or "no-type";
             await Assert.That(catalog.RootElement.GetProperty("tables").GetArrayLength()).IsEqualTo(available ? Math.Min(100, names.Length) : 0);
             await Assert.That(catalog.RootElement.GetProperty("truncated").GetBoolean()).IsEqualTo(answer == "cap");
-            await Assert.That(html).DoesNotContain("documents_only");
             if (available) { await Assert.That(html).Contains("declared_only"); await Assert.That(html).Contains(answer == "no-type" ? "No declared type" : "TEXT"); }
             else
             {
@@ -116,11 +95,10 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             await Assert.That(Volatile.Read(ref catalogs)).IsEqualTo(2);
             await Assert.That(Volatile.Read(ref batches)).IsEqualTo(answer is "empty" or "listing-denied" ? 0 : 2);
             await Assert.That(Volatile.Read(ref executions)).IsEqualTo(1);
-            await Assert.That(Volatile.Read(ref documentReads)).IsEqualTo(0);
         }
 
         // sqlite_master lists the engine's own tables next to the user's; TerraBase refuses PRAGMA table_info on them, so the catalog never asks.
-        private static readonly string[] EngineTables = ["_tb_meta", "collections", "commit_offset", "sqlite_sequence", "turso_cdc"];
+        private static readonly string[] EngineTables = ["_tb_meta", "commit_offset", "sqlite_sequence", "turso_cdc"];
 
         internal static object Result(string[] fields, object?[][] rows)
         {

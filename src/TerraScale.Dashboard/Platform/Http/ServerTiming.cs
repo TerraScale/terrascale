@@ -40,7 +40,7 @@ namespace TerraScale.Dashboard.Platform.Http
             return ReadAsync(key, read, false);
         }
 
-        // Public issuer metadata cannot change because this request wrote account or document
+        // Public issuer metadata cannot change because this request wrote account or database
         // state. Share it through those writes, but never into the next request (key rotation).
         public static Task<T> PublicReadAsync<T>(object key, Func<Task<T>> read)
         {
@@ -250,7 +250,7 @@ namespace TerraScale.Dashboard.Platform.Http
                     var ended = timing.clock.Elapsed.TotalMilliseconds;
                     var upstream = Upstream(request.RequestUri);
                     timing.Record(upstream, started, ended);
-                    // Only fixed operation names escape: no URL, query, token, document ID or customer name.
+                    // Only fixed operation names escape: no URL, query, token, record ID or customer name.
                     var operation = Operation(request.RequestUri);
                     if (!timing.probe && timing.logger is { } logger && logger.IsEnabled(LogLevel.Information))
                     {
@@ -274,13 +274,13 @@ namespace TerraScale.Dashboard.Platform.Http
             }
 
             private static readonly HashSet<string> IdentifiedResources = new(StringComparer.Ordinal)
-            { "organizations", "projects", "databases", "collections", "documents", "members", "invitations" };
+            { "organizations", "projects", "databases", "members", "invitations" };
 
             private static readonly HashSet<string> Operations = new(StringComparer.Ordinal)
             {
                 "terrascale", "v1", "v2", ".well-known", "openid-configuration", "jwks", "oauth", "token", "userinfo",
                 "platform", "organizations", "projects", "members", "ownership-transfer", "invitations", "audit-events",
-                "databases", "collections", "documents", "query", "sql", "analytics", "usage", "replication", "regions",
+                "databases", "query", "sql", "analytics", "usage", "regions",
                 "admin", "plan", "sessions", "accounts", "identities", "allowance_notifications", "get", "list", "transactions"
             };
         }

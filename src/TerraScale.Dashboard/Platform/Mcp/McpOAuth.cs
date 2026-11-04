@@ -17,8 +17,8 @@ namespace TerraScale.Dashboard.Platform.Mcp
     // ts-auth grant, so it is listed and revoked on Profile → Access tokens like any other.
     public static partial class McpOAuth
     {
-        public const string ClientCollection = "dashboard_mcp_oauth_clients";
-        public const string CodeCollection = "dashboard_mcp_oauth_codes";
+        public const string ClientTable = "dashboard_mcp_oauth_clients";
+        public const string CodeTable = "dashboard_mcp_oauth_codes";
         public const string McpHost = "mcp.terrascale.tech";
         private const int TokenDays = 90;
         private const int MaxRegistrationBytes = 16 * 1024;
@@ -181,7 +181,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
             var id = AccountService.NewId();
             var client = McpRegistrations.Create(id, name.Length == 0 ? "MCP client" : name, [.. uris.EnumerateArray().Select(uri => uri.GetString()!)], time.GetUtcNow());
-            await state.PutAsync(ClientCollection, id, JsonSerializer.SerializeToElement(client), StatePrecondition.Absent, context.RequestAborted);
+            await state.PutAsync(ClientTable, id, JsonSerializer.SerializeToElement(client), StatePrecondition.Absent, context.RequestAborted);
             return Results.Json(new Dictionary<string, object>
             {
                 ["client_id"] = id,
@@ -292,7 +292,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 credential = await sessions.CreateCredentialAsync(fresh, tokenExpiresAt, context.RequestAborted);
                 var grant = new McpCode(authorization.ClientId, authorization.RedirectUri, authorization.CodeChallenge, authorization.Resource, fresh.UserId, credential,
                     client.Name, time.GetUtcNow().AddMinutes(5), tokenExpiresAt);
-                await state.PutAsync(CodeCollection, Hash(code), JsonSerializer.SerializeToElement(grant), StatePrecondition.Absent, context.RequestAborted);
+                await state.PutAsync(CodeTable, Hash(code), JsonSerializer.SerializeToElement(grant), StatePrecondition.Absent, context.RequestAborted);
             }
             catch (Exception error)
             {
@@ -341,17 +341,17 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 return OAuthError("invalid_grant", "The authorization code is invalid.");
             }
 
-            var document = await state.GetAsync(CodeCollection, Hash(code), context.RequestAborted);
-            if (document is null || document.Id != Hash(code))
+            var row = await state.GetAsync(CodeTable, Hash(code), context.RequestAborted);
+            if (row is null || row.Id != Hash(code))
             {
                 return OAuthError("invalid_grant", "The authorization code is invalid or was already used.");
             }
             // Deleting first makes the code single use across replicas: only one redemption wins the version.
-            try { await state.DeleteAsync(CodeCollection, document.Id, document.Version, context.RequestAborted); }
+            try { await state.DeleteAsync(CodeTable, row.Id, row.Version, context.RequestAborted); }
             catch (Exception error) when (error is StateConflictException or
                                           HttpRequestException { StatusCode: System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict or System.Net.HttpStatusCode.NotFound })
             { return OAuthError("invalid_grant", "The authorization code is invalid or was already used."); }
-            var grant = document.Body.Deserialize<McpCode>() ?? throw new JsonException("Invalid authorization code.");
+            var grant = row.Body.Deserialize<McpCode>() ?? throw new JsonException("Invalid authorization code.");
             var verifier = form["code_verifier"].ToString();
             var failure =
                 grant.ExpiresAt <= time.GetUtcNow() ? "The authorization code expired." :
