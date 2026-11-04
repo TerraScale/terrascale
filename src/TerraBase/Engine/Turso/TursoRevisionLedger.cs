@@ -151,6 +151,23 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
 
     internal static void EndSnapshot(SqliteConnection reader) => Execute(reader, "ROLLBACK;");
 
+    internal DatabaseRevision SnapshotRevision(SqliteConnection reader)
+    {
+        var snapshot = reader.GetWalState();
+        lock (_gate)
+        {
+            ThrowIfFenced();
+            if (_attached is null || _manifest is null
+                || snapshot.CheckpointSequence != _live.CheckpointSequence
+                || snapshot.MaxFrame != _live.MaxFrame)
+            {
+                throw new InvalidOperationException("a checksum snapshot must match the revision index it was read against");
+            }
+
+            return _manifest.Current(snapshot.MaxFrame);
+        }
+    }
+
     internal RevisionPullPlan PlanPull(SqliteConnection reader, string? clientRevision)
     {
         var snapshot = reader.GetWalState();

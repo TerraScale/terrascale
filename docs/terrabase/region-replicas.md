@@ -67,6 +67,42 @@ eventual consistency.
    reachable again; the next pull is incremental. A restarted home keeps its durable revision ledger, so replicas pull
    incrementally or, for a rewritten or restored home, take a full answer.
 
+## Anti-entropy (PIVOT R11, D18)
+
+Replicas never silently diverge from their home.
+
+1. **Exact revisions.** Every pull answer carries the home's snapshot revision in the `TerraBase-Revision` header, so a
+   replica knows the exact revision (`ts1:<incarnation>:<generation>:<frame>`) it holds after each applied pull.
+2. **Rounds.** A follower runs a verification round about a minute after it starts and every 10 minutes after each
+   completed pass. It asks its home for
+   `GET /v1/sync/organizations/{organization}/projects/{project}/databases/{database}/checksums?revision=<held>`: the home
+   takes a read snapshot, and only when it is still at that revision hashes the schema and every table in rowid ranges of
+   at most 256 rows and 4 MiB (SHA-256 over typed values). A round stops after 64 ranges or 16 MiB and returns a cursor;
+   the next round continues 5 seconds later until the pass covers every table. The replica hashes the same ranges in one
+   read snapshot at the same revision and compares. When the home moved on, the replica pulls and retries up to three
+   times, then skips the round for 30 seconds (`result="skipped"`).
+3. **Bounded cost.** One round runs at a time per replica node. On the home a round is bulk storage work attributed to
+   the database's organization, so it shares that organization's I/O worker cap (E11) and never takes a customer's
+   request or engine budget.
+4. **Healing.** Equal revisions with unequal hashes are a divergence: the replica logs an error naming the database, counts
+   `terrabase.replica.verifications{result="diverged"}`, deletes its files and bootstraps again from the home's full
+   answer, then verifies again. A replica that diverges again within 15 minutes of a rebootstrap waits out that window,
+   so a persistent fault alerts instead of looping. A restore or failover starts a new incarnation (D18), so replicas
+   take a full answer on their next pull.
+
+## Replica status
+
+After each pull (at most every 10 seconds, and on every state change) a replica reports to its home with
+`POST …/databases/{database}/replica-status`: its state (`bootstrapping`, `following`, `healing`), lag, last pull and last
+completed verification. The home keeps the reports in memory; one older than 90 seconds reads as `stale`, and a region
+that has not reported since the home started reads as `unknown`. The per-database regions read API takes each replica's
+last completed verification from these reports; a node that is not the home reads them from the home with a 2-second
+timeout.
+
+Lag is the time since the oldest home commit the replica has been told about and does not hold yet; with NATS notices it
+is 0 once a pull delivered every notice, and without NATS (sweep only) it is the time since the start of the last
+successful pull, an upper bound.
+
 ## Encryption
 
 Every replica file is encrypted at rest under the replica's own aegis256 data key, wrapped by the replica node's master key
@@ -80,6 +116,9 @@ listener, as for every peer request.
 
 - `terrabase.replica.lag` (ms): from the home's commit, on its clock, to the replica holding it after the notice's pull.
 - `terrabase.replica.pulls` (`result` = `changed`, `unchanged`, `failed`).
+- `terrabase.replica.verifications` (`result` = `equal`, `diverged`, `skipped`, `failed`).
+- `terrabase.replica.rebootstraps`: replicas deleted and bootstrapped again after a divergence.
+- `terrabase.replica.max_lag` (ms) and `terrabase.replica.max_verification_age` (s): the worst replica on the node.
 
 ## Known gaps
 
@@ -87,4 +126,6 @@ listener, as for every peer request.
   follow on the 30-second sweep until it does.
 - **One node per region.** A replica pulls from the first node the peers file lists for its home region.
 - **Reads only through relational SQL.** Document, query and shape reads of a replicated database are served by its home.
+- **Replica status is in memory.** After a home restarts, replica status reads `unknown` until each replica's next report
+  (at most 30 seconds).
 - **Buffered pulls.** The page sync host buffers each answer in memory (see [page sync host](page-sync-host.md)).

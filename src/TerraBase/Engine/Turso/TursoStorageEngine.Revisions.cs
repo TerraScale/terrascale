@@ -1,4 +1,5 @@
 using TerraBase.Engine.Revisions;
+using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
 using ZLogger;
 
@@ -34,6 +35,26 @@ internal sealed partial class TursoStorageEngine : IDatabaseRevisions
         try
         {
             return await Io.WithAdmissionAsync<RevisionPullResult?>(async () => await store.PullRevisionAsync(clientRevision, sink, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+        }
+        finally
+        {
+            Io.Release();
+        }
+    }
+
+    public async ValueTask<RevisionChecksums?> ChecksumAsync(TenantContext database, DatabaseRevision revision, ChecksumCursor? cursor, CancellationToken cancellationToken)
+    {
+        if (await OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not TursoDatabaseStore store)
+        {
+            return null;
+        }
+
+        using var tenant = QosContext.Enter(database);
+        using var bulk = StorageWork.Bulk();
+        Io.Admit();
+        try
+        {
+            return await Io.WithAdmissionAsync<RevisionChecksums?>(async () => await store.ChecksumAsync(revision, cursor, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
         }
         finally
         {

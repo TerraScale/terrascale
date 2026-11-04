@@ -4,6 +4,7 @@ namespace TerraBase.Engine.Revisions;
 
 internal readonly record struct DatabaseRevision(Ulid Incarnation, ulong Generation, ulong Frame)
 {
+    internal const string Header = "TerraBase-Revision";
     private const string Prefix = "ts1:";
 
     public override string ToString() =>

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using TerraBase.Configuration;
+using TerraBase.Engine.Revisions;
 using TerraBase.Features.Backup;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -23,7 +24,7 @@ internal sealed class TursoReplicas(
     : IDatabaseReplicas, IAsyncDisposable
 {
     internal const string DirectoryName = ".replicas";
-    private const string KeyHeader = "TERRABASE-REPLICA-KEY-1\n";
+    internal const string KeyHeader = "TERRABASE-REPLICA-KEY-1\n";
     private const int MaxIdleConnections = 4;
     private const int MaxReadRows = 10_000;
 
@@ -86,6 +87,17 @@ internal sealed class TursoReplicas(
 
     public IReadOnlyList<TenantContext> List() =>
         [.. _replicas.Keys.Select(key => new TenantContext(key.Organization, PlanTier.Hobby, key.Project, key.Database))];
+
+    public DatabaseRevision? HeldRevision(TenantContext database) =>
+        _replicas.TryGetValue(Key(database), out var opening) && opening.IsValueCreated && opening.Value.IsCompletedSuccessfully ? opening.Value.Result.Held : null;
+
+    public async ValueTask<ReplicaComparison?> CompareAsync(TenantContext database, DatabaseRevision revision, IReadOnlyList<RangeChecksum> home, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(home);
+        return await FindAsync(database).ConfigureAwait(false) is { Pulled: true } replica
+            ? await replica.CompareAsync(revision, home, cancellationToken).ConfigureAwait(false)
+            : null;
+    }
 
     public async ValueTask<IReplicaReader?> BeginReadAsync(TenantContext database, CancellationToken cancellationToken) =>
         await FindAsync(database).ConfigureAwait(false) is { Pulled: true } replica
@@ -162,11 +174,13 @@ internal sealed class TursoReplicas(
             { } wrapped => await UnwrapAsync(wrapped).ConfigureAwait(false),
             null => null,
         };
+        var observer = new RevisionObserver(http);
+        var observed = new HttpClient(observer) { Timeout = Timeout.InfiniteTimeSpan };
         if (hexKey is not null && File.Exists(path + "-info"))
         {
             try
             {
-                return new Replica(this, await TursoSyncDatabase.OpenAsync(Options(path, hexKey, source, http)).ConfigureAwait(false), path, logger, pulled: true);
+                return new Replica(this, await TursoSyncDatabase.OpenAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, pulled: true);
             }
             catch (TursoException error)
             {
@@ -176,7 +190,7 @@ internal sealed class TursoReplicas(
 
         _ = await Task.Run(() => DeleteFiles(path)).ConfigureAwait(false);
         hexKey = await NewKeyAsync(path).ConfigureAwait(false);
-        var replica = new Replica(this, await TursoSyncDatabase.CreateAsync(Options(path, hexKey, source, http)).ConfigureAwait(false), path, logger, pulled: false);
+        var replica = new Replica(this, await TursoSyncDatabase.CreateAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, pulled: false);
         try
         {
             _ = await replica.PullAsync(CancellationToken.None).ConfigureAwait(false);
@@ -280,7 +294,43 @@ internal sealed class TursoReplicas(
         return deleted;
     }
 
-    private sealed class Replica(TursoReplicas owner, TursoSyncDatabase sync, string path, ILogger logger, bool pulled) : IAsyncDisposable
+    private sealed class RevisionObserver(HttpClient http) : HttpMessageHandler
+    {
+        private string? _seen;
+
+        public string? Take() => Interlocked.Exchange(ref _seen, null);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            using var copy = new HttpRequestMessage(request.Method, request.RequestUri)
+            {
+                Content = request.Content,
+                Version = request.Version,
+                VersionPolicy = request.VersionPolicy,
+            };
+            foreach (var (name, values) in request.Headers)
+            {
+                _ = copy.Headers.TryAddWithoutValidation(name, values);
+            }
+
+            try
+            {
+                var response = await http.SendAsync(copy, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+                if (response.IsSuccessStatusCode && response.Headers.TryGetValues(DatabaseRevision.Header, out var values))
+                {
+                    Volatile.Write(ref _seen, values.FirstOrDefault());
+                }
+
+                return response;
+            }
+            finally
+            {
+                copy.Content = null;
+            }
+        }
+    }
+
+    private sealed class Replica(TursoReplicas owner, TursoSyncDatabase sync, string path, RevisionObserver observer, HttpClient observed, ILogger logger, bool pulled) : IAsyncDisposable
     {
         private readonly SemaphoreSlim _pulls = new(1, 1);
         private readonly ConcurrentQueue<TursoDatabaseHandle> _idle = new();
@@ -296,14 +346,86 @@ internal sealed class TursoReplicas(
 
         private long _applied;
 
+        public DatabaseRevision? Held { get; private set; }
+
+        public async Task<ReplicaComparison> CompareAsync(DatabaseRevision revision, IReadOnlyList<RangeChecksum> home, CancellationToken cancellationToken)
+        {
+            await _pulls.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (Held != revision)
+                {
+                    return new ReplicaComparison(ReplicaVerdict.Moved, Held, null);
+                }
+
+                await using var reader = await BeginReadAsync(cancellationToken).ConfigureAwait(false);
+                foreach (var range in home)
+                {
+                    RangeChecksum? local;
+                    try
+                    {
+                        local = await ChecksumAsync(reader, range, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (SqlStatementException)
+                    {
+                        local = null;
+                    }
+
+                    if (local != range)
+                    {
+                        return new ReplicaComparison(ReplicaVerdict.Diverged, revision, RangeChecksums.Mismatch(range, local));
+                    }
+                }
+
+                return new ReplicaComparison(ReplicaVerdict.Equal, revision, null);
+            }
+            finally
+            {
+                _pulls.Release();
+            }
+        }
+
+        private static async Task<RangeChecksum?> ChecksumAsync(IReplicaReader reader, RangeChecksum home, CancellationToken cancellationToken)
+        {
+            var schema = home.Table.Length == 0;
+            var sql = schema ? RangeChecksums.SchemaSql : RangeChecksums.RowsSql(home.Table, home.After, home.Last, home.Rows + 1);
+            var maxRows = schema ? MaxReadRows : home.Rows + 1;
+            var result = await reader.ExecuteAsync(new SqlStatement(sql, [], new Dictionary<string, object?>(), maxRows, home.Bytes + RangeChecksums.RangeBytes, TimeSpan.FromSeconds(30)),
+                cancellationToken).ConfigureAwait(false);
+            if (result.Truncated)
+            {
+                return null;
+            }
+
+            using var hasher = new RangeChecksums.Hasher();
+            foreach (var row in result.Rows)
+            {
+                hasher.Add(row);
+            }
+
+            return hasher.Finish(home.Table, home.After, home.Last);
+        }
+
         public async Task<ReplicaPullResult> PullAsync(CancellationToken cancellationToken)
         {
             await _pulls.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
                 var position = owner.NextPosition();
-                var changed = await sync.PullAsync(cancellationToken).ConfigureAwait(false);
+                _ = observer.Take();
+                bool changed;
+                try
+                {
+                    changed = await sync.PullAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    Held = null;
+                    throw;
+                }
+
                 Volatile.Write(ref _applied, position);
+                Held = DatabaseRevision.TryParse(observer.Take(), out var held) ? held : null;
                 Pulled = true;
                 // The replica's own log only holds pulled pages; fold it into the file once it outgrows the home's policy.
                 var log = new FileInfo(path + "-wal");
@@ -374,6 +496,7 @@ internal sealed class TursoReplicas(
             }
 
             sync.Dispose();
+            observed.Dispose();
             _pulls.Dispose();
             return ValueTask.CompletedTask;
         }

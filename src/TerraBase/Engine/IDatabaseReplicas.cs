@@ -1,3 +1,4 @@
+using TerraBase.Engine.Revisions;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Engine;
@@ -5,6 +6,15 @@ namespace TerraBase.Engine;
 /// <summary>A completed pull.</summary>
 /// <param name="Changed">Whether the pull applied pages.</param>
 internal sealed record ReplicaPullResult(bool Changed);
+
+internal enum ReplicaVerdict
+{
+    Equal,
+    Diverged,
+    Moved,
+}
+
+internal sealed record ReplicaComparison(ReplicaVerdict Verdict, DatabaseRevision? Revision, string? Where);
 
 /// <summary>
 /// This node's read-only copies of databases homed in another region (docs/terrabase/region-replicas.md). A replica pulls the
@@ -30,6 +40,10 @@ internal interface IDatabaseReplicas
 
     /// <summary>The open replicas.</summary>
     IReadOnlyList<TenantContext> List();
+
+    DatabaseRevision? HeldRevision(TenantContext database);
+
+    ValueTask<ReplicaComparison?> CompareAsync(TenantContext database, DatabaseRevision revision, IReadOnlyList<RangeChecksum> home, CancellationToken cancellationToken);
 
     /// <summary>
     /// A read snapshot of an open replica that holds at least one pull, or <see langword="null"/>. Every statement of the

@@ -10,6 +10,8 @@ internal interface IDatabaseRevisions
 
     ValueTask<RevisionPullResult?> PullAsync(TenantContext database, string? clientRevision, IRevisionPullSink sink, CancellationToken cancellationToken);
 
+    ValueTask<RevisionChecksums?> ChecksumAsync(TenantContext database, DatabaseRevision revision, ChecksumCursor? cursor, CancellationToken cancellationToken);
+
     ValueTask<bool> StartIncarnationAsync(TenantContext database, CancellationToken cancellationToken);
 }
 

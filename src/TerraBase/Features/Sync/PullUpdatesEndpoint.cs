@@ -21,7 +21,7 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
         Summary("Streams the pages of a database that changed since a revision");
         Description("Internal listener only, behind the peer credential; 404 on the public listener. Page pull for region replicas: the body is a "
             + "protobuf pull-updates request in page mode with raw encoding. client_revision is the server_revision of an earlier answer, or empty to bootstrap. "
-            + "The answer is a length-delimited protobuf header (server_revision, db_size) followed by one message per page. A revision from an expired "
+            + "The answer is a length-delimited protobuf header (server_revision, db_size) followed by one message per page; the TerraBase-Revision header repeats server_revision. A revision from an expired "
             + "history, another incarnation or a rewritten database gets every page. Long polls are answered at once. 400 unsupported_pull for zstd, MVCC "
             + "logical pulls, pinned server revisions and page or query selectors; 404 when the database is not in this node's catalog.");
         Tags("Administration");
@@ -137,6 +137,7 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
         response.StatusCode = StatusCodes.Status200OK;
         response.ContentType = MediaType;
         response.Headers.CacheControl = "no-store";
+        response.Headers[DatabaseRevision.Header] = start.Revision.ToString();
         Write(response.BodyWriter, new PullUpdatesHeader
         {
             ServerRevision = start.Revision.ToString(),

@@ -6,6 +6,7 @@ using System.Threading.Channels;
 using NATS.Client.Core;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Engine.Revisions;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -25,14 +26,22 @@ internal sealed class RegionReplication(
     /// <summary>How often every replica pulls and every home's catalog is read again without a notice.</summary>
     internal static readonly TimeSpan Sweep = TimeSpan.FromSeconds(30);
 
+    internal static readonly TimeSpan VerifyEvery = TimeSpan.FromMinutes(10);
+
     private const int MaxConcurrentPulls = 8;
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan RoundGap = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan RetryGap = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan HealGap = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan ReportEvery = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan ReportTimeout = TimeSpan.FromSeconds(2);
 
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), Follower> _followers = new();
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (TenantContext Database, long At)> _revised = new();
     private readonly Channel<bool> _publish = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
     private readonly Channel<string> _catalogWakes = Channel.CreateBounded<string>(new BoundedChannelOptions(64) { FullMode = BoundedChannelFullMode.DropWrite });
     private readonly SemaphoreSlim _pulls = new(MaxConcurrentPulls, MaxConcurrentPulls);
+    private readonly SemaphoreSlim _verifying = new(1, 1);
     private readonly HttpClient _http = PeerHttp.Create(credential);
     private readonly Meter _meter = meters.Create(Telemetry.MeterName);
     private readonly Lock _gate = new();
@@ -40,12 +49,19 @@ internal sealed class RegionReplication(
     private NatsConnection? _nats;
     private Histogram<double>? _lag;
     private Counter<long>? _pullCount;
+    private Counter<long>? _verifications;
+    private Counter<long>? _rebootstraps;
+    private ReplicaVerifier? _verifier;
 
     private IDatabaseReplicas Replicas => replicas;
 
     private ILogger Logger => logger;
 
     private TimeProvider Time => time;
+
+    private bool Notified => _nats is not null;
+
+    private string Region => options.Region;
 
     /// <summary>The open followers' databases, for tests and diagnostics.</summary>
     internal IReadOnlyCollection<TenantContext> Following => [.. _followers.Values.Select(follower => follower.Database)];
@@ -58,6 +74,14 @@ internal sealed class RegionReplication(
             _lag = _meter.CreateHistogram<double>("terrabase.replica.lag", "ms",
                 "Time from a home's commit, on its clock, to the replica holding it after the notice's pull.");
             _pullCount = _meter.CreateCounter<long>("terrabase.replica.pulls", "{pull}", "Replica pulls by result (changed, unchanged, failed).");
+            _verifications = _meter.CreateCounter<long>("terrabase.replica.verifications", "{round}",
+                "Replica checksum rounds against the home by result (equal, diverged, skipped, failed).");
+            _rebootstraps = _meter.CreateCounter<long>("terrabase.replica.rebootstraps", "{rebootstrap}", "Replicas deleted and bootstrapped again after a divergence.");
+            _ = _meter.CreateObservableGauge("terrabase.replica.max_lag", () => _followers.Values.Select(follower => follower.LagMs ?? 0).DefaultIfEmpty(0).Max(), "ms",
+                "The largest lag of this node's replicas behind their homes.");
+            _ = _meter.CreateObservableGauge("terrabase.replica.max_verification_age", () => _followers.Values.Select(follower => follower.VerificationAge.TotalSeconds)
+                .DefaultIfEmpty(0).Max(), "s", "The longest time any of this node's replicas went without a completed verification against its home.");
+            _verifier = new ReplicaVerifier(replicas, _http);
         }
 
         if (_peers.Count > 0 && options is { NatsUrl: { } natsUrl, NatsToken: { } natsToken })
@@ -102,6 +126,7 @@ internal sealed class RegionReplication(
     public override void Dispose()
     {
         _pulls.Dispose();
+        _verifying.Dispose();
         _meter.Dispose();
         base.Dispose();
     }
@@ -448,7 +473,18 @@ internal sealed class RegionReplication(
         private readonly Channel<bool> _signals = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
         private readonly CancellationTokenSource _stop = new();
         private readonly ReplicaPeer _home;
+        private readonly Uri _source;
+        private readonly DateTimeOffset _started;
         private long _noticed;
+        private long _pullStartedAt;
+        private DateTimeOffset? _syncedAt;
+        private DateTimeOffset? _verifiedAt;
+        private DateTimeOffset _nextVerify;
+        private DateTimeOffset _lastHeal = DateTimeOffset.MinValue;
+        private DateTimeOffset _lastReport = DateTimeOffset.MinValue;
+        private string _state = ReplicaStates.Bootstrapping;
+        private string? _reportedState;
+        private ChecksumCursor? _cursor;
         private TaskCompletionSource _pulled = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private Task _loop = Task.CompletedTask;
 
@@ -457,9 +493,26 @@ internal sealed class RegionReplication(
             _owner = owner;
             Database = database;
             _home = home;
+            _source = new Uri(_home.Internal,
+                $"/v1/sync/organizations/{Database.OrganizationId}/projects/{Database.ProjectId}/databases/{Database.DatabaseId}");
+            _started = owner.Time.GetUtcNow();
+            _nextVerify = _started + TimeSpan.FromSeconds(Random.Shared.Next(5, 60));
         }
 
         public TenantContext Database { get; }
+
+        public long? LagMs
+        {
+            get
+            {
+                var now = _owner.Time.GetUtcNow().ToUnixTimeMilliseconds();
+                return Volatile.Read(ref _noticed) is > 0 and var noticed ? Math.Max(0, now - noticed)
+                    : Volatile.Read(ref _pullStartedAt) is > 0 and var started ? (_owner.Notified ? 0 : Math.Max(0, now - started))
+                    : null;
+            }
+        }
+
+        public TimeSpan VerificationAge => _owner.Time.GetUtcNow() - (_verifiedAt ?? _started);
 
         public static Follower Start(RegionReplication owner, TenantContext database, ReplicaPeer home)
         {
@@ -505,18 +558,19 @@ internal sealed class RegionReplication(
         private async Task RunAsync()
         {
             var cancellationToken = _stop.Token;
-            var source = new Uri(_home.Internal,
-                $"/v1/sync/organizations/{Database.OrganizationId}/projects/{Database.ProjectId}/databases/{Database.DatabaseId}");
+            await ReportAsync(cancellationToken).ConfigureAwait(false);
             await RetryAsync(async () =>
             {
-                await _owner.Replicas.OpenAsync(Database, source, _owner._http, cancellationToken).ConfigureAwait(false);
+                await _owner.Replicas.OpenAsync(Database, _source, _owner._http, cancellationToken).ConfigureAwait(false);
                 return true;
             }, "open", cancellationToken).ConfigureAwait(false);
+            _state = ReplicaStates.Following;
             Signal(0);
             await foreach (var _ in _signals.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
             {
                 var completing = Interlocked.Exchange(ref _pulled, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
                 var noticed = Interlocked.Exchange(ref _noticed, 0);
+                var started = _owner.Time.GetUtcNow();
                 var changed = await RetryAsync(async () =>
                 {
                     await _owner._pulls.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -535,7 +589,120 @@ internal sealed class RegionReplication(
                     _owner._lag?.Record(Math.Max(0, _owner.Time.GetUtcNow().ToUnixTimeMilliseconds() - noticed));
                 }
 
+                Volatile.Write(ref _pullStartedAt, started.ToUnixTimeMilliseconds());
+                _syncedAt = _owner.Time.GetUtcNow();
+                await VerifyAsync(cancellationToken).ConfigureAwait(false);
+                await ReportAsync(cancellationToken).ConfigureAwait(false);
                 completing.TrySetResult();
+            }
+        }
+
+        private async Task VerifyAsync(CancellationToken cancellationToken)
+        {
+            if (_owner._verifier is not { } verifier || _owner.Time.GetUtcNow() < _nextVerify || !await _owner._verifying.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            try
+            {
+                var round = await verifier.RoundAsync(Database, _source, _cursor, cancellationToken).ConfigureAwait(false);
+                var now = _owner.Time.GetUtcNow();
+                switch (round.Verdict)
+                {
+                    case ReplicaVerdict.Equal:
+                        Count("equal");
+                        _cursor = round.Next;
+                        if (round.Next is null)
+                        {
+                            _verifiedAt = now;
+                            _nextVerify = now + VerifyEvery;
+                        }
+                        else
+                        {
+                            _nextVerify = now + RoundGap;
+                            WakeAfter(RoundGap, cancellationToken);
+                        }
+
+                        break;
+                    case ReplicaVerdict.Moved:
+                        Count("skipped");
+                        _nextVerify = now + RetryGap;
+                        break;
+                    default:
+                        Count("diverged");
+                        _owner.Logger.ZLogError($"Replica of database {Database.DatabaseId:@Database} in project {Database.ProjectId:@Project} diverged from its home in region {_home.Region:@Home}: {round.Where:@Where}");
+                        await HealAsync(verifier, now, cancellationToken).ConfigureAwait(false);
+                        break;
+                }
+            }
+            catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                Count("failed");
+                _owner.Logger.ZLogInformation($"A replica verification round failed and is retried: {error.GetType().Name:@Error}");
+                _nextVerify = _owner.Time.GetUtcNow() + RetryGap;
+            }
+            finally
+            {
+                _owner._verifying.Release();
+            }
+        }
+
+        private async Task HealAsync(ReplicaVerifier verifier, DateTimeOffset now, CancellationToken cancellationToken)
+        {
+            _cursor = null;
+            if (now - _lastHeal < HealGap)
+            {
+                _owner.Logger.ZLogError($"Replica of database {Database.DatabaseId:@Database} diverged again within {HealGap.TotalMinutes} minutes of its last rebootstrap; the next waits");
+                _nextVerify = _lastHeal + HealGap;
+                return;
+            }
+
+            _state = ReplicaStates.Healing;
+            _verifiedAt = null;
+            await ReportAsync(cancellationToken).ConfigureAwait(false);
+            await RetryAsync(async () =>
+            {
+                await verifier.HealAsync(Database, _source, cancellationToken).ConfigureAwait(false);
+                return true;
+            }, "rebootstrap", cancellationToken).ConfigureAwait(false);
+            _lastHeal = _owner.Time.GetUtcNow();
+            _owner._rebootstraps?.Add(1);
+            _owner.Logger.ZLogWarning($"Replica of database {Database.DatabaseId:@Database} was bootstrapped again from its home and is verified next");
+            _state = ReplicaStates.Following;
+            _syncedAt = _lastHeal;
+            _nextVerify = _lastHeal;
+            WakeAfter(RoundGap, cancellationToken);
+        }
+
+        private void Count(string result) => _owner._verifications?.Add(1, new KeyValuePair<string, object?>("result", result));
+
+        private void WakeAfter(TimeSpan delay, CancellationToken cancellationToken) =>
+            _ = Task.Delay(delay, _owner.Time, cancellationToken).ContinueWith(_ => Signal(0), CancellationToken.None, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
+
+        private async Task ReportAsync(CancellationToken cancellationToken)
+        {
+            var now = _owner.Time.GetUtcNow();
+            if (_state == _reportedState && now - _lastReport < ReportEvery)
+            {
+                return;
+            }
+
+            _lastReport = now;
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(ReportTimeout);
+            try
+            {
+                using var response = await _owner._http.PostAsJsonAsync(new Uri(_source + "/replica-status"),
+                    new ReplicaStatusReport(_owner.Region, _state, LagMs, _syncedAt, _verifiedAt), TerraBaseJsonContext.Default.ReplicaStatusReport, timeout.Token)
+                    .ConfigureAwait(false);
+                if (response.IsSuccessStatusCode)
+                {
+                    _reportedState = _state;
+                }
+            }
+            catch (Exception error) when (error is HttpRequestException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            {
             }
         }
 

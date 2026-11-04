@@ -140,4 +140,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(TerraBase.Features.Replicas.HomeSessionOpen))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.HomeSessionCall))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.HomeSessionAnswer))]
+[JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaChecksumPage))]
+[JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaStatusReport))]
+[JsonSerializable(typeof(IReadOnlyList<TerraBase.Features.Replicas.ReplicaStatusBody>))]
 internal sealed partial class TerraBaseJsonContext : JsonSerializerContext;
