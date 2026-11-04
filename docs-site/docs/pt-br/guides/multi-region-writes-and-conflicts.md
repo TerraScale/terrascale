@@ -27,7 +27,7 @@ The conflict log records decisions at apply time. Reading the application's row 
 | `confirmed` | Applied at the home. Individual columns can still lose to greater HLC stamps. |
 | `reverted` | Rejected at the home. None of the transaction's changes applied. |
 
-A conflict's `state` is `superseded` or `reverted`. `superseded` records losing columns in a **confirmed** transaction. A provisional transaction has no conflict record until the home makes its decision. An empty conflict list does not prove that a transaction was confirmed.
+A conflict's `loser_state` is `superseded` or `reverted`. `superseded` records losing columns in a **confirmed** transaction. A provisional transaction has no conflict record until the home makes its decision. An empty conflict list does not prove that a transaction was confirmed.
 
 A delete leaves a stamped tombstone, so an older write cannot resurrect the row. Inserts with an existing primary key and updates to a missing row revert the transaction. Unique, foreign-key and other constraint failures also revert the whole transaction. A stamp more than 60 seconds ahead of the home clock is rejected as `clock`.
 
@@ -36,8 +36,9 @@ A delete leaves a stamped tombstone, so an older write cannot resurrect the row.
 `terrascale.conflicts` is a read-only SQL table in each database. Use the existing SDK `query` method, SQL over HTTP, WebSocket, or psql:
 
 ```sql
-SELECT id, transaction_id, region, state, kind,
-       table_name, row_key, change, message, created_at
+SELECT id, kind, table_name, row_key, column_name,
+       winner_value, winner_region, winner_hlc, winner_transaction_id, winner_state,
+       loser_value, loser_region, loser_hlc, loser_transaction_id, loser_state, created_at
 FROM terrascale.conflicts
 WHERE table_name = 'orders'
   AND julianday(created_at) >= julianday('2026-11-04T12:00:00Z')
@@ -51,16 +52,24 @@ Bind the table name and timestamps as query parameters in application code. For 
 | Column | Meaning |
 | --- | --- |
 | `id` | Conflict record ULID; order by this for pagination. |
-| `transaction_id` | Origin transaction ULID. |
-| `region` | Origin region of the losing write. |
-| `state` | `superseded` or `reverted`. |
 | `kind` | Conflict reason, such as `superseded`, `primary_key`, `foreign_key`, or `clock`. |
 | `table_name`, `row_key` | Affected table and JSON primary key, when the rejection identifies a row. |
-| `change` | JSON losing columns for `superseded`; the transaction's changes for `reverted`. |
+| `column_name` | Losing column; null for a row or transaction conflict. |
+| `winner_value`, `loser_value` | JSON of the kept and losing values. A row-level conflict can contain row values; a reverted conflict contains the transaction's losing changes. |
+| `winner_region`, `loser_region` | Regions that committed the writes. |
+| `winner_node`, `loser_node` | Nodes that stamped the writes. |
+| `winner_hlc`, `loser_hlc` | Commit stamps in HLC order: hex milliseconds, logical counter, then node ID. |
+| `winner_transaction_id`, `loser_transaction_id` | Transaction IDs for both writes. |
+| `winner_state` | `confirmed`, or null when no winning write was recorded. |
+| `loser_state` | `superseded` or `reverted`; `superseded` means the transaction is confirmed. |
 | `message` | Reason for the decision. |
-| `created_at` | UTC time when the home recorded the conflict, distinct from the write's HLC. |
+| `created_at` | UTC time when the home recorded the conflict, distinct from either write's HLC. |
 
-The database keeps its newest 10,000 conflict records. Replicas may show the log after replication catches up. The dashboard reads at the home. Reads use the database's normal read permission; writes to the conflict table are refused.
+For example, `019a50c1e2f3.00000001:gru-1` beats `019a50c1e2f3.00000000:sjc-1` because its logical counter is greater. The node ID only breaks a tie when both the milliseconds and logical counter match.
+
+SQL NULL means no value was recorded (for example, a deleted or unknown row); the text `null` is a recorded JSON null value. Values larger than 4 KiB of JSON are represented by `{"sha256":"…","bytes":12345}`. The console shows those hashes and sizes without fetching the current application row.
+
+The home retains at most the newest 10,000 conflict records and trims records older than 30 days when it records a conflict. Replicas may show the log after replication catches up. The dashboard reads at the home. Reads use the database's normal read permission; writes to the conflict table are refused.
 
 ## Read conflicts with MCP
 
@@ -76,6 +85,6 @@ Call `list_conflicts` on the [dashboard MCP server](/pt-br/guides/mcp):
 }
 ```
 
-The result contains `conflicts`, `nextBefore`, `hasMore`, and `limit`. Each conflict includes `transactionState` alongside its conflict `state`. Pass `nextBefore` as `before`, keeping the filters, to continue. The limit is 1–100; the default is 50. Omit filters to read recent conflicts across tables. `organizationId` and `projectId` follow the MCP server's usual scope selection and permissions.
+The result contains `conflicts`, `nextBefore`, `hasMore`, and `limit`. Each conflict includes `winner` and `loser` objects with value, region, node, HLC, transaction ID, `state` and `transactionState`. A loser with `state: "superseded"` has `transactionState: "confirmed"`. Pass `nextBefore` as `before`, keeping the filters, to continue. The limit is 1–100; the default is 50. Omit filters to read recent conflicts across tables. `organizationId` and `projectId` follow the MCP server's usual scope selection and permissions.
 
 </div>

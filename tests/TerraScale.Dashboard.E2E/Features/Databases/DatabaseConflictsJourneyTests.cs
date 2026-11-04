@@ -23,10 +23,10 @@ public sealed class DatabaseConflictsJourneyTests(DashboardRootFixture fixture)
             if (!sql.Contains("terrascale.conflicts", StringComparison.Ordinal)) { return null; }
             await Assert.That(auth.ResolveProjectToken(http.Request.Headers.Authorization.ToString()[7..])!.Value.Scopes.SequenceEqual(["documents:read"])).IsTrue();
             lock (statements) { statements.Add(sql); }
-            var columns = new[] { "id", "transaction_id", "region", "state", "kind", "table_name", "row_key", "change", "message", "created_at" };
+            var columns = new[] { "id", "kind", "table_name", "row_key", "column_name", "winner_value", "loser_value", "winner_region", "winner_node", "winner_hlc", "winner_transaction_id", "winner_state", "loser_region", "loser_node", "loser_hlc", "loser_transaction_id", "loser_state", "message", "created_at" };
             return Results.Json(new { results = new[] { SqlCatalogJourneyTests.Result(columns,
-                [new object?[] { "01M4EQ00000000000000000002", "01M4EP00000000000000000002", "sjc", "superseded", "superseded", "orders'archive", "{\"id\":\"order-1\"}", "{\"op\":\"update\",\"values\":{\"amount\":7,\"note\":null}}", "A greater column HLC won.", "2026-11-04T12:00:00.000Z" },
-                new object?[] { "01M4EQ00000000000000000001", "01M4EP00000000000000000001", "fra", "reverted", "foreign_key", "orders'archive", "{\"id\":\"order-2\"}", "[{\"op\":\"delete\",\"table\":\"orders'archive\",\"key\":{\"id\":\"order-2\"}}]", "A foreign key would be broken.", "2026-11-04T11:00:00.000Z" }]) } });
+                [new object?[] { "01M4EQ00000000000000000002", "superseded", "orders'archive", "{\"id\":\"order-1\"}", "amount", "9", "7", "gru", "gru-1", "019a50c1e2f3.00000001:gru-1", "01M4EP00000000000000000003", "confirmed", "sjc", "sjc-1", "019a50c1e2f3.00000000:sjc-1", "01M4EP00000000000000000002", "superseded", "A greater column HLC won.", "2026-11-04T12:00:00.000Z" },
+                new object?[] { "01M4EQ00000000000000000001", "foreign_key", "orders'archive", "{\"id\":\"order-2\"}", null, "null", "[{\"op\":\"delete\",\"table\":\"orders'archive\",\"key\":{\"id\":\"order-2\"}}]", null, null, null, null, null, "fra", "fra-1", "019a50c1e2f2.00000000:fra-1", "01M4EP00000000000000000001", "reverted", "A foreign key would be broken.", "2026-11-04T11:00:00.000Z" }]) } });
         });
         using var client = scenario.CreateClient();
         var account = await DatabaseJourney.NativeWorkspaceAsync(client);
@@ -39,13 +39,14 @@ public sealed class DatabaseConflictsJourneyTests(DashboardRootFixture fixture)
         await Assert.That(html).Contains("data-conflict-id=\"01M4EQ00000000000000000002\"");
         await Assert.That(html).Contains("<code>7</code>");
         await Assert.That(html).Contains("<code>null</code>");
+        await Assert.That(html).Contains("019a50c1e2f3.00000001:gru-1");
         await Assert.That(html).Contains("confirmed");
         await Assert.That(html).Contains("reverted");
         var rpc = await HttpJourney.McpAsync(client, pat, "tools/call", new { name = "list_conflicts", arguments = new { databaseId = id, table = "orders'archive", since = "2026-11-04T00:00:00Z", until = "2026-11-05T00:00:00Z", limit = 1 } });
         var result = rpc.GetProperty("result").GetProperty("structuredContent");
         await Assert.That(result.GetProperty("conflicts").GetArrayLength()).IsEqualTo(1);
-        await Assert.That(result.GetProperty("conflicts")[0].GetProperty("transactionState").GetString()).IsEqualTo("confirmed");
-        await Assert.That(result.GetProperty("conflicts")[0].GetProperty("change").GetProperty("values").GetProperty("note").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(result.GetProperty("conflicts")[0].GetProperty("loser").GetProperty("transactionState").GetString()).IsEqualTo("confirmed");
+        await Assert.That(result.GetProperty("conflicts")[0].GetProperty("winner").GetProperty("value").GetInt32()).IsEqualTo(9);
         await Assert.That(result.GetProperty("hasMore").GetBoolean()).IsTrue();
         var before = result.GetProperty("nextBefore").GetString()!;
         await HttpJourney.McpAsync(client, pat, "tools/call", new { name = "list_conflicts", arguments = new { databaseId = id, before } });
