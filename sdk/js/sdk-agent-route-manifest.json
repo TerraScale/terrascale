@@ -1,0 +1,56 @@
+{
+  "contract": "sdk/SQL-API.md#databases-for-agents",
+  "revision": "923bd4934",
+  "evidence": "Contract examples; not a live-service recording.",
+  "routes": [
+    {
+      "operation": "createDatabase",
+      "method": "POST",
+      "pathTemplate": "/v1/projects/{project}/databases",
+      "successStatus": 201,
+      "authorization": "Bearer project access token"
+    },
+    {
+      "operation": "forkDatabase",
+      "method": "POST",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/branches",
+      "successStatus": 201,
+      "authorization": "Bearer project access token"
+    },
+    {
+      "operation": "forkDatabase",
+      "method": "POST",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/point-in-time/restore",
+      "successStatus": 201,
+      "authorization": "Bearer project access token"
+    },
+    {
+      "operation": "setDatabaseTtl",
+      "method": "PUT",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/ttl",
+      "successStatus": 200,
+      "authorization": "Bearer project access token"
+    },
+    {
+      "operation": "clearDatabaseTtl",
+      "method": "DELETE",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/ttl",
+      "successStatus": 200,
+      "authorization": "Bearer project access token"
+    },
+    {
+      "operation": "deleteDatabase",
+      "method": "DELETE",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}",
+      "successStatus": 204,
+      "authorization": "Bearer project access token"
+    },
+    {
+      "operation": "createScopedKey",
+      "method": "POST",
+      "pathTemplate": "/v1/terrascale/api-keys/self/scoped-keys",
+      "successStatus": 201,
+      "authorization": "Basic keyId:key"
+    }
+  ]
+}

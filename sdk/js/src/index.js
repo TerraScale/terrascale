@@ -86,3 +86,8 @@ export { V1FileStorage, V1FileBucket } from "./v1/file-storage.js";
 /** @typedef {import("./v1/file-storage.js").FileUploadRequest} FileUploadRequest */
 /** @typedef {import("./v1/file-storage.js").FileUploadOptions} FileUploadOptions */
 /** @typedef {import("./v1/file-storage.js").FileListOptions} FileListOptions */
+
+/** @typedef {import("./v1/terrabase-v1.js").V1AgentDatabaseOptions} V1AgentDatabaseOptions */
+/** @typedef {import("./v1/terrabase-v1.js").V1ForkDatabaseOptions} V1ForkDatabaseOptions */
+/** @typedef {import("./v1/terrabase-v1.js").V1ScopedKeyRequest} V1ScopedKeyRequest */
+/** @typedef {import("./v1/terrabase-v1.js").V1ScopedKey} V1ScopedKey */

@@ -64,6 +64,41 @@ Values are `null`, numbers, strings and `Uint8Array` blobs; integers beyond 2^53
 For live data, `db.shape("todos").subscribe(({ rows }) => …)` keeps every row of a table current (see
 [Live SQL table shapes](#live-sql-table-shapes)).
 
+## Databases for agents
+
+On your server, pass `apiKey` instead of `token`. The key is exchanged at ts-auth for a project access token
+on each request; the raw key goes only to `https://auth.terrascale.tech`. Keep keys out of browser code and logs.
+
+```js
+const client = createTerraBaseClient({
+  baseUrl: "https://api.terrascale.tech",
+  project: process.env.TERRASCALE_PROJECT,
+  apiKey: process.env.TERRASCALE_API_KEY,
+});
+const project = process.env.TERRASCALE_PROJECT;
+const run = await client.createDatabase(project, "agent_run", { ttlSeconds: 3600 });
+const fork = await client.forkDatabase(project, run.id, "agent_fork", { ttlSeconds: 600 });
+const key = await client.createScopedKey({ project, database: fork.id, access: "read_write", ttlSeconds: 600 });
+const agent = createTerraBaseClient({ baseUrl: "https://api.terrascale.tech", project, apiKey: key.key });
+await agent.database(fork.id).execute("CREATE TABLE results (id TEXT PRIMARY KEY, value TEXT)");
+await client.setDatabaseTtl(project, run.id, 7200);
+await client.clearDatabaseTtl(project, run.id);
+await client.deleteDatabase(project, run.id);
+```
+
+`forkDatabase` also accepts `{ pointInTime: "2026-11-04T12:00:00Z", ttlSeconds: 600 }` for a restore-window
+snapshot. A fork does not inherit its source's TTL. Database results include `expiresAt` (RFC 3339 or null).
+Database TTLs are whole seconds from 60 to 31,536,000; expiration deletes the database, backups and data keys.
+Scoped keys require a database ULID, `read` or `read_write` access, and optionally 60 to 2,592,000 seconds
+(default 3600, capped by the parent key's expiry). Organization keys require `project`; project keys may omit it.
+The key is returned once. Revoking or rotating its parent revokes it. Database management requires `databases:write`;
+scoped keys cannot manage databases or mint more keys. Mutations are sent once, and ts-auth refusals preserve
+`TerraBaseV1Error` status, code, body and Retry-After.
+
+The [agent route manifest](sdk-agent-route-manifest.json) and synthetic recorded contract fixtures cover encoding,
+decoding and refusals against [the shared contract](../SQL-API.md#databases-for-agents). Live producer qualification
+for these methods has not run; this evidence does not establish deployed TTL deletion or key isolation.
+
 ## Atlas and endpoint selection
 
 The [zero-configuration operating contract](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert)

@@ -2,16 +2,24 @@
 // for the project-scoped C# API (sdk/SQL-API.md).
 import { V1FileStorage } from "./file-storage.js";
 import { requireId } from "../ids.js";
-import { requireDatabaseSelector } from "./ids.js";
+import { requireDatabaseSelector, requireName } from "./ids.js";
 import { executeSql, sqlRowObjects, sqlStatement } from "./sql-execute.js";
 import { V1TableShape } from "./table-shape.js";
-import { V1Databases } from "./catalog.js";
+import { decodeManagedDatabase, requireTtlSeconds, V1Databases } from "./catalog.js";
+import { members } from "./management-validation.js";
+import { object, string } from "./decode.js";
+import { stringifyExactJson } from "./json.js";
 import { V1Transport } from "./transport.js";
 import { V1Health, V1Platform } from "./system.js";
 import { V1Backups, V1BackupDestinationClient } from "./backups.js";
 import { V1ProjectUsageClient, V1DatabaseUsageClient } from "./usage.js";
 import { V1SavedQueries } from "./saved-queries.js";
 /** @import { TerraBaseV1ClientConfig } from "./transport.js" */
+
+/** @typedef {{ readonly ttlSeconds?: number | undefined; readonly signal?: AbortSignal | undefined }} V1AgentDatabaseOptions */
+/** @typedef {V1AgentDatabaseOptions & { readonly pointInTime?: string | undefined }} V1ForkDatabaseOptions */
+/** @typedef {{ readonly project?: string | undefined; readonly database: string; readonly access: "read" | "read_write"; readonly ttlSeconds?: number | undefined }} V1ScopedKeyRequest */
+/** @typedef {{ readonly key: string; readonly id: string; readonly projectId: string; readonly database: string; readonly access: "read" | "read_write"; readonly expiresAt: string }} V1ScopedKey */
 
 /** @typedef {{ readonly signal?: AbortSignal | undefined }} V1RequestOptions */
 
@@ -114,10 +122,17 @@ export class TerraBaseV1Client {
   /** @type {V1Transport} */
   #transport;
 
+  /** @type {TerraBaseV1ClientConfig} */
+  #config;
+  /** @type {Map<string, V1Transport>} */
+  #projects = new Map();
+
   /** @param {TerraBaseV1ClientConfig} config */
   constructor(config) {
     requireId(config.project);
+    this.#config = Object.freeze({ ...config });
     this.#transport = new V1Transport(config);
+    this.#projects.set(config.project, this.#transport);
     this.#storage = new V1FileStorage(this.#transport, config.fetch ?? globalThis.fetch.bind(globalThis));
     this.#databases = new V1Databases(this.#transport);
     this.#savedQueries = new V1SavedQueries(this.#transport);
@@ -134,6 +149,77 @@ export class TerraBaseV1Client {
    */
   database(name) {
     return new V1Database(this.#transport, name);
+  }
+
+  /** @param {string} project @returns {V1Transport} */
+  #projectTransport(project) {
+    requireId(project, "Project ID");
+    let transport = this.#projects.get(project);
+    if (transport === undefined) {
+      transport = new V1Transport({ ...this.#config, project });
+      this.#projects.set(project, transport);
+    }
+    return transport;
+  }
+
+  /** @param {string} project @param {string} name @param {V1AgentDatabaseOptions} [options] @returns {Promise<import("./catalog.js").V1ManagedDatabase>} */
+  createDatabase(project, name, options = {}) {
+    members(options, ["ttlSeconds", "signal"]);
+    return new V1Databases(this.#projectTransport(project)).create({ name,
+      ...(options.ttlSeconds === undefined ? {} : { ttlSeconds: options.ttlSeconds }),
+    }, options);
+  }
+
+  /** @param {string} project @param {string} source @param {string} name @param {V1ForkDatabaseOptions} [options] @returns {Promise<import("./catalog.js").V1ManagedDatabase>} */
+  async forkDatabase(project, source, name, options = {}) {
+    members(options, ["pointInTime", "ttlSeconds", "signal"]);
+    if (options.ttlSeconds !== undefined) requireTtlSeconds(options.ttlSeconds);
+    if (options.pointInTime !== undefined && (typeof options.pointInTime !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(options.pointInTime) ||
+        !Number.isFinite(Date.parse(options.pointInTime)))) throw new TypeError("pointInTime must be an RFC 3339 instant.");
+    const response = await this.#projectTransport(project).call(options.pointInTime === undefined ? "branchDatabase" : "restorePointInTime", {
+      database: requireDatabaseSelector(source),
+    }, { body: stringifyExactJson({ name: requireName("database", name),
+      ...(options.pointInTime === undefined ? {} : { pointInTime: options.pointInTime }),
+      ...(options.ttlSeconds === undefined ? {} : { ttlSeconds: options.ttlSeconds }),
+    }, "database fork"), signal: options.signal });
+    return decodeManagedDatabase(response.value);
+  }
+
+  /** @param {string} project @param {string} database @param {number} ttlSeconds @param {V1RequestOptions} [options] @returns {Promise<import("./catalog.js").V1ManagedDatabase>} */
+  async setDatabaseTtl(project, database, ttlSeconds, options = {}) {
+    const response = await this.#projectTransport(project).call("setDatabaseTtl", { database: requireDatabaseSelector(database) }, {
+      body: stringifyExactJson({ ttlSeconds: requireTtlSeconds(ttlSeconds) }, "database TTL"), signal: options.signal,
+    });
+    return decodeManagedDatabase(response.value);
+  }
+
+  /** @param {string} project @param {string} database @param {V1RequestOptions} [options] @returns {Promise<import("./catalog.js").V1ManagedDatabase>} */
+  async clearDatabaseTtl(project, database, options = {}) {
+    return decodeManagedDatabase((await this.#projectTransport(project).call("clearDatabaseTtl", {
+      database: requireDatabaseSelector(database),
+    }, { signal: options.signal })).value);
+  }
+
+  /** @param {string} project @param {string} database @param {V1RequestOptions} [options] @returns {Promise<void>} */
+  deleteDatabase(project, database, options = {}) {
+    return new V1Databases(this.#projectTransport(project)).delete(database, options);
+  }
+
+  /** @param {V1ScopedKeyRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1ScopedKey>} */
+  async createScopedKey(request, options = {}) {
+    members(request, ["project", "database", "access", "ttlSeconds"]);
+    if (request.access !== "read" && request.access !== "read_write") throw new TypeError("access must be read or read_write.");
+    const raw = object(await this.#transport.createScopedKey(stringifyExactJson({
+      ...(request.project === undefined ? {} : { project: requireId(request.project, "Project ID") }),
+      database: requireId(request.database, "Database ID"), access: request.access,
+      ...(request.ttlSeconds === undefined ? {} : { ttl_seconds: requireTtlSeconds(request.ttlSeconds, 2_592_000) }),
+    }, "scoped key"), options.signal), "scoped key");
+    if (raw.access !== "read" && raw.access !== "read_write") throw new TypeError("Malformed scoped-key access.");
+    const expiresAt = string(raw.expires_at, "scoped-key expires_at");
+    if (!Number.isFinite(Date.parse(expiresAt))) throw new TypeError("Malformed scoped-key expiry.");
+    return Object.freeze({ key: string(raw.key, "scoped-key key"), id: requireId(raw.id),
+      projectId: requireId(raw.project_id), database: requireId(raw.database), access: raw.access, expiresAt });
   }
 
   /** @returns {V1Databases} Project-scoped database catalog. */

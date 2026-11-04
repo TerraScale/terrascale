@@ -2,6 +2,7 @@
 // from any package entrypoint: callers reach it only through named operations.
 import { parseV1Error } from "./errors.js";
 import { requireDatabaseSelector, requireProject } from "./ids.js";
+import { object } from "./decode.js";
 import { parseExactJson } from "./json.js";
 import { v1Route, v1RoutePath } from "./routes.js";
 import { V1SqlSocket, sqlSocketProtocol } from "./sql-socket.js";
@@ -31,7 +32,8 @@ const tokenPattern = /^(?!tbk1\.)(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-
  * URLs must use HTTPS or loopback HTTP. Mutations are never automatically replayed.
  * @typedef {object} TerraBaseV1ClientConfig
  * @property {string} project
- * @property {string | V1TokenProvider} token An access JWT (or a legacy C# tb_ key), or a provider resolved per authenticated request; held privately. Browser callers must use end-user tokens, never project credentials.
+ * @property {string | undefined} [apiKey] Server-side TerraScale key for token exchange and scoped-key creation.
+ * @property {string | V1TokenProvider | undefined} [token] An access JWT (or a legacy C# tb_ key), or a provider resolved per authenticated request; held privately. Browser callers must use end-user tokens, never project credentials.
  * @property {string | undefined} [baseUrl]
  * @property {V1EndpointResolver | undefined} [endpointResolver]
  * @property {FetchLike | undefined} [fetch]
@@ -171,6 +173,8 @@ export class V1Transport {
   #bases = new Map();
   /** @type {string | V1TokenProvider | undefined} */
   #token;
+  /** @type {string | undefined} */
+  #apiKeyBasic;
   /** @type {FetchLike} */
   #fetch;
   /** @type {number} */
@@ -187,7 +191,14 @@ export class V1Transport {
     if (config.endpointResolver !== undefined && typeof config.endpointResolver !== "function")
       throw new TypeError("endpointResolver must be a function.");
     this.#resolver = config.endpointResolver ?? staticBaseUrlResolver(/** @type {string} */ (config.baseUrl));
-    if ((config.project !== undefined || config.token !== undefined) && typeof config.token !== "function")
+    const apiKey = "apiKey" in config ? config.apiKey : undefined;
+    if (apiKey !== undefined) {
+      if (config.token !== undefined) throw new TypeError("Supply exactly one of token or apiKey.");
+      if (!/^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$/u.test(apiKey))
+        throw new TypeError("apiKey must be a canonical ULID, underscore and 52 lowercase Base32 characters.");
+      this.#apiKeyBasic = `Basic ${btoa(`${apiKey.slice(0, 26)}:${apiKey}`)}`;
+    }
+    if (apiKey === undefined && (config.project !== undefined || config.token !== undefined) && typeof config.token !== "function")
       requireToken(config.token);
     if ("autoIdempotencyKey" in config || "maxRetries" in config || "resolver" in config)
       throw new TypeError("Unsupported client configuration member.");
@@ -222,11 +233,20 @@ export class V1Transport {
   }
 
   /** Internal credential lifetime metadata; never exposes the bearer value. */
-  get hasTokenProvider() { return typeof this.#token === "function"; }
+  get hasTokenProvider() { return typeof this.#token === "function" || this.#apiKeyBasic !== undefined; }
 
   /** @param {AbortSignal | undefined} signal @returns {Promise<string>} */
   async #accessToken(signal) {
     signal?.throwIfAborted();
+    if (this.#apiKeyBasic !== undefined) {
+      const response = await this.#authRequest("/terrascale/oauth/token", new URLSearchParams({
+        grant_type: "client_credentials", project: requireProject(this.#project),
+      }).toString(), "application/x-www-form-urlencoded", signal);
+      const raw = object(response, "API key token");
+      if (typeof raw.expires_in !== "number" || !Number.isSafeInteger(raw.expires_in) || raw.expires_in <= 0)
+        throw new TypeError("ts-auth returned an invalid token lifetime.");
+      return requireToken(raw.access_token);
+    }
     const provider = this.#token;
     if (typeof provider !== "function") return requireToken(provider);
     /** @type {() => void} */
@@ -248,6 +268,31 @@ export class V1Transport {
     } finally {
       signal?.removeEventListener("abort", abort);
     }
+  }
+
+  /** @param {string} body @param {AbortSignal | undefined} signal @returns {Promise<JsonValue | undefined>} */
+  createScopedKey(body, signal) {
+    return this.#authRequest("/v1/terrascale/api-keys/self/scoped-keys", body, "application/json", signal);
+  }
+
+  /** @param {string} path @param {string} body @param {string} contentType @param {AbortSignal | undefined} signal @returns {Promise<JsonValue | undefined>} */
+  async #authRequest(path, body, contentType, signal) {
+    if (this.#apiKeyBasic === undefined) throw new TypeError("createScopedKey requires the client's apiKey.");
+    const bounded = signal === undefined ? AbortSignal.timeout(30_000) : AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
+    bounded.throwIfAborted();
+    const bytes = new TextEncoder().encode(body);
+    /** @type {RequestInit & { duplex?: "half" }} */
+    const init = { method: "POST", redirect: "manual", signal: bounded,
+      headers: { authorization: this.#apiKeyBasic, "content-type": contentType, accept: "application/json" }, body };
+    if (typeof process !== "undefined" && process.release?.name === "node") {
+      init.body = new ReadableStream({ start(controller) { controller.enqueue(bytes); controller.close(); } });
+      init.duplex = "half";
+    }
+    const response = await this.#fetch(`https://auth.terrascale.tech${path}`, init);
+    const text = await this.readText(response, bounded, 64 * 1024);
+    if (response.status !== (path.endsWith("scoped-keys") ? 201 : 200))
+      throw parseV1Error(response.status, response.headers, text);
+    return V1Transport.#decodeJson(response, text);
   }
 
   /**
@@ -309,9 +354,10 @@ export class V1Transport {
    * connection failure while reading is a BodyTransportError.
    * @param {Response} response
    * @param {AbortSignal | undefined} [signal]
+   * @param {number} [maximumBytes]
    * @returns {Promise<string>}
    */
-  async readText(response, signal) {
+  async readText(response, signal, maximumBytes = this.#maxResponseBytes) {
     signal?.throwIfAborted();
     const reader = response.body?.getReader();
     if (reader === undefined) return "";
@@ -332,8 +378,8 @@ export class V1Transport {
         signal?.throwIfAborted();
         if (part.done) break;
         size += part.value.byteLength;
-        if (size > this.#maxResponseBytes)
-          throw new TypeError(`TerraBase response exceeds ${this.#maxResponseBytes} bytes.`);
+        if (size > maximumBytes)
+          throw new TypeError(`TerraBase response exceeds ${maximumBytes} bytes.`);
         parts.push(part.value);
       }
     } catch (error) {
@@ -429,7 +475,7 @@ export class V1Transport {
     for (let attempt = 0; ; attempt++) {
       const headers = new Headers(options.headers);
       // Resolve the credential per attempt so a retry never sends a token the provider has replaced.
-      if (route.permission !== "anonymous" && this.#token !== undefined)
+      if (route.permission !== "anonymous" && (this.#token !== undefined || this.#apiKeyBasic !== undefined))
         headers.set("authorization", `Bearer ${await this.#accessToken(signal)}`);
       if (route.responseMediaType !== "") headers.set("accept", route.responseMediaType);
       if (options.body !== undefined) headers.set("content-type", options.contentType ?? "application/json");

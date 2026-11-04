@@ -194,6 +194,9 @@ export function parseV1Error(status, headers, text) {
   try {
     body = text === "" ? undefined : parseExactJson(text);
     if (isJsonObject(body) && isJsonObject(body.error)) details = body.error;
+    else if (isJsonObject(body) && typeof body.error === "string") details = {
+      code: body.error, ...(typeof body.error_description === "string" ? { message: body.error_description } : {}),
+    };
   } catch {
     details = undefined;
   }

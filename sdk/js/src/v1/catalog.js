@@ -19,8 +19,9 @@ import { stringifyExactJson } from "./json.js";
  * @property {string} createdAt ISO date-time returned by the producer.
  * @property {string} region The region that answered.
  * @property {string} homeRegion The one region that stores and serves the database.
+ * @property {string | null | undefined} [expiresAt] RFC 3339 expiry, or null without a TTL.
  */
-/** @typedef {{ readonly name: string; readonly homeRegion?: string | null | undefined }} V1DatabaseCreateRequest */
+/** @typedef {{ readonly name: string; readonly homeRegion?: string | null | undefined; readonly ttlSeconds?: number | undefined }} V1DatabaseCreateRequest */
 /** @typedef {{ readonly name: string }} V1DatabaseBranchRequest */
 /** @typedef {{ readonly after?: string | undefined; readonly limit?: number | undefined }} V1DatabaseListRequest */
 /** @typedef {{ readonly items: readonly V1ManagedDatabase[]; readonly next: string | null }} V1DatabasePage */
@@ -48,11 +49,14 @@ function region(value) {
 }
 
 /** @param {JsonValue | undefined} value @returns {V1ManagedDatabase} */
-function database(value) {
+export function decodeManagedDatabase(value) {
   const raw = object(value, "managed database");
   const createdAt = string(raw.createdAt, "database createdAt");
   if (!/^\d{4}-\d{2}-\d{2}T/u.test(createdAt) || !Number.isFinite(Date.parse(createdAt))) malformed("database createdAt");
+  if (raw.expiresAt !== undefined && raw.expiresAt !== null &&
+      (typeof raw.expiresAt !== "string" || !Number.isFinite(Date.parse(raw.expiresAt)))) malformed("database expiresAt");
   return Object.freeze({
+    ...(raw.expiresAt === undefined ? {} : { expiresAt: raw.expiresAt }),
     id: requireId(raw.id, "Database ID"), projectId: requireId(raw.projectId, "Project ID"),
     name: requireName("database", raw.name),
     branchedFrom: raw.branchedFrom === null ? null : requireId(raw.branchedFrom, "Source database ID"),
@@ -74,16 +78,18 @@ export class V1Databases {
    * @param {V1DatabaseCreateRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>}
    */
   async create(request, options = {}) {
-    members(request, ["name", "homeRegion"]);
+    members(request, ["name", "homeRegion", "ttlSeconds"]);
+    if (request.ttlSeconds !== undefined) requireTtlSeconds(request.ttlSeconds);
     mutationOptions(options);
     const name = requireName("database", request.name);
     if (request.homeRegion !== undefined && request.homeRegion !== null) region(request.homeRegion);
     const response = await this.#transport.call("createDatabase", { database: name }, {
       body: stringifyExactJson({ name,
         ...(request.homeRegion === undefined ? {} : { homeRegion: request.homeRegion }),
+        ...(request.ttlSeconds === undefined ? {} : { ttlSeconds: request.ttlSeconds }),
       }, "database create"), signal: options.signal,
     });
-    return database(response.value);
+    return decodeManagedDatabase(response.value);
   }
 
   /** @param {V1DatabaseListRequest} [request] @param {V1RequestOptions} [options] @returns {Promise<V1DatabasePage>} */
@@ -101,13 +107,13 @@ export class V1Databases {
     const response = await this.#transport.call("listDatabases", {}, { query, signal: options.signal });
     const raw = object(response.value, "database page");
     if (raw.next !== null && (typeof raw.next !== "string" || raw.next === "")) malformed("database next");
-    return Object.freeze({ items: Object.freeze(array(raw.items, "databases").map(database)), next: raw.next });
+    return Object.freeze({ items: Object.freeze(array(raw.items, "databases").map(decodeManagedDatabase)), next: raw.next });
   }
 
   /** @param {string} name @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>} */
   async get(name, options = {}) {
     const response = await this.#transport.call("getDatabase", { database: requireDatabaseSelector(name) }, { signal: options.signal });
-    return database(response.value);
+    return decodeManagedDatabase(response.value);
   }
 
   /**
@@ -127,7 +133,7 @@ export class V1Databases {
     const response = await this.#transport.call("updateDatabase", { database: requireDatabaseSelector(databaseId) }, {
       body: stringifyExactJson({ name: requireName("database", name) }, "database rename"), signal: options.signal,
     });
-    return database(response.value);
+    return decodeManagedDatabase(response.value);
   }
 
   /**
@@ -146,6 +152,12 @@ export class V1Databases {
     const response = await this.#transport.call("branchDatabase", { database: requireDatabaseSelector(name) }, {
       body: stringifyExactJson({ name: requireName("database", request.name) }, "database branch"), signal: options.signal,
     });
-    return database(response.value);
+    return decodeManagedDatabase(response.value);
   }
+}
+
+/** @param {number} value @param {number} [maximum] @returns {number} */
+export function requireTtlSeconds(value, maximum = 31_536_000) {
+  if (!Number.isSafeInteger(value) || value < 60 || value > maximum) throw new TypeError(`ttlSeconds must be an integer from 60 to ${maximum}.`);
+  return value;
 }
