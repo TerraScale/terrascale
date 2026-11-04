@@ -31,6 +31,11 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
     public async ValueTask AcknowledgeAsync(long position, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(position);
+        if (BeforeTrim is { } beforeTrim)
+        {
+            await beforeTrim(cancellationToken).ConfigureAwait(false);
+        }
+
         await _store.WithWriterAsync(writer =>
         {
             if (position > _anchor)
