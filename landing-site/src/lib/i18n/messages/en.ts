@@ -121,7 +121,7 @@ export const en = {
       },
       {
         q: 'Is my database copied to other regions?',
-        a: 'Yes. Choose replica regions to keep encrypted read-only copies outside the home region. REST can read a ready local replica; local psql and WebSocket reads are coming. Replicas are eventually consistent. Writes go to the home region, reached from any serving region.',
+        a: 'Yes. Choose replica regions to keep encrypted read-only copies outside the home region. REST, psql and WebSocket can read a ready local replica. Replicas are eventually consistent. Writes go to the home region, reached from any serving region.',
       },
       {
         q: 'Can I use my Postgres tools?',
