@@ -138,6 +138,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(TerraBase.Features.Replicas.HomeSessionOpen))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.NodeLease))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.HomeLease))]
+[JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaHeldNotice))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.HomeSessionCall))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.HomeSessionAnswer))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaChecksumPage))]
