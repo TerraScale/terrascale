@@ -1021,6 +1021,7 @@ namespace TerraScale.Dashboard.E2E.Demo
         private readonly ConcurrentDictionary<string, ManagedDatabase> databases = new();
         private readonly ConcurrentDictionary<string, TestSqlEngine> engines = new(StringComparer.Ordinal);
         private readonly TerraScale.Dashboard.Common.Accounts.TerraScaleIdGenerator ids = new();
+        private readonly ConcurrentDictionary<string, DatabaseReadGrant> grants = new();
         private static readonly IReadOnlyList<DatabaseRegion> regions = [new("GRU", "gru", "São Paulo", "br", new("https://gru.api.terrascale.tech"), true), new("SJC", "sjc", "San Francisco Bay Area", "us", new("https://sjc.api.terrascale.tech"), true)];
         public void SeedFixtureDatabase(ManagedDatabase database)
         {
@@ -1137,7 +1138,12 @@ namespace TerraScale.Dashboard.E2E.Demo
             Database(scope, databaseId);
             return engines.GetOrAdd(databaseId, _ => new TestSqlEngine());
         }
-
+        public Task<IReadOnlyList<DatabaseReadGrant>> ReadGrantsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
+        { Database(scope, databaseId); return Task.FromResult<IReadOnlyList<DatabaseReadGrant>>(grants.Where(item => item.Key.StartsWith(databaseId + "/", StringComparison.Ordinal)).Select(item => item.Value).OrderBy(item => item.Table, StringComparer.Ordinal).ToArray()); }
+        public Task<DatabaseReadGrant> PutReadGrantAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string table, string? where, IReadOnlyList<string>? columns, CancellationToken cancellationToken)
+        { Database(scope, databaseId); var grant = new DatabaseReadGrant(table, where, columns, DateTimeOffset.UtcNow); grants[databaseId + "/" + table] = grant; return Task.FromResult(grant); }
+        public Task DeleteReadGrantAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string table, CancellationToken cancellationToken)
+        { Database(scope, databaseId); return grants.TryRemove(databaseId + "/" + table, out _) ? Task.CompletedTask : throw new HttpRequestException("Test grant missing.", null, HttpStatusCode.NotFound); }
         private ManagedDatabase Database(DatabaseScope scope, string id)
         {
             return databases.TryGetValue(id, out var database) && database.ProjectId == scope.ProjectId ? database : throw new HttpRequestException("Test database missing.", null, HttpStatusCode.NotFound);
