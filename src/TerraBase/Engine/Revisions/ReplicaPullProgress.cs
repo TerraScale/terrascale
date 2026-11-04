@@ -1,13 +1,15 @@
 namespace TerraBase.Engine.Revisions;
 
 // Owned by one open revision ledger and protected by its gate. These are observations, never durable application data.
-// Keep at most eight placed replicas and 256 commit boundaries; an expired boundary produces unknown lag.
+// Keep at most eight placed replicas and 256 commit boundaries for pulls still in flight.
 internal sealed class ReplicaPullProgress
 {
     private const int MaxCommits = 256;
     private readonly Queue<(DatabaseRevision Revision, DateTimeOffset At)> _commits = new();
-    private readonly Dictionary<string, (DatabaseRevision Revision, DateTimeOffset At)> _pulls = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Pull> _pulls = new(StringComparer.Ordinal);
     private DatabaseRevision? _baseline;
+
+    private sealed record Pull(DatabaseRevision Revision, DateTimeOffset At, bool Known, DateTimeOffset? MissingSince);
 
     internal long Bytes => _commits.Count * 64L + _pulls.Count * 256L;
 
@@ -26,6 +28,14 @@ internal sealed class ReplicaPullProgress
             return;
         }
 
+        foreach (var (region, pull) in _pulls.ToArray())
+        {
+            if (pull.Known && pull.MissingSince is null)
+            {
+                _pulls[region] = pull with { MissingSince = at };
+            }
+        }
+
         _commits.Enqueue((revision, at));
         if (_commits.Count > MaxCommits)
         {
@@ -35,17 +45,28 @@ internal sealed class ReplicaPullProgress
 
     internal void Pulled(string region, DatabaseRevision revision, DateTimeOffset at)
     {
+        _pulls.TryGetValue(region, out var previous);
         // A slower concurrent stream cannot replace a newer successfully served revision.
-        if (_pulls.TryGetValue(region, out var previous) && previous.Revision.Incarnation == revision.Incarnation
-            && Compare(previous.Revision, revision) > 0)
+        if (previous is not null && previous.Revision.Incarnation == revision.Incarnation && Compare(previous.Revision, revision) > 0)
         {
             return;
         }
 
-        if (_pulls.ContainsKey(region) || _pulls.Count < 8)
+        if (previous is null && _pulls.Count >= 8)
         {
-            _pulls[region] = (revision, at);
+            return;
         }
+
+        var known = _baseline is { } baseline && revision.Incarnation == baseline.Incarnation && Compare(revision, baseline) >= 0;
+        var missing = known ? _commits.FirstOrDefault(commit => Compare(commit.Revision, revision) > 0).At : (DateTimeOffset?)null;
+        // An unchanged served revision keeps its known oldest missing commit even after the in-flight history expires.
+        if (!known && previous is { Known: true } && previous.Revision == revision)
+        {
+            known = true;
+            missing = previous.MissingSince;
+        }
+
+        _pulls[region] = new Pull(revision, at, known, missing == default(DateTimeOffset) ? null : missing);
     }
 
     internal IReadOnlyList<ReplicaPullObservation> Read(DatabaseRevision current, IReadOnlyList<string> regions, DateTimeOffset now)
@@ -62,13 +83,9 @@ internal sealed class ReplicaPullProgress
                 return new ReplicaPullObservation(region, null, null, null);
             }
 
-            double? lag = null;
-            if (pull.Revision.Incarnation == current.Incarnation && _baseline is { } baseline && Compare(pull.Revision, baseline) >= 0)
-            {
-                var missing = _commits.FirstOrDefault(commit => Compare(commit.Revision, pull.Revision) > 0);
-                lag = missing == default ? 0 : Math.Max(0, (now - missing.At).TotalMilliseconds);
-            }
-
+            double? lag = pull.Known && pull.Revision.Incarnation == current.Incarnation
+                ? pull.MissingSince is { } missing ? Math.Max(0, (now - missing).TotalMilliseconds) : 0
+                : null;
             return new ReplicaPullObservation(region, lag, pull.At, pull.Revision.ToString());
         })];
     }
