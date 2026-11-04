@@ -7,7 +7,7 @@ verification and enrolled MFA. A recent OIDC login alone does not authorize an
 operation. PAT issuance still creates its own independent OIDC grant afterward.
 
 The dashboard keeps the opaque purpose/audience proof inside encrypted TerraBase
-`auth-flows` state. The browser receives only the hosted confirmation URL and an
+`dashboard_auth_flows` state. The browser receives only the hosted confirmation URL and an
 HttpOnly correlation cookie. The fixed return path is `/auth/step-up/callback`;
 query-bearing callbacks are refused. Pending intents are single use, expire with
 the proof, and bind the initiating account, browser session, selected workspace
