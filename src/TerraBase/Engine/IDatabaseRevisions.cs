@@ -17,6 +17,8 @@ internal interface IDatabaseRevisions
     ValueTask RecordReplicaPullAsync(TenantContext database, string region, DatabaseRevision revision, CancellationToken cancellationToken);
 
     ValueTask<bool> StartIncarnationAsync(TenantContext database, CancellationToken cancellationToken);
+
+    ValueTask<bool> DrainWritersAsync(TenantContext database, CancellationToken cancellationToken);
 }
 
 internal interface IRevisionPullSink
