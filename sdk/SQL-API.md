@@ -12,6 +12,49 @@ async conventions. The .NET SDK (`sdk/dotnet`, `TerraBaseSqlClient`) is the refe
 | Client | `new TerraBaseSqlClient(http, options)` | options: `BaseAddress` or `Region` (default origin `https://api.terrascale.tech`), `ApiKey` or `AccessTokenProvider` |
 | Database | `client.Database(projectId, database)` | name or ULID; no request |
 
+## Databases for agents
+
+One database per agent, session or test run: create it, fork it, let it expire, and hand the agent a key that reaches
+only that database. Server contract: `docs/terrabase/agent-databases.md`; recorded fixtures:
+`sdk/dotnet/contracts/terrabase/agent/`. Database routes need `databases:write` (create, fork, TTL, delete).
+
+| Method | Request | Returns |
+|---|---|---|
+| `createDatabase(project, name, { ttlSeconds? })` | `POST /v1/projects/{project}/databases` `{"name","ttlSeconds"}` | `ManagedDatabase` (201) |
+| `forkDatabase(project, source, name, { pointInTime?, ttlSeconds? })` | without `pointInTime`: `POST …/databases/{source}/branches` `{"name","ttlSeconds"}`; with it: `POST …/databases/{source}/point-in-time/restore` `{"name","pointInTime","ttlSeconds"}` | `ManagedDatabase` (201) |
+| `setDatabaseTtl(project, database, ttlSeconds)` | `PUT …/databases/{database}/ttl` `{"ttlSeconds"}` | `ManagedDatabase` (200) |
+| `clearDatabaseTtl(project, database)` | `DELETE …/databases/{database}/ttl` | `ManagedDatabase` (200) |
+| `deleteDatabase(project, database)` | `DELETE …/databases/{database}` | nothing (204) |
+| `createScopedKey({ project?, database, access, ttlSeconds? })` | `POST https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys`, `Authorization: Basic base64(keyId:key)` of the client's `ApiKey`, `{"project","database","access","ttl_seconds"}` | `ScopedKey` (201) |
+
+`ManagedDatabase` is the existing database body (`id`, `projectId`, `name`, `branchedFrom`, `createdAt`, `region`,
+`homeRegion`, …) plus `expiresAt` (RFC 3339, or null without a TTL).
+
+- `ttlSeconds` is 60 to 31,536,000 (365 days). The database, its backups and its data keys are deleted (crypto-shredded)
+  within seconds after `expiresAt`; deletion is the same as `deleteDatabase`. A TTL database counts against the plan's
+  database limit and is billed like any other until it is deleted. A fork does not inherit the source's TTL.
+- `pointInTime` is an RFC 3339 instant inside the source's restore window; the fork holds every transaction committed
+  before it. Without it the fork is a consistent copy taken now. `source` and `database` are a name or ULID.
+- `createScopedKey` mints a new API key from the client's own key. `database` is the database ULID (never a name).
+  `access` is `read` (scope `documents:read`) or `read_write` (`documents:read documents:write`). `ttl_seconds` is 60 to
+  2,592,000 (30 days), default 3600; the key never outlives the parent key. `project` is required for an organization
+  key and must equal the key's project for a project key. The parent must reach the database and hold the scopes.
+  A scoped key cannot mint keys, manage databases or reach another database (404). Revoking or rotating the parent
+  revokes its scoped keys. `ScopedKey` is `{ key, id, projectId, database, access, expiresAt }`; `key` is shown once and
+  is a normal API key string, so it goes straight into another client's `ApiKey` option.
+- Errors keep each SDK's HTTP error types; ts-auth refusals are 400 `invalid_request`, 401 `invalid_client`, 403
+  `forbidden` (scope or database beyond the parent's) and 429 with Retry-After.
+
+| .NET | JS/TS | Go | Python | Rust |
+|---|---|---|---|---|
+| `client.CreateDatabaseAsync` | `client.createDatabase` | `client.CreateDatabase` | `client.create_database` | `client.create_database` |
+| `client.ForkDatabaseAsync` | `client.forkDatabase` | `client.ForkDatabase` | `client.fork_database` | `client.fork_database` |
+| `client.SetDatabaseTtlAsync` / `ClearDatabaseTtlAsync` | `setDatabaseTtl` / `clearDatabaseTtl` | `SetDatabaseTTL` / `ClearDatabaseTTL` | `set_database_ttl` / `clear_database_ttl` | `set_database_ttl` / `clear_database_ttl` |
+| `client.DeleteDatabaseAsync` | `client.deleteDatabase` | `client.DeleteDatabase` | `client.delete_database` | `client.delete_database` |
+| `client.CreateScopedKeyAsync` | `client.createScopedKey` | `client.CreateScopedKey` | `client.create_scoped_key` | `client.create_scoped_key` |
+
+Durations are seconds in every SDK (`TimeSpan`/`Duration` accepted where idiomatic and sent as whole seconds).
+
 ## REST: one request, one transaction
 
 `POST /v1/projects/{project}/databases/{database}/sql/execute`
