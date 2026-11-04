@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Net;
+using System.Net.Http.Json;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.Shapes;
@@ -15,7 +17,7 @@ public sealed class CdcRetentionTests
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var host = await BackupShippingHost.StartAsync();
         host.Time.SetUtcNow(DateTimeOffset.UtcNow);
-        using var data = await host.Api.CreateClientAsync(host.Database.Organization, "sql:read", "sql:write");
+        using var data = await host.Api.CreateClientAsync(host.Database.Organization, "sql:read", "sql:write", "databases:read", "databases:write");
         var slow = new TableShapeClient(data, ManagementApi.Uri(host.Database.Data).ToString(), "people");
         var bootstrap = await slow.GetAsync(ManagementApi.Uri(slow.Path + "?offset=-1"));
         await Assert.That(bootstrap.Status).IsEqualTo(System.Net.HttpStatusCode.TemporaryRedirect);
@@ -23,7 +25,11 @@ public sealed class CdcRetentionTests
         await Assert.That(snapshot.Status).IsEqualTo(System.Net.HttpStatusCode.OK);
         slow.Apply(snapshot);
         var slowOffset = long.Parse(slow.NextOffset, CultureInfo.InvariantCulture);
+        using var grant = await data.PutAsJsonAsync(ManagementApi.Uri(host.Database.Data + "/tables/people/read-grant"), new { where = "text IS NOT NULL" }, token);
+        grant.EnsureSuccessStatusCode();
         await host.ShipAsync(TimeSpan.FromSeconds(10), token);
+        using var revoked = await data.DeleteAsync(ManagementApi.Uri(host.Database.Data + "/tables/people/read-grant"), token);
+        await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await host.PutAsync("people", "one", "first", token);
         var fast = new TableShapeClient(data, ManagementApi.Uri(host.Database.Data).ToString(), "people", "&columns=text");
         await fast.SyncAsync();
@@ -38,6 +44,9 @@ public sealed class CdcRetentionTests
         await Assert.That(await OldestAsync(store, token)).IsLessThanOrEqualTo(slowOffset);
         var kept = await slow.ReadAsync(slow.NextOffset);
         await Assert.That(kept.Ops.Any()).IsTrue();
+        await host.RestoreAsync(host.Status().LastShippedAt!.Value, "revoked", token);
+        using var restoredGrant = await data.GetAsync(ManagementApi.Uri((host.Database with { Name = "revoked" }).Data + "/tables/people/read-grant"), token);
+        await Assert.That(restoredGrant.StatusCode).IsEqualTo(HttpStatusCode.NotFound).Because("backup replay must preserve grant revocations");
         var backup = store.BackupAnchor!.Value;
         await host.PutAsync("people", "two", "not-backed-up", token);
         host.S3.FailPut = key => key.StartsWith(host.File + "/wal/", StringComparison.Ordinal);

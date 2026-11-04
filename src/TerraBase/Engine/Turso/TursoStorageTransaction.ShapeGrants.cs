@@ -13,7 +13,6 @@ internal sealed partial class TursoStorageTransaction
     public async ValueTask PutShapeGrantAsync(ShapeGrant grant, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(grant);
-        await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
         await RunAsync(() =>
         {
             var upsert = Command("""
@@ -31,7 +30,6 @@ internal sealed partial class TursoStorageTransaction
 
     public async ValueTask<bool> DeleteShapeGrantAsync(string table, CancellationToken cancellationToken)
     {
-        await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
         return await RunAsync(() =>
         {
             var remove = Command("DELETE FROM _tb_shape_chunk WHERE handle = $key AND offset = 0;");
