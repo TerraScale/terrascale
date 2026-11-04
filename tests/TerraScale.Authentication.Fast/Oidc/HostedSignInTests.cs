@@ -135,6 +135,46 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         return OidcHarness.SessionCookie(response);
     }
 
+    [Test]
+    public async Task An_exhausted_code_budget_is_said_so_for_an_account_but_not_for_an_unknown_address()
+    {
+        // A whole UTC clock hour, so the fixed issue window and the mail budgets never roll over mid-test.
+        var clock = new ManualClock(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600 * 3600));
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        await oidc.CreateUserAsync("alice@example.test");
+        const string Stranger = "stranger@example.test";
+
+        // The account spends its five codes for this hour (mail arrives after each response).
+        for (var request = 0; request < Passcodes.MaxIssuesPerWindow; request++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(61));
+            using var sent = await oidc.PostFormAsync(SignIn, new() { ["email"] = "alice@example.test", ["next"] = string.Empty });
+            await Assert.That(sent.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await oidc.Email.NextCodeAsync("alice@example.test");
+        }
+
+        // The sixth request says the budget is spent: no new code, the wait until the hour turns, no live resend.
+        using var limited = await oidc.PostFormAsync(SignIn, new() { ["email"] = "alice@example.test", ["next"] = string.Empty });
+        var budgetPage = await limited.Content.ReadAsStringAsync();
+        await Assert.That(limited.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
+        await Assert.That(budgetPage).Contains("You've requested several codes. Use the latest code you received, or try again in");
+        await Assert.That(budgetPage).Contains("No new code was sent");
+        await Assert.That(budgetPage).Contains("disabled>Send a new code in");
+        await Assert.That(budgetPage).DoesNotContain(">Send a new code</button>");
+        await Assert.That(limited.Headers.TryGetValues("Retry-After", out var retry) && long.TryParse(retry.First(), out var seconds) && seconds >= 60).IsTrue();
+
+        // An address with no account and no pending sign-up keeps the neutral answers, so nothing is enumerable.
+        for (var request = 0; request < Passcodes.MaxIssuesPerWindow + 1; request++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(61));
+            using var neutral = await oidc.PostFormAsync(SignIn, new() { ["email"] = Stranger, ["next"] = string.Empty });
+            var neutralPage = await neutral.Content.ReadAsStringAsync();
+            await Assert.That(neutral.StatusCode).IsEqualTo(request < Passcodes.MaxIssuesPerWindow ? HttpStatusCode.OK : HttpStatusCode.TooManyRequests);
+            await Assert.That(neutralPage).DoesNotContain("You've requested several codes");
+            await Assert.That(neutralPage).DoesNotContain("No new code was sent");
+        }
+    }
+
     [GeneratedRegex("name=\"pending_token\" value=\"([^\"]+)\"")]
     private static partial Regex PendingToken();
 }
