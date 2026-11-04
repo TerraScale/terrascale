@@ -144,7 +144,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             }
             if (tool == "delete_database")
             {
-                if (Text("confirmName", Text("confirmation")) != database.Name) throw new AccountAccessException("Type the database name to confirm deletion.", 422);
+                if (McpScope.Alias(Text("confirmName"), Text("confirmation"), "confirmName") != database.Name) throw new AccountAccessException("Type the database name to confirm deletion.", 422);
                 await management.DeleteDatabaseAsync(scope.ProjectId, databaseId);
                 return Reply(new McpDeleted(true), McpAgentJson.Default.McpDeleted);
             }
