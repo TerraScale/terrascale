@@ -139,6 +139,7 @@ async function main() {
           }
           if (objects.length < 2 || !objects.some(item => !item.offset.startsWith("snap."))) throw new Error("MIRROR_NOT_READY");
           const before = await db.metrics.usage({}, { signal: signal() });
+          const monthBefore = (await writer.metrics.usage({}, { signal: signal() })).month;
           phase = `readers_${region}_${shape}_${readers}_${repeat}`;
           const started = Date.now();
           const requests = { bootstrap: 0, manifest: 0, keys: 0, snapshot_payload: 0, catchup_payload: 0, head: 0, tail: 0, cdn: 0 };
@@ -204,13 +205,17 @@ async function main() {
           }
           const ended = Date.now();
           const after = await db.metrics.usage({}, { signal: signal() });
+          const monthAfter = (await writer.metrics.usage({}, { signal: signal() })).month;
           const samples = cpu.filter(sample => sample.at * 1000 >= started && sample.at * 1000 <= ended);
           emit({ type: "cell", region, shape, readers, repeat, start: new Date(started).toISOString(), end: new Date(ended).toISOString(),
             snapshot: stats(snapshot), catchup: stats(caughtUp), tail: stats(tail), requests, statuses, colos,
             cdn_hit_ratio: (statuses.HIT ?? 0) / requests.cdn,
             cpu_samples: samples.length, cpu_max_percent: samples.length ? Math.max(...samples.map(sample => sample.cpu_percent)) : null,
-            billed_reads_before: before.reads, billed_reads_after: after.reads, billed_read_units: after.reads - before.reads });
-          if (snapshot.length !== readers || tail.length !== readers || after.reads !== before.reads) throw new Error("MEASUREMENT_INCOMPLETE");
+            usage_reads_before: before.reads, usage_reads_after: after.reads,
+            month_before: monthBefore, month_after: monthAfter, sql_read_units: monthAfter.readUnits - monthBefore.readUnits,
+            billed_read_units_before: monthBefore.units - monthBefore.writeUnits, billed_read_units_after: monthAfter.units - monthAfter.writeUnits });
+          if (snapshot.length !== readers || tail.length !== readers || after.reads !== before.reads || monthAfter.readUnits !== monthBefore.readUnits
+            || monthAfter.units !== monthAfter.writeUnits) throw new Error("MEASUREMENT_INCOMPLETE");
         }
       } finally { await route.close(); }
     }
