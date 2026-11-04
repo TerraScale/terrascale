@@ -10,14 +10,11 @@ overlay (F7) and region-to-region provisional changes (F8) are later tasks. Prot
 
 ## 1. Source: the home database's change capture
 
-- Every TerraBase write connection runs Turso change capture (`PRAGMA capture_data_changes_conn('after')`). Each
-  committed transaction appends its row changes, with after-images, to the database file's `turso_cdc` table in the
-  same transaction, then one commit record (`change_type = 2`).
-- PIVOT D8 asks for `full` mode (before images too, for F2 move-in/move-out). On the pinned Turso 0.8.2, `full`
-  breaks every `INSERT … ON CONFLICT DO UPDATE` with an I/O error, because the upsert reads its before image after
-  the write; upstream fixed this in `26dbb464` (in v0.9.0-pre.2). Capture moves to `full` once that fix is in the
-  pinned native build. Shapes need only after-images: keys are row ids, a row id change is captured as delete then
-  insert, and a re-created table's `CREATE` is captured with its after-image.
+- Every TerraBase write connection runs Turso change capture in `full` mode
+  (`PRAGMA capture_data_changes_conn('full')`). Each committed transaction appends its row changes, with before and
+  after images, to the database file's `turso_cdc` table in the same transaction, then one commit record
+  (`change_type = 2`). Before images feed F2's move-in and move-out. `INSERT … ON CONFLICT DO UPDATE` needs native
+  patch 0008 (the backport of upstream `26dbb464`), which the pinned native release carries.
 - Shapes read only `turso_cdc` and the table itself. The document feed (`_tb_feed`) is not read.
 - Only the database's home serves and seals shapes. Region replicas are not served yet (`replicas_unavailable`), so
   every sealed chunk holds only home-committed, home-confirmed changes. When region writes arrive (PIVOT R4 to R7),
@@ -95,7 +92,7 @@ every table of the database file; commits that do not touch the table still adva
   columns are omitted): null, numbers, strings, or blobs as `{"base64":"…"}` (standard base64), as SQL over REST
   returns them. A non-finite real cannot be served and answers `503 unavailable`.
 - An `UPDATE` that changes the row id arrives as `delete` of the old key, then `insert` of the new one.
-  On the pinned Turso 0.8.2 that insert is captured without an after-image, so the sealer reads the row's values as
+  The pinned Turso captures that insert without an after-image, so the sealer reads the row's values as
   of sealing (or emits `delete` when the row is gone by then). Later changes to that key follow in order, so the
   client converges at every later offset.
 - **Apply rule:** apply ops in order. `insert` and `update` set `rows[key] = row`; `delete` removes `rows[key]`.
