@@ -494,7 +494,7 @@ failure.
 On a password, sign-in-code or reset-code account-budget refusal, the existing
 notice worker looks up the normalized address and sends its real account owner
 a branded lockout notice. Unknown addresses enqueue the same lookup but send
-no email. IP refusals, mail cooldowns and hourly issuance caps do not notify.
+no email. IP refusals, mail cooldowns and hourly issuance caps do not notify. A spent hourly code budget is stated to the page for addresses whose account or pending sign-up issued the five codes (no new code was sent, when it resets, resend disabled, `Retry-After` present); addresses with neither keep the neutral answers.
 Each method is paused only until the original fixed window ends; every
 attempt counts, and another method's budget remains available. The English
 and Portuguese notice states the absolute UTC deadline without implying a

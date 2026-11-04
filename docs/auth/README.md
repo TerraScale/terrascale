@@ -461,7 +461,12 @@ OpenID Connect routes for the slug `terrascale` (other slugs answer 404):
 The sign-up and reset mail starts share a persisted 60-second cooldown per normalized
 email, including unknown addresses; earlier repeats answer 429 with
 `Retry-After` for the remaining cooldown. The five-code hourly request budget
-is shared by those pages and applies to unknown emails too.
+is shared by those pages and applies to unknown emails too. When that hourly
+budget is spent, an address whose account or pending sign-up issued the five
+codes is told so plainly - the page says no new code was sent and when the
+budget resets, the resend control is disabled for the same wait, and the
+answer carries `Retry-After` - while an address with neither keeps the same
+neutral answers as before, so nothing becomes enumerable.
 
 All of them appear in `/openapi/v1.json` under the `OAuth` and `Sign-in`
 tags. Introspection is not served. The
