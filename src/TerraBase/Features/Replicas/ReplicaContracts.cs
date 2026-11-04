@@ -28,4 +28,8 @@ internal static class ReplicaSubjects
     public static string Revision(string replica, string home, string database) => $"terrabase.revision.{replica}.{home}.{database}";
 
     public static string Revisions(string replica) => $"terrabase.revision.{replica}.>";
+
+    public static string Held(string home, string database) => $"terrabase.held.{home}.{database}";
+
+    public static string HeldAt(string home) => $"terrabase.held.{home}.*";
 }
