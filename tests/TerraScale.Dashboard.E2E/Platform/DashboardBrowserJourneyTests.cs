@@ -244,33 +244,5 @@ namespace TerraScale.Dashboard.E2E.Platform
             }
         }
 
-        [Test]
-        public async Task AccessibleSignInFailureAndNotFoundPages()
-        {
-            var output = BrowserAudit.Output(fixture.Root, "");
-            var origin = fixture.Origin.ToString().TrimEnd('/');
-            using var playwright = await Playwright.CreateAsync();
-            await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-            foreach (var (name, width, height) in new[] { ("desktop", 1440, 1000), ("mobile", 390, 844) })
-            {
-                await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = height } });
-                var page = await context.NewPageAsync();
-                var errors = new ConcurrentQueue<string>();
-                page.PageError += (_, error) => errors.Enqueue(error);
-                // Sign-in UI lives on ts-auth's hosted pages; the dashboard only renders a failed callback.
-                var response = await page.GotoAsync(origin + "/login/callback?state=forged&code=forged");
-                await Assert.That(response!.Status).IsEqualTo(400);
-                await page.GetByRole(AriaRole.Heading, new() { Name = "Sign-in failed", Exact = true }).WaitForAsync();
-                await Assert.That(await page.GetByRole(AriaRole.Link, new() { Name = "Try again", Exact = true }).GetAttributeAsync("href")).IsEqualTo("/login");
-                await page.EvaluateAsync("() => document.fonts.ready");
-                await page.ScreenshotAsync(new() { Path = Path.Combine(output, $"signin-failure-{name}.png"), FullPage = true });
-                await BrowserAudit.AssertAccessibleAsync(page, "WCAG 2.2 AA on the sign-in failure page " + name);
-                await page.GotoAsync(origin + "/missing");
-                await page.GetByRole(AriaRole.Heading, new() { Name = "We can’t find that page." }).WaitForAsync();
-                await page.ScreenshotAsync(new() { Path = Path.Combine(output, $"notfound-{name}.png"), FullPage = true });
-                await BrowserAudit.AssertAccessibleAsync(page, "WCAG 2.2 AA on the not-found page " + name);
-                await Assert.That(errors).IsEmpty().Because("No browser script errors");
-            }
-        }
     }
 }

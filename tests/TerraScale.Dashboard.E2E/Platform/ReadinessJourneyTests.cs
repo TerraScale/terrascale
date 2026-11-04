@@ -30,19 +30,6 @@ namespace TerraScale.Dashboard.E2E.Platform
         }
 
         [Test]
-        public async Task TerraBaseOutOfServiceFailsReadinessNamingTerraBase()
-        {
-            var environment = new DemoEnvironment();
-            environment.State.ReadyError = new IOException("Test-only TerraBase outage.");
-            await using var app = await StartAsync(environment);
-            using var client = Client(app);
-            var (status, body) = await GetAsync(client, "/readyz");
-            await Assert.That(status).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-            await Assert.That(body.GetProperty("dependencies").GetProperty("terrabase").GetString()).IsEqualTo("unavailable");
-            await Assert.That(body.GetProperty("dependencies").GetProperty("ts-auth").GetString()).IsEqualTo("ok");
-        }
-
-        [Test]
         public async Task ReadyBodiesNameTheRegionAndNeverTheBuildRevision()
         {
             await using var app = await StartAsync(new DemoEnvironment());

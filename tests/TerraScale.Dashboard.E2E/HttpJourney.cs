@@ -20,6 +20,16 @@ namespace TerraScale.Dashboard.E2E
             return WebUtility.HtmlDecode(token);
         }
 
+        public static async Task<string> CreateDatabaseAsync(HttpClient client, string name)
+        {
+            var csrf = await CsrfAsync(client, "/databases");
+            using var response = await PostFormAsync(client, "/api/v1/dashboard/databases", new()
+            { ["_csrf"] = csrf, ["name"] = name, ["region"] = "GRU" });
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            return json.RootElement.GetProperty("id").GetString()!;
+        }
+
         // Dashboard origin -> the test-only ts-auth producer serving https://auth.terrascale.tech for that host.
         public static readonly ConcurrentDictionary<string, Uri> AuthProviders = new();
         // Stands in for ts-auth's own session cookie: who this client signed in as on the hosted page.

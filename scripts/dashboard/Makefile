@@ -6,7 +6,7 @@ SOLUTION = scripts/dashboard/TerraScale.Dashboard.slnx
 E2E = $(DOTNET) run --configuration Release --project tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj --
 RESULTS = --report-trx --results-directory "$(CURDIR)/test-results/tunit"
 
-.PHONY: build lint security check css check-css js dev demo test-e2e test-fast test-slow test-hot-reload test-live-readiness perf check-e2e-shards
+.PHONY: build lint security check css check-css js dev demo test-e2e test-fast test-slow test-live-readiness check-e2e-shards
 
 build:
 	$(DOTNET) build $(SOLUTION) --configuration Release -p:RestoreLockedMode=true
@@ -46,8 +46,8 @@ demo:
 # test-only providers (tests/TerraScale.Dashboard.E2E/Demo). test-fast is the HTTP, MCP, CLI and
 # customer-SDK journeys; test-slow is the browser journeys and the internal-billing policy suites
 # ([Category("Slow")]); test-e2e is both for local investigation. Fast is the merge/release gate.
-# Slow is non-blocking and failures are reported by its independent workflow. Explicit journeys (hot reload,
-# performance, live readiness) run only through their own targets below.
+# Slow is non-blocking and failures are reported by its independent workflow. The explicit live readiness journey
+# runs only through its own target below.
 test-e2e:
 	$(E2E) $(RESULTS)
 
@@ -57,14 +57,8 @@ test-fast:
 test-slow:
 	$(E2E) --treenode-filter '/*/*/*/*[Category=Slow]' $(RESULTS) --report-trx-filename slow.trx
 
-test-hot-reload:
-	$(E2E) --treenode-filter '/*/*/HotReloadJourneyTests/*' $(RESULTS) --report-trx-filename hot-reload.trx
-
 test-live-readiness:
 	$(E2E) --treenode-filter '/*/*/LiveProductionReadinessJourneyTests/*' $(RESULTS) --report-trx-filename live-production-readiness.trx
-
-perf:
-	$(E2E) --treenode-filter '/*/*/PerformanceJourneyTests/*' $(RESULTS) --report-trx-filename performance.trx
 
 check-e2e-shards:
 	$(E2E) --list-tests

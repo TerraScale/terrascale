@@ -24,6 +24,19 @@ test("all 84 inventoried public routes are inventoried once, including routes ab
   }
 });
 
+test("public scope excludes hidden aliases, internal listeners and unmapped documentation routes", () => {
+  for (const route of current) {
+    expect(route.pathTemplate).not.toMatch(/\/management\/|\/admin\/|^\/metrics$/u);
+    expect(`${route.method} ${route.pathTemplate}`).not.toBe("PUT /v1/projects/{project}/databases/{database}");
+    expect(route.pathTemplate).not.toMatch(/\/download$/u);
+  }
+});
+
+test.each(["local_durable", "remote_durable", "unchanged"])("current durability label %s passes through", async durability => {
+  const { client } = await fixture((_r, response) => json(response, { id: "01ARZ3NDEKTSV4RRFFQ69G5FA2", version: "tbv1-1", offset: "1", durability }));
+  expect((await client.database("app").collection("users").put("01ARZ3NDEKTSV4RRFFQ69G5FA2", { name: "A" })).durability).toBe(durability);
+});
+
 test("unknown write outcomes retain region/machine metadata and are never replayed", async () => {
   const { client, requests } = await fixture((_r, response) => json(response, {
     error: { code: "write_outcome_unknown", message: "Confirmation not received", region: "gru", machine: "fixture" },

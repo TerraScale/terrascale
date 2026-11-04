@@ -20,3 +20,16 @@ test("packed browser exposes the C# client and exact decimal values", async ({ p
   expect(observation).toEqual({ methods: true, exact: "9007199254740993", credential: false, retired: [] });
 });
 
+test("packed browser generates monotonic ULIDs and rejects noncanonical ids", async ({ page }) => {
+  await page.goto("/browser-tests/fixture.html");
+  const valid = await page.evaluate(async () => {
+    const candidate = "/candidate/src/index.js";
+    const sdk = /** @type {typeof import("../src/index.js")} */ (await import(candidate));
+    const first = sdk.generateId();
+    const second = sdk.generateId();
+    return sdk.isValidId(first) && sdk.isValidId(second) && first < second &&
+      !sdk.isValidId(first.toLowerCase()) && !sdk.isValidId("org_" + first) &&
+      !sdk.isValidId("8" + first.slice(1)) && !("documentIdFor" in sdk);
+  });
+  expect(valid).toBe(true);
+});

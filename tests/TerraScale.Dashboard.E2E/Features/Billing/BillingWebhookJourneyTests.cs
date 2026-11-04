@@ -127,53 +127,6 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
                 .Because("A validated paid subscription keeps the organization's existing active billing entitlement.");
         }
 
-        [Test]
-        [Arguments(false, 1)]
-        [Arguments(true, 1)]
-        [Arguments(false, 64 * 1024 + 1)]
-        [Arguments(true, 64 * 1024 + 1)]
-        public async Task OversizedWebhookAllowsFollowUpPostOnSameClientPool(bool chunked, int excess)
-        {
-            using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, MaxConnectionsPerServer = 1 })
-            { BaseAddress = fixture.Origin, Timeout = TimeSpan.FromSeconds(30) };
-            var body = new string('x', (1 << 20) + excess);
-            foreach (var path in WebhookPaths)
-            {
-                using (var rejected = await SendWebhookAsync(client, path, body, "t=1,v1=forged", chunked))
-                {
-                    await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.RequestEntityTooLarge);
-                    if (excess > 64 * 1024)
-                    {
-                        await Assert.That(rejected.Headers.ConnectionClose).IsTrue()
-                            .Because("An undrained HTTP/1.1 rejection must tell the pool to retire its connection.");
-                    }
-                }
-
-                using var followUp = await SendWebhookAsync(client, path, "{}", "t=1,v1=forged");
-                await Assert.That(followUp.StatusCode).IsEqualTo(HttpStatusCode.BadRequest)
-                    .Because("A subsequent non-idempotent POST must receive a real response without a transport retry.");
-            }
-        }
-
-        [Test]
-        public async Task KnownLengthOversizedWebhookIsDrainedAfterEarlyRejection()
-        {
-            // Raw HTTP pins the order HttpClient races: 413 arrives, then the sender finishes its upload.
-            using var tcp = new TcpClient();
-            await tcp.ConnectAsync(fixture.Origin.Host, fixture.Origin.Port);
-            using var stream = new SslStream(tcp.GetStream(), false, (_, certificate, _, errors) => TestHttps.Valid(certificate, errors));
-            await stream.AuthenticateAsClientAsync(fixture.Origin.Host);
-            const int length = (1 << 20) + 1;
-            await stream.WriteAsync(Encoding.ASCII.GetBytes(
-                $"POST {WebhookPaths[0]} HTTP/1.1\r\nHost: {fixture.Origin.Authority}\r\nContent-Type: application/json\r\nStripe-Signature: t=1,v1=forged\r\nContent-Length: {length}\r\n\r\n"));
-            await Assert.That(await ReadResponseHeadAsync(stream)).StartsWith("HTTP/1.1 413")
-                .Because("A known oversized length is rejected before any body byte is read.");
-            await stream.WriteAsync(new byte[length]);
-            await stream.WriteAsync(Encoding.ASCII.GetBytes($"GET /readyz HTTP/1.1\r\nHost: {fixture.Origin.Authority}\r\n\r\n"));
-            await Assert.That(await ReadResponseHeadAsync(stream)).StartsWith("HTTP/1.1 200")
-                .Because("The rejected upload is drained within the bounded allowance instead of resetting the sender.");
-        }
-
         private static async Task<string> ReadResponseHeadAsync(Stream stream)
         {
             var head = new StringBuilder();

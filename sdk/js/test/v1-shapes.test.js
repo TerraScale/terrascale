@@ -34,4 +34,32 @@ describe.skipIf(!liveConfigured)("real C# collection shapes", () => {
       await expect(pending).rejects.toThrow(/test cancellation/u);
     } finally { await documents.delete(id).catch(() => undefined); }
   });
+
+  test("shape long-poll wakes on real commits and advances the public cursor", async () => {
+    const documents = liveDatabase().collection(collections.shapes);
+    const id = generateId();
+    const where = v1Filter.eq("/run", generateId());
+    const snapshot = await documents.shape({ where });
+    const head = await documents.shape({ where, handle: snapshot.handle, offset: snapshot.nextOffset });
+    const signal = AbortSignal.timeout(10_000);
+    const pending = documents.shape({ where, handle: head.handle, offset: head.nextOffset, live: true }, { signal });
+    try {
+      // A real durable commit wakes the collection's poll, even when its document does not match.
+      const written = await documents.put(id, { unrelated: true });
+      let live = await pending;
+      // Other suites share this database and may wake the first poll before this write.
+      while (BigInt(live.nextOffset) < BigInt(written.offset))
+        live = await documents.shape({ where, handle: live.handle, offset: live.nextOffset, live: true, cursor: live.cursor }, { signal });
+      expect(BigInt(live.nextOffset)).toBeGreaterThanOrEqual(BigInt(written.offset));
+      expect(live.upToDate).toBe(true);
+      expect(live.cursor).toMatch(/^\d+$/u);
+      const next = await documents.shape({ where, handle: live.handle, offset: head.nextOffset, live: true, cursor: live.cursor });
+      expect(BigInt(/** @type {string} */ (next.cursor))).toBeGreaterThan(BigInt(/** @type {string} */ (live.cursor)));
+    } finally { await documents.delete(id).catch(() => undefined); }
+  });
+
+  test.skipIf(!process.env.TB_V1_READ_KEY)("documents:read does not grant shapes:read", async () => {
+    await expect(liveDatabase(process.env.TB_V1_READ_KEY).collection(collections.shapes).shape())
+      .rejects.toMatchObject({ status: 403, code: "forbidden_scope" });
+  });
 });
