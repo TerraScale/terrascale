@@ -438,6 +438,8 @@ pub(crate) struct Req<'a> {
     pub replay_safe: bool,
     /// Only public health probes omit the configured bearer credential.
     anonymous_probe: bool,
+    pub timeout: Option<Duration>,
+    pub move_unresolved_retries: u32,
 }
 
 impl<'a> Req<'a> {
@@ -452,6 +454,8 @@ impl<'a> Req<'a> {
             headers: Vec::new(),
             replay_safe,
             anonymous_probe: false,
+            timeout: None,
+            move_unresolved_retries: 0,
         }
     }
 
@@ -846,6 +850,7 @@ impl Client {
         let replay_safe = req.replay_safe;
         let policy = &self.inner.retry;
         let mut attempt: u32 = 0;
+        let mut unresolved: u32 = 0;
         let mut refreshed = false;
         loop {
             match self
@@ -854,6 +859,14 @@ impl Client {
             {
                 Attempt::Done(resp) => return Ok(resp),
                 Attempt::Failed(err, retry_after) => {
+                    if unresolved < req.move_unresolved_retries
+                        && err.status() == Some(503)
+                        && err.code() == Some("move_unresolved")
+                    {
+                        tokio::time::sleep(retry_after.unwrap_or(Duration::from_secs(1))).await;
+                        unresolved += 1;
+                        continue;
+                    }
                     let retry = attempt < policy.max_retries
                         && ((matches!(err, Error::Transport(_))
                             || matches!(&err, Error::Response { status, error, .. } if !(400..500).contains(status) && matches!(**error, Error::Transport(_))))
@@ -915,6 +928,9 @@ impl Client {
             .http
             .request(req.method.clone(), url.clone())
             .header("Accept", "application/json");
+        if let Some(timeout) = req.timeout {
+            rb = rb.timeout(timeout);
+        }
         if let Some(region) = region {
             rb = rb.header("X-TerraScale-Region-Pin", region);
         }

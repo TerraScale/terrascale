@@ -1,0 +1,31 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/projects/01JA0000000000000000000001/databases/01JA0000000000000000000004/move-home",
+    "headers": {
+      "Accept": "application/json",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "homeRegion": "sjc"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "01JA0000000000000000000004",
+      "projectId": "01JA0000000000000000000001",
+      "name": "orders",
+      "branchedFrom": null,
+      "createdAt": "2026-11-04T12:00:00+00:00",
+      "region": "gru",
+      "homeRegion": "sjc",
+      "replicaRegions": [
+        "fra",
+        "gru"
+      ],
+      "allRegions": false,
+      "expiresAt": null
+    }
+  }
+}

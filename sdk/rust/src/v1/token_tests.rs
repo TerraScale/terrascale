@@ -17,6 +17,9 @@ mod failures;
 #[path = "agent_tests.rs"]
 mod agent;
 
+#[path = "placement_tests.rs"]
+mod placement;
+
 const PROJECT: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const KEY_ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
 fn key() -> String {

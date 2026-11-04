@@ -16,13 +16,17 @@ pub struct ManagementPage<T> {
     pub next: Option<String>,
 }
 
-/// Placement supplied when creating a database. A database lives in its home region only;
-/// omitting `home_region` creates it in the region that serves the request.
+/// Placement of a database: its home region, which commits writes, and its replica regions.
+/// Omitting `home_region` at creation uses the region that serves the request.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DatabasePlacement {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub home_region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replica_regions: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub all_regions: bool,
 }
 
 impl Client {

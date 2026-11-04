@@ -38,7 +38,7 @@ mod types;
 
 pub use agent::{
     CreateDatabaseOptions, ForkDatabaseOptions, ManagedDatabase, ScopedKey, ScopedKeyAccess,
-    ScopedKeyOptions,
+    ScopedKeyOptions, MOVE_HOME_TIMEOUT,
 };
 pub use backups::RestoredDatabase;
 pub use buckets::{BucketRules, FileBucket, FileBucketPage, ReadWriteGrants};

@@ -95,6 +95,35 @@ region is the home. `Client::list_databases`, `Database::get_database`, `Client:
 `Database::delete_database` in the database's home region; HTTP 204 confirms logical deletion and local
 cleanup.
 
+### Placement
+
+A database has one home region, which commits its writes, and replica regions, which hold read replicas.
+`CreateDatabaseOptions` and `DatabasePlacement` accept `home_region`, `replica_regions` and `all_regions`;
+unset options are not sent. `Client::set_database_placement(database, &DatabasePlacement)` needs exactly one
+of `replica_regions` (an empty list removes every replica) or `all_regions`, and no `home_region`.
+`Client::move_database_home(database, region)` moves the home to one of its replica regions; it waits up to
+`MOVE_HOME_TIMEOUT` (5 minutes) and retries only `503 move_unresolved`, at most five times, after
+`Retry-After` or 1 second. `ManagedDatabase` carries `home_region`, `replica_regions` and `all_regions`.
+Contract fixtures in `contracts/terrabase/placement/` qualify the HTTP boundary.
+
+```rust,no_run
+use terrascale::v1::{Client, CreateDatabaseOptions, DatabasePlacement};
+
+# async fn example(project: &str, api_key: &str) -> terrascale::v1::Result<()> {
+let client = Client::for_project_api_key(project, api_key).build()?;
+let database = client.create_database("orders", &CreateDatabaseOptions {
+    home_region: Some("gru".into()),
+    replica_regions: Some(vec!["sjc".into()]),
+    ..Default::default()
+}).await?;
+client.set_database_placement(&database.id, &DatabasePlacement {
+    all_regions: true,
+    ..Default::default()
+}).await?;
+let moved = client.move_database_home(&database.id, "sjc").await?;
+# let _ = moved; Ok(()) }
+```
+
 ## Databases for agents
 
 The project-bound SQL `Client` exposes `create_database(name, &CreateDatabaseOptions)`,
@@ -112,6 +141,7 @@ use terrascale::v1::{Client, CreateDatabaseOptions, ScopedKeyAccess, ScopedKeyOp
 let client = Client::for_project_api_key(project, api_key).build()?;
 let database = client.create_database("agent", &CreateDatabaseOptions {
     ttl_seconds: Some(3600),
+    ..Default::default()
 }).await?;
 let scoped = client.create_scoped_key(&ScopedKeyOptions {
     project: Some(project.into()),

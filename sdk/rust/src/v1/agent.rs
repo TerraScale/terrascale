@@ -1,4 +1,5 @@
 use std::fmt;
+use std::time::Duration;
 
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
@@ -7,12 +8,21 @@ use super::client::{Client, Req};
 use super::database::ProjectDatabaseInfo;
 use super::errors::{Error, Result};
 use super::ids::{check_database_selector, check_name, valid_entity_id};
+use super::management::DatabasePlacement;
+
+pub const MOVE_HOME_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub type ManagedDatabase = ProjectDatabaseInfo;
 
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateDatabaseOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub home_region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replica_regions: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub all_regions: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttl_seconds: Option<u64>,
 }
@@ -86,6 +96,11 @@ impl Client {
     ) -> Result<ManagedDatabase> {
         check_name("database", name)?;
         check_ttl(options.ttl_seconds, 31_536_000)?;
+        if options.replica_regions.is_some() && options.all_regions {
+            return Err(Error::InvalidInput(
+                "set replica_regions or all_regions, not both".into(),
+            ));
+        }
         #[derive(Serialize)]
         struct Body<'a> {
             name: &'a str,
@@ -148,6 +163,41 @@ impl Client {
                 StatusCode::OK,
             )
             .await
+    }
+
+    pub async fn set_database_placement(
+        &self,
+        database: &str,
+        placement: &DatabasePlacement,
+    ) -> Result<ManagedDatabase> {
+        if placement.home_region.is_some()
+            || placement.replica_regions.is_some() == placement.all_regions
+        {
+            return Err(Error::InvalidInput(
+                "set exactly one of replica_regions or all_regions; move the home with move_database_home".into(),
+            ));
+        }
+        self.database(database)
+            .management(Method::PATCH, &[], &[], Some(placement), StatusCode::OK)
+            .await
+    }
+
+    pub async fn move_database_home(
+        &self,
+        database: &str,
+        home_region: &str,
+    ) -> Result<ManagedDatabase> {
+        check_database_selector(database)?;
+        if home_region.is_empty() {
+            return Err(Error::InvalidInput("home_region is required".into()));
+        }
+        let mut req = Req::new(Method::POST, vec!["v1", "databases", database, "move-home"])
+            .json(&serde_json::json!({"homeRegion": home_region}))?;
+        req.timeout = Some(MOVE_HOME_TIMEOUT);
+        req.move_unresolved_retries = 5;
+        self.send_project(req)
+            .await?
+            .decode_status(&[StatusCode::OK])
     }
 
     pub async fn clear_database_ttl(&self, database: &str) -> Result<ManagedDatabase> {

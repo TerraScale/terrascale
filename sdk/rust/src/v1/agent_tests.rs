@@ -56,6 +56,7 @@ async fn agent_database_lifecycle_matches_recorded_contract() {
     let client = scoped_client(&data, &issuer);
     let ttl = CreateDatabaseOptions {
         ttl_seconds: Some(3600),
+        ..Default::default()
     };
     let created = client.create_database("agent", &ttl).await.unwrap();
     assert_eq!(
