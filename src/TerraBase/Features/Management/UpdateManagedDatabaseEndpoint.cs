@@ -17,7 +17,7 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
         Metadata(AnchoredRevocation.Instance);
         Name("updateDatabase");
         Summary("Renames a database or confirms its home-region placement");
-        Description("Renames a database or confirms its unchanged home-region placement. Replica placement is unavailable. " + ProjectApiRoute.IdentityDescription);
+        Description("Renames a database or sets its replica regions (up to 8 regions other than the home, which pull its pages and serve SQL reads). The home region cannot change and allRegions is unavailable. " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -52,9 +52,9 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
             return DatabaseRegions.HomeRegion(home, database.Regions(options.Region));
         }
 
-        if (request.AllRegions == true || request.ReplicaRegions is { Count: > 0 })
+        if (request.AllRegions == true)
         {
-            return ErrorResponse.From(new Validation("databases serve only in their home region until replicas are available", "replicas_unavailable"));
+            return ErrorResponse.From(new Validation("all-region placement is unavailable: name the replica regions", "replicas_unavailable"));
         }
 
         if (request.Name is not null)
@@ -70,7 +70,7 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
 
         Valid<IReadOnlyList<string>> checkedRegions = request.HomeRegion is { } requested && requested != home ? new Validation("homeRegion cannot change")
             : request.ReplicaRegions is not { } replicas ? new Validation("replicaRegions or allRegions is required")
-            : DatabaseRegions.Check(replicas) is Validation invalid ? invalid
+            : DatabaseRegions.Check(replicas, home) is Validation invalid ? invalid
             : DatabaseRegions.Unserved("replicaRegions", replicas, [.. (await regions.ServingAsync(cancellationToken).ConfigureAwait(false)).Union(database.Regions(home), StringComparer.Ordinal)]) is { } unserved ? unserved
             : replicas;
         return checkedRegions switch

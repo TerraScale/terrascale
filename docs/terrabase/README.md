@@ -82,6 +82,8 @@ and public listeners.
 
 Point load balancers and reverse proxies (Caddy) at the client listener's `/readyz`.
 
+Region replicas (read-only page-pull copies in replica regions, PIVOT R3): [`region-replicas.md`](region-replicas.md).
+
 Target replication design (Turso + CDC + lattices across gru and sjc, with its slice plan):
 [`multi-region-replication.md`](multi-region-replication.md). It replaces the replication described below.
 

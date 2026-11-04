@@ -112,20 +112,25 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
         }
     }
 
-    internal void AfterWrite(SqliteConnection writer)
+    /// <summary>Indexes the writer's new frames; whether the committed WAL moved, so the database has a newer revision.</summary>
+    internal bool AfterWrite(SqliteConnection writer)
     {
         lock (_gate)
         {
             if (!ReferenceEquals(_attached, writer))
             {
-                return;
+                return false;
             }
 
+            var (frame, sequence) = (_live.MaxFrame, _live.CheckpointSequence);
             Refresh(writer);
+            var moved = _live.MaxFrame != frame || _live.CheckpointSequence != sequence;
             if (_live.MaxFrame - _live.BaseFrame >= CheckpointFrames)
             {
                 CheckpointLocked(writer);
             }
+
+            return moved;
         }
     }
 

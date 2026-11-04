@@ -92,6 +92,10 @@
   <ItemGroup Label="Object storage">
     <PackageVersion Include="AWSSDK.S3" Version="4.0.104.1" />
   </ItemGroup>
+  <!-- Revision notifications between regions for region replicas (Features/Replicas). -->
+  <ItemGroup Label="Messaging">
+    <PackageVersion Include="NATS.Client.Core" Version="3.3.2" />
+  </ItemGroup>
   <!-- Cron expressions for scheduled backups (Features/Management/Backups). -->
   <ItemGroup Label="Scheduling">
     <PackageVersion Include="Cronos" Version="0.13.0" />

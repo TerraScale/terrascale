@@ -184,4 +184,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(TsAuthTokenResponse))]
 [JsonSerializable(typeof(TsAuthErrorBody))]
 [JsonSerializable(typeof(TsAuthKeyStatus))]
+[JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaCatalogPage))]
+[JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaCatalogEntry))]
+[JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaRevisionNotice))]
 internal sealed partial class TerraBaseJsonContext : JsonSerializerContext;

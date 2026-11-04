@@ -393,7 +393,8 @@ internal sealed partial class EngineManagementService
                 : ManagementErrors.NotFound;
         }
 
-        if (placement.Includes(options.Region))
+        // Only the home holds a database file; a replica region records it and pulls its pages (docs/terrabase/region-replicas.md).
+        if (placement.Home == options.Region)
         {
             return await AddDatabaseAsync(project, name, sourceId: null, branchedFrom: null, cancellationToken, id: database.DatabaseId, placement: placement)
                 .ConfigureAwait(false) switch
@@ -406,7 +407,7 @@ internal sealed partial class EngineManagementService
             };
         }
 
-        // Placed elsewhere: only the record, no file and no backups, so requests here can be told where it is served.
+        // Homed elsewhere: only the record, no file and no backups; a replica here pulls its pages.
         var record = new ManagedDatabase(
             database.DatabaseId, database.ProjectId, name, null, time.GetUtcNow(), placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version,
             placement.AllRegions);
@@ -466,7 +467,7 @@ internal sealed partial class EngineManagementService
                 AllRegions = placement.AllRegions,
             }, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false);
             // Backed up where it is served; a removal leaves no tombstone, so the database can come back with its placement.
-            if (placement.Includes(options.Region))
+            if (placement.Home == options.Region)
             {
                 await PutAsync(transaction, EngineManagedBackupService.BackedUpDatabases, database.DatabaseId, DatabaseOwner.Of(database),
                     TerraBaseJsonContext.Default.DatabaseOwner, cancellationToken).ConfigureAwait(false);

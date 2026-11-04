@@ -21,9 +21,19 @@ internal static class DatabaseRegions
     /// <summary>Marks an endpoint that answers for databases placed elsewhere itself: reading, updating and deleting the record.</summary>
     internal sealed class PlacementAware;
 
-    internal static Valid<IReadOnlyList<string>> Check(IReadOnlyList<string> replicas) =>
-        replicas.Count > 0 ? new Validation("databases serve only in their home region until replicas are available", "replicas_unavailable")
-        : replicas;
+    /// <summary>Marks an endpoint that a replica region answers itself from its replica (docs/terrabase/region-replicas.md).</summary>
+    internal sealed class ReplicaReads;
+
+    /// <summary>
+    /// The replica regions of a database homed in <paramref name="home"/>: distinct regions other than the home, at most
+    /// <see cref="MaxReplicas"/>. Replicas pull the home's pages and serve reads (docs/terrabase/region-replicas.md).
+    /// </summary>
+    internal static Valid<IReadOnlyList<string>> Check(IReadOnlyList<string> replicas, string home) =>
+        replicas.Count > MaxReplicas ? new Validation($"replicaRegions names at most {MaxReplicas} regions")
+        : replicas.FirstOrDefault(region => !TerraBaseOptions.IsRegion(region)) is { } invalid ? new Validation($"replicaRegions names {invalid}, which is not a region")
+        : replicas.Contains(home, StringComparer.Ordinal) ? new Validation("replicaRegions cannot name the home region")
+        : replicas.Distinct(StringComparer.Ordinal).Count() != replicas.Count ? new Validation("replicaRegions names a region twice")
+        : (IReadOnlyList<string>)[.. replicas.Order(StringComparer.Ordinal)];
 
     internal static Validation? Unserved(string field, IEnumerable<string> regions, IReadOnlyList<string> serving) =>
         regions.FirstOrDefault(region => !serving.Contains(region, StringComparer.Ordinal)) is { } unknown
@@ -64,7 +74,9 @@ internal static class DatabaseRegions
                 var region = context.RequestServices.GetRequiredService<TerraBaseOptions>().Region;
                 await (await RecordAsync(context, project, database).ConfigureAwait(false) switch
                 {
-                    ManagedDatabase record when !record.PlacedIn(region) => WrongRegion(record.Home(region), record.Regions(region)).ExecuteAsync(context),
+                    ManagedDatabase record when !record.PlacedIn(region)
+                        && !(record.Replicas.Contains(region) && endpoint.Metadata.GetMetadata<ReplicaReads>() is not null)
+                        => WrongRegion(record.Home(region), record.Regions(region)).ExecuteAsync(context),
                     ManagedDatabase => next(context),
                     NotFound => next(context),
                     Unavailable error => ErrorResponse.From(error).ExecuteAsync(context),
