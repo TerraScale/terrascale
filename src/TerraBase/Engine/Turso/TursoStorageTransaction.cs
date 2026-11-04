@@ -13,6 +13,8 @@ internal sealed partial class TursoStorageTransaction(
 {
     internal TursoDatabaseStore.CopyOperation? Operation { get; init; }
 
+    internal string? Leased { get; init; }
+
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Lock _disposalGate = new();
     private Task? _disposal;
@@ -215,6 +217,11 @@ internal sealed partial class TursoStorageTransaction(
                 if (store.Tenant is { } committer)
                 {
                     store.Checkpoint?.Invoke("writer.commit", committer);
+                }
+
+                if (Leased is { } leased)
+                {
+                    store.ThrowIfUnleased(leased);
                 }
 
                 committing = true;
