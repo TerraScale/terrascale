@@ -161,7 +161,12 @@ internal static class SqlScript
         }
 
         var rewritten = SqlSandbox.RewriteSchema(sql, tokens, out var schemaDenied);
-        return schemaDenied ?? (rewritten is var (original, run) ? plan with { Sql = original, Run = run } : plan);
+        if (schemaDenied is not null)
+        {
+            return schemaDenied;
+        }
+
+        return rewritten is var (original, run) ? plan with { Sql = original, Run = run } : plan;
     }
 
     private static SqlError? Explained(string sql, List<SqlToken> tokens)
