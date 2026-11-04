@@ -90,15 +90,13 @@ def test_mutation_transport_error_is_commit_uncertain(fake: Fake) -> None:
     http = httpx.Client(transport=httpx.MockTransport(handler))
     client = TerraScale(API_KEY, project=PROJECT, base_url=BASE, issuer=ISSUER, http_client=http)
     with pytest.raises(CommitUncertainError) as caught:
-        client.database("main").collection("c").create({"a": 1})
+        client.database("main").execute("INSERT INTO t VALUES (1)")
     assert caught.value.request_id is None
 
 
 def test_error_mapping() -> None:
-    err = terrascale.errors.error_for(409, {"error": {"code": "unique_violation", "message": "dup", "op": "2"}})
+    err = terrascale.errors.error_for(409, {"error": {"code": "unique_violation", "message": "dup"}})
     assert isinstance(err, terrascale.UniqueViolationError) and isinstance(err, ConflictError)
-    assert err.op == 2 and str(err) == "409 unique_violation: dup (op 2)"
+    assert str(err) == "409 unique_violation: dup"
     err = terrascale.errors.error_for(502, b"<html>")
     assert type(err) is terrascale.APIError and err.code == "http_502"
-
-

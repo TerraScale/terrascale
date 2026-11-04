@@ -1,4 +1,4 @@
-"""Typed project usage, database usage and observed workload reports."""
+"""Typed project and database usage reports."""
 
 from __future__ import annotations
 
@@ -73,8 +73,6 @@ class DatabaseUsage:
     database_id: str
     storage_bytes: int
     logical_bytes: int
-    collections: int
-    documents: int
     reads: int
     writes: int
     period: UsagePeriod
@@ -82,8 +80,8 @@ class DatabaseUsage:
 
     @classmethod
     def from_json(cls, b: dict[str, Any]) -> DatabaseUsage:
-        return cls(b["databaseId"], int(b["storageBytes"]), int(b["logicalBytes"]), int(b["collections"]),
-                   int(b["documents"]), int(b["reads"]), int(b["writes"]), UsagePeriod.from_json(b["period"]),
+        return cls(b["databaseId"], int(b["storageBytes"]), int(b["logicalBytes"]),
+                   int(b["reads"]), int(b["writes"]), UsagePeriod.from_json(b["period"]),
                    [UsagePoint.from_json(p) for p in b["series"]])
 
 
@@ -93,7 +91,6 @@ class ProjectUsage:
     databases: int
     storage_bytes: int
     logical_bytes: int
-    documents: int
     reads: int
     writes: int
     period: UsagePeriod
@@ -106,30 +103,9 @@ class ProjectUsage:
     @classmethod
     def from_json(cls, b: dict[str, Any]) -> ProjectUsage:
         return cls(b["projectId"], int(b["databases"]), int(b["storageBytes"]), int(b["logicalBytes"]),
-                   int(b["documents"]), int(b["reads"]), int(b["writes"]), UsagePeriod.from_json(b["period"]),
+                   int(b["reads"]), int(b["writes"]), UsagePeriod.from_json(b["period"]),
                    [UsagePoint.from_json(p) for p in b["series"]], [DatabaseUsage.from_json(x) for x in b["items"]],
                    UsageMonth.from_json(b["month"]), int(b["fileBytes"]) if b.get("fileBytes") is not None else None, b)
-
-
-@dataclass(frozen=True)
-class QueryShape:
-    id: str
-    collection: str
-    shape: str
-    queries: int
-    total_latency_ms: float
-    max_latency_ms: float
-    rows_scanned: int
-    last_seen_at: str
-    latency_buckets: list[int] | None
-    p95_latency_ms: float | None
-
-    @classmethod
-    def from_json(cls, b: dict[str, Any]) -> QueryShape:
-        buckets, p95 = b.get("latencyBuckets"), b.get("p95LatencyMs")
-        return cls(b["id"], b["collection"], b["shape"], int(b["queries"]), float(b["totalLatencyMs"]),
-                   float(b["maxLatencyMs"]), int(b["rowsScanned"]), b["lastSeenAt"],
-                   [int(x) for x in buckets] if buckets is not None else None, float(p95) if p95 is not None else None)
 
 
 class _Requests:
@@ -141,9 +117,6 @@ class _Requests:
         path = self._path if database is None else [*self._path, "databases", name(database, "database")]
         return Call("GET", [*path, suffix], lambda r: parse(r.json()),
                     params=query.params() if query is not None else {}, replay_safe=True)
-
-    def _shapes(self, database: str) -> Call:
-        return self._call(database, "query-shapes", lambda b: [QueryShape.from_json(x) for x in b["items"]])
 
 
 class Reporting(_Requests):
@@ -159,9 +132,6 @@ class Reporting(_Requests):
     def get_database_usage(self, database: str, query: UsageQuery | None = None) -> DatabaseUsage:
         return self._client._send(self._call(database, "usage", DatabaseUsage.from_json, query))
 
-    def list_query_shapes(self, database: str) -> list[QueryShape]:
-        return self._client._send(self._shapes(database))
-
 
 class AsyncReporting(_Requests):
     """The asynchronous twin of Reporting, with identical arguments and results."""
@@ -175,6 +145,3 @@ class AsyncReporting(_Requests):
 
     async def get_database_usage(self, database: str, query: UsageQuery | None = None) -> DatabaseUsage:
         return await self._client._send(self._call(database, "usage", DatabaseUsage.from_json, query))
-
-    async def list_query_shapes(self, database: str) -> list[QueryShape]:
-        return await self._client._send(self._shapes(database))

@@ -121,56 +121,24 @@ async with AsyncTerraScale() as ts:
 
 | Surface | Methods |
 | --- | --- |
-| Client | `TerraScale(api_key=, project=, token=, base_url=, region=)`, `database(name)`, `list_databases()`, `create_database(name, home_region=, replica_regions=, all_regions=)` |
-| Database | `info()`, `update(home_region=, replica_regions=, all_regions=)`, `delete()`, `branch(name)`, `create_collection(name)`, `list_collections()`, `collection(name)` |
-| Documents | `get`, `create`, `put`, `patch(merge=\|ops=)`, `delete`, `list` |
-| Queries | `query(filter, sort=, project=, limit=, cursor=, count=, aggregate=)`, `pages(...)`, `items(...)` |
-| Vector | `search(path, vector, limit=, metric="cosine"\|"l2")` or `sort=[q.near(...)]` |
-| Geo | `q.within_radius(path, lat, lon, meters)`, `q.within_box(path, south, west, north, east)`, `sort=[q.geo_near(path, lat, lon)]` |
-| Aggregates | `query(filter, aggregate=q.aggregate(group_by, sum=, avg=, min=, max=), limit=)` answers `page.groups` |
-| TTL | `get_ttl()`, `set_ttl("/expiresAt")`, `delete_ttl()` |
-| SQL | `execute`, `query`, `batch` (see [SQL](#sql)) |
-| Transactions | `with db.transaction() as tx: tx.create/put/patch/delete/assert_/assert_absent/assert_count` |
+| Client | `TerraScale(api_key=, project=, token=, base_url=, region=)`, `database(name)`, `list_databases()`, `create_database(name, home_region=)`, `rename_database(id, name)` |
+| Database | `info()`, `delete()`, `branch(name)`, `execute`, `query`, `batch` (see [SQL](#sql)) |
 
-**IDs** are canonical ULIDs (`terrascale.new_id()`); the document key is the ID.
-**Versions** are opaque: pass `doc.version` back as `if_match`. Use
-`if_none_match_any=True` to create only when absent.
-
-**Filters** (`terrascale.query`): `and_`, `or_`, `not_`, `eq`, `ne`, `lt`, `lte`,
-`gt`, `gte`, `in_`, `nin`, `exists`, `prefix`, `contains`; paths are JSON Pointers
-(`"/title"`) or `q.ID_PATH`. Sort with `q.asc`/`q.desc`. Patch ops: `q.set_`,
-`q.unset`, `q.append`, `q.inc`, `q.add`, `q.remove`.
-
-**Geo**: points are `{"lat": ..., "lon": ...}` objects (WGS 84 degrees).
-`q.within_radius`/`q.within_box` are ordinary filters (a box with `west > east`
-crosses the antimeridian). `q.geo_near` must be the only sort key: one page of
-at most 100 documents, nearest first, each with `distance` in meters.
-
-**Aggregates**: `q.aggregate(["/status"], sum=["/amount"])` groups by 0-4 paths;
-each `terrascale.Group` has `key` (one value per path), `count`, and `sum`/`avg`/
-`min`/`max` dicts keyed by pointer. `limit` bounds the groups; aggregates take no
-`sort`, `project`, `cursor` or `count`.
+**IDs** are canonical ULIDs (`terrascale.new_id()`).
 
 **Regions**: `create_database("eu", home_region="fra")` stores and serves the
 database in its home region; without `home_region` the called region is the home.
-Region replicas are not available yet: a non-empty `replica_regions` or
-`all_regions=True` on `create_database` or `db.update` returns HTTP 400
-`replicas_unavailable`.
 
 For deletion, call `db.delete()` directly in the database's home region (await
 for async clients). HTTP 204 confirms logical deletion and local cleanup.
 
-**TTL** deletes documents whose member holds a past RFC 3339 UTC time, in an
-hourly sweep; expired documents stay readable until then.
-
 ## Errors
 
-Every server error is a `terrascale.APIError` with `status`, `code`, `message`,
-`op` (failing transaction op), `retry_after` and `etag`. Common cases have
+Every server error is a `terrascale.APIError` with `status`, `code`, `message`
+and `retry_after`. Common cases have
 subclasses: `InvalidRequestError` (400), `AuthenticationError` (401),
 `PermissionDeniedError` (403), `NotFoundError` (404), `ConflictError` /
-`UniqueViolationError` (409), `PreconditionFailedError` (412), `RateLimitError`
-(429), `ServiceUnavailableError` (503). A refused API key raises `TokenError`.
+`UniqueViolationError` (409), `RateLimitError` (429), `ServiceUnavailableError` (503). A refused API key raises `TokenError`.
 
 `APIError` (including its subclasses) and `TokenError` expose
 `request_id: str | None` for support correlation in both sync and async clients.
@@ -187,18 +155,16 @@ exception. Its fixed message omits response contents; the SDK does not retry it.
 Malformed token success responses retain `TokenError` / `invalid_token_response`
 and now carry the request ID too. Transport failures with no response have no ID.
 
-Reads and read-only queries retry transport failures, 429, 502, 504 and
+Reads retry transport failures, 429, 502, 504 and
 transient 503s (`storage_busy`, `unavailable`, `capacity`, ...) with jittered
 exponential backoff, honouring `Retry-After`, up to `max_attempts` (default 4).
 The token exchange retries transport failures, 429 and 5xx the same way; one
 exchange runs at a time and concurrent callers share its result. A connect or
 connection-pool failure never reached the server, so writes retry it too; when
 attempts run out the `TerraScaleError` names the cause and says the request was
-not sent. Writes, including `if_match` writes, are never replayed after an
-ambiguous failure: a transport failure after sending, 5xx or malformed
-acknowledgement raises `CommitUncertainError`; reconcile state before retrying. Transactions
-cannot be changed or committed again after submission; context exit sends once.
-Malformed read responses raise `InvalidResponseError`.
+not sent. SQL statements and other writes are never replayed after an ambiguous
+failure: a transport failure after sending, 5xx or malformed acknowledgement
+raises `CommitUncertainError`; reconcile state before retrying. Malformed read responses raise `InvalidResponseError`.
 
 ## Development
 

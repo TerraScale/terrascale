@@ -20,7 +20,6 @@ __all__ = [
     "NotFoundError",
     "ConflictError",
     "UniqueViolationError",
-    "PreconditionFailedError",
     "RateLimitError",
     "ServiceUnavailableError",
     "CommitUncertainError",
@@ -62,10 +61,8 @@ class APIError(TerraScaleError):
         code: str,
         message: str = "",
         *,
-        op: int | None = None,
         details: list[dict[str, Any]] | None = None,
         retry_after: float | None = None,
-        etag: str | None = None,
         region: str | None = None,
         request_id: str | None = None,
         statement: int | None = None,
@@ -75,10 +72,8 @@ class APIError(TerraScaleError):
         self.status = status
         self.code = code
         self.message = message
-        self.op = op
         self.details = details or []
         self.retry_after = retry_after
-        self.etag = etag
         self.region = region
         self.request_id: str | None = request_id if is_valid_id(request_id) else None
         self.statement = statement
@@ -87,8 +82,6 @@ class APIError(TerraScaleError):
         text = f"{status} {code}"
         if message:
             text += f": {message}"
-        if op is not None:
-            text += f" (op {op})"
         super().__init__(text)
 
 
@@ -97,7 +90,7 @@ class InvalidResponseError(APIError):
 
 
 class InvalidRequestError(APIError):
-    """400: the request, query, patch or cursor is invalid."""
+    """400: the request or cursor is invalid."""
 
 
 class AuthenticationError(APIError):
@@ -117,20 +110,15 @@ class PermissionDeniedError(APIError):
 
 
 class NotFoundError(APIError):
-    """404: unknown document, collection, database or route. For a deleted
-    document ``etag`` holds the tombstone version, usable with ``if_match``."""
+    """404: unknown database or route."""
 
 
 class ConflictError(APIError):
-    """409: e.g. ``name_taken``, ``patch_conflict``, ``index_exists``."""
+    """409: e.g. ``name_taken``."""
 
 
 class UniqueViolationError(ConflictError):
     """409 ``unique_violation``: nothing was written."""
-
-
-class PreconditionFailedError(APIError):
-    """412: ``if_match`` / ``if_none_match_any`` did not hold."""
 
 
 class RateLimitError(APIError):
@@ -194,7 +182,6 @@ _BY_CODE: dict[str, type[APIError]] = {
     "unique_violation": UniqueViolationError,
     "commit_uncertain": CommitUncertainError,
     "write_outcome_unknown": CommitUncertainError,
-    "precondition_failed": PreconditionFailedError,
 }
 _BY_STATUS: dict[int, type[APIError]] = {
     400: InvalidRequestError,
@@ -202,7 +189,6 @@ _BY_STATUS: dict[int, type[APIError]] = {
     403: PermissionDeniedError,
     404: NotFoundError,
     409: ConflictError,
-    412: PreconditionFailedError,
     429: RateLimitError,
     503: ServiceUnavailableError,
 }
@@ -215,18 +201,9 @@ def error_for(status: int, body: Any, headers: Any = None, *, mutation: bool = F
         err = {}
     raw_code = err.get("code")
     code: str = raw_code if isinstance(raw_code, str) and raw_code else f"http_{status}"
-    op = err.get("op")
-    try:
-        op = int(op) if isinstance(op, (int, str)) and not isinstance(op, bool) else None
-    except (TypeError, ValueError, OverflowError):
-        op = None
     retry_after = None
-    etag = None
     if headers is not None:
         retry_after = parse_retry_after(headers.get("retry-after"))
-        raw_etag = headers.get("etag")
-        if raw_etag:
-            etag = raw_etag.removeprefix("W/").strip('"')
     statement = err.get("statement") if type(err.get("statement")) is int else None
     raw_state = err.get("sqlstate")
     sqlstate = raw_state if isinstance(raw_state, str) and raw_state else None
@@ -239,10 +216,8 @@ def error_for(status: int, body: Any, headers: Any = None, *, mutation: bool = F
         status,
         code,
         err.get("message") or "",
-        op=op,
         details=err.get("details") if isinstance(err.get("details"), list) else None,
         retry_after=retry_after,
-        etag=etag,
         region=err.get("region"),
         request_id=response_request_id(headers),
         statement=statement,

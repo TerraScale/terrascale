@@ -3,14 +3,13 @@
 Rename sends only `{"name":"production"}` to
 `PATCH /v1/projects/{project}/databases/{database}` with `databases:write`.
 The selector accepts an immutable ULID or the current name; prefer the ULID so
-handles survive renames. Success returns 200 with database metadata. Never combine
-name and placement changes in one request.
+handles survive renames. Success returns 200 with database metadata.
 
-The database keeps its ULID, data, placement, backups and keys. Update name-based
+The database keeps its ULID, data, home region, backups and keys. Update name-based
 connection strings and handles. After convergence, the old name has no alias: it
 returns 404 or resolves to a database that later claims it.
 
-Invalid names or mixed placement fields return 400 `invalid_request`; a known
+Invalid names return 400 `invalid_request`; a known
 same-region duplicate returns 409 `name_taken`; a platform database returns 409
 `platform_placement_locked`; an unknown database returns 404 `unknown_database`.
 Only the home region accepts rename; other regions return 421 `wrong_region`

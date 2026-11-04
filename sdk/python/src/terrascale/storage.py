@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from ._spec import Call, name
 from .errors import APIError
 from .ids import validate_id
-from .rules import CollectionRules, _policy_call, _policy_failure
+from .rules import BucketRules, _policy_call, _policy_failure
 
 if TYPE_CHECKING:
     from .aio import AsyncTerraScale
@@ -20,7 +20,7 @@ class FileBucket:
     id: str
     name: str
     region: str
-    rules: CollectionRules
+    rules: BucketRules
     raw: dict[str, Any] = field(repr=False)
 
     @classmethod
@@ -28,7 +28,7 @@ class FileBucket:
         if not isinstance(b["region"], str):
             raise ValueError("bucket region must be a string")
         return cls(validate_id(b["id"], "bucket"), name(b["name"], "bucket"), b["region"],
-                   CollectionRules.from_json(b["rules"]), b)
+                   BucketRules.from_json(b["rules"]), b)
 
 
 @dataclass(frozen=True)
@@ -53,15 +53,15 @@ class _Requests:
         return _policy_call("GET", self._path, lambda r: FileBucketPage.from_json(r.json()), 200,
                             params={} if after is None else {"after": validate_id(after, "bucket cursor")})
 
-    def _create(self, bucket_name: str, rules: CollectionRules | None) -> Call:
-        policy = CollectionRules() if rules is None else rules
-        if not isinstance(policy, CollectionRules):
+    def _create(self, bucket_name: str, rules: BucketRules | None) -> Call:
+        policy = BucketRules() if rules is None else rules
+        if not isinstance(policy, BucketRules):
             raise ValueError("bucket rules must be a complete policy")
         return _policy_call("POST", self._path, lambda r: FileBucket.from_json(r.json()), 201,
                             body={"name": name(bucket_name, "bucket"), "rules": policy.body()})
 
-    def _replace(self, bucket: str, rules: CollectionRules) -> Call:
-        if not isinstance(rules, CollectionRules):
+    def _replace(self, bucket: str, rules: BucketRules) -> Call:
+        if not isinstance(rules, BucketRules):
             raise ValueError("bucket rules must be a complete policy")
         return _policy_call("PUT", [*self._path, validate_id(bucket, "bucket"), "rules"],
                             lambda r: FileBucket.from_json(r.json()), 200, body={"rules": rules.body()})
@@ -86,10 +86,10 @@ class Storage(_Requests):
     def list_buckets(self, *, after: str | None = None) -> FileBucketPage:
         return self._send(self._list(after))
 
-    def create_bucket(self, name: str, rules: CollectionRules | None = None) -> FileBucket:
+    def create_bucket(self, name: str, rules: BucketRules | None = None) -> FileBucket:
         return self._send(self._create(name, rules))
 
-    def set_bucket_rules(self, bucket: str, rules: CollectionRules) -> FileBucket:
+    def set_bucket_rules(self, bucket: str, rules: BucketRules) -> FileBucket:
         return self._send(self._replace(bucket, rules))
 
     def delete_bucket(self, bucket: str) -> None:
@@ -112,10 +112,10 @@ class AsyncStorage(_Requests):
     async def list_buckets(self, *, after: str | None = None) -> FileBucketPage:
         return await self._send(self._list(after))
 
-    async def create_bucket(self, name: str, rules: CollectionRules | None = None) -> FileBucket:
+    async def create_bucket(self, name: str, rules: BucketRules | None = None) -> FileBucket:
         return await self._send(self._create(name, rules))
 
-    async def set_bucket_rules(self, bucket: str, rules: CollectionRules) -> FileBucket:
+    async def set_bucket_rules(self, bucket: str, rules: BucketRules) -> FileBucket:
         return await self._send(self._replace(bucket, rules))
 
     async def delete_bucket(self, bucket: str) -> None:

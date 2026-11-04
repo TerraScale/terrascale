@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -19,15 +19,8 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class FunctionTrigger:
-    collection: str
-    events: list[Literal["upsert", "delete"]] | None = None
-
-
-@dataclass(frozen=True)
 class FunctionDeployment:
     source: str
-    trigger: FunctionTrigger | None = None
     cron: str | None = None
 
 
@@ -35,17 +28,13 @@ class FunctionDeployment:
 class Function:
     name: str
     source: str | None
-    trigger: FunctionTrigger | None
     cron: str | None
     created_at: str
     updated_at: str
 
     @classmethod
     def from_json(cls, b: dict[str, Any]) -> Function:
-        trigger = b["trigger"]
-        parsed = FunctionTrigger(trigger["collection"], trigger["events"]) if trigger is not None else None
-        return cls(b["name"], b["source"], parsed,
-                   b["cron"], b["createdAt"], b["updatedAt"])
+        return cls(b["name"], b["source"], b["cron"], b["createdAt"], b["updatedAt"])
 
 
 @dataclass(frozen=True)
@@ -61,23 +50,6 @@ class FunctionLog:
     @classmethod
     def from_json(cls, b: dict[str, Any]) -> FunctionLog:
         return cls(b["id"], b["at"], b["trigger"], b["status"], int(b["durationMs"]), b["lines"], b["error"])
-
-
-@dataclass(frozen=True)
-class FunctionDelivery:
-    id: str
-    created_at: str
-    status: str
-    attempts: int
-    last_attempt_at: str | None
-    next_attempt_at: str | None
-    http_status: int | None
-    error_code: str | None
-
-    @classmethod
-    def from_json(cls, b: dict[str, Any]) -> FunctionDelivery:
-        return cls(b["id"], b["createdAt"], b["status"], int(b["attempts"]), b["lastAttemptAt"], b["nextAttemptAt"],
-                   int(b["httpStatus"]) if b["httpStatus"] is not None else None, b["errorCode"])
 
 
 class _FunctionCall(Call):
@@ -113,7 +85,7 @@ class _Requests:
                     return None
                 value = r.text if suffix == "invoke" and r.headers.get("content-type", "").startswith("text/") else (
                     r.json() if r.content else None)
-                if method == "GET" and (function is None or suffix in ("logs", "deliveries")):
+                if method == "GET" and (function is None or suffix == "logs"):
                     if not isinstance(value, list):
                         raise ValueError("expected an array")
                 return parse(value)
@@ -128,10 +100,6 @@ class _Requests:
     def _deploy(self, function: str, deployment: FunctionDeployment) -> Call:
         if not isinstance(deployment.source, str) or not deployment.source or len(deployment.source.encode()) > 256 * 1024:
             raise ValueError("function source must contain 1 to 256 KiB of JavaScript")
-        if deployment.trigger is not None:
-            name(deployment.trigger.collection, "collection")
-            if deployment.trigger.events is not None and any(e not in ("upsert", "delete") for e in deployment.trigger.events):
-                raise ValueError("trigger events must be upsert or delete")
         return self._call("PUT", function, Function.from_json, body=asdict(deployment))
 
     def _logs(self, function: str, limit: int | None) -> Call:
@@ -164,10 +132,6 @@ class DatabaseFunctions(_Requests):
     def list_function_logs(self, function: str, *, limit: int | None = None) -> list[FunctionLog]:
         return self._client._send(self._logs(function, limit))
 
-    def list_function_deliveries(self, function: str) -> list[FunctionDelivery]:
-        return self._client._send(self._call("GET", function, lambda b: [FunctionDelivery.from_json(x) for x in b],
-                                            suffix="deliveries"))
-
 
 class AsyncDatabaseFunctions(_Requests):
     def __init__(self, database: AsyncDatabase):
@@ -191,7 +155,3 @@ class AsyncDatabaseFunctions(_Requests):
 
     async def list_function_logs(self, function: str, *, limit: int | None = None) -> list[FunctionLog]:
         return await self._client._send(self._logs(function, limit))
-
-    async def list_function_deliveries(self, function: str) -> list[FunctionDelivery]:
-        return await self._client._send(self._call("GET", function, lambda b: [FunctionDelivery.from_json(x) for x in b],
-                                                  suffix="deliveries"))

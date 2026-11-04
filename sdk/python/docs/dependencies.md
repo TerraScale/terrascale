@@ -18,8 +18,8 @@ markers with the real interpreter, so a requirement conditional on Python 3.11+
 cannot be hidden by the resolver's Python 3.10 target. Missing, incompatible or
 unlocked backend dependencies fail before editable installation or building.
 Publication repeats both checks before building. The audit
-fails on findings at **every severity**, dependency collection failures and feed
-errors. Its HTTP cache honors feed freshness; uv's package cache is also reused.
+fails on findings at **every severity**, dependency resolution failures and
+advisory-source errors. Its HTTP cache honors advisory freshness; uv's package cache is also reused.
 There are no ignored advisories. Dependabot proposes pip and Action updates;
 those PRs must also regenerate the complete lock when necessary.
 

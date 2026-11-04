@@ -5,7 +5,7 @@ over HTTPS, with HTTP/1.1 fallback. The HTTP/2 dependencies are installed with
 the SDK. This also applies to standalone API-key token sources.
 
 Keep a client for the application's lifetime and close it with its context
-manager or `close()`. Database and collection handles share that client's pool;
+manager or `close()`. Database handles share that client's pool;
 API-key exchange uses the same HTTPX client. Each origin has its own pooled
 connections. Reconstructing a client per request prevents this reuse.
 

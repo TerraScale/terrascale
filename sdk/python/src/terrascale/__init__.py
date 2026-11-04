@@ -8,11 +8,10 @@
     print(db.query("SELECT * FROM notes"))
 """
 
-from . import query
 from ._version import __version__
-from .aio import AsyncCollection, AsyncDatabase, AsyncTerraScale, AsyncTransaction
+from .aio import AsyncDatabase, AsyncTerraScale
 from .auth import APIKeyTokenSource, AsyncAPIKeyTokenSource
-from .client import Collection, Database, TerraScale, Transaction
+from .client import Database, TerraScale
 from .errors import (
     APIError,
     AuthenticationError,
@@ -24,7 +23,6 @@ from .errors import (
     KeyRevokedError,
     NotFoundError,
     PermissionDeniedError,
-    PreconditionFailedError,
     RateLimitError,
     ServiceUnavailableError,
     SqlError,
@@ -34,28 +32,17 @@ from .errors import (
     UniqueViolationError,
 )
 from .ids import is_valid_id, new_id, validate_id
-from .models import Document, Group, Page, SQLResult, TransactionResult, WriteResult
 from .session import AsyncSqlSession, SqlSession
 from .sql import Column, Row, Statement, StatementResult
 
 __all__ = [
     "__version__",
-    "query",
     "TerraScale",
     "Database",
-    "Collection",
-    "Transaction",
     "AsyncTerraScale",
     "AsyncDatabase",
-    "AsyncCollection",
-    "AsyncTransaction",
     "APIKeyTokenSource",
     "AsyncAPIKeyTokenSource",
-    "Document",
-    "Page",
-    "Group",
-    "WriteResult",
-    "SQLResult",
     "SqlSession",
     "AsyncSqlSession",
     "Statement",
@@ -64,7 +51,6 @@ __all__ = [
     "Row",
     "SqlError",
     "SqlErrorCodes",
-    "TransactionResult",
     "new_id",
     "is_valid_id",
     "validate_id",
@@ -80,7 +66,6 @@ __all__ = [
     "NotFoundError",
     "ConflictError",
     "UniqueViolationError",
-    "PreconditionFailedError",
     "RateLimitError",
     "ServiceUnavailableError",
     "CommitUncertainError",

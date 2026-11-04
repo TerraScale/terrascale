@@ -2,11 +2,11 @@
 
 ```python
 from terrascale.storage import Storage
-from terrascale.rules import CollectionRules, OperationGrants
+from terrascale.rules import BucketRules, OperationGrants
 
 storage = Storage(client)
 bucket = storage.create_bucket("avatars")  # explicit denying policy
-policy = CollectionRules("/userId", OperationGrants(owner=True), OperationGrants(owner=True))
+policy = BucketRules("/userId", OperationGrants(owner=True), OperationGrants(owner=True))
 bucket = storage.set_bucket_rules(bucket.id, policy)
 page = storage.list_buckets()
 if page.next_cursor is not None:
@@ -15,7 +15,7 @@ storage.delete_bucket(bucket.id)
 ```
 
 Use `AsyncStorage(async_client)` and await each method for asyncio. The same
-`FileBucket`, `FileBucketPage`, `CollectionRules` and `OperationGrants` DTOs apply.
+`FileBucket`, `FileBucketPage`, `BucketRules` and `OperationGrants` DTOs apply.
 This source candidate covers four metadata routes. File transfer lifecycle,
 root wrappers, live qualification and publication remain separate work.
 

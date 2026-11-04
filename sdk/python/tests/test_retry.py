@@ -19,9 +19,8 @@ from terrascale import (
 
 TOKEN = {"access_token": "fixture-token", "token_type": "Bearer", "expires_in": 3600}
 DATABASE = {"id": PROJECT, "projectId": PROJECT, "name": "main", "region": "gru", "homeRegion": "gru",
-            "replicaRegions": ["fra"], "allRegions": False, "branchedFrom": None,
-            "createdAt": "2026-10-27T00:00:00Z"}
-ACK = {"id": PROJECT, "version": "v1", "offset": "1", "durability": "local"}
+            "branchedFrom": None, "createdAt": "2026-10-27T00:00:00Z"}
+RESULTS = {"results": [{"columns": [], "rows": [], "rows_affected": 1, "last_insert_rowid": None}]}
 
 
 @pytest.fixture(params=[False, True], ids=["sync", "async"])
@@ -79,9 +78,9 @@ async def test_reads_retry_documented_transient_answers(asynchronous: bool, stat
 
 @pytest.mark.parametrize("failure", [httpx.ReadError("reset"), httpx.WriteError("broken pipe"), httpx.ReadTimeout("slow")])
 async def test_writes_never_replay_after_sending(asynchronous: bool, failure: Exception) -> None:
-    steps: list[Step] = [failure, httpx.Response(201, json=ACK)]
+    steps: list[Step] = [failure, httpx.Response(200, json=RESULTS)]
     with pytest.raises(CommitUncertainError):
-        await _run(asynchronous, steps, lambda ts: ts.database("main").collection("c").create({"a": 1}))
+        await _run(asynchronous, steps, lambda ts: ts.database("main").execute("INSERT INTO t VALUES (1)"))
     assert len(steps) == 1
 
 

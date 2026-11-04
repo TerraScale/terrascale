@@ -1,20 +1,15 @@
-"""End-user permission grants shared by collection and bucket policies."""
+"""End-user permission grants of file-bucket policies."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import httpx
 
-from ._spec import Call, name
+from ._spec import Call
 from .errors import APIError, CommitUncertainError, response_request_id
-from .ids import validate_id
-
-if TYPE_CHECKING:
-    from .aio import AsyncCollection
-    from .client import Collection
 
 
 @dataclass(frozen=True)
@@ -40,7 +35,7 @@ class OperationGrants:
 
 
 @dataclass(frozen=True)
-class CollectionRules:
+class BucketRules:
     owner: str | None = None
     read: OperationGrants | None = field(default_factory=OperationGrants)
     write: OperationGrants | None = field(default_factory=OperationGrants)
@@ -53,7 +48,7 @@ class CollectionRules:
         return {"owner": self.owner, "read": self.read.body(), "write": self.write.body()}
 
     @classmethod
-    def from_json(cls, b: dict[str, Any]) -> CollectionRules:
+    def from_json(cls, b: dict[str, Any]) -> BucketRules:
         owner, read, write = b["owner"], b["read"], b["write"]
         if owner is not None and not isinstance(owner, str):
             raise ValueError("invalid owner pointer")
@@ -89,53 +84,3 @@ def _policy_failure(call: Call, error: APIError) -> APIError:
         return CommitUncertainError(error.status, error.code, "policy mutation may have committed; read before retrying",
                                     request_id=error.request_id)
     return error
-
-
-class _Requests:
-    def __init__(self, project: str, database: str, collection: str):
-        self._path = ["v1", "projects", validate_id(project, "project"), "databases", name(database, "database"),
-                      "collections", name(collection, "collection"), "rules"]
-
-    def _call(self, method: str, rules: CollectionRules | None = None) -> Call:
-        if method == "PUT" and not isinstance(rules, CollectionRules):
-            raise ValueError("a complete rules policy is required")
-        def parse(r: httpx.Response) -> CollectionRules | None:
-            policy = r.json()["rules"]
-            return CollectionRules.from_json(policy) if policy is not None else None
-        return _policy_call(method, self._path, parse, 200, body=rules.body() if rules is not None else None)
-
-
-class CollectionPermissions(_Requests):
-    def __init__(self, collection: Collection):
-        super().__init__(*collection._p)
-        self._client = collection._c
-
-    def _send(self, call: Call) -> CollectionRules | None:
-        try:
-            return self._client._send(call)
-        except APIError as error:
-            raise _policy_failure(call, error) from None
-
-    def get_rules(self) -> CollectionRules | None:
-        return self._send(self._call("GET"))
-
-    def put_rules(self, rules: CollectionRules) -> CollectionRules | None:
-        return self._send(self._call("PUT", rules))
-
-
-class AsyncCollectionPermissions(_Requests):
-    def __init__(self, collection: AsyncCollection):
-        super().__init__(*collection._p)
-        self._client = collection._c
-
-    async def _send(self, call: Call) -> CollectionRules | None:
-        try:
-            return await self._client._send(call)
-        except APIError as error:
-            raise _policy_failure(call, error) from None
-
-    async def get_rules(self) -> CollectionRules | None:
-        return await self._send(self._call("GET"))
-
-    async def put_rules(self, rules: CollectionRules) -> CollectionRules | None:
-        return await self._send(self._call("PUT", rules))

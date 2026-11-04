@@ -36,8 +36,8 @@ are mutations; reconcile an uncertain outcome before retrying.
 
 ## Release handoff
 
-The repository documents bumping `src/terrascale/_version.py`, tagging the same
-`v0.0.X` version and publishing a GitHub release. `.github/workflows/publish.yml`
+Releases bump `src/terrascale/_version.py`, tag the same
+`v0.0.X` version and publish a GitHub release. `.github/workflows/publish.yml`
 checks the tag matches the source version, builds with uv and uses PyPI trusted
 publishing through the GitHub `pypi` environment. It also exposes a manual
 dispatch, subject to the same tag check. CI tests Python 3.10–3.13 and checks

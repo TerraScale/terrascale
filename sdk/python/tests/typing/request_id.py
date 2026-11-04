@@ -7,5 +7,5 @@ def support_id(error: APIError | TokenError) -> str | None:
     return error.request_id
 
 
-def missing_document_id(error: NotFoundError) -> str | None:
+def missing_database_id(error: NotFoundError) -> str | None:
     return error.request_id

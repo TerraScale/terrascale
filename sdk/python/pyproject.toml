@@ -5,13 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "terrascale"
 dynamic = ["version"]
-description = "Python SDK for TerraScale TerraBase: documents, queries, vector search, TTL and SQL. Sync and async."
+description = "Python SDK for TerraScale TerraBase: SQL databases. Sync and async."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [{ name = "TerraScale", email = "admin@terrascale.tech" }]
-keywords = ["terrascale", "terrabase", "database", "dbaas", "document-database", "vector", "sql"]
+keywords = ["terrascale", "terrabase", "database", "dbaas", "sql"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Framework :: AsyncIO",

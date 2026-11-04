@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -11,11 +12,25 @@ import httpx
 from ._spec import Call, name
 from .errors import APIError, CommitUncertainError, InvalidResponseError, TerraScaleError, response_request_id
 from .ids import validate_id
-from .tooling import _integer, _text
 
 if TYPE_CHECKING:
     from .aio import AsyncDatabase, AsyncTerraScale
     from .client import Database, TerraScale
+
+
+def _integer(value: Any, bits: int = 64) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, str)) or not re.fullmatch(r"-?(?:0|[1-9][0-9]*)", str(value)):
+        raise ValueError("expected an exact integer")
+    result = int(value)
+    if not -(2 ** (bits - 1)) <= result < 2 ** (bits - 1):
+        raise ValueError("integer outside contract range")
+    return result
+
+
+def _text(value: Any) -> str:
+    if not isinstance(value, str):
+        raise ValueError("expected text")
+    return value
 
 
 def _optional_text(value: Any) -> str | None:
@@ -60,7 +75,7 @@ def _redacted(error: TerraScaleError) -> TerraScaleError:
         return TerraScaleError("configuration request failed; diagnostics redacted")
     safe_codes = {"invalid_response", "invalid_request", "invalid_key", "forbidden_scope", "forbidden_role", "not_found",
                   "rate_limited", "capacity", "storage_unavailable", "dependencies_unavailable", "commit_uncertain",
-                  "write_outcome_unknown", "invalid_query", "invalid_cursor", "webhook_limit", "name_taken", "conflict",
+                  "write_outcome_unknown", "invalid_cursor", "name_taken", "conflict",
                   "unknown_database", "unknown_route", "storage_busy", "unavailable", "misdirected_request", "wrong_region"}
     code = error.code if error.code in safe_codes else f"http_{error.status}"
     return type(error)(error.status, code, "configuration request failed; reconcile uncertain writes",
