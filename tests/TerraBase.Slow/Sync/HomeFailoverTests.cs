@@ -51,14 +51,18 @@ public sealed class HomeFailoverTests
         await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(gruLeases.Find(all.Id)?.Home == "gru" && gruLeases.Find(local.Id)?.Home == "gru"
             && sjcLeases.Find(all.Id) is not null && sjcLeases.Find(local.Id) is not null), TimeSpan.FromSeconds(30));
 
-        var acked = new ConcurrentDictionary<string, ConcurrentQueue<string>>();
+        var acked = new ConcurrentDictionary<string, ConcurrentQueue<string>>(StringComparer.Ordinal)
+        {
+            [all.Id] = new ConcurrentQueue<string>(),
+            [local.Id] = new ConcurrentQueue<string>(),
+        };
         var cut = 0;
         var ackedAfterCut = 0;
         using var stop = new CancellationTokenSource();
         var writers = new[] { (all, "all"), (local, "local") }.Select(pair => Task.Run(async () =>
         {
             var (database, durability) = pair;
-            var rows = acked.GetOrAdd(database.Id, _ => new ConcurrentQueue<string>());
+            var rows = acked[database.Id];
             while (!stop.IsCancellationRequested)
             {
                 var row = EntityIds.New().ToString();
@@ -78,7 +82,8 @@ public sealed class HomeFailoverTests
             }
         }, token)).ToArray();
 
-        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(acked.Values.All(rows => rows.Count >= 10)), TimeSpan.FromSeconds(30));
+        await TerraBaseTestServer.EventuallyAsync(async _ => acked.Values.All(rows => rows.Count >= 10)
+            && (await ReplicaCountAsync(viaSjc, all, token)) >= 10 && (await ReplicaCountAsync(viaSjc, local, token)) >= 10, TimeSpan.FromSeconds(30));
         gruNats.Cut();
         gruPeer.Cut();
         Volatile.Write(ref cut, 1);
@@ -116,6 +121,14 @@ public sealed class HomeFailoverTests
         using var table = await client.PostAsJsonAsync(database.Sql, new { statements = new[] { new { sql = "CREATE TABLE acked (id TEXT PRIMARY KEY)" } } }, token);
         await Assert.That(table.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await table.Content.ReadAsStringAsync(token));
         return database;
+    }
+
+    private static async Task<long> ReplicaCountAsync(HttpClient client, Database database, CancellationToken token)
+    {
+        using var read = await client.PostAsJsonAsync(database.Sql, new { statements = new[] { new { sql = "SELECT count(*) FROM acked" } } }, token);
+        return read.StatusCode == HttpStatusCode.OK
+            ? (await read.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("results")[0].GetProperty("rows")[0][0].GetInt64()
+            : -1;
     }
 
     private static async Task<HttpStatusCode> WriteAsync(HttpClient client, Database database, CancellationToken token)
