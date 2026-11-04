@@ -29,6 +29,7 @@ const text = `# TerraScale documentation
 - [SQL overview](https://docs.terrascale.tech/concepts/sql)
 - [Regions](https://docs.terrascale.tech/concepts/regions)
 - [Replication](https://docs.terrascale.tech/concepts/replication)
+- [Multi-region writes and conflicts](https://docs.terrascale.tech/guides/multi-region-writes-and-conflicts)
 - [Agent databases](https://docs.terrascale.tech/guides/agent-databases)
 - [Pricing](https://docs.terrascale.tech/pricing)
 - [SQL over HTTP](https://docs.terrascale.tech/guides/sql-http)

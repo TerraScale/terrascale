@@ -152,3 +152,24 @@ Failures before execution keep each SDK's generic HTTP error types (401, 404, 42
 
 Primary keys are ULIDs from the SDK's ULID generator (`TerraScaleIdGenerator`, `TerraScaleIds.Validate`). Tables that
 take local writes avoid `AUTOINCREMENT`.
+
+## Multi-region write conflicts
+
+Read the database's public, read-only `terrascale.conflicts` table with the existing `query` method. No additional SDK
+method or HTTP endpoint is needed. Home-apply contract: `docs/terrabase/home-apply.md`.
+
+```sql
+SELECT * FROM terrascale.conflicts
+WHERE table_name = ?
+  AND julianday(created_at) >= julianday(?)
+  AND julianday(created_at) < julianday(?)
+ORDER BY id DESC LIMIT 50;
+```
+
+Bind the exact table name, inclusive UTC start and exclusive UTC end as positional arguments. For older records,
+add `AND id < ?` with the last returned conflict ID; omit predicates for unfiltered recent records.
+`created_at` is recording time, not the write's HLC. `row_key` and `change` are JSON text. A `superseded` conflict
+belongs to a `confirmed` transaction whose losing columns did not apply; `reverted` means none of the transaction's
+changes applied. Provisional writes have no conflict record yet, so no records does not prove confirmation.
+The newest 10,000 records are retained per database, subject to replica freshness. Never reconstruct historical
+winning values by joining against the current application row.
