@@ -10,9 +10,7 @@ internal sealed partial class TursoStorageTransaction : IShapeSweepTransaction
 {
     private const string ShapeLineagePrefix = "~lineage:";
     private const int LineageBodyBytes = 256;
-    // Keys longer than this are not handles: listed truncated, past every key that shares the prefix, and never classified.
     private const int ShapeKeyChars = 64;
-    // Sweep reads are counted apart from the reads that serve and seal shapes.
     private const string Sweep = "shape_sweep";
     private static readonly SearchValues<char> ShapeHandleHex = SearchValues.Create("0123456789abcdef");
 
@@ -71,7 +69,6 @@ internal sealed partial class TursoStorageTransaction : IShapeSweepTransaction
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 string? next = null;
-                // Canonical keys, floor-only and lineage-only handles, other client-range keys, and snapshot keys.
                 foreach (var candidate in (ReadOnlySpan<string?>)[
                     NextShapeKey("_tb_shape_chunk", "", cursor, "~"), NextShapeKey("_tb_shape_chunk", ShapeFloorPrefix, cursor, "~floor;"),
                     NextShapeKey("_tb_shape_chunk", ShapeLineagePrefix, cursor, "~lineage;"),
@@ -84,7 +81,6 @@ internal sealed partial class TursoStorageTransaction : IShapeSweepTransaction
                     }
                 }
 
-                // SQLite orders keys by UTF-8 bytes, this loop by UTF-16 code units: stop rather than repeat a key.
                 if (next is null || string.CompareOrdinal(next, cursor) <= 0)
                 {
                     break;
@@ -97,7 +93,6 @@ internal sealed partial class TursoStorageTransaction : IShapeSweepTransaction
             return handles;
         }, cancellationToken);
 
-    // One indexed seek: the least key above prefix + after, without its prefix. No body is read.
     private string? NextShapeKey(string table, string prefix, string after, string? below)
     {
         var command = Command(below is null
@@ -127,11 +122,9 @@ internal sealed partial class TursoStorageTransaction : IShapeSweepTransaction
         await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
         return await RunAsync(() =>
         {
-            // Classified and deleted in this one writer transaction: a writer that publishes after it sees the same lineage.
             var state = ClassifyShapeHandle(handle);
             if (state == ShapeHandleState.Current)
             {
-                // Ordinary retention, as a request runs it: a batch that deleted rows, or stopped at the byte budget, continues.
                 var (rows, bytes, floor, more) = TrimShape(handle, before, maxRows, maxBytes, cancellationToken);
                 return new ShapeSweepStep(state, rows, bytes, floor, rows > 0 || more);
             }
@@ -154,7 +147,6 @@ internal sealed partial class TursoStorageTransaction : IShapeSweepTransaction
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
-    // Retired only when a valid record names a lineage that is no longer current. Absent, damaged or unknown is protected.
     private ShapeHandleState ClassifyShapeHandle(string handle)
     {
         if (handle.Length != 19 || !handle.StartsWith("h1-", StringComparison.Ordinal) || handle.AsSpan(3).ContainsAnyExcept(ShapeHandleHex))
@@ -182,9 +174,8 @@ internal sealed partial class TursoStorageTransaction : IShapeSweepTransaction
             body = TursoSession.Bytes(reader, 0);
         }
 
-        if (body.AsSpan().ContainsAnyExceptInRange((byte)' ', (byte)'~') || Encoding.ASCII.GetString(body).Split(' ') is not ["1", var incarnation, var replica, var generation, var table]
-            || !EntityIds.IsValid(incarnation) || !ulong.TryParse(replica, NumberStyles.None, CultureInfo.InvariantCulture, out var replicaId)
-            || replicaId.ToString(CultureInfo.InvariantCulture) != replica || !EntityIds.IsValid(generation) || !ShapeTables.IsValidName(table))
+        if (body.AsSpan().ContainsAnyExceptInRange((byte)' ', (byte)'~') || Encoding.ASCII.GetString(body).Split(' ') is not ["2", var incarnation, var generation, var table]
+            || !EntityIds.IsValid(incarnation) || !EntityIds.IsValid(generation) || !ShapeTables.IsValidName(table))
         {
             return ShapeHandleState.Malformed;
         }

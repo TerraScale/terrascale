@@ -1,5 +1,4 @@
 using System.Globalization;
-using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.Shapes;
@@ -46,9 +45,8 @@ public sealed class CdcRetentionTests
         await Assert.That(store.BackupAnchor).IsEqualTo(backup);
         host.S3.FailPut = _ => false;
         host.Time.Advance(TimeSpan.FromDays(8));
-        var retention = host.Api.Server.Services.GetRequiredService<IShapeRetention>();
-        _ = await retention.RunPassAsync(store, slow.Handle!, token);
-        _ = await retention.RunPassAsync(store, fast.Handle!, token);
+        await SweepAsync(store, slow.Handle!, host.Time.GetUtcNow(), token);
+        await SweepAsync(store, fast.Handle!, host.Time.GetUtcNow(), token);
         await Assert.That(await OldestAsync(store, token)).IsLessThanOrEqualTo(backup);
         var push = await ScalarAsync(store, "SELECT max(change_id) FROM turso_cdc WHERE change_type = 2;", token);
         await SetConsumerAsync(store, "replica:sjc", backup, token);
@@ -56,17 +54,17 @@ public sealed class CdcRetentionTests
         await host.ShipAsync(TimeSpan.FromSeconds(3), token);
         await Assert.That(await OldestAsync(store, token)).IsLessThanOrEqualTo(backup);
         await SetConsumerAsync(store, "replica:sjc", push, token);
-        _ = await retention.RunPassAsync(store, fast.Handle!, token);
+        await SweepAsync(store, fast.Handle!, host.Time.GetUtcNow(), token);
         await Assert.That(await OldestAsync(store, token)).IsGreaterThan(backup);
         await host.PutAsync("people", "two", "ahead-of-push", token);
         var replica = await ScalarAsync(store, "SELECT max(change_id) FROM turso_cdc WHERE change_type = 2;", token);
         await SetConsumerAsync(store, "replica:sjc", replica, token);
         await host.ShipAsync(TimeSpan.FromSeconds(3), token);
-        _ = await retention.RunPassAsync(store, slow.Handle!, token);
-        _ = await retention.RunPassAsync(store, fast.Handle!, token);
+        await SweepAsync(store, slow.Handle!, host.Time.GetUtcNow(), token);
+        await SweepAsync(store, fast.Handle!, host.Time.GetUtcNow(), token);
         await Assert.That(await OldestAsync(store, token)).IsLessThanOrEqualTo(push);
         await SetConsumerAsync(store, "region-to-home", null, token);
-        _ = await retention.RunPassAsync(store, fast.Handle!, token);
+        await SweepAsync(store, fast.Handle!, host.Time.GetUtcNow(), token);
         await Assert.That(await OldestAsync(store, token)).IsGreaterThan(push);
         await SetConsumerAsync(store, "replica:sjc", null, token);
         for (var round = 0; round < 3; round++)
@@ -76,12 +74,21 @@ public sealed class CdcRetentionTests
                 await host.PutAsync("people", "two", $"{round}-{write}", token);
             }
 
-            _ = await retention.RunPassAsync(store, slow.Handle!, token);
-            _ = await retention.RunPassAsync(store, fast.Handle!, token);
+            await SweepAsync(store, slow.Handle!, host.Time.GetUtcNow(), token);
+            await SweepAsync(store, fast.Handle!, host.Time.GetUtcNow(), token);
             await host.ShipAsync(TimeSpan.FromSeconds(3), token);
             var count = await ScalarAsync(store, "SELECT count(*) FROM turso_cdc;", token);
             await Assert.That(count).IsLessThan(100L);
         }
+    }
+
+    private static async Task SweepAsync(TursoDatabaseStore store, string handle, DateTimeOffset now, CancellationToken token)
+    {
+        await using var transaction = await store.BeginTransactionAsync(write: true, token);
+        var step = await ((IShapeSweepTransaction)transaction).SweepShapeHandleAsync(handle, (now - ShapeRetention.Age).ToUnixTimeMilliseconds(),
+            ShapeRetention.BatchRows, ShapeRetention.BatchBytes, token);
+        await Assert.That(step.State).IsEqualTo(ShapeHandleState.Current);
+        _ = await transaction.CommitAsync(token);
     }
 
     private static async Task SetConsumerAsync(TursoDatabaseStore store, string consumer, long? position, CancellationToken token)
