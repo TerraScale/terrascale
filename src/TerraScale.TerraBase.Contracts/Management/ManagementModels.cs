@@ -14,6 +14,7 @@ namespace TerraScale.TerraBase.Contracts.Management
     [MessagePackObject(true)]
     public sealed record TerraBaseDatabasePlacement(string? Name = null, string? HomeRegion = null, IReadOnlyList<string>? ReplicaRegions = null, bool? AllRegions = null, long? TtlSeconds = null);
 
+    /// <summary><c>PUT /v1/projects/{project}/databases/{database}/ttl</c> request.</summary>
     [MessagePackObject(true)]
     public sealed record TerraBaseDatabaseTtl(long TtlSeconds);
 
