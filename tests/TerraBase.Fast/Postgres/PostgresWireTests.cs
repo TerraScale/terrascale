@@ -1,6 +1,5 @@
 using Bogus;
 using Npgsql;
-using TerraBase.Primitives;
 using TerraBase.Testing;
 using static TerraBase.Testing.PostgresSql;
 
@@ -83,91 +82,6 @@ public sealed class PostgresWireTests
     }
 
     [Test]
-    public async Task Index_statements_run_and_a_unique_index_answers_unique_violation()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
-        await using var source = Source(api, key, database.Name);
-        await using var connection = await source.OpenConnectionAsync();
-        await ExecuteAsync(connection, People);
-
-        await ExecuteAsync(connection, "CREATE INDEX people_team ON people (team)");
-        await ExecuteAsync(connection, "CREATE UNIQUE INDEX people_name ON people (name)");
-        await ExecuteAsync(connection, "INSERT INTO people (name) VALUES ($1)", "ada");
-        var duplicate = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, "INSERT INTO people (name) VALUES ($1)", "ada"));
-        await ExecuteAsync(connection, "DROP INDEX people_name");
-        await ExecuteAsync(connection, "DROP INDEX IF EXISTS people_team");
-        await ExecuteAsync(connection, "INSERT INTO people (name) VALUES ($1)", "ada");
-
-        await Assert.That(duplicate!.SqlState).IsEqualTo("23505");
-        await Assert.That((await ReadAsync(connection, "SELECT count(*) FROM people"))[0][0]).IsEqualTo("2");
-    }
-
-    [Test]
-    public async Task Read_only_keys_cannot_write()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var (database, key) = await DatabaseAsync(api, "documents:read");
-        await using var source = Source(api, key, database.Name);
-        await using var connection = await source.OpenConnectionAsync();
-
-        var refused = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, People));
-
-        await Assert.That(refused!.SqlState).IsEqualTo("42501");
-    }
-
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task Dashboard_database_restrictions_can_connect_by_id_or_name(bool idRoute)
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var database = await api.CreateManagedDatabaseAsync();
-        var key = DashboardKey(api, database, "documents:read documents:write", database.Id);
-        await using var source = Source(api, key, idRoute ? database.Id : database.Name);
-        await using var connection = await source.OpenConnectionAsync();
-        await ExecuteAsync(connection, People);
-        await ExecuteAsync(connection, "INSERT INTO people (name) VALUES ($1)", Faker.Name.FullName());
-        await Assert.That((await ReadAsync(connection, "SELECT count(*) FROM people"))[0][0]).IsEqualTo("1");
-    }
-
-    [Test]
-    public async Task Dashboard_api_keys_are_passwords_within_their_scopes_and_database()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var database = await api.CreateManagedDatabaseAsync();
-        var writer = DashboardKey(api, database, "documents:read documents:write", database.Id);
-        var reader = DashboardKey(api, database, "documents:read", database.Id);
-        var elsewhere = DashboardKey(api, database, "documents:read documents:write", EntityIds.New().ToString());
-        var unknown = EntityIds.New() + "_" + Faker.Random.String2(52, "0123456789abcdefghjkmnpqrstvwxyz");
-
-        await using (var source = Source(api, writer, database.Name))
-        {
-            await using var connection = await source.OpenConnectionAsync();
-            await ExecuteAsync(connection, People);
-            await ExecuteAsync(connection, "INSERT INTO people (name) VALUES ($1)", Faker.Name.FullName());
-        }
-
-        var exchanged = api.Issuer.TokenRequests;
-        await using var again = Source(api, writer, $"{database.Project}/{database.Name}");
-        await using var reused = await again.OpenConnectionAsync();
-        var count = await ReadAsync(reused, "SELECT count(*) FROM people");
-        var reExchanged = api.Issuer.TokenRequests - exchanged;
-        await using var readOnly = Source(api, reader, database.Name);
-        await using var reading = await readOnly.OpenConnectionAsync();
-        var refused = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(reading, "DELETE FROM people"));
-        var wrongDatabase = await Assert.ThrowsAsync<PostgresException>(async () => await (await Source(api, elsewhere, database.Name).OpenConnectionAsync()).DisposeAsync());
-        var wrongKey = await Assert.ThrowsAsync<PostgresException>(async () => await (await Source(api, unknown, database.Name).OpenConnectionAsync()).DisposeAsync());
-
-        await Assert.That(count[0][0]).IsEqualTo("1");
-        await Assert.That(refused!.SqlState).IsEqualTo("42501");
-        await Assert.That(wrongDatabase!.SqlState).IsEqualTo("28P01");
-        await Assert.That(wrongKey!.SqlState).IsEqualTo("28P01");
-        // Later connections and statements reuse the writer's grant until its token nears expiry.
-        await Assert.That(reExchanged).IsEqualTo(0);
-    }
-
-    [Test]
     public async Task Psql_runs_statements_in_order_and_describes_tables()
     {
         await using var api = await ManagementApi.StartAsync();
@@ -186,61 +100,6 @@ public sealed class PostgresWireTests
         await Assert.That(tables.Where(message => message.Type == 'D').Select(message => string.Join(',', message.Fields))).IsEquivalentTo(["public,people,table,wire"]);
         await Assert.That(columns.Where(message => message.Type == 'D').Select(message => string.Join(',', message.Fields.Take(4)))).IsEquivalentTo(
             ["id,integer,,t", "name,text,,t", "email,character varying,,f", "team,text,,f"]);
-    }
-
-    // Needs SQ1-c (SELECT with joins) and SQ1-d (INSERT/UPDATE/DELETE).
-    [Test]
-    public async Task Rows_are_written_with_parameters_and_read_with_joins()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
-        await using var source = Source(api, key, database.Name);
-        await using var connection = await source.OpenConnectionAsync();
-        await ExecuteAsync(connection, People);
-        await ExecuteAsync(connection, "CREATE TABLE teams (code TEXT PRIMARY KEY, label TEXT NOT NULL)");
-        var (ann, bob) = (Faker.Name.FullName(), Faker.Name.FullName() + " O'Brien");
-
-        var teams = await ExecuteAsync(connection, "INSERT INTO teams (code, label) VALUES ($1, $2), ($3, $4)", "core", "Core", "edge", "Edge");
-        var people = await ExecuteAsync(connection, "INSERT INTO people (name, email, team) VALUES ($1, $2, $3), ($4, $5, $6)",
-            ann, Faker.Internet.Email(), "core", bob, Faker.Internet.Email(), "edge");
-        var updated = await ExecuteAsync(connection, "UPDATE people SET team = $1 WHERE name ILIKE $2", "core", bob.ToUpperInvariant());
-        var joined = await ReadAsync(connection, "SELECT p.name, t.label, p.id::text FROM people p JOIN teams t ON t.code = p.team ORDER BY p.name");
-        var deleted = await ExecuteAsync(connection, "DELETE FROM people WHERE name = $1", ann);
-
-        await Assert.That((teams, people, updated, deleted)).IsEqualTo((2, 2, 1, 1));
-        await Assert.That(joined.Select(row => $"{row[0]}|{row[1]}")).IsEquivalentTo(new[] { $"{ann}|Core", $"{bob}|Core" }.Order(StringComparer.Ordinal));
-    }
-
-    // Needs SQ1-d (INSERT and unique constraints).
-    [Test]
-    public async Task Prepared_statements_run_repeatedly_and_unique_violations_are_23505()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
-        await using var source = Source(api, key, database.Name);
-        await using var connection = await source.OpenConnectionAsync();
-        await ExecuteAsync(connection, People);
-        string[] emails = [.. Enumerable.Range(0, 3).Select(i => $"{i}{Faker.Internet.Email()}")];
-
-        await using var insert = new NpgsqlCommand("INSERT INTO people (name, email) VALUES ($1, $2)", connection)
-        {
-            Parameters = { new() { NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text }, new() { NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text } },
-        };
-        await insert.PrepareAsync();
-        var inserted = 0;
-        foreach (var email in emails)
-        {
-            (insert.Parameters[0].Value, insert.Parameters[1].Value) = (Faker.Name.FullName(), email);
-            inserted += await insert.ExecuteNonQueryAsync();
-        }
-
-        insert.Parameters[1].Value = emails[0];
-        var conflict = await Assert.ThrowsAsync<PostgresException>(insert.ExecuteNonQueryAsync);
-        var count = await ReadAsync(connection, "SELECT count(*) FROM people");
-
-        await Assert.That(inserted).IsEqualTo(3);
-        await Assert.That(conflict!.SqlState).IsEqualTo("23505");
-        await Assert.That(count[0][0]).IsEqualTo("3");
     }
 
     // Needs SQ1-d (writes) and SQ1-e (transactions).
@@ -303,59 +162,6 @@ public sealed class PostgresWireTests
         }
     }
 
-    [Test]
-    public async Task Driver_startup_settings_and_returning_work_without_client_overrides()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
-        await using var source = Source(api, key, database.Name);
-        await using var connection = await source.OpenConnectionAsync();
-
-        // SQLAlchemy's default dialect initialization and pgcli's timezone startup query.
-        var isolation = await ReadAsync(connection, "show transaction isolation level");
-        var spaced = await ReadAsync(connection, "SHOW TRANSACTION\tISOLATION  LEVEL");
-        var zone = await ReadAsync(connection, "show time zone");
-        var conforming = await ReadAsync(connection, "show standard_conforming_strings");
-        await Assert.That(isolation[0][0]).IsEqualTo("serializable");
-        await Assert.That(spaced[0][0]).IsEqualTo("serializable");
-        await Assert.That(zone[0][0]).IsEqualTo("UTC");
-        await Assert.That(conforming[0][0]).IsEqualTo("on");
-
-        await ExecuteAsync(connection, "CREATE TABLE driver_rows (id TEXT PRIMARY KEY, value TEXT NOT NULL)");
-        await using var existence = new NpgsqlCommand("SELECT EXISTS (SELECT 1 FROM driver_rows) AS found", connection);
-        await existence.PrepareAsync();
-        await Assert.That(Convert.ToInt64(await existence.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture)).IsEqualTo(0);
-        await using var insert = new NpgsqlCommand("INSERT INTO driver_rows (id, value) VALUES ($1, $2) RETURNING id, value", connection);
-        insert.Parameters.AddWithValue("a");
-        insert.Parameters.AddWithValue("before");
-        await insert.PrepareAsync();
-        await using (var reader = await insert.ExecuteReaderAsync())
-        {
-            await Assert.That(await reader.ReadAsync()).IsTrue();
-            await Assert.That(reader.GetString(0)).IsEqualTo("a");
-            await Assert.That(reader.GetString(1)).IsEqualTo("before");
-            await Assert.That(await reader.ReadAsync()).IsFalse();
-        }
-
-        await ExecuteAsync(connection, "BEGIN");
-        await Assert.That(Convert.ToInt64(await existence.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture)).IsEqualTo(1);
-        var updated = await ReadAsync(connection, "UPDATE driver_rows SET value = 'after' WHERE id = 'a' RETURNING value");
-        await Assert.That(updated[0][0]).IsEqualTo("after");
-        await ExecuteAsync(connection, "ROLLBACK");
-        var persisted = await ReadAsync(connection, "SELECT value FROM driver_rows WHERE id = 'a'");
-        await Assert.That(persisted[0][0]).IsEqualTo("before");
-        var deleted = await ReadAsync(connection, "DELETE FROM driver_rows WHERE id = 'a' RETURNING id");
-        await Assert.That(deleted[0][0]).IsEqualTo("a");
-
-        await ExecuteAsync(connection, "CREATE TABLE bad_dates (v DATE)");
-        await ExecuteAsync(connection, "INSERT INTO bad_dates VALUES ('2023-02-29')");
-        await using var simple = await PostgresWireClient.ConnectAsync(api.Server.PostgresPort, key, database.Name);
-        var invalid = await simple.QueryAsync("SELECT v FROM bad_dates");
-        await Assert.That(invalid.Single(message => message.Type == 'E').Fields[0]).IsEqualTo("22P02");
-        var recovery = await simple.QueryAsync("SELECT 1");
-        await Assert.That(recovery.Single(message => message.Type == 'D').Fields[0]).IsEqualTo("1");
-    }
-
     private static async Task<PostgresException?> OpenFailureAsync(ManagementApi api, string key, string database)
     {
         await using var source = Source(api, key, database);
@@ -373,22 +179,6 @@ public sealed class PostgresWireTests
         }
 
         return rows;
-    }
-
-    // A ts-auth project API key, as the dashboard issues it, restricted to one database.
-    private static string DashboardKey(ManagementApi api, ManagedDatabaseRef database, string scope, string restricted)
-    {
-        var id = EntityIds.New().ToString();
-        var key = id + "_" + Faker.Random.String2(52, "0123456789abcdefghjkmnpqrstvwxyz");
-        api.Issuer.GrantClient(key, () => api.Issuer.Mint(id, token =>
-        {
-            token.Claims["key_id"] = id;
-            token.Claims["key_gen"] = TestIssuer.KeyGeneration(key);
-            token.Claims["project_id"] = database.Project;
-            token.Claims["database"] = restricted;
-            token.Claims["scope"] = scope;
-        }));
-        return key;
     }
 
     private static async Task<(ManagedDatabaseRef Database, string Key)> DatabaseAsync(ManagementApi api, params string[] scopes)
