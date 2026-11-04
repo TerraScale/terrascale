@@ -86,11 +86,12 @@ for job in ("libs", "auth", "terrabase-build", "terrabase"):
     assert "event_name != 'push'" not in block, f"{job} must run on pushes to main"
 test_job = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  test:\n", 1)[1], maxsplit=1)[0]
 main_job = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  main:\n", 1)[1], maxsplit=1)[0]
-assert "    needs: [changes, native, terrabase, terrabase-package]\n" in main_job, "TerraBase releases must wait for their own Fast shards and production packaging"
-assert "!cancelled() && needs.terrabase.result == 'success'" in main_job
+assert "    needs: [changes, native, terrabase, terrabase-package, test]\n" in main_job, "TerraBase releases must wait for their own Fast shards and production packaging"
+assert "!cancelled() && needs.test.result == 'success' && needs.terrabase.result == 'success'" in main_job
 main_auth = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  main-auth:\n", 1)[1], maxsplit=1)[0]
-assert "    needs: [changes, native, auth, auth-package]\n" in main_auth, "Auth releases must wait for Auth Fast"
-assert "!cancelled() && needs.auth.result == 'success'" in main_auth
+assert "    needs: [changes, native, auth, auth-package, test, main]\n" in main_auth, "Auth releases must wait for Auth Fast"
+assert "!cancelled() && needs.test.result == 'success' && needs.auth.result == 'success'" in main_auth
+assert "(!contains(fromJSON(needs.changes.outputs.main), 'terrabase') || needs.main.result == 'success')" in main_auth, "When both services change, Auth must follow a successful TerraBase rollout"
 for release in (main_job, main_auth):
     assert "cancel-in-progress: false" in release, "A running release must finish"
     assert "image-payloads-" in workflow, "Release jobs reuse their area's checked build output"

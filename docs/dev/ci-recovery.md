@@ -58,3 +58,8 @@ The focused gate regression fixtures run during dev-host dashboard qualification
 
 Use the [controlled missed-push drill](ci-recovery-drill.md) to prove recovery
 without a push CI run and record the exact revision and deployment evidence.
+
+Core service publication waits for the aggregate `test` job. When both services
+are selected, TerraBase must finish its rollout before ts-auth starts, so a
+failed TerraBase check cannot deploy only a new scope issuer. Auth-only runs
+continue after `test` when TerraBase was intentionally not selected.

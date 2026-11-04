@@ -559,9 +559,9 @@ jobs:
           retention-days: 7
 
   main:
-    needs: [changes, native, terrabase, terrabase-package]
+    needs: [changes, native, terrabase, terrabase-package, test]
     if: >-
-      !cancelled() && needs.terrabase.result == 'success' && needs.terrabase-package.result == 'success'
+      !cancelled() && needs.test.result == 'success' && needs.terrabase.result == 'success' && needs.terrabase-package.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'terrabase')
     concurrency:
@@ -663,12 +663,15 @@ jobs:
           fi
           exit "$status"
 
+  # Shared scope and contract changes must reach TerraBase before their issuer.
+  # Auth-only runs may proceed when TerraBase was intentionally not selected.
   main-auth:
-    needs: [changes, native, auth, auth-package]
+    needs: [changes, native, auth, auth-package, test, main]
     if: >-
-      !cancelled() && needs.auth.result == 'success' && needs.auth-package.result == 'success'
+      !cancelled() && needs.test.result == 'success' && needs.auth.result == 'success' && needs.auth-package.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'auth')
+      && (!contains(fromJSON(needs.changes.outputs.main), 'terrabase') || needs.main.result == 'success')
     concurrency:
       group: production-auth
       cancel-in-progress: false
