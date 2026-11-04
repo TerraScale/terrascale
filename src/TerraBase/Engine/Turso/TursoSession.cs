@@ -43,8 +43,8 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
     /// <summary>The store's statistics generation when this connection opened (<see cref="TursoDatabaseStore.StatisticsChanged"/>).</summary>
     public int Statistics { get; set; }
 
-    /// <summary>Turns change capture on for this connection: every later commit lands in <c>turso_cdc</c>, after-images only.</summary>
-    internal const string CaptureOn = "PRAGMA capture_data_changes_conn('after');";
+    /// <summary>Turns change capture on for this connection: every later commit lands in <c>turso_cdc</c> with before and after images.</summary>
+    internal const string CaptureOn = "PRAGMA capture_data_changes_conn('full');";
 
     /// <summary>Turns change capture off for this connection.</summary>
     internal const string CaptureOff = "PRAGMA capture_data_changes_conn('off');";

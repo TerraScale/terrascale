@@ -40,6 +40,32 @@ public sealed class TableShapeTests
     }
 
     [Test]
+    public async Task Upserts_under_full_change_capture_commit_and_reach_the_shape_as_insert_then_update()
+    {
+        await using var db = await StartAsync();
+        await db.OkAsync(Items);
+        var client = Client(db);
+        await client.SyncAsync();
+
+        const string Upsert = "INSERT INTO items (id, name, note) VALUES (?, ?, ?) ON CONFLICT (id) DO UPDATE SET name = excluded.name, note = excluded.note";
+        await db.OkAsync(Stmt(Upsert, 4, "first", "inserted"));
+        await db.OkAsync(Stmt(Upsert, 4, "second", "updated"), Stmt(Upsert, 5, "other", null));
+        List<(string, string)> ops = [];
+        ShapeReply chunk;
+        do
+        {
+            chunk = await client.ReadAsync(client.NextOffset);
+            await Assert.That(chunk.Status).IsEqualTo(HttpStatusCode.OK);
+            ops.AddRange(chunk.Ops.Select(op => (op.GetProperty("op").GetString()!, op.GetProperty("key").GetString()!)));
+        }
+        while (chunk.UpToDate != "true");
+
+        await Assert.That(ops).IsEquivalentTo([("insert", "4"), ("update", "4"), ("insert", "5")], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+        await Assert.That(client.State["4"]["name"]!.GetValue<string>()).IsEqualTo("second");
+        await Assert.That(client.Equals(await TableShapeClient.TruthAsync(db, "items"))).IsTrue();
+    }
+
+    [Test]
     public async Task Schema_changes_answer_must_refetch_with_a_new_handle()
     {
         await using var db = await StartAsync();
