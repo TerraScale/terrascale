@@ -9,6 +9,7 @@ import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../env";
 import { logEvent } from "../log";
 import { ROUND_MS, roundOf, runRound, type RoundState } from "./round";
+import { discoverRegionalHosts } from "./regional-hosts";
 
 interface State extends Partial<RoundState> {
   /** The last round stored. */
@@ -31,6 +32,7 @@ export class Coordinator extends DurableObject<Env> {
     if (state.round !== undefined && state.round >= at) return;
     try {
       await bootstrap(this.env);
+      await discoverRegionalHosts(this.env.STATUS_DB);
       const result = await runRound(this.env, at, {
         streaks: state.streaks ?? {},
         colos: state.colos ?? {},

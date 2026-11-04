@@ -77,7 +77,7 @@ export function isConfigured(probe: TerraBaseProbe, value: unknown): boolean {
 
 /** A bare https origin: no credentials, path, query or fragment, which the
     appended API path would otherwise land behind. */
-function isOrigin(value: unknown): boolean {
+export function isOrigin(value: unknown): boolean {
   if (typeof value !== "string") return false;
   try {
     const url = new URL(value);
