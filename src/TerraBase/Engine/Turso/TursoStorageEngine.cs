@@ -76,6 +76,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
     internal StorageFaultLedger Ledger { get; }
 
+    internal DatabaseFences Fences { get; }
+
     internal void Checkpoint(string step, TenantContext database) => _checkpoint(step, database);
 
     internal TursoDatabaseStore? OpenStore(StorageFaultLedger.Key key) =>
@@ -310,6 +312,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         ArgumentNullException.ThrowIfNull(masterKey);
         Encryption = new DatabaseKeys(masterKey);
         _dataDirectory = dataDirectory;
+        Fences = new DatabaseFences(Path.Combine(dataDirectory, ".fences"));
         Disk = diskBudget ?? new DiskBudget(dataDirectory, meter);
         _schemaMemory = schemaMemory;
         _storageReads = meter.CreateCounter<long>("terrabase.storage.reads", description: "Instrumented record and shape SELECT executions, by path (point, query, shape, shape_body).");
@@ -1574,7 +1577,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         var store = new TursoDatabaseStore(key.Database, path, Pool, Io, _pragmas, tenant, Time,
             RecordCommittedWrite, _logger, _schemaMemory, _storageReads, Encryption)
         {
-
+            Fences = Fences,
             QueryBudget = QueryBudget,
             Checkpoint = _checkpoint,
             Ledger = Ledger,
