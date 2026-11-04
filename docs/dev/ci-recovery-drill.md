@@ -52,3 +52,19 @@ That recovery head had a successful push CI run too; it proves dispatch
 deployment, not the absent-push part of the controlled drill above. Dispatching
 CI alone did not create the dashboard archive. Keep these two proof phases
 separate when recording a missed-event recovery.
+
+## A failed drill stays ineligible
+
+The first controlled no-push head, `06e5cf7da7d36f56711288c1a334aeab6a2071cb`,
+passed dashboard qualification but its
+[complete dispatch CI](https://github.com/TerraScale/terrascale/actions/runs/41896303848)
+failed three TerraBase sync tests that still requested renamed API-key scopes.
+The [Images dispatch](https://github.com/TerraScale/terrascale/actions/runs/41896303392)
+did not release it. Fixing the tests in a later commit does not make this old
+head green: repeat the drill from a new main head that contains the fix. Never
+override the failed CI or reuse another revision's archive.
+
+Core releases now wait for aggregate CI. When both core services are selected,
+TerraBase rolls out first, followed by ts-auth; a failed consumer check prevents
+publication of a new issuer. The next controlled docs-only head exercises this
+ordering together with dispatch qualification and Images recovery.
