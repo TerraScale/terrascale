@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime;
+using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Platform;
 
@@ -10,6 +11,14 @@ public static class SuiteTimings
     private static long started;
     private static TimeSpan cpu;
     private static TimeSpan paused;
+
+    [Before(HookType.Assembly)]
+    public static async Task InitializeAsync()
+    {
+        var fixture = SharedDataSources.GetOrCreate<TerraBaseFixture>(SharedType.PerTestSession, typeof(SuiteTimings), null);
+        await fixture.InitializeAsync();
+        _ = await fixture.ManagementAsync();
+    }
 
     [Before(HookType.TestSession)]
     public static void Start()
