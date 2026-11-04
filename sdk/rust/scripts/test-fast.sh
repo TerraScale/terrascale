@@ -6,5 +6,5 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # Resolve real executables: a rustup proxy's path does not identify its selected compiler.
 toolchain_use
 # Artifacts from another toolchain must never enter this SDK's Fast build graph.
-export CARGO_TARGET_DIR="$PWD/target/1.98.1"
+export CARGO_TARGET_DIR="$PWD/target/1.99.1"
 cargo test --locked

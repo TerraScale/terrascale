@@ -1,6 +1,6 @@
-//! The Fast suite must pin the 1.98.1 toolchain with or without rustup on
+//! The Fast suite must pin the 1.99.1 toolchain with or without rustup on
 //! PATH: the resolver prefers rustup, then a managed toolchain directory, and
-//! only then a PATH compiler that identifies itself as 1.98.1.
+//! only then a PATH compiler that identifies itself as 1.99.1.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -57,7 +57,7 @@ impl Sandbox {
         let managed = self.root.join("managed").join("bin");
         let target = self
             .home()
-            .join(".rustup/toolchains/1.98.1-x86_64-unknown-linux-gnu/bin");
+            .join(".rustup/toolchains/1.99.1-x86_64-unknown-linux-gnu/bin");
         for tool in tools.split(' ') {
             let body = format!("#!/bin/sh\necho '{tool} {version} (fake 2026-01-01)'\n");
             self.write_executable(&format!("managed/bin/{tool}"), &body);
@@ -105,7 +105,7 @@ fn use_helper() -> String {
 }
 
 fn reject_branch() -> String {
-    "else echo REJECTED; [[ \"$(<{PROBE_DIR}/err)\" == *1.98.1* ]] && echo MESSAGE_NAMES_TOOLCHAIN; fi\n".to_string()
+    "else echo REJECTED; [[ \"$(<{PROBE_DIR}/err)\" == *1.99.1* ]] && echo MESSAGE_NAMES_TOOLCHAIN; fi\n".to_string()
 }
 
 fn fill_probe_dir(template: &str, sandbox: &Sandbox) -> String {
@@ -115,7 +115,7 @@ fn fill_probe_dir(template: &str, sandbox: &Sandbox) -> String {
 #[test]
 fn resolves_the_managed_toolchain_without_rustup_and_pins_every_binary() {
     let sandbox = Sandbox::new("managed");
-    let bin = sandbox.install_toolchain("rustc rustdoc cargo", "1.98.1");
+    let bin = sandbox.install_toolchain("rustc rustdoc cargo", "1.99.1");
     let body = format!(
         "{use_helper}\
          test \"$RUSTC\" = '{bin}/rustc' && test \"$CARGO\" = '{bin}/cargo' && test \"$RUSTDOC\" = '{bin}/rustdoc'\n\

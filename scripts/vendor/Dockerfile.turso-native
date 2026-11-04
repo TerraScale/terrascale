@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Maintenance only: the helper requires a real host of the target architecture.
-FROM rust:1.88.0-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0 AS build
+FROM rust:1.99.1-bookworm@sha256:c9155318d07341301a78b45ecdd81af2e43b8b297d64e8fd4c5e80d7735607c3 AS build
 ADD --checksum=sha256:7ea83d5e28577cf9d8655b77705902379e06b82fb29424f6ea328b5f26f17ecb https://codeload.github.com/tursodatabase/turso/tar.gz/5c168be5ef6a32ac966daf5983502a4f694b37ad /turso.tar.gz
 WORKDIR /turso
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
@@ -26,7 +26,7 @@ RUN echo 'eadb14ec88ac351c938908443bcb89da324411e4eb8f8d068b3cc755fc0808ae  /inp
     && echo '7769646f767bb2dd7a1fccec69e4d2808c63d85a250c2669d941d16ad07925a5  /inputs/0008-upsert-cdc-before-image.patch' | sha256sum --check \
     && git apply --check /inputs/0008-upsert-cdc-before-image.patch && git apply /inputs/0008-upsert-cdc-before-image.patch
 # The sync dependency selects encryption + FTS without the transitive pure-rust default.
-RUN cargo +1.88.0 tree --locked --package turso_sync_sdk_kit --features turso_sdk_kit/fts -e features -i aegis > /inputs/aegis-feature-tree.txt \
+RUN cargo +1.99.1 tree --locked --package turso_sync_sdk_kit --features turso_sdk_kit/fts -e features -i aegis > /inputs/aegis-feature-tree.txt \
     && ! grep -E 'feature "(pure-rust|pure-rust-crypto)"' /inputs/aegis-feature-tree.txt \
     && aegis=(/usr/local/cargo/registry/src/*/aegis-0.9.8) && test "${#aegis[@]}" = 1 \
     && echo "6d8f7dfa155082559521a4ee9fa7190e8ea5853201969ce7cbc2c6a503d4f37a  ${aegis[0]}/build.rs" | sha256sum --check \
@@ -35,7 +35,7 @@ RUN cargo +1.88.0 tree --locked --package turso_sync_sdk_kit --features turso_sd
     && cp "${aegis[0]}/build.rs" /inputs/aegis-build.rs \
     && cp /usr/local/cargo/registry/cache/*/aegis-0.9.8.crate /inputs/ \
     && echo '78412fa53e6da95324e8902c3641b3ff32ab45258582ea997eb9169c68ffa219  /inputs/aegis-0.9.8.crate' | sha256sum --check \
-    && cargo +1.88.0 build --locked --package turso_sync_sdk_kit --features turso_sdk_kit/fts --profile lib-release \
+    && cargo +1.99.1 build --locked --package turso_sync_sdk_kit --features turso_sdk_kit/fts --profile lib-release \
     && cp target/lib-release/libturso_sync_sdk_kit.so target/lib-release/libturso_sdk_kit.so
 ARG TARGETARCH
 COPY scripts/vendor/turso-native-smoke.c scripts/vendor/turso-native-contract-smoke.c scripts/vendor/turso-native-wal-smoke.c \
@@ -73,10 +73,10 @@ RUN case "$TARGETARCH" in amd64) rid=linux-x64; machine=3e00 ;; arm64) rid=linux
     && cp /inputs/* LICENSE.md NOTICE.md Cargo.lock /out/release/ \
     && cp /turso.tar.gz /out/release/turso-5c168be5ef6a32ac966daf5983502a4f694b37ad.tar.gz \
     && { printf 'source_commit=5c168be5ef6a32ac966daf5983502a4f694b37ad\nversion=0.8.2\nrid=%s\nhost=%s\n' "$rid" "$(uname -m)"; \
-         printf 'rust_image=rust:1.88.0-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0\n'; \
-         printf 'command=cargo +1.88.0 build --locked --package turso_sync_sdk_kit --features turso_sdk_kit/fts --profile lib-release\n'; \
+         printf 'rust_image=rust:1.99.1-bookworm@sha256:c9155318d07341301a78b45ecdd81af2e43b8b297d64e8fd4c5e80d7735607c3\n'; \
+         printf 'command=cargo +1.99.1 build --locked --package turso_sync_sdk_kit --features turso_sdk_kit/fts --profile lib-release\n'; \
          printf 'sdk_dependency_defaults=disabled;features=encryption,fts\naegis_backend=runtime-dispatched-c\nSOURCE_DATE_EPOCH=%s\nRUSTFLAGS=%s\n' "$SOURCE_DATE_EPOCH" "$RUSTFLAGS"; \
-         rustc +1.88.0 --version --verbose; \
+         rustc +1.99.1 --version --verbose; \
          cd /out/release; sha256sum Cargo.lock *.patch Dockerfile.turso-native *.sh aegis-build.rs "$rid-aegis-feature-tree.txt" *.c *.crate *.tar.gz; \
          cd /out; sha256sum "runtimes/$rid/native/libturso_sdk_kit.so"; \
        } > "/out/release/$rid-build-receipt.txt" \
