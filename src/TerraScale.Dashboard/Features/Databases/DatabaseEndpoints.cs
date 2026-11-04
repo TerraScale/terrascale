@@ -53,7 +53,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 }
                 catch (Exception error) when (KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException) { return Failure(error); }
             });
-            foreach (var tab in new[] { "overview", "replication", "backups", "branches", "import", "danger" })
+            foreach (var tab in new[] { "overview", "tables", "replication", "backups", "branches", "import", "danger" })
             {
                 var section = tab;
                 endpoints.MapGet(tab == "overview" ? "/databases/{databaseId}" : "/databases/{databaseId}/" + tab,
@@ -267,64 +267,57 @@ namespace TerraScale.Dashboard.Features.Databases
                 (KnownFailure(failure) || failure is HttpRequestException or IOException or InvalidDataException or System.Text.Json.JsonException or OperationCanceledException))
             { return DatabaseResults.PageFailure(http, context, failure); }
             IReadOnlyList<DatabaseRegion> choices = [];
-            IReadOnlyList<CollectionStats> contents = [];
-            var contentsAvailable = false;
             var range = HomePage.NormalizeRange(http.Request.Query["range"]);
+            var selectedTable = tab == "tables" ? http.Request.Query["table"].ToString() : "";
             // Each tab's reads are independent of one another, so they all start before any is awaited.
-            var measurementsRead = tab == "replication"
-                ? http.RequestServices.GetRequiredService<IUsageReplication>().ReadAsync(new(context, range, database.Id, true), http.RequestAborted) : null;
-            var activityRead = tab is "overview" or "replication"
+            var activityRead = tab == "overview"
                 ? DatabaseActivity.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, database.Id,
-                    key => tab == "overview" && http.Request.Query[key].ToString() is { Length: > 0 } selected ? HomePage.NormalizeRange(selected) : range, http.RequestAborted) : null;
+                    key => http.Request.Query[key].ToString() is { Length: > 0 } selected ? HomePage.NormalizeRange(selected) : range, http.RequestAborted) : null;
+            // Storage is the metered SQL storage gauge from the latest analytics bucket.
+            var storageRead = tab == "overview" ? DatabaseListMetrics.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, "24h", http.RequestAborted) : null;
             var backupsRead = tab is "backups" or "overview" ? BackupEndpoints.PageAsync(http, context, database, error, tab == "backups") : null;
-            var choicesRead = tab == "replication" ? backend.RegionsAsync(http.RequestAborted) : null;
-            async Task<IReadOnlyList<CollectionStats>> ContentsAsync()
+            async Task<(DatabaseTables Tables, string Table, DatabaseSqlResult? Preview)> TablesAsync()
             {
-                return await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, http.RequestAborted), id, http.RequestAborted);
+                var scope = DatabaseService.Scope(context);
+                var home = await databases.HomeAsync(context, database, http.RequestAborted);
+                var tables = await DatabaseTables.LoadAsync(backend, scope, home, database.Id, http.RequestAborted);
+                var shown = tables.Tables.FirstOrDefault(table => table.Name == selectedTable) ?? (selectedTable.Length == 0 ? tables.Tables.FirstOrDefault() : null);
+                return tab != "tables" || shown is null ? (tables, "", null) : (tables, shown.Name, await DatabaseTables.PreviewAsync(backend, scope, home, database.Id, shown.Name, http.RequestAborted));
             }
 
-            var contentsRead = tab == "overview" ? ContentsAsync() : null;
-            if (choicesRead is not null)
+            var tablesRead = tab is "overview" or "tables" ? TablesAsync() : null;
+            // An all-regions database serves every catalog region; without the catalog it shows its recorded regions.
+            if (tab == "overview" && database.AllRegions)
             {
-                try
-                {
-                    choices = await choicesRead;
-                    // The database's own regions stay listed even when the catalog does not name them.
-                    var listed = choices;
-                    choices = [.. listed, .. DatabaseService.Regions(database).Select(code => DatabaseRegion.Resolve(listed, code)).OfType<DatabaseRegion>().Where(region => !listed.Contains(region)).Distinct()];
-                }
+                try { choices = await backend.RegionsAsync(http.RequestAborted); }
                 catch (HttpRequestException) { }
             }
-            if (contentsRead is not null)
-            {
-                // An all-regions database serves every catalog region; without the catalog it shows its recorded regions.
-                if (database.AllRegions)
-                {
-                    try { choices = await backend.RegionsAsync(http.RequestAborted); }
-                    catch (HttpRequestException) { }
-                }
 
-                try
-                {
-                    contents = await contentsRead;
-                    DatabaseService.ValidateContents(contents);
-                    contentsAvailable = true;
-                }
-                catch (Exception failure) when (failure is HttpRequestException or System.Text.Json.JsonException or OverflowException || KnownFailure(failure))
+            DatabaseTables? tables = null;
+            DatabaseSqlResult? preview = null;
+            var shownTable = "";
+            if (tablesRead is not null)
+            {
+                try { (tables, shownTable, preview) = await tablesRead; }
+                catch (Exception failure) when (failure is HttpRequestException or System.Text.Json.JsonException or OverflowException or InvalidOperationException || KnownFailure(failure))
                 {
                     if (error.Length == 0)
                     {
-                        error = "Database counts are unavailable. The data plane did not answer.";
+                        error = "Tables are unavailable. The data plane did not answer.";
                     }
                 }
             }
-            UsageReplication? measurements = measurementsRead is null ? null : await measurementsRead;
             var activity = activityRead is null ? null : await activityRead;
-            // The backups section shows the same page error, which the counts read above may have just set.
+            var storage = storageRead is null ? null : (await storageRead).Databases.GetValueOrDefault(database.Id)?.StorageBytes;
+            // The backups section shows the same page error, which the tables read above may have just set.
             var backups = backupsRead is null ? null : (await backupsRead) with { Error = error };
-            var result = DatabaseDetailView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, contents, error, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, contentsAvailable, measurements, range, activity)
+            var result = DatabaseDetailView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, error, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, range, activity)
             {
-                BranchName = branchName
+                BranchName = branchName,
+                Tables = tables,
+                Table = shownTable,
+                Preview = preview,
+                StorageBytes = storage
             });
             result.StatusCode = status;
             return result;
