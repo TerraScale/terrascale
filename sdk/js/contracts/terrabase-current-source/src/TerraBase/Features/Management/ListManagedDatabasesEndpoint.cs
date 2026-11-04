@@ -1,20 +1,28 @@
+using System.Collections.Frozen;
+using System.Diagnostics;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Regions;
+using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
 /// <summary><c>GET …/projects/{project}/databases</c>: lists the databases of a project.</summary>
-public sealed class ListManagedDatabasesEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
+internal sealed class ListManagedDatabasesEndpoint(
+    IManagementService management, IProjectCatalog catalog, IRegionPeers regions, RemoteDatabases remote) : EndpointWithoutRequest<IResult>
 {
+    internal const string ListOperationName = "listDatabases";
+
     /// <inheritdoc />
     public override void Configure()
     {
         Get(ProjectApiRoute.Databases);
-        Name("listDatabases");
+        Name(ListOperationName);
         Summary("Lists the databases of a project");
-        Description(ManagementRoute.PageDescription + " " + ProjectApiRoute.IdentityDescription);
+        Description(ManagementRoute.PageDescription + " " + ProjectApiRoute.IdentityDescription
+            + " Every serving region's page is merged, so a database appears whichever region homes it; items are in id order.");
         Tags("Databases");
         Produces<ManagementPage<ManagedDatabaseBody>>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
@@ -29,11 +37,109 @@ public sealed class ListManagedDatabasesEndpoint(IManagementService management) 
         ManagementRoute.CheckPage(HttpContext) switch
         {
             Validation error => ErrorResponse.From(error),
-            PageQuery page => await management.ListDatabasesAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), page.After, page.Limit, cancellationToken) switch
-            {
-                ManagementPage<ManagedDatabase> value => TypedResults.Ok(new ManagementPage<ManagedDatabaseBody>([.. value.Items.Select(database => ManagedDatabaseBody.From(database, Listeners.RegionOf(HttpContext)))], value.Next)),
-                NotFound error => ErrorResponse.From(error),
-                Unavailable error => ErrorResponse.From(error),
-            },
+            PageQuery page => await ListAsync(page, cancellationToken).ConfigureAwait(false),
+            _ => throw new UnreachableException(),
         };
+
+    private async ValueTask<IResult> ListAsync(PageQuery page, CancellationToken cancellationToken)
+    {
+        var project = ManagementRoute.Value(HttpContext, "project");
+        if (HttpContext.Request.RouteValues.TryGetValue("organization", out var bound) && bound is string known)
+        {
+            return await ListAsync(ManagementRoute.UserId(HttpContext), known, project, null, null, page, cancellationToken).ConfigureAwait(false);
+        }
+
+        var actor = ManagementRoute.UserId(HttpContext);
+        var resolved = await catalog.ResolveProjectAsync(project, actor, createIn: null, cancellationToken).ConfigureAwait(false);
+        if (resolved is not string owner)
+        {
+            return ErrorResponse.From(resolved switch
+            {
+                Unavailable unavailable => unavailable,
+                NotFound => Unknown(),
+                string => throw new UnreachableException(),
+            });
+        }
+
+        var restricted = HttpContext.User.FindFirst("database")?.Value;
+        string? restrictedId = null;
+        if (restricted is not null)
+        {
+            switch (await management.FindDatabaseRecordAsync(owner, project, restricted, cancellationToken).ConfigureAwait(false))
+            {
+                case ManagedDatabase record:
+                    restrictedId = record.Id;
+                    break;
+                case Unavailable unavailable:
+                    return ErrorResponse.From(unavailable);
+                case NotFound:
+                    break;
+                default:
+                    throw new InvalidOperationException();
+            }
+        }
+
+        HttpContext.Request.RouteValues["organization"] = owner;
+        IResult result = null!;
+        var grant = new ProjectAccess(actor, project, owner, restricted, restrictedId)
+        {
+            IsEndUser = HttpContext.User.HasClaim("token_kind", "end_user"),
+            Roles = HttpContext.User.FindAll("roles").Select(claim => claim.Value).ToFrozenSet(StringComparer.Ordinal),
+        };
+        await ProjectAccess.RunAsync(grant, async () => result = await ListAsync(grant.Actor, owner, project, restricted, grant, page, cancellationToken).ConfigureAwait(false))
+            .ConfigureAwait(false);
+        return result;
+    }
+
+    private async ValueTask<IResult> ListAsync(
+        string actor, string organization, string project, string? restricted, ProjectAccess? grant, PageQuery page, CancellationToken cancellationToken) =>
+        await management.ListDatabasesAsync(actor, organization, project, page.After, page.Limit, cancellationToken).ConfigureAwait(false) switch
+        {
+            ManagementPage<ManagedDatabase> local => TypedResults.Ok(await MergedAsync(local, restricted is not null, page, project, cancellationToken).ConfigureAwait(false)),
+            NotFound error => grant is null ? ErrorResponse.From(error) : ErrorResponse.From(Unknown()),
+            Unavailable unavailable => ErrorResponse.From(unavailable),
+            _ => throw new InvalidOperationException(),
+        };
+
+    /// <summary>
+    /// The local page, or when the token is not narrowed to one database, the cluster's: this region's items and each peer
+    /// region's, deduplicated by id in id order. A narrowed token keeps its single-database local page.
+    /// </summary>
+    private async ValueTask<ManagementPage<ManagedDatabaseBody>> MergedAsync(
+        ManagementPage<ManagedDatabase> local, bool restricted, PageQuery page, string project, CancellationToken cancellationToken)
+    {
+        var region = Listeners.RegionOf(HttpContext);
+        if (restricted)
+        {
+            return new([.. local.Items.Select(database => ManagedDatabaseBody.From(database, region))], local.Next);
+        }
+
+        var items = local.Items.Select(database => ManagedDatabaseBody.From(database, region)).ToList();
+        var more = local.Next is not null;
+        var peers = (await regions.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).Select(peer => peer.Address).ToList();
+        if (peers.Count > 0)
+        {
+            var pages = await Task.WhenAll(peers.Select(peer => remote.PageAsync(peer, project, page.After, page.Limit, cancellationToken)))
+                .ConfigureAwait(false);
+            foreach (var fetched in pages)
+            {
+                if (fetched is not null)
+                {
+                    items.AddRange(fetched.Items.Where(database => database.ProjectId == project));
+                    more |= fetched.Next is not null;
+                }
+            }
+        }
+
+        var ordered = items.DistinctBy(database => database.Id)
+            .OrderBy(database => database.Id, StringComparer.Ordinal)
+            .SkipWhile(database => page.After is not null && string.CompareOrdinal(database.Id, page.After) <= 0)
+            .Take(page.Limit + 1)
+            .ToList();
+        var truncated = ordered.Count > page.Limit;
+        var shown = truncated ? [.. ordered.Take(page.Limit)] : ordered;
+        return new(shown, shown.Count > 0 && (truncated || more) ? shown[^1].Id : null);
+    }
+
+    private static NotFound Unknown() => new("the database does not exist", "unknown_database");
 }

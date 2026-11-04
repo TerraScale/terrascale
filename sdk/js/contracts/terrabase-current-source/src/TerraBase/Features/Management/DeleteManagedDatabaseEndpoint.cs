@@ -1,23 +1,22 @@
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
 /// <summary><c>DELETE …/databases/{database}</c>: deletes a database and its data.</summary>
-public sealed class DeleteManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
+internal sealed class DeleteManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Delete(ProjectApiRoute.Database);
         Metadata(AnchoredRevocation.Instance);
         Name("deleteDatabase");
         Summary("Deletes a database and its data");
-        Description("Branches of the database are independent copies and are not deleted. A database is deleted in its home region (421 wrong_region elsewhere) once it has no replica regions (409 database_replicated): remove them with PATCH first." + " " + ProjectApiRoute.IdentityDescription);
+        Description("Branches of the database are independent copies and are not deleted. Delete in its home region (421 wrong_region elsewhere). Permanent purge authority removes every replica, including allRegions placement, without a preceding PATCH. 204 records logical deletion and local cleanup; remote erasure is retried durably." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
@@ -28,10 +27,13 @@ public sealed class DeleteManagedDatabaseEndpoint(IManagementService management,
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware(), new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }
 
-    /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        DeleteAsync(HttpContext, management, options, cancellationToken);
+
+    internal static async ValueTask<IResult> DeleteAsync(
+        HttpContext context, IManagementService management, TerraBaseOptions options, CancellationToken cancellationToken)
     {
-        var placement = await DatabaseRegions.ElsewhereAsync(HttpContext, management, options.Region);
+        var placement = await DatabaseRegions.ElsewhereAsync(context, management, options.Region);
         if (placement is not Done)
         {
             return placement switch
@@ -43,7 +45,7 @@ public sealed class DeleteManagedDatabaseEndpoint(IManagementService management,
             };
         }
 
-        return await management.DeleteDatabaseAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.Value(HttpContext, "database"), cancellationToken) switch
+        return await management.DeleteDatabaseAsync(ManagementRoute.UserId(context), ManagementRoute.OrganizationId(context), ManagementRoute.Value(context, "project"), ManagementRoute.Value(context, "database"), cancellationToken) switch
         {
             Done => TypedResults.NoContent(),
             NotFound error => ManagementRoute.DatabaseNotFound(error),

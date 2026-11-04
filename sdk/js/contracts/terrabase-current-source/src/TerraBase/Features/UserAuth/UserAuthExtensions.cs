@@ -1,45 +1,42 @@
+using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
+using TerraScale.Endpoints;
 
 namespace TerraBase.Features.UserAuth;
 
-/// <summary>Registers ts-auth user authentication and reads the authenticated user.</summary>
-public static class UserAuthExtensions
+internal static class UserAuthExtensions
 {
-    /// <summary>Authorization policy of endpoints that act as a ts-auth user.</summary>
     public const string PolicyName = "user";
 
-    /// <summary>The scheme that validates ts-auth access tokens.</summary>
     public const string TokenScheme = "TsAuth";
 
-    /// <summary>The platform operator's scheme: the internal listener, acting as a named user.</summary>
     public const string OperatorScheme = "Operator";
 
-    /// <summary>
-    /// Registers <see cref="IIssuerKeys"/> with its background fetch, the <c>TsAuth</c> scheme (client listener), the
-    /// <c>Operator</c> scheme (internal listener) and the <see cref="PolicyName"/> policy that accepts
-    /// either. Without <c>auth-issuer</c> the token scheme authenticates no one.
-    /// </summary>
     public static IServiceCollection AddTerraBaseUserAuth(this IServiceCollection services)
     {
-        // No request logging: it would write auth-issuer's URL, and settings are never logged by value.
         services.AddHttpClient(TsAuthKeys.HttpClientName, client =>
         {
             client.Timeout = TsAuthKeys.FetchTimeout;
             client.MaxResponseContentBufferSize = TsAuthKeys.MaxDocumentBytes;
         })
-            // Discovery and JWKS are fetched where auth-issuer and jwks_uri say, never where a redirect points.
             .ConfigurePrimaryHttpMessageHandler((handler, _) => ((SocketsHttpHandler)handler).AllowAutoRedirect = false)
+            .AddHttpMessageHandler(provider => RequestIdentity.CreatePropagationHandler(
+                provider.GetRequiredService<InternalCredential>().CorrelationKey,
+                new Uri(provider.GetRequiredService<TerraBaseOptions>().AuthIssuer ?? "about:blank")))
             .RemoveAllLoggers();
         services.AddSingleton<TsAuthKeys>();
         services.AddSingleton<ValidatedTokens>();
         services.AddSingleton<IIssuerKeys>(provider => provider.GetRequiredService<TsAuthKeys>());
         services.AddSingleton<IProjectAuthorityVerifier, TsAuthProjectAuthorityVerifier>();
+        services.AddSingleton<TsAuthKeyExchange>();
+        services.AddSingleton<IKeyAuthority, TsAuthKeyAuthority>();
         services.AddHostedService(provider => provider.GetRequiredService<TsAuthKeys>());
         services.AddAuthentication()
             .AddScheme<AuthenticationSchemeOptions, UserAuthenticationHandler>(UserAuthenticationHandler.SchemeName, configureOptions: null)
@@ -50,39 +47,182 @@ public static class UserAuthExtensions
         return services;
     }
 
-    /// <summary>
-    /// The ts-auth user id of a request authorized by <see cref="PolicyName"/>: the token's <c>sub</c>, or the user the
-    /// platform operator names.
-    /// </summary>
     public static string UserId(this ClaimsPrincipal user) =>
         (Identity(user, UserAuthenticationHandler.SchemeName) ?? Identity(user, OperatorHandler.SchemeName))
             ?.FindFirst(ClaimTypes.NameIdentifier)?.Value
         ?? throw new InvalidOperationException("the request has no authenticated ts-auth user");
 
-    /// <summary>
-    /// Whether the request came from the platform operator (internal listener), which
-    /// the dashboard document space of Management commits needs: a ts-auth user token never reaches it.
-    /// </summary>
-    public static bool IsOperator(this ClaimsPrincipal user) => Identity(user, OperatorHandler.SchemeName) is not null;
+    internal static bool IsOperator(this ClaimsPrincipal user) => Identity(user, OperatorHandler.SchemeName) is not null;
 
-    /// <summary>The user's email when its ts-auth token marks it verified; otherwise <see langword="null"/>.</summary>
-    public static string? VerifiedEmail(this ClaimsPrincipal user) =>
-        Identity(user, UserAuthenticationHandler.SchemeName)?.FindFirst(ClaimTypes.Email)?.Value;
-
-    // Only an identity these schemes authenticated, never one another scheme (an API key) added to the principal.
     private static ClaimsIdentity? Identity(ClaimsPrincipal user, string scheme) =>
         user?.Identities.FirstOrDefault(identity => identity.IsAuthenticated && identity.AuthenticationType == scheme);
 
-    /// <summary>Checks signed project/database claims before scope authorization so cross-project calls answer 404.</summary>
+    internal sealed record SocketRefusal(string Code, string Message);
+
+    internal static async ValueTask<SocketRefusal?> AdmitSocketAsync(HttpContext context, CancellationTokenSource revoked, Action<IDisposable> keep)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(revoked);
+        ArgumentNullException.ThrowIfNull(keep);
+        if (Identity(context.User, UserAuthenticationHandler.SchemeName) is not { } jwt)
+        {
+            return null;
+        }
+
+        if (jwt.HasClaim("token_kind", "end_user"))
+        {
+            return new SocketRefusal("forbidden", "end-user tokens cannot run SQL");
+        }
+
+        if (jwt.FindFirst("project_id")?.Value is not { } project)
+        {
+            return new SocketRefusal("invalid_key", "this token does not authorize project routes; use an API key or its project token");
+        }
+
+        if (context.Request.RouteValues["project"] as string != project)
+        {
+            return new SocketRefusal("unknown_database", "the database does not exist");
+        }
+
+        var token = context.Features.Get<ProjectToken>();
+        if (token is { Allowlists.Count: > 0 } && IpAllowlists.ClientOf(context) is var client && !IpAllowlists.Admits(token.Allowlists, client))
+        {
+            return new SocketRefusal("ip_not_allowed", IpAllowlists.Refusal(client));
+        }
+
+        if (token?.Key is not { } key)
+        {
+            return null;
+        }
+
+        var authority = context.RequestServices.GetRequiredService<IKeyAuthority>();
+        switch ((await authority.AdmitAsync(key, context.RequestAborted).ConfigureAwait(false)).Value)
+        {
+            case KeyActive active:
+                if (KeyWatch.Start(authority, watched: true, active.Until, _ => ValueTask.FromResult<KeyToken?>(key), revoked,
+                    context.RequestServices.GetRequiredService<TimeProvider>()) is { } watch)
+                {
+                    keep(watch);
+                }
+
+                return null;
+            case KeyRefused refused:
+                return new SocketRefusal(refused.Code, KeyAuthorityMessages.Refused(refused.Code));
+            default:
+                return new SocketRefusal("auth_unavailable", KeyAuthorityMessages.Unavailable);
+        }
+    }
+
+    private const int Serving = 0;
+    private const int Started = 1;
+    private const int CutOff = 2;
+    private const int Refusing = 3;
+
+    private static Task RefuseKeyAsync(HttpContext context, KeyRefused? refused)
+    {
+        if (refused is not null)
+        {
+            context.Response.Headers.WWWAuthenticate = $"Bearer error=\"invalid_token\", error_description=\"{refused.Code}\"";
+            return BadRequests.WriteAsync(context, StatusCodes.Status401Unauthorized, refused.Code, KeyAuthorityMessages.Refused(refused.Code), op: null);
+        }
+
+        context.Response.Headers.RetryAfter = "1";
+        return BadRequests.WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "auth_unavailable", KeyAuthorityMessages.Unavailable, op: null);
+    }
+
     public static WebApplication UseTerraBaseProjectCheck(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
         app.Use(async (context, next) =>
         {
-            // Project tokens never enter the membership-based compatibility API: that would discard their narrowing.
+            if (Identity(context.User, UserAuthenticationHandler.SchemeName) is null || context.Features.Get<ProjectToken>()?.Key is not { } key)
+            {
+                await next(context).ConfigureAwait(false);
+                return;
+            }
+
+            var authority = context.RequestServices.GetRequiredService<IKeyAuthority>();
+            var answer = (await authority.AdmitAsync(key, context.RequestAborted).ConfigureAwait(false)).Value;
+            if (answer is not KeyActive active)
+            {
+                await RefuseKeyAsync(context, answer as KeyRefused).ConfigureAwait(false);
+                return;
+            }
+
+            var aborted = context.RequestAborted;
+            using var refusal = CancellationTokenSource.CreateLinkedTokenSource(aborted);
+            var state = Serving;
+            context.Response.OnStarting(() =>
+            {
+                if (refusal.IsCancellationRequested && !aborted.IsCancellationRequested)
+                {
+                    Interlocked.CompareExchange(ref state, CutOff, Serving);
+                }
+
+                if (Interlocked.CompareExchange(ref state, Started, Serving) == CutOff)
+                {
+                    context.Abort();
+                }
+
+                return Task.CompletedTask;
+            });
+            using var cut = refusal.Token.Register(() =>
+            {
+                if (!aborted.IsCancellationRequested && Interlocked.CompareExchange(ref state, CutOff, Serving) == Started)
+                {
+                    context.Abort();
+                }
+            });
+            using var watch = KeyWatch.Start(authority, watched: true, active.Until, _ => ValueTask.FromResult<KeyToken?>(key), refusal, context.RequestServices.GetRequiredService<TimeProvider>());
+            context.RequestAborted = refusal.Token;
+            try
+            {
+                await next(context).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (refusal.IsCancellationRequested && !aborted.IsCancellationRequested && !context.Response.HasStarted)
+            {
+                Interlocked.CompareExchange(ref state, CutOff, Serving);
+            }
+            finally
+            {
+                context.RequestAborted = aborted;
+            }
+
+            if (refusal.IsCancellationRequested && !aborted.IsCancellationRequested)
+            {
+                Interlocked.CompareExchange(ref state, CutOff, Serving);
+            }
+
+            if (Interlocked.CompareExchange(ref state, Refusing, CutOff) == CutOff && !context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                await RefuseKeyAsync(context, watch!.Refusal).ConfigureAwait(false);
+            }
+        });
+        app.Use(async (context, next) =>
+        {
+            if (Identity(context.User, UserAuthenticationHandler.SchemeName) is not null
+                && context.Features.Get<ProjectToken>() is { Allowlists.Count: > 0 } restricted
+                && IpAllowlists.ClientOf(context) is var client && !IpAllowlists.Admits(restricted.Allowlists, client))
+            {
+                await BadRequests.WriteAsync(context, StatusCodes.Status403Forbidden, "ip_not_allowed", IpAllowlists.Refusal(client), op: null).ConfigureAwait(false);
+                return;
+            }
+
+            if (Identity(context.User, UserAuthenticationHandler.SchemeName)?.HasClaim("token_kind", "end_user") == true
+                && context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName is not
+                    ("getDocument" or "listDocuments" or "queryDocuments" or "createDocument" or "putDocument"
+                    or "patchDocument" or "deleteDocument" or "runTransaction" or "streamDatabaseChanges"
+                    or "createFileUpload" or "completeFileUpload" or "listBucketFiles" or "createFileDownload" or "deleteBucketFile"))
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return;
+            }
+
             if (Identity(context.User, UserAuthenticationHandler.SchemeName)?.FindFirst("project_id") is not null
                 && (context.Features.Get<LegacyManagementRoute>() is not null
-                    || context.Request.Path.StartsWithSegments(ManagementRoute.Prefix, StringComparison.OrdinalIgnoreCase)))
+                    || context.Request.Path.StartsWithSegments(ManagementRoute.Prefix, StringComparison.OrdinalIgnoreCase)
+                    || context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == "legacyCreateDatabase"))
             {
                 await BadRequests.WriteAsync(context, 404, "unknown_database", "the database does not exist", op: null).ConfigureAwait(false);
                 return;
@@ -102,9 +242,14 @@ public static class UserAuthExtensions
                 var jwt = Identity(context.User, UserAuthenticationHandler.SchemeName);
                 if (jwt is not null)
                 {
-                    var database = jwt.FindFirst("database")?.Value;
-                    if (jwt.FindFirst("project_id")?.Value != project
-                        || database is not null && context.Request.RouteValues["database"] is string name && database != name)
+                    if (jwt.FindFirst("project_id") is null)
+                    {
+                        await BadRequests.WriteAsync(context, StatusCodes.Status401Unauthorized, "invalid_key",
+                            "this token does not authorize project routes; use an API key or its project token", op: null).ConfigureAwait(false);
+                        return;
+                    }
+
+                    if (jwt.FindFirst("project_id")?.Value != project)
                     {
                         await BadRequests.WriteAsync(context, 404, "unknown_database", "the database does not exist", op: null).ConfigureAwait(false);
                         return;
@@ -122,7 +267,6 @@ public static class UserAuthExtensions
         return app;
     }
 
-    /// <summary>Resolves authorized project tokens without moving production files or changing replication formats.</summary>
     public static WebApplication UseTerraBaseProjectCatalog(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -143,8 +287,8 @@ public static class UserAuthExtensions
                 return;
             }
 
-            // Creation validates its bound body and signed database restriction before it can enroll a project.
-            if (context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == CreateManagedDatabaseEndpoint.OperationName)
+            if (context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName
+                is CreateManagedDatabaseEndpoint.OperationName or ListManagedDatabasesEndpoint.ListOperationName)
             {
                 await next(context).ConfigureAwait(false);
                 return;
@@ -152,7 +296,10 @@ public static class UserAuthExtensions
 
             var actor = jwt.FindFirst(ClaimTypes.NameIdentifier)!.Value;
             var catalog = context.RequestServices.GetRequiredService<IProjectCatalog>();
-            var resolved = await catalog.ResolveProjectAsync(project, actor, createIn: null, context.RequestAborted).ConfigureAwait(false);
+            var bucketCreation = context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == "createFileBucket"
+                && !jwt.HasClaim("token_kind", "end_user") && jwt.FindFirst("database") is null;
+            var resolved = await catalog.ResolveProjectAsync(project, actor,
+                createIn: bucketCreation ? jwt.FindFirst("org_id")?.Value : null, context.RequestAborted).ConfigureAwait(false);
             if (resolved is not string organization)
             {
                 await (resolved switch
@@ -183,15 +330,23 @@ public static class UserAuthExtensions
                     Unavailable => throw new UnreachableException(),
                 };
             }
-            var grant = new ProjectAccess(actor, project, organization, restricted, restrictedId);
+            var grant = new ProjectAccess(actor, project, organization, restricted, restrictedId)
+            {
+                IsEndUser = jwt.HasClaim("token_kind", "end_user"),
+                Roles = jwt.FindAll("roles").Select(claim => claim.Value).ToFrozenSet(StringComparer.Ordinal),
+            };
             context.Features.Set(grant);
 
             if (managementRoute)
             {
                 context.Request.RouteValues["organization"] = organization;
+            }
+
+            if (managementRoute || restricted is not null)
+            {
                 if (context.Request.RouteValues["database"] is string name)
                 {
-                    if (!DatabaseName.TryParse(name, out _))
+                    if (!Primitives.EntityIds.IsValid(name) && !DatabaseName.TryParse(name, out _))
                     {
                         await BadRequests.WriteAsync(context, 404, "unknown_database", "the database does not exist", op: null).ConfigureAwait(false);
                         return;
@@ -209,7 +364,16 @@ public static class UserAuthExtensions
                         return;
                     }
 
-                    context.Request.RouteValues["databaseName"] = name;
+                    if (restricted is not null && restrictedId != record.Id)
+                    {
+                        await BadRequests.WriteAsync(context, 404, "unknown_database", "the database does not exist", op: null).ConfigureAwait(false);
+                        return;
+                    }
+
+                    if (managementRoute)
+                    {
+                        context.Request.RouteValues["databaseName"] = record.Name;
+                    }
                     context.Request.RouteValues["database"] = record.Id;
                 }
             }
