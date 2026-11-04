@@ -74,6 +74,9 @@ internal sealed class TursoReplicas(TerraBaseOptions options, ILogger<TursoRepli
         return await Task.Run(() => DeleteFiles(PathOf(key)), cancellationToken).ConfigureAwait(false);
     }
 
+    public bool Holds(TenantContext database) =>
+        database.ProjectId is { } project && database.DatabaseId is { } id && _replicas.ContainsKey((database.OrganizationId, project, id));
+
     public IReadOnlyList<TenantContext> List() =>
         [.. _replicas.Keys.Select(key => new TenantContext(key.Organization, PlanTier.Hobby, key.Project, key.Database))];
 
