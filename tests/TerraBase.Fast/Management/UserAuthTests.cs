@@ -96,7 +96,7 @@ public sealed class UserAuthTests
     [Test]
     public async Task Users_reach_only_their_own_organizations_whatever_headers_they_send()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
         var organization = await api.CreateOrganizationAsync(Faker.Company.CompanyName());
         var project = await api.CreateProjectAsync(organization, "Web");
         using var mallory = api.As(EntityIds.New().ToString());

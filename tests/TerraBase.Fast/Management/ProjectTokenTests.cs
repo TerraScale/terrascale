@@ -15,7 +15,7 @@ public sealed class ProjectTokenTests
     public async Task A_project_JWT_creates_a_database_and_runs_sql_without_organization_membership()
     {
         var faker = new Faker();
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
         var project = EntityIds.New().ToString();
         using var client = api.WithToken(Token(api, EntityIds.New().ToString(), project, AllScopes));
         var databases = $"/v1/projects/{project}/databases";
@@ -82,7 +82,7 @@ public sealed class ProjectTokenTests
     public async Task A_database_restricted_JWT_filters_project_list_and_usage_and_cannot_read_delete_create_branch_or_restore_another_database()
     {
         var faker = new Faker();
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
         var first = await api.CreateManagedDatabaseAsync("first");
         var second = await api.CreateManagedDatabaseAsync(first.Organization, first.Project, "second");
         using var legacy = await api.CreateClientAsync(first.Organization, "sql:read", "sql:write");
