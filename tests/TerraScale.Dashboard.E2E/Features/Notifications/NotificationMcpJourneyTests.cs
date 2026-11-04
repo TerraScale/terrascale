@@ -14,6 +14,8 @@ namespace TerraScale.Dashboard.E2E.Features.Notifications
             using var replica = fixture.CreateClient(replica: true);
             using var login = await HttpJourney.LoginAsync(client);
             await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            using var replicaLogin = await HttpJourney.LoginAsync(replica);
+            await Assert.That(replicaLogin.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             var secret = await HttpJourney.CreatePatAsync(client, "TUnit notifications MCP");
             using var selected = await client.GetAsync("/api/v1/auth/me");
             await Assert.That(selected.StatusCode).IsEqualTo(HttpStatusCode.OK);
