@@ -237,10 +237,19 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
             }
         }
 
-        var answer = await Ask(id, key).WaitAsync(cancellationToken).ConfigureAwait(false);
-        return answer.Result.Value is KeyActive active && active.Until - time.GetUtcNow() < Admission
-            ? new Unavailable("ts-auth answered too slowly for new work to outlast its answer")
-            : answer.Result;
+        // A region's first question about a key can pay a cold connection to ts-auth, or join one sent before this work arrived:
+        // one fresh question more, never a stale yes, before new work is refused. Revocation keeps its Fresh bound.
+        for (var attempt = 0; ; attempt++)
+        {
+            var answer = await Ask(id, key).WaitAsync(cancellationToken).ConfigureAwait(false);
+            KeyAuthorityResult result = answer.Result.Value is KeyActive active && active.Until - time.GetUtcNow() < Admission
+                ? new Unavailable("ts-auth answered too slowly for new work to outlast its answer")
+                : answer.Result;
+            if (result.Value is not Unavailable || attempt == 1)
+            {
+                return result;
+            }
+        }
     }
 
     public async ValueTask<KeyAuthorityResult> CheckAsync(KeyToken key, CancellationToken cancellationToken)
