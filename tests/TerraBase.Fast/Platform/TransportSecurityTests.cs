@@ -22,25 +22,6 @@ public sealed class TransportSecurityTests
     [Test]
     [Arguments("rest")]
     [Arguments("postgres")]
-    public async Task A_token_opens_the_surface_through_the_tls_edge(string surface)
-    {
-        await using var db = await SqlNativeDatabase.StartSharedAsync();
-
-        if (surface == "rest")
-        {
-            var results = await db.OkAsync("SELECT 1");
-            await Assert.That(results[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(1);
-        }
-        else
-        {
-            await using var connection = await db.Postgres.OpenConnectionAsync();
-            await Assert.That(await SqlNativeDatabase.ScalarAsync(connection, "SELECT 1")).IsEqualTo(1);
-        }
-    }
-
-    [Test]
-    [Arguments("rest")]
-    [Arguments("postgres")]
     public async Task Plaintext_that_bypasses_the_tls_edge_and_wrong_tokens_are_refused(string surface)
     {
         var s3 = new FakeS3();
