@@ -12,6 +12,8 @@ public static class ReplicaExtensions
         services.TryAddSingleton<IReplicaStatus, ReplicaStatusBoard>();
         services.AddSingleton<RegionReplication>();
         services.AddSingleton<HomeSessions>();
+        services.AddSingleton<HomeLeases>();
+        services.AddHostedService(provider => provider.GetRequiredService<HomeLeases>());
         return services.AddHostedService(provider => provider.GetRequiredService<RegionReplication>());
     }
 }
