@@ -9,7 +9,7 @@ using static TerraScale.Dashboard.Platform.Mcp.McpScope;
 namespace TerraScale.Dashboard.Features.Databases
 {
     [McpServerToolType]
-    public sealed class DatabaseMcpTools(IHttpContextAccessor http, AccountService accounts, DatabaseService databases, IDatabaseBackend backend, BackupService backups)
+    public sealed class DatabaseMcpTools(IHttpContextAccessor http, DatabaseService databases, IDatabaseBackend backend, BackupService backups)
     {
         [McpServerTool(Name = "list_databases", Title = "List databases", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List the databases in a project with their status and region.")]
         public async Task<McpDatabaseList> ListDatabases(string? organizationId = null, string? projectId = null,
@@ -64,34 +64,18 @@ namespace TerraScale.Dashboard.Features.Databases
                 unavailable, backupsEnabled, context.CanManage, db.Status == "ready" && context.CanManage && context.Organization!.CanProvision(context.UserId));
         }
 
-        [McpServerTool(Name = "create_database", Title = "Create database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Provision a new database in a project. Requires an owner or admin role and a plan with database capacity. Without replica regions, the API uses every currently serving region; explicit placement needs at least two regions including home. allRegions also follows future regions; it excludes replica regions, so pass at most the home region with it.")]
-        public async Task<McpDatabase> CreateDatabase(string name, string? region = null, string[]? regions = null, bool allRegions = false, string? organizationId = null, string? projectId = null)
+        [McpServerTool(Name = "create_database", Title = "Create database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Provision a new database in a project. It serves only in its home region: region, or the project's region when omitted. Requires an owner or admin role and a plan with database capacity.")]
+        public async Task<McpDatabase> CreateDatabase(string name, string? region = null, string? organizationId = null, string? projectId = null)
         {
             var context = Scope(organizationId, projectId);
             DatabaseService.Scope(context);
-            if (regions is not null && !allRegions)
-            {
-                DatabaseService.RequireReplicas(regions);
-            }
-
-            var placement = regions is { Length: > 0 } ? regions : [string.IsNullOrEmpty(region) ? context.Project!.Region : region];
-            return await DatabaseOutput(await databases.CreateAsync(context, name, placement, allRegions, Cancellation));
+            return await DatabaseOutput(await databases.CreateAsync(context, name, string.IsNullOrEmpty(region) ? context.Project!.Region : region, Cancellation));
         }
 
         [McpServerTool(Name = "branch_database", Title = "Branch database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a new database that copies a ready database's documents, schemas, and indexes.")]
         public async Task<McpDatabase> BranchDatabase(string databaseId, string name = "", string? organizationId = null, string? projectId = null)
         {
             return await DatabaseOutput(await databases.BranchAsync(Scope(organizationId, projectId), databaseId, name, Cancellation));
-        }
-
-        [McpServerTool(Name = "set_database_regions", Title = "Set database regions", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Choose at least two regions including its home, or allRegions to copy it to every serving region, including regions that join later. Selecting every current region alone does not follow future regions. allRegions excludes replica regions; choosing regions turns it off. The home region never changes. Requires an owner or admin role.")]
-        public async Task<McpDatabase> SetRegions(string databaseId, string[]? regions = null, bool allRegions = false, string? organizationId = null, string? projectId = null)
-        {
-            var context = Scope(organizationId, projectId);
-            await databases.SetRegionsAsync(context, databaseId, regions ?? [], allRegions, Cancellation);
-            var fresh = await accounts.GetContextAsync(context.Session, Cancellation);
-            var db = fresh.Organizations.First(org => org.Id == context.Organization!.Id).Projects[context.Project!.Id].Databases[databaseId];
-            return await DatabaseOutput(db);
         }
 
         [McpServerTool(Name = "delete_database", Title = "Delete database", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Permanently delete a database and all of its data. Requires confirmName to equal the database name.")]

@@ -40,9 +40,10 @@ behavior that page copy no longer spells out.
   sign-in are refused for that domain except for organization owners. The client secret is write-only;
   leaving it blank keeps the current secret.
 - The audit view shows only events inside the plan's audit retention window; exports use the same window.
-- Project regions: the primary region is the default home for new databases. Placement is configured per
-  database; writable databases need at least two regions; changing project regions does not move
-  existing databases. Hosted authentication runs only in GRU (São Paulo).
+- Project regions: the primary region is the default home for new databases. A new database names only its
+  home region and serves there alone until TerraBase replicas are available; the dashboard and MCP offer no
+  placement changes. Changing project regions does not move existing databases. Hosted authentication runs
+  only in GRU (São Paulo).
 - Project grants take a canonical user ULID of an existing organization member.
 - Support response targets are first-response targets, Monday to Friday 09:00–18:00 CET, not an SLA.
   A request ID (`X-Request-ID`) grants no access to diagnostics.
