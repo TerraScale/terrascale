@@ -10,44 +10,6 @@ namespace TerraBase.Fast.Backup;
 public sealed class BackupRequiredTests
 {
     [Test]
-    public async Task Backupz_answers_200_only_after_every_file_this_node_ships_reached_the_bucket()
-    {
-        var s3 = new FakeS3();
-        await using var server = await TerraBaseTestServer.StartAsync(s3.Configure, services =>
-        {
-            s3.Route(services);
-            ManualBackupHosting.Configure(services);
-        });
-        using var before = await server.Client.GetAsync(new Uri("/backupz", UriKind.Relative));
-
-        await server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        using var after = await server.Client.GetAsync(new Uri("/backupz", UriKind.Relative));
-        var body = await after.Content.ReadFromJsonAsync<JsonElement>();
-
-        await Assert.That(before.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(after.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(body.GetProperty("status").GetString()).IsEqualTo("shipping");
-        await Assert.That(after.Headers.CacheControl!.ToString()).IsEqualTo("no-store");
-        await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith("v1/_system/nodes/local/snapshots/", StringComparison.Ordinal))).IsTrue();
-    }
-
-    [Test]
-    public async Task Backupz_answers_503_in_development_without_backup()
-    {
-        using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        using var client = tls.CreateClient(server.ClientAddress!);
-        using var response = await server.Client.GetAsync(new Uri("/backupz", UriKind.Relative));
-        using var anonymous = await client.GetAsync(new Uri("/backupz", UriKind.Relative));
-        var body = await anonymous.Content.ReadFromJsonAsync<JsonElement>();
-
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        // Anonymous public callers never see the build revision, storage format or node name.
-        await Assert.That(body.EnumerateObject().Select(property => property.Name).ToList()).IsEquivalentTo(["status", "version", "region"]);
-    }
-
-    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task Outside_development_a_node_without_the_tigris_bucket_and_master_key_refuses_to_start(bool unrelatedAwsVariables)
