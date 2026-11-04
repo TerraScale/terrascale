@@ -36,15 +36,16 @@ async function monitor() {
     const deadline = setTimeout(() => reject(new Error("CPU_START_FAILED")), 10_000);
     createInterface({ input: child.stdout }).on("line", line => {
       const sample = JSON.parse(line);
-      if (sample.error || sample.cpu_percent > 70) {
+      const invalid = !Number.isFinite(sample.cpu_percent) || !Number.isFinite(sample.cores) || sample.cores <= 0;
+      if (sample.error || invalid || sample.cpu_percent > 70) {
         emit({ type: "guard", ...sample });
-        controller.abort(new Error(sample.error ? "CPU_UNAVAILABLE" : "CPU_LIMIT"));
+        controller.abort(new Error(sample.error || invalid ? "CPU_UNAVAILABLE" : "CPU_LIMIT"));
         clearTimeout(deadline);
         reject(controller.signal.reason);
         return;
       }
       cpu.push(sample);
-      if (!ready) { ready = true; clearTimeout(deadline); resolve(); }
+      if (!ready) { ready = true; emit({ type: "cpu_capacity", ...sample }); clearTimeout(deadline); resolve(); }
     });
     child.on("exit", () => {
       if (!controller.signal.aborted) controller.abort(new Error("CPU_MONITOR_EXITED"));
@@ -123,6 +124,7 @@ async function main() {
   const sha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   emit({ type: "method", sha, host: hostname(), node: process.version, resumed_cohorts: [...completed],
     rows: 16, body_bytes: 128, repeats: 3, readers: [1, 10, 100, 1000], cpu_limit_percent: 70, cohort_deadline_seconds: 180,
+    cpu: "Process CPU ticks divided by the minimum of affinity and cgroup v2 ancestor quotas; stop on process or capacity change",
     latency: "Dev-host SDK through regional SSH CONNECT egress; includes tunnel and write request latency; nearest-rank percentiles per repeat" });
   await monitor();
   for (const previous of (await writer.databases.list({ limit: 100 }, { signal: signal() })).items) {
