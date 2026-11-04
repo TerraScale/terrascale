@@ -15,7 +15,7 @@ using ZLogger;
 
 namespace TerraBase.Engine.Turso;
 
-internal sealed class TursoReplicas(
+internal sealed partial class TursoReplicas(
     TerraBaseOptions options, [FromKeyedServices(EngineExtensions.DatabaseMasterKey)] IMasterKey master, ILogger<TursoReplicas> logger)
     : IDatabaseReplicas, IAsyncDisposable
 {
@@ -81,7 +81,9 @@ internal sealed class TursoReplicas(
         database.ProjectId is { } project && database.DatabaseId is { } id && _replicas.ContainsKey((database.OrganizationId, project, id));
 
     public IReadOnlyList<TenantContext> List() =>
-        [.. _replicas.Keys.Select(key => new TenantContext(key.Organization, PlanTier.Hobby, key.Project, key.Database))];
+        [.. _replicas.Keys.Select(Tenant)];
+
+    private static TenantContext Tenant((string Organization, string Project, string Database) key) => new(key.Organization, PlanTier.Hobby, key.Project, key.Database);
 
     public DatabaseRevision? HeldRevision(TenantContext database) =>
         _replicas.TryGetValue(Key(database), out var opening) && opening.IsValueCreated && opening.Value.IsCompletedSuccessfully ? opening.Value.Result.Held : null;
@@ -178,7 +180,7 @@ internal sealed class TursoReplicas(
         {
             try
             {
-                return new Replica(this, await TursoSyncDatabase.OpenAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, pulled: true);
+                return new Replica(this, Tenant(key), await TursoSyncDatabase.OpenAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, pulled: true);
             }
             catch (TursoException error)
             {
@@ -188,7 +190,7 @@ internal sealed class TursoReplicas(
 
         _ = await Task.Run(() => DeleteFiles(path)).ConfigureAwait(false);
         hexKey = await NewKeyAsync(path).ConfigureAwait(false);
-        var replica = new Replica(this, await TursoSyncDatabase.CreateAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, pulled: false);
+        var replica = new Replica(this, Tenant(key), await TursoSyncDatabase.CreateAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, pulled: false);
         try
         {
             _ = await replica.PullAsync(CancellationToken.None).ConfigureAwait(false);
@@ -327,9 +329,10 @@ internal sealed class TursoReplicas(
         }
     }
 
-    private sealed class Replica(TursoReplicas owner, TursoSyncDatabase sync, string path, RevisionObserver observer, HttpClient observed, ILogger logger, bool pulled) : IAsyncDisposable
+    private sealed partial class Replica(TursoReplicas owner, TenantContext database, TursoSyncDatabase sync, string path, RevisionObserver observer, HttpClient observed, ILogger logger, bool pulled) : IAsyncDisposable
     {
         private readonly SemaphoreSlim _pulls = new(1, 1);
+        private readonly ReplicaGate _gate = new();
         private readonly ConcurrentQueue<TursoDatabaseHandle> _idle = new();
         private int _idleCount;
         private int _disposed;
@@ -410,18 +413,26 @@ internal sealed class TursoReplicas(
                 var position = owner.NextPosition();
                 _ = observer.Take();
                 bool changed;
-                try
+                using (await _gate.ExclusiveAsync(cancellationToken).ConfigureAwait(false))
                 {
-                    changed = await sync.PullAsync(cancellationToken).ConfigureAwait(false);
-                }
-                catch
-                {
-                    Held = null;
-                    throw;
+                    try
+                    {
+                        changed = await sync.PullAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        Held = null;
+                        throw;
+                    }
+
+                    Held = DatabaseRevision.TryParse(observer.Take(), out var pulledRevision) ? pulledRevision : null;
+                    if (changed)
+                    {
+                        await RestoreOverlayAsync(cancellationToken).ConfigureAwait(false);
+                    }
                 }
 
                 Volatile.Write(ref _applied, position);
-                Held = DatabaseRevision.TryParse(observer.Take(), out var held) ? held : null;
                 Pulled = true;
                 var log = new FileInfo(path + "-wal");
                 if (log.Exists && log.Length > 4L * 1024 * 1024)
@@ -449,6 +460,20 @@ internal sealed class TursoReplicas(
         public async Task<IReplicaReader> BeginReadAsync(CancellationToken cancellationToken)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            var lease = await _gate.ReadAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                return await OpenReaderAsync(lease, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                lease.Dispose();
+                throw;
+            }
+        }
+
+        private async Task<IReplicaReader> OpenReaderAsync(IDisposable lease, CancellationToken cancellationToken)
+        {
             if (!_idle.TryDequeue(out var native))
             {
                 native = await sync.ConnectHandleAsync(cancellationToken).ConfigureAwait(false);
@@ -477,7 +502,7 @@ internal sealed class TursoReplicas(
                 throw;
             }
 
-            return new Reader(this, native);
+            return new Reader(this, native, lease);
         }
 
         public ValueTask DisposeAsync()
@@ -492,9 +517,16 @@ internal sealed class TursoReplicas(
                 Close(native);
             }
 
+            if (_writer is { } writer)
+            {
+                _writer = null;
+                Close(writer);
+            }
+
             sync.Dispose();
             observed.Dispose();
             _pulls.Dispose();
+            _gate.Dispose();
             return ValueTask.CompletedTask;
         }
 
@@ -544,7 +576,7 @@ internal sealed class TursoReplicas(
             }
         }
 
-        private sealed class Reader(Replica replica, TursoDatabaseHandle native) : IReplicaReader
+        private sealed class Reader(Replica replica, TursoDatabaseHandle native, IDisposable lease) : IReplicaReader
         {
             private bool _healthy = true;
             private int _disposed;
@@ -568,6 +600,7 @@ internal sealed class TursoReplicas(
                 if (Interlocked.Exchange(ref _disposed, 1) == 0)
                 {
                     replica.Return(native, _healthy);
+                    lease.Dispose();
                 }
 
                 return ValueTask.CompletedTask;
@@ -612,7 +645,7 @@ internal sealed class TursoReplicas(
                     {
                         using (cancellationToken.Register(static state => TursoBindings.Interrupt((TursoDatabaseHandle)state!), native))
                         {
-                            var (columns, rows, truncated) = Step(prepared, statement, cancellationToken);
+                            var (columns, rows, _, truncated) = Step(prepared, statement, cancellationToken);
                             return new SqlStatementResult(columns, rows, 0, 0, 0, truncated, consumed);
                         }
                     }
@@ -631,7 +664,7 @@ internal sealed class TursoReplicas(
                 }
             }
 
-            private static (List<SqlStatementColumn> Columns, List<object?[]> Rows, bool Truncated) Step(
+            internal static (List<SqlStatementColumn> Columns, List<object?[]> Rows, long Affected, bool Truncated) Step(
                 TursoStatementHandle prepared, SqlStatement statement, CancellationToken cancellationToken)
             {
                 try
@@ -657,7 +690,7 @@ internal sealed class TursoReplicas(
 
                         if (rows.Count == maxRows || size > statement.MaxBytes - bytes)
                         {
-                            return (columns, rows, true);
+                            return (columns, rows, TursoBindings.RowsAffected(prepared), true);
                         }
 
                         bytes += size;
@@ -677,7 +710,7 @@ internal sealed class TursoReplicas(
                         rows.Add(row);
                     }
 
-                    return (columns, rows, false);
+                    return (columns, rows, TursoBindings.RowsAffected(prepared), false);
                 }
                 finally
                 {
