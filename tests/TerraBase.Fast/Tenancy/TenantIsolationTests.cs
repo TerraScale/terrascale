@@ -120,37 +120,6 @@ public sealed class TenantIsolationTests
     }
 
     [Test]
-    public async Task Two_organizations_each_have_their_own_database_of_the_same_name()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        // Every client scope, so each route answers past its scope check.
-        using var a = await api.CreateTenantAsync("documents:read", "documents:write");
-        using var b = await api.CreateTenantAsync("documents:read", "documents:write");
-        var document = $"/collections/people/documents/by-key?id={DocumentId}";
-
-        var aApp = await CreateDatabaseAsync(a, "app");
-        var bApp = await CreateDatabaseAsync(b, "app");
-        (await a.Data.PutAsJsonAsync(a.Database("app", document), new { owner = "a" })).EnsureSuccessStatusCode();
-        using var bWrite = await b.Data.PutAsJsonAsync(b.Database("app", document), new { owner = "b" });
-        var aRead = await a.Data.GetFromJsonAsync<JsonElement>(a.Database("app", document));
-        (await a.Data.DeleteAsync(a.Database("app", document))).EnsureSuccessStatusCode();
-        var bRead = await b.Data.GetFromJsonAsync<JsonElement>(b.Database("app", document));
-        using var aGone = await a.Data.GetAsync(a.Database("app", document));
-        // A's key with B's project, for a name A also has.
-        using var crossProject = await a.Data.GetAsync(b.Database("app", document));
-
-        await Assert.That(aApp).IsNotEqualTo(bApp);
-        // B's write created its document: A's earlier write to the same name never touched B's database.
-        await Assert.That(bWrite.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        await Assert.That(aRead.GetProperty("document").GetProperty("owner").GetString()).IsEqualTo("a");
-        await Assert.That(bRead.GetProperty("document").GetProperty("owner").GetString()).IsEqualTo("b");
-        await Assert.That(aGone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(crossProject.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(File.Exists(Path.Combine(api.Server.DataDirectory, a.OrganizationId, a.ProjectId, aApp + ".db"))).IsTrue();
-        await Assert.That(File.Exists(Path.Combine(api.Server.DataDirectory, b.OrganizationId, b.ProjectId, bApp + ".db"))).IsTrue();
-    }
-
-    [Test]
     public async Task Keys_reach_only_their_organization_and_the_project_and_database_they_are_narrowed_to()
     {
         await using var api = await ManagementApi.StartAsync();

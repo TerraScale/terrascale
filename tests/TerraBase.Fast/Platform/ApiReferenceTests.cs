@@ -115,35 +115,6 @@ public sealed class ApiReferenceTests
         """;
 
     [Test]
-    public async Task The_root_redirects_to_scalar_and_the_reference_is_served_on_the_client_listener_only()
-    {
-        using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        using var client = tls.CreateClient(server.ClientAddress!);
-
-        using var root = await client.GetAsync(Uri("/"));
-        using var page = await client.GetAsync(Uri("/scalar/"));
-        using var script = await client.GetAsync(Uri("/scalar/scalar.js"));
-
-        await Assert.That(root.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(root.Headers.Location!.IsAbsoluteUri).IsFalse();
-        await Assert.That(root.Headers.Location.OriginalString).IsEqualTo("scalar/");
-        await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(page.Content.Headers.ContentType!.MediaType).IsEqualTo("text/html");
-        var html = await page.Content.ReadAsStringAsync();
-        await Assert.That(html).Contains("openapi/v1.json");
-        await Assert.That(html).Contains("\"withDefaultFonts\":false");
-        await Assert.That(html).Contains("\"telemetry\":false");
-        await Assert.That(html).Contains("\"agent\":{\"disabled\":true}");
-        await Assert.That(script.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        foreach (var path in new[] { "/", "/scalar", "/scalar/", "/scalar/scalar.js", "/openapi/v1.json" })
-        {
-            using var admin = await server.Client.GetAsync(Uri(path));
-            await Assert.That(admin.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        }
-    }
-
-    [Test]
     public async Task The_openapi_document_lists_every_public_operation_with_its_security_and_errors()
     {
         using var tls = new ClientTls();

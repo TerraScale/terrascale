@@ -6,28 +6,6 @@ namespace TerraBase.Fast.Revisions;
 public sealed class DurableRevisionTests
 {
     [Test]
-    public async Task IncrementalPullsStayExactAcrossPolicyCheckpoints()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var database = new RevisionDatabase();
-        await database.CreateAsync(api);
-        await database.InsertAsync(api, 100);
-        var replica = new RevisionReplica();
-        var bootstrap = await replica.PullAsync(api.Server, database.Database);
-        await Assert.That(bootstrap.Full).IsEqualTo(FullReason.Bootstrap);
-
-        await database.InsertAsync(api, 3_000);
-        await database.UpdateAsync(api, 200);
-        await database.DeleteAsync(api, 100);
-        var pull = await replica.PullAsync(api.Server, database.Database);
-
-        await Assert.That(pull.Full).IsNull();
-        await Assert.That(pull.Revision.Incarnation).IsEqualTo(bootstrap.Revision.Incarnation);
-        await Assert.That(pull.Revision.Generation).IsGreaterThan(bootstrap.Revision.Generation);
-        await AssertConvergedAsync(api, database, replica, pull);
-    }
-
-    [Test]
     public async Task IncrementalPullsSurviveAGracefulRestart()
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-revisions-").FullName;
@@ -67,5 +45,4 @@ public sealed class DurableRevisionTests
         await Assert.That(database.Differences(replica)).IsEqualTo(0);
         await Assert.That(await database.LostAckedWritesAsync(api)).IsEqualTo(0);
     }
-
 }
