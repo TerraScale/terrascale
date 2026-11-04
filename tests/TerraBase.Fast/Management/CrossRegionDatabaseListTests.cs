@@ -15,11 +15,11 @@ public sealed class CrossRegionDatabaseListTests
     public async Task A_project_lists_the_databases_of_every_region_with_paging()
     {
         await using var away = await ManagementApi.StartAsync(settings => settings["region"] = "sjc");
-        await using var home = await ManagementApi.StartAsync(services =>
+        await using var home = await ManagementApi.StartAsync(settings => settings["region"] = "gru", services =>
         {
             var peers = away.Server.BaseAddress;
             services.Replace(ServiceDescriptor.Singleton<IRemoteRegions>(new FixedRemoteRegions(peers)));
-        }, settings => settings["region"] = "gru");
+        });
 
         var project = EntityIds.New().ToString();
         var local = home.WithToken(Token(home, project));
