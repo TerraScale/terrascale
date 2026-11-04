@@ -48,7 +48,7 @@ nonce (`GET /login` to `{issuer}/oauth/authorize`, `GET /login/callback`),
 redirects to `{issuer}/oauth/logout` with `id_token_hint`,
 `post_logout_redirect_uri` and `client_id`. The dashboard requests the
 exact project scopes an action needs (`databases:read|write`,
-`documents:read|write`); ts-auth grants them only within the user's role.
+`sql:read|write`); ts-auth grants them only within the user's role.
 The internal-billing commands sign in as ts-auth's public CLI client `ts-cli`
 with the device authorization grant (`{issuer}/oauth/device`).
 

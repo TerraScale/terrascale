@@ -765,8 +765,8 @@ namespace TerraScale.Dashboard.E2E
                 var organizationId = form["organization"].ToString();
                 var projectId = form["project"].ToString();
                 var role = workspace.ProjectRole(session.Subject, organizationId, projectId);
-                var allowed = role == "viewer" ? new[] { "databases:read", "documents:read" }
-                    : role is "member" or "admin" ? new[] { "databases:read", "databases:write", "documents:read", "documents:write" } : [];
+                var allowed = role == "viewer" ? new[] { "databases:read", "sql:read" }
+                    : role is "member" or "admin" ? new[] { "databases:read", "databases:write", "sql:read", "sql:write" } : [];
                 var error = !TerraScaleIds.IsValid(organizationId) || !TerraScaleIds.IsValid(projectId) || allowed.Length == 0 || fault == "project-refused"
                     ? "invalid_target" : requested.Except(allowed, StringComparer.Ordinal).Any() ? "invalid_scope" : "";
                 projectScopeExchanges.Enqueue(new { organizationId, projectId, requested, granted = error.Length == 0 ? requested : [], error });

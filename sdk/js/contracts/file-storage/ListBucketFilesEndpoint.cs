@@ -22,7 +22,7 @@ public sealed class ListBucketFilesEndpoint(IFileStorage files) : EndpointWithou
         Produces<ErrorBody>(409);
         Produces<ErrorBody>(429);
         Produces<ErrorBody>(503);
-        RequireAuthorization("documents:read");
+        RequireAuthorization("sql:read");
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Client);
     }
 

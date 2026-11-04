@@ -59,7 +59,7 @@ public sealed class PostgresWireTests
     public async Task Npgsql_with_default_settings_creates_tables_and_answers_session_queries()
     {
         await using var api = await ManagementApi.StartAsync();
-        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
+        var (database, key) = await DatabaseAsync(api, "sql:read", "sql:write");
         await using var source = Source(api, key, database.Name);
         await using var connection = await source.OpenConnectionAsync();
 
@@ -85,7 +85,7 @@ public sealed class PostgresWireTests
     public async Task Psql_runs_statements_in_order_and_describes_tables()
     {
         await using var api = await ManagementApi.StartAsync();
-        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
+        var (database, key) = await DatabaseAsync(api, "sql:read", "sql:write");
         await using var psql = await PostgresWireClient.ConnectAsync(api.Server.PostgresPort, key, database.Name);
 
         var script = await psql.QueryAsync($"{People}; CREATE TABLE people (id INTEGER PRIMARY KEY); CREATE TABLE never (id INTEGER PRIMARY KEY)");
@@ -107,7 +107,7 @@ public sealed class PostgresWireTests
     public async Task Transactions_commit_roll_back_and_abort_after_an_error()
     {
         await using var api = await ManagementApi.StartAsync();
-        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
+        var (database, key) = await DatabaseAsync(api, "sql:read", "sql:write");
         await using var source = Source(api, key, database.Name);
         await using var connection = await source.OpenConnectionAsync();
         await ExecuteAsync(connection, People);
@@ -144,9 +144,9 @@ public sealed class PostgresWireTests
     public async Task Wrong_keys_unknown_databases_and_unreached_databases_fail_alike()
     {
         await using var api = await ManagementApi.StartAsync();
-        var (database, key) = await DatabaseAsync(api, "documents:read");
+        var (database, key) = await DatabaseAsync(api, "sql:read");
         var other = await api.CreateManagedDatabaseAsync();
-        var otherKey = await api.Server.IssueNarrowedAsync(other.Organization, other.Project, null, "documents:read");
+        var otherKey = await api.Server.IssueNarrowedAsync(other.Organization, other.Project, null, "sql:read");
 
         PostgresException?[] failures =
         [

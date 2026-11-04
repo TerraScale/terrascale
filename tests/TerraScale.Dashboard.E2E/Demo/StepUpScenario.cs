@@ -57,7 +57,7 @@ namespace TerraScale.Dashboard.E2E
                 ["email"] = Email,
                 ["name"] = "Proof protected",
                 ["expiresInDays"] = "30",
-                ["scope"] = "documents:read",
+                ["scope"] = "sql:read",
                 ["type"] = "confidential",
                 ["redirect_uris"] = "https://example.test/callback"
             };

@@ -38,7 +38,7 @@ public sealed class ReplicaSessionTests
         var bearer = issuer.Mint(gru.User, descriptor =>
         {
             descriptor.Claims["project_id"] = project;
-            descriptor.Claims["scope"] = "databases:read documents:read documents:write";
+            descriptor.Claims["scope"] = "databases:read sql:read sql:write";
         });
         using var viaGru = gru.WithToken(bearer);
         var first = Faker.Lorem.Sentence();
@@ -109,7 +109,7 @@ public sealed class ReplicaSessionTests
             token.Claims["key_id"] = id;
             token.Claims["key_gen"] = TestIssuer.KeyGeneration(key);
             token.Claims["project_id"] = project;
-            token.Claims["scope"] = "documents:read documents:write";
+            token.Claims["scope"] = "sql:read sql:write";
         }));
         return key;
     }

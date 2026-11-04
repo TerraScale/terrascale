@@ -22,7 +22,7 @@ public sealed class CompleteFileUploadEndpoint(IFileStorage files) : EndpointWit
         Produces<ErrorBody>(409);
         Produces<ErrorBody>(429);
         Produces<ErrorBody>(503);
-        RequireAuthorization("documents:write");
+        RequireAuthorization("sql:write");
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Client);
     }
 

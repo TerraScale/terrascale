@@ -36,7 +36,7 @@ only that database. Server contract: `docs/terrabase/agent-databases.md`; record
 - `pointInTime` is an RFC 3339 instant inside the source's restore window; the fork holds every transaction committed
   before it. Without it the fork is a consistent copy taken now. `source` and `database` are a name or ULID.
 - `createScopedKey` mints a new API key from the client's own key. `database` is the database ULID (never a name).
-  `access` is `read` (scope `documents:read`) or `read_write` (`documents:read documents:write`). `ttl_seconds` is 60 to
+  `access` is `read` (scope `sql:read`) or `read_write` (`sql:read sql:write`). `ttl_seconds` is 60 to
   2,592,000 (30 days), default 3600; the key never outlives the parent key. `project` is required for an organization
   key and must equal the key's project for a project key. The parent must reach the database and hold the scopes.
   A scoped key cannot mint keys, manage databases or reach another database (404). Revoking or rotating the parent

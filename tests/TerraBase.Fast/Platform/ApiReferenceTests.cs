@@ -10,10 +10,10 @@ public sealed class ApiReferenceTests
 {
     private const string Operations = """
         DELETE /v1/projects/{project}/backup-destination TsAuth(databases:write) deleteBackupDestination Backups
-        DELETE /v1/projects/{project}/buckets/{bucket} TsAuth(documents:write) deleteFileBucket File storage
-        DELETE /v1/projects/{project}/buckets/{bucket}/files/{file} TsAuth(documents:write) deleteBucketFile File storage
+        DELETE /v1/projects/{project}/buckets/{bucket} TsAuth(sql:write) deleteFileBucket File storage
+        DELETE /v1/projects/{project}/buckets/{bucket}/files/{file} TsAuth(sql:write) deleteBucketFile File storage
         DELETE /v1/projects/{project}/databases/{database} TsAuth(databases:write) deleteDatabase Databases
-        DELETE /v1/projects/{project}/databases/{database}/functions/{function} TsAuth(documents:read,documents:write) deleteFunction Functions
+        DELETE /v1/projects/{project}/databases/{database}/functions/{function} TsAuth(sql:read,sql:write) deleteFunction Functions
         DELETE /v1/projects/{project}/databases/{database}/if-id/{expectedId} TsAuth(databases:write) deleteDatabaseIfId Databases
         DELETE /v1/projects/{project}/databases/{database}/tables/{table}/read-grant TsAuth(databases:write) deleteReadGrant Live
         DELETE /v1/projects/{project}/databases/{database}/ttl TsAuth(databases:write) clearDatabaseTtl Databases
@@ -23,47 +23,47 @@ public sealed class ApiReferenceTests
         GET /v1/platform/databases TsAuth(platform_role=admin) listPlatformDatabases Platform
         GET /v1/projects/{project}/analytics TsAuth(databases:read) getProjectAnalytics Analytics
         GET /v1/projects/{project}/backup-destination TsAuth(databases:read) getBackupDestination Backups
-        GET /v1/projects/{project}/buckets TsAuth(documents:read) listFileBuckets File storage
-        GET /v1/projects/{project}/buckets/{bucket}/files TsAuth(documents:read) listBucketFiles File storage
+        GET /v1/projects/{project}/buckets TsAuth(sql:read) listFileBuckets File storage
+        GET /v1/projects/{project}/buckets/{bucket}/files TsAuth(sql:read) listBucketFiles File storage
         GET /v1/projects/{project}/databases TsAuth(databases:read) listDatabases Databases
         GET /v1/projects/{project}/databases/{database} TsAuth(databases:read) getDatabase Databases
         GET /v1/projects/{project}/databases/{database}/analytics TsAuth(databases:read) getDatabaseAnalytics Analytics
         GET /v1/projects/{project}/databases/{database}/backup-policy TsAuth(databases:read) getBackupPolicy Backups
         GET /v1/projects/{project}/databases/{database}/backups TsAuth(databases:read) listBackups Backups
-        GET /v1/projects/{project}/databases/{database}/functions TsAuth(documents:read,documents:write) listFunctions Functions
-        GET /v1/projects/{project}/databases/{database}/functions/{function} TsAuth(documents:read,documents:write) getFunction Functions
-        GET /v1/projects/{project}/databases/{database}/functions/{function}/logs TsAuth(documents:read,documents:write) listFunctionLogs Functions
+        GET /v1/projects/{project}/databases/{database}/functions TsAuth(sql:read,sql:write) listFunctions Functions
+        GET /v1/projects/{project}/databases/{database}/functions/{function} TsAuth(sql:read,sql:write) getFunction Functions
+        GET /v1/projects/{project}/databases/{database}/functions/{function}/logs TsAuth(sql:read,sql:write) listFunctionLogs Functions
         GET /v1/projects/{project}/databases/{database}/logs TsAuth(databases:read) listDatabaseLogs Logs
         GET /v1/projects/{project}/databases/{database}/point-in-time TsAuth(databases:read) getRestoreWindow Backups
         GET /v1/projects/{project}/databases/{database}/read-grants TsAuth(databases:read) listReadGrants Live
         GET /v1/projects/{project}/databases/{database}/regions TsAuth(databases:read) getDatabaseRegions Databases
-        GET /v1/projects/{project}/databases/{database}/sql/ws TsAuth(documents:read) connectSql Queries
+        GET /v1/projects/{project}/databases/{database}/sql/ws TsAuth(sql:read) connectSql Queries
         GET /v1/projects/{project}/databases/{database}/tables/{table}/read-grant TsAuth(databases:read) getReadGrant Live
-        GET /v1/projects/{project}/databases/{database}/tables/{table}/shape TsAuth(documents:read) getShape Live
-        GET /v1/projects/{project}/databases/{database}/tables/{table}/shape/keys TsAuth(documents:read) getShapeKey Live
-        GET /v1/projects/{project}/databases/{database}/tables/{table}/shape/manifest TsAuth(documents:read) getShapeManifest Live
+        GET /v1/projects/{project}/databases/{database}/tables/{table}/shape TsAuth(sql:read) getShape Live
+        GET /v1/projects/{project}/databases/{database}/tables/{table}/shape/keys TsAuth(sql:read) getShapeKey Live
+        GET /v1/projects/{project}/databases/{database}/tables/{table}/shape/manifest TsAuth(sql:read) getShapeManifest Live
         GET /v1/projects/{project}/databases/{database}/usage TsAuth(databases:read) getDatabaseUsage Usage
         GET /v1/projects/{project}/metrics TsAuth(databases:read) getProjectMetrics Analytics
         GET /v1/projects/{project}/usage TsAuth(databases:read) getProjectUsage Usage
         GET /v1/regions anonymous listRegions Regions
         PATCH /v1/projects/{project}/databases/{database} TsAuth(databases:write) updateDatabase Databases
-        POST /v1/projects/{project}/buckets TsAuth(documents:write) createFileBucket File storage
-        POST /v1/projects/{project}/buckets/{bucket}/files/upload TsAuth(documents:write) createFileUpload File storage
-        POST /v1/projects/{project}/buckets/{bucket}/files/{file}/complete TsAuth(documents:write) completeFileUpload File storage
-        POST /v1/projects/{project}/buckets/{bucket}/files/{file}/download TsAuth(documents:read) createFileDownload File storage
+        POST /v1/projects/{project}/buckets TsAuth(sql:write) createFileBucket File storage
+        POST /v1/projects/{project}/buckets/{bucket}/files/upload TsAuth(sql:write) createFileUpload File storage
+        POST /v1/projects/{project}/buckets/{bucket}/files/{file}/complete TsAuth(sql:write) completeFileUpload File storage
+        POST /v1/projects/{project}/buckets/{bucket}/files/{file}/download TsAuth(sql:read) createFileDownload File storage
         POST /v1/projects/{project}/databases TsAuth(databases:write) createDatabase Databases
         POST /v1/projects/{project}/databases/{database}/backups TsAuth(databases:write) createBackup Backups
         POST /v1/projects/{project}/databases/{database}/backups/{backup}/restore TsAuth(databases:write) restoreBackup Backups
         POST /v1/projects/{project}/databases/{database}/branches TsAuth(databases:write) branchDatabase Databases
         POST /v1/projects/{project}/databases/{database}/branches/if-id/{expectedId} TsAuth(databases:write) branchDatabaseIfId Databases
-        POST /v1/projects/{project}/databases/{database}/functions/{function}/invoke TsAuth(documents:read) invokeFunction Functions
+        POST /v1/projects/{project}/databases/{database}/functions/{function}/invoke TsAuth(sql:read) invokeFunction Functions
         POST /v1/projects/{project}/databases/{database}/point-in-time/plan TsAuth(databases:read) planPointInTime Backups
         POST /v1/projects/{project}/databases/{database}/point-in-time/restore TsAuth(databases:write) restorePointInTime Backups
-        POST /v1/projects/{project}/databases/{database}/sql/execute TsAuth(documents:read) executeSql Queries
+        POST /v1/projects/{project}/databases/{database}/sql/execute TsAuth(sql:read) executeSql Queries
         PUT /v1/projects/{project}/backup-destination TsAuth(databases:write) setBackupDestination Backups
-        PUT /v1/projects/{project}/buckets/{bucket}/rules TsAuth(documents:write) setFileBucketRules File storage
+        PUT /v1/projects/{project}/buckets/{bucket}/rules TsAuth(sql:write) setFileBucketRules File storage
         PUT /v1/projects/{project}/databases/{database}/backup-policy TsAuth(databases:write) setBackupPolicy Backups
-        PUT /v1/projects/{project}/databases/{database}/functions/{function} TsAuth(documents:read,documents:write) deployFunction Functions
+        PUT /v1/projects/{project}/databases/{database}/functions/{function} TsAuth(sql:read,sql:write) deployFunction Functions
         PUT /v1/projects/{project}/databases/{database}/tables/{table}/read-grant TsAuth(databases:write) putReadGrant Live
         PUT /v1/projects/{project}/databases/{database}/ttl TsAuth(databases:write) setDatabaseTtl Databases
         """;

@@ -37,7 +37,7 @@ backup data keys are destroyed ([crypto-shredding.md](crypto-shredding.md)). A d
 base64(keyId:key)` of an API key and `{"project","database","access","ttl_seconds"}` answers 201
 `{"key","id","project_id","database","access","expires_at"}`.
 
-- `database` is the ULID; `access` is `read` (`documents:read`) or `read_write` (`documents:read documents:write`).
+- `database` is the ULID; `access` is `read` (`sql:read`) or `read_write` (`sql:read sql:write`).
 - `ttl_seconds` 60 to 2,592,000, default 3600; never past the parent's expiry. `project` is required for an
   organization key and must equal a project key's project.
 - The parent must hold the scopes and, if narrowed, the same database; otherwise 403. A scoped key cannot mint keys,

@@ -22,7 +22,7 @@
         "sha256": "da12dea0a18f633dbb3e7a43b2f3d8b2ef5b364de4fa807f5c95f49b0fafaf68"
       },
       "src/TerraBase/Features/ApiKeys/IApiKeyStore.cs": {
-        "sha256": "ba580389eb28a662cf26f934d18889a070040de3652915b33ea56c9ab401c6a5"
+        "sha256": "da2bdd3d439a6408243bd4b2a590b55db98db1e494b4dbc81d112b0d8e53189d"
       },
       "src/TerraBase/Features/Management/BranchManagedDatabaseEndpoint.cs": {
         "sha256": "30645c044df19dbdb634436dc257664fdf29beea4f7389adcb93f33cf3e37c51"
@@ -55,7 +55,7 @@
         "sha256": "10f5e8cb95fb0cceafd3dc97c7228bd717f65ee15def84bc86f63b1d0100ef25"
       },
       "src/TerraBase/Features/UserAuth/UserAuthenticationHandler.cs": {
-        "sha256": "4551fd002d29a20ffd48ca280644371031bc87334ed0a6c56b881d8976b79492"
+        "sha256": "5855137c2d46757afd9f1ad7ae74af9a6c3af93455ea404289133cf2f6b773e9"
       },
       "src/TerraBase/Features/UserAuth/UserAuthExtensions.cs": {
         "sha256": "bb4c057dc201bdd9ac553e830551fcbe3b88afb83721f2d5076662eb9f7943ce"

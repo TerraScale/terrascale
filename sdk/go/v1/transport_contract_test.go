@@ -28,7 +28,7 @@ func TestTokenSourceExchangeToPublicAPI(t *testing.T) {
 		if r.Method != http.MethodPost || r.URL.Path != "/terrascale/oauth/token" || !ok || client != key[:26] || secret != key {
 			t.Error("incorrect local token exchange boundary")
 		}
-		if err := r.ParseForm(); err != nil || r.Form.Get("project") != testProject || r.Form.Get("scope") != "documents:read" {
+		if err := r.ParseForm(); err != nil || r.Form.Get("project") != testProject || r.Form.Get("scope") != "sql:read" {
 			t.Error("project or permission changed during exchange")
 		}
 		fmt.Fprintf(w, `{"access_token":%q,"token_type":"Bearer","expires_in":900}`, token)
@@ -42,7 +42,7 @@ func TestTokenSourceExchangeToPublicAPI(t *testing.T) {
 		fmt.Fprint(w, `{"results":[{"columns":[{"name":"n","decltype":"INTEGER"}],"rows":[[9007199254740993]],"rows_affected":0,"last_insert_rowid":null}]}`)
 	}))
 	t.Cleanup(api.Close)
-	source, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Issuer: issuer.URL + "/terrascale", Key: key, Project: testProject, Scopes: []string{tsauth.ScopeDocumentsRead}})
+	source, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Issuer: issuer.URL + "/terrascale", Key: key, Project: testProject, Scopes: []string{tsauth.ScopeSQLRead}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,14 +104,14 @@ func TestUnsupportedScopeAndRevokedCredentialExchangeStopsBeforeResource(t *test
 				status = http.StatusUnauthorized
 			}
 			issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if err := r.ParseForm(); err != nil || r.Form.Get("scope") != tsauth.ScopeDocumentsWrite {
+				if err := r.ParseForm(); err != nil || r.Form.Get("scope") != tsauth.ScopeSQLWrite {
 					t.Error("permission was replaced")
 				}
 				w.WriteHeader(status)
 				fmt.Fprintf(w, `{"error":%q}`, code)
 			}))
 			t.Cleanup(issuer.Close)
-			source, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Issuer: issuer.URL + "/terrascale", Key: "01ARZ3NDEKTSV4RRFFQ69G5FA8_0123456789abcdefghjkmnpqrstvwxyz0123456789abcdefghjk", Project: testProject, Scopes: []string{tsauth.ScopeDocumentsWrite}})
+			source, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Issuer: issuer.URL + "/terrascale", Key: "01ARZ3NDEKTSV4RRFFQ69G5FA8_0123456789abcdefghjkmnpqrstvwxyz0123456789abcdefghjk", Project: testProject, Scopes: []string{tsauth.ScopeSQLWrite}})
 			if err != nil {
 				t.Fatal(err)
 			}

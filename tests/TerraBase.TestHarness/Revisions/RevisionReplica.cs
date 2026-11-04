@@ -181,7 +181,7 @@ internal sealed class RevisionDatabase
         if (_client is not { } open || !ReferenceEquals(open.Api, api))
         {
             _client?.Client.Dispose();
-            var key = await api.Server.IssueNarrowedAsync(_reference!.Organization, _reference.Project, null, "documents:read", "documents:write");
+            var key = await api.Server.IssueNarrowedAsync(_reference!.Organization, _reference.Project, null, "sql:read", "sql:write");
             _client = open = (api, api.DataClient(key));
         }
 

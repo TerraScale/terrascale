@@ -17,8 +17,8 @@ public sealed class TerraScaleAuthTokenContractTests
 {
     private const string Issuer = "https://auth.terrascale.tech/terrascale";
     private const string Audience = "https://api.terrascale.tech";
-    private static readonly string[] Scopes = ["databases:read", "databases:write", "documents:read", "documents:write"];
-    private const string TokenJson = "{\"access_token\":\"fixture-token\",\"token_type\":\"Bearer\",\"expires_in\":900,\"scope\":\"documents:read\"}";
+    private static readonly string[] Scopes = ["databases:read", "databases:write", "sql:read", "sql:write"];
+    private const string TokenJson = "{\"access_token\":\"fixture-token\",\"token_type\":\"Bearer\",\"expires_in\":900,\"scope\":\"sql:read\"}";
 
     [Test]
     public async Task PinnedSecurityContractNamesTheOneIssuerAudienceAndFourScopes()
@@ -33,9 +33,9 @@ public sealed class TerraScaleAuthTokenContractTests
     }
 
     [Test]
-    [Arguments("documents:read")]
-    [Arguments("databases:read documents:read")]
-    [Arguments("databases:read databases:write documents:read documents:write")]
+    [Arguments("sql:read")]
+    [Arguments("databases:read sql:read")]
+    [Arguments("databases:read databases:write sql:read sql:write")]
     public async Task ClientCredentialsSendsTheExactSpaceSeparatedScope(string scope)
     {
         using var handler = new CaptureHandler(HttpStatusCode.OK, TokenJson);
@@ -53,10 +53,10 @@ public sealed class TerraScaleAuthTokenContractTests
         using var handler = new CaptureHandler(HttpStatusCode.OK, TokenJson);
         using var http = new HttpClient(handler);
         await Client(http).Oidc.ExchangeTokenAsync("fixture-client", "fixture-secret", "fixture-subject",
-            "01JA0000000000000000000002", "01JA0000000000000000000003", "databases:read documents:read");
+            "01JA0000000000000000000002", "01JA0000000000000000000003", "databases:read sql:read");
         var form = Form(handler.Bodies[0]);
         await Assert.That(form["grant_type"]).IsEqualTo("urn:ietf:params:oauth:grant-type:token-exchange");
-        await Assert.That(form["scope"]).IsEqualTo("databases:read documents:read");
+        await Assert.That(form["scope"]).IsEqualTo("databases:read sql:read");
         await Assert.That(form["organization"]).IsEqualTo("01JA0000000000000000000002");
         await Assert.That(form["project"]).IsEqualTo("01JA0000000000000000000003");
         await Assert.That(handler.Authorizations[0]!.Scheme).IsEqualTo("Basic");

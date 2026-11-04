@@ -40,7 +40,7 @@ db.batch(vec![
 
 The project is a canonical uppercase ULID and the database a name or ULID. Read the API key from secret
 storage: `for_project_api_key` exchanges it through ts-auth and refreshes tokens automatically. Reads need
-`documents:read`; writes and schema changes also need `documents:write`. `Client::for_project` takes an
+`sql:read`; writes and schema changes also need `sql:write`. `Client::for_project` takes an
 already exchanged bearer token.
 
 ## SQL

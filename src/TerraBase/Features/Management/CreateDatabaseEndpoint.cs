@@ -29,7 +29,7 @@ public sealed class CreateDatabaseEndpoint(ITenantDirectory tenants) : EndpointW
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(ApiKeyScopes.DocumentsWrite);
+        RequireAuthorization(ApiKeyScopes.SqlWrite);
         Metadata(ListenerMetadata.Client);
     }
 

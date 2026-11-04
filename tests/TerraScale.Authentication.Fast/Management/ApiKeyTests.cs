@@ -23,8 +23,8 @@ namespace TerraScale.Authentication.Fast.Management;
 public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
 {
     private const string Audience = "https://api.terrascale.tech";
-    private static readonly string[] ReadWrite = ["documents:read", "documents:write"];
-    private static readonly string[] WithShapes = ["documents:read", "shapes:read"];
+    private static readonly string[] ReadWrite = ["sql:read", "sql:write"];
+    private static readonly string[] WithShapes = ["sql:read", "shapes:read"];
 
     [Test]
     public async Task A_project_key_is_shown_once_and_exchanged_for_a_project_token_with_the_contract_claims()
@@ -70,7 +70,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(access.GetClaim("org_id").Value).IsEqualTo(organization);
         await Assert.That(access.GetClaim("project_id").Value).IsEqualTo(project);
         await Assert.That(access.GetClaim("database").Value).IsEqualTo(database);
-        await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(["documents:read", "documents:write"]);
+        await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(["sql:read", "sql:write"]);
         await Assert.That(access.TryGetClaim("email", out _)).IsFalse();
         await Assert.That((access.ValidTo - access.IssuedAt).TotalSeconds).IsEqualTo(60);
 
@@ -80,10 +80,10 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That((await oidc.OkAsync(HttpMethod.Get, keys, token)).GetProperty("items")[0].GetProperty("last_used_at").GetDateTimeOffset()).IsEqualTo(used);
 
         // The key string authenticates with client_secret_post too; scopes narrow but never widen.
-        using (var posted = await oidc.PostTokenAsync(new() { ["grant_type"] = "client_credentials", ["client_id"] = id, ["client_secret"] = key, ["scope"] = "documents:read" }, null, null))
+        using (var posted = await oidc.PostTokenAsync(new() { ["grant_type"] = "client_credentials", ["client_id"] = id, ["client_secret"] = key, ["scope"] = "sql:read" }, null, null))
         {
             var narrowed = await oidc.ValidateAsync((await OidcHarness.JsonAsync(posted)).GetProperty("access_token").GetString()!, Audience);
-            await Assert.That(narrowed.GetClaim("scope").Value).IsEqualTo("documents:read");
+            await Assert.That(narrowed.GetClaim("scope").Value).IsEqualTo("sql:read");
         }
 
         await Assert.That(await TokenErrorAsync(oidc.ApiKeyTokenAsync(key, new() { ["scope"] = "databases:write" }))).IsEqualTo((400, "invalid_scope"));
@@ -135,7 +135,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
             await Assert.That(access.GetClaim("email").Value).IsEqualTo("alice@example.test");
             await Assert.That(access.GetClaim("org_id").Value).IsEqualTo(organization);
             await Assert.That(access.GetClaim("project_id").Value).IsEqualTo(first);
-            await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(["databases:read", "databases:write", "documents:read", "documents:write"]);
+            await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(["databases:read", "databases:write", "sql:read", "sql:write"]);
             await Assert.That(access.Audiences.ToArray()).IsEquivalentTo([Audience]);
             await Assert.That((access.ValidTo - access.IssuedAt).TotalSeconds).IsLessThanOrEqualTo(60);
 
@@ -151,10 +151,10 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         {
             var access = await oidc.ValidateAsync((await OidcHarness.JsonAsync(viewer)).GetProperty("access_token").GetString()!, Audience, clock);
             await Assert.That(access.TryGetClaim("project_id", out _)).IsFalse();
-            await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(["databases:read", "documents:read"]);
+            await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(["databases:read", "sql:read"]);
         }
 
-        await Assert.That(await TokenErrorAsync(oidc.ExchangeAsync(bobToken, new() { ["organization"] = organization, ["project"] = first, ["scope"] = "documents:write" }))).IsEqualTo((400, "invalid_scope"));
+        await Assert.That(await TokenErrorAsync(oidc.ExchangeAsync(bobToken, new() { ["organization"] = organization, ["project"] = first, ["scope"] = "sql:write" }))).IsEqualTo((400, "invalid_scope"));
 
         // A collaborator reaches only its project, and has no organization token.
         await Assert.That((await TokenErrorAsync(oidc.ExchangeAsync(daveToken, new() { ["organization"] = organization, ["project"] = second }))).Status).IsEqualTo(200);
@@ -169,7 +169,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         // A sign-in never carries TerraBase or billing scopes, although the dashboard holds their permissions.
         clock.Advance(HostedAuth.MailCooldown);
         var (_, challenge) = OidcHarness.Pkce();
-        using (var authorize = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge, scope: "openid documents:write"), await oidc.SignInAsync("bob@example.test")))
+        using (var authorize = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge, scope: "openid sql:write"), await oidc.SignInAsync("bob@example.test")))
         {
             await Assert.That(OidcHarness.Query(authorize.Headers.Location!)["error"]).IsEqualTo("invalid_scope");
         }

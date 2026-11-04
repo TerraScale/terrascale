@@ -25,7 +25,7 @@ overlay (F7) and region-to-region provisional changes (F8) are later tasks. Prot
 
 `GET /v1/projects/{project}/databases/{database}/tables/{table}/shape?handle=&offset=&live=&cursor=&where=&columns=`
 
-Client listener, TLS, `documents:read`, OpenAPI tag `Live`. End-user tokens read only granted tables: [shape read grants](shape-read-grants.md).
+Client listener, TLS, `sql:read`, OpenAPI tag `Live`. End-user tokens read only granted tables: [shape read grants](shape-read-grants.md).
 
 | Parameter | Value |
 | --- | --- |

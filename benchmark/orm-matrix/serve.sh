@@ -126,7 +126,7 @@ print(base64.b64encode(hashlib.sha256(b"TerraBase integration fixtures only; nev
     -H 'Content-Type: application/json' --data '{"name":"matrix"}' "$local_management/organizations/$organization/projects/$project/databases" \
     || fail "database creation failed"
   jq -n --arg organization "$organization" --arg project "$project" \
-    '{name: "orm-matrix", scopes: ["documents:read", "documents:write"], organizationId: $organization, projectId: $project, databaseId: null}' \
+    '{name: "orm-matrix", scopes: ["sql:read", "sql:write"], organizationId: $organization, projectId: $project, databaseId: null}' \
     >"$work/key.json"
   local key
   key=$(curl -fsS --http2-prior-knowledge -H @"$work/peer.headers" -H 'Content-Type: application/json' \
