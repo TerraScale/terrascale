@@ -71,7 +71,13 @@ public sealed class TransportSecurityTests
     {
         var settings = new NpgsqlConnectionStringBuilder
         {
-            Host = host, Port = port, Username = "wire", Password = key, Database = Faker.Database.Column(), SslMode = ssl, Pooling = false,
+            Host = host,
+            Port = port,
+            Username = "wire",
+            Password = key,
+            Database = Faker.Database.Column(),
+            SslMode = ssl,
+            Pooling = false,
         };
         await using var connection = new NpgsqlConnection(settings.ConnectionString);
         var error = await Assert.ThrowsAsync<PostgresException>(async () => await connection.OpenAsync());
