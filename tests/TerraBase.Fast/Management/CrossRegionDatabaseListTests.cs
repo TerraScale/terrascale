@@ -2,7 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using TerraBase.Features.Management;
+using TerraBase.Features.Regions;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -19,7 +19,7 @@ public sealed class CrossRegionDatabaseListTests
         await using var home = await ManagementApi.StartAsync(settings => settings["region"] = "gru", services =>
         {
             var peers = away.Server.BaseAddress;
-            services.Replace(ServiceDescriptor.Singleton<IRemoteRegions>(new FixedRemoteRegions(peers)));
+            services.Replace(ServiceDescriptor.Singleton<IRegionPeers>(new FixedRegionPeers(peers)));
         });
 
         var project = EntityIds.New().ToString();
@@ -68,9 +68,9 @@ public sealed class CrossRegionDatabaseListTests
             token.Claims["scope"] = Scopes;
         });
 
-    private sealed class FixedRemoteRegions(Uri peer) : IRemoteRegions
+    private sealed class FixedRegionPeers(Uri peer) : IRegionPeers
     {
-        public ValueTask<IReadOnlyList<Uri>> InternalListenersAsync(CancellationToken cancellationToken) =>
-            ValueTask.FromResult<IReadOnlyList<Uri>>([peer]);
+        public ValueTask<IReadOnlyList<RegionPeer>> OtherRegionsAsync(CancellationToken cancellationToken) =>
+            ValueTask.FromResult<IReadOnlyList<RegionPeer>>([new RegionPeer("sjc", peer)]);
     }
 }
