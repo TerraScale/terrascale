@@ -42,6 +42,8 @@ internal sealed class SqlReadCharge(Action accept)
 
 internal sealed record SqlError(string Code, string Message)
 {
+    public bool Sandbox { get; init; }
+
     public string Kind => Code switch
     {
         "SQLITE_AUTH" => "auth",
