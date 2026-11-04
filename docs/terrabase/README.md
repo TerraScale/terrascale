@@ -8,6 +8,7 @@ Local processes: [TerraBase local host](local-host.md).
 Recovery: [Copy placement and snapshot routing](recovery-copy-placement.md).
 Transport security: [TLS and authentication on every SQL surface](transport-security.md).
 Erasure: [Crypto-shredding of deleted databases](crypto-shredding.md).
+Clock safety: [HLC and clock admission](hlc-clock.md).
 Placement: [Home region, replica regions, all-regions mode and moving the home](placement.md).
 
 TerraBase is TerraScale's database, moving to SQL only on Turso. The leaderless
