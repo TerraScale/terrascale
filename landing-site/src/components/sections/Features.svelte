@@ -5,7 +5,7 @@
   import { dict } from '@/lib/i18n'
   import { reveal } from '@/lib/reveal'
 
-  const featureIcons: AppIconName[] = ['database', 'globe', 'target', 'activity', 'shieldCheck']
+  const featureIcons: AppIconName[] = ['database', 'globe', 'target', 'activity', 'database', 'shieldCheck']
   // The regions card shows the serving regions it describes.
   const featureRegions = [[], [], ['gru', 'sjc', 'fra']] as const
   $: features = $dict.features.items.map((item, i) => ({
@@ -77,7 +77,7 @@
     color: var(--ts-primary-light);
   }
 
-  /* Two wide cards over three narrow ones. */
+  /* Six capabilities in two rows. */
   .features__grid {
     list-style: none;
     margin: 0;
@@ -97,10 +97,6 @@
     border-radius: 16px;
     background: var(--ts-bg-surface);
     transition: border-color 300ms cubic-bezier(0.22, 1, 0.36, 1);
-  }
-
-  .feature:nth-child(-n + 2) {
-    grid-column: span 3;
   }
 
   .feature:hover {
@@ -133,7 +129,6 @@
     text-wrap: balance;
   }
 
-
   .feature__tags {
     display: flex;
     flex-wrap: wrap;
@@ -159,12 +154,8 @@
     .features__grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
-    .feature,
-    .feature:nth-child(-n + 2) {
+    .feature {
       grid-column: span 1;
-    }
-    .feature:last-child {
-      grid-column: span 2;
     }
   }
 
@@ -182,9 +173,7 @@
     .features__grid {
       grid-template-columns: minmax(0, 1fr);
     }
-    .feature,
-    .feature:nth-child(-n + 2),
-    .feature:last-child {
+    .feature {
       grid-column: auto;
       padding: 24px;
     }
