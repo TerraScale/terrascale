@@ -34,7 +34,7 @@ internal static class SqlSandbox
 
     public static SqlError Denied(string message) => new(SqlErrors.Sandbox, message);
 
-    public static SqlError Hidden(string name) => SqlErrors.Error($"no such table: {name}");
+    public static SqlError Hidden { get; } = SqlErrors.Error("no such table");
 
     public static bool IsHidden(string name) => TerraBaseSqlNames.IsReserved(name);
 

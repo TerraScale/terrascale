@@ -73,7 +73,8 @@ the sandbox works on the statement's tokens with SQLite quoting and comments res
   (`src/TerraScale.TerraBase.Contracts/TerraBaseSqlNames.cs`): prefixes `_tb_`, `_ts_`, `turso_` (so `turso_cdc`,
   `turso_cdc_version` and `turso_sync_cdc`), `__turso_`, `tb_index_`, `fts_dir_`, `pragma_` and `sqlite_stat`, and the
   engine tables `collections`, `commit_offset`, `_collections`, `_indexes` and `_unique`. A statement naming one, even
-  as a string literal, answers `undefined_table` (42P01).
+  as a string literal, answers `undefined_table` (42P01) with the message `no such table`, which never echoes the
+  internal name.
 - Schema listings show only customer objects: every read of `sqlite_schema`, `sqlite_master` or `sqlite_sequence` runs
   on a filtered subquery under the same name, so aliases, qualified columns and views over it work; the engine's
   `sqlite_sequence` is left out of the listings; `PRAGMA table_list` and `PRAGMA foreign_key_check` drop rows of
