@@ -44,7 +44,7 @@ func validateBackupSettings(command string, args []string) error {
 		_, err := backupPolicyRequest(args[0], args[1])
 		return err
 	case "backup window":
-	case "backup plan", "backup restore-at":
+	case "backup plan", "backup restore-at", "backup rewind":
 		if _, err := time.Parse(time.RFC3339, args[0]); err != nil {
 			return fmt.Errorf("restore time must be RFC3339: %w", errUsage)
 		}
@@ -82,7 +82,7 @@ func backupSettings(ctx context.Context, db *v1.Database, command string, args [
 			return err
 		}
 		return emitJSON(out, result)
-	case "backup window", "backup plan", "backup restore-at":
+	case "backup window", "backup plan", "backup restore-at", "backup rewind":
 		var at time.Time
 		if command != "backup window" {
 			var err error
@@ -106,6 +106,13 @@ func backupSettings(ctx context.Context, db *v1.Database, command string, args [
 		}
 		if command == "backup window" {
 			result, err := db.RestoreWindow(ctx, source)
+			if err != nil {
+				return err
+			}
+			return emitJSON(out, result)
+		}
+		if command == "backup rewind" {
+			result, err := db.RewindPointInTime(ctx, v1.PointInTimeRequest{PointInTime: at, Destination: source})
 			if err != nil {
 				return err
 			}

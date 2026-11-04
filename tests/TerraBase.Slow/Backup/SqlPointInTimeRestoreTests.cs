@@ -93,5 +93,33 @@ public sealed class SqlPointInTimeRestoreTests
         await Assert.That(replica.Rows()).IsEquivalentTo(rows.Skip(1).ToDictionary(row => row.Id, row => row.Value));
     }
 
+    [Test]
+    public async Task A_replica_rebootstraps_after_a_rewind_and_matches_the_rewound_database(CancellationToken cancellationToken)
+    {
+        await using var host = await SqlBackupHost.StartAsync(cancellationToken);
+        await host.OkAsync("CREATE TABLE items (id TEXT PRIMARY KEY, v TEXT NOT NULL)");
+        var rows = Enumerable.Range(0, 40).Select(_ => (Id: EntityIds.New().ToString(), Value: Faker.Lorem.Sentence(20))).ToList();
+        await host.OkAsync([.. rows.Select(row => Stmt("INSERT INTO items VALUES (?, ?)", row.Id, row.Value))]);
+        await host.SnapshotAsync(cancellationToken);
+        var k = host.SnapshotAt.AddSeconds(2);
+        await host.OkAsync(Stmt("DELETE FROM items WHERE id = ?", rows[0].Id));
+        await host.StampAsync(k.AddSeconds(-1), cancellationToken);
+        await host.OkAsync("DELETE FROM items");
+        await host.StampAsync(k, cancellationToken);
+        await host.ShipAsync(TimeSpan.FromMilliseconds(2500), cancellationToken);
+        var replica = new RevisionReplica();
+        var before = await replica.PullAsync(host.Api.Server, host.Tenant);
+
+        using var rewound = await host.Api.Client.PostAsJsonAsync(ManagementApi.Uri($"{host.Database.Path}/point-in-time/rewind"), new { pointInTime = k }, cancellationToken);
+        var after = await replica.PullAsync(host.Api.Server, host.Tenant);
+        var steady = await replica.PullAsync(host.Api.Server, host.Tenant);
+
+        await Assert.That(rewound.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await rewound.Content.ReadAsStringAsync(cancellationToken));
+        await Assert.That(after.Full).IsEqualTo(FullReason.OtherIncarnation);
+        await Assert.That(after.Revision.Incarnation).IsNotEqualTo(before.Revision.Incarnation);
+        await Assert.That(steady.Full).IsNull();
+        await Assert.That(replica.Rows()).IsEquivalentTo(rows.Skip(1).ToDictionary(row => row.Id, row => row.Value));
+    }
+
     private static object Stmt(string sql, params object?[] args) => new { sql, args };
 }
