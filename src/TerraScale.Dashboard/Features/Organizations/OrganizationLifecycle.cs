@@ -98,7 +98,7 @@ namespace TerraScale.Dashboard.Features.Organizations
 
             var project = context.Organization!.Projects.GetValueOrDefault(projectId);
             var removed = project is null;
-            if (removed && await state.GetAsync(AccountService.OrganizationsCollection, context.Organization.Id, cancellationToken) is { } saved)
+            if (removed && await state.GetAsync(AccountService.OrganizationsTable, context.Organization.Id, cancellationToken) is { } saved)
             {
                 var pendingName = AccountService.Read<OrganizationRecord>(saved).PendingProjectDeletions.GetValueOrDefault(projectId);
                 if (!string.IsNullOrEmpty(pendingName) && pendingName == confirmation.Trim())
@@ -208,13 +208,13 @@ namespace TerraScale.Dashboard.Features.Organizations
         {
             for (var attempt = 0; ; attempt++)
             {
-                var document = await state.GetAsync(AccountService.OrganizationsCollection, context.Organization!.Id, cancellationToken);
-                if (document is null)
+                var row = await state.GetAsync(AccountService.OrganizationsTable, context.Organization!.Id, cancellationToken);
+                if (row is null)
                 {
                     return;
                 }
 
-                var org = AccountService.Read<OrganizationRecord>(document);
+                var org = AccountService.Read<OrganizationRecord>(row);
                 if (org.Id != context.Organization.Id)
                 {
                     throw new IOException("Organization projection identity changed.");
@@ -229,7 +229,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, deleted ? "organization.deleted" : "member.left", deleted ? org.Name : context.UserId, "organization", time.GetUtcNow(), Ip: accounts.ClientIp));
                 try
                 {
-                    await state.PutAsync(AccountService.OrganizationsCollection, org.Id, JsonSerializer.SerializeToElement(org), StatePrecondition.Matches(document.Version), cancellationToken);
+                    await state.PutAsync(AccountService.OrganizationsTable, org.Id, JsonSerializer.SerializeToElement(org), StatePrecondition.Matches(row.Version), cancellationToken);
                     return;
                 }
                 catch (StateConflictException) when (attempt < 3) { }

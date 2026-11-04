@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.Features.Billing
 {
     public sealed partial class StripeBilling
     {
-        public const string CheckoutsCollection = "dashboard_stripe_checkouts";
+        public const string CheckoutsTable = "dashboard_stripe_checkouts";
 
         private static string CheckoutReturnUrl(string checkoutId)
         {
@@ -25,13 +25,13 @@ namespace TerraScale.Dashboard.Features.Billing
             var value = CheckoutBinding.For(binding);
             try
             {
-                await state.PutAsync(CheckoutsCollection, binding.CheckoutId, JsonSerializer.SerializeToElement(value),
+                await state.PutAsync(CheckoutsTable, binding.CheckoutId, JsonSerializer.SerializeToElement(value),
                     StatePrecondition.Absent, cancellationToken);
             }
             catch (StateConflictException)
             {
-                var document = await state.GetAsync(CheckoutsCollection, binding.CheckoutId, cancellationToken);
-                if (document is null || document.Id != binding.CheckoutId || AccountService.Read<CheckoutBinding>(document) != value)
+                var row = await state.GetAsync(CheckoutsTable, binding.CheckoutId, cancellationToken);
+                if (row is null || row.Id != binding.CheckoutId || AccountService.Read<CheckoutBinding>(row) != value)
                 {
                     throw new IOException("Checkout ownership changed.");
                 }
@@ -45,14 +45,14 @@ namespace TerraScale.Dashboard.Features.Billing
                 throw new AccountAccessException("Checkout is unavailable.", 404);
             }
 
-            var document = await state.GetAsync(CheckoutsCollection, checkoutId, cancellationToken)
+            var row = await state.GetAsync(CheckoutsTable, checkoutId, cancellationToken)
                 ?? throw new AccountAccessException("Checkout is unavailable.", 404);
-            if (document.Id != checkoutId)
+            if (row.Id != checkoutId)
             {
-                throw new IOException("Checkout document identity is invalid.");
+                throw new IOException("Checkout row identity is invalid.");
             }
 
-            var index = AccountService.Read<CheckoutBinding>(document);
+            var index = AccountService.Read<CheckoutBinding>(row);
             if (index.CheckoutId != checkoutId || string.IsNullOrEmpty(index.OrganizationId) || string.IsNullOrEmpty(index.CustomerId) ||
                 string.IsNullOrEmpty(index.RequestId) || index.ProjectId is null || index.ReturnPath is null || index.Plan is null || index.Interval is null)
             {

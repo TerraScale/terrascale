@@ -17,31 +17,31 @@ namespace TerraScale.Dashboard.Platform.Contracts
             services.AddOpenApi("integration", options =>
             {
                 options.ShouldInclude = description => description.GroupName == "integration";
-                options.AddDocumentTransformer((document, _, _) =>
+                options.AddDocumentTransformer((openApi, _, _) =>
                 {
-                    document.Info.Title = "TerraScale Dashboard integration API";
-                    document.Info.Version = "v1";
-                    document.Servers = [new OpenApiServer { Url = "https://dash.terrascale.tech" }];
-                    document.Info.Description = "Same-origin dashboard APIs. Existing /api/v1 browser paths are preserved. " +
+                    openApi.Info.Title = "TerraScale Dashboard integration API";
+                    openApi.Info.Version = "v1";
+                    openApi.Servers = [new OpenApiServer { Url = "https://dash.terrascale.tech" }];
+                    openApi.Info.Description = "Same-origin dashboard APIs. Existing /api/v1 browser paths are preserved. " +
                         "New public APIs use /v1. Mutations require the current session and the _csrf form token " +
                         "bound to the same origin; authentication and membership checks run before actions. " +
                         "This document covers explicitly annotated integration routes, not every UI page.";
-                    document.Components ??= new();
-                    document.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
-                    document.Components.SecuritySchemes["dashboardSession"] = new OpenApiSecurityScheme
+                    openApi.Components ??= new();
+                    openApi.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
+                    openApi.Components.SecuritySchemes["dashboardSession"] = new OpenApiSecurityScheme
                     {
                         Type = SecuritySchemeType.ApiKey,
                         In = ParameterLocation.Cookie,
                         Name = "ts-dashboard-session",
                         Description = "Server-managed HttpOnly session cookie. Obtain by signing in through ts-auth's hosted pages (GET /login)."
                     };
-                    foreach (var path in document.Paths.Values)
+                    foreach (var path in openApi.Paths.Values)
                     {
                         foreach (var operation in path.Operations!.Values)
                         {
                             operation.Security = [new OpenApiSecurityRequirement
                             {
-                                [new OpenApiSecuritySchemeReference("dashboardSession", document)] = []
+                                [new OpenApiSecuritySchemeReference("dashboardSession", openApi)] = []
                             }];
                         }
                     }

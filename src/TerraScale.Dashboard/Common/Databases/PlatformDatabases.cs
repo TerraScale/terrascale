@@ -3,7 +3,6 @@ using TerraScale.TerraBase.Contracts.Platform;
 using System.Net;
 using System.Text.Json;
 using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Common.Databases
 {
@@ -36,8 +35,8 @@ namespace TerraScale.Dashboard.Common.Databases
         // The platform organization's projects get their databases from TerraBase; the dashboard stores none for them.
         public static async Task HydrateAsync(OrganizationRecord org, TerraBaseRpcClient rpc, SessionRecord session, CancellationToken cancellationToken)
         {
-            using var document = await ReadAsync(() => rpc.User<IPlatformService>(session.AccessToken).WithCancellationToken(cancellationToken).ListDatabasesAsync().ResponseAsync) ?? throw new DatabaseProviderException(HttpStatusCode.NotFound);
-            foreach (var item in Items(document))
+            using var json = await ReadAsync(() => rpc.User<IPlatformService>(session.AccessToken).WithCancellationToken(cancellationToken).ListDatabasesAsync().ResponseAsync) ?? throw new DatabaseProviderException(HttpStatusCode.NotFound);
+            foreach (var item in Items(json))
             {
                 var id = item.GetProperty("id").GetString()!;
                 if (!Databases.TryGetValue(id, out var known) || item.GetProperty("name").GetString() != known.Name ||
@@ -61,54 +60,9 @@ namespace TerraScale.Dashboard.Common.Databases
             }
         }
 
-        public static async Task<IReadOnlyList<TerraBaseCollectionInfo>> CollectionsAsync(TerraBaseRpcClient rpc, SessionRecord session, string database, CancellationToken cancellationToken)
+        private static JsonElement.ArrayEnumerator Items(JsonDocument json)
         {
-            using var document = await ReadAsync(() => rpc.User<IPlatformService>(session.AccessToken).WithCancellationToken(cancellationToken).ListCollectionsAsync(Name(database)).ResponseAsync) ?? throw new DatabaseProviderException(HttpStatusCode.NotFound);
-            return [.. Items(document).Select(item => new TerraBaseCollectionInfo(item.GetProperty("name").GetString()!,
-                DateTimeOffset.FromUnixTimeMilliseconds(long.Parse(item.GetProperty("created_at").GetString()!, System.Globalization.CultureInfo.InvariantCulture)),
-                item.TryGetProperty("id", out var id) ? id.GetString() ?? "" : ""))];
-        }
-
-        // Documents in id order only: explore has no filters or sorts.
-        public static async Task<TerraBaseDocumentPage> DocumentsAsync(TerraBaseRpcClient rpc, SessionRecord session, string database, string collection, TerraBaseQuery query, CancellationToken cancellationToken)
-        {
-            if (query.Filter is not null || query.Project is not null || query.Sort is { Count: > 0 } sort && (sort.Count > 1 || sort[0].Path != "$id" || sort[0].Order is not (null or "asc")))
-            {
-                throw new AccountAccessException("Platform databases list documents in id order only.", 422);
-            }
-
-            return await ListAsync(rpc, session, database, collection, Math.Clamp(query.Limit ?? 50, 1, 1000), query.Cursor, cancellationToken);
-        }
-
-        public static async Task<TerraBaseDocumentPage> ListAsync(TerraBaseRpcClient rpc, SessionRecord session, string database, string collection, int limit, string? cursor, CancellationToken cancellationToken)
-        {
-            using var document = await ReadAsync(() => rpc.User<IPlatformService>(session.AccessToken).WithCancellationToken(cancellationToken)
-                .ListDocumentsAsync(Name(database), collection, limit, cursor).ResponseAsync) ?? throw new DatabaseProviderException(HttpStatusCode.NotFound);
-            var next = document.RootElement.TryGetProperty("next_cursor", out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-            return new([.. Items(document).Select(Document)], next);
-        }
-
-        public static async Task<TerraBaseDocument?> GetAsync(TerraBaseRpcClient rpc, SessionRecord session, string database, string collection, string id, CancellationToken cancellationToken)
-        {
-            using var document = await ReadAsync(() => rpc.User<IPlatformService>(session.AccessToken).WithCancellationToken(cancellationToken)
-                .GetDocumentAsync(Name(database), collection, id).ResponseAsync);
-            return document is null ? null : Document(document.RootElement);
-        }
-
-        // Only the two platform names reach TerraBase.
-        private static string Name(string database)
-        {
-            return Databases.Values.Any(known => known.Name == database) ? database : throw new DatabaseProviderException(HttpStatusCode.NotFound);
-        }
-
-        private static JsonElement.ArrayEnumerator Items(JsonDocument document)
-        {
-            return document.RootElement.GetProperty("items").EnumerateArray();
-        }
-
-        private static TerraBaseDocument Document(JsonElement item)
-        {
-            return new(item.GetProperty("id").GetString()!, item.GetProperty("version").GetString()!, item.GetProperty("state").GetString()!, item.GetProperty("document").Clone());
+            return json.RootElement.GetProperty("items").EnumerateArray();
         }
 
         // null on 404; 401 and 403 mean the caller is not (or no longer) a platform admin.

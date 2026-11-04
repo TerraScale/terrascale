@@ -9,7 +9,7 @@ namespace TerraScale.Dashboard.Features.Auth
     // are encrypted in TerraBase, shared across replicas, and never logged.
     public sealed partial class AuthFlows(IDashboardState state, IDashboardIdentity identity, TimeProvider time)
     {
-        private const string Collection = "dashboard_auth_flows";
+        private const string Table = "dashboard_auth_flows";
         private const string OidcCookie = "ts-dashboard-oidc";
 
         public async Task<OidcFlow> StartOidcAsync(HttpContext context, string returnTo, string tokenName = "", int tokenDays = 0, TerraScale.Dashboard.Platform.Mcp.McpAuthorization? mcp = null, StepUpIntent? stepUp = null)
@@ -31,7 +31,7 @@ namespace TerraScale.Dashboard.Features.Auth
                 return null;
             }
 
-            try { await state.DeleteAsync(Collection, stored.Id, stored.Version, context.RequestAborted); }
+            try { await state.DeleteAsync(Table, stored.Id, stored.Version, context.RequestAborted); }
             catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict or System.Net.HttpStatusCode.NotFound)
             { return null; }
             return stored.Value.ExpiresAt > time.GetUtcNow() ? stored.Value : null;
@@ -41,7 +41,7 @@ namespace TerraScale.Dashboard.Features.Auth
         {
             var token = Random();
             var credentials = await identity.ReadAsync(context.RequestAborted);
-            await state.PutAsync(Collection, Key(token), Seal(value, credentials.SessionEncryptionKey, cookie), StatePrecondition.Absent, context.RequestAborted);
+            await state.PutAsync(Table, Key(token), Seal(value, credentials.SessionEncryptionKey, cookie), StatePrecondition.Absent, context.RequestAborted);
             var options = Options(context);
             options.Expires = expires;
             context.Response.Cookies.Append(cookie, token, options);
@@ -55,14 +55,14 @@ namespace TerraScale.Dashboard.Features.Auth
                 return null;
             }
 
-            var document = await state.GetAsync(Collection, Key(token), context.RequestAborted);
-            if (document is null)
+            var row = await state.GetAsync(Table, Key(token), context.RequestAborted);
+            if (row is null)
             {
                 return null;
             }
 
             var credentials = await identity.ReadAsync(context.RequestAborted);
-            try { return new(document.Id, document.Version, Open<T>(document.Body, credentials.SessionEncryptionKey, cookie)); }
+            try { return new(row.Id, row.Version, Open<T>(row.Body, credentials.SessionEncryptionKey, cookie)); }
             catch (Exception error) when (error is CryptographicException or FormatException or JsonException)
             { throw new IOException("Authentication flow is invalid."); }
         }
@@ -71,10 +71,10 @@ namespace TerraScale.Dashboard.Features.Auth
         {
             if (context.Request.Cookies[cookie] is { Length: 64 } token && token.All(char.IsAsciiHexDigitLower))
             {
-                var document = await state.GetAsync(Collection, Key(token), context.RequestAborted);
-                if (document is not null)
+                var row = await state.GetAsync(Table, Key(token), context.RequestAborted);
+                if (row is not null)
                 {
-                    await state.DeleteAsync(Collection, document.Id, document.Version, context.RequestAborted);
+                    await state.DeleteAsync(Table, row.Id, row.Version, context.RequestAborted);
                 }
             }
             context.Response.Cookies.Delete(cookie, Options(context));

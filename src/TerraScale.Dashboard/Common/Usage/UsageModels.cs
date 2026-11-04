@@ -35,7 +35,7 @@ namespace TerraScale.Dashboard.Common.Usage
     public sealed record ActivityPoint(DateTimeOffset Start, long Reads, long Writes);
     public enum UsageSourceState { Measured, NotMetered, Unauthorized, Unavailable, NoProducer, Restricted, QueryTooExpensive }
     public sealed record UsagePeriod(DateTimeOffset From, DateTimeOffset To, string Granularity, long Reads, long Writes);
-    public sealed record UsageReading(string ProjectId, string DatabaseId, long LogicalBytes, long Documents, UsagePeriod Period, IReadOnlyList<ActivityPoint> Series, IReadOnlyList<UsageReading> Items, UsageMonth? Month = null);
+    public sealed record UsageReading(string ProjectId, string DatabaseId, long LogicalBytes, UsagePeriod Period, IReadOnlyList<ActivityPoint> Series, IReadOnlyList<UsageReading> Items, UsageMonth? Month = null);
     public sealed record UsageMonth(string Month, long ReadUnits, long WriteUnits, long Units, long? OrganizationUnits = null, long? OrganizationReadUnits = null);
     public sealed record UsageObservation(UsageSourceState State, UsageReading? Reading = null);
     public sealed record UsageMeasurements(UsageObservation Scope, IReadOnlyDictionary<string, UsageObservation> Monthly)

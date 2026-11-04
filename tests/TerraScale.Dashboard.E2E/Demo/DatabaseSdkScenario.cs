@@ -25,13 +25,12 @@ using TerraScale.Dashboard.Features.Organizations;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.E2E
 {
     // A REST producer behind the real MagicOnion services for application E2E tests. The dashboard keeps its production
-    // database, document, changes and ts-auth adapters. Customer SDK callers reach the same producer over public REST. Data routes follow I2 contracts/terrabase (canonical /v1/projects lifecycle by
-    // database name, exchanged action-scoped project bearers, SSE changes); project keys follow I1 contracts/auth at the
+    // database, SQL and ts-auth adapters. Customer SDK callers reach the same producer over public REST. Data routes follow I2 contracts/terrabase (canonical /v1/projects lifecycle by
+    // database name, exchanged action-scoped project bearers); project keys follow I1 contracts/auth at the
     // global ts-auth origin only. No customer key reaches TerraBase and no key is stored by the dashboard. Management routes
     // remain only for workspace/backup callers not yet moved. This fixture does not qualify a live deployment.
     public sealed class DatabaseSdkScenario : IAsyncDisposable
@@ -156,7 +155,6 @@ namespace TerraScale.Dashboard.E2E
                 application.Services.Replace(ServiceDescriptor.Singleton<TerraBaseRpcClient>(services => new(
                     services.GetRequiredService<IDashboardIdentity>(), ProviderOrigin, null, peersFile, services.GetRequiredService<IMeterFactory>())));
                 application.Services.Replace(ServiceDescriptor.Singleton<IDatabaseBackend, DatabaseBackend>());
-                application.Services.Replace(ServiceDescriptor.Singleton<IDocumentBackend>(services => services.GetRequiredService<DocumentBackend>()));
                 application.Services.Replace(ServiceDescriptor.Singleton<IOrganizationAccess, TsOrganizationAccess>());
                 configureScenario?.Invoke(application);
             }
@@ -253,7 +251,7 @@ namespace TerraScale.Dashboard.E2E
 
         private sealed class RecordingState(IDashboardState inner, TestWorkspace workspace) : IDashboardState
         {
-            // The encrypted data-key registry is gone; recording its former collection shows nothing writes customer keys again.
+            // The encrypted data-key registry is gone; recording its former table shows nothing writes customer keys again.
             private const string Credentials = "dashboard_data_credentials";
             private readonly ConcurrentQueue<string> encrypted = new();
             private int credentialReads;
@@ -312,10 +310,10 @@ namespace TerraScale.Dashboard.E2E
                 return inner.CheckReadyAsync(ct);
             }
 
-            public async Task<StateRecord?> GetAsync(string collection, string id, CancellationToken ct)
+            public async Task<StateRecord?> GetAsync(string table, string id, CancellationToken ct)
             {
-                var value = await inner.GetAsync(collection, id, ct);
-                if (collection != Credentials)
+                var value = await inner.GetAsync(table, id, ct);
+                if (table != Credentials)
                 {
                     return value;
                 }
@@ -323,20 +321,20 @@ namespace TerraScale.Dashboard.E2E
                 Interlocked.Increment(ref credentialReads);
                 return ConflictCredentials && value is not null ? throw new IOException("Synthetic credential read conflict.") : value;
             }
-            public async Task PutAsync(string collection, string id, JsonElement document, StatePrecondition condition, CancellationToken ct)
+            public async Task PutAsync(string table, string id, JsonElement row, StatePrecondition condition, CancellationToken ct)
             {
-                var databaseCommit = collection == AccountService.OrganizationsCollection &&
-                    document.GetProperty("Projects").EnumerateObject().Any(project => project.Value.GetProperty("Databases").EnumerateObject().Any());
+                var databaseCommit = table == AccountService.OrganizationsTable &&
+                    row.GetProperty("Projects").EnumerateObject().Any(project => project.Value.GetProperty("Databases").EnumerateObject().Any());
                 if (databaseCommit && quotaGate is { } paused)
                 {
                     Interlocked.Increment(ref pausedQuotaCommits);
                     await paused.Task.WaitAsync(ct);
                 }
-                if (collection == AccountService.OrganizationsCollection && id == targetDatabaseOrg &&
-                    Volatile.Read(ref databaseMetadataArmed) == 1 && document.GetProperty("Projects").TryGetProperty(targetDatabaseProject, out var databaseProject) &&
+                if (table == AccountService.OrganizationsTable && id == targetDatabaseOrg &&
+                    Volatile.Read(ref databaseMetadataArmed) == 1 && row.GetProperty("Projects").TryGetProperty(targetDatabaseProject, out var databaseProject) &&
                     databaseProject.GetProperty("Databases").EnumerateObject().Any(database => database.Value.GetProperty("Name").GetString() == targetDatabaseName))
                 {
-                    var prior = await inner.GetAsync(collection, id, ct);
+                    var prior = await inner.GetAsync(table, id, ct);
                     if (prior is not null && prior.Body.GetProperty("Projects").TryGetProperty(targetDatabaseProject, out var priorProject) &&
                         !priorProject.GetProperty("Databases").EnumerateObject().Any(database => database.Value.GetProperty("Name").GetString() == targetDatabaseName) &&
                         Interlocked.CompareExchange(ref databaseMetadataArmed, 0, 1) == 1)
@@ -346,11 +344,11 @@ namespace TerraScale.Dashboard.E2E
                     }
                 }
                 // Stored project settings carry no name; ts-auth's canonical project with the armed name identifies the target.
-                if (collection == AccountService.OrganizationsCollection && id == targetProjectOrg &&
+                if (table == AccountService.OrganizationsTable && id == targetProjectOrg &&
                     Volatile.Read(ref projectMetadataArmed) == 1 && CanonicalProjectId(targetProjectOrg, targetProjectName) is { } targetProject &&
-                    document.GetProperty("Projects").TryGetProperty(targetProject, out _))
+                    row.GetProperty("Projects").TryGetProperty(targetProject, out _))
                 {
-                    var prior = await inner.GetAsync(collection, id, ct);
+                    var prior = await inner.GetAsync(table, id, ct);
                     if (prior is not null && !prior.Body.GetProperty("Projects").TryGetProperty(targetProject, out _) &&
                         Interlocked.CompareExchange(ref projectMetadataArmed, 0, 1) == 1)
                     {
@@ -358,10 +356,10 @@ namespace TerraScale.Dashboard.E2E
                         throw new IOException("Test-only project metadata write interrupted.");
                     }
                 }
-                if (collection == AccountService.OrganizationsCollection && id == targetDeletionOrg &&
-                    Volatile.Read(ref projectDeletionMetadataArmed) == 1 && !document.GetProperty("Projects").TryGetProperty(targetDeletionProject, out _))
+                if (table == AccountService.OrganizationsTable && id == targetDeletionOrg &&
+                    Volatile.Read(ref projectDeletionMetadataArmed) == 1 && !row.GetProperty("Projects").TryGetProperty(targetDeletionProject, out _))
                 {
-                    var prior = await inner.GetAsync(collection, id, ct);
+                    var prior = await inner.GetAsync(table, id, ct);
                     if (prior is not null && prior.Body.GetProperty("Projects").TryGetProperty(targetDeletionProject, out var project) &&
                         project.GetProperty("Id").GetString() == targetDeletionProject &&
                         Interlocked.CompareExchange(ref projectDeletionMetadataArmed, 0, 1) == 1)
@@ -370,27 +368,27 @@ namespace TerraScale.Dashboard.E2E
                         throw new IOException("Test-only project deletion metadata write interrupted.");
                     }
                 }
-                try { await inner.PutAsync(collection, id, document, condition, ct); }
+                try { await inner.PutAsync(table, id, row, condition, ct); }
                 catch (StateConflictException) when (databaseCommit)
                 { Interlocked.Increment(ref quotaCasFailures); throw; }
-                if (collection == Credentials)
+                if (table == Credentials)
                 {
-                    encrypted.Enqueue(document.GetRawText());
+                    encrypted.Enqueue(row.GetRawText());
                 }
             }
-            public Task<IReadOnlyList<StateRecord>> ListAsync(string collection, CancellationToken ct)
+            public Task<IReadOnlyList<StateRecord>> ListAsync(string table, CancellationToken ct)
             {
-                return inner.ListAsync(collection, ct);
+                return inner.ListAsync(table, ct);
             }
 
-            public Task<StatePage> PageAsync(string collection, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken ct)
+            public Task<StatePage> PageAsync(string table, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken ct)
             {
-                return inner.PageAsync(collection, scope, fields, limit, cursor, ct);
+                return inner.PageAsync(table, scope, fields, limit, cursor, ct);
             }
 
-            public Task DeleteAsync(string collection, string id, string version, CancellationToken ct)
+            public Task DeleteAsync(string table, string id, string version, CancellationToken ct)
             {
-                return inner.DeleteAsync(collection, id, version, ct);
+                return inner.DeleteAsync(table, id, version, ct);
             }
 
             private string? CanonicalProjectId(string organizationId, string name)
@@ -412,7 +410,6 @@ namespace TerraScale.Dashboard.E2E
             private readonly Dictionary<string, ProducerSnapshot> snapshots = [];
             private readonly Dictionary<string, ProducerBackupPolicy> policies = [];
             private readonly Dictionary<string, BackupDestinationView> destinations = [];
-            private readonly Dictionary<string, ExportScheduleView> schedules = [];
             private string backupFailure = "";
             // A TerraBase conflict code every database create answers with, or empty.
             private string createConflict = "";
@@ -424,25 +421,16 @@ namespace TerraScale.Dashboard.E2E
             private int projectConflicts;
             private int projectDeletes;
             private int projectDeleteNotFound;
-            private readonly Dictionary<string, Dictionary<string, TerraBaseDocument>> collections = [];
             private readonly ConcurrentDictionary<string, TestSqlEngine> sqlEngines = new(StringComparer.Ordinal);
             private readonly ConcurrentQueue<RequestObservation> requests = new();
             private readonly ConcurrentQueue<string> failures = new();
             private TaskCompletionSource? createGate;
-            private readonly Dictionary<string, SortedDictionary<string, ProducerIndex>> indexes = [];
-            private readonly List<ChangeRecord> changes = [];
-            private long sequence;
-            private long changeFloor;
-            private bool changesInitialCursor = true;
-            private bool changesReplayBoundary;
             private int pausedCreates;
             private int creates;
             // As production TerraBase's 503 catalog_anchor_unavailable: this many next placement and delete writes commit and still answer 503.
             private int anchorDeleteFailures;
             private int branchCreates;
             private int branchConflicts;
-            private int documentsRequests;
-            private long offset;
             public RecordingState State { get; set; } = null!;
             // ts-auth's canonical organizations, projects and memberships for this fixture; the producer stores no identity.
             public TestWorkspace Workspace { get; set; } = null!;
@@ -511,15 +499,15 @@ namespace TerraScale.Dashboard.E2E
                 {
                     var path = http.Request.Path.Value!;
                     if (path.StartsWith("/v1/projects/", StringComparison.Ordinal) &&
-                        (http.Request.Method == "GET" && (path.EndsWith("/replication", StringComparison.Ordinal) || path.EndsWith("/analytics", StringComparison.Ordinal) || path.Contains("/schema/", StringComparison.Ordinal) || path.EndsWith("/point-in-time", StringComparison.Ordinal)) ||
-                         http.Request.Method == "POST" && (path.EndsWith("/schema/preview", StringComparison.Ordinal) || path.Contains("/point-in-time/", StringComparison.Ordinal))))
+                        (http.Request.Method == "GET" && (path.EndsWith("/replication", StringComparison.Ordinal) || path.EndsWith("/analytics", StringComparison.Ordinal) || path.EndsWith("/point-in-time", StringComparison.Ordinal)) ||
+                         http.Request.Method == "POST" && path.Contains("/point-in-time/", StringComparison.Ordinal)))
                     {
                         var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
                         var projectId = parts.Length >= 4 ? parts[2] : "";
                         var text = http.Request.Headers.Authorization.ToString();
                         var grant = text.StartsWith("Bearer ", StringComparison.Ordinal) ? ResolveProjectToken(text[7..]) : null;
                         Require(projectId.Length > 0 && grant is not null && grant.Value.ProjectId == projectId,
-                            "Project reporting and schema use an exchanged project-scoped bearer for the selected project");
+                            "Project reporting uses an exchanged project-scoped bearer for the selected project");
                         Require(CanonicalProject(grant!.Value.OrganizationId, projectId), "Project replication bearer organization matches the canonical project");
                         if (path.EndsWith("/point-in-time", StringComparison.Ordinal))
                         {
@@ -528,12 +516,8 @@ namespace TerraScale.Dashboard.E2E
 
                         if (http.Request.Method == "POST")
                         {
-                            var expected = path.EndsWith("/recovery-preview", StringComparison.Ordinal) ? new[] { "databases:write", "documents:read" }
-                                : path.EndsWith("/recover", StringComparison.Ordinal) ? new[] { "databases:write", "documents:write" }
-                                : path.EndsWith("/plan", StringComparison.Ordinal) ? new[] { "databases:read" }
-                                : path.EndsWith("/restore", StringComparison.Ordinal) ? new[] { "databases:write" }
-                                : new[] { "documents:read", "documents:write" };
-                            Require(grant.Value.Scopes.Order(StringComparer.Ordinal).SequenceEqual(expected), "Preview/recovery uses the exact action-scoped project grant");
+                            var expected = path.EndsWith("/plan", StringComparison.Ordinal) ? new[] { "databases:read" } : new[] { "databases:write" };
+                            Require(grant.Value.Scopes.Order(StringComparer.Ordinal).SequenceEqual(expected), "Point-in-time recovery uses the exact action-scoped project grant");
                         }
                         lock (gate)
                         {
@@ -633,13 +617,7 @@ namespace TerraScale.Dashboard.E2E
                             return await DestinationAsync(http, route[2]);
                         }
 
-                        if (route is not [_, _, _, "databases", _, "collections", ..])
-                        {
-                            return await CanonicalAsync(http);
-                        }
-
-                        Interlocked.Increment(ref documentsRequests);
-                        return await DocumentsAsync(http);
+                        return await CanonicalAsync(http);
                     }
                     throw new InvalidOperationException("Unexpected producer route: " + http.Request.Method + " " + path);
                 }
@@ -657,10 +635,6 @@ namespace TerraScale.Dashboard.E2E
                 {
                     case "pause-key-list": ApiKeys!.PauseLists(); break;
                     case "release-key-list": ApiKeys!.ReleaseLists(); break;
-                    case "expire-changes": lock (gate) { changeFloor = sequence; } break;
-                    case "changes-initial-cursor": changesInitialCursor = body.GetProperty("value").GetBoolean(); break;
-                    case "changes-replay-boundary": changesReplayBoundary = body.GetProperty("value").GetBoolean(); break;
-                    case "changes-transaction": TransactionChanges(body); break;
                     case "pause-database-creates": Interlocked.Exchange(ref pausedCreates, 0); createGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
                     case "release-database-creates": createGate?.TrySetResult(); createGate = null; break;
                     case "pause-quota-commits": State.PauseQuotaCommits(); break;
@@ -712,7 +686,7 @@ namespace TerraScale.Dashboard.E2E
                     case "database-status":
                         var databaseOrgId = body.GetProperty("organizationId").GetString()!;
                         var databaseProjectId = body.GetProperty("projectId").GetString()!;
-                        var databaseValue = await State.GetAsync(AccountService.OrganizationsCollection, databaseOrgId, http.RequestAborted)
+                        var databaseValue = await State.GetAsync(AccountService.OrganizationsTable, databaseOrgId, http.RequestAborted)
                             ?? throw new InvalidOperationException("Database fixture control targets a canonical organization");
                         var databaseOrg = databaseValue.Body.Deserialize<OrganizationRecord>()!;
                         databaseOrg.Projects.TryGetValue(databaseProjectId, out var fixtureProject);
@@ -741,14 +715,14 @@ namespace TerraScale.Dashboard.E2E
                             }
 
                             fixtureDatabase!.Status = status;
-                            await State.PutAsync(AccountService.OrganizationsCollection, databaseOrgId, JsonSerializer.SerializeToElement(databaseOrg),
+                            await State.PutAsync(AccountService.OrganizationsTable, databaseOrgId, JsonSerializer.SerializeToElement(databaseOrg),
                                 StatePrecondition.Matches(databaseValue.Version), http.RequestAborted);
                         }
                         break;
                     case "fail-project-metadata":
                         var faultOrganizationId = body.GetProperty("organizationId").GetString()!;
                         var faultName = body.GetProperty("name").GetString()!.Trim();
-                        var faultValue = await State.GetAsync(AccountService.OrganizationsCollection, faultOrganizationId, http.RequestAborted)
+                        var faultValue = await State.GetAsync(AccountService.OrganizationsTable, faultOrganizationId, http.RequestAborted)
                             ?? throw new InvalidOperationException("Project metadata failure targets an existing organization");
                         var faultOrg = faultValue.Body.Deserialize<OrganizationRecord>()!;
                         bool faultNameTaken;
@@ -765,7 +739,7 @@ namespace TerraScale.Dashboard.E2E
                     case "fail-project-deletion-metadata":
                         var deletionOrgId = body.GetProperty("organizationId").GetString()!;
                         var deletionProjectId = body.GetProperty("projectId").GetString()!;
-                        var deletionValue = await State.GetAsync(AccountService.OrganizationsCollection, deletionOrgId, http.RequestAborted)
+                        var deletionValue = await State.GetAsync(AccountService.OrganizationsTable, deletionOrgId, http.RequestAborted)
                             ?? throw new InvalidOperationException("Project deletion metadata failure targets an existing organization");
                         var deletionOrg = deletionValue.Body.Deserialize<OrganizationRecord>()!;
                         Require(TerraScaleIds.IsValid(deletionOrgId) && TerraScaleIds.IsValid(deletionProjectId) &&
@@ -779,11 +753,11 @@ namespace TerraScale.Dashboard.E2E
                         break;
                     case "plan":
                         var organizationId = body.GetProperty("organizationId").GetString()!;
-                        var current = await State.GetAsync(AccountService.OrganizationsCollection, organizationId, http.RequestAborted)
+                        var current = await State.GetAsync(AccountService.OrganizationsTable, organizationId, http.RequestAborted)
                             ?? throw new InvalidOperationException("The fixture plan targets an existing organization");
                         var organization = current.Body.Deserialize<OrganizationRecord>()!;
                         organization.PlanId = body.GetProperty("value").GetString()!;
-                        await State.PutAsync(AccountService.OrganizationsCollection, organizationId, JsonSerializer.SerializeToElement(organization),
+                        await State.PutAsync(AccountService.OrganizationsTable, organizationId, JsonSerializer.SerializeToElement(organization),
                             StatePrecondition.Matches(current.Version), http.RequestAborted);
                         break;
                     default: throw new InvalidOperationException("Unknown test producer control");
@@ -811,7 +785,6 @@ namespace TerraScale.Dashboard.E2E
                         creates,
                         branchCreates,
                         branchConflicts,
-                        documentsRequests,
                         backupLists,
                         backupCreates,
                         backupRestores,
@@ -827,7 +800,6 @@ namespace TerraScale.Dashboard.E2E
                         backups = snapshots.Values.Select(value => value.Backup).ToArray(),
                         credentials = (ApiKeys?.Issued() ?? []).Select(value => new { value.Key.Id, value.Key.Name, Secret = value.Secret, Host = "auth.terrascale.tech", value.Key.Scopes, value.Key.Database }).ToArray(),
                         authKeys = ApiKeys?.Observations(),
-                        changes = changes.Select(value => new { value.Sequence, value.Transaction, value.DatabaseId, value.Collection, value.Id, value.Op }).ToArray(),
                         encrypted = State.Encrypted,
                         credentialReads = State.CredentialReads,
                         pausedQuotaCommits = State.PausedQuotaCommits,
@@ -858,32 +830,6 @@ namespace TerraScale.Dashboard.E2E
                     return Error(503, "unavailable");
                 }
 
-                if (parts.Length == 6 && parts[5] == "export-schedule")
-                {
-                    lock (gate)
-                    {
-                        if (http.Request.Method == "GET")
-                        {
-                            return Results.Json(schedules.GetValueOrDefault(source.Id) ?? new ExportScheduleView(null, null, null));
-                        }
-
-                        if (!destinations.ContainsKey(project))
-                        {
-                            return Error(409, "conflict");
-                        }
-                    }
-                    Require(http.Request.Method == "PUT", "Export schedule uses PUT");
-                    var cron = (await JsonAsync(http)).GetProperty("cron").GetString();
-                    if (!string.IsNullOrEmpty(cron) && !CronExpression.TryParse(cron, CronFormat.Standard, out _))
-                    {
-                        return Error(400, "validation");
-                    }
-
-                    lock (gate)
-                    {
-                        return Results.Json(schedules[source.Id] = new(string.IsNullOrEmpty(cron) ? null : cron, DateTimeOffset.UtcNow, null));
-                    }
-                }
                 if (parts.Length == 6 && parts[5] == "backup-policy")
                 {
                     if (http.Request.Method == "GET")
@@ -931,12 +877,10 @@ namespace TerraScale.Dashboard.E2E
                         }
                     }
                     Require(http.Request.Method == "POST" && http.Request.ContentLength is null or 0, "Manual backup has no invented body");
-                    var prefix = project + "/" + source.Name + "/";
+                    var snapshot = SqlEngine(source.Id).Snapshot();
                     lock (gate)
                     {
-                        var snapshot = collections.Where(item => item.Key.StartsWith(prefix, StringComparison.Ordinal))
-                            .ToDictionary(item => item.Key[prefix.Length..], item => new Dictionary<string, TerraBaseDocument>(item.Value), StringComparer.Ordinal);
-                        var size = snapshot.Values.SelectMany(rows => rows.Values).Sum(document => (long)System.Text.Encoding.UTF8.GetByteCount(document.Document.GetRawText()));
+                        var size = snapshot.Sum(statement => (long)System.Text.Encoding.UTF8.GetByteCount(statement.Sql) + statement.Args.Sum(arg => (long)System.Text.Encoding.UTF8.GetByteCount(arg ?? "")));
                         var backup = new ProducerBackup(ids.NewId(), backupFailure == "foreign-backup" ? ids.NewId() : source.Id,
                             "ready", "manual", size, DateTimeOffset.UtcNow);
                         snapshots.Add(backup.Id, new(backup, snapshot));
@@ -947,6 +891,8 @@ namespace TerraScale.Dashboard.E2E
                 Require(parts.Length == 8 && parts[5] == "backups" && parts[7] == "restore" && http.Request.Method == "POST", "Producer restore route");
                 var request = await JsonAsync(http);
                 Require(request.EnumerateObject().Count() == 1 && request.TryGetProperty("name", out _), "Producer restore accepts only optional name");
+                ManagedDatabase restored;
+                IReadOnlyList<TestSqlStatement> replay = [];
                 lock (gate)
                 {
                     if (!snapshots.TryGetValue(parts[6], out var snapshot) || snapshot.Backup.DatabaseId != source.Id)
@@ -973,7 +919,7 @@ namespace TerraScale.Dashboard.E2E
                     }
 
                     Interlocked.Increment(ref backupRestores);
-                    var restored = new ManagedDatabase(ids.NewId(), project, name, DateTimeOffset.UtcNow, source.Id,
+                    restored = new ManagedDatabase(ids.NewId(), project, name, DateTimeOffset.UtcNow, source.Id,
                         http.Request.Host.Host == "gru.api.terrascale.tech" ? "gru" : "sfo", null);
                     if (backupFailure == "wrong-project")
                     {
@@ -1005,18 +951,20 @@ namespace TerraScale.Dashboard.E2E
                         databases.Add(restored.Id, restored);
                         if (backupFailure != "wrong-name")
                         {
-                            foreach (var collection in snapshot.Collections)
-                            {
-                                collections.Add(project + "/" + restored.Name + "/" + collection.Key, new Dictionary<string, TerraBaseDocument>(collection.Value));
-                            }
+                            replay = snapshot.Statements;
                         }
                     }
-                    return Results.Json(restored, statusCode: 201);
                 }
+                if (replay.Count > 0)
+                {
+                    await SqlEngine(restored.Id).ExecuteAsync(replay, http.RequestAborted);
+                }
+
+                return Results.Json(restored, statusCode: 201);
             }
 
             // I2 canonical project lifecycle and database operations. {database} is the name; each operation demands the exact
-            // action scope its SDK method documents (databases:* lifecycle/SQL/index/stats, documents:read for the feed).
+            // action scope its SDK method requires (databases:* lifecycle and backups, documents:read for SQL).
             private async Task<IResult> CanonicalAsync(HttpContext http)
             {
                 var parts = http.Request.Path.Value!.Split('/', StringSplitOptions.RemoveEmptyEntries).Select(Uri.UnescapeDataString).ToArray();
@@ -1026,13 +974,9 @@ namespace TerraScale.Dashboard.E2E
                 var answering = http.Response.Headers["X-TerraBase-Region"].ToString();
                 var scope = parts switch
                 {
-                    [_, _, _, _, _, "changes"] => "documents:read",
                     [_, _, _, _] or [_, _, _, _, _] when method == "GET" => "databases:read",
                     [_, _, _, _, _, "sql", "execute"] => "documents:read",
-                    [_, _, _, _, _, "schema"] => "databases:read",
-                    [_, _, _, _, _, "schema", _] when method == "GET" => "databases:read",
-                    [_, _, _, _, _, "indexes"] when method == "GET" => "databases:read",
-                    [_, _, _, _, _, "backups" or "backup-policy" or "export-schedule"] when method == "GET" => "databases:read",
+                    [_, _, _, _, _, "backups" or "backup-policy"] when method == "GET" => "databases:read",
                     _ => "databases:write"
                 };
                 if (Authorize(http, project, scope) is { } denied)
@@ -1115,7 +1059,7 @@ namespace TerraScale.Dashboard.E2E
 
                     current = found;
                 }
-                if (parts.Length >= 6 && parts[5] is "backups" or "backup-policy" or "export-schedule")
+                if (parts.Length >= 6 && parts[5] is "backups" or "backup-policy")
                 {
                     return await BackupsAsync(http, parts, project, current, callerRole);
                 }
@@ -1152,9 +1096,6 @@ namespace TerraScale.Dashboard.E2E
                                     return Error(409, "name_taken");
                                 }
 
-                                var prefix = project + "/" + current.Name + "/";
-                                foreach (var collection in collections.Keys.Where(key => name != current.Name && key.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
-                                { collections.Add(project + "/" + name + "/" + collection[prefix.Length..], collections[collection]); collections.Remove(collection); }
                                 var renamed = current with { Name = name, PreviousName = null, ConflictOf = null };
                                 databases[current.Id] = renamed;
                                 return Results.Json(Wire(renamed, answering));
@@ -1171,12 +1112,6 @@ namespace TerraScale.Dashboard.E2E
                         lock (gate)
                         {
                             databases.Remove(current.Id);
-                            indexes.Remove(current.Id);
-                            var prefix = project + "/" + current.Name + "/";
-                            foreach (var collection in collections.Keys.Where(name => name.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
-                            {
-                                collections.Remove(collection);
-                            }
                         }
                         return Interlocked.Decrement(ref anchorDeleteFailures) >= 0 ? AnchorUnavailable() : Results.NoContent();
                     case (6, "POST", "branches"):
@@ -1199,62 +1134,13 @@ namespace TerraScale.Dashboard.E2E
                             { Interlocked.Increment(ref branchConflicts); return Error(409, "name_taken"); }
                             var branch = new ManagedDatabase(ids.NewId(), project, branchName, DateTimeOffset.UtcNow, current.Id, current.HomeRegion, []);
                             databases.Add(branch.Id, branch);
-                            var prefix = project + "/" + current.Name + "/";
-                            foreach (var collection in collections.Where(item => item.Key.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
-                            {
-                                collections.Add(project + "/" + branchName + "/" + collection.Key[prefix.Length..], new Dictionary<string, TerraBaseDocument>(collection.Value));
-                            }
-
-                            if (indexes.TryGetValue(current.Id, out var copied))
-                            {
-                                indexes[branch.Id] = new(copied, StringComparer.Ordinal);
-                            }
-
                             Interlocked.Increment(ref branchCreates);
                             return Results.Json(Wire(branch, answering), statusCode: 201);
                         }
-                    case (6, "GET", "schema"):
-                        lock (gate)
-                        {
-                            return Results.Json(new
-                            {
-                                items = collections.Where(item => item.Key.StartsWith(project + "/" + current.Name + "/", StringComparison.Ordinal)).Select(item =>
-                                    new { name = item.Key.Split('/')[2], documents = (long)item.Value.Count, bytes = item.Value.Values.Sum(value => (long)System.Text.Encoding.UTF8.GetByteCount(value.Document.GetRawText())) }).ToArray()
-                            });
-                        }
-
-                    case (7, "GET", "schema"):
-                        lock (gate)
-                        {
-                            if (!collections.TryGetValue(project + "/" + current.Name + "/" + parts[6], out var inferredRows))
-                            {
-                                return Error(404, "not_found");
-                            }
-                            // I2 inferred-schema.json: sampled document presence and type counts, separate from declared schema.
-                            var sampled = inferredRows.Values.OrderBy(row => row.Id, StringComparer.Ordinal).Take(1000).ToArray();
-                            var inferredFields = sampled.SelectMany(row => row.Document.EnumerateObject()).GroupBy(field => field.Name)
-                                .OrderBy(field => field.Key, StringComparer.Ordinal)
-                                .Select(field => new
-                                {
-                                    path = field.Key,
-                                    present = field.Count(),
-                                    types = field.GroupBy(value => value.Value.ValueKind switch
-                                    {
-                                        JsonValueKind.Number => value.Value.TryGetInt64(out _) ? "integer" : "number",
-                                        JsonValueKind.True or JsonValueKind.False => "boolean",
-                                        _ => value.Value.ValueKind.ToString().ToLowerInvariant()
-                                    }).ToDictionary(kind => kind.Key, kind => kind.Count())
-                                }).ToArray();
-                            return Results.Json(new { collection = parts[6], documents = inferredRows.Count, sampledDocuments = sampled.Length, fields = inferredFields, uniqueConstraints = Array.Empty<object>() });
-                        }
                     case (7, "POST", "sql") when parts[6] == "execute":
-                        // TerraBase's relational SQL API: statements run in one transaction on the database's own SQL engine;
-                        // SELECT * over a document collection still reads its documents.
+                        // TerraBase's relational SQL API: statements run in one transaction on the database's own SQL engine.
                         var statements = (await JsonAsync(http)).GetProperty("statements").EnumerateArray().Select(item => item.GetProperty("sql").GetString()!).ToArray();
                         var engine = SqlEngine(current.Id);
-                        var tables = (await engine.ExecuteAsync([new("SELECT name FROM sqlite_master WHERE type = 'table'", [])], http.RequestAborted))[0].Rows.Select(row => (string)row[0]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                        var match = System.Text.RegularExpressions.Regex.Match(statements[0], @"^\s*SELECT\s+\*\s+FROM\s+([A-Za-z0-9_-]+)(?:\s+LIMIT\s+(\d+))?\s*;?\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-                        if (statements.Length > 1 || !match.Success || tables.Contains(match.Groups[1].Value))
                         {
                             if (statements.Any(sql => System.Text.RegularExpressions.Regex.IsMatch(sql, @"^\s*(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) &&
                                 Authorize(http, project, "documents:write") is not null)
@@ -1281,67 +1167,6 @@ namespace TerraScale.Dashboard.E2E
                                 return Results.Json(new { error = new { code = failure.Code, message = failure.Message, statement = failure.Statement, sqlstate = failure.Sqlstate } }, statusCode: 400);
                             }
                         }
-                        var take = match.Groups[2].Success ? int.Parse(match.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture) : 100;
-                        lock (gate)
-                        {
-                            if (!collections.TryGetValue(project + "/" + current.Name + "/" + match.Groups[1].Value, out var rows))
-                            {
-                                return SqlError(400, "undefined_table", "no such table: " + match.Groups[1].Value, "42P01");
-                            }
-
-                            var selected = rows.Values.OrderBy(value => value.Id, StringComparer.Ordinal).Take(take).ToArray();
-                            var names = selected.SelectMany(value => value.Document.EnumerateObject().Select(field => field.Name)).Where(name => name != "id").Distinct().ToArray();
-                            return Results.Json(new
-                            {
-                                results = new[] { new
-                                {
-                                    columns = new[] { new { name = "id", decltype = (string?)"TEXT" } }.Concat(names.Select(name => new { name, decltype = (string?)null })).ToArray(),
-                                    rows = selected.Select(value => new object?[] { value.Id }.Concat(names.Select(name => value.Document.TryGetProperty(name, out var cell) ? (object?)cell : null)).ToArray()).ToArray(),
-                                    rows_affected = 0, last_insert_rowid = (long?)null
-                                } }
-                            });
-                        }
-                    case (6, "GET", "indexes"):
-                        var only = http.Request.Query["collection"].ToString();
-                        lock (gate)
-                        {
-                            return Results.Json(new
-                            {
-                                items = indexes.GetValueOrDefault(current.Id)?.Values.Where(index => only.Length == 0 || index.Collection == only)
-                            .Select(index => new { name = index.Name, collection = index.Collection, fields = index.Fields, state = "active" }).ToArray() ?? []
-                            });
-                        }
-
-                    case (6, "POST", "indexes"):
-                        var create = await JsonAsync(http);
-                        Require(create.EnumerateObject().All(field => field.Name is "collection" or "fields" or "name"), "Index create sends collection, fields and optional name");
-                        var indexCollection = create.GetProperty("collection").GetString()!;
-                        var fields = create.GetProperty("fields").EnumerateArray().Select(value => value.GetString()!).ToArray();
-                        if (fields.Length is < 1 or > 4 || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length)
-                        {
-                            return Error(400, "validation");
-                        }
-
-                        var indexName = create.TryGetProperty("name", out var given) ? given.GetString()! : indexCollection + "_" + string.Join('_', fields).Replace('.', '_');
-                        lock (gate)
-                        {
-                            var owned = indexes.TryGetValue(current.Id, out var existing) ? existing : indexes[current.Id] = new(StringComparer.Ordinal);
-                            if (owned.ContainsKey(indexName))
-                            {
-                                return Error(409, "index_exists");
-                            }
-
-                            owned[indexName] = new(indexName, indexCollection, fields);
-                        }
-                        return Results.Json(new { name = indexName, collection = indexCollection, fields, state = "active" }, statusCode: 201);
-                    case (7, "DELETE", "indexes"):
-                        lock (gate)
-                        {
-                            return indexes.GetValueOrDefault(current.Id)?.Remove(parts[6]) == true ? Results.NoContent() : Error(404, "not_found");
-                        }
-
-                    case (6, "GET", "changes"):
-                        return await ChangesAsync(http, current);
                 }
                 throw new InvalidOperationException("Unsupported canonical database route: " + method + " " + http.Request.Path);
             }
@@ -1412,125 +1237,6 @@ namespace TerraScale.Dashboard.E2E
                 return null;
             }
 
-            // SSE per I2 contracts/terrabase changes.sse plus the COS SDK14 repair: a transaction's changes carry an id only on its
-            // final event, the opening checkpoint may be absent, and a resume at a transaction boundary may replay that transaction.
-            // The stream ends cleanly after the retained events and a closing checkpoint; the consumer reconnects with Last-Event-ID.
-            private async Task<IResult> ChangesAsync(HttpContext http, ManagedDatabase database)
-            {
-                var query = http.Request.Query;
-                Require(query.Keys.All(key => key is "cursor" or "collections"), "Changes accepts only cursor and collections");
-                string? text = http.Request.Headers.TryGetValue("Last-Event-ID", out var resume) ? resume.ToString() : query.ContainsKey("cursor") ? query["cursor"].ToString() : null;
-                var filter = query.ContainsKey("collections") ? query["collections"].ToString().Split(',').ToHashSet(StringComparer.Ordinal) : null;
-                var events = new System.Text.StringBuilder();
-                lock (gate)
-                {
-                    long start;
-                    if (text is null)
-                    {
-                        start = changeFloor;
-                    }
-                    else if (text == "now")
-                    {
-                        start = sequence;
-                    }
-                    else if (DecodeCursor(text, database.Id) is { } decoded)
-                    {
-                        start = decoded;
-                    }
-                    else
-                    {
-                        return Error(400, "invalid_cursor");
-                    }
-
-                    if (start < changeFloor)
-                    {
-                        return Error(410, "cursor_expired");
-                    }
-
-                    if (changesInitialCursor)
-                    {
-                        Cursor(events, database.Id, start);
-                    }
-
-                    var own = changes.Where(change => change.DatabaseId == database.Id).ToArray();
-                    var replayed = changesReplayBoundary ? own.Where(change => change.Sequence == start).Select(change => change.Transaction).FirstOrDefault(-1) : -1;
-                    foreach (var group in own.Where(change => change.Sequence > start || change.Transaction == replayed).GroupBy(change => change.Transaction))
-                    {
-                        var delivered = group.Where(change => filter is null || filter.Contains(change.Collection)).ToArray();
-                        for (var index = 0; index < delivered.Length; index++)
-                        {
-                            var change = delivered[index];
-                            TerraBaseDocument? value = null;
-                            collections.GetValueOrDefault(database.ProjectId + "/" + database.Name + "/" + change.Collection)?.TryGetValue(change.Id, out value);
-                            events.Append("event: change\n");
-                            if (index == delivered.Length - 1)
-                            {
-                                events.Append("id: ").Append(EncodeCursor(database.Id, group.Max(item => item.Sequence))).Append('\n');
-                            }
-
-                            events.Append("data: ").Append(JsonSerializer.Serialize(new
-                            {
-                                collection = change.Collection,
-                                id = change.Id,
-                                op = change.Op,
-                                version = change.Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                                origin = "00000000000000a1",
-                                document = value?.Document
-                            })).Append("\n\n");
-                        }
-                    }
-                    Cursor(events, database.Id, Math.Max(start, own.Select(change => change.Sequence).DefaultIfEmpty(0).Max()));
-                }
-                http.Response.Headers.CacheControl = "no-store";
-                http.Response.ContentType = "text/event-stream";
-                await http.Response.WriteAsync(events.ToString(), http.RequestAborted);
-                return Results.Empty;
-
-                static void Cursor(System.Text.StringBuilder events, string databaseId, long position)
-                {
-                    var cursor = EncodeCursor(databaseId, position);
-                    events.Append("event: cursor\nid: ").Append(cursor).Append("\ndata: ").Append(JsonSerializer.Serialize(new { cursor })).Append("\n\n");
-                }
-            }
-
-            // Test control: one committed multi-change transaction; only its final SSE event names the cursor after it.
-            private void TransactionChanges(JsonElement body)
-            {
-                var project = body.GetProperty("projectId").GetString()!;
-                var name = body.GetProperty("database").GetString()!;
-                var collection = body.GetProperty("collection").GetString()!;
-                var keys = body.GetProperty("ids").EnumerateArray().Select(value => value.GetString()!).ToArray();
-                Require(keys.Length >= 2 && keys.Distinct(StringComparer.Ordinal).Count() == keys.Length, "A fixture transaction holds several distinct changes");
-                lock (gate)
-                {
-                    var database = databases.Values.SingleOrDefault(value => value.ProjectId == project && value.Name == name)
-                        ?? throw new InvalidOperationException("The fixture transaction targets an existing producer database");
-                    Require(collections.TryGetValue(project + "/" + name + "/" + collection, out var rows), "The fixture transaction targets an existing collection");
-                    var transaction = sequence + 1;
-                    foreach (var key in keys)
-                    {
-                        rows![key] = new(key, "tbv1-" + Guid.NewGuid().ToString("N"), "value", JsonSerializer.SerializeToElement(new { transaction }));
-                        changes.Add(new(++sequence, transaction, database.Id, collection, key, "upsert"));
-                    }
-                }
-            }
-
-            private static string EncodeCursor(string databaseId, long position)
-            {
-                return WebEncoders.Base64UrlEncode(System.Text.Encoding.UTF8.GetBytes(databaseId + ":" + position.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-            }
-
-            private static long? DecodeCursor(string cursor, string databaseId)
-            {
-                try
-                {
-                    var text = System.Text.Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(cursor));
-                    return text.StartsWith(databaseId + ":", StringComparison.Ordinal) && long.TryParse(text[(databaseId.Length + 1)..], System.Globalization.NumberStyles.None,
-                        System.Globalization.CultureInfo.InvariantCulture, out var position) ? position : null;
-                }
-                catch (FormatException) { return null; }
-            }
-
             // I2 ManagedDatabaseBody: camelCase, answering region and complete placement.
             private static object Wire(ManagedDatabase database, string region)
             {
@@ -1546,138 +1252,6 @@ namespace TerraScale.Dashboard.E2E
                     replicaRegions = database.ReplicaRegions ?? Array.Empty<string>(),
                     allRegions = database.AllRegions
                 };
-            }
-
-            private async Task<IResult> DocumentsAsync(HttpContext http)
-            {
-                // Match the current producer's public point route. Document keys
-                // are query encoded exactly once and never occupy a path segment.
-                var raw = http.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpRequestFeature>()!.RawTarget!.Split('?')[0];
-                var parts = raw.Split('/', StringSplitOptions.RemoveEmptyEntries).Select(Uri.UnescapeDataString).ToArray();
-                Require(parts.Length >= 6 && parts[0] == "v1" && parts[1] == "projects" && parts[3] == "databases", "Official Documents SDK path");
-                var project = parts[2]; var database = parts[4];
-                Require(TerraScaleIds.IsValid(project), "The current producer accepts canonical ULID projects");
-                lock (gate)
-                {
-                    Require(databases.Values.Any(value => value.ProjectId == project && value.Name == database), "Documents database belongs to scoped project");
-                }
-
-                var token = http.Request.Headers.Authorization.ToString();
-                var read = http.Request.Method == "GET" || parts.LastOrDefault() == "query";
-                if (Authorize(http, project, read ? "documents:read" : "documents:write") is { } denied)
-                {
-                    return denied;
-                }
-
-                requests.Enqueue(new(http.Request.Method, raw, token, http.Request.ContentType ?? "", http.Request.Headers.IfMatch.ToString(), http.Request.Headers.IfNoneMatch.ToString(), http.Request.QueryString.Value ?? ""));
-                Require(parts[5] == "collections", "SDK collection path");
-                var prefix = project + "/" + database + "/";
-                if (parts.Length == 6)
-                {
-                    if (http.Request.Method == "GET")
-                    {
-                        Require(http.Request.Query["limit"] == "200", "Collection list uses bounded SDK pagination");
-                        lock (gate)
-                        {
-                            return Results.Json(new { items = collections.Keys.Where(name => name.StartsWith(prefix, StringComparison.Ordinal)).Select(name => new { name = name[prefix.Length..], created_at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(), id = ids.NewId() }).ToArray(), next_cursor = (string?)null });
-                        }
-                    }
-                    var body = await JsonAsync(http); var name = body.GetProperty("name").GetString()!;
-                    lock (gate)
-                    {
-                        if (!collections.TryAdd(prefix + name, []))
-                        {
-                            return Error(409, "name_taken");
-                        }
-                    }
-                    return Results.Json(new { name, created_at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(), id = ids.NewId() }, statusCode: 201);
-                }
-                if (parts.Length == 7 && http.Request.Method == "DELETE")
-                {
-                    lock (gate)
-                    {
-                        if (!collections.Remove(prefix + parts[6]))
-                        {
-                            return Error(404, "not_found");
-                        }
-                    }
-                    return Results.Json(new { name = parts[6], created_at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(), id = ids.NewId() });
-                }
-                Require(parts.Length >= 8 && parts[7] is "documents" or "query", "Official document route");
-                var collectionKey = prefix + parts[6];
-                Dictionary<string, TerraBaseDocument> rows;
-                lock (gate)
-                {
-                    if (!collections.TryGetValue(collectionKey, out rows!))
-                    {
-                        return Error(404, "not_found");
-                    }
-                }
-                if (parts.Length == 8 && http.Request.Method is "GET" or "POST")
-                {
-                    var limit = http.Request.Method == "GET" ? int.Parse(http.Request.Query["limit"].ToString()) : 25;
-                    var cursor = http.Request.Query["cursor"].ToString();
-                    var skip = cursor.Length == 0 ? 0 : int.Parse(cursor);
-                    lock (gate)
-                    {
-                        var ordered = rows.Values.OrderBy(value => value.Id, StringComparer.Ordinal).ToArray(); var page = ordered.Skip(skip).Take(limit).ToArray();
-                        return Results.Json(new { items = page, next_cursor = skip + page.Length < ordered.Length ? (skip + page.Length).ToString() : null, count = new { value = ordered.Length.ToString(System.Globalization.CultureInfo.InvariantCulture), exact = true } });
-                    }
-                }
-                Require(parts.Length == 9 && parts[8] == "by-key", "Point operations use the current producer by-key route");
-                Require(http.Request.Query.Count == 1 && http.Request.Query.TryGetValue("id", out var queryId) && queryId.Count == 1 && queryId[0] is { Length: > 0 },
-                    "A point operation carries exactly one UTF-8 query-encoded key");
-                var id = http.Request.Query["id"].ToString();
-                if (http.Request.Method == "GET")
-                {
-                    lock (gate)
-                    {
-                        if (!rows.TryGetValue(id, out var current))
-                        {
-                            return Error(404, "not_found");
-                        }
-
-                        http.Response.Headers.ETag = '"' + current.Version + '"';
-                        return Results.Json(current);
-                    }
-                }
-                JsonElement document = default;
-                if (http.Request.Method != "DELETE")
-                {
-                    document = await JsonAsync(http);
-                }
-
-                lock (gate)
-                {
-                    rows.TryGetValue(id, out var current);
-                    var match = http.Request.Headers.IfMatch.ToString(); var absent = http.Request.Headers.IfNoneMatch.ToString();
-                    if (absent == "*" && current is not null || match.Length > 0 && (current is null || match != '"' + current.Version + '"'))
-                    {
-                        return Error(412, "precondition_failed");
-                    }
-
-                    Require(absent == "*" || match.Length > 0, "Dashboard writes always carry an optimistic concurrency condition");
-                    if (http.Request.Method == "PATCH")
-                    {
-                        Require(http.Request.ContentType == "application/merge-patch+json", "SDK patch uses RFC7396 content type");
-                        document = JsonSerializer.SerializeToElement(Merge(JsonNode.Parse(current!.Document.GetRawText()), JsonNode.Parse(document.GetRawText())));
-                    }
-                    var version = "tbv1-" + Guid.NewGuid().ToString("N");
-                    if (http.Request.Method == "DELETE")
-                    {
-                        rows.Remove(id);
-                    }
-                    else
-                    {
-                        rows[id] = new(id, version, "value", document.Clone());
-                    }
-
-                    var changed = databases.Values.Single(value => value.ProjectId == project && value.Name == database);
-                    ++sequence;
-                    changes.Add(new(sequence, sequence, changed.Id, parts[6], id, http.Request.Method == "DELETE" ? "delete" : "upsert"));
-                    http.Response.Headers.ETag = '"' + version + '"';
-                    return Results.Json(new { id, version, offset = (++offset).ToString(System.Globalization.CultureInfo.InvariantCulture), durability = "local_durable" }, statusCode: current is null ? 201 : 200);
-                }
             }
 
             private void Require(bool condition, string message)
@@ -1714,30 +1288,7 @@ namespace TerraScale.Dashboard.E2E
             }
 
             private static async Task<JsonElement> JsonAsync(HttpContext http) { using var json = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted); return json.RootElement.Clone(); }
-            private static JsonNode? Merge(JsonNode? current, JsonNode? patch)
-            {
-                if (patch is not JsonObject changes)
-                {
-                    return patch?.DeepClone();
-                }
-
-                var target = current as JsonObject ?? new JsonObject();
-                foreach (var entry in changes)
-                {
-                    if (entry.Value is null)
-                    {
-                        target.Remove(entry.Key);
-                    }
-                    else
-                    {
-                        target[entry.Key] = Merge(target[entry.Key], entry.Value);
-                    }
-                }
-                return target;
-            }
-            private sealed record ProducerSnapshot(ProducerBackup Backup, Dictionary<string, Dictionary<string, TerraBaseDocument>> Collections);
-            private sealed record ProducerIndex(string Name, string Collection, string[] Fields);
-            private sealed record ChangeRecord(long Sequence, long Transaction, string DatabaseId, string Collection, string Id, string Op);
+            private sealed record ProducerSnapshot(ProducerBackup Backup, IReadOnlyList<TestSqlStatement> Statements);
             private sealed record RequestObservation(string Method, string Path, string Authorization, string ContentType, string IfMatch, string IfNoneMatch, string Query);
         }
     }

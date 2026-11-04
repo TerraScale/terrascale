@@ -14,7 +14,6 @@ namespace TerraScale.Dashboard.Features.Usage
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? LogicalBytes, bool Unavailable,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] double? SharePercent, bool Selected);
     public sealed record UsageToolDatabase(string Id, string Name, string Region, string Status,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Documents,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? LogicalBytes, bool Unavailable,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] double? SharePercent, bool Metered,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Reads,
@@ -36,7 +35,7 @@ namespace TerraScale.Dashboard.Features.Usage
     }
 
     [McpServerToolType]
-    public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService accounts, SpendingService spending, IUsageMeasurements measurements, IUsageStorage documentStorage, TimeProvider time)
+    public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService accounts, SpendingService spending, IUsageMeasurements measurements, TimeProvider time)
     {
         [McpServerTool(Name = "get_usage", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read organization plan allowances and producer measurements for an authorized project/database. Missing measurements remain unavailable.")]
         public Task<UsageToolReport> Read(string databaseId = "",
@@ -61,12 +60,7 @@ namespace TerraScale.Dashboard.Features.Usage
 
             var selection = UsageSelection.For(context, context.Project?.Id ?? "", databaseId, range);
             var controls = await spending.ReadAsync(context, Cancellation);
-            var measurementRead = measurements.ReadAsync(selection, Cancellation);
-            var storageRead = documentStorage.ReadAsync(selection, Cancellation);
-            await Task.WhenAll(measurementRead, storageRead);
-            var measured = await measurementRead;
-            var stored = await storageRead;
-            stored.Validate(selection);
+            var measured = await measurements.ReadAsync(selection, Cancellation);
             var plan = PlanCatalog.For(context.Organization!);
             var limits = PlanCatalog.Limits(context.Organization!);
             var complete = measured.Scope.State != UsageSourceState.NoProducer && controls.Projects.All(project => measured.Monthly.GetValueOrDefault(project.Id) is { State: UsageSourceState.Measured, Reading: not null });
@@ -112,16 +106,14 @@ namespace TerraScale.Dashboard.Features.Usage
             var listed = selected?.Databases.Where(database => databaseId.Length == 0 || database.Id == databaseId).ToArray() ?? [];
             var databaseReadings = listed.ToDictionary(database => database.Id,
                 database => databaseId.Length > 0 ? scope : scope?.Items.SingleOrDefault(reading => reading.DatabaseId == database.Id), StringComparer.Ordinal);
-            var databaseBytes = listed.ToDictionary(database => database.Id, database => databaseReadings[database.Id]?.LogicalBytes ??
-                stored.Projects.GetValueOrDefault(context.Project!.Id)?.Databases.GetValueOrDefault(database.Id)?.LogicalBytes, StringComparer.Ordinal);
-            var databaseTotal = UsageStorageSnapshot.SumCounters(databaseBytes.Values);
+            var databaseBytes = listed.ToDictionary(database => database.Id, database => databaseReadings[database.Id]?.LogicalBytes, StringComparer.Ordinal);
+            var databaseTotal = UsageCounters.Sum(databaseBytes.Values);
             var databases = listed.Select(database =>
             {
                 var reading = databaseReadings[database.Id];
-                var fact = stored.Projects.GetValueOrDefault(context.Project!.Id)?.Databases.GetValueOrDefault(database.Id);
                 var bytes = databaseBytes[database.Id];
                 return new UsageToolDatabase(database.Id, database.Name, database.Region,
-                    context.Project!.Databases[database.Id].Status, reading?.Documents ?? fact?.Documents, bytes, bytes is null,
+                    context.Project!.Databases[database.Id].Status, bytes, bytes is null,
                     ValueFormat.Percent(bytes, databaseTotal), reading is not null, reading?.Period.Reads, reading?.Period.Writes);
             }).ToArray();
             var error = measured.Scope.State switch
@@ -144,13 +136,13 @@ namespace TerraScale.Dashboard.Features.Usage
                 ? "TerraBase didn't accept this sign-in, so this month's reads and writes didn't load. Sign out and in again."
                 : measured.Monthly.Values.Any(value => value.State == UsageSourceState.Unavailable) || complete
                     ? "This month's reads and writes could not be loaded from TerraBase. Try again shortly." : "";
-            var scopeBytes = scope?.LogicalBytes ?? (databaseId.Length > 0 ? stored.Scope(selection)?.LogicalBytes : null);
+            var scopeBytes = scope?.LogicalBytes;
             return new(context.Organization!.Id, context.Project?.Id ?? "", databaseId, plan?.Name ?? "No billing plan",
                 [Allowance("Operation units this month", plan?.OperationsAllowance, limits.MonthlyOperations,
                     complete && reads is not null ? measured.OperationUnits(controls.Projects.Select(project => project.Id), time.GetUtcNow()) : null),
                  Allowance("Storage across regions", plan?.StorageAllowance, limits.StorageBytes, null),
                  Allowance("Client egress this month", plan?.EgressAllowance, limits.MonthlyEgressBytes, null)], allowanceError,
-                "Published allowances count 4 KiB operation units and storage across selected regions, and client egress. These document counters do not measure allowance utilization.",
+                "Published allowances count 4 KiB operation units and storage across selected regions, and client egress. These read and write counters do not measure allowance utilization.",
                 projects, databases,
                 new(scope is not null, source, error, range, scope?.Period.Reads, scope?.Period.Writes, scopeBytes, scopeBytes is not null, scope?.Series ?? []),
                 context.Project?.Databases.Count ?? 0,

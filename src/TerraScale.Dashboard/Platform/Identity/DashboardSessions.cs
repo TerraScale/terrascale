@@ -147,25 +147,25 @@ namespace TerraScale.Dashboard.Platform.Identity
                 throw new IOException("Credential identity is invalid.");
             }
 
-            var document = await state.GetAsync("auth_credentials", id, cancellationToken);
-            if (document is null)
+            var row = await state.GetAsync("auth_credentials", id, cancellationToken);
+            if (row is null)
             {
                 return;
             }
 
-            if (document.Id != id)
+            if (row.Id != id)
             {
                 throw new IOException("Credential identity is invalid.");
             }
 
             var credentials = await identity.ReadAsync(cancellationToken);
-            var record = Open(document.Body.Deserialize<SealedSession>() ?? throw new IOException("Dashboard credential is invalid."), credentials.SessionEncryptionKey);
+            var record = Open(row.Body.Deserialize<SealedSession>() ?? throw new IOException("Dashboard credential is invalid."), credentials.SessionEncryptionKey);
             if (record.UserId != subject)
             {
                 throw new IOException("Credential ownership is invalid.");
             }
 
-            await state.DeleteAsync("auth_credentials", id, document.Version, cancellationToken);
+            await state.DeleteAsync("auth_credentials", id, row.Version, cancellationToken);
         }
 
         // Erasure replay uses retained references, independently of active issuer grants
@@ -174,30 +174,30 @@ namespace TerraScale.Dashboard.Platform.Identity
         {
             foreach (var reference in await AccountEnrollment.ListAsync(state, userId, cancellationToken))
             {
-                if (reference.Collection is not ("sessions" or "auth_credentials"))
+                if (reference.Table is not ("sessions" or "auth_credentials"))
                 {
                     continue;
                 }
 
-                var document = await state.GetAsync(reference.Collection, reference.RecordId, cancellationToken);
-                if (document is null)
+                var row = await state.GetAsync(reference.Table, reference.RecordId, cancellationToken);
+                if (row is null)
                 {
                     continue;
                 }
 
-                if (document.Id != reference.RecordId)
+                if (row.Id != reference.RecordId)
                 {
                     throw new IOException("Enrollment identity is invalid.");
                 }
 
                 var credentials = await identity.ReadAsync(cancellationToken);
-                var record = Open(document.Body.Deserialize<SealedSession>() ?? throw new IOException("Dashboard credential is invalid."), credentials.SessionEncryptionKey);
+                var record = Open(row.Body.Deserialize<SealedSession>() ?? throw new IOException("Dashboard credential is invalid."), credentials.SessionEncryptionKey);
                 if (record.UserId != userId)
                 {
                     throw new IOException("Enrollment ownership is invalid.");
                 }
 
-                await state.DeleteAsync(reference.Collection, reference.RecordId, document.Version, cancellationToken);
+                await state.DeleteAsync(reference.Table, reference.RecordId, row.Version, cancellationToken);
             }
             await AccountEnrollment.CleanAsync(state, userId, cancellationToken);
         }
@@ -224,9 +224,9 @@ namespace TerraScale.Dashboard.Platform.Identity
             {
                 if (id.Length != 64 || !id.All(char.IsAsciiHexDigitLower)) { stale.Add(id); continue; }
                 if (expires <= time.GetUtcNow()) { await DeleteStrictAsync("sessions", id, context.RequestAborted); stale.Add(id); continue; }
-                var document = await state.GetAsync("sessions", id, context.RequestAborted);
-                if (document is null) { stale.Add(id); continue; }
-                var record = Open(document.Body.Deserialize<SealedSession>() ?? throw new IOException("Dashboard session is invalid."), credentials.SessionEncryptionKey);
+                var row = await state.GetAsync("sessions", id, context.RequestAborted);
+                if (row is null) { stale.Add(id); continue; }
+                var record = Open(row.Body.Deserialize<SealedSession>() ?? throw new IOException("Dashboard session is invalid."), credentials.SessionEncryptionKey);
                 if (record.UserId != session.UserId)
                 {
                     throw new IOException("Session index ownership is invalid.");
@@ -244,7 +244,7 @@ namespace TerraScale.Dashboard.Platform.Identity
             return [.. result.OrderByDescending(item => item.ExpiresAt).ThenBy(item => item.Id, StringComparer.Ordinal)];
         }
 
-        private async Task<SessionRecord?> ResolveAsync(string collection, string id, CancellationToken cancellationToken, bool forceRefresh = false, string? initialAccessToken = null,
+        private async Task<SessionRecord?> ResolveAsync(string table, string id, CancellationToken cancellationToken, bool forceRefresh = false, string? initialAccessToken = null,
             Func<SessionRecord, Task>? alongside = null)
         {
             var credentials = await identity.ReadAsync(cancellationToken);
@@ -255,18 +255,18 @@ namespace TerraScale.Dashboard.Platform.Identity
             string? accessOnEntry = initialAccessToken;
             while (true)
             {
-                var document = await state.GetAsync(collection, id, cancellationToken);
-                if (document is null)
+                var row = await state.GetAsync(table, id, cancellationToken);
+                if (row is null)
                 {
                     return null;
                 }
 
-                var record = Open(document.Body.Deserialize<SealedSession>() ?? throw new IOException("Dashboard session is invalid."), credentials.SessionEncryptionKey);
+                var record = Open(row.Body.Deserialize<SealedSession>() ?? throw new IOException("Dashboard session is invalid."), credentials.SessionEncryptionKey);
                 accessOnEntry ??= record.AccessToken;
                 var now = time.GetUtcNow();
                 if ((record.SessionExpiresAt ?? record.ExpiresAt) <= now)
                 {
-                    await RemoveAsync(collection, document, "expired", cancellationToken);
+                    await RemoveAsync(table, row, "expired", cancellationToken);
                     return null;
                 }
                 // Privileged callers need a grant minted after their first read.
@@ -281,14 +281,14 @@ namespace TerraScale.Dashboard.Platform.Identity
                             throw new IOException("Fresh platform authorization is unavailable.");
                         }
 
-                        await RemoveAsync(collection, document, "no refresh token", cancellationToken);
+                        await RemoveAsync(table, row, "no refresh token", cancellationToken);
                         return null;
                     }
                     if (record.RefreshLease.Length != 0)
                     {
                         // A replica disappeared after potentially rotating the token.
                         // Starting a second rotation could revoke the token family.
-                        if (record.RefreshLeaseUntil is null || record.RefreshLeaseUntil <= now) { await RemoveAsync(collection, document, "abandoned refresh lease", cancellationToken); return null; }
+                        if (record.RefreshLeaseUntil is null || record.RefreshLeaseUntil <= now) { await RemoveAsync(table, row, "abandoned refresh lease", cancellationToken); return null; }
                         if (waitDeadline.Elapsed > TimeSpan.FromSeconds(20))
                         {
                             throw new TimeoutException("Session refresh is still in progress.");
@@ -304,7 +304,7 @@ namespace TerraScale.Dashboard.Platform.Identity
                     var lease = record with { RefreshLease = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)), RefreshLeaseUntil = now.AddMinutes(1) };
                     try
                     {
-                        await state.PutAsync(collection, id, JsonSerializer.SerializeToElement(Seal(lease, credentials.SessionEncryptionKey)), StatePrecondition.Matches(document.Version), rotating);
+                        await state.PutAsync(table, id, JsonSerializer.SerializeToElement(Seal(lease, credentials.SessionEncryptionKey)), StatePrecondition.Matches(row.Version), rotating);
                     }
                     catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict)
                     { continue; }
@@ -312,10 +312,10 @@ namespace TerraScale.Dashboard.Platform.Identity
                     try { refreshed = await refresh.RefreshAsync(lease, rotating); }
                     catch (SignInRejectedException)
                     {
-                        var refused = await state.GetAsync(collection, id, rotating);
+                        var refused = await state.GetAsync(table, id, rotating);
                         if (refused is not null)
                         {
-                            await RemoveAsync(collection, refused, "refresh rejected by ts-auth", rotating);
+                            await RemoveAsync(table, refused, "refresh rejected by ts-auth", rotating);
                         }
 
                         return null;
@@ -323,7 +323,7 @@ namespace TerraScale.Dashboard.Platform.Identity
                     catch (Exception error) when (error is not (SignInRejectedException or RefreshNotStartedException))
                     {
                         // The lease stays until it expires; the next request after that replays the refresh once.
-                        logger.RefreshOfAStoredTsAuth(collection,
+                        logger.RefreshOfAStoredTsAuth(table,
                             error.GetType().Name, (error as HttpRequestException)?.StatusCode, (error as TerraScale.Dashboard.Platform.TsAuth.TsAuthException)?.ErrorCode ?? "none");
                         throw;
                     }
@@ -331,13 +331,13 @@ namespace TerraScale.Dashboard.Platform.Identity
                     {
                         // ts-auth never read the secret, so the session keeps it and
                         // survives an auth restart instead of expiring with the lease.
-                        var unchanged = await state.GetAsync(collection, id, rotating);
+                        var unchanged = await state.GetAsync(table, id, rotating);
                         if (unchanged is not null &&
                             Open(unchanged.Body.Deserialize<SealedSession>() ?? throw new IOException("Dashboard session is invalid."), credentials.SessionEncryptionKey).RefreshLease == lease.RefreshLease)
                         {
                             try
                             {
-                                await state.PutAsync(collection, id, JsonSerializer.SerializeToElement(Seal(record, credentials.SessionEncryptionKey)), StatePrecondition.Matches(unchanged.Version), rotating);
+                                await state.PutAsync(table, id, JsonSerializer.SerializeToElement(Seal(record, credentials.SessionEncryptionKey)), StatePrecondition.Matches(unchanged.Version), rotating);
                             }
                             catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict) { }
                         }
@@ -358,7 +358,7 @@ namespace TerraScale.Dashboard.Platform.Identity
                     {
                         try
                         {
-                            var latest = await state.GetAsync(collection, id, rotating);
+                            var latest = await state.GetAsync(table, id, rotating);
                             if (latest is null)
                             {
                                 return null; // A concurrent logout wins.
@@ -377,7 +377,7 @@ namespace TerraScale.Dashboard.Platform.Identity
 
                             try
                             {
-                                await state.PutAsync(collection, id, JsonSerializer.SerializeToElement(Seal(refreshed, credentials.SessionEncryptionKey)), StatePrecondition.Matches(latest.Version), rotating);
+                                await state.PutAsync(table, id, JsonSerializer.SerializeToElement(Seal(refreshed, credentials.SessionEncryptionKey)), StatePrecondition.Matches(latest.Version), rotating);
                             }
                             catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict)
                             {
@@ -393,7 +393,7 @@ namespace TerraScale.Dashboard.Platform.Identity
                         catch (Exception error) when (attempt < 5 && (error is TimeoutException or HttpRequestException { StatusCode: null or >= System.Net.HttpStatusCode.InternalServerError or System.Net.HttpStatusCode.TooManyRequests } ||
                                                                       error is OperationCanceledException && !rotating.IsCancellationRequested))
                         {
-                            logger.SavingARefreshedTsAuthGrant(collection, error.GetType().Name);
+                            logger.SavingARefreshedTsAuthGrant(table, error.GetType().Name);
                             await Task.Delay(TimeSpan.FromMilliseconds(500 << attempt), rotating);
                         }
                     }
@@ -409,7 +409,7 @@ namespace TerraScale.Dashboard.Platform.Identity
                         _ = work.ContinueWith(static task => _ = task.Exception, TaskScheduler.Default);
                     }
 
-                    var rejected = await state.GetAsync(collection, id, cancellationToken);
+                    var rejected = await state.GetAsync(table, id, cancellationToken);
                     if (rejected is not null)
                     {
                         var latestRecord = Open(rejected.Body.Deserialize<SealedSession>() ?? throw new IOException("Dashboard session is invalid."), credentials.SessionEncryptionKey);
@@ -425,7 +425,7 @@ namespace TerraScale.Dashboard.Platform.Identity
                             continue;
                         }
 
-                        await RemoveAsync(collection, rejected, "inactive at ts-auth", cancellationToken);
+                        await RemoveAsync(table, rejected, "inactive at ts-auth", cancellationToken);
                     }
                     return null;
                 }
@@ -438,12 +438,12 @@ namespace TerraScale.Dashboard.Platform.Identity
             if (context.Request.Cookies[Cookie] is { Length: 64 } token && token.All(char.IsAsciiHexDigitLower))
             {
                 var id = Key(token);
-                var document = await state.GetAsync("sessions", id, context.RequestAborted);
+                var row = await state.GetAsync("sessions", id, context.RequestAborted);
                 string? subject = null;
-                if (document is not null)
+                if (row is not null)
                 {
                     var credentials = await identity.ReadAsync(context.RequestAborted);
-                    subject = Open(document.Body.Deserialize<SealedSession>() ?? throw new IOException("Dashboard session is invalid."), credentials.SessionEncryptionKey).UserId;
+                    subject = Open(row.Body.Deserialize<SealedSession>() ?? throw new IOException("Dashboard session is invalid."), credentials.SessionEncryptionKey).UserId;
                 }
                 await DeleteStrictAsync("sessions", id, context.RequestAborted);
                 if (subject is not null)
@@ -467,13 +467,13 @@ namespace TerraScale.Dashboard.Platform.Identity
             // A password change first revokes the user at ts-auth. Delete each
             // indexed browser credential with CAS so an in-flight refresh cannot
             // restore it after revocation.
-            var document = await state.GetAsync("session_indexes", Key(subject), cancellationToken);
-            if (document is null)
+            var row = await state.GetAsync("session_indexes", Key(subject), cancellationToken);
+            if (row is null)
             {
                 return;
             }
 
-            var index = document.Body.Deserialize<SessionIndex>() ?? throw new IOException("Session index is invalid.");
+            var index = row.Body.Deserialize<SessionIndex>() ?? throw new IOException("Session index is invalid.");
             if (index.UserId != subject || index.Entries is null)
             {
                 throw new IOException("Session index identity is invalid.");
@@ -509,8 +509,8 @@ namespace TerraScale.Dashboard.Platform.Identity
             var id = Key(subject);
             for (var attempt = 0; attempt < 4; attempt++)
             {
-                var document = await state.GetAsync("session_indexes", id, cancellationToken);
-                var index = document?.Body.Deserialize<SessionIndex>() ?? new(subject, []);
+                var row = await state.GetAsync("session_indexes", id, cancellationToken);
+                var index = row?.Body.Deserialize<SessionIndex>() ?? new(subject, []);
                 if (index.UserId != subject || index.Entries is null)
                 {
                     throw new IOException("Session index identity is invalid.");
@@ -536,42 +536,42 @@ namespace TerraScale.Dashboard.Platform.Identity
                 {
                     if (index.Entries.Count == 0)
                     {
-                        if (document is not null)
+                        if (row is not null)
                         {
-                            await state.DeleteAsync("session_indexes", id, document.Version, cancellationToken);
+                            await state.DeleteAsync("session_indexes", id, row.Version, cancellationToken);
                         }
 
                         return;
                     }
                     await state.PutAsync("session_indexes", id, JsonSerializer.SerializeToElement(index),
-                        document is null ? StatePrecondition.Absent : StatePrecondition.Matches(document.Version), cancellationToken);
+                        row is null ? StatePrecondition.Absent : StatePrecondition.Matches(row.Version), cancellationToken);
                     return;
                 }
                 catch (HttpRequestException error) when (attempt < 3 && error.StatusCode is System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict) { }
             }
         }
 
-        private async Task DeleteStrictAsync(string collection, string id, CancellationToken cancellationToken)
+        private async Task DeleteStrictAsync(string table, string id, CancellationToken cancellationToken)
         {
             for (var attempt = 0; attempt < 4; attempt++)
             {
-                var document = await state.GetAsync(collection, id, cancellationToken);
-                if (document is null)
+                var row = await state.GetAsync(table, id, cancellationToken);
+                if (row is null)
                 {
                     return;
                 }
 
-                try { await state.DeleteAsync(collection, document.Id, document.Version, cancellationToken); return; }
+                try { await state.DeleteAsync(table, row.Id, row.Version, cancellationToken); return; }
                 catch (HttpRequestException error) when (attempt < 3 && error.StatusCode is System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict) { }
                 catch (HttpRequestException error) when (error.StatusCode == System.Net.HttpStatusCode.NotFound) { return; }
             }
         }
 
         // Every drop of a stored grant is logged so a signed-out session or PAT can be traced to its cause.
-        private async Task RemoveAsync(string collection, StateRecord document, string reason, CancellationToken cancellationToken)
+        private async Task RemoveAsync(string table, StateRecord row, string reason, CancellationToken cancellationToken)
         {
-            logger.DroppedStoredGrant(reason == "expired" ? LogLevel.Information : LogLevel.Warning, collection, reason);
-            try { await state.DeleteAsync(collection, document.Id, document.Version, cancellationToken); }
+            logger.DroppedStoredGrant(reason == "expired" ? LogLevel.Information : LogLevel.Warning, table, reason);
+            try { await state.DeleteAsync(table, row.Id, row.Version, cancellationToken); }
             catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict or System.Net.HttpStatusCode.NotFound) { }
         }
 

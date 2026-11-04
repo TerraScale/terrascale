@@ -60,36 +60,13 @@ namespace TerraScale.Dashboard.E2E.Platform
                     var databaseId = new Uri(page.Url).AbsolutePath.Split('/').ElementAtOrDefault(2);
                     await Assert.That(databaseId).IsNotNullOrEmpty().Because("Created database opens its details");
                     await ShotAsync("database");
-                    await GotoAsync($"/databases/{databaseId}/documents");
-                    await page.GetByRole(AriaRole.Button, new() { Name = "New collection", Exact = true }).Last.ClickAsync();
-                    await page.Locator("#new-collection[open]").WaitForAsync();
-                    await page.Locator("#new-collection-name").FillAsync("users");
-                    await SubmitAsync("#new-collection form", "Create collection");
-                    await page.GetByRole(AriaRole.Button, new() { Name = "Add document", Exact = true }).ClickAsync();
-                    await page.Locator("#add-document[open]").WaitForAsync();
-                    await page.Locator("#new-document-id").FillAsync("01K78D0C000000000000000020");
-                    await EditorAsync("#new-document-json", """{"name":"Ada","score":7,"nested":{"keep":true,"remove":false}}""");
-                    await SubmitAsync("#add-document form", "Add document");
-                    await page.GetByRole(AriaRole.Link, new() { Name = "01K78D0C000000000000000020", Exact = true }).ClickAsync();
-                    await page.Locator("#edit-document[open]").WaitForAsync();
-                    await page.Locator("#operation").SelectOptionAsync("patch");
-                    await EditorAsync("#document-json", """{"score":9,"nested":{"remove":null}}""");
-                    await SubmitAsync("#edit-document form", "Save document");
-                    await page.GetByRole(AriaRole.Link, new() { Name = "01K78D0C000000000000000020", Exact = true }).ClickAsync();
-                    await page.Locator("#edit-document[open]").WaitForAsync();
-                    var patched = JsonNode.Parse(await page.Locator("#document-json").InputValueAsync());
-                    await Assert.That(JsonNode.DeepEquals(patched, JsonNode.Parse("""{"name":"Ada","score":9,"nested":{"keep":true}}"""))).IsTrue()
-                        .Because("Patch preserves unrelated fields and removes null members: " + patched?.ToJsonString());
-                    await page.Locator("#edit-document").GetByRole(AriaRole.Button, new() { Name = "Cancel", Exact = true }).ClickAsync();
-                    await ShotAsync("documents");
-                    await GotoAsync($"/databases/{databaseId}/schema?collection=users");
-                    await Assert.That(await page.Locator("#declared-schema").InputValueAsync()).IsEqualTo("{}").Because("Collections start without declared validation");
-                    await Assert.That(await page.Locator("main").InnerTextAsync()).Contains("No declared validation schema.");
-                    await Assert.That(await page.Locator("section[aria-labelledby=inferred-schema-title] pre").InnerTextAsync()).Contains("score").Because("Inferred fields reflect live documents separately from declared validation");
-                    await ShotAsync("schema");
-                    await GotoAsync($"/databases/{databaseId}/sql?collection=users");
-                    await EditorAsync("#sql", "SELECT * FROM users LIMIT 100");
-                    await SubmitAsync("form:is([action=\"/api/v1/dashboard/data/sql\"],[action^=\"/api/v1/dashboard/data/sql?\"])", "Run query");
+                    await GotoAsync($"/databases/{databaseId}/sql");
+                    foreach (var statement in new[] { "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, score INTEGER)", "INSERT INTO users (name, score) VALUES ('Ada', 7)", "SELECT * FROM users LIMIT 100" })
+                    {
+                        await EditorAsync("#sql", statement);
+                        await SubmitAsync("form:is([action=\"/api/v1/dashboard/data/sql\"],[action^=\"/api/v1/dashboard/data/sql?\"])", "Run query");
+                    }
+
                     await page.GetByText("Ada", new() { Exact = true }).WaitForAsync();
                     await ShotAsync("sql");
 
@@ -201,7 +178,7 @@ namespace TerraScale.Dashboard.E2E.Platform
                         DataObject = rpc,
                     });
                 }
-                Console.WriteLine("PASS: desktop/mobile profile, database CRUD, collections, versioned JSON merge patches, schema/SQL, keys/PATs, native/MCP state and revocation, paid organization checkout/project wizard and customer portal");
+                Console.WriteLine("PASS: desktop/mobile profile, database CRUD, SQL, keys/PATs, native/MCP state and revocation, paid organization checkout/project wizard and customer portal");
             }
             catch when (activePage is { IsClosed: false })
             {

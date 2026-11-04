@@ -7,14 +7,13 @@ using TerraScale.Dashboard.Common.UI;
 
 namespace TerraScale.Dashboard.Features.Usage
 {
-    public sealed record UsageDatabaseRow(SpendingDatabase Spending, string Status, UsageReading? Reading, double? SharePercent, UsageStorageFact? Storage = null)
+    public sealed record UsageDatabaseRow(SpendingDatabase Spending, string Status, UsageReading? Reading, double? SharePercent)
     {
-        public long? LogicalBytes => Reading?.LogicalBytes ?? Storage?.LogicalBytes;
-        public long? Documents => Reading?.Documents ?? Storage?.Documents;
+        public long? LogicalBytes => Reading?.LogicalBytes;
     }
-    public sealed record UsageProjectRow(SpendingProject Spending, UsageReading? Reading, bool Selected, double? SharePercent, UsageStorageFact? Storage = null)
+    public sealed record UsageProjectRow(SpendingProject Spending, UsageReading? Reading, bool Selected, double? SharePercent)
     {
-        public long? LogicalBytes => Reading?.LogicalBytes ?? Storage?.LogicalBytes;
+        public long? LogicalBytes => Reading?.LogicalBytes;
     }
     public sealed record UsageAllowance(string Name, string Allowance, string Used, double? Percent, string PlanName, string? ExactUsed = null, string? ExactAllowance = null)
     {
@@ -23,13 +22,12 @@ namespace TerraScale.Dashboard.Features.Usage
     }
     public sealed record UsagePage(ShellModel Shell, UsageSelection Selection, string Tab, string Saved, SpendingSnapshot Spending,
         IReadOnlyList<UsageProjectRow> Projects, IReadOnlyList<UsageDatabaseRow> Databases, IReadOnlyList<UsageAllowance> Allowances,
-        string PlanName, UsageReading? Scope, AnalyticsLinePlot? History, string UsageSource, string UsageError, string AllowanceError, bool OrganizationStorageMeasured, UsageReplication Replication)
+        string PlanName, UsageReading? Scope, AnalyticsLinePlot? History, string UsageSource, string UsageError, string AllowanceError, bool OrganizationStorageMeasured)
     {
-        public UsageStorageFact? StoredScope { get; init; }
         // Set when a plan without overage billing has used its monthly operation units: TerraBase refuses new writes.
         public string WritesPaused { get; init; } = "";
         public InternalBill? InternalBill { get; init; }
-        public long? ScopeLogicalBytes => Scope?.LogicalBytes ?? StoredScope?.LogicalBytes;
+        public long? ScopeLogicalBytes => Scope?.LogicalBytes;
         public bool ScopeStorageMeasured => ScopeLogicalBytes is not null;
         public int ActiveDatabases => Selection.Context.Project?.Databases.Count ?? 0;
         public int? RegionCount => UsagePlacement.For(Selection.Context.Project).RegionCount;
@@ -42,7 +40,7 @@ namespace TerraScale.Dashboard.Features.Usage
         }
     }
 
-    public sealed class UsageService(IUsageMeasurements measurements, SpendingService spending, IUsageReplication replication, IUsageStorage storage, TimeProvider time)
+    public sealed class UsageService(IUsageMeasurements measurements, SpendingService spending, TimeProvider time)
     {
         public static string WritesPaused(BillingPlan? plan, PlanAllowances limits, long? units, DateTimeOffset now)
         {
@@ -60,12 +58,7 @@ namespace TerraScale.Dashboard.Features.Usage
         {
             var controls = await spending.ReadAsync(selection.Context, cancellationToken);
             var usageRead = tab == "overview" || selection.Context.Organization!.InternalBilling is not null ? measurements.ReadAsync(selection, cancellationToken) : Task.FromResult(new UsageMeasurements(new(UsageSourceState.NotMetered), new Dictionary<string, UsageObservation>()));
-            var replicationRead = tab == "overview" ? replication.ReadAsync(selection, cancellationToken) : Task.FromResult(new UsageReplication([], []));
-            var storageRead = StoredAsync();
-            await Task.WhenAll(usageRead, replicationRead, storageRead);
             var result = await usageRead;
-            var stored = await storageRead;
-            stored?.Validate(selection);
             var plan = PlanCatalog.For(selection.Context.Organization!);
             var limits = PlanCatalog.Limits(selection.Context.Organization!);
             var name = plan?.Name ?? "No billing plan";
@@ -98,7 +91,7 @@ namespace TerraScale.Dashboard.Features.Usage
                         : "This month's reads and writes could not be loaded from TerraBase. Try again shortly.";
             }
 
-            long? organizationStorage = complete ? logical : null; // Collection fallback excludes files.
+            long? organizationStorage = complete ? logical : null;
             var units = complete ? result.OperationUnits(controls.Projects.Select(project => project.Id), time.GetUtcNow()) : null;
             var sqlReads = complete ? result.SqlReadUnits(controls.Projects.Select(project => project.Id), time.GetUtcNow()) : null;
             var allowances = new[] {
@@ -136,16 +129,14 @@ namespace TerraScale.Dashboard.Features.Usage
             var selectedProject = controls.Projects.FirstOrDefault(project => project.Id == selection.Context.Project?.Id);
             var listed = selectedProject?.Databases.Where(database => selection.DatabaseId.Length == 0 || database.Id == selection.DatabaseId).ToArray() ?? [];
             var databaseRows = listed.Select(database => new UsageDatabaseRow(database, selection.Context.Project!.Databases[database.Id].Status,
-                selection.DatabaseId.Length > 0 ? scope : scopedDatabases.FirstOrDefault(reading => reading.DatabaseId == database.Id), 0,
-                stored?.Projects.GetValueOrDefault(selection.Context.Project!.Id)?.Databases.GetValueOrDefault(database.Id))).ToArray();
-            var knownDatabaseTotal = UsageStorageSnapshot.SumCounters(databaseRows.Select(database => database.LogicalBytes));
+                selection.DatabaseId.Length > 0 ? scope : scopedDatabases.FirstOrDefault(reading => reading.DatabaseId == database.Id), 0)).ToArray();
+            var knownDatabaseTotal = UsageCounters.Sum(databaseRows.Select(database => database.LogicalBytes));
             databaseRows = [.. databaseRows.Select(database => database with { SharePercent = database.LogicalBytes is { } bytes && knownDatabaseTotal is { } total ? ValueFormat.Percent(bytes, total) : null })];
             var history = scope is { Series.Count: > 0 } ? AnalyticsLinePlot.For("Reads and writes, " + selection.RangeLabel, selection.Range, [.. scope.Series.Select(point => point.Start)],
                 [new("Reads", [.. scope.Series.Select(point => (decimal)point.Reads)]), new("Writes", [.. scope.Series.Select(point => (decimal)point.Writes)])]) : null;
             return new(shell, selection, tab, saved, controls, projects, databaseRows, allowances, name, scope, history, source,
-                result.Scope.State == UsageSourceState.Unavailable ? "Metered reads and writes could not be loaded. Try again shortly." : "", monthError, organizationStorage is not null, await replicationRead)
+                result.Scope.State == UsageSourceState.Unavailable ? "Metered reads and writes could not be loaded. Try again shortly." : "", monthError, organizationStorage is not null)
             {
-                StoredScope = selection.DatabaseId.Length > 0 ? stored?.Scope(selection) : null,
                 WritesPaused = writesPaused,
                 InternalBill = selection.Context.Organization!.InternalBilling is not null
                 ? InternalBillingService.Estimate(selection.Context.Organization, result, time.GetUtcNow()) : null
@@ -157,11 +148,29 @@ namespace TerraScale.Dashboard.Features.Usage
                 measured ? bytes ? MetricFormat.Bytes(used) : ChartGeometry.Compact(used) : "Not metered",
                 measured && limit > 0 ? ValueFormat.Percent(used, limit) : null, name, measured && !bytes ? used.ToString("N0", CultureInfo.InvariantCulture) : null, !bytes && limit > 0 ? limit.ToString("N0", CultureInfo.InvariantCulture) + " " + unit : null);
             }
+        }
+    }
 
-            async Task<UsageStorageSnapshot?> StoredAsync()
+    public static class UsageCounters
+    {
+        // Null when any counter is unknown or the total overflows: a partial sum is never shown as a total.
+        public static long? Sum(IEnumerable<long?> counters)
+        {
+            long total = 0;
+            try
             {
-                return tab == "overview" ? await storage.ReadAsync(selection, cancellationToken) : null;
+                foreach (var counter in counters)
+                {
+                    if (counter is null)
+                    {
+                        return null;
+                    }
+
+                    total = checked(total + counter.Value);
+                }
+                return total;
             }
+            catch (OverflowException) { return null; }
         }
     }
 }

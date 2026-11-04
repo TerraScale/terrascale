@@ -19,7 +19,6 @@ lint: check-css
 	python3 scripts/dashboard/verify-sdk.py
 	python3 scripts/dashboard/verify-e2e.py
 	python3 scripts/dashboard/report-slow-failure.py --self-check
-	node scripts/dashboard/check-document-changes.mjs
 	DOTNET="$(DOTNET)" bash scripts/dashboard/ci/format.sh
 
 security:

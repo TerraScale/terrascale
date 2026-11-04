@@ -26,8 +26,8 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
                 await Assert.That(lastOwner.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
                 await Assert.That(await lastOwner.Content.ReadAsStringAsync()).Contains("Transfer ownership of your shared organizations before deleting your account.");
             }
-            await Assert.That(await scenario.ExistsAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(UserId))).IsTrue();
-            await Assert.That(await scenario.ExistsAsync(AccountService.OrganizationsCollection, personal)).IsTrue();
+            await Assert.That(await scenario.ExistsAsync(AccountService.AccountsTable, AccountService.AccountStorageKey(UserId))).IsTrue();
+            await Assert.That(await scenario.ExistsAsync(AccountService.OrganizationsTable, personal)).IsTrue();
             await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsTrue();
             using var profile = await scenario.Client.GetAsync("/profile?tab=danger");
             await Assert.That(profile.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -45,21 +45,18 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             await Assert.That(database.StatusCode).IsEqualTo(HttpStatusCode.Created);
             using var created = JsonDocument.Parse(await database.Content.ReadAsStringAsync());
             var databaseId = created.RootElement.GetProperty("id").GetString()!;
-            using (var collection = await HttpJourney.PostFormAsync(scenario.Client, "/api/v1/dashboard/data/collections", new()
-            { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["name"] = "items" }))
+            foreach (var sql in new[] { "CREATE TABLE items (id INTEGER PRIMARY KEY, value INTEGER)", "INSERT INTO items (value) VALUES (1)" })
             {
-                await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
+                using var written = await HttpJourney.PostFormAsync(scenario.Client, "/api/v1/dashboard/data/sql", new()
+                { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["sql"] = sql });
+                await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.OK);
             }
 
-            using (var document = await HttpJourney.PostFormAsync(scenario.Client, "/api/v1/dashboard/data/documents", new()
-            { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["collection"] = "items", ["operation"] = "create", ["document"] = "{\"value\":1}" }))
+            using (var counted = await HttpJourney.PostFormAsync(scenario.Client, "/api/v1/dashboard/data/sql", new()
+            { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["sql"] = "SELECT count(*) FROM items" }))
+            using (var rows = JsonDocument.Parse(await counted.Content.ReadAsStringAsync()))
             {
-                await Assert.That(document.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            }
-
-            using (var documents = JsonDocument.Parse(await scenario.Client.GetStringAsync("/api/v1/dashboard/data/documents?databaseId=" + databaseId + "&collection=items")))
-            {
-                await Assert.That(documents.RootElement.GetProperty("documents").GetArrayLength()).IsEqualTo(1);
+                await Assert.That(rows.RootElement.GetProperty("rows")[0][0].GetInt32()).IsEqualTo(1);
             }
             // This journey verifies dashboard delegation; ts-auth/TerraBase qualify physical erasure.
             await HttpJourney.CreatePatAsync(scenario.Client);
@@ -72,9 +69,9 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
                     .And.Contains("without a refund").And.Contains("Shared organizations keep their data and plans");
                 await Assert.That(consent).DoesNotContain("Delete your databases first");
             }
-            var personalProjection = await scenario.Environment.State.GetAsync(AccountService.OrganizationsCollection, personal, default);
+            var personalProjection = await scenario.Environment.State.GetAsync(AccountService.OrganizationsTable, personal, default);
             await Assert.That(personalProjection!.Body.Deserialize<OrganizationRecord>()!.Projects.Values.Any(project => project.Databases.ContainsKey(databaseId))).IsTrue();
-            await Assert.That(await scenario.ExistsAsync(AccountService.OrganizationsCollection, shared)).IsTrue();
+            await Assert.That(await scenario.ExistsAsync(AccountService.OrganizationsTable, shared)).IsTrue();
 
             using (var deleted = await scenario.DeleteAsync("  USER@example.com "))
             {
@@ -82,11 +79,11 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
                 await Assert.That(deleted.Headers.Location!.OriginalString).IsEqualTo("/account-deleted");
             }
             var key = AccountService.AccountStorageKey(UserId);
-            await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.AccountsCollection, key, default))!)).IsTrue();
-            await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.IdentitiesCollection, key, default))!)).IsTrue();
-            await Assert.That(await scenario.ExistsAsync(AccessTokens.Collection, key)).IsFalse();
-            await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.OrganizationsCollection, personal, default))!)).IsTrue();
-            await Assert.That(await scenario.ExistsAsync(AccountService.OrganizationsCollection, shared)).IsTrue().Because("shared organizations keep their data");
+            await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.AccountsTable, key, default))!)).IsTrue();
+            await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.IdentitiesTable, key, default))!)).IsTrue();
+            await Assert.That(await scenario.ExistsAsync(AccessTokens.Table, key)).IsFalse();
+            await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.OrganizationsTable, personal, default))!)).IsTrue();
+            await Assert.That(await scenario.ExistsAsync(AccountService.OrganizationsTable, shared)).IsTrue().Because("shared organizations keep their data");
             await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsFalse();
             await Assert.That(scenario.Environment.Workspace.Organizations[shared].Members.ContainsKey(UserId)).IsFalse();
             using var session = await scenario.Client.GetAsync("/__test/session");
@@ -104,8 +101,8 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             await Assert.That(scenario.Environment.BillingPlans.SubscriptionStatus(binding.SubscriptionId)).IsEqualTo("canceled");
             await Assert.That(scenario.Environment.BillingPlans.Mutations(binding.CustomerId).Count(path => path == "DELETE /v1/subscriptions/" + binding.SubscriptionId)).IsEqualTo(1);
             // The binding stays until DeletionReconciler fences it from the same auth proof.
-            await Assert.That(StripeBilling.ReadBinding((await scenario.Environment.State.GetAsync(StripeBilling.Collection, personal, default))!, personal).Status).IsEqualTo("canceled");
-            await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(userId), default))!)).IsTrue();
+            await Assert.That(StripeBilling.ReadBinding((await scenario.Environment.State.GetAsync(StripeBilling.Table, personal, default))!, personal).Status).IsEqualTo("canceled");
+            await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.AccountsTable, AccountService.AccountStorageKey(userId), default))!)).IsTrue();
             await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsFalse();
         }
 
@@ -125,7 +122,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
                 await Assert.That(free.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             }
 
-            var binding = StripeBilling.ReadBinding((await scenario.Environment.State.GetAsync(StripeBilling.Collection, personal, default))!, personal);
+            var binding = StripeBilling.ReadBinding((await scenario.Environment.State.GetAsync(StripeBilling.Table, personal, default))!, personal);
             await Assert.That(scenario.Environment.BillingPlans.SubscriptionStatus(binding.SubscriptionId)).IsEqualTo("active");
             scenario.Environment.BillingPlans.SetScenario(binding.CustomerId, stripeScenario);
             // Without a hosted step-up proof the request only starts confirmation: nothing is deleted or billed.
@@ -135,7 +132,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
                 await Assert.That(unconfirmed.StatusCode).IsNotEqualTo(HttpStatusCode.SeeOther);
             }
 
-            await Assert.That(await scenario.ExistsAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(userId))).IsTrue();
+            await Assert.That(await scenario.ExistsAsync(AccountService.AccountsTable, AccountService.AccountStorageKey(userId))).IsTrue();
             await Assert.That(scenario.Environment.BillingPlans.SubscriptionStatus(binding.SubscriptionId)).IsEqualTo("active");
             using (var deleted = await scenario.DeleteAsync(email))
             {
@@ -194,9 +191,9 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
                 return await HttpJourney.PostConfirmedFormAsync(Client, "/api/v1/dashboard/profile/delete", new() { ["_csrf"] = csrf, ["email"] = email });
             }
 
-            public async Task<bool> ExistsAsync(string collection, string id)
+            public async Task<bool> ExistsAsync(string table, string id)
             {
-                return await Environment.State.GetAsync(collection, id, default) is not null;
+                return await Environment.State.GetAsync(table, id, default) is not null;
             }
 
             public async ValueTask DisposeAsync()

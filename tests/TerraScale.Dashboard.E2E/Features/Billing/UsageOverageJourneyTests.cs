@@ -15,7 +15,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
         public async Task StarterOverageBillsOnePendingSubscriptionItemAboveWhatIsInvoiced()
         {
             using var client = fixture.CreateClient();
-            await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+            await DatabaseJourney.NativeWorkspaceAsync(client);
             var csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=billing");
             using var checkout = await HttpJourney.PostFormAsync(client, "/billing/checkout", new()
             { ["_csrf"] = csrf, ["plan"] = "starter", ["interval"] = "annual", ["return"] = "/organization?tab=billing" });
@@ -66,7 +66,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
         public async Task FreeStopsAtItsAllowanceWithoutOverageItems()
         {
             using var client = fixture.CreateClient();
-            await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+            await DatabaseJourney.NativeWorkspaceAsync(client);
             await Assert.That((await ReportAsync(client, 10_000_000)).Length).IsEqualTo(0);
             await Assert.That(await UsageAsync(client)).IsEqualTo("Free stops new writes at its 50,000 operation units a month; reads keep working. No usage charges.");
             await AssertSpendingAsync(client, "Free stops new writes at its included operation allowance; reads keep working. No usage charges.");

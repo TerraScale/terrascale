@@ -9,8 +9,8 @@ namespace TerraScale.Dashboard.Features.Auth
 {
     public sealed class AccessTokens(IDashboardState state, DashboardSessions sessions, IAuthGateway auth, AccountService accounts, TimeProvider time, IAuthStepUpGateway stepUp) : IProfileTokens
     {
-        public const string Collection = "dashboard_access_tokens";
-        public const string IndexCollection = "dashboard_access_token_hashes";
+        public const string Table = "dashboard_access_tokens";
+        public const string IndexTable = "dashboard_access_token_hashes";
 
         public async Task<IReadOnlyList<ProfileToken>> ListAsync(AccountContext context, CancellationToken cancellationToken)
         {
@@ -74,7 +74,7 @@ namespace TerraScale.Dashboard.Features.Auth
                 }
 
                 created = await StoreAsync(userId, name, expiresAt, credentialId, mcpClientId, cancellationToken);
-                // No cross-document atomicity claim: recheck after storage, before publishing the secret.
+                // No cross-row atomicity claim: recheck after storage, before publishing the secret.
                 if (await McpRegistrations.TouchAsync(state, time, mcpClientId, cancellationToken) is null)
                 {
                     throw new AccountAccessException("The MCP client registration expired. Add the server again.", 401);
@@ -115,9 +115,9 @@ namespace TerraScale.Dashboard.Features.Auth
             var stored = new StoredToken(token, Hash(secret), credential, McpClientId: mcpClientId);
             // The index alone cannot authenticate: the account's CAS-protected
             // token set must still contain the token on every request.
-            await AccountEnrollment.RememberAsync(state, userId, IndexCollection, stored.SecretHash, cancellationToken);
-            await AccountEnrollment.RememberAsync(state, userId, Collection, AccountService.AccountId(userId), cancellationToken);
-            await state.PutAsync(IndexCollection, stored.SecretHash, JsonSerializer.SerializeToElement(new TokenOwner(userId, token.Id)), StatePrecondition.Absent, cancellationToken);
+            await AccountEnrollment.RememberAsync(state, userId, IndexTable, stored.SecretHash, cancellationToken);
+            await AccountEnrollment.RememberAsync(state, userId, Table, AccountService.AccountId(userId), cancellationToken);
+            await state.PutAsync(IndexTable, stored.SecretHash, JsonSerializer.SerializeToElement(new TokenOwner(userId, token.Id)), StatePrecondition.Absent, cancellationToken);
             await UpdateAsync(userId, set =>
             {
                 if (set.Tokens.Count(item => item.RevokedAt is null && item.Token.ExpiresAt > time.GetUtcNow()) >= 25)
@@ -155,7 +155,7 @@ namespace TerraScale.Dashboard.Features.Auth
             }
 
             await sessions.DeleteCredentialAsync(token.CredentialId, cancellationToken);
-            var index = await state.GetAsync(IndexCollection, token.SecretHash, cancellationToken);
+            var index = await state.GetAsync(IndexTable, token.SecretHash, cancellationToken);
             if (index is not null)
             {
                 if (index.Id != token.SecretHash || AccountService.Read<TokenOwner>(index) != new TokenOwner(userId, token.Token.Id))
@@ -163,7 +163,7 @@ namespace TerraScale.Dashboard.Features.Auth
                     throw new IOException("Access token index ownership changed.");
                 }
 
-                await state.DeleteAsync(IndexCollection, token.SecretHash, index.Version, cancellationToken);
+                await state.DeleteAsync(IndexTable, token.SecretHash, index.Version, cancellationToken);
             }
             await UpdateAsync(userId, set => set.Tokens.RemoveAll(item => item.Token.Id == id), cancellationToken);
         }
@@ -172,8 +172,8 @@ namespace TerraScale.Dashboard.Features.Auth
         public async Task ForgetAllAsync(string userId, CancellationToken cancellationToken)
         {
             var id = AccountService.AccountId(userId);
-            var document = await state.GetAsync(Collection, id, cancellationToken);
-            if (document is null)
+            var row = await state.GetAsync(Table, id, cancellationToken);
+            if (row is null)
             {
                 return;
             }
@@ -182,17 +182,17 @@ namespace TerraScale.Dashboard.Features.Auth
             foreach (var token in set.Tokens)
             {
                 await sessions.DeleteCredentialAsync(token.CredentialId, userId, cancellationToken);
-                if (await state.GetAsync(IndexCollection, token.SecretHash, cancellationToken) is { } index)
+                if (await state.GetAsync(IndexTable, token.SecretHash, cancellationToken) is { } index)
                 {
                     if (index.Id != token.SecretHash || AccountService.Read<TokenOwner>(index) != new TokenOwner(userId, token.Token.Id))
                     {
                         throw new IOException("Access token index ownership changed.");
                     }
 
-                    await state.DeleteAsync(IndexCollection, token.SecretHash, index.Version, cancellationToken);
+                    await state.DeleteAsync(IndexTable, token.SecretHash, index.Version, cancellationToken);
                 }
             }
-            await state.DeleteAsync(Collection, id, document.Version, cancellationToken);
+            await state.DeleteAsync(Table, id, row.Version, cancellationToken);
         }
 
         public async Task<AccountContext?> ResolveAsync(string secret, CancellationToken cancellationToken)
@@ -203,7 +203,7 @@ namespace TerraScale.Dashboard.Features.Auth
             }
 
             var hash = Hash(secret);
-            var index = await state.GetAsync(IndexCollection, hash, cancellationToken);
+            var index = await state.GetAsync(IndexTable, hash, cancellationToken);
             if (index is not null && index.Id != hash)
             {
                 throw new IOException("Access token index identity does not match.");
@@ -253,13 +253,13 @@ namespace TerraScale.Dashboard.Features.Auth
 
         private async Task<TokenSet> ReadAsync(string userId, CancellationToken cancellationToken)
         {
-            var document = await state.GetAsync(Collection, AccountService.AccountId(userId), cancellationToken);
-            if (document is not null && document.Id != AccountService.AccountId(userId))
+            var row = await state.GetAsync(Table, AccountService.AccountId(userId), cancellationToken);
+            if (row is not null && row.Id != AccountService.AccountId(userId))
             {
                 throw new IOException("Access token set identity does not match.");
             }
 
-            var set = document is null ? new TokenSet { UserId = userId } : AccountService.Read<TokenSet>(document);
+            var set = row is null ? new TokenSet { UserId = userId } : AccountService.Read<TokenSet>(row);
             if (set.UserId != userId)
             {
                 throw new AccountAccessException("Access token ownership does not match.");
@@ -273,20 +273,20 @@ namespace TerraScale.Dashboard.Features.Auth
             var id = AccountService.AccountId(userId);
             for (var attempt = 0; attempt < 4; attempt++)
             {
-                var document = await state.GetAsync(Collection, id, cancellationToken);
-                if (document is not null && document.Id != id)
+                var row = await state.GetAsync(Table, id, cancellationToken);
+                if (row is not null && row.Id != id)
                 {
                     throw new IOException("Access token set identity does not match.");
                 }
 
-                var set = document is null ? new TokenSet { UserId = userId } : AccountService.Read<TokenSet>(document);
+                var set = row is null ? new TokenSet { UserId = userId } : AccountService.Read<TokenSet>(row);
                 if (set.UserId != userId)
                 {
                     throw new AccountAccessException("Access token ownership does not match.");
                 }
 
                 update(set);
-                try { await state.PutAsync(Collection, id, JsonSerializer.SerializeToElement(set), document is null ? StatePrecondition.Absent : StatePrecondition.Matches(document.Version), cancellationToken); return; }
+                try { await state.PutAsync(Table, id, JsonSerializer.SerializeToElement(set), row is null ? StatePrecondition.Absent : StatePrecondition.Matches(row.Version), cancellationToken); return; }
                 catch (StateConflictException) when (attempt < 3) { }
             }
         }

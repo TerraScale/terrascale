@@ -30,9 +30,9 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             using var created = await HttpJourney.PostFormAsync(browser, "/__test/billing/webhook/event",
                 new() { ["_csrf"] = csrf, ["liveMode"] = "false" });
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            using var eventDocument = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
-            var body = eventDocument.RootElement.GetProperty("body").GetString()!;
-            var signature = eventDocument.RootElement.GetProperty("signature").GetString()!;
+            using var eventJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+            var body = eventJson.RootElement.GetProperty("body").GetString()!;
+            var signature = eventJson.RootElement.GetProperty("signature").GetString()!;
 
             foreach (var path in WebhookPaths)
             {
@@ -79,9 +79,9 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             using var wrongMode = await HttpJourney.PostFormAsync(browser, "/__test/billing/webhook/event",
                 new() { ["_csrf"] = csrf, ["liveMode"] = "true" });
             await Assert.That(wrongMode.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            using var wrongModeDocument = JsonDocument.Parse(await wrongMode.Content.ReadAsStringAsync());
-            var wrongModeBody = wrongModeDocument.RootElement.GetProperty("body").GetString()!;
-            var wrongModeSignature = wrongModeDocument.RootElement.GetProperty("signature").GetString()!;
+            using var wrongModeJson = JsonDocument.Parse(await wrongMode.Content.ReadAsStringAsync());
+            var wrongModeBody = wrongModeJson.RootElement.GetProperty("body").GetString()!;
+            var wrongModeSignature = wrongModeJson.RootElement.GetProperty("signature").GetString()!;
             using var rejectedMode = await SendWebhookAsync(anonymous, WebhookPaths[1], wrongModeBody, wrongModeSignature);
             await Assert.That(rejectedMode.StatusCode).IsEqualTo(HttpStatusCode.BadRequest)
                 .Because("A valid signature cannot authorize an event from the wrong key mode.");

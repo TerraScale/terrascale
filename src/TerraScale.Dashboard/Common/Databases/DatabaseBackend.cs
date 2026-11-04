@@ -43,14 +43,12 @@ namespace TerraScale.Dashboard.Common.Databases
         public string? PreviousName { get; init; }
         public string? ConflictOf { get; init; }
     }
-    public sealed record CollectionStats(string Name, long Documents, long Bytes);
     public sealed record DatabaseSqlRow(string Id, JsonElement Value);
     public sealed record DatabaseSqlCatalog(IReadOnlyList<DatabaseSqlTable> Tables, bool Truncated);
     public sealed record DatabaseSqlTable(string Name, IReadOnlyList<DatabaseSqlColumn> Columns);
     public sealed record DatabaseSqlColumn(string Name, string? Decltype);
     // One relational statement's result from TerraBase POST .../sql/execute: columns, rows (one value per column), and write counts.
     public sealed record DatabaseSqlResult(IReadOnlyList<DatabaseSqlColumn> Columns, IReadOnlyList<IReadOnlyList<JsonElement>> Rows, long RowsAffected, long? LastInsertRowId);
-    public sealed record DatabaseIndex(string Name, string Collection, IReadOnlyList<string> Fields, string State);
     public sealed record ProjectCredential(string Id, string ProjectId, string Name, IReadOnlyList<string> Scopes, string? DatabaseId, string LastFour, DateTimeOffset CreatedAt)
     {
         public string CreatedByUserId { get; init; } = "";
@@ -80,12 +78,8 @@ namespace TerraScale.Dashboard.Common.Databases
         Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken);
         Task<ManagedDatabase> RenameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken);
         Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
-        Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
         Task<DatabaseSqlCatalog> SqlTablesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
         Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, bool write, CancellationToken cancellationToken);
-        Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
-        Task<DatabaseIndex> CreateIndexAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string collection, IReadOnlyList<string> fields, CancellationToken cancellationToken);
-        Task DropIndexAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken);
 
     }
 
@@ -229,13 +223,6 @@ namespace TerraScale.Dashboard.Common.Databases
             return Map(await RunAsync(() => project.SetDatabaseAsync(scope.ProjectId, databaseId, new(Name: name)).ResponseAsync));
         }
 
-        public async Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
-        {
-            var name = await NameAsync(scope, home, databaseId, cancellationToken);
-            var database = await ClientAsync(scope, home, "databases:read", cancellationToken);
-            return [.. (await RunAsync(() => database.ListCollectionStatsAsync(scope.ProjectId, name).ResponseAsync)).Items.Select(item => new CollectionStats(item.Name, item.Documents, item.Bytes))];
-        }
-
         // SQL execution and catalog batches share current-user authority, home-region routing and JSON bounds.
         public async Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, bool write, CancellationToken cancellationToken)
         {
@@ -339,27 +326,6 @@ namespace TerraScale.Dashboard.Common.Databases
                 : throw new HttpRequestException("TerraBase returned invalid SQL metadata.");
         }
 
-        public async Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
-        {
-            var name = await NameAsync(scope, home, databaseId, cancellationToken);
-            var database = await ClientAsync(scope, home, "databases:read", cancellationToken);
-            return [.. (await RunAsync(() => database.ListIndexesAsync(scope.ProjectId, name).ResponseAsync)).Items.Select(Map)];
-        }
-
-        public async Task<DatabaseIndex> CreateIndexAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string collection, IReadOnlyList<string> fields, CancellationToken cancellationToken)
-        {
-            var databaseName = await NameAsync(scope, home, databaseId, cancellationToken);
-            var database = await ClientAsync(scope, home, "databases:write", cancellationToken);
-            return Map(await RunAsync(() => database.CreateIndexAsync(scope.ProjectId, databaseName, new(collection, fields)).ResponseAsync));
-        }
-
-        public async Task DropIndexAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
-        {
-            var databaseName = await NameAsync(scope, home, databaseId, cancellationToken);
-            var database = await ClientAsync(scope, home, "databases:write", cancellationToken);
-            await RunAsync(() => database.DropIndexAsync(scope.ProjectId, databaseName, name).ResponseAsync);
-        }
-
         private async Task<IManagementService> ClientAsync(DatabaseScope scope, DatabaseRegion home, string permission, CancellationToken cancellationToken)
         {
             if (PlatformDatabases.IsPlatform(scope.OrganizationId))
@@ -384,11 +350,6 @@ namespace TerraScale.Dashboard.Common.Databases
             return new(item.Id, item.ProjectId, item.Name, item.CreatedAt,
             item.BranchedFrom, item.HomeRegion, item.ReplicaRegions, item.AllRegions)
             { PreviousName = item.PreviousName, ConflictOf = item.ConflictOf };
-        }
-
-        private static DatabaseIndex Map(TerraBaseIndex item)
-        {
-            return new(item.Name, item.Collection, item.Fields, item.State);
         }
 
         private static async Task<T> RunAsync<T>(Func<Task<T>> operation)

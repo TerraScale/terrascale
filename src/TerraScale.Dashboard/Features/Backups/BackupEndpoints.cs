@@ -30,7 +30,7 @@ namespace TerraScale.Dashboard.Features.Backups
                     (error is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested))
                 { return Failure(error); }
             });
-            foreach (var operation in new[] { "create", "policy", "restore", "destination", "destination-remove", "export-schedule" })
+            foreach (var operation in new[] { "create", "policy", "restore", "destination", "destination-remove" })
             {
                 var action = operation;
                 endpoints.MapPost(action == "create" ? "/api/v1/dashboard/backups" : "/api/v1/dashboard/backups/" + action,
@@ -63,11 +63,10 @@ namespace TerraScale.Dashboard.Features.Backups
                                     form["incrementalBackupCron"].ToString(), days, form["disabled"] == "1", http.RequestAborted);
                                 return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "backups")) : Results.Json(policy);
                             }
-                            if (action is "destination" or "destination-remove" or "export-schedule")
+                            if (action is "destination" or "destination-remove")
                             {
                                 object? answer = action == "destination" ? await backups.SetDestinationAsync(context, databaseId, form["endpoint"].ToString(), form["region"].ToString(),
-                                    form["bucket"].ToString(), form["accessKeyId"].ToString(), form["secretKey"].ToString(), http.RequestAborted)
-                                    : action == "export-schedule" ? await backups.SetExportScheduleAsync(context, databaseId, form["cron"].ToString(), http.RequestAborted) : null;
+                                    form["bucket"].ToString(), form["accessKeyId"].ToString(), form["secretKey"].ToString(), http.RequestAborted) : null;
                                 if (action == "destination-remove")
                                 {
                                     await backups.RemoveDestinationAsync(context, databaseId, http.RequestAborted);
@@ -107,18 +106,13 @@ namespace TerraScale.Dashboard.Features.Backups
             catch (Exception failure) when (KnownFailure(failure) &&
                 (failure is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested))
             { unavailable = Message(failure); }
-            BackupExportView? exports = null;
+            BackupBucketView? bucket = null;
             if (export)
             {
-                try { exports = await http.RequestServices.GetRequiredService<BackupService>().ExportAsync(context, database.Id, http.RequestAborted); }
+                try { bucket = await http.RequestServices.GetRequiredService<BackupService>().BucketAsync(context, database.Id, http.RequestAborted); }
                 catch (Exception failure) when (KnownFailure(failure) &&
                     (failure is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested))
                 { }
-            }
-
-            if (exports?.Schedule.LastRun is { Status: "failed" } failed && context.Role == "owner")
-            {
-                await NotifyFailedExportAsync(http, context, database, failed);
             }
 
             var form = http.Request.HasFormContentType ? await http.Request.ReadFormAsync(http.RequestAborted) : null;
@@ -126,35 +120,9 @@ namespace TerraScale.Dashboard.Features.Backups
                 form?["backupId"].ToString() ?? http.Request.Query["restore"].ToString(), form?["name"].ToString() ?? http.Request.Query["name"].ToString(),
                 form is not null && form.ContainsKey("fullBackupCron") ? form["fullBackupCron"].ToString() : null,
                 form is not null && form.ContainsKey("retentionDays") ? form["retentionDays"].ToString() : null)
-            { Export = exports, ExportRead = export };
+            { Bucket = bucket, BucketRead = export };
         }
 
-        // A failed scheduled export reaches the owner's inbox once: the run's start time identifies it.
-        private static Task NotifyFailedExportAsync(HttpContext http, AccountContext context, DatabaseRecord database, ExportRunView run)
-        {
-            var url = DatabaseService.Path(database.Id, "backups");
-            return http.RequestServices.GetRequiredService<AccountService>().UpdateAccountAsync(context.Session, account =>
-            {
-                if (account.Notifications.Any(item => item.Type == "export-failed" && item.Url == url && item.CreatedAt == run.StartedAt))
-                {
-                    return;
-                }
-
-                account.Notifications.Add(new()
-                {
-                    Id = AccountService.NewId(),
-                    OrganizationId = context.Organization!.Id,
-                    ProjectId = context.Project!.Id,
-                    Type = "export-failed",
-                    Title = "Scheduled export failed",
-                    Body = database.Name + ": " + (run.Error ?? "TerraBase did not report the reason."),
-                    Severity = "warning",
-                    Status = "unread",
-                    Url = url,
-                    CreatedAt = run.StartedAt
-                });
-            }, http.RequestAborted);
-        }
         internal static bool KnownFailure(Exception error)
         {
             return DatabaseResults.KnownFailure(error) || error is HttpRequestException or JsonException or OperationCanceledException;

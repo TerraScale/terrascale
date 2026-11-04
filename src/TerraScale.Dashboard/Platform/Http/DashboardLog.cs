@@ -22,11 +22,11 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "Partial session cleanup failed ({ErrorType})")]
         internal static partial void PartialSessionCleanupFailed(this ILogger logger, object? errorType);
 
-        [LoggerMessage(EventId = 7, Level = LogLevel.Warning, Message = "Refresh of a stored ts-auth grant in {Collection} failed ({ErrorType}, status {Status}, code {ErrorCode})")]
-        internal static partial void RefreshOfAStoredTsAuth(this ILogger logger, object? collection, object? errorType, object? status, object? errorCode);
+        [LoggerMessage(EventId = 7, Level = LogLevel.Warning, Message = "Refresh of a stored ts-auth grant in {Table} failed ({ErrorType}, status {Status}, code {ErrorCode})")]
+        internal static partial void RefreshOfAStoredTsAuth(this ILogger logger, object? table, object? errorType, object? status, object? errorCode);
 
-        [LoggerMessage(EventId = 8, Level = LogLevel.Warning, Message = "Saving a refreshed ts-auth grant in {Collection} failed ({ErrorType}); retrying")]
-        internal static partial void SavingARefreshedTsAuthGrant(this ILogger logger, object? collection, object? errorType);
+        [LoggerMessage(EventId = 8, Level = LogLevel.Warning, Message = "Saving a refreshed ts-auth grant in {Table} failed ({ErrorType}); retrying")]
+        internal static partial void SavingARefreshedTsAuthGrant(this ILogger logger, object? table, object? errorType);
 
         [LoggerMessage(EventId = 9, Level = LogLevel.Warning, Message = "Revoked session index cleanup failed ({ErrorType})")]
         internal static partial void RevokedSessionIndexCleanupFailed(this ILogger logger, object? errorType);
@@ -133,7 +133,7 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 43, Level = LogLevel.Warning, Message = "Stripe event {EventId} ({EventType}) was not applied ({ErrorType}: {Error}); answering 503 so Stripe redelivers it.")]
         internal static partial void StripeEventWasNotAppliedAnswering(this ILogger logger, object? eventId, object? eventType, object? errorType, object? error);
 
-        [LoggerMessage(EventId = 100, Message = "Dropped a stored ts-auth grant from {Collection}: {Reason}")]
-        internal static partial void DroppedStoredGrant(this ILogger logger, LogLevel level, string collection, string reason);
+        [LoggerMessage(EventId = 100, Message = "Dropped a stored ts-auth grant from {Table}: {Reason}")]
+        internal static partial void DroppedStoredGrant(this ILogger logger, LogLevel level, string table, string reason);
     }
 }

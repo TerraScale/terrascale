@@ -8,7 +8,7 @@ const checkDelay = 400;
 const lineBreaks = new Set(['SELECT', 'FROM', 'WHERE', 'ORDER', 'GROUP', 'HAVING', 'LIMIT', 'UNION']);
 
 // Quoted values and names stay whole, and so do dotted field paths,
-// hyphenated collection names, compound SQL operators and $1.
+// hyphenated table names, compound SQL operators and $1.
 const tokenPattern = /--[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|'(?:[^']|'')*'?|"(?:[^"]|"")*"?|`(?:[^`]|``)*`?|\[[^\]]*\]?|[A-Za-z_][A-Za-z0-9_]*(?:[.-][A-Za-z0-9_]+)*\.?|\$\d+|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|->>|->|\|\||<<|>>|==|<=|>=|!=|<>|\S/g;
 const tokenize = text => [...text.matchAll(tokenPattern)].map(match => ({ text: match[0], start: match.index, end: match.index + match[0].length }));
 const isName = token => /^[A-Za-z_]/.test(token?.text ?? '');
@@ -29,7 +29,7 @@ export function attach(api, editor, textarea, host) {
   const context = {
     catalog,
     form: textarea.form,
-    collections: new Map(catalog.tables.map(collection => [collection.name, collection])),
+    tables: new Map(catalog.tables.map(table => [table.name, table])),
     keywords: new Set(catalog.keywords.flatMap(keyword => keyword.split(' '))),
   };
   contexts.set(model, context);
@@ -151,7 +151,7 @@ function register(api) {
       if (lastToken && isComment(lastToken) && lastToken.end === before.length && (lastToken.text.startsWith('--') || !lastToken.text.slice(2).endsWith('*/'))) {
         return { suggestions: [] };
       }
-      // A collection name may contain hyphens; a field path, dots.
+      // A table name may contain hyphens; a field path, dots.
       const name = before.match(/[A-Za-z0-9_-]*$/)[0];
       const nameTokens = tokenizeCode(before.slice(0, offset - name.length));
       const beforeName = nameTokens.at(-1)?.text.toUpperCase();
@@ -176,33 +176,33 @@ function register(api) {
 
       if (inFrom) {
         return {
-          suggestions: context.catalog.tables.map(collection => ({
-            label: collection.name,
+          suggestions: context.catalog.tables.map(table => ({
+            label: table.name,
             kind: Kind.Module,
             detail: 'SQL table',
-            documentation: collectionSummary(collection),
-            insertText: sqlName(collection.name),
-            filterText: collection.name,
+            documentation: tableSummary(table),
+            insertText: sqlName(table.name),
+            filterText: table.name,
             range,
           })),
         };
       }
-      const collection = statementCollection(context, model.getValue());
-      const fields = collection?.fields ?? [];
+      const table = statementTable(context, model.getValue());
+      const fields = table?.fields ?? [];
       if (dot >= 0) {
         // a.b. completes the members of a.b.
         const prefix = word.slice(0, dot + 1);
         return {
-          suggestions: fields.filter(field => field.path.startsWith(prefix) && !field.path.slice(prefix.length).includes('.')).map(field => fieldItem(Kind, collection, field, field.path.slice(prefix.length), range)),
+          suggestions: fields.filter(field => field.path.startsWith(prefix) && !field.path.slice(prefix.length).includes('.')).map(field => fieldItem(Kind, table, field, field.path.slice(prefix.length), range)),
         };
       }
       const suggestions = [
-        ...fields.map(field => fieldItem(Kind, collection, field, field.path, range)),
+        ...fields.map(field => fieldItem(Kind, table, field, field.path, range)),
         ...context.catalog.keywords.map(keyword => ({ label: keyword, kind: Kind.Keyword, insertText: keyword, sortText: `2${keyword}`, range })),
       ];
       if (tokens.length === 0) {
-        // The default collection is snippet text, where $, } and \ are syntax.
-        const name = sqlName(collection?.name ?? 'collection').replace(/[\\$}]/g, '\\$&');
+        // The default table is snippet text, where $, } and \ are syntax.
+        const name = sqlName(table?.name ?? 'table').replace(/[\\$}]/g, '\\$&');
         suggestions.push(...snippets(Kind, Rule, name, range));
       }
       return { suggestions };
@@ -218,14 +218,14 @@ function register(api) {
         return null;
       }
       const range = { startLineNumber: position.lineNumber, startColumn: model.getPositionAt(token.start).column, endLineNumber: position.lineNumber, endColumn: model.getPositionAt(token.end).column };
-      const collection = context.collections.get(token.text);
-      if (collection) {
-        return { range, contents: [{ value: `**${collection.name}** SQL table` }, { value: collectionSummary(collection) }] };
+      const table = context.tables.get(token.text);
+      if (table) {
+        return { range, contents: [{ value: `**${table.name}** SQL table` }, { value: tableSummary(table) }] };
       }
       // Hovering a in a.b.c names a; hovering c names the whole path.
       const segment = token.text.slice(offset - token.start).match(/^[A-Za-z0-9_]*/)[0];
       const path = token.text.slice(0, offset - token.start) + segment;
-      const owner = statementCollection(context, model.getValue());
+      const owner = statementTable(context, model.getValue());
       const field = owner?.fields.find(field => field.path === path);
       if (!field) {
         return null;
@@ -242,23 +242,23 @@ function register(api) {
   });
 }
 
-function fieldItem(Kind, collection, field, label, range) {
+function fieldItem(Kind, table, field, label, range) {
   return {
     label,
     kind: Kind.Field,
     detail: field.type,
-    documentation: `${field.path}: ${field.type}\n${fieldSource(collection)}`,
+    documentation: `${field.path}: ${field.type}\n${fieldSource(table)}`,
     insertText: sqlName(label),
     sortText: `1${field.path.startsWith('_') ? '~' : ''}${field.path}`,
     range,
   };
 }
 
-function snippets(Kind, Rule, collection, range) {
+function snippets(Kind, Rule, table, range) {
   return [
-    ['SELECT … FROM … LIMIT', `SELECT \${1:*} FROM \${2:${collection}} LIMIT \${3:20}`],
-    ['SELECT … FROM … WHERE … LIMIT', `SELECT \${1:*} FROM \${2:${collection}}\nWHERE \${3:field} = \${4:'value'}\nLIMIT \${5:20}`],
-    ['SELECT … FROM … ORDER BY … LIMIT', `SELECT \${1:*} FROM \${2:${collection}}\nORDER BY \${3:field} \${4|DESC,ASC|}\nLIMIT \${5:20}`],
+    ['SELECT … FROM … LIMIT', `SELECT \${1:*} FROM \${2:${table}} LIMIT \${3:20}`],
+    ['SELECT … FROM … WHERE … LIMIT', `SELECT \${1:*} FROM \${2:${table}}\nWHERE \${3:field} = \${4:'value'}\nLIMIT \${5:20}`],
+    ['SELECT … FROM … ORDER BY … LIMIT', `SELECT \${1:*} FROM \${2:${table}}\nORDER BY \${3:field} \${4|DESC,ASC|}\nLIMIT \${5:20}`],
   ].map(([label, insertText]) => ({ label, kind: Kind.Snippet, insertText, insertTextRules: Rule.InsertAsSnippet, sortText: `0${label}`, range }));
 }
 
@@ -271,13 +271,13 @@ function sqlName(name) {
 const fieldStarts = new Set(['SELECT', ',', '(', 'WHERE', 'AND', 'OR', 'NOT', 'BY']);
 
 // clauseFrom reports whether tokens[i], spelled FROM, starts the FROM clause:
-// it does not stand where a field does, nor where FROM names its collection.
+// it does not stand where a field does, nor where FROM names its table.
 function clauseFrom(tokens, i) {
   const before = tokens[i - 1]?.text.toUpperCase();
   return !fieldStarts.has(before) && !(before === 'FROM' && clauseFrom(tokens, i - 1));
 }
 
-// fromTargets are the collection names after the FROM clause keyword, quoted
+// fromTargets are the table names after the FROM clause keyword, quoted
 // or not, located in the text.
 function fromTargets(text) {
   const tokens = tokenizeCode(text);
@@ -300,17 +300,17 @@ function fromTargets(text) {
   });
 }
 
-// The collection after FROM, or else the one the console has open.
-function statementCollection(context, text) {
-  return context.collections.get(fromTargets(text)[0]?.name ?? context.form.elements.collection?.value);
+// The table after FROM.
+function statementTable(context, text) {
+  return context.tables.get(fromTargets(text)[0]?.name);
 }
 
-function collectionSummary(collection) {
-  return `${collection.fields.length} declared columns`;
+function tableSummary(table) {
+  return `${table.fields.length} declared columns`;
 }
 
-function fieldSource(collection) {
-  return `Declared in SQL table ${collection.name}.`;
+function fieldSource(table) {
+  return `Declared in SQL table ${table.name}.`;
 }
 
 // formatSQL puts each clause on its own line and each AND or OR on an
@@ -321,7 +321,7 @@ function formatSQL(text, keywords) {
   let previous = null;
   let previousEnd = -1;
   for (const { text: token, start, end } of tokenize(text)) {
-    // A collection keeps its line even when it reads as a keyword.
+    // A table keeps its line even when it reads as a keyword.
     const upper = previous?.toUpperCase() === 'FROM' ? '' : token.toUpperCase();
     if (previous === null) {
       out = token;

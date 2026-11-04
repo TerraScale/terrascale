@@ -182,12 +182,12 @@ namespace TerraScale.Dashboard.E2E
         public async Task<string> UpgradeOnlyOrganizationAsync(string planId)
         {
             var state = first!.Services.GetRequiredService<IDashboardState>();
-            var document = (await state.ListAsync(AccountService.OrganizationsCollection, default)).Single();
-            var organization = AccountService.Read<OrganizationRecord>(document);
-            var stored = await state.GetAsync(AccountService.OrganizationsCollection, organization.Id, default) ?? throw new IOException("The organization is unavailable.");
+            var row = (await state.ListAsync(AccountService.OrganizationsTable, default)).Single();
+            var organization = AccountService.Read<OrganizationRecord>(row);
+            var stored = await state.GetAsync(AccountService.OrganizationsTable, organization.Id, default) ?? throw new IOException("The organization is unavailable.");
             organization.PlanId = planId;
             organization.BillingStatus = "active";
-            await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization),
+            await state.PutAsync(AccountService.OrganizationsTable, organization.Id, JsonSerializer.SerializeToElement(organization),
                 StatePrecondition.Matches(stored.Version), default);
             return organization.Id;
         }
@@ -325,9 +325,9 @@ namespace TerraScale.Dashboard.E2E
             private readonly ConcurrentQueue<string> failures = new();
             private readonly Dictionary<string, string> organizationPlans = new(StringComparer.Ordinal);
             private int planPublishes;
-            private TaskCompletionSource? collectionGate;
+            private TaskCompletionSource? tableGate;
             private TaskCompletionSource? planGate;
-            private TaskCompletionSource? documentGate;
+            private TaskCompletionSource? rowGate;
             private TaskCompletionSource? registrationGate;
             private TaskCompletionSource registrationPaused = new(TaskCreationOptions.RunContinuationsAsynchronously);
             public Task PauseRegistrationCompletion()
@@ -343,7 +343,7 @@ namespace TerraScale.Dashboard.E2E
             private int redirectTargetRequests;
             private string mode = "";
             public string Mode { get { lock (gate) { return mode; } } }
-            public void Release() { ReleaseRegistrationCompletion(); planGate?.TrySetResult(); collectionGate?.TrySetResult(); documentGate?.TrySetResult(); engine.Dispose(); }
+            public void Release() { ReleaseRegistrationCompletion(); planGate?.TrySetResult(); tableGate?.TrySetResult(); rowGate?.TrySetResult(); engine.Dispose(); }
 
             public async Task<IResult> DispatchAsync(HttpContext http)
             {
@@ -454,16 +454,16 @@ namespace TerraScale.Dashboard.E2E
                 if (schema)
                 {
                     Interlocked.Increment(ref schemaWrites);
-                    if (collectionGate is { } held) { Interlocked.Increment(ref pausedCreates); await held.Task.WaitAsync(http.RequestAborted); }
+                    if (tableGate is { } held) { Interlocked.Increment(ref pausedCreates); await held.Task.WaitAsync(http.RequestAborted); }
                     if (Mode == "interrupted")
                     {
                         return Error(503, "unavailable");
                     }
                 }
 
-                if (writes.Any(statement => Writes(statement, "dashboard_accounts")) && documentGate is { } accounts)
+                if (writes.Any(statement => Writes(statement, "dashboard_accounts")) && rowGate is { } accounts)
                 { Interlocked.Increment(ref pausedWrites); await accounts.Task.WaitAsync(http.RequestAborted); }
-                if (writes.Any(statement => Writes(statement, McpOAuth.ClientCollection) && statement.Args.Any(arg => arg?.Contains("\"FirstSignInCompletedAt\":\"", StringComparison.Ordinal) == true))
+                if (writes.Any(statement => Writes(statement, McpOAuth.ClientTable) && statement.Args.Any(arg => arg?.Contains("\"FirstSignInCompletedAt\":\"", StringComparison.Ordinal) == true))
                     && registrationGate is { } pending)
                 { registrationPaused.TrySetResult(); await pending.Task.WaitAsync(http.RequestAborted); }
                 if (Mode == "sql-delete-unavailable" && writes.Any(statement => statement.Sql.StartsWith("DELETE FROM dashboard_sql_workspaces", StringComparison.Ordinal)))
@@ -471,12 +471,12 @@ namespace TerraScale.Dashboard.E2E
                     return Error(503, "unavailable");
                 }
 
-                if (Mode == "complete-mcp-before-delete" && writes.FirstOrDefault(statement => statement.Sql.StartsWith("DELETE FROM " + McpOAuth.ClientCollection, StringComparison.Ordinal)) is { } removal)
+                if (Mode == "complete-mcp-before-delete" && writes.FirstOrDefault(statement => statement.Sql.StartsWith("DELETE FROM " + McpOAuth.ClientTable, StringComparison.Ordinal)) is { } removal)
                 {
-                    var row = (await engine.ExecuteAsync([new("SELECT body FROM " + McpOAuth.ClientCollection + " WHERE id = ?", [removal.Args[0]])], http.RequestAborted))[0].Rows;
+                    var row = (await engine.ExecuteAsync([new("SELECT body FROM " + McpOAuth.ClientTable + " WHERE id = ?", [removal.Args[0]])], http.RequestAborted))[0].Rows;
                     if (row.Count == 1 && JsonSerializer.Deserialize<McpRegistration>((string)row[0][0]!) is { } registration)
                     {
-                        await engine.ExecuteAsync([new("UPDATE " + McpOAuth.ClientCollection + " SET version = ?, body = ? WHERE id = ?", ["completed-race",
+                        await engine.ExecuteAsync([new("UPDATE " + McpOAuth.ClientTable + " SET version = ?, body = ? WHERE id = ?", ["completed-race",
                             JsonSerializer.Serialize(registration with { FirstSignInCompletedAt = registration.CreatedAt.AddHours(23), LastActivityAt = registration.CreatedAt.AddHours(23) }),
                             removal.Args[0]])], http.RequestAborted);
                     }
@@ -518,8 +518,8 @@ namespace TerraScale.Dashboard.E2E
 
             private async Task<IResult> ControlAsync(HttpContext http)
             {
-                using var document = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
-                var body = document.RootElement;
+                using var row = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
+                var body = row.RootElement;
                 var command = body.GetProperty("command").GetString();
                 if (command == "drop-table")
                 {
@@ -532,10 +532,10 @@ namespace TerraScale.Dashboard.E2E
                     switch (command)
                     {
                         case "mode": mode = body.GetProperty("value").GetString()!; break;
-                        case "pause-schema": collectionGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
-                        case "release-schema": collectionGate?.TrySetResult(); collectionGate = null; break;
-                        case "pause-account-writes": pausedWrites = 0; documentGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
-                        case "release-account-writes": documentGate?.TrySetResult(); documentGate = null; break;
+                        case "pause-schema": tableGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
+                        case "release-schema": tableGate?.TrySetResult(); tableGate = null; break;
+                        case "pause-account-writes": pausedWrites = 0; rowGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
+                        case "release-account-writes": rowGate?.TrySetResult(); rowGate = null; break;
                         case "wipe-plans": organizationPlans.Clear(); break;
                         case "pause-plans": planGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
                         case "release-plans": planGate?.TrySetResult(); planGate = null; break;

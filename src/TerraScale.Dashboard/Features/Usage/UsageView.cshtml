@@ -12,7 +12,7 @@
 </div>
 @if (Model.InternalBill is not null && Model.Saved == "ok") { <div class="ts-spending-notice" data-signals="{spendingSaved: true}" data-attr:hidden="!$spendingSaved"><div class="ts-alert ts-alert-success" role="alert"><div class="ts-row-between"><div class="ts-stack-sm"><p class="ts-alert-title">Changes saved</p><p class="ts-alert-body">Report-only cap saved.</p></div><button class="ts-icon-btn" type="button" aria-label="Dismiss save confirmation" data-on:click="$spendingSaved = false">@Icons.Render("X", 16)</button></div></div></div> }
 @if (Model.InternalBill is not null && Model.Saved == "invalid") { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">Enter a non-negative dollar amount with at most two decimal places.</p></div> }
-@if (Model.Tab == "overview") { <p class="ts-meta ts-measurement-loading" role="status">Loading usage and replication…</p>@(await RenderPartialAsync<TerraScale.Dashboard.Features.Usage.UsageOverviewView, TerraScale.Dashboard.Features.Usage.UsagePage>(Model))@(await RenderPartialAsync<TerraScale.Dashboard.Features.Usage.UsageReplicationView, TerraScale.Dashboard.Features.Usage.UsagePage>(Model)) }
+@if (Model.Tab == "overview") { <p class="ts-meta ts-measurement-loading" role="status">Loading usage…</p>@(await RenderPartialAsync<TerraScale.Dashboard.Features.Usage.UsageOverviewView, TerraScale.Dashboard.Features.Usage.UsagePage>(Model)) }
 else { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Usage.SpendingView, TerraScale.Dashboard.Features.Usage.UsagePage>(Model)) }
 </main>
 @functions { public ShellModel LayoutModel => Model.Shell; }

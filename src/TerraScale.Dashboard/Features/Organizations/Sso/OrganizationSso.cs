@@ -117,10 +117,10 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
                 return null;
             }
 
-            using var document = await PlatformJson.ReadAsync(response.Content, deadline.Token);
+            using var json = await PlatformJson.ReadAsync(response.Content, deadline.Token);
             if ((int)response.StatusCode is >= 400 and < 500)
             {
-                throw Refusal(response.StatusCode, document.RootElement);
+                throw Refusal(response.StatusCode, json.RootElement);
             }
 
             if (!response.IsSuccessStatusCode)
@@ -128,7 +128,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
                 throw new HttpRequestException("ts-auth could not answer the single sign-on request.", null, response.StatusCode);
             }
 
-            var connection = document.RootElement.Deserialize(SsoJson.Default.SsoConnection);
+            var connection = json.RootElement.Deserialize(SsoJson.Default.SsoConnection);
             return connection?.OrganizationId == organizationId ? connection : throw new HttpRequestException("ts-auth returned a connection for another organization.");
         }
 

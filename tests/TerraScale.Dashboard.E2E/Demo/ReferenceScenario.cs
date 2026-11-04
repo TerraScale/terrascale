@@ -39,10 +39,7 @@ namespace TerraScale.Dashboard.E2E
                 transport ??= new(original);
                 builder.Services.Replace(ServiceDescriptor.Singleton<IHomeMeasurements>(new ReferenceMeasurements()));
                 builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new ReferenceHttpFactory(transport)));
-                var originalDatabases = (IDatabaseBackend)builder.Services.Last(descriptor => descriptor.ServiceType == typeof(IDatabaseBackend)).ImplementationInstance!;
-                builder.Services.Replace(ServiceDescriptor.Singleton<IDatabaseBackend>(new ReferenceDatabaseBackend(originalDatabases, databaseFacts)));
                 builder.Services.Replace(ServiceDescriptor.Singleton<IBackupBackend>(databaseFacts));
-                builder.Services.Replace(ServiceDescriptor.Singleton<IUsageReplication>(new ReferenceUsageReplication()));
                 configure?.Invoke(builder);
             }
             first = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);

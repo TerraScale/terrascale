@@ -25,11 +25,11 @@ namespace TerraScale.Dashboard.Features.Billing
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
             // A pending checkout first: its refresh grants and publishes the plan the organization now pays for.
-            foreach (var document in await state.ListAsync(StripeBilling.Collection, cancellationToken))
+            foreach (var row in await state.ListAsync(StripeBilling.Table, cancellationToken))
             {
                 try
                 {
-                    if (document.Body.Deserialize<BillingBinding>() is { } binding)
+                    if (row.Body.Deserialize<BillingBinding>() is { } binding)
                     {
                         await billing.ReconcilePendingCheckoutAsync(binding, cancellationToken);
                     }
@@ -39,10 +39,10 @@ namespace TerraScale.Dashboard.Features.Billing
                     logger.APendingCheckoutDidNotReconcile(error.GetType().Name);
                 }
             }
-            foreach (var document in await state.ListAsync(AccountService.OrganizationsCollection, cancellationToken))
+            foreach (var row in await state.ListAsync(AccountService.OrganizationsTable, cancellationToken))
             {
                 OrganizationRecord organization;
-                try { organization = AccountService.Read<OrganizationRecord>(document); }
+                try { organization = AccountService.Read<OrganizationRecord>(row); }
                 catch (Exception error) when (error is IOException or JsonException) { continue; }
                 await plans.PublishAsync(organization, reconcile: true, cancellationToken);
             }

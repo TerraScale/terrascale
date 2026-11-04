@@ -32,7 +32,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 typeof(DashboardMcpTools),
                 typeof(TerraScale.Dashboard.Features.Databases.DatabaseMcpTools),
                 typeof(TerraScale.Dashboard.Features.Data.DataMcpTools),
-                typeof(TerraScale.Dashboard.Features.Data.DeclaredSchemaMcpTools),
                 typeof(TerraScale.Dashboard.Features.ApiKeys.ApiKeyMcpTools),
                 typeof(TerraScale.Dashboard.Features.Backups.BackupMcpTools),
                 typeof(TerraScale.Dashboard.Features.Functions.FunctionMcpTools),
@@ -46,7 +45,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 typeof(TerraScale.Dashboard.Features.Onboarding.OnboardingMcpTools),
                 typeof(TerraScale.Dashboard.Features.AuthenticationManagement.AuthenticationMcpTools),
                 typeof(TerraScale.Dashboard.Features.Organizations.OrganizationMcpTools),
-                typeof(TerraScale.Dashboard.Features.QuerySubscriptions.QuerySubscriptionMcpTools),
             ];
             return [.. toolTypes.SelectMany(toolType => toolType.GetMethods()
                 .Where(method => method.IsDefined(typeof(McpServerToolAttribute)))
@@ -140,9 +138,9 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
                         return Failure(error.Message);
                     }
-                    // Upstream refusals (missing collection, duplicate ID, stale version) and outages keep the
+                    // Upstream refusals and outages keep the
                     // dashboard's own wording instead of the SDK's generic "An error occurred invoking" result.
-                    catch (Exception error) when (error is HttpRequestException or IOException or TimeoutException or DatabaseWrongRegionException or DocumentWriteOutcomeUnknownException ||
+                    catch (Exception error) when (error is HttpRequestException or IOException or TimeoutException or DatabaseWrongRegionException ||
                                                   error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                     {
                         if (DatabaseResults.Status(error) is >= 500 or 408)

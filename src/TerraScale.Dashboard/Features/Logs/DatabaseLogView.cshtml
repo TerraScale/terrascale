@@ -33,16 +33,6 @@
             }
         </div>
     </section>
-    <section class="ts-card" aria-labelledby="slow-queries-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="slow-queries-title">Slow queries</h2></div></header><div class="ts-card-body">
-        @if (Model.QueryShapesError.Length > 0) { <p class="ts-meta" role="status">@Model.QueryShapesError</p> }
-        else if (Model.QueryShapes is not { Count: > 0 }) { <p class="ts-empty">No query shapes seen in the last 24 hours.</p> }
-        else { <div class="ts-table-wrap"><table class="ts-table"><caption class="ts-sr-only">Slow query shapes for @Model.Database.Name</caption><thead><tr><th scope="col">Collection</th><th scope="col">Shape</th><th scope="col">Queries</th><th scope="col">p95 ms</th><th scope="col">Avg ms</th><th scope="col">Rows scanned per query</th><th scope="col">Last seen (UTC)</th></tr></thead><tbody>
-            @foreach (var shape in Model.QueryShapes)
-            {
-                <tr><td>@shape.Collection</td><td><code title="@shape.Shape">@(shape.Shape.Length > 100 ? shape.Shape[..100] + "…" : shape.Shape)</code></td><td title="@shape.Queries.ToString("N0", CultureInfo.InvariantCulture)">@ChartGeometry.Compact(shape.Queries)</td><td>@MetricFormat.Latency(shape.P95LatencyMs)</td><td>@MetricFormat.Latency(shape.Queries > 0 ? shape.TotalLatencyMs / shape.Queries : null)</td><td>@(shape.Queries > 0 ? ((double)shape.RowsScanned / shape.Queries).ToString("0.##", CultureInfo.InvariantCulture) : "—")</td><td><time datetime="@shape.LastSeenAt.ToString("O", CultureInfo.InvariantCulture)">@shape.LastSeenAt.UtcDateTime.ToString("MMM d HH:mm:ss", CultureInfo.InvariantCulture)</time></td></tr>
-            }
-        </tbody></table></div> }
-    </div></section>
     <section class="ts-card" id="log-drain" aria-labelledby="log-drain-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="log-drain-title">Project log drain</h2></div></header><div class="ts-card-body ts-stack">
         @if (Model.DrainError.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.DrainError</p></div> }
         @if (Model.Drain is { } drain)

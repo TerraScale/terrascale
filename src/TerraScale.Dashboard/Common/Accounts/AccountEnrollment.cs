@@ -9,15 +9,15 @@ namespace TerraScale.Dashboard.Common.Accounts
     // keep visiting these references without a time-based retirement rule.
     public static class AccountEnrollment
     {
-        public const string Collection = "dashboard_account_enrollments";
-        public sealed record Reference(string UserId, string Collection, string RecordId);
+        public const string Table = "dashboard_account_enrollments";
+        public sealed record Reference(string UserId, string Table, string RecordId);
 
-        public static async Task RememberAsync(IDashboardState state, string userId, string collection, string recordId, CancellationToken ct)
+        public static async Task RememberAsync(IDashboardState state, string userId, string table, string recordId, CancellationToken ct)
         {
-            var reference = new Reference(userId, collection, recordId);
+            var reference = new Reference(userId, table, recordId);
             Validate(reference);
             await ThrowIfErasedAsync(state, userId, ct);
-            await state.PutAsync(Collection, AccountService.NewId(), JsonSerializer.SerializeToElement(reference), StatePrecondition.Absent, ct);
+            await state.PutAsync(Table, AccountService.NewId(), JsonSerializer.SerializeToElement(reference), StatePrecondition.Absent, ct);
             await ThrowIfErasedAsync(state, userId, ct);
         }
 
@@ -25,18 +25,18 @@ namespace TerraScale.Dashboard.Common.Accounts
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(userId);
             var key = AccountService.AccountStorageKey(userId);
-            var document = await state.GetAsync(AccountService.AccountsCollection, key, ct);
-            if (document is null)
+            var row = await state.GetAsync(AccountService.AccountsTable, key, ct);
+            if (row is null)
             {
                 return;
             }
 
-            if (document.Id != key)
+            if (row.Id != key)
             {
                 throw new IOException("Account identity is invalid.");
             }
 
-            if (AccountService.IsDeletionFence(document))
+            if (AccountService.IsDeletionFence(row))
             {
                 throw new AccountAccessException("Account was erased.", 401);
             }
@@ -46,15 +46,15 @@ namespace TerraScale.Dashboard.Common.Accounts
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(userId);
             var references = new List<Reference>();
-            foreach (var document in await state.ListAsync(Collection, ct))
+            foreach (var row in await state.ListAsync(Table, ct))
             {
-                var reference = AccountService.Read<Reference>(document);
+                var reference = AccountService.Read<Reference>(row);
                 if (reference.UserId != userId)
                 {
                     continue;
                 }
 
-                if (!TerraScaleIds.IsValid(document.Id))
+                if (!TerraScaleIds.IsValid(row.Id))
                 {
                     throw new IOException("Enrollment reference identity is invalid.");
                 }
@@ -71,42 +71,42 @@ namespace TerraScale.Dashboard.Common.Accounts
         {
             foreach (var reference in await ListAsync(state, userId, ct))
             {
-                if (reference.Collection is "sessions" or "auth_credentials")
+                if (reference.Table is "sessions" or "auth_credentials")
                 {
                     continue;
                 }
 
-                var document = await state.GetAsync(reference.Collection, reference.RecordId, ct);
-                if (document is null)
+                var row = await state.GetAsync(reference.Table, reference.RecordId, ct);
+                if (row is null)
                 {
                     continue;
                 }
 
-                if (document.Id != reference.RecordId)
+                if (row.Id != reference.RecordId)
                 {
                     throw new IOException("Enrollment identity is invalid.");
                 }
 
-                var owner = AccountService.Read<Ownership>(document);
+                var owner = AccountService.Read<Ownership>(row);
                 if (owner.UserId != userId)
                 {
                     throw new IOException("Enrollment ownership is invalid.");
                 }
 
-                await state.DeleteAsync(reference.Collection, reference.RecordId, document.Version, ct);
+                await state.DeleteAsync(reference.Table, reference.RecordId, row.Version, ct);
             }
         }
 
         private static void Validate(Reference reference)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(reference.UserId);
-            if (reference.Collection is not ("sessions" or "auth_credentials" or "session_indexes" or AccessTokens.Collection or AccessTokens.IndexCollection) ||
+            if (reference.Table is not ("sessions" or "auth_credentials" or "session_indexes" or AccessTokens.Table or AccessTokens.IndexTable) ||
                 reference.RecordId is not { Length: 64 } || !reference.RecordId.All(char.IsAsciiHexDigitLower))
             {
                 throw new IOException("Enrollment reference is invalid.");
             }
 
-            if (reference.Collection is "session_indexes" or AccessTokens.Collection && reference.RecordId != AccountService.AccountStorageKey(reference.UserId))
+            if (reference.Table is "session_indexes" or AccessTokens.Table && reference.RecordId != AccountService.AccountStorageKey(reference.UserId))
             {
                 throw new IOException("Enrollment owner key is invalid.");
             }
