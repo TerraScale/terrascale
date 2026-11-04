@@ -27,18 +27,25 @@ fixtures still query `turso_cdc`, which 0006 renamed.
 
 ## Evidence
 
-Release: [`turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-20261104`](https://github.com/TerraScale/terrascale/releases/tag/turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-20261104),
-built by [maintenance run 41745677415](https://github.com/TerraScale/terrascale/actions/runs/41745677415):
-two independent byte-identical builds per real architecture, FTS, contract1 and WAL smokes passed. Its
-`PROVENANCE.txt` names the previous release because the assembly script still hardcoded that tag; the script now
-names this one.
+Release: [`turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-upsertcdc1-20261104`](https://github.com/TerraScale/terrascale/releases/tag/turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-upsertcdc1-20261104), patches 0001-0008,
+built by [maintenance run 41767214589](https://github.com/TerraScale/terrascale/actions/runs/41767214589):
+two independent byte-identical builds per real architecture, FTS, contract1 and WAL smokes passed. The earlier
+0001-0007 release `turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-20261104` (run 41745677415) is superseded and was never pinned; its `PROVENANCE.txt` named the
+2026-10-29 release because the assembly script hardcoded the tag.
 
 | Architecture | SHA-256 |
 | --- | --- |
-| linux-x64 | `066d730867a9c0b6bb6f48cba1ea312e2cace345972f7aebbc93c8b820856db8` |
-| linux-arm64 | `5ae94d9d2bd2da7f62acf0f9736c8503f7dbdcd63ac3cbf94ac8f4fe38cb613b` |
+| linux-x64 | `b4821db592c5fd0b55b9b5f3e4cc443c48a9e7d3b7b6c6b1370c667cbbbfb776` |
+| linux-arm64 | `609d0735b62433f9011d2417b6bc3ff3f7a1babe66f1555e7cf008f7b75446e3` |
 
-On the exact x64 bytes with R3 replicas and local encryption: driver 24/24, TerraBase Fast 423/423. The replica
-test finds no plaintext marker in any replica file. The same test on the previous release leaves the marker in
-`<db>.db-wal` (296,672 bytes) and `<db>.db-changes` (218,360 bytes), or, with client bootstrap, fails to decrypt
-page 1.
+On the exact x64 bytes: driver 25/25, TerraBase Fast 424/424, and with R3 replicas and local encryption both
+RegionReplicaTests pass with no plaintext marker in any replica file. On the previous release the replica test
+leaves the marker in `<db>.db-wal` (296,672 bytes) and `<db>.db-changes` (218,360 bytes), or, with client
+bootstrap, fails to decrypt page 1.
+
+## Patch 0008
+
+Upstream Turso 26dbb464 (fixes tursodatabase/turso#9069), `core/translate/upsert.rs` only: `ON CONFLICT DO UPDATE`
+read the CDC before image after overwriting the row, so `full` and `before` capture recorded the new row. The
+replica sync client captures in `full` mode. `CdcUpsertTests` in the driver suite fails on the previous release
+(before image equals the new row) and passes on this one.
