@@ -1,0 +1,232 @@
+using System.Diagnostics.Metrics;
+using System.Text.Json;
+using System.Threading.Channels;
+using TerraBase.Configuration;
+using TerraBase.Features.HomeApply;
+using TerraBase.Features.Replicas;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
+using ZLogger;
+
+namespace TerraBase.Features.LocalAck;
+
+/// <summary>The second in-region copy of every local write (PIVOT D16, docs/terrabase/in-region-ack.md).</summary>
+internal interface IInRegionAck
+{
+    /// <summary>Whether this node's in-region partner answered within the last 3 s. A one-node region never has one.</summary>
+    bool PartnerHealthy { get; }
+
+    /// <summary>
+    /// Stores the published transaction on the partner and answers true once it is synced there; false when the partner
+    /// did not store it, and the write then waits for the home instead.
+    /// </summary>
+    ValueTask<bool> HoldAsync(TenantContext database, string home, ulong sequence, RegionTransaction transaction, CancellationToken cancellationToken);
+
+    /// <summary>Tells the partner that the home holds the database's transactions up to <paramref name="through"/>.</summary>
+    void Release(TenantContext database, ulong through);
+}
+
+internal sealed class InRegionAck(
+    TerraBaseOptions options, IRegionPartners partners, IReplicaPeers homes, HoldStore holds, InternalCredential credential, IMeterFactory meters,
+    TimeProvider time, ILogger<InRegionAck> logger) : BackgroundService, IInRegionAck
+{
+    internal static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
+    internal static readonly TimeSpan HealthyWithin = TimeSpan.FromSeconds(3);
+    internal static readonly TimeSpan OriginLostAfter = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan HoldTimeout = TimeSpan.FromSeconds(2);
+    private const int FinishPage = 64;
+
+    private readonly Channel<HoldRelease> _releases = Channel.CreateBounded<HoldRelease>(
+        new BoundedChannelOptions(1024) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
+    private readonly Meter _meter = meters.Create(Telemetry.MeterName);
+    private HttpClient? _http;
+    private volatile RegionPartner? _partner;
+    private long _lastAnswerTicks;
+    private Counter<long>? _finished;
+
+    public bool PartnerHealthy => _partner is not null
+        && time.GetUtcNow().UtcTicks - Interlocked.Read(ref _lastAnswerTicks) < HealthyWithin.Ticks;
+
+    private HttpClient Http => _http ??= PeerHttp.Create(credential);
+
+    public override Task StartAsync(CancellationToken cancellationToken)
+    {
+        _finished = _meter.CreateCounter<long>("terrabase.localack.finished", "{transaction}",
+            "Held transactions this node applied at the home after their origin node was lost.");
+        _ = _meter.CreateObservableGauge("terrabase.localack.held", () => holds.Count, "{transaction}", "Transactions this node holds for its in-region partner.");
+        _ = _meter.CreateObservableGauge("terrabase.localack.partner", () => PartnerHealthy ? 1 : 0, "{node}", "1 while the in-region partner answers.");
+        return base.StartAsync(cancellationToken);
+    }
+
+    public override void Dispose()
+    {
+        _http?.Dispose();
+        _meter.Dispose();
+        base.Dispose();
+    }
+
+    public async ValueTask<bool> HoldAsync(TenantContext database, string home, ulong sequence, RegionTransaction transaction, CancellationToken cancellationToken)
+    {
+        if (_partner is not { } partner || !PartnerHealthy)
+        {
+            return false;
+        }
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(HoldTimeout);
+        try
+        {
+            using var body = Json(JsonSerializer.SerializeToUtf8Bytes(
+                new HeldTransaction(1, options.MachineId, home, database.OrganizationId, database.ProjectId, database.DatabaseId, sequence, transaction),
+                TerraBaseJsonContext.Default.HeldTransaction));
+            using var response = await Http.PostAsync(new Uri(partner.Internal, "v1/sync/holds"), body, timeout.Token).ConfigureAwait(false);
+            if (response.IsSuccessStatusCode)
+            {
+                Answered();
+                return true;
+            }
+
+            logger.ZLogWarning($"The in-region partner did not hold a local transaction ({(int)response.StatusCode}); the write waits for the home");
+            return false;
+        }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            logger.ZLogWarning($"The in-region partner did not hold a local transaction ({error.GetType().Name:@Error}); the write waits for the home");
+            return false;
+        }
+    }
+
+    public void Release(TenantContext database, ulong through) =>
+        _releases.Writer.TryWrite(new HoldRelease(options.MachineId, database.OrganizationId, database.ProjectId, database.DatabaseId, through));
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken) =>
+        await Task.WhenAll(TouchAsync(stoppingToken), ReleasesAsync(stoppingToken)).ConfigureAwait(false);
+
+    private async Task TouchAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                _partner = (await partners.ListAsync(cancellationToken).ConfigureAwait(false)) is [var first, ..] ? first : null;
+                if (_partner is { } partner)
+                {
+                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    timeout.CancelAfter(HoldTimeout);
+                    using var response = await Http.PostAsync(new Uri(partner.Internal, $"v1/sync/holds/{options.MachineId}/contact"), null, timeout.Token)
+                        .ConfigureAwait(false);
+                    if (response.IsSuccessStatusCode)
+                    {
+                        Answered();
+                    }
+                }
+
+                foreach (var origin in await holds.OriginsAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    if (origin != options.MachineId && time.GetUtcNow() - holds.LastContact(origin) > OriginLostAfter)
+                    {
+                        await FinishAsync(origin, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+            }
+            catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                logger.ZLogInformation($"The in-region partner check retries: {error.GetType().Name:@Error}");
+            }
+
+            await Task.Delay(Interval, time, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Applies a lost origin's held transactions at their homes, one database at a time in stream order. The home answers a
+    /// transaction it already has from its record, so one the origin's stream also delivers is applied once.
+    /// </summary>
+    private async Task FinishAsync(string origin, CancellationToken cancellationToken)
+    {
+        var stalled = new HashSet<(string, string, string)>();
+        var peers = await homes.ListAsync(cancellationToken).ConfigureAwait(false);
+        HeldTransaction? after = null;
+        while (true)
+        {
+            var page = await holds.ListAsync(origin, after, FinishPage, cancellationToken).ConfigureAwait(false);
+            foreach (var held in page)
+            {
+                after = held;
+                var key = (held.Organization!, held.Project!, held.Database!);
+                if (stalled.Contains(key))
+                {
+                    continue;
+                }
+
+                if (peers.FirstOrDefault(peer => peer.Region == held.Home) is not { } home || !await ApplyAsync(home, held, cancellationToken).ConfigureAwait(false))
+                {
+                    _ = stalled.Add(key);
+                    continue;
+                }
+
+                await holds.DropAsync(held, cancellationToken).ConfigureAwait(false);
+                _finished?.Add(1);
+            }
+
+            if (page.Count < FinishPage)
+            {
+                return;
+            }
+        }
+    }
+
+    private async Task<bool> ApplyAsync(ReplicaPeer home, HeldTransaction held, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var body = Json(JsonSerializer.SerializeToUtf8Bytes(held.Transaction!, TerraBaseJsonContext.Default.RegionTransaction));
+            using var response = await Http.PostAsync(
+                new Uri(home.Internal, $"v1/sync/organizations/{held.Organization}/projects/{held.Project}/databases/{held.Database}/apply"),
+                body, cancellationToken).ConfigureAwait(false);
+            if (response.IsSuccessStatusCode)
+            {
+                return true;
+            }
+
+            logger.ZLogWarning($"The home did not apply a held transaction of a lost node ({(int)response.StatusCode}); it retries");
+            return false;
+        }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            logger.ZLogWarning($"The home did not apply a held transaction of a lost node ({error.GetType().Name:@Error}); it retries");
+            return false;
+        }
+    }
+
+    private async Task ReleasesAsync(CancellationToken cancellationToken)
+    {
+        await foreach (var release in _releases.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (_partner is not { } partner)
+            {
+                continue;
+            }
+
+            try
+            {
+                using var body = Json(JsonSerializer.SerializeToUtf8Bytes(release, TerraBaseJsonContext.Default.HoldRelease));
+                using var response = await Http.PostAsync(new Uri(partner.Internal, "v1/sync/holds/release"), body, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                logger.ZLogInformation($"A hold release waits for the next one: {error.GetType().Name:@Error}");
+            }
+        }
+    }
+
+    // The internal endpoints read a body of known length, so it is sent whole rather than streamed.
+    private static ByteArrayContent Json(byte[] json)
+    {
+        var content = new ByteArrayContent(json);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        return content;
+    }
+
+    private void Answered() => Interlocked.Exchange(ref _lastAnswerTicks, time.GetUtcNow().UtcTicks);
+}

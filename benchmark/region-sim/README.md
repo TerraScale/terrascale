@@ -1,6 +1,6 @@
 # region-sim
 
-`benchmark/cmd/region-sim` runs a two-region TerraBase cluster on one host and drives it with the real `ts` CLI. It prints a Markdown table (`scenario | pass/fail | lag | notes`) and exits non-zero if any scenario fails.
+`benchmark/cmd/region-sim` runs a two-region TerraBase cluster on one host (gru-1 and sjc-1, plus each region's holder gru-2 and sjc-2; see `docs/terrabase/in-region-ack.md`) and drives it with the real `ts` CLI. It prints a Markdown table (`scenario | pass/fail | lag | notes`) and exits non-zero if any scenario fails.
 
 - **gru-1** (region `gru`) is the database's home and takes writes.
 - **sjc-1** (region `sjc`) is a read-only replica of the home.
@@ -39,6 +39,7 @@ Functional steps use `ts`: `auth login`, `projects create`, `db create simdb -re
 | cli-login | `ts auth login` signs in; `ts whoami` works | — |
 | create-project-db-replica-sjc | project created; db home `gru` with replica `sjc` | — |
 | dml-in-A-visible-in-B | DDL, insert, update and delete on gru, all visible on sjc; CLI read on sjc matches | last write ack → visible on sjc |
+| second-nodes-hold-no-customer-data | gru-2 and sjc-2 (each region's holder, PIVOT R10) store no region replica while sjc-1 follows the database | — |
 | restart-B-catches-up | 51 writes while sjc-1 is down; after restart sjc-1 serves all of them | sjc-1 ready → caught up |
 
 `cli-login` and `create-project-db-replica-sjc` are prerequisites. If either fails, later scenarios are reported as failed and not run.
