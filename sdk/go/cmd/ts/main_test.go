@@ -20,6 +20,7 @@ func TestRunRejectsUnknownCommandsOffline(t *testing.T) {
 		{"backup", "restore", "app", "id"}, {"projects", "create"}, {"usage", "a", "b"}, {"completion"},
 		{"databases", "rename", "app"}, {"db", "rename"}, {"db", "rename", "app"}, {"db", "rename", "app", "new", "extra"},
 		{"backup", "restore-at", "app", "2026-10-23T00:00:00Z"}, {"-home-region", "gru-1", "db", "list"},
+		{"db", "placement", "app"}, {"db", "placement", "app", "-replica-regions", "sjc", "-all-regions"}, {"db", "move-home", "app", "Bad!"},
 		{"functions", "list"}, {"functions", "invoke", "app"}, {"functions", "logs", "app", "fn", "-limit", "101"},
 		{"functions", "delete", "app", "fn", "-data", "{}"}} {
 		if err := run(t.Context(), args, io.Discard); !errors.Is(err, errUsage) {

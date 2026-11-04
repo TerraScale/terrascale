@@ -58,8 +58,8 @@ Options go before or after the command and its operands; -- ends options.
   completion bash | zsh | fish            print a shell completion script
 
   db list | create <db> | delete <db>     manage the project's databases
-                                          create in a region: -home-region <region>
-                                          (before command)
+                                          create placement: -home-region <region>,
+                                          -replica-regions <a,b> | -all-regions
                                           delete requires typing the database
                                           name; -yes before db delete consents
                                           explicitly for unattended use
@@ -67,6 +67,9 @@ Options go before or after the command and its operands; -- ends options.
   databases rename <database> <new-name>  rename by name or immutable ULID
                                           alias: db rename
   db info <db>                            print a database's metadata as JSON
+  db placement <db> (-replica-regions <a,b> | -all-regions)
+                                          set the database's replica regions
+  db move-home <db> <region>              move the home to a replica region
   backup list | create <db>               list or take a database's backups
   backup policy <db>                      read the snapshot schedule and retention
   backup policy-set <db> <cron|none> <days> set five-field UTC cron and 1..35 days
@@ -192,6 +195,8 @@ var commands = map[string][]int{
 	"db delete":          {1},
 	"db branch":          {2},
 	"db info":            {1},
+	"db placement":       {1},
+	"db move-home":       {2},
 	"backup list":        {1},
 	"backup create":      {1},
 	"backup restore":     {3},
@@ -258,6 +263,8 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	allowCIDR := fs.String("allow-cidr", "", "keys create: comma-separated CIDRs")
 	scope := fs.String("scope", "", "keys create: read or read-write")
 	homeRegion := fs.String("home-region", "", "db create: requested home region")
+	replicaRegions := fs.String("replica-regions", "", "db create, db placement: comma-separated replica regions")
+	allRegions := fs.Bool("all-regions", false, "db create, db placement: a replica in every serving region")
 	expectedID := fs.String("expected-id", "", "db branch/delete: require the server to match this immutable database ULID")
 	args, err := parseOptions(fs, args)
 	if err != nil {
@@ -294,7 +301,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			return err
 		}
 	}
-	var yesSet, scopeSet, keyOptionsSet, placementSet, expectedIDSet bool
+	var yesSet, scopeSet, keyOptionsSet, placementSet, replicasSet, allRegionsSet, expectedIDSet bool
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "expected-id":
@@ -303,6 +310,10 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			keyOptionsSet = true
 		case "home-region":
 			placementSet = true
+		case "replica-regions":
+			replicasSet = true
+		case "all-regions":
+			allRegionsSet = true
 		}
 		if f.Name == "scope" {
 			scopeSet = true
@@ -319,6 +330,10 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	}
 	if placementSet && (name != "db create" || !validRegion(*homeRegion)) {
 		return fmt.Errorf("-home-region needs db create and a region name: %w", errUsage)
+	}
+	placement, err := placementOptions(name, operands, replicasSet, *replicaRegions, allRegionsSet && *allRegions, allRegionsSet)
+	if err != nil {
+		return err
 	}
 	if scopeSet && name != "keys create" {
 		return fmt.Errorf("-scope is only accepted for keys create: %w", errUsage)
@@ -398,8 +413,13 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 				return confirmManagementTarget(action, label, id, *yes, in, prompt, tty)
 			}, out)
 		}
-		if placementSet {
-			return createDatabaseIn(ctx, s.tb.Database(s.project, operands[0]), *homeRegion, out)
+		switch {
+		case name == "db create" && (placementSet || replicasSet || allRegionsSet):
+			return createPlaced(ctx, s.tb, s.project, operands[0], *homeRegion, placement, out)
+		case name == "db placement":
+			return setPlacement(ctx, s.tb, s.project, operands[0], placement, out)
+		case name == "db move-home":
+			return moveHome(ctx, s.tb, s.project, operands[0], operands[1], out, prompt)
 		}
 		return s.dispatch(ctx, name, fn, operands, commandInput{in: in, prompt: prompt, tty: tty, yes: *yes}, out)
 	}

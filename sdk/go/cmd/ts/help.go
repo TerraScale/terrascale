@@ -17,6 +17,7 @@ var commandSyntax = map[string]string{
 	"usage": "usage [<database>]", "completion": "completion bash|zsh|fish",
 	"db list": "db list", "db create": "db create <database>", "db delete": "db delete <database>",
 	"db branch": "db branch <source> <new-database>", "db info": "db info <database>",
+	"db placement": "db placement <database> (-replica-regions <a,b> | -all-regions)", "db move-home": "db move-home <database> <region>",
 	"db rename":        "db rename <database> <new-name>",
 	"databases rename": "databases rename <database> <new-name>",
 	"shell":            "shell <database>",
@@ -65,7 +66,7 @@ func requestedHelp(args []string, out io.Writer) (bool, error) {
 		if strings.HasPrefix(a, "-") {
 			name, _, equal := strings.Cut(strings.TrimLeft(a, "-"), "=")
 			switch name {
-			case "project", "org", "expected-id", "scope", "expires", "allow-cidr", "name", "cron", "data", "limit", "home-region":
+			case "project", "org", "expected-id", "scope", "expires", "allow-cidr", "name", "cron", "data", "limit", "home-region", "replica-regions":
 				if !equal {
 					i++
 				}
@@ -164,7 +165,12 @@ func helpOptions(name string) map[string]string {
 	case name == "backup destination":
 		options["-yes"] = "required for set (credential JSON only on stdin); delete otherwise types the project ID"
 	case name == "db create":
-		options["-home-region <region>"] = "region that serves the database; default the called region"
+		options["-home-region <region>"] = "region that commits the database's writes; default the called region"
+		options["-replica-regions <a,b>"] = "regions that hold read replicas"
+		options["-all-regions"] = "a read replica in every serving region"
+	case name == "db placement":
+		options["-replica-regions <a,b>"] = "regions that hold read replicas; empty removes them"
+		options["-all-regions"] = "a read replica in every serving region, including new ones"
 	case name == "keys rotate":
 		options["<grace>"] = "required whole-second duration from 0s to 24h; previous secret remains valid for this grace; new secret appears once on stdout"
 	case strings.HasPrefix(name, "keys create"):

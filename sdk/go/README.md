@@ -125,6 +125,25 @@ preserve `*tb.APIError`, including auth refusal codes and `RetryAfter`, and send
 once. [Contract fixtures](contracts/terrabase/agent/) qualify the HTTP boundary;
 live server behavior remains unqualified.
 
+### Placement
+
+A database has one home region, which commits its writes, and replica regions,
+which hold read replicas. `CreateDatabaseOptions` accepts `HomeRegion`,
+`ReplicaRegions` and `AllRegions`; unset options are not sent.
+
+```go
+db, err := c.CreateDatabase(ctx, projectID, "orders", tb.CreateDatabaseOptions{HomeRegion: "gru", ReplicaRegions: []string{"sjc"}})
+db, err = c.SetDatabasePlacement(ctx, projectID, db.ID, tb.DatabasePlacement{AllRegions: true})
+db, err = c.MoveDatabaseHome(ctx, projectID, db.ID, "sjc")
+```
+
+`SetDatabasePlacement` needs exactly one of `ReplicaRegions` (an empty non-nil
+slice removes every replica) or `AllRegions`. `MoveDatabaseHome` waits up to
+`MoveHomeTimeout` (5 minutes) and retries only `503 move_unresolved`, at most five
+times, after `Retry-After` or 1 second. `ManagedDatabase` carries `HomeRegion`,
+`ReplicaRegions` and `AllRegions`. [Contract fixtures](contracts/terrabase/placement/)
+qualify the HTTP boundary.
+
 ### Relational SQL
 
 The SQL API follows the shared shape in [`sdk/SQL-API.md`](../SQL-API.md) and the
@@ -522,6 +541,9 @@ ts db create app && ts sql app 'CREATE TABLE users (id TEXT PRIMARY KEY, email T
 ts sql app 'SELECT * FROM users LIMIT 10'
 ts keys create backend app         # printed once on stdout
 ts db info app
+ts db create orders -home-region gru -replica-regions sjc   # or -all-regions
+ts db placement orders -all-regions                          # or -replica-regions fra,sjc
+ts db move-home orders sjc         # database JSON on stdout, elapsed ms on stderr
 ts backup create app && ts backup list app
 ts functions deploy app hello.js
 ts functions deploy app ./report -cron '0 * * * *'   # deploys report/index.js as report

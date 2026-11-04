@@ -146,13 +146,12 @@ func newClient(cfg Config) (*Client, error) {
 		cfg.Resolver = StaticResolver(cfg.BaseURL)
 	}
 	hc := &http.Client{Transport: &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
-		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS13},
-		ForceAttemptHTTP2:     true,
-		IdleConnTimeout:       90 * time.Second,
+		Proxy:               http.ProxyFromEnvironment,
+		DialContext:         (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		TLSHandshakeTimeout: 10 * time.Second,
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS13},
+		ForceAttemptHTTP2:   true,
+		IdleConnTimeout:     90 * time.Second,
 	}}
 	if cfg.HTTPClient != nil {
 		copied := *cfg.HTTPClient
@@ -247,6 +246,7 @@ type request struct {
 	// readOnly marks a read-only POST. GET is implicitly read-only. Only
 	// reads may retry potentially committed outcomes or transport failures.
 	readOnly bool
+	timeout  time.Duration
 }
 
 type response struct {
@@ -283,7 +283,7 @@ func (c *Client) url(ctx context.Context, segments []string, query url.Values) (
 // do sends req with the client's retry policy and returns a 2xx response or
 // an error. Non-2xx statuses become *APIError.
 func (c *Client) do(ctx context.Context, req request) (*response, error) {
-	ctx, cancel := context.WithTimeout(ctx, OperationTimeout)
+	ctx, cancel := context.WithTimeout(ctx, cmp.Or(req.timeout, OperationTimeout))
 	defer cancel()
 	if len(req.path) >= 3 && req.path[0] == "v1" && req.path[1] == "projects" {
 		var err error

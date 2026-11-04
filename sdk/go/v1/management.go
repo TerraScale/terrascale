@@ -132,7 +132,9 @@ type ManagedDatabase struct {
 	// Region identifies the answering node; it is absent from restore results.
 	Region string `json:"region"`
 	// HomeRegion is null when catalog placement has not been assigned.
-	HomeRegion *string `json:"homeRegion"`
+	HomeRegion     *string  `json:"homeRegion"`
+	ReplicaRegions []string `json:"replicaRegions"`
+	AllRegions     bool     `json:"allRegions"`
 	// PlacementVersion is included in catalog restore results.
 	PlacementVersion int64 `json:"placementVersion"`
 }
