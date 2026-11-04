@@ -60,8 +60,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 ?? throw new AccountAccessException("Choose regions listed by TerraScale discovery.", 422);
         }
 
-        // TerraBase serves a database only in its home region until replicas are available, so a create names only that region.
-        public async Task<DatabaseRecord> CreateAsync(AccountContext context, string name, string homeRegion, CancellationToken cancellationToken, decimal? ttlHours = null)
+        public async Task<DatabaseRecord> CreateAsync(AccountContext context, string name, string homeRegion, CancellationToken cancellationToken, decimal? ttlHours = null, IReadOnlyList<string>? replicaRegions = null, bool allRegions = false)
         {
             var ttlSeconds = DatabaseTtl.Seconds(ttlHours);
             name = ValidName(name);
@@ -70,10 +69,12 @@ namespace TerraScale.Dashboard.Common.Databases
             DemandProvision(context.Organization!, context.UserId);
             DemandName(context.Project!, name);
             DemandRoom(context.Organization!);
-            var home = ResolveRegion(await backend.RegionsAsync(cancellationToken), homeRegion);
+            var catalog = await backend.RegionsAsync(cancellationToken);
+            var home = ResolveRegion(catalog, homeRegion);
+            var replicas = ReplicaIds(catalog, home, replicaRegions ?? []);
             ManagedDatabase remote;
             var recovered = false;
-            try { remote = await backend.CreateAsync(scope, name, home, cancellationToken, ttlSeconds); }
+            try { remote = await backend.CreateAsync(scope, name, home, replicas, allRegions, cancellationToken, ttlSeconds); }
             catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken")
             {
                 // A prior provision whose dashboard commit failed is recovered by name. Other conflicts (database_limit, a
@@ -278,6 +279,106 @@ namespace TerraScale.Dashboard.Common.Databases
             return database;
         }
 
+        public async Task<DatabaseRecord> PlaceAsync(AccountContext context, string id, IReadOnlyList<string> replicaRegions, bool allRegions, CancellationToken cancellationToken)
+        {
+            context = await CurrentAsync(context, cancellationToken);
+            var database = DemandPlacement(context, id);
+            var home = await HomeAsync(context, database, cancellationToken);
+            var replicas = ReplicaIds(await backend.RegionsAsync(cancellationToken), home, replicaRegions);
+            var remote = await backend.PlaceAsync(Scope(context), home, id, replicas, allRegions, cancellationToken);
+            return await SavePlacementAsync(context, database, remote, "database.placement", cancellationToken);
+        }
+
+        public async Task<DatabaseRecord> MoveHomeAsync(AccountContext context, string id, string homeRegion, CancellationToken cancellationToken)
+        {
+            context = await CurrentAsync(context, cancellationToken);
+            var database = DemandPlacement(context, id);
+            var home = await HomeAsync(context, database, cancellationToken);
+            var target = DatabaseRegion.Resolve(await backend.RegionsAsync(cancellationToken), homeRegion.Trim());
+            if (target is null || target.Id == home.Id || !Regions(database).Skip(1).Any(code => code.Equals(target.Code, StringComparison.OrdinalIgnoreCase) || code == target.Id))
+            {
+                throw new AccountAccessException("Choose one of this database's replica regions.", 422);
+            }
+
+            ManagedDatabase remote;
+            try { remote = await backend.MoveHomeAsync(Scope(context), home, id, target.Id, cancellationToken); }
+            catch (TerraBaseException error) when (error.ErrorCode is "move_in_progress" or "replica_not_ready" or "move_unresolved")
+            {
+                throw new AccountAccessException(error.ErrorCode switch
+                {
+                    "move_in_progress" => "Another move of this database is running. Try again when it finishes.",
+                    "replica_not_ready" => "The replica in " + DatabaseFormat.Region(target.Id) + " is not ready. Nothing changed. Try again shortly.",
+                    _ => "The move is still being settled, and writes are paused until it is. Retry the move."
+                }, error.Status, error.ErrorCode);
+            }
+            if (remote.HomeRegion != target.Id)
+            {
+                throw new HttpRequestException("The move returned a different home region. Reload to check its placement.");
+            }
+
+            return await SavePlacementAsync(context, database, remote, "database.home_moved", cancellationToken);
+        }
+
+        private static DatabaseRecord DemandPlacement(AccountContext context, string id)
+        {
+            var database = Database(context, id);
+            if (!context.CanManage)
+            {
+                throw new AccountAccessException("Organization management access is required.");
+            }
+
+            if (database.Status != "ready")
+            {
+                throw new AccountAccessException("Only a ready database can change its placement.", 409);
+            }
+
+            if (PlatformDatabases.IsPlatform(context.Organization?.Id))
+            {
+                throw new AccountAccessException("Platform databases keep their placement.", 409);
+            }
+
+            return database;
+        }
+
+        private static IReadOnlyList<string> ReplicaIds(IReadOnlyList<DatabaseRegion> catalog, DatabaseRegion home, IEnumerable<string> codes)
+        {
+            var ids = codes.Where(code => !string.IsNullOrWhiteSpace(code)).Select(code => ResolveRegion(catalog, code).Id)
+                .Where(regionId => regionId != home.Id).Distinct(StringComparer.Ordinal).ToArray();
+            return ids.Length > 8 ? throw new AccountAccessException("Choose at most 8 replica regions.", 422) : ids;
+        }
+
+        private async Task<DatabaseRecord> SavePlacementAsync(AccountContext context, DatabaseRecord database, ManagedDatabase remote, string audit, CancellationToken cancellationToken)
+        {
+            var scope = Scope(context);
+            if (remote.Id != database.Id || remote.ProjectId != scope.ProjectId)
+            {
+                throw new HttpRequestException("The placement change returned an unexpected database identity.");
+            }
+
+            var record = Record(remote, await RemotePlacementAsync(remote, cancellationToken), database.Status);
+            await accounts.UpdateOrganizationAsync(context, org =>
+            {
+                if (!org.CanManage(context.UserId))
+                {
+                    throw new AccountAccessException("Organization management access is required.");
+                }
+
+                var current = org.Projects.GetValueOrDefault(scope.ProjectId)?.Databases.GetValueOrDefault(database.Id)
+                    ?? throw new AccountAccessException("Database is unavailable.", 404);
+                current.Region = record.Region;
+                current.Regions = [.. record.Regions];
+                current.AllRegions = record.AllRegions;
+                current.Endpoint = record.Endpoint;
+                current.PlacementRevision = checked(current.PlacementRevision + 1);
+                org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, audit, current.Name, "database", accounts.Now));
+            }, cancellationToken);
+            database.Region = record.Region;
+            database.Regions = [.. record.Regions];
+            database.AllRegions = record.AllRegions;
+            database.Endpoint = record.Endpoint;
+            return database;
+        }
+
         public async Task DeleteAsync(AccountContext context, string id, string confirmation, CancellationToken cancellationToken)
         {
             context = await CurrentAsync(context, cancellationToken);
@@ -463,10 +564,9 @@ namespace TerraScale.Dashboard.Common.Databases
             return record.Regions.Count > 0 ? record.Regions : string.IsNullOrEmpty(record.Region) ? [] : [record.Region];
         }
 
-        // A database serves from its home region only.
         public static IReadOnlyList<string> ServingRegions(DatabaseRecord record)
         {
-            return string.IsNullOrEmpty(record.Region) ? Regions(record).Take(1).ToArray() : [record.Region];
+            return Regions(record);
         }
 
         internal static void DemandName(ProjectRecord project, string name)
