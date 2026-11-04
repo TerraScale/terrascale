@@ -17,4 +17,16 @@ namespace TerraScale.TerraBase.Contracts.Management
     /// <summary><c>PUT /v1/projects/{project}/databases/{database}/ttl</c> request.</summary>
     [MessagePackObject(true)]
     public sealed record TerraBaseDatabaseTtl(long TtlSeconds);
+
+    /// <summary>A table read grant: the condition and columns end-user tokens may read.</summary>
+    [MessagePackObject(true)]
+    public sealed record TerraBaseReadGrant(string Table, string? Where, IReadOnlyList<string>? Columns, DateTimeOffset UpdatedAt);
+
+    /// <summary>The read grants in a database.</summary>
+    [MessagePackObject(true)]
+    public sealed record TerraBaseReadGrantPage(IReadOnlyList<TerraBaseReadGrant> Grants);
+
+    /// <summary>A read grant definition; null where or columns grants every row or column.</summary>
+    [MessagePackObject(true)]
+    public sealed record TerraBaseReadGrantRule(string? Where, IReadOnlyList<string>? Columns);
 }
