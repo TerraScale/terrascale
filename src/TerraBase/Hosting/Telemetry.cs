@@ -94,7 +94,7 @@ public static class Telemetry
                         or "terrabase.backup.last_success" or "terrabase.backup.bucket_snapshot"
                         or "terrabase.shape.reads" or "terrabase.shape.requests.waiting" or "terrabase.shape.flights.active"
                         or "terrabase.shape.seals" or "terrabase.shape.seals.duration" or "terrabase.shape.sealed_bytes"
-                        or "terrabase.shape.mirror.lag" or "terrabase.shape.redirects"
+                        or "terrabase.shape.mirror.lag" or "terrabase.shape.redirects" or "terrabase.cdc.retained.rows"
                         => new MetricStreamConfiguration { CardinalityLimit = 1 },
                     "terrabase.auth.key_fetches" or "terrabase.stats.operations" => new MetricStreamConfiguration { CardinalityLimit = 2 },
                     "terrabase_pressure_listener_request_rate" or "terrabase_pressure_listener_p95_latency_ms"
