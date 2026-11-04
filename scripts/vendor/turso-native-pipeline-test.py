@@ -17,6 +17,8 @@ assert "ubuntu-24.04-arm" in maintenance
 assert maintenance.count("repeat: 1") == 2 and maintenance.count("repeat: 2") == 2
 assert "turso-native-build-${{ matrix.arch }}-${{ matrix.repeat }}" in maintenance
 assert 'cmp "native-builds/turso-native-build-$arch-1/runtimes/$rid/native/libturso_sdk_kit.so"' in workflow
+assert 'cmp "native-builds/turso-native-build-$arch-1/router-parser/runtimes/$rid/native/libterrascale_sql_parser.so"' in workflow
+assert "Dockerfile.router-parser" in (root / "scripts/vendor/build-turso-native.sh").read_text()
 aggregate = workflow.split("\n  test:\n", 1)[1]
 assert "name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && 'native-maintenance-unqualified' || 'test' }}" in aggregate
 assert "if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts) }}" in aggregate
@@ -50,13 +52,15 @@ with tempfile.TemporaryDirectory(prefix="native-pipeline-") as temporary:
         shutil.copy2(root / "scripts/vendor" / script, scripts)
     # Minimal synthetic ELF headers verify architecture checks, never pretend to be loadable libraries.
     hashes = []
+    parser_hashes = []
     for rid, machine in (("linux-x64", b"\x3e\x00"), ("linux-arm64", b"\xb7\x00")):
-        content = b"\x7fELF\x02\x01" + bytes(12) + machine + bytes(44)
-        name = f"terrascale-turso-{rid}.so"
-        (assets / name).write_bytes(content)
-        hashes.append(f"{hashlib.sha256(content).hexdigest()}  {name}\n")
+        for prefix, marker, sums in (("terrascale-turso", b"turso", hashes), ("terrascale-sql-parser", b"parser", parser_hashes)):
+            content = b"\x7fELF\x02\x01" + bytes(12) + machine + bytes(44) + marker
+            name = f"{prefix}-{rid}.so"
+            (assets / name).write_bytes(content)
+            sums.append(f"{hashlib.sha256(content).hexdigest()}  {name}\n")
     pins = vendor / "SHA256SUMS"
-    pins.write_text("".join(hashes))
+    pins.write_text("".join(hashes + parser_hashes))
     curl = fixture / "curl"
     curl.write_text("#!/usr/bin/env python3\nimport os,pathlib,shutil,sys\na=sys.argv\nurl=a[a.index('--tlsv1.2')+1]\nshutil.copyfile(pathlib.Path(os.environ['TEST_NATIVE_ASSETS'])/url.rsplit('/',1)[1], a[a.index('-o')+1])\n")
     curl.chmod(0o755)
@@ -99,22 +103,40 @@ with tempfile.TemporaryDirectory(prefix="native-pipeline-") as temporary:
 
     run("download-turso-native.sh", output)
     run("verify-turso-native.sh", output)
+    for rid in ("linux-x64", "linux-arm64"):
+        assert (output / f"runtimes/{rid}/native/libturso_sdk_kit.so").read_bytes() == (assets / f"terrascale-turso-{rid}.so").read_bytes()
+        assert (output / f"runtimes/{rid}/native/libterrascale_sql_parser.so").read_bytes() == (assets / f"terrascale-sql-parser-{rid}.so").read_bytes()
     library = output / "runtimes/linux-x64/native/libturso_sdk_kit.so"
     original = library.read_bytes()
     library.write_bytes(original + b"tampered")
     run("verify-turso-native.sh", output, succeeds=False)
     library.write_bytes(original)
-    pins.write_text(hashes[1])
+    parser = output / "runtimes/linux-arm64/native/libterrascale_sql_parser.so"
+    parser_original = parser.read_bytes()
+    parser.write_bytes(parser_original + b"tampered")
     run("verify-turso-native.sh", output, succeeds=False)
-    run("download-turso-native.sh", output, succeeds=False)
+    parser.unlink()
+    run("verify-turso-native.sh", output, succeeds=False)
+    parser.write_bytes(parser_original)
+    run("verify-turso-native.sh", output)
+    # Every library needs its pin: a partial release (Turso only, or one parser RID) fails closed before download.
+    for partial in (hashes, hashes + parser_hashes[:1], [hashes[1]] + parser_hashes):
+        pins.write_text("".join(partial))
+        run("verify-turso-native.sh", output, succeeds=False)
+        run("download-turso-native.sh", output, succeeds=False)
     # Matching SHA alone must not admit a binary for the wrong CPU.
     wrong = (assets / "terrascale-turso-linux-arm64.so").read_bytes()
     library.write_bytes(wrong)
-    pins.write_text(f"{hashlib.sha256(wrong).hexdigest()}  terrascale-turso-linux-x64.so\n" + hashes[1])
+    pins.write_text(f"{hashlib.sha256(wrong).hexdigest()}  terrascale-turso-linux-x64.so\n" + hashes[1] + "".join(parser_hashes))
     run("verify-turso-native.sh", output, succeeds=False)
-    pins.write_text("".join(hashes))
+    pins.write_text("".join(hashes + parser_hashes))
     (assets / "terrascale-turso-linux-x64.so").write_bytes(original + b"tampered")
     run("download-turso-native.sh", output, succeeds=False)
+    (assets / "terrascale-turso-linux-x64.so").write_bytes(original)
+    parser_x64 = (assets / "terrascale-sql-parser-linux-x64.so").read_bytes()
+    (assets / "terrascale-sql-parser-linux-x64.so").write_bytes(b"tampered")
+    run("download-turso-native.sh", output, succeeds=False)
+    (assets / "terrascale-sql-parser-linux-x64.so").write_bytes(parser_x64)
     # Release assembly must retain matching source receipts and refuse incomplete smoke evidence.
     builds = []
     for rid, host in (("linux-x64", "x86_64"), ("linux-arm64", "aarch64")):
@@ -124,6 +146,18 @@ with tempfile.TemporaryDirectory(prefix="native-pipeline-") as temporary:
         runtime = build / f"runtimes/{rid}/native/libturso_sdk_kit.so"
         runtime.parent.mkdir(parents=True)
         runtime.write_bytes(original if rid == "linux-x64" else wrong)
+        parser_build = build / "router-parser"
+        parser_runtime = parser_build / f"runtimes/{rid}/native/libterrascale_sql_parser.so"
+        parser_runtime.parent.mkdir(parents=True)
+        parser_runtime.write_bytes((assets / f"terrascale-sql-parser-{rid}.so").read_bytes())
+        (parser_build / rid).mkdir()
+        (parser_build / rid / "smoke.txt").write_text(
+            "parser ABI integration: SET, WHERE, UTF-8, invalid suffix, bracket names, arrays and budget bypasses passed\n")
+        (parser_build / rid / "exports.txt").write_text(
+            "0000000000001000 T ts_sql_abi_version\n0000000000001100 T ts_sql_free\n0000000000001200 T ts_sql_next\n")
+        (parser_build / rid / "Cargo.lock").write_text("parser lock\n")
+        (parser_build / rid / "SHA256SUMS").write_text(
+            f"{hashlib.sha256(parser_runtime.read_bytes()).hexdigest()}  runtimes/{rid}/native/libterrascale_sql_parser.so\n")
         (release / "source-receipt.txt").write_text("same pinned inputs\n")
         (release / f"{rid}-build-receipt.txt").write_text(f"host={host}\naegis_backend=runtime-dispatched-c\n")
         (release / f"{rid}-aegis-proof.txt").write_text(
@@ -144,7 +178,35 @@ with tempfile.TemporaryDirectory(prefix="native-pipeline-") as temporary:
         builds.append(build)
     prepared = fixture / "prepared"
     run("prepare-turso-native-release.sh", *builds, prepared)
-    assert (prepared / "SHA256SUMS").is_file() and (prepared / "NATIVE-SHA256SUMS").read_text() == "".join(reversed(hashes))
+    assert (prepared / "SHA256SUMS").is_file()
+    assert (prepared / "NATIVE-SHA256SUMS").read_text() == "".join(reversed(parser_hashes)) + "".join(reversed(hashes))
+    for rid in ("linux-x64", "linux-arm64"):
+        assert (prepared / f"terrascale-sql-parser-{rid}.so").read_bytes() == (assets / f"terrascale-sql-parser-{rid}.so").read_bytes()
+        assert (prepared / f"sql-parser-{rid}-smoke.txt").is_file() and (prepared / f"sql-parser-{rid}-exports.txt").is_file()
+        assert not (prepared / f"sql-parser-{rid}-SHA256SUMS").exists()
+    # The parser needs its smoke, its three ABI exports, matching bytes and the right ELF machine.
+    parser_receipts = builds[1] / "router-parser/linux-arm64"
+    parser_library = builds[1] / "router-parser/runtimes/linux-arm64/native/libterrascale_sql_parser.so"
+    good_smoke = (parser_receipts / "smoke.txt").read_text()
+    good_exports = (parser_receipts / "exports.txt").read_text()
+    good_parser = parser_library.read_bytes()
+    (parser_receipts / "smoke.txt").write_text("not qualified\n")
+    run("prepare-turso-native-release.sh", *builds, fixture / "parser-unqualified", succeeds=False)
+    (parser_receipts / "smoke.txt").write_text(good_smoke)
+    (parser_receipts / "exports.txt").write_text(good_exports.replace(" T ts_sql_next\n", ""))
+    run("prepare-turso-native-release.sh", *builds, fixture / "parser-missing-export", succeeds=False)
+    (parser_receipts / "exports.txt").write_text(good_exports)
+    parser_library.write_bytes(good_parser + b"tampered")
+    run("prepare-turso-native-release.sh", *builds, fixture / "parser-mismatched", succeeds=False)
+    wrong_parser = (assets / "terrascale-sql-parser-linux-x64.so").read_bytes()
+    parser_library.write_bytes(wrong_parser)
+    (parser_receipts / "SHA256SUMS").write_text(
+        f"{hashlib.sha256(wrong_parser).hexdigest()}  runtimes/linux-arm64/native/libterrascale_sql_parser.so\n")
+    run("prepare-turso-native-release.sh", *builds, fixture / "parser-wrong-machine", succeeds=False)
+    parser_library.write_bytes(good_parser)
+    (parser_receipts / "SHA256SUMS").write_text(
+        f"{hashlib.sha256(good_parser).hexdigest()}  runtimes/linux-arm64/native/libterrascale_sql_parser.so\n")
+    run("prepare-turso-native-release.sh", *builds, fixture / "parser-restored")
     (builds[1] / "release/linux-arm64-aegis-proof.txt").write_text("no hardware/fallback proof\n")
     manifest(builds[1], "SHA256SUMS-linux-arm64")
     run("prepare-turso-native-release.sh", *builds, fixture / "missing-crypto-proof", succeeds=False)
@@ -162,4 +224,4 @@ with tempfile.TemporaryDirectory(prefix="native-pipeline-") as temporary:
     (builds[1] / "release/linux-arm64-wal-smoke.txt").write_text("not qualified\n")
     manifest(builds[1], "SHA256SUMS-linux-arm64")
     run("prepare-turso-native-release.sh", *builds, fixture / "wal-unqualified", succeeds=False)
-print("turso-native-pipeline-test: ok (release-only CI, patch, download/cache hashes, ELF, pending pins and release receipts)")
+print("turso-native-pipeline-test: ok (release-only CI, patch, Turso and SQL parser download/cache hashes, ELF, pending pins and release receipts)")
