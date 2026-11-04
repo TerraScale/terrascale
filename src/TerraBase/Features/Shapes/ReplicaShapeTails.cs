@@ -13,9 +13,11 @@ internal interface IReplicaShapeReader : IAsyncDisposable
     ValueTask<ShapeRead?> ReadAsync(ShapeScope scope, ShapeLineage lineage, long offset, IMemoryBudget memory, CancellationToken cancellationToken);
 }
 
-internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudget memory, TimeProvider time)
+internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudget memory, TimeProvider time) : IDisposable
 {
     private readonly SemaphoreSlim _waiting = new(128, 128);
+
+    public void Dispose() => _waiting.Dispose();
 
     internal bool Holds(TenantContext database) => replicas.Holds(database);
 
