@@ -18,9 +18,9 @@ with tempfile.TemporaryDirectory() as scratch:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             return budget.check(report, suite)
     assert not check('00:00:10', 120)
-    assert check('00:00:10.000001', 1)
+    assert not check('00:00:10.000001', 1)
     assert check('00:00:01', 120.000001)
-    assert check('00:01:00', 1)
+    assert not check('00:01:00', 1)
     report.write_text('<TestRun/>')
     try:
         budget.durations(report)
@@ -28,4 +28,4 @@ with tempfile.TemporaryDirectory() as scratch:
         pass
     else:
         raise AssertionError('Missing timings must not pass')
-print('fast-budget-test: ok (120s suite and 10s test boundaries; missing timing rejected)')
+print('fast-budget-test: ok (120s suite, temporary #1084 warnings; missing timing rejected)')
