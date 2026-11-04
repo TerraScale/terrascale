@@ -21,11 +21,10 @@ test('active SDK installation pins match the dashboard manifest', () => {
   }
 
   for (const path of [
-    'examples/terrabase-js', 'examples/server-token-provider',
-    'examples/typed-models', 'examples/browser-todos', 'create-terrascale-app/template',
+    'examples/server-token-provider', 'create-terrascale-app/template',
   ]) {
     assert.equal(json(`${path}/package.json`).dependencies['@terrascale/sdk'], versions.javascript, path);
-    if (['examples/typed-models', 'create-terrascale-app/template'].includes(path)) continue;
+    if (path === 'create-terrascale-app/template') continue;
     const lock = json(`${path}/package-lock.json`).packages;
     assert.equal(lock[''].dependencies['@terrascale/sdk'], versions.javascript, path);
     assert.equal(lock['node_modules/@terrascale/sdk'].version, versions.javascript, path);
