@@ -1,8 +1,11 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Time.Testing;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
 using TerraBase.Primitives;
@@ -22,11 +25,14 @@ public sealed class RegionShapeTailTests
         var token = TestContext.Current!.Execution.CancellationToken;
         using var issuer = new TestIssuer();
         var regions = new List<RegionPeer>();
-        await using var gru = await StartAsync("gru", issuer, regions);
+        var backupTime = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var backups = new FakeS3();
+        await using var gru = await StartAsync("gru", issuer, regions, backups, backupTime);
         regions.Add(new RegionPeer("gru", gru.Server.BaseAddress));
         await using var sjc = await StartAsync("sjc", issuer, regions);
         regions.Add(new RegionPeer("sjc", sjc.Server.BaseAddress));
         var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
+        await gru.SetPlanAsync(gru.User, organization, "enterprise", token);
         var project = await gru.CreateProjectAsync(organization, "Project");
         using var created = await gru.Client.PostAsJsonAsync(
             ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"), new { name = "main", replicaRegions = new List<string> { "sjc" } }, token);
@@ -53,6 +59,8 @@ public sealed class RegionShapeTailTests
         var replication = sjc.Server.Services.GetRequiredService<RegionReplication>();
         await replication.SyncCatalogsAsync(token);
         await replication.PullAllAsync(token);
+        var backup = gru.Server.Services.GetRequiredService<IContinuousBackup>();
+        await backup.RunOnceAsync(token);
         var path = ManagementApi.Uri(database.Data).ToString();
         var shapes = new[]
         {
@@ -91,6 +99,20 @@ public sealed class RegionShapeTailTests
                     },
                 }, token);
             changed.EnsureSuccessStatusCode();
+            backupTime.Advance(TimeSpan.FromSeconds(3));
+            await backup.RunOnceAsync(token);
+            foreach (var shape in shapes)
+            {
+                var boundary = await store.WithWriterAsync(writer =>
+                {
+                    using var command = writer.Connection.CreateCommand();
+                    command.CommandText = "SELECT count(*) FROM turso_cdc WHERE change_id = $offset AND change_type = 2;";
+                    command.Parameters.AddWithValue("$offset", long.Parse(shape.NextOffset, CultureInfo.InvariantCulture));
+                    return (long)command.ExecuteScalar()!;
+                }, "the advertised continuation after backup cleanup", token);
+                await Assert.That(boundary).IsEqualTo(1L);
+            }
+
             await replication.PullAllAsync(token);
             await replication.PullAllAsync(token);
             await Assert.That(await ReadReplicaFloorAsync()).IsGreaterThan(replicaFloor);
@@ -123,15 +145,25 @@ public sealed class RegionShapeTailTests
         }
     }
 
-    private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, List<RegionPeer> regions) => ManagementApi.StartAsync(
-        settings => settings["region"] = region,
+    private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, List<RegionPeer> regions, FakeS3? backups = null, TimeProvider? time = null) => ManagementApi.StartAsync(
+        settings =>
+        {
+            settings["region"] = region;
+            backups?.Configure(settings);
+        },
         services =>
         {
+            if (backups is not null)
+            {
+                backups.Route(services);
+                ManualBackupHosting.Configure(services);
+            }
+
             services.Replace(ServiceDescriptor.Singleton<IRegionPeers>(new RegionView(region, regions)));
             services.Replace(ServiceDescriptor.Singleton<IRegionCatalog>(new Serving()));
             services.Replace(ServiceDescriptor.Singleton<IReplicaPeers>(new ReplicaView(region, regions)));
         },
-        sharedIssuer: issuer);
+        time: time, sharedIssuer: issuer);
 
     private sealed class Serving : IRegionCatalog
     {
