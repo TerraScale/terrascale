@@ -9,6 +9,7 @@ import subprocess
 import sys
 import shutil
 import tempfile
+import urllib.request
 
 REPO = 'TerraScale/terrascale'
 
@@ -23,7 +24,20 @@ def digest(path):
 
 
 def statuses(sha):
-    pages = json.loads(gh('api', '--paginate', '--slurp', f'repos/{REPO}/commits/{sha}/statuses?per_page=100'))
+    if os.environ.get('GITHUB_ACTIONS') == 'true':
+        # Commit statuses are public. Preserve the existing anonymous lookup so
+        # verification jobs need no additional token permission.
+        pages = []
+        url = f'https://api.github.com/repos/{REPO}/commits/{sha}/statuses?per_page=100'
+        while url:
+            request = urllib.request.Request(url, headers={'Accept': 'application/vnd.github+json'})
+            with urllib.request.urlopen(request, timeout=20) as response:
+                pages.append(json.load(response))
+                link = response.headers.get('Link', '')
+                next_page = re.search(r'<([^>]+)>; rel="next"', link)
+                url = next_page[1] if next_page else None
+    else:
+        pages = json.loads(gh('api', '--paginate', '--slurp', f'repos/{REPO}/commits/{sha}/statuses?per_page=100'))
     latest = {}
     for page in pages:
         for row in page:
@@ -97,7 +111,7 @@ def publish_image(area, sha, directory, env):
     with dockerfile.open('w') as output:
         subprocess.run(['bash', 'scripts/ci/image-payloads.sh', 'runtime-dockerfile', area],
                        stdout=output, check=True, env=env)
-    index = 'localhost/ci-' + area + ':' + sha
+    index = 'localhost/ci-' + area + ':' + sha + '-' + directory.name
     images = []
     try:
         subprocess.run([engine, 'manifest', 'create', index], check=True)
@@ -184,6 +198,8 @@ def main():
     if not re.fullmatch(r'[0-9a-f]{40}', sha):
         raise ValueError('Expected exact commit SHA')
     if action == 'prepare':
+        if subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() != sha or subprocess.check_output(['git', 'status', '--porcelain'], text=True).strip():
+            raise ValueError('Checked build requires a clean checkout of its exact revision')
         with tempfile.TemporaryDirectory(prefix='ci-build-') as scratch:
             prepare(area, sha, Path(scratch))
     elif action == 'restore':
