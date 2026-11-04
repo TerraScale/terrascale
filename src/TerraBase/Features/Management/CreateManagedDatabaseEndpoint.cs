@@ -20,7 +20,7 @@ internal sealed class CreateManagedDatabaseEndpoint(IManagementService managemen
         Post(ProjectApiRoute.Databases);
         Name(OperationName);
         Summary("Creates a database in a project");
-        Description("Creates a database in its home region. Replicas and all-region placement are unavailable until the replacement sync engine is ready. " + ProjectApiRoute.IdentityDescription);
+        Description("Creates a database in its home region. replicaRegions names up to 8 other regions that hold read replicas: they pull the home's pages and serve SQL reads, while writes go to the home. allRegions is unavailable. " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -45,9 +45,9 @@ internal sealed class CreateManagedDatabaseEndpoint(IManagementService managemen
 
     private async ValueTask<IResult> CreateAsync(DatabaseRegionsRequest request, string name, CancellationToken cancellationToken)
     {
-        if (request.AllRegions == true || request.ReplicaRegions is { Count: > 0 })
+        if (request.AllRegions == true)
         {
-            return ErrorResponse.From(new Validation("databases serve only in their home region until replicas are available", "replicas_unavailable"));
+            return ErrorResponse.From(new Validation("all-region placement is unavailable: name the replica regions", "replicas_unavailable"));
         }
         const bool all = false;
 
@@ -68,7 +68,7 @@ internal sealed class CreateManagedDatabaseEndpoint(IManagementService managemen
 
         if (!all)
         {
-            var checkedRegions = DatabaseRegions.Check(replicas);
+            var checkedRegions = DatabaseRegions.Check(replicas, home);
             if (checkedRegions is Validation invalid)
             {
                 return ErrorResponse.From(invalid);
