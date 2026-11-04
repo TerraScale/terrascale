@@ -71,6 +71,7 @@ The C#, TypeScript, Go, Python and Rust SDKs call the same endpoint; see [SDKs](
 ## Transactions
 
 - HTTP: each request is one transaction of 1 to 256 statements, all or nothing. `BEGIN`, `COMMIT` and `ROLLBACK` are refused.
+- WebSocket: `GET /v1/projects/{project}/databases/{database}/sql/ws` with subprotocol `terrascale.sql.v1`. Send the access token as an `Authorization` header or, from a browser, as a first `{"type":"auth","token":"…"}` frame. `execute` frames run statements as over HTTP; `begin`, `commit` and `rollback` frames hold a transaction of at most 5 seconds.
 - Postgres wire: `BEGIN`, `COMMIT`, `ROLLBACK` and savepoints work. A transaction lives at most 5 seconds, then rolls back.
 - Without a transaction, each statement commits on its own.
 

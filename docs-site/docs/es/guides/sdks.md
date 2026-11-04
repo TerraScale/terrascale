@@ -10,21 +10,21 @@ description: TerraScale SDKs for JavaScript, C#, Go, Python and Rust, with insta
 
 # SDK reference
 
-Official SDKs for the TerraBase document and SQL API at `https://api.terrascale.tech`. Every SDK exchanges a dashboard API key for short-lived project access tokens (or shows you how to), sends typed requests and preserves the server's error contract. Create a key first: see [Getting started](/es/getting-started/).
+Official SDKs for the TerraBase SQL API at `https://api.terrascale.tech`. Every SDK exchanges a dashboard API key for short-lived project access tokens (or shows you how to), sends typed requests and preserves the server's error contract. Create a key first: see [Getting started](/es/getting-started/).
 
 | Language | Package | Install | Quickstart |
 | --- | --- | --- | --- |
 | JavaScript / TypeScript | `@terrascale/sdk` on npm | `npm install @terrascale/sdk` (SQL quickstart: `npm pack` from the monorepo) | [JavaScript quickstart](/es/getting-started/javascript) |
-| C# / .NET | `TerraScale.DotNet` (source; NuGet pending) | `dotnet pack` from the monorepo into a local feed | [C# quickstart](/es/getting-started/csharp) |
+| C# / .NET | `TerraScale.DotNet` (source; NuGet pending) | `dotnet pack` from the monorepo into a local package folder | [C# quickstart](/es/getting-started/csharp) |
 | Go | `terrascale.tech/sdk` | `go get terrascale.tech/sdk@main` (the SQL surface predates the latest tag) | [Go quickstart](/es/getting-started/go) |
 | Python | `terrascale` (source; PyPI pending) | `pip install "git+https://github.com/TerraScale/terrascale@main#subdirectory=sdk/python"` | [Python quickstart](/es/getting-started/python) |
 | Rust | `terrascale` (source; crates.io pending) | `terrascale = { git = "https://github.com/TerraScale/terrascale.git" }` in `Cargo.toml` | [Rust README](https://github.com/TerraScale/terrascale/blob/main/sdk/rust/README.md) |
 
-Every SDK covers the same core surface: databases and collections, documents (create/get/put/patch/delete), typed queries with filters, sorting and cursor pages, transactions and relational SQL. Language-specific extras (schema codegen for TypeScript, change streams, shape subscriptions) are documented in each package.
+Every SDK runs SQL with the same calls: `execute`, `query` and `batch` post to `/v1/projects/{project}/databases/{database}/sql/execute`, one request and one transaction each, with positional or named arguments and typed rows. The .NET and Go SDKs also open a WebSocket session on `/sql/ws` for interactive transactions (`begin`, `commit`, `rollback`). Primary keys are ULIDs from each SDK's ID generator.
 
 ## Which entry do I call?
 
-- **Data operations** go through the SDK's document client against `https://api.terrascale.tech`, with a project access token.
+- **SQL** goes through the SDK's database handle against `https://api.terrascale.tech`, with a project access token.
 - **Key exchange** happens against `https://auth.terrascale.tech/terrascale/oauth/token` with the client credentials grant. Go, Python and Rust SDKs do it for you; the JavaScript and .NET SDKs expose the token call and a token-provider hook (each quickstart shows the exact code). See [authentication](/es/guides/authentication).
 - **SQL over plain HTTP** (any HTTP client) is documented in [SQL over HTTP](/es/guides/sql-http); PostgreSQL-compatible clients work too ([PostgreSQL clients](/es/guides/postgres-clients)).
 

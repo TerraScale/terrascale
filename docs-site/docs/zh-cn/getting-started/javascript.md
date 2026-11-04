@@ -36,7 +36,7 @@ npm init -y
 npm install ../path/to/terrascale/sdk/js/terrascale-sdk-0.0.19.tgz
 ```
 
-`npm pack` writes a tarball (`terrascale-sdk-<version>.tgz`) you can install from anywhere; it carries the SDK's `ulid` dependency with it. Plain `npm install @terrascale/sdk` still works for the published document-API surface.
+`npm pack` writes a tarball (`terrascale-sdk-<version>.tgz`) you can install from anywhere; it carries the SDK's `ulid` dependency with it.
 
 ## Run the quickstart
 
