@@ -12,6 +12,9 @@ namespace TerraScale.TerraBase.Contracts.Management
         /// <summary><c>GET /v1/projects/{project}/databases/{database}</c>.</summary>
         UnaryResult<TerraBaseManagedDatabase> GetDatabaseAsync(string projectId, string database);
 
+        /// <summary><c>GET /v1/projects/{project}/databases/{database}/regions</c>.</summary>
+        UnaryResult<TerraBaseDatabaseRegions> GetDatabaseRegionsAsync(string projectId, string database);
+
         /// <summary><c>POST /v1/projects/{project}/databases</c>.</summary>
         UnaryResult<TerraBaseManagedDatabase> CreateDatabaseAsync(string projectId, TerraBaseDatabasePlacement request);
 
