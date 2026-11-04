@@ -16,6 +16,8 @@ namespace TerraScale.Dashboard.Platform.TsAuth
     [JsonSerializable(typeof(TsAuthEmailChangeRequest))]
     [JsonSerializable(typeof(TsAuthEmailChange))]
     [JsonSerializable(typeof(TsAuthEmailChangeConfirmation))]
+    [JsonSerializable(typeof(TsAuthScopedKeyRequest))]
+    [JsonSerializable(typeof(TsAuthScopedKey))]
     [JsonSerializable(typeof(TsAuthStepUpRequest))]
     [JsonSerializable(typeof(TsAuthStepUp))]
     [JsonSerializable(typeof(TsAuthStepUpConsume))]

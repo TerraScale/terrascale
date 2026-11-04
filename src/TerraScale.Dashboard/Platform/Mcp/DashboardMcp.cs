@@ -286,6 +286,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 {
                     if (await context.RequestServices.GetRequiredService<AccessTokens>().ResolveAsync(header.Parameter, context.RequestAborted) is not { } principal)
                     {
+                        context.Response.Headers.WWWAuthenticate = $"Bearer realm=\"TerraScale MCP\", resource_metadata=\"{McpOAuth.ResourceMetadataUrl(context)}\", error=\"invalid_token\"";
                         context.Response.StatusCode = 401;
                         return;
                     }
@@ -296,6 +297,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                     var project = context.Request.Headers["X-TerraScale-Project"].ToString();
                     if (await context.RequestServices.GetRequiredService<McpApiKeyTools>().AuthenticateAsync(header.Parameter, project, context.RequestAborted) is not { } key)
                     {
+                        context.Response.Headers.WWWAuthenticate = $"Bearer realm=\"TerraScale MCP\", resource_metadata=\"{McpOAuth.ResourceMetadataUrl(context)}\", error=\"invalid_token\"";
                         context.Response.StatusCode = 401;
                         return;
                     }
