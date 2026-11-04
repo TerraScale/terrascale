@@ -30,10 +30,11 @@
   </Target>
 
 
-  <!-- Project-reference content loses AssetType; .NET's single-file publisher otherwise leaves Turso beside the app. -->
+  <!-- Project-reference content loses AssetType; .NET's single-file publisher otherwise leaves Turso and the SQL parser
+       beside the app. -->
   <Target Name="ClassifyTursoNativeForSingleFile" BeforeTargets="_ComputeFilesToBundle" Condition="'$(PublishSingleFile)' == 'true'">
     <ItemGroup>
-      <ResolvedFileToPublish Update="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == 'libturso_sdk_kit.so'" AssetType="native" />
+      <ResolvedFileToPublish Update="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == 'libturso_sdk_kit.so' Or '%(Filename)%(Extension)' == 'libterrascale_sql_parser.so'" AssetType="native" />
     </ItemGroup>
   </Target>
 
