@@ -202,7 +202,7 @@ func selectCLIContext(ctx context.Context, u *tsauth.User, token string, operand
 }
 
 func usesDatabaseOperand(name string) bool {
-	if name == "db create" || name == "db list" || name == "migrate new" || name == "backup destination" {
+	if name == "db create" || name == "db list" || name == "db branch create" || name == "db branch list" || name == "migrate new" || name == "backup destination" {
 		return false
 	}
 	for _, prefix := range []string{"db ", "databases ", "backup ", "migrate ", "functions "} {
