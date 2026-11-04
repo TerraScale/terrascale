@@ -40,7 +40,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             });
             using var client = scenario.CreateClient();
             await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
-            var id = await PagePaymentAudit.Oct13.DatabaseDataAccess.DatabaseDataAccessJourneyTests.CreateDatabaseAsync(client, "sql-receipt-" + answer);
+            var id = await HttpJourney.CreateDatabaseAsync(client, "sql-receipt-" + answer);
             var csrf = await HttpJourney.CsrfAsync(client, "/databases/" + id + "/sql");
             const string sql = "INSERT INTO items (id) VALUES (1)";
             using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/data/sql")

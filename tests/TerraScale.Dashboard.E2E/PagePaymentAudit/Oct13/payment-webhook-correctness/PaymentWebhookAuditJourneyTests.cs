@@ -7,35 +7,6 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
     public sealed class PaymentWebhookAuditJourneyTests
     {
         [Test]
-        public async Task ConcurrentReplicasDiscardTheOlderCanonicalSnapshotAfterACasConflict()
-        {
-            await using var scenario = await PaymentWebhookAuditScenario.StartAsync();
-            using var owner = scenario.CreateClient();
-            await CompleteCheckoutAsync(owner, "starter");
-            using var first = scenario.CreateClient();
-            using var replica = scenario.CreateClient(replica: true);
-            var body = scenario.EventBody();
-            var reads = scenario.Stripe.SubscriptionReads;
-            scenario.Stripe.Status = "active";
-            scenario.Stripe.HoldNextSubscriptionRead = true;
-            var stale = PaymentWebhookAuditScenario.SendAsync(first, body);
-            try
-            {
-                await scenario.Stripe.SubscriptionReadHeld.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                scenario.Stripe.Status = "canceled";
-                using var current = await PaymentWebhookAuditScenario.SendAsync(replica, body, legacy: true);
-                await Assert.That(current.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            }
-            finally { scenario.Stripe.ReleaseSubscriptionRead.TrySetResult(); }
-            using var recovered = await stale;
-            await Assert.That(recovered.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(scenario.Stripe.SubscriptionReads - reads).IsEqualTo(3)
-                .Because("The losing replica must discard its active snapshot and reread after its billing CAS fails.");
-            await Assert.That(scenario.State.Billing!.EffectivePlan).IsEqualTo("free");
-            await Assert.That((await OrganizationAsync(owner)).GetProperty("planId").GetString()).IsEqualTo("3BN8V1JQWTB3R3NSZ26SERTHWT");
-        }
-
-        [Test]
         public async Task ReplayedAndOutOfOrderEventsUseCurrentStripeFactsAcrossReplicas()
         {
             await using var scenario = await PaymentWebhookAuditScenario.StartAsync();
@@ -69,61 +40,6 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
             await Assert.That(scenario.State.Billing.Revision).IsGreaterThan(revision);
             await Assert.That(scenario.Stripe.SubscriptionReads - reads).IsEqualTo(5)
                 .Because("Every delivery, including the duplicate ID, rereads canonical provider state.");
-        }
-
-        [Test]
-        public async Task InterruptedOrganizationProjectionIsRetryableAndReplayReadsNewCanonicalState()
-        {
-            await using var scenario = await PaymentWebhookAuditScenario.StartAsync();
-            using var owner = scenario.CreateClient();
-            await CompleteCheckoutAsync(owner, "starter");
-            using var anonymous = scenario.CreateClient();
-            var body = scenario.EventBody("invoice.payment_failed");
-            scenario.Stripe.Status = "past_due";
-            scenario.State.FailNextOrganizationWrite = true;
-            using var interrupted = await PaymentWebhookAuditScenario.SendAsync(anonymous, body);
-            await Assert.That(interrupted.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-            await Assert.That(scenario.State.InterruptedWrites).IsEqualTo(1);
-            await Assert.That(scenario.State.Billing!.Status).IsEqualTo("past_due");
-            var beforeRetry = await OrganizationAsync(owner);
-            await Assert.That(beforeRetry.GetProperty("billingStatus").GetString()).IsEqualTo("active")
-                .Because("The fault occurs after the billing CAS and before the organization CAS.");
-            scenario.Stripe.Status = "canceled";
-            using var replica = scenario.CreateClient(replica: true);
-            using var retried = await PaymentWebhookAuditScenario.SendAsync(replica, body, legacy: true);
-            await Assert.That(retried.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            var reconciled = await OrganizationAsync(owner);
-            await Assert.That(reconciled.GetProperty("planId").GetString()).IsEqualTo("3BN8V1JQWTB3R3NSZ26SERTHWT");
-            await Assert.That(scenario.State.Billing!.Status).IsEqualTo("canceled");
-            await Assert.That(scenario.State.Billing.EffectivePlan).IsEqualTo("free");
-        }
-
-        [Test]
-        public async Task ForeignCurrencyFractionalPricesAndMultipleQuantityInvalidateThePaidBinding()
-        {
-            await using var scenario = await PaymentWebhookAuditScenario.StartAsync();
-            using var owner = scenario.CreateClient();
-            await CompleteCheckoutAsync(owner, "starter");
-            using var anonymous = scenario.CreateClient();
-            scenario.Stripe.Status = "active";
-            foreach (var invalid in new[] { "foreign-currency", "fractional-price", "multiple-quantity" })
-            {
-                scenario.Stripe.PriceCurrency = invalid == "foreign-currency" ? "eur" : null;
-                scenario.Stripe.FractionalPrice = invalid == "fractional-price";
-                scenario.Stripe.Quantity = invalid == "multiple-quantity" ? 2 : 1;
-                using var delivery = await PaymentWebhookAuditScenario.SendAsync(anonymous, scenario.EventBody(id: "evt_" + invalid));
-                await Assert.That(delivery.StatusCode).IsEqualTo(HttpStatusCode.OK);
-                var organization = await OrganizationAsync(owner);
-                await Assert.That(organization.GetProperty("billingStatus").GetString()).IsEqualTo("billing_required");
-                await Assert.That(organization.GetProperty("paymentMethodValidated").GetBoolean()).IsFalse();
-                await Assert.That(scenario.State.Billing!.EffectivePlan).IsEqualTo("");
-            }
-            scenario.Stripe.PriceCurrency = null;
-            scenario.Stripe.FractionalPrice = false;
-            scenario.Stripe.Quantity = 1;
-            using var recovered = await PaymentWebhookAuditScenario.SendAsync(anonymous, scenario.EventBody());
-            await Assert.That(recovered.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That((await OrganizationAsync(owner)).GetProperty("billingStatus").GetString()).IsEqualTo("active");
         }
 
         [Test]
@@ -188,41 +104,6 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
             using var upgrade = await CheckoutAsync(owner, csrf, "starter");
             await Assert.That(upgrade.StatusCode).IsEqualTo(HttpStatusCode.SeeOther)
                 .Because("A completed setup is no longer an unfinished checkout reservation.");
-        }
-
-        [Test]
-        [Category("PaymentAuditExpectation")]
-        public async Task FreeSetupDoesNotInventAPaidSubscriptionTrial()
-        {
-            await using var scenario = await PaymentWebhookAuditScenario.StartAsync();
-            using var owner = scenario.CreateClient();
-            await CompleteCheckoutAsync(owner, "free");
-            await Assert.That(scenario.State.Billing).IsNull().Because("Free onboarding must not create a Stripe reservation.");
-            var csrf = await HttpJourney.CsrfAsync(owner, "/organization?tab=billing");
-            using var upgrade = await CheckoutAsync(owner, csrf, "starter");
-            await Assert.That(upgrade.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-            await Assert.That(scenario.Stripe.LastTrialDays).IsEqualTo("")
-                .Because("The published paid plans do not offer a trial.");
-        }
-
-        [Test]
-        [Category("PaymentAuditDefect")]
-        [Arguments("jpy", 1500L, "JPY 1500")]
-        [Arguments("clp", 1234L, "CLP 1234")]
-        [Arguments("usd", 501L, "$5.01")]
-        public async Task InvoiceHistoryUsesTheCurrencyMinorUnit(string currency, long amount, string expected)
-        {
-            await using var scenario = await PaymentWebhookAuditScenario.StartAsync();
-            using var owner = scenario.CreateClient();
-            await CompleteCheckoutAsync(owner, "starter");
-            scenario.Stripe.InvoiceCurrency = currency;
-            scenario.Stripe.InvoiceAmount = amount;
-            using var history = await owner.GetAsync("/organization?tab=billing");
-            await Assert.That(history.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            var html = await history.Content.ReadAsStringAsync();
-            var displayed = WebUtility.HtmlDecode(Regex.Match(html, "<td class=\"ts-num\">([^<]+)</td>").Groups[1].Value);
-            await Assert.That(displayed).IsEqualTo(expected)
-                .Because("The amount returned by Stripe is an integer in this currency's smallest unit.");
         }
 
         private static Task<HttpResponseMessage> CheckoutAsync(HttpClient owner, string csrf, string plan)

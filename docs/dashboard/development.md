@@ -48,6 +48,9 @@ create isolated service/component/unit tests or introduce another runner.
 Scenario and protocol controls belong under
 `tests/TerraScale.Dashboard.E2E/Demo`, alongside shared synthetic providers. Journey tests belong under
 `tests/TerraScale.Dashboard.E2E`, in `*JourneyTests.cs` files.
+Test only the happy path and critical paths (sign-in, tenant isolation, billing,
+erasure, backup/restore, transport and secret safety). Do not add copy, layout
+or per-page accessibility tests.
 Node browser journeys are in `tests/TerraScale.Dashboard.E2E/browser`.
 
 ```sh
@@ -124,10 +127,8 @@ configuration options. Run it with:
 nice -n 19 dotnet run --project src/TerraScale.Dashboard -- audit-stripe
 ```
 
-The process/TLS-HTTP E2E journey is `StripeAuditJourneyTests`; its nineteen
-focused cases pass. `BillingWebhookJourneyTests` sends signed native HTTP
-requests to both webhook URLs, including retryable provider failures and
-request-size boundaries. Internal usage reports remain noncharging. These
+`BillingWebhookJourneyTests` sends signed native HTTP requests to both webhook
+URLs. Internal usage reports remain noncharging. These
 test-provider results do not qualify live Stripe delivery or payments; there
 is no separate unit-test runner.
 

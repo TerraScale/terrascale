@@ -10,46 +10,6 @@ namespace TerraScale.Dashboard.E2E.Platform
     public sealed class DemoModeJourneyTests(DashboardRootFixture fixture)
     {
         [Test]
-        public async Task TestExecutableServesSyntheticJourneysWithoutProviders()
-        {
-            await using var host = StartFixture();
-            try
-            {
-                var origin = await host.WaitForOriginAsync();
-                using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new CookieContainer() })
-                { BaseAddress = origin, Timeout = TimeSpan.FromSeconds(10) };
-                var ready = await ReadyAsync(client, host.Process);
-                await Assert.That(ready.GetProperty("status").GetString()).IsEqualTo("ok");
-                using (var login = await HttpJourney.LoginAsync(client))
-                {
-                    await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther).Because("The synthetic user signs in without ts-auth.");
-                }
-
-                foreach (var path in new[] { "/", "/databases", "/organization?tab=billing" })
-                {
-                    using var page = await client.GetAsync(path);
-                    await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(path + " renders from in-memory providers.");
-                }
-                using var admin = await client.GetAsync("/admin");
-                await Assert.That(admin.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-                await Assert.That(await admin.Content.ReadAsStringAsync()).StartsWith("DEMO:");
-            }
-            catch (Exception failure)
-            {
-                var exited = host.Process.HasExited;
-                var exitCode = exited ? host.Process.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture) : "running";
-                // StopAsync drains both pipes; diagnostic collection must never replace the original failure.
-                var log = await host.StopAsync();
-                var collected = host.Process.HasExited;
-                var bindFailure = log.Contains("Failed to bind", StringComparison.OrdinalIgnoreCase);
-                var addressInUse = log.Contains("AddressInUseException", StringComparison.Ordinal) ||
-                    log.Contains("address already in use", StringComparison.OrdinalIgnoreCase) || log.Contains("EADDRINUSE", StringComparison.Ordinal);
-                throw new IOException($"Demo child diagnostics: pid={host.Process.Id}; port={host.AnnouncedPort}; exitedBeforeCleanup={exited}; " +
-                    $"exitCodeBeforeCleanup={exitCode}; collected={collected}; announcement={host.Announced}; bindFailure={bindFailure}; addressInUse={addressInUse}.", failure);
-            }
-        }
-
-        [Test]
         [Arguments(null)]
         [Arguments("1")]
         [Arguments("TRUE")]

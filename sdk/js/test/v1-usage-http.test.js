@@ -26,3 +26,15 @@ test("all six usage routes preserve envelopes, buckets, nullable observations an
   expect(Object.fromEntries(requests[0]?.url.searchParams ?? [])).toEqual({ granularity: "hour", from: period.from, to: period.to });
   expect(requests[2]?.url.searchParams.get("database")).toBe(entity);
 });
+test.each([400, 401, 403, 404, 503])("usage retains HTTP error %i", async status => {
+  const { client, requests } = await fixture((_r, response) => json(response, { error: { code: "invalid_query", message: "Refused" } }, status));
+  await expect(client.metrics.analytics()).rejects.toMatchObject({ status, code: "invalid_query" });
+  expect(requests).toHaveLength(1);
+});
+test("filters reject malformed IDs, ranges and timestamps before dispatch", async () => {
+  const { client, requests } = await fixture((_r, response) => json(response, {}));
+  await expect(client.metrics.analytics({ database: "db-prefixed" })).rejects.toThrow(TypeError);
+  await expect(client.metrics.usage({ from: "yesterday" })).rejects.toThrow(TypeError);
+  await expect(client.metrics.replication(/** @type {any} */ ({ range: "all" }))).rejects.toThrow(TypeError);
+  expect(requests).toHaveLength(0);
+});

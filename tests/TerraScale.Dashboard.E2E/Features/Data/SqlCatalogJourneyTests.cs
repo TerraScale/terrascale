@@ -69,7 +69,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             });
             using var client = scenario.CreateClient();
             await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
-            var id = await PagePaymentAudit.Oct13.DatabaseDataAccess.DatabaseDataAccessJourneyTests.CreateDatabaseAsync(client, "sql-catalog");
+            var id = await HttpJourney.CreateDatabaseAsync(client, "sql-catalog");
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new() { ["_csrf"] = csrf, ["databaseId"] = id, ["name"] = "documents_only" }))
             {

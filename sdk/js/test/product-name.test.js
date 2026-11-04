@@ -37,6 +37,16 @@ const utf8 = new TextDecoder("utf-8", { fatal: true });
  */
 
 describe("retired product name", () => {
+  test("canonical name is accepted and every separator variant is rejected", () => {
+    const legacyName = new RegExp(legacyNameSource, "iu");
+    for (const joiner of ["", "-", "_", " ", "."]) {
+      const candidate = nameParts.join(joiner);
+      assert.equal(legacyName.test(candidate), true, `separator ${JSON.stringify(joiner)} not covered`);
+      assert.equal(legacyName.test(candidate.toUpperCase()), true);
+    }
+    assert.equal(legacyName.test(nameParts.slice(0, 2).join("")), false);
+  });
+
   test("tracked files contain no retired variants outside the allowlist", async () => {
     const trackedPaths = readGitPaths();
     const allowlist = await readAllowlist();

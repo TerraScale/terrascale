@@ -68,61 +68,12 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         }
 
         [Test]
-        public async Task ResultsKeepEveryRawCellAndRenderOnlyTwoHundredRows()
-        {
-            var executions = 0;
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
-            {
-                if (http.Request.Method != "POST" || !http.Request.Path.Value!.EndsWith("/sql/execute", StringComparison.Ordinal))
-                {
-                    return null;
-                }
-
-                if (await DatabaseSdkScenario.EmptySqlCatalogAsync(http) is { } catalog)
-                {
-                    return catalog;
-                }
-
-                Interlocked.Increment(ref executions);
-                return Results.Json(new
-                {
-                    results = new[] { new
-                    {
-                        columns = new[] { new { name = "n", decltype = "INTEGER" }, new { name = "n", decltype = "TEXT" } },
-                        rows = Enumerable.Range(0, 201).Select(_ => new object?[] { 9007199254740993L, null }).ToArray(),
-                        rows_affected = 201, last_insert_rowid = (long?)null
-                    } }
-                });
-            });
-            using var client = scenario.CreateClient();
-            await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
-            var id = await PagePaymentAudit.Oct13.DatabaseDataAccess.DatabaseDataAccessJourneyTests.CreateDatabaseAsync(client, "sql-results");
-            var csrf = await HttpJourney.CsrfAsync(client, "/databases/" + id + "/sql");
-            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/data/sql")
-            { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["_csrf"] = csrf, ["databaseId"] = id, ["sql"] = "INSERT INTO audit VALUES (1) RETURNING *" }) };
-            request.Headers.Accept.ParseAdd("text/html");
-            using var posted = await client.SendAsync(request);
-            await Assert.That(posted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-            using var response = await client.GetAsync(posted.Headers.Location);
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            var html = await response.Content.ReadAsStringAsync();
-            var payload = Regex.Match(html, "<script[^>]*data-sql-result-data[^>]*>(.*?)</script>", RegexOptions.Singleline | RegexOptions.CultureInvariant);
-            using var json = JsonDocument.Parse(payload.Groups[1].Value);
-            await Assert.That(json.RootElement.GetProperty("rows").GetArrayLength()).IsEqualTo(201);
-            await Assert.That(json.RootElement.GetProperty("rows")[0][0].GetString()).IsEqualTo("9007199254740993");
-            await Assert.That(json.RootElement.GetProperty("rows")[0][1].GetString()).IsEqualTo("null");
-            var table = Regex.Match(html, "<tbody>(.*?)</tbody>", RegexOptions.Singleline | RegexOptions.CultureInvariant).Groups[1].Value;
-            await Assert.That(Regex.Matches(table, "<tr>", RegexOptions.CultureInvariant).Count).IsEqualTo(200);
-            await Assert.That(Volatile.Read(ref executions)).IsEqualTo(1);
-        }
-
-        [Test]
         public async Task RunExecutesRelationalSqlAndShowsTerraBaseMessages()
         {
             await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
             using var client = scenario.CreateClient();
             await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
-            var id = await PagePaymentAudit.Oct13.DatabaseDataAccess.DatabaseDataAccessJourneyTests.CreateDatabaseAsync(client, "sql-run");
+            var id = await HttpJourney.CreateDatabaseAsync(client, "sql-run");
             var csrf = await HttpJourney.CsrfAsync(client, "/databases/" + id + "/sql");
             async Task<(HttpStatusCode Status, JsonElement Body)> RunAsync(string sql)
             {

@@ -20,5 +20,5 @@ New saved queries use ULIDs. Saved-query links work with and without a selected
 collection. Database-specific queries are listed and restored only in their original database;
 project templates remain available across the project. No stored records are rewritten and no migration is introduced.
 
-Regression coverage lives in `SqlEditorCorrectnessJourneyTests` (Fast HTTP
-journeys) and `SqlFormattingBrowserJourneyTests` (Slow browser journey).
+Run and check coverage lives in `SqlCheckJourneyTests` and
+`SqlRunReceiptJourneyTests`.

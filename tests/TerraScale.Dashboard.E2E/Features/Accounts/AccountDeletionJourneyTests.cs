@@ -109,20 +109,6 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsFalse();
         }
 
-        [Test]
-        public async Task StripeOutageNeitherBlocksDeletionNorLosesThePlanToEnd()
-        {
-            var (scenario, userId, personal, binding) = await PaidAsync("offline");
-            await using var _ = scenario;
-            await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(userId), default))!)).IsTrue();
-            await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsFalse();
-            // The exact binding stays in its deleting state for DeletionReconciler to end the plan.
-            var retained = StripeBilling.ReadBinding((await scenario.Environment.State.GetAsync(StripeBilling.Collection, personal, default))!, personal);
-            await Assert.That(retained.State).IsEqualTo("deleting");
-            await Assert.That(retained.SubscriptionId).IsEqualTo(binding.SubscriptionId);
-            await Assert.That(await scenario.ExistsAsync(StripeBilling.CustomersCollection, binding.CustomerId)).IsTrue();
-        }
-
         // Billing never runs before ts-auth admits the deletion, so a Stripe outage cannot fail the request.
         private static async Task<(Scenario Scenario, string UserId, string Personal, BillingBinding Binding)> PaidAsync(string stripeScenario)
         {

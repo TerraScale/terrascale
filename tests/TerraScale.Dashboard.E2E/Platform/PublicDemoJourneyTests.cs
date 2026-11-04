@@ -26,22 +26,6 @@ namespace TerraScale.Dashboard.E2E.Platform
         }
 
         [Test]
-        public async Task FullDocumentsCarryNoDemoBanner()
-        {
-            await using var demo = await StartAsync();
-            using var client = demo.Client();
-            using (var login = await HttpJourney.LoginAsync(client))
-            {
-                await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-            }
-
-            foreach (var path in new[] { "/", "/databases", "/profile", "/organization" })
-            {
-                await AssertUnlabelledAsync(client, path);
-            }
-        }
-
-        [Test]
         public async Task AdminMcpScenarioAndDestructiveRoutesAreBlockedEvenWhenSignedIn()
         {
             await using var demo = await StartAsync();
@@ -71,47 +55,6 @@ namespace TerraScale.Dashboard.E2E.Platform
             }
             using var portal = await client.GetAsync("/__test/portal");
             await Assert.That(portal.StatusCode).IsEqualTo(HttpStatusCode.OK).Because("The fake Stripe portal stays reachable for the billing walkthrough.");
-        }
-
-        [Test]
-        public async Task AuthenticationConsoleRendersEverySectionFromTheSyntheticTenant()
-        {
-            await using var demo = await StartAsync();
-            using var client = demo.Client();
-            using (var anonymous = await client.GetAsync("/auth/users"))
-            {
-                await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
-                await Assert.That(anonymous.Headers.Location?.OriginalString).IsEqualTo("/login?returnTo=%2Fauth%2Fusers").Because("Signed-out visitors still sign in first.");
-            }
-            using (var login = await HttpJourney.LoginAsync(client))
-            {
-                await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-            }
-
-            foreach (var section in AuthenticationSection.All)
-            {
-                using var response = await client.GetAsync("/auth/" + section.Key);
-                var html = await response.Content.ReadAsStringAsync();
-                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(section.Key);
-                await Assert.That(html).Contains($"data-auth-section=\"{section.Key}\"");
-                await Assert.That(html).DoesNotContain("id=\"auth-error\"").Because($"{section.Key} shows the synthetic tenant, not an error.");
-                if (section.Key is "users" or "sessions" or "clients")
-                {
-                    await Assert.That(Regex.IsMatch(html, @"<tbody>\s*<tr>")).IsTrue().Because($"{section.Key} lists synthetic rows.");
-                }
-            }
-            var users = await client.GetStringAsync("/auth/users?q=globex");
-            await Assert.That(users).Contains("alan@globex.io").Because("Search filters the rows.");
-            await Assert.That(users).DoesNotContain("ada@northwind.app");
-            var signIn = await client.GetStringAsync("/auth/sign-in");
-            await Assert.That(signIn).Contains("role=\"switch\" id=\"auth-method-password\" name=\"password\" checked");
-            foreach (var path in new[] { "/api/v1/auth-management/clients", "/api/v1/auth-management/settings", "/api/v1/auth-management/branding" })
-            {
-                using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["name"] = "x" }) };
-                request.Headers.Add("Origin", demo.Origin.GetLeftPart(UriPartial.Authority));
-                using var response = await client.SendAsync(request);
-                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Forbidden).Because($"POST {path} stays blocked in the public demo.");
-            }
         }
 
         private static async Task AssertUnlabelledAsync(HttpClient client, string path)

@@ -26,3 +26,15 @@ test("all five index routes preserve selector names and opaque recommendation ID
   expect(requests[1]?.url.search).toBe("?collection=users");
   for (const r of requests) expect(r.headers.authorization).toBe(`Bearer ${token}`);
 });
+test.each([400, 401, 403, 404, 409, 421, 503])("index writes preserve %i and are never retried", async status => {
+  const { client, requests } = await fixture((_r, response) => json(response, { error: { code: "index_refused", message: "Refused" } }, status));
+  await expect(client.database("app").indexes.create({ collection: "users", fields: ["email"] })).rejects.toMatchObject({ status, code: "index_refused" });
+  expect(requests).toHaveLength(1);
+});
+test("invalid secondary index requests fail before dispatch", async () => {
+  const { client, requests } = await fixture((_r, response) => json(response, index));
+  for (const fields of [[], ["_id"], ["email", "email"], ["a", "b", "c", "d", "e"]])
+    await expect(client.database("app").indexes.create({ collection: "users", fields })).rejects.toThrow(TypeError);
+  await expect(client.database("app").indexes.drop("../bad")).rejects.toThrow(TypeError);
+  expect(requests).toHaveLength(0);
+});

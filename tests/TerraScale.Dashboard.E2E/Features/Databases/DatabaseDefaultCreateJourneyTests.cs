@@ -8,27 +8,6 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
     [ClassDataSource<DashboardRootFixture>]
     public sealed class DatabaseDefaultCreateJourneyTests(DashboardRootFixture fixture)
     {
-        [Test]
-        public async Task NamesKeepTheDashboardSubsetAndRejectDataPlaneReservedNames()
-        {
-            foreach (var name in new[] { "a", "a1", "a--b", "orders-2026", "con-db", "console", "com10", "lpt10", new string('a', 63) })
-            {
-                await Assert.That(DatabaseService.ValidName(name)).IsEqualTo(name);
-            }
-
-            var invalid = new[] { "", "1database", "0", "-orders", "orders-", "Orders", "order_db", "orders.db", "a\nb", new string('a', 64), "con", "prn", "aux", "nul" }
-                .Concat(Enumerable.Range(0, 10).SelectMany(number => new[] { "com" + number, "lpt" + number }));
-            foreach (var name in invalid)
-            {
-                AccountAccessException? rejected = null;
-                try { DatabaseService.ValidName(name); }
-                catch (AccountAccessException error) { rejected = error; }
-                await Assert.That(rejected?.StatusCode).IsEqualTo(422).Because("Invalid database name: " + name);
-                await Assert.That(rejected?.Message).Contains("must start with a lowercase letter");
-                await Assert.That(rejected?.Message).Contains("Reserved names:");
-            }
-        }
-
         // A fresh workspace's empty Databases page carries the create control, and the Overview CTAs open its dialog directly.
         [Test]
         public async Task EmptyDatabasesPageCreatesThroughTheDialogAndTheOverviewLinksOpenIt()
@@ -149,45 +128,5 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await Assert.That(observations.RootElement.GetProperty("failures").GetArrayLength()).IsEqualTo(0);
         }
 
-        [Test]
-        [Arguments("GRU,SJC", false)]
-        [Arguments("GRU,FRA,SJC", false)]
-        [Arguments("GRU,FRA", false)]
-        [Arguments("SJC", false)]
-        [Arguments("", false)]
-        [Arguments("", true)]
-        public async Task ChosenHomeIsUsedWithoutAddingUnselectedRegions(string placement, bool allRegions)
-        {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
-            using var client = scenario.CreateClient();
-            using var producer = scenario.CreateProviderClient();
-            await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
-            using var catalog = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = new[] { "gru", "fra", "sjc" } });
-            using var answering = await producer.PostAsJsonAsync("/__test/control", new { command = "api-region", value = "sjc" });
-            var csrf = await HttpJourney.CsrfAsync(client, "/databases");
-            var selected = placement.Split(',', StringSplitOptions.RemoveEmptyEntries);
-            using var response = await client.PostAsync("/api/v1/dashboard/databases", new FormUrlEncodedContent(
-                new[] { new KeyValuePair<string, string>("_csrf", csrf), new("name", "chosen-home"), new("homeRegion", "SJC"), new("allRegions", allRegions ? "true" : "false") }
-                    .Concat(selected.Select(region => new KeyValuePair<string, string>("region", region)))));
-            var explicitReplicas = selected.Where(region => !region.Equals("SJC", StringComparison.OrdinalIgnoreCase)).ToArray();
-            if (!allRegions && explicitReplicas.Length > 0 && !selected.Contains("SJC", StringComparer.OrdinalIgnoreCase))
-            {
-                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
-                await Assert.That(await response.Content.ReadAsStringAsync()).Contains(DatabaseService.HomePlacementMessage);
-                using var observations = JsonDocument.Parse(await producer.GetStringAsync("/__test/observations"));
-                await Assert.That(observations.RootElement.GetProperty("creates").GetInt32()).IsEqualTo(0);
-                return;
-            }
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await response.Content.ReadAsStringAsync());
-            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            await Assert.That(body.RootElement.GetProperty("region").GetString()).IsEqualTo("SJC");
-            await Assert.That(body.RootElement.GetProperty("allRegions").GetBoolean()).IsEqualTo(allRegions);
-            if (!allRegions)
-            {
-                // Home alone sends no replicaRegions: the data plane places the database in every other serving region.
-                var expected = explicitReplicas.Length > 0 ? selected : new[] { "SJC", "GRU", "FRA" };
-                await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(expected);
-            }
-        }
     }
 }

@@ -69,12 +69,8 @@ bytes actually streamed, under the existing five-second deadline. Authentication
 and discovery envelopes retain their shared 64 KiB limit. This permits full
 database-region series without treating normal dense responses as unavailable.
 
-Parallel-safe HTTP contract coverage lives in
-`tests/TerraScale.Dashboard.E2E/Features/Analytics/AnalyticsBackendContractTests.cs`.
-It checks all four ranges, database-ID/region filters, current session/project
-authority, fresh read tokens and exchange refusals that send no analytics
-request. Execution against the real SDK and I3/I5 composition is still required;
-the tests do not establish live producer qualification.
+Analytics has no dedicated dashboard test; tenant-scope refusal is covered by
+`ReportingJourneyTests` and `UsageBackendContractTests`.
 
 Historical: the Go application left its `core.MetricsReader` unset because the
 ts-go pin lacked these methods, and read region latency through ts-go

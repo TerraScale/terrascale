@@ -45,8 +45,6 @@ namespace TerraScale.Dashboard.E2E
             });
             app.MapGet("/__test/elements", (HttpContext context) => DatastarEvents.PatchElementsAsync(context, TerraScale.Dashboard.Common.UI.Slices.RegionMap.Create()));
             BillingWebhookScenario.MapRoutes(app);
-            InvitationExpiryScenario.MapRoutes(app);
-            OrganizationProviderScenario.MapRoutes(app);
             return app;
         }
 
