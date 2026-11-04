@@ -11,7 +11,8 @@ public sealed class HealthTests
     [Test]
     public async Task Healthz_reports_ok_and_the_running_version()
     {
-        await using var server = await TerraBaseTestServer.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
+        var server = api.Server;
 
         await AssertProbeAsync(server.Client, "/healthz", HttpStatusCode.OK, "ok");
     }
@@ -19,7 +20,8 @@ public sealed class HealthTests
     [Test]
     public async Task Admin_listener_binds_loopback_only()
     {
-        await using var server = await TerraBaseTestServer.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
+        var server = api.Server;
 
         await Assert.That(IPAddress.IsLoopback(IPAddress.Parse(server.BaseAddress.Host))).IsTrue();
     }
@@ -28,7 +30,8 @@ public sealed class HealthTests
     public async Task Probes_answer_on_the_client_listener_without_an_api_key()
     {
         using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
+        await using var api = await ManagementApi.StartSharedAsync();
+        var server = api.Server;
         using var client = tls.CreateClient(server.ClientAddress!);
 
         await AssertProbeAsync(client, "/healthz", HttpStatusCode.OK, "ok");
