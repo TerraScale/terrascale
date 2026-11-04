@@ -1,12 +1,13 @@
 # SQL input and shell
 
-`ts sql app - < query.sql` sends one document SELECT; `ts exec app - < script.sql`
-sends relational SQL in one backend request/transaction. Neither command splits SQL.
+`ts sql app - < script.sql` sends one SQL statement in one backend request and
+transaction. The command does not split SQL. `--json` returns columns, positional
+rows, affected count and last insert ID from the SDK, preserving duplicate column
+names and integers, as one JSON object.
 
-`ts shell app` starts a relational shell with multiline input and session-only history
+`ts shell app` starts a SQL shell with multiline input and session-only history
 of submitted statements (Up/Down). Enter `.run` on its own line to submit the entire
-buffer, `.reset` to discard it, `.mode document` for the limited read-only collection
-SELECT API, or `.mode relational` for SQL tables. `.help` shows help; `.quit` exits.
+buffer as one transaction, `.reset` to discard it. `.help` shows help; `.quit` exits.
 SQL strings, comments and trigger bodies retain their semicolons. Transactions cannot
 span submissions. No history file is written.
 
@@ -16,8 +17,3 @@ JSON emits typed result records as `{"type":"record","data":...}`, then
 SQL errors, read failures, interruption, output failures and an unsubmitted buffer
 at EOF/`.quit` produce nonzero exit; a failed session never emits `complete`.
 EOF is successful only after the pending buffer is submitted or explicitly reset.
-
-`ts export app` writes live `{collection,id,document}` NDJSON. Stored SQL and
-migration rows can appear with non-ULID keys; NDJSON import rejects those keys
-during preview, so a mixed-key export cannot be imported unchanged. Accepted
-records do not restore SQL table definitions, indexes or other metadata.

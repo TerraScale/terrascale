@@ -7,6 +7,4 @@ and exit 1 (or 2 for invalid arguments). A writer failure may prevent the termin
 record: missing complete always means incomplete output. Records already emitted
 remain partial results; consume with backpressure, never buffer the entire stream.
 
-For `db changes`, SIGINT emits an interrupted error and exits 1 in JSON mode;
-ordinary output retains its existing graceful SIGINT behavior. Completion certifies
-only stream termination. Document listings across pages are not snapshots.
+`shell --json` is the stream command. Completion certifies only stream termination.

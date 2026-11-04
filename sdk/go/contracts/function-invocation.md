@@ -5,7 +5,7 @@ Producer pin: `terrascale@9081109f54e7ac2b20e20505e49eefa08b93840c`,
 This is source provenance, not a deployed-SHA claim.
 
 `POST /v1/projects/{project}/databases/{database}/functions/{name}/invoke`
-requires a project token with `documents:read`. Input is at most 1 MiB;
+requires a project token with the read scope. Input is at most 1 MiB;
 parsed JSON becomes `event.body`, other UTF-8 input becomes text, and empty
 input becomes null. URL query values become `event.query`; repeated values
 are comma-joined by the producer. Function names remain validated path segments.
@@ -24,6 +24,6 @@ Send it once, including when a handler returns 401, 429 or 503. The fixed
 operation deadline includes token acquisition; caller cancellation remains earlier.
 Never infer non-execution or replay a mutation from an HTTP handler outcome.
 
-List, get, logs and deliveries require **both** `documents:read` and
-`documents:write`, as do deploy/delete. Invocation alone needs `documents:read`.
-Logs and deliveries are bounded retained arrays, not durable export/checkpoint APIs.
+List, get and logs require both the read and write scopes, as do deploy and
+delete. Invocation alone needs the read scope. Logs are a bounded retained array,
+not a durable export/checkpoint API.

@@ -13,6 +13,6 @@ if [[ ! -f "$scanner_dir/govulncheck" ]]; then
 fi
 echo "d36c5d591f43f085b4561a3a9db05894d343a86376f20fab7d8c4ffff38b7a01  $scanner_dir/govulncheck" | sha256sum --check
 chmod +x "$scanner_dir/govulncheck"
-# Scanner dependencies and its embedded compiler are checked against today's feed too.
+# Scanner dependencies and its embedded compiler are checked against today's advisories too.
 "$scanner_dir/govulncheck" -mode=binary -scan=module -show=verbose "$scanner_dir/govulncheck"
 echo "$scanner_dir" >> "$GITHUB_PATH"

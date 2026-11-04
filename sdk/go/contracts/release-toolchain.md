@@ -9,7 +9,7 @@ The existing test and release jobs cache only the pinned govulncheck v1.9.0
 executable, never advisory results. Its Go 1.27.3 trimpath build is checksum-verified
 on every use and self-scanned; only trusted-main CI saves the scanner cache.
 Every ready PR (including documentation-only changes) queries the current Go advisory
-feed. Automatic discovery covers every committed Go module. Source symbol analysis
+database. Automatic discovery covers every committed Go module. Source symbol analysis
 covers every package and includes tests. `go list -deps -test` independently
 discovers imported modules; one package per module becomes an explicit scan root
 so internal-test package deduplication cannot hide test-only dependencies.

@@ -98,8 +98,6 @@ func (f tsAuthEdgeTransport) RoundTrip(r *http.Request) (*http.Response, error) 
 
 // Section E: pagination edges.
 
-// Section F: webhook verifier edges.
-
 // Section G: configuration edges.
 
 // G56: a base URL with a query, fragment, or userinfo is a construction

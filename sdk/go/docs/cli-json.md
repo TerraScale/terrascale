@@ -6,8 +6,8 @@ after `--` are preserved.
 
 All original command forms support JSON, with objects for finite results, arrays
 for resource lists and NDJSON record/complete/error envelopes for unbounded streams.
-See the cli-json-auth, cli-json-streams, cli-json-metadata, cli-json-documents,
-cli-json-functions, cli-json-migrations and cli-json-diff documents for field shapes.
+See cli-json-auth, cli-json-streams, cli-json-metadata, cli-sql-shell,
+cli-json-functions, cli-json-migrations and cli-json-diff for field shapes.
 
 Finite success emits one JSON value followed by a newline: metadata objects, arrays
 for lists (including `[]`), `{name,deleted:true}` for database deletion, `{version}` for

@@ -14,7 +14,7 @@ Bearer is a terrascale sign-in user token; project/API-key/end-user tokens fail.
 JSON uses **snake_case** at runtime: id/email/created_at/disabled; page items/next.
 Every member is required; next alone is nullable. IDs are canonical uppercase ULIDs.
 q is an email substring; limit 1..100 defaults to 50; after is opaque, list-bound.
-Lists document 400 invalid_request; all operations document 401,403,404,503.
+Lists return 400 invalid_request; all operations return 401,403,404,503.
 Errors remain typed APIError with status/code/RetryAfter and sanitized diagnostics.
 Requests are sent once, redirects refused, cancellation honored, deadline 30s,
 responses bounded to 8 MiB. Caller HTTP clients remain owned by the caller.
@@ -27,7 +27,7 @@ producer schema drift TS1274); no schema parity or live qualification is claimed
 | POST /v1/{project}/users/{user}/enable | enable_project_user | admin | 200 ProjectUserBody |
 | DELETE /v1/{project}/users/{user} | delete_project_user | admin | 204 empty |
 
-These operations have no request body and document 401,403,404,503 JSON errors.
+These operations have no request body and return 401,403,404,503 JSON errors.
 Disable prevents sign-in and invalidates existing sessions/tokens immediately.
 Enable permits new sign-ins but does not restore ended sessions. Delete releases
 email and invalidates tokens/sessions. Never automatically replay any mutation;
