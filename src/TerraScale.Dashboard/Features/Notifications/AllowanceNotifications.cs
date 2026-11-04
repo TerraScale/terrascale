@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
@@ -125,11 +124,11 @@ namespace TerraScale.Dashboard.Features.Notifications
                 try
                 {
                     await state.PutAsync(Collection, item.OrganizationId, JsonSerializer.SerializeToElement(current),
-                        document is null ? TerraBasePrecondition.Absent : TerraBasePrecondition.Matches(document.Version), cancellationToken);
+                        document is null ? StatePrecondition.Absent : StatePrecondition.Matches(document.Version), cancellationToken);
                     saved = current;
                     break;
                 }
-                catch (TerraBasePreconditionFailedException) when (attempt < 7) { }
+                catch (StateConflictException) when (attempt < 7) { }
             }
             if (saved is null)
             {
@@ -157,13 +156,13 @@ namespace TerraScale.Dashboard.Features.Notifications
                     }
 
                     current.Alerts[index] = current.Alerts[index] with { EmailStatus = outcome };
-                    try { await state.PutAsync(Collection, item.OrganizationId, JsonSerializer.SerializeToElement(current), TerraBasePrecondition.Matches(document.Version), cancellationToken); break; }
-                    catch (TerraBasePreconditionFailedException) when (attempt < 7) { }
+                    try { await state.PutAsync(Collection, item.OrganizationId, JsonSerializer.SerializeToElement(current), StatePrecondition.Matches(document.Version), cancellationToken); break; }
+                    catch (StateConflictException) when (attempt < 7) { }
                 }
             }
         }
 
-        public static AllowanceNotificationState Read(TerraBaseDocument document, string organizationId)
+        public static AllowanceNotificationState Read(StateRecord document, string organizationId)
         {
             var saved = AccountService.Read<AllowanceNotificationState>(document);
             if (document.Id != organizationId || saved.OrganizationId != organizationId || saved.Alerts is null || saved.Alerts.Count > 4 ||
@@ -210,11 +209,11 @@ namespace TerraScale.Dashboard.Features.Notifications
                 account.Notifications.AddRange(missing.Select(alert => alert.Notification()));
                 try
                 {
-                    await state.PutAsync(AccountService.AccountsCollection, key, JsonSerializer.SerializeToElement(account), TerraBasePrecondition.Matches(document.Version), cancellationToken);
+                    await state.PutAsync(AccountService.AccountsCollection, key, JsonSerializer.SerializeToElement(account), StatePrecondition.Matches(document.Version), cancellationToken);
                     context.Account.Notifications = account.Notifications;
                     return;
                 }
-                catch (TerraBasePreconditionFailedException) when (attempt < 7) { }
+                catch (StateConflictException) when (attempt < 7) { }
             }
         }
     }

@@ -5,9 +5,8 @@ using System.Globalization;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Home;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 using TerraScale.Dashboard.Platform.TsAuth;
+using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.E2E
 {
@@ -71,9 +70,9 @@ namespace TerraScale.Dashboard.E2E
                 PaymentValidated = true,
                 ReturnPath = "/organization?tab=billing",
                 StartedAt = At(2026, 1, 12, 9, 24)
-            }), TerraBasePrecondition.Absent, default);
+            }), StatePrecondition.Absent, default);
             await state.PutAsync(StripeBilling.CustomersCollection, ReferenceStripeTransport.CustomerId,
-                JsonSerializer.SerializeToElement(new CustomerBinding(LabsId)), TerraBasePrecondition.Absent, default);
+                JsonSerializer.SerializeToElement(new CustomerBinding(LabsId)), StatePrecondition.Absent, default);
 
             foreach (var project in labs.Projects.Values)
             {
@@ -104,7 +103,7 @@ namespace TerraScale.Dashboard.E2E
                 new("39ZEVV1QSZ378459T0K4B2R2WJ", "orders-over-500", "SELECT * FROM orders WHERE total > 500", "", At(2026, 9, 16, 10, 20)),
                 new("01RDCAGXABDJ1KBJ6RGJZM0FE3", "sessions-active-7d", "SELECT id, startedAt FROM sessions WHERE startedAt > now() - 7d", "", At(2026, 9, 14, 16, 44))
             ]);
-            await state.PutAsync("dashboard_saved_queries", Hash(LabsId + "/" + CoreId), JsonSerializer.SerializeToElement(saved), TerraBasePrecondition.Absent, default);
+            await state.PutAsync("dashboard_saved_queries", Hash(LabsId + "/" + CoreId), JsonSerializer.SerializeToElement(saved), StatePrecondition.Absent, default);
             return personas;
         }
 
@@ -392,8 +391,8 @@ namespace TerraScale.Dashboard.E2E
                 ActiveProjectId = activeProject,
                 Notifications = notifications ?? []
             };
-            await state.PutAsync(AccountService.IdentitiesCollection, storageKey, JsonSerializer.SerializeToElement(new AccountIdentityBinding(principal.Subject, account.Id)), TerraBasePrecondition.Absent, default);
-            await state.PutAsync(AccountService.AccountsCollection, storageKey, JsonSerializer.SerializeToElement(account), TerraBasePrecondition.Absent, default);
+            await state.PutAsync(AccountService.IdentitiesCollection, storageKey, JsonSerializer.SerializeToElement(new AccountIdentityBinding(principal.Subject, account.Id)), StatePrecondition.Absent, default);
+            await state.PutAsync(AccountService.AccountsCollection, storageKey, JsonSerializer.SerializeToElement(account), StatePrecondition.Absent, default);
         }
 
         private static async Task PersistOrganizationAsync(TestState state, TestWorkspace workspace, OrganizationRecord organization)
@@ -408,7 +407,7 @@ namespace TerraScale.Dashboard.E2E
                 workspace.Organizations[organization.Id] = TestWorkspace.Clone(organization);
                 workspace.SeedInvitationMetadata(organization);
             }
-            await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization), TerraBasePrecondition.Absent, default);
+            await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization), StatePrecondition.Absent, default);
         }
 
         private static OrganizationRecord Personal(ReferencePrincipal principal, JsonElement detail)

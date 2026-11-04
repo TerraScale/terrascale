@@ -1,7 +1,5 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Platform.Mcp
 {
@@ -55,12 +53,12 @@ namespace TerraScale.Dashboard.Platform.Mcp
                     return null;
                 }
 
-                if (document.Id != clientId || document.State != "value" || string.IsNullOrWhiteSpace(document.Version))
+                if (document.Id != clientId || string.IsNullOrWhiteSpace(document.Version))
                 {
                     throw new IOException("MCP registration state identity is invalid.");
                 }
 
-                var current = document.Document.Deserialize<McpRegistration>() ?? throw new JsonException("Invalid MCP registration.");
+                var current = document.Body.Deserialize<McpRegistration>() ?? throw new JsonException("Invalid MCP registration.");
                 Validate(current, clientId);
                 if (current.ClosedAt is not null)
                 {
@@ -95,32 +93,25 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 try
                 {
                     await state.PutAsync(McpOAuth.ClientCollection, clientId, JsonSerializer.SerializeToElement(next),
-                        TerraBasePrecondition.Matches(document.Version), cancellationToken);
+                        StatePrecondition.Matches(document.Version), cancellationToken);
                     return expired ? null : next;
                 }
-                catch (TerraBasePreconditionFailedException) { }
+                catch (StateConflictException) { }
             }
             throw new IOException("MCP registration changed concurrently.");
         }
 
-        // Listings carry provider IDs, not natural client IDs. Only a fresh, validated
-        // natural-key read authorizes deletion; a concurrent sign-in wins through CAS.
         internal static async Task ReclaimUnfinishedAsync(IDashboardState state, TimeProvider time,
-            TerraBaseDocument listed, CancellationToken cancellationToken)
+            StateRecord listed, CancellationToken cancellationToken)
         {
-            if (listed.State != "value")
-            {
-                return;
-            }
-
-            var candidate = listed.Document.Deserialize<McpRegistration>() ?? throw new JsonException("Invalid MCP registration.");
+            var candidate = listed.Body.Deserialize<McpRegistration>() ?? throw new JsonException("Invalid MCP registration.");
             if (!Canonical(candidate.ClientId))
             {
                 return; // Legacy clients are outside this policy.
             }
 
             Validate(candidate, candidate.ClientId);
-            if (listed.Id != TerraBaseDashboardState.DocumentId(McpOAuth.ClientCollection, candidate.ClientId))
+            if (listed.Id != candidate.ClientId)
             {
                 throw new IOException("MCP registration listing identity is invalid.");
             }
@@ -131,12 +122,12 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 return;
             }
 
-            if (fresh.Id != candidate.ClientId || fresh.State != "value" || string.IsNullOrWhiteSpace(fresh.Version))
+            if (fresh.Id != candidate.ClientId || string.IsNullOrWhiteSpace(fresh.Version))
             {
                 throw new IOException("MCP registration state identity is invalid.");
             }
 
-            var current = fresh.Document.Deserialize<McpRegistration>() ?? throw new JsonException("Invalid MCP registration.");
+            var current = fresh.Body.Deserialize<McpRegistration>() ?? throw new JsonException("Invalid MCP registration.");
             Validate(current, candidate.ClientId);
             var now = time.GetUtcNow();
             if (current.CreatedAt > now || current.LastActivityAt > now)
@@ -150,7 +141,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             }
 
             try { await state.DeleteAsync(McpOAuth.ClientCollection, current.ClientId, fresh.Version, cancellationToken); }
-            catch (TerraBasePreconditionFailedException) { } // A newer lifecycle transition must survive.
+            catch (StateConflictException) { } // A newer lifecycle transition must survive.
         }
 
         private static bool Canonical(string? clientId)

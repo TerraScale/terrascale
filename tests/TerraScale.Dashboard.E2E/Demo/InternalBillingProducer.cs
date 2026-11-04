@@ -5,8 +5,6 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.E2E
 {
@@ -49,7 +47,7 @@ namespace TerraScale.Dashboard.E2E
             return state.CheckReadyAsync(cancellationToken);
         }
 
-        public async Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken)
+        public async Task<StateRecord?> GetAsync(string collection, string id, CancellationToken cancellationToken)
         {
             var document = await state.GetAsync(collection, id, cancellationToken);
             if (document is not null && collection == AccountService.OrganizationsCollection && id == misboundOrganization)
@@ -59,24 +57,14 @@ namespace TerraScale.Dashboard.E2E
             }
             return document;
         }
-        Task<TerraBaseDocumentPage> IDashboardState.ReadPageAsync(string collection, JsonElement? filter, int limit, string? cursor, CancellationToken ct)
-        {
-            return ((IDashboardState)state).ReadPageAsync(collection, filter, limit, cursor, ct);
-        }
-
-        Task<TerraBaseTransactionResult> IDashboardState.TransactAsync(IReadOnlyList<DashboardStateOperation> operations, CancellationToken ct)
-        {
-            return ((IDashboardState)state).TransactAsync(operations, ct);
-        }
-
-        public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken cancellationToken)
+        public Task<IReadOnlyList<StateRecord>> ListAsync(string collection, CancellationToken cancellationToken)
         {
             return state.ListAsync(collection, cancellationToken);
         }
 
-        public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken cancellationToken)
+        public Task<StatePage> PageAsync(string collection, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken cancellationToken)
         {
-            return state.QueryPageAsync(collection, query, cancellationToken);
+            return state.PageAsync(collection, scope, fields, limit, cursor, cancellationToken);
         }
 
         public Task DeleteAsync(string collection, string id, string version, CancellationToken cancellationToken)
@@ -84,7 +72,7 @@ namespace TerraScale.Dashboard.E2E
             return state.DeleteAsync(collection, id, version, cancellationToken);
         }
 
-        public async Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken cancellationToken)
+        public async Task PutAsync(string collection, string id, JsonElement document, StatePrecondition precondition, CancellationToken cancellationToken)
         {
             var kind = document.TryGetProperty("Kind", out var discriminator) ? discriminator.GetString() ?? "" : "";
             await PauseAsync(false);
@@ -241,7 +229,7 @@ namespace TerraScale.Dashboard.E2E
             var project = organization.Projects[account.ActiveProjectId];
             var database = new DatabaseRecord { Id = new TerraScaleIdGenerator().NewId(), ProjectId = project.Id, Name = name, Region = "GRU", Regions = ["GRU", "FRA", "SJC"], CreatedAt = now() };
             project.Databases[database.Id] = database;
-            await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization), TerraBasePrecondition.Matches(organizationDocument.Version), cancellationToken);
+            await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization), StatePrecondition.Matches(organizationDocument.Version), cancellationToken);
             return Results.NoContent();
         }
 
@@ -288,13 +276,13 @@ namespace TerraScale.Dashboard.E2E
                     workspace.Organizations[organization.Id] = TestWorkspace.Clone(organization);
                 }
 
-                await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization), TerraBasePrecondition.Absent, cancellationToken);
+                await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization), StatePrecondition.Absent, cancellationToken);
                 seedOrganization?.Invoke(organization);
                 account.OrganizationIds.Add(organization.Id);
                 if (index == 0) { account.ActiveOrganizationId = organization.Id; account.ActiveProjectId = organization.Projects.Keys.First(); }
                 targets.Add(new { organizationId = organization.Id, projects = organization.Projects.Values.Select(project => new { project.Id, project.Name }).ToArray() });
             }
-            await state.PutAsync(AccountService.AccountsCollection, key, JsonSerializer.SerializeToElement(account), TerraBasePrecondition.Matches(accountDocument.Version), cancellationToken);
+            await state.PutAsync(AccountService.AccountsCollection, key, JsonSerializer.SerializeToElement(account), StatePrecondition.Matches(accountDocument.Version), cancellationToken);
             return Results.Json(new { targets });
         }
 
@@ -328,7 +316,7 @@ namespace TerraScale.Dashboard.E2E
                 return Error(HttpStatusCode.Forbidden, "forbidden", "Not a member of the organization.");
             }
 
-            var settings = state.Items.GetValueOrDefault(AccountService.OrganizationsCollection + "/" + organizationId)?.Document.Deserialize<OrganizationRecord>();
+            var settings = state.Items.GetValueOrDefault(AccountService.OrganizationsCollection + "/" + organizationId)?.Body.Deserialize<OrganizationRecord>();
             var databases = settings?.Projects.GetValueOrDefault(projectId)?.Databases.Values.Where(database => database.ProjectId == projectId).OrderBy(database => database.CreatedAt).ToArray() ?? [];
             if (!Window(http.Request.Query, now(), out var granularity, out var from, out var to))
             {
@@ -465,11 +453,11 @@ namespace TerraScale.Dashboard.E2E
                 injectedFailures,
                 writes = writes.ToArray(),
                 organizations = state.Items.Where(pair => pair.Key.StartsWith(AccountService.OrganizationsCollection + "/", StringComparison.Ordinal))
-                .Select(pair => new { id = pair.Value.Id, document = pair.Value.Document }).ToArray(),
-                bindings = state.Items.Where(pair => pair.Key.StartsWith("dashboard_billing/", StringComparison.Ordinal)).Select(pair => pair.Value.Document).ToArray(),
-                singleton = state.Items.GetValueOrDefault("dashboard_internal_billing/organization")?.Document,
+                .Select(pair => new { id = pair.Value.Id, document = pair.Value.Body }).ToArray(),
+                bindings = state.Items.Where(pair => pair.Key.StartsWith("dashboard_billing/", StringComparison.Ordinal)).Select(pair => pair.Value.Body).ToArray(),
+                singleton = state.Items.GetValueOrDefault("dashboard_internal_billing/organization")?.Body,
                 notifications = state.Items.Where(pair => pair.Key.StartsWith(AccountService.AccountsCollection + "/", StringComparison.Ordinal))
-                .SelectMany(pair => pair.Value.Document.GetProperty("Notifications").EnumerateArray()).ToArray()
+                .SelectMany(pair => pair.Value.Body.GetProperty("Notifications").EnumerateArray()).ToArray()
             };
         }
     }

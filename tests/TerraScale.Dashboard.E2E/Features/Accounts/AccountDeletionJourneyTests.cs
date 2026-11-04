@@ -73,7 +73,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
                 await Assert.That(consent).DoesNotContain("Delete your databases first");
             }
             var personalProjection = await scenario.Environment.State.GetAsync(AccountService.OrganizationsCollection, personal, default);
-            await Assert.That(personalProjection!.Document.Deserialize<OrganizationRecord>()!.Projects.Values.Any(project => project.Databases.ContainsKey(databaseId))).IsTrue();
+            await Assert.That(personalProjection!.Body.Deserialize<OrganizationRecord>()!.Projects.Values.Any(project => project.Databases.ContainsKey(databaseId))).IsTrue();
             await Assert.That(await scenario.ExistsAsync(AccountService.OrganizationsCollection, shared)).IsTrue();
 
             using (var deleted = await scenario.DeleteAsync("  USER@example.com "))

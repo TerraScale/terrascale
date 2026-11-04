@@ -28,8 +28,6 @@ using TerraScale.Dashboard.Platform.Rpc;
 using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.Dashboard.Platform.Contracts;
 using TerraScale.Dashboard.Common.UI;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard
 {

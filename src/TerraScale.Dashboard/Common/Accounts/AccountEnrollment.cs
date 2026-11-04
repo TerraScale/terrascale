@@ -1,8 +1,6 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Common.Accounts
 {
@@ -19,7 +17,7 @@ namespace TerraScale.Dashboard.Common.Accounts
             var reference = new Reference(userId, collection, recordId);
             Validate(reference);
             await ThrowIfErasedAsync(state, userId, ct);
-            await state.PutAsync(Collection, AccountService.NewId(), JsonSerializer.SerializeToElement(reference), TerraBasePrecondition.Absent, ct);
+            await state.PutAsync(Collection, AccountService.NewId(), JsonSerializer.SerializeToElement(reference), StatePrecondition.Absent, ct);
             await ThrowIfErasedAsync(state, userId, ct);
         }
 
@@ -33,7 +31,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 return;
             }
 
-            if (document.Id != key || document.State != "value")
+            if (document.Id != key)
             {
                 throw new IOException("Account identity is invalid.");
             }

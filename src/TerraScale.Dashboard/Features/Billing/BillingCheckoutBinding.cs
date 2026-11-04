@@ -1,6 +1,5 @@
+using TerraScale.Dashboard.Platform.Persistence;
 using System.Text.Json;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 
 namespace TerraScale.Dashboard.Features.Billing
@@ -27,9 +26,9 @@ namespace TerraScale.Dashboard.Features.Billing
             try
             {
                 await state.PutAsync(CheckoutsCollection, binding.CheckoutId, JsonSerializer.SerializeToElement(value),
-                    TerraBasePrecondition.Absent, cancellationToken);
+                    StatePrecondition.Absent, cancellationToken);
             }
-            catch (TerraBasePreconditionFailedException)
+            catch (StateConflictException)
             {
                 var document = await state.GetAsync(CheckoutsCollection, binding.CheckoutId, cancellationToken);
                 if (document is null || document.Id != binding.CheckoutId || AccountService.Read<CheckoutBinding>(document) != value)

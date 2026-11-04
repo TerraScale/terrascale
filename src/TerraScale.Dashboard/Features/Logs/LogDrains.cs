@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Logs
 {
@@ -241,7 +240,7 @@ namespace TerraScale.Dashboard.Features.Logs
             return (organization, project);
         }
 
-        public static LogDrain Read(TerraBaseDocument document, string projectId)
+        public static LogDrain Read(StateRecord document, string projectId)
         {
             var saved = AccountService.Read<LogDrain>(document);
             if (document.Id != projectId || saved.ProjectId != projectId || saved.Cursors is null || !Uri.TryCreate(saved.Url, UriKind.Absolute, out _))

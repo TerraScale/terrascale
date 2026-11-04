@@ -67,7 +67,7 @@ namespace TerraScale.Dashboard.E2E.Demo
         public async Task InitializeAsync()
         {
             var personal = workspace.SeedPersonal(new("test-user", "Test User", "user@example.com", "", null, clock.GetUtcNow().AddHours(1)));
-            await state.PutAsync(AccountService.OrganizationsCollection, personal.Id, JsonSerializer.SerializeToElement(personal), TerraBasePrecondition.Absent, default);
+            await state.PutAsync(AccountService.OrganizationsCollection, personal.Id, JsonSerializer.SerializeToElement(personal), StatePrecondition.Absent, default);
             var account = new AccountRecord
             {
                 Id = AccountService.AccountId("test-user"),
@@ -82,7 +82,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                 ActiveProjectId = personal.Projects.Keys.First(),
                 CreatedAt = clock.GetUtcNow()
             };
-            await state.PutAsync(AccountService.AccountsCollection, account.Id, JsonSerializer.SerializeToElement(account), TerraBasePrecondition.Absent, default);
+            await state.PutAsync(AccountService.AccountsCollection, account.Id, JsonSerializer.SerializeToElement(account), StatePrecondition.Absent, default);
         }
 
         // contentRoot holds web/static: the project directory, or the published application directory.
@@ -407,10 +407,11 @@ namespace TerraScale.Dashboard.E2E.Demo
         IReadOnlyList<string> RequestedScopes, IReadOnlyList<string> GrantedScopes, HttpStatusCode Status);
     sealed class TestState : IDashboardState
     {
-        public ConcurrentDictionary<string, TerraBaseDocument> Items { get; } = new();
+        public ConcurrentDictionary<string, StateRecord> Items { get; } = new();
         public Exception? ReadyError { get; set; }
         public Func<string, string, Task>? BeforeWriteAsync { get; set; }
         public Func<string, string, Exception?>? WriteFailure { get; set; }
+        public Func<string, Exception?>? ReadFailure { get; set; }
         public Task InitializeAsync(CancellationToken cancellationToken)
         {
             return Task.CompletedTask;
@@ -421,74 +422,65 @@ namespace TerraScale.Dashboard.E2E.Demo
             return ReadyError is null ? Task.CompletedTask : Task.FromException(ReadyError);
         }
 
-        public Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken)
+        public Task<StateRecord?> GetAsync(string table, string id, CancellationToken cancellationToken)
         {
-            return Task.FromResult(Items.GetValueOrDefault(collection + "/" + id));
+            return ReadFailure?.Invoke(table) is { } failure ? Task.FromException<StateRecord?>(failure) : Task.FromResult(Items.GetValueOrDefault(table + "/" + id));
         }
 
-        Task<TerraBaseDocumentPage> IDashboardState.ReadPageAsync(string collection, JsonElement? filter, int limit, string? cursor, CancellationToken ct)
+        public Task<IReadOnlyList<StateRecord>> ListAsync(string table, CancellationToken cancellationToken)
         {
-            throw new NotSupportedException("Use StateSdkScenario for paged persistence journeys.");
+            return Task.FromResult<IReadOnlyList<StateRecord>>(Rows(table).ToArray());
         }
 
-        Task<TerraBaseTransactionResult> IDashboardState.TransactAsync(IReadOnlyList<DashboardStateOperation> operations, CancellationToken ct)
+        public Task<StatePage> PageAsync(string table, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor,
+            CancellationToken cancellationToken)
         {
-            throw new NotSupportedException("Use StateSdkScenario for atomic persistence journeys.");
+            return Task.FromResult(TestStateQuery.Page(Rows(table), scope, fields, limit, cursor));
         }
 
-        public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken cancellationToken)
-        {
-            return Task.FromResult<IReadOnlyList<TerraBaseDocument>>(Items.Where(item => item.Key.StartsWith(collection + "/", StringComparison.Ordinal)).Select(item => item.Value).ToArray());
-        }
-
-        public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken cancellationToken)
-        {
-            return Task.FromResult(TestStateQuery.Page(Items.Where(item => item.Key.StartsWith(collection + "/", StringComparison.Ordinal)).Select(item => item.Value), query));
-        }
-
-        public async Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken cancellationToken)
+        public async Task PutAsync(string table, string id, JsonElement body, StatePrecondition precondition, CancellationToken cancellationToken)
         {
             if (BeforeWriteAsync is { } before)
             {
-                await before(collection, id);
+                await before(table, id);
             }
 
-            if (WriteFailure?.Invoke(collection, id) is { } error)
+            if (WriteFailure?.Invoke(table, id) is { } error)
             {
                 throw error;
             }
 
             lock (Items)
             {
-                var key = collection + "/" + id;
+                var key = table + "/" + id;
                 var existing = Items.GetValueOrDefault(key);
-                var match = precondition.IfMatch;
-                if (precondition.IfNoneMatch && existing is not null ||
-                    match is not null && (existing is null || match != "*" && match != existing.Version))
+                if (precondition.Version is null ? existing is not null : existing?.Version != precondition.Version)
                 {
-                    throw PreconditionFailed();
+                    throw new StateConflictException();
                 }
 
-                Items[key] = new(id, "tbv1-" + Guid.NewGuid().ToString("N"), "value", document.Clone());
+                Items[key] = new(id, Guid.NewGuid().ToString("N"), body.Clone());
             }
         }
-        public Task DeleteAsync(string collection, string id, string version, CancellationToken cancellationToken)
+
+        public Task DeleteAsync(string table, string id, string version, CancellationToken cancellationToken)
         {
-            var key = collection + "/" + id;
+            var key = table + "/" + id;
             lock (Items)
             {
                 if (Items.GetValueOrDefault(key)?.Version != version)
                 {
-                    throw PreconditionFailed();
+                    throw new StateConflictException();
                 }
 
                 Items.TryRemove(key, out _);
             }
             return Task.CompletedTask;
         }
-        private static Exception PreconditionFailed()
+
+        private IEnumerable<StateRecord> Rows(string table)
         {
-            return new TerraBasePreconditionFailedException(new TerraBaseFault(412, "precondition_failed", "Test version precondition failed"));
+            return Items.Where(item => item.Key.StartsWith(table + "/", StringComparison.Ordinal)).Select(item => item.Value);
         }
     }
 

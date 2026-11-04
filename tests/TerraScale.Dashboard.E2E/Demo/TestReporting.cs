@@ -134,7 +134,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                     return Json(new { error = "not_found" }, HttpStatusCode.NotFound);
                 }
                 // Auth owns identity and membership; dashboard storage owns the database references used by reporting fixtures.
-                var settings = state.Items.GetValueOrDefault(AccountService.OrganizationsCollection + "/" + org.Id)?.Document.Deserialize<OrganizationRecord>();
+                var settings = state.Items.GetValueOrDefault(AccountService.OrganizationsCollection + "/" + org.Id)?.Body.Deserialize<OrganizationRecord>();
                 if (settings?.Projects.TryGetValue(id, out var storedProject) == true)
                 {
                     project.Databases = storedProject.Databases;

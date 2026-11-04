@@ -3,7 +3,6 @@ using Stripe;
 using TerraScale.Dashboard.Features.Billing.Internal;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 using TerraScale.Dashboard.Common.Validation;
 
@@ -108,9 +107,9 @@ namespace TerraScale.Dashboard.Features.Billing
             // checkout. Its create-only ownership binding must never be reassigned.
             try
             {
-                await state.PutAsync(CustomersCollection, binding.CustomerId, JsonSerializer.SerializeToElement(new CustomerBinding(org.Id)), TerraBasePrecondition.Absent, cancellationToken);
+                await state.PutAsync(CustomersCollection, binding.CustomerId, JsonSerializer.SerializeToElement(new CustomerBinding(org.Id)), StatePrecondition.Absent, cancellationToken);
             }
-            catch (TerraBasePreconditionFailedException)
+            catch (StateConflictException)
             {
                 var index = await state.GetAsync(CustomersCollection, binding.CustomerId, cancellationToken);
                 if (index is null || AccountService.Read<CustomerBinding>(index).OrganizationId != org.Id)
@@ -559,8 +558,8 @@ namespace TerraScale.Dashboard.Features.Billing
 
                 try
                 {
-                    await state.PutAsync(Collection, orgId, JsonSerializer.SerializeToElement(binding), TerraBasePrecondition.Matches(billingDocument.Version), cancellationToken);
-                    await state.PutAsync(AccountService.OrganizationsCollection, orgId, JsonSerializer.SerializeToElement(org), TerraBasePrecondition.Matches(organizationDocument.Version), cancellationToken);
+                    await state.PutAsync(Collection, orgId, JsonSerializer.SerializeToElement(binding), StatePrecondition.Matches(billingDocument.Version), cancellationToken);
+                    await state.PutAsync(AccountService.OrganizationsCollection, orgId, JsonSerializer.SerializeToElement(org), StatePrecondition.Matches(organizationDocument.Version), cancellationToken);
                     // The two records have separate CAS versions. If another
                     // reconciliation advanced billing while we projected it,
                     // reconcile again before reporting success.
@@ -573,7 +572,7 @@ namespace TerraScale.Dashboard.Features.Billing
                     }
                 }
                 // Another writer (an account view, audit or plan publication) moved a record: re-read after a jittered pause.
-                catch (TerraBasePreconditionFailedException) when (attempt < 3)
+                catch (StateConflictException) when (attempt < 3)
                 { await Task.Delay(TimeSpan.FromMilliseconds(Random.Shared.Next(50, 150) << attempt), time, cancellationToken); }
             }
             throw new IOException("Billing changed concurrently. Retry reconciliation.");
@@ -591,8 +590,8 @@ namespace TerraScale.Dashboard.Features.Billing
                 RequestId = Guid.CreateVersion7().ToString(),
                 StartedAt = time.GetUtcNow()
             };
-            try { await state.PutAsync(Collection, orgId, JsonSerializer.SerializeToElement(initial), TerraBasePrecondition.Absent, cancellationToken); return initial; }
-            catch (TerraBasePreconditionFailedException) { }
+            try { await state.PutAsync(Collection, orgId, JsonSerializer.SerializeToElement(initial), StatePrecondition.Absent, cancellationToken); return initial; }
+            catch (StateConflictException) { }
             var existing = await ReadAsync(orgId, cancellationToken) ?? throw new IOException("Billing reservation did not persist.");
             RequireStripe(existing);
             if (existing.State == "deleting")
@@ -645,7 +644,7 @@ namespace TerraScale.Dashboard.Features.Billing
             return ReadBinding(document, orgId);
         }
 
-        internal static BillingBinding ReadBinding(TerraBaseDocument document, string orgId)
+        internal static BillingBinding ReadBinding(StateRecord document, string orgId)
         {
             var value = AccountService.Read<BillingBinding>(document);
             if (document.Id != orgId || value.OrganizationId != orgId || value.Revision < 0 || string.IsNullOrEmpty(value.RequestId) ||
@@ -696,8 +695,8 @@ namespace TerraScale.Dashboard.Features.Billing
                 }
 
                 update(binding);
-                try { await state.PutAsync(Collection, orgId, JsonSerializer.SerializeToElement(binding), TerraBasePrecondition.Matches(document.Version), cancellationToken); return binding; }
-                catch (TerraBasePreconditionFailedException) when (attempt < 3) { }
+                try { await state.PutAsync(Collection, orgId, JsonSerializer.SerializeToElement(binding), StatePrecondition.Matches(document.Version), cancellationToken); return binding; }
+                catch (StateConflictException) when (attempt < 3) { }
             }
             throw new IOException("Billing changed concurrently.");
         }

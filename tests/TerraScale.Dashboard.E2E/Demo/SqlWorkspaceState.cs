@@ -8,8 +8,6 @@ using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.E2E
 {
@@ -67,7 +65,7 @@ namespace TerraScale.Dashboard.E2E
             {
                 var context = (await AccountRequest.RequireAsync(http, sessions, accounts))!;
                 var scope = DatabaseService.Scope(context);
-                var before = (await wire!.GetAsync(AccountService.OrganizationsCollection, scope.OrganizationId, default))!.Document.GetRawText();
+                var before = (await wire!.GetAsync(AccountService.OrganizationsCollection, scope.OrganizationId, default))!.Body.GetRawText();
                 for (var index = 0; index < 4100; index++)
                 {
                     var marker = new DatabaseWorkspaceDeletion(scope.OrganizationId, scope.ProjectId, AccountService.NewId());
@@ -75,12 +73,12 @@ namespace TerraScale.Dashboard.E2E
                     await DatabaseWorkspaceCleanup.RememberAsync(wire, marker, default);
                 }
                 var markers = await wire.ListAsync(DatabaseWorkspaceCleanup.Collection, default);
-                var after = (await wire.GetAsync(AccountService.OrganizationsCollection, scope.OrganizationId, default))!.Document.GetRawText();
+                var after = (await wire.GetAsync(AccountService.OrganizationsCollection, scope.OrganizationId, default))!.Body.GetRawText();
                 return Results.Json(new
                 {
                     count = markers.Count,
                     unchanged = before == after,
-                    bounded = markers.All(row => row.Document.EnumerateObject().Count() == 3 && System.Text.Encoding.UTF8.GetByteCount(row.Document.GetRawText()) < 160),
+                    bounded = markers.All(row => row.Body.EnumerateObject().Count() == 3 && System.Text.Encoding.UTF8.GetByteCount(row.Body.GetRawText()) < 160),
                     scoped = markers.All(row => DatabaseWorkspaceCleanup.Read(row) is var value && value.OrganizationId == scope.OrganizationId && value.ProjectId == scope.ProjectId)
                 });
             });
@@ -127,17 +125,7 @@ namespace TerraScale.Dashboard.E2E
                 return inner.CheckReadyAsync(ct);
             }
 
-            Task<TerraBaseDocumentPage> IDashboardState.ReadPageAsync(string collection, JsonElement? filter, int limit, string? cursor, CancellationToken ct)
-            {
-                return inner.ReadPageAsync(collection, filter, limit, cursor, ct);
-            }
-
-            Task<TerraBaseTransactionResult> IDashboardState.TransactAsync(IReadOnlyList<DashboardStateOperation> operations, CancellationToken ct)
-            {
-                return inner.TransactAsync(operations, ct);
-            }
-
-            public async Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken ct)
+            public async Task<StateRecord?> GetAsync(string collection, string id, CancellationToken ct)
             {
                 if (collection == AccountService.OrganizationsCollection && id == control.importOrganization && !control.pauseImportCommit &&
                     Interlocked.CompareExchange(ref control.importPause, 0, 2) == 2)
@@ -155,14 +143,14 @@ namespace TerraScale.Dashboard.E2E
 
                 return document;
             }
-            public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken ct)
+            public Task<IReadOnlyList<StateRecord>> ListAsync(string collection, CancellationToken ct)
             {
                 return inner.ListAsync(collection, ct);
             }
 
-            public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken ct)
+            public Task<StatePage> PageAsync(string collection, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken ct)
             {
-                return inner.QueryPageAsync(collection, query, ct);
+                return inner.PageAsync(collection, scope, fields, limit, cursor, ct);
             }
 
             public Task DeleteAsync(string collection, string id, string version, CancellationToken ct)
@@ -170,12 +158,7 @@ namespace TerraScale.Dashboard.E2E
                 return inner.DeleteAsync(collection, id, version, ct);
             }
 
-            public Task DeleteListedAsync(string collection, TerraBaseDocument document, CancellationToken ct)
-            {
-                if (collection == SqlWorkspace.Collection && control.FailDeletes) { control.DeleteFailures++; throw new IOException("Synthetic workspace cleanup failure."); }
-                return inner.DeleteListedAsync(collection, document, ct);
-            }
-            public async Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition condition, CancellationToken ct)
+            public async Task PutAsync(string collection, string id, JsonElement document, StatePrecondition condition, CancellationToken ct)
             {
                 if (collection == DatabaseWorkspaceCleanup.Collection && control.FailNextMarkerWrite)
                 {
@@ -213,7 +196,7 @@ namespace TerraScale.Dashboard.E2E
                     await control.ResumeImport.Task.WaitAsync(ct);
                 }
                 try { await inner.PutAsync(collection, id, document, condition, ct); }
-                catch (TerraBasePreconditionFailedException) when (pausedImport) { control.ImportCasConflicts++; throw; }
+                catch (StateConflictException) when (pausedImport) { control.ImportCasConflicts++; throw; }
             }
         }
     }

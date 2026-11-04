@@ -6,7 +6,6 @@ using TerraScale.Dashboard.Features.Billing.Internal;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Common.Formatting;
 using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
@@ -74,11 +73,11 @@ namespace TerraScale.Dashboard.Features.Billing
                 try
                 {
                     await state.PutAsync(AccountService.OrganizationsCollection, config.OrganizationId,
-                        JsonSerializer.SerializeToElement(target.Organization), TerraBasePrecondition.Matches(target.Document.Version), cancellationToken);
+                        JsonSerializer.SerializeToElement(target.Organization), StatePrecondition.Matches(target.Record.Version), cancellationToken);
                     await ActivateAsync(reservation, cancellationToken);
                     return;
                 }
-                catch (TerraBasePreconditionFailedException) when (attempt < 7) { }
+                catch (StateConflictException) when (attempt < 7) { }
             }
             throw new IOException("Internal billing changed concurrently. Retry configuration.");
         }
@@ -269,10 +268,10 @@ namespace TerraScale.Dashboard.Features.Billing
                 try
                 {
                     await state.PutAsync(StripeBilling.Collection, organization.Id, JsonSerializer.SerializeToElement(next),
-                        document is null ? TerraBasePrecondition.Absent : TerraBasePrecondition.Matches(document.Version), cancellationToken);
+                        document is null ? StatePrecondition.Absent : StatePrecondition.Matches(document.Version), cancellationToken);
                     return next;
                 }
-                catch (TerraBasePreconditionFailedException) when (attempt < 7) { }
+                catch (StateConflictException) when (attempt < 7) { }
             }
             throw new IOException("Internal billing changed concurrently.");
         }
@@ -292,10 +291,10 @@ namespace TerraScale.Dashboard.Features.Billing
             {
                 try
                 {
-                    await state.PutAsync(Collection, SingletonId, JsonSerializer.SerializeToElement(singleton), TerraBasePrecondition.Absent, cancellationToken);
+                    await state.PutAsync(Collection, SingletonId, JsonSerializer.SerializeToElement(singleton), StatePrecondition.Absent, cancellationToken);
                     return;
                 }
-                catch (TerraBasePreconditionFailedException) { document = await state.GetAsync(Collection, SingletonId, cancellationToken); }
+                catch (StateConflictException) { document = await state.GetAsync(Collection, SingletonId, cancellationToken); }
             }
 
             if (document is null || document.Id != SingletonId)
@@ -338,8 +337,8 @@ namespace TerraScale.Dashboard.Features.Billing
 
                 current.State = "active"; current.Status = "active"; current.EffectivePlan = "internal"; current.EffectiveInterval = "monthly";
                 current.Revision = checked(current.Revision + 1);
-                try { await state.PutAsync(StripeBilling.Collection, current.OrganizationId, JsonSerializer.SerializeToElement(current), TerraBasePrecondition.Matches(document.Version), cancellationToken); return; }
-                catch (TerraBasePreconditionFailedException) when (attempt < 7) { }
+                try { await state.PutAsync(StripeBilling.Collection, current.OrganizationId, JsonSerializer.SerializeToElement(current), StatePrecondition.Matches(document.Version), cancellationToken); return; }
+                catch (StateConflictException) when (attempt < 7) { }
             }
             throw new IOException("Internal billing activation changed concurrently.");
         }
@@ -362,7 +361,7 @@ namespace TerraScale.Dashboard.Features.Billing
             if (current.Kind == "internal" && current.State == "reserved" && current.RequestId == reservation.RequestId)
             {
                 try { await state.DeleteAsync(StripeBilling.Collection, reservation.OrganizationId, document.Version, cancellationToken); }
-                catch (TerraBasePreconditionFailedException) { }
+                catch (StateConflictException) { }
             }
         }
 
@@ -375,7 +374,7 @@ namespace TerraScale.Dashboard.Features.Billing
             for (var attempt = 0; attempt < 8; attempt++)
             {
                 principal = await RefreshAdministratorAsync(principal, refreshAuthority, cancellationToken);
-                var (Document, Organization, Authority) = await AuthorizedOrganizationAsync(principal, observed.Id, cancellationToken);
+                var (record, Organization, Authority) = await AuthorizedOrganizationAsync(principal, observed.Id, cancellationToken);
                 if (Organization.InternalBilling?.ConfigurationId != observed.InternalBilling!.ConfigurationId ||
                     Organization.OwnerUserId != observed.OwnerUserId || Organization.SpendCapCents != bill.SpendCapCents)
                 {
@@ -391,8 +390,8 @@ namespace TerraScale.Dashboard.Features.Billing
                 alert = new(Organization.OwnerUserId, observed.InternalBilling.ConfigurationId, bill.SpendCapCents,
                     alert?.Id ?? ids.NewId(), month, bill.Alert!, time.GetUtcNow());
                 Organization.InternalBillingAlerts[alertKey] = alert;
-                try { await state.PutAsync(AccountService.OrganizationsCollection, observed.Id, JsonSerializer.SerializeToElement(Organization), TerraBasePrecondition.Matches(Document.Version), cancellationToken); break; }
-                catch (TerraBasePreconditionFailedException) when (attempt < 7) { alert = null; }
+                try { await state.PutAsync(AccountService.OrganizationsCollection, observed.Id, JsonSerializer.SerializeToElement(Organization), StatePrecondition.Matches(record.Version), cancellationToken); break; }
+                catch (StateConflictException) when (attempt < 7) { alert = null; }
             }
             if (alert is null || alert.Month != month || alert.Id.Length == 0 || alert.OwnerUserId.Length == 0)
             {
@@ -417,7 +416,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 // The CLI's explicit target need not be the browser selection.
                 // Re-resolve its provider membership after credential rotation,
                 // then read its canonical owner/policy/cap after that awaited work.
-                var (Document, Organization, Authority) = await AuthorizedOrganizationAsync(principal, observed.Id, cancellationToken);
+                var (record, Organization, Authority) = await AuthorizedOrganizationAsync(principal, observed.Id, cancellationToken);
                 if (Organization.OwnerUserId != alert.OwnerUserId || Organization.InternalBilling?.ConfigurationId != alert.ConfigurationId ||
                     Organization.SpendCapCents != alert.SpendCapCents)
                 {
@@ -444,8 +443,8 @@ namespace TerraScale.Dashboard.Features.Billing
                 });
                 // The account CAS deduplicates inbox writes; it cannot atomically
                 // guard a later change to the separate organization document.
-                try { await state.PutAsync(AccountService.AccountsCollection, key, JsonSerializer.SerializeToElement(account), TerraBasePrecondition.Matches(document.Version), cancellationToken); return; }
-                catch (TerraBasePreconditionFailedException) when (attempt < 7) { }
+                try { await state.PutAsync(AccountService.AccountsCollection, key, JsonSerializer.SerializeToElement(account), StatePrecondition.Matches(document.Version), cancellationToken); return; }
+                catch (StateConflictException) when (attempt < 7) { }
             }
             throw new IOException("Internal billing owner inbox changed concurrently.");
         }
@@ -472,7 +471,7 @@ namespace TerraScale.Dashboard.Features.Billing
             return fresh;
         }
 
-        private async Task<(TerraBaseDocument Document, OrganizationRecord Organization)> OrganizationAsync(string id, CancellationToken cancellationToken)
+        private async Task<(StateRecord Record, OrganizationRecord Organization)> OrganizationAsync(string id, CancellationToken cancellationToken)
         {
             var document = await state.GetAsync(AccountService.OrganizationsCollection, id, cancellationToken) ?? throw new AccountAccessException("Organization was not found.", 404);
             var organization = AccountService.Read<OrganizationRecord>(document);
@@ -484,7 +483,7 @@ namespace TerraScale.Dashboard.Features.Billing
             return (document, organization);
         }
 
-        private async Task<(TerraBaseDocument Document, OrganizationRecord Organization, OrganizationRecord Authority)> AuthorizedOrganizationAsync(AccountContext principal, string id, CancellationToken cancellationToken)
+        private async Task<(StateRecord Record, OrganizationRecord Organization, OrganizationRecord Authority)> AuthorizedOrganizationAsync(AccountContext principal, string id, CancellationToken cancellationToken)
         {
             // Capture the CAS version before awaited canonical reads so a newer dashboard projection cannot be overwritten.
             var (Document, Organization) = await OrganizationAsync(id, cancellationToken);

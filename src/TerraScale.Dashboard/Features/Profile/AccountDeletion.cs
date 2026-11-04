@@ -5,8 +5,6 @@ using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Common.UI;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Profile
 {
@@ -236,7 +234,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 using var aes = new AesGcm(Convert.FromBase64String((await identity.ReadAsync(http.RequestAborted)).SessionEncryptionKey), 16);
                 aes.Encrypt(nonce, bytes, ciphertext, tag, Encoding.UTF8.GetBytes(Operations + key));
                 await state.PutAsync(Operations, key, JsonSerializer.SerializeToElement(new Envelope(key, operation.Session.UserId,
-                    new SealedSession(Convert.ToBase64String(nonce), Convert.ToBase64String(ciphertext), Convert.ToBase64String(tag)))), TerraBasePrecondition.Absent, http.RequestAborted);
+                    new SealedSession(Convert.ToBase64String(nonce), Convert.ToBase64String(ciphertext), Convert.ToBase64String(tag)))), StatePrecondition.Absent, http.RequestAborted);
             }
             finally { CryptographicOperations.ZeroMemory(bytes); }
             http.Response.Cookies.Append(Cookie, http.Request.Cookies[Cookie] ?? http.Request.Cookies["ts-dashboard-session"]!,
@@ -258,12 +256,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 return null;
             }
 
-            if (document.State != "value")
-            {
-                throw new IOException("Deletion operation has a causal conflict.");
-            }
-
-            var envelope = document.Document.Deserialize<Envelope>() ?? throw new IOException("Deletion operation is invalid.");
+            var envelope = document.Body.Deserialize<Envelope>() ?? throw new IOException("Deletion operation is invalid.");
             if (envelope.Key != key)
             {
                 throw new IOException("Deletion operation identity is invalid.");
@@ -294,7 +287,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     continue;
                 }
 
-                if (current.Document.GetRawText() != document.Document.GetRawText())
+                if (current.Body.GetRawText() != document.Body.GetRawText())
                 {
                     throw new IOException("Deletion operation changed concurrently.");
                 }

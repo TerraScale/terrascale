@@ -4,7 +4,6 @@ using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Profile
 {
@@ -114,12 +113,12 @@ namespace TerraScale.Dashboard.Features.Profile
                     {
                         foreach (var document in await state.ListAsync(collection, cancellationToken))
                         {
-                            if (!document.Document.TryGetProperty("OrganizationId", out var owner) || owner.GetString() != proof.SubjectId)
+                            if (!document.Body.TryGetProperty("OrganizationId", out var owner) || owner.GetString() != proof.SubjectId)
                             {
                                 continue;
                             }
 
-                            if (!document.Document.TryGetProperty("ProjectId", out var project) || !TerraScaleIds.IsValid(project.GetString()))
+                            if (!document.Body.TryGetProperty("ProjectId", out var project) || !TerraScaleIds.IsValid(project.GetString()))
                             {
                                 throw new IOException("Owned project record identity is invalid.");
                             }
@@ -132,7 +131,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     {
                         if (await state.GetAsync(collection, "all", cancellationToken) is { } index)
                         {
-                            if (index.State != "value" || !index.Document.TryGetProperty("Projects", out var entries) || entries.ValueKind != JsonValueKind.Object)
+                            if (!index.Body.TryGetProperty("Projects", out var entries) || entries.ValueKind != JsonValueKind.Object)
                             {
                                 throw new IOException("Owned project index is invalid.");
                             }
@@ -162,9 +161,9 @@ namespace TerraScale.Dashboard.Features.Profile
                     {
                         foreach (var document in await state.ListAsync(collection, cancellationToken))
                         {
-                            if (document.Document.TryGetProperty("OrganizationId", out var owner) && owner.GetString() == proof.SubjectId)
+                            if (document.Body.TryGetProperty("OrganizationId", out var owner) && owner.GetString() == proof.SubjectId)
                             {
-                                await state.DeleteListedAsync(collection, document, cancellationToken);
+                                await state.DeleteAsync(collection, document.Id, document.Version, cancellationToken);
                             }
                         }
                     }
@@ -248,7 +247,7 @@ namespace TerraScale.Dashboard.Features.Profile
             if (removed)
             {
                 await state.PutAsync(AccountService.OrganizationsCollection, organizationId, JsonSerializer.SerializeToElement(org),
-                document is null ? TerraBasePrecondition.Absent : TerraBasePrecondition.Matches(document.Version), cancellationToken);
+                document is null ? StatePrecondition.Absent : StatePrecondition.Matches(document.Version), cancellationToken);
             }
 
             if (await state.GetAsync(AccountService.OrganizationsCollection, organizationId, cancellationToken) is { } latest)

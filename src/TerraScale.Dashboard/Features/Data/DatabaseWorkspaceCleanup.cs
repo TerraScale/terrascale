@@ -1,7 +1,5 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.TerraBase.Contracts.Documents;
-using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Data
 {
@@ -20,11 +18,11 @@ namespace TerraScale.Dashboard.Features.Data
 
             return record.OrganizationId + "/" + record.ProjectId + "/" + record.DatabaseId;
         }
-        public static DatabaseWorkspaceDeletion Read(TerraBaseDocument document)
+        public static DatabaseWorkspaceDeletion Read(StateRecord document)
         {
             var record = AccountService.Read<DatabaseWorkspaceDeletion>(document);
             if (new[] { record.OrganizationId, record.ProjectId, record.DatabaseId }.Any(id => !TerraScaleIds.IsValid(id)) ||
-                document.Id != Key(record) && document.Id != TerraBaseDashboardState.DocumentId(Collection, Key(record)))
+                document.Id != Key(record))
             {
                 throw new IOException("Database cleanup marker identity is invalid.");
             }
@@ -40,8 +38,8 @@ namespace TerraScale.Dashboard.Features.Data
                 return;
             }
 
-            try { await state.PutAsync(Collection, key, JsonSerializer.SerializeToElement(record), TerraBasePrecondition.Absent, cancellationToken); }
-            catch (TerraBasePreconditionFailedException)
+            try { await state.PutAsync(Collection, key, JsonSerializer.SerializeToElement(record), StatePrecondition.Absent, cancellationToken); }
+            catch (StateConflictException)
             {
                 if (!await IsDeletedAsync(state, record, cancellationToken))
                 {
@@ -84,7 +82,7 @@ namespace TerraScale.Dashboard.Features.Data
             await foreach (var document in DashboardStatePages.ReadAsync(state, Collection, scope, null, cancellationToken))
             {
                 Read(document);
-                await state.DeleteListedAsync(Collection, document, cancellationToken);
+                await state.DeleteAsync(Collection, document.Id, document.Version, cancellationToken);
             }
         }
 

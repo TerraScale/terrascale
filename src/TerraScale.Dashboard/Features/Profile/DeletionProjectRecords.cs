@@ -6,7 +6,6 @@ using TerraScale.Dashboard.Features.Logs;
 using TerraScale.Dashboard.Features.Notifications;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Profile
 {
@@ -84,7 +83,7 @@ namespace TerraScale.Dashboard.Features.Profile
 
             entries.Remove(projectId);
             await state.PutAsync(collection, "all", JsonSerializer.SerializeToElement(index),
-                TerraBasePrecondition.Matches(document.Version), cancellationToken);
+                StatePrecondition.Matches(document.Version), cancellationToken);
         }
     }
 }

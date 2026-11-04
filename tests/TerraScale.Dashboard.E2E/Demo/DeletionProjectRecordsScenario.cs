@@ -9,8 +9,6 @@ using TerraScale.Dashboard.Features.Logs;
 using TerraScale.Dashboard.Features.Notifications;
 using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.E2E
 {
@@ -65,14 +63,14 @@ namespace TerraScale.Dashboard.E2E
             {
                 foreach (var project in new[] { Project, Retained })
                 {
-                    await State.PutAsync(collection, Key(collection, project), JsonSerializer.SerializeToElement(Record(collection, Organization, project)), TerraBasePrecondition.Absent, default);
+                    await State.PutAsync(collection, Key(collection, project), JsonSerializer.SerializeToElement(Record(collection, Organization, project)), StatePrecondition.Absent, default);
                 }
             }
 
             foreach (var collection in Indexes)
             {
                 await State.PutAsync(collection, "all", JsonSerializer.SerializeToElement(new AlertProjectIndex(new()
-                { [Project] = Organization, [Retained] = Organization, [ForeignProject] = ForeignOrganization })), TerraBasePrecondition.Absent, default);
+                { [Project] = Organization, [Retained] = Organization, [ForeignProject] = ForeignOrganization })), StatePrecondition.Absent, default);
             }
         }
 
@@ -93,7 +91,7 @@ namespace TerraScale.Dashboard.E2E
                         // Keep the queried organization/project but corrupt the remaining key identity.
                         ? new SqlWorkspaceRecord(Organization, Project, ForeignProject, User, "private draft", ["SELECT 1"])
                         : Record(collection, ForeignOrganization, Project);
-                await State.PutAsync(collection, key, JsonSerializer.SerializeToElement(body), TerraBasePrecondition.Matches(document.Version), default);
+                await State.PutAsync(collection, key, JsonSerializer.SerializeToElement(body), StatePrecondition.Matches(document.Version), default);
             }
         }
 
@@ -111,7 +109,7 @@ namespace TerraScale.Dashboard.E2E
                 var document = (await GetAsync(collection, key))!;
                 var index = AccountService.Read<AlertProjectIndex>(document);
                 index.Projects[concurrentProject] = ForeignOrganization;
-                await State.PutAsync(collection, key, JsonSerializer.SerializeToElement(index), TerraBasePrecondition.Matches(document.Version), default);
+                await State.PutAsync(collection, key, JsonSerializer.SerializeToElement(index), StatePrecondition.Matches(document.Version), default);
             };
             return concurrentProject;
         }
@@ -141,7 +139,7 @@ namespace TerraScale.Dashboard.E2E
             ? Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Organization + "/" + project))) : project;
         }
 
-        public Task<TerraBaseDocument?> GetAsync(string collection, string project)
+        public Task<StateRecord?> GetAsync(string collection, string project)
         {
             return State.GetAsync(collection, Key(collection, project), default);
         }

@@ -2,8 +2,6 @@ using System.Text.Json;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Profile
 {
@@ -64,15 +62,15 @@ namespace TerraScale.Dashboard.Features.Profile
                 }
             }
             var entry = new Entry(proof, [.. projects.Order(StringComparer.Ordinal)], [.. customers.Order(StringComparer.Ordinal)]);
-            try { await state.PutAsync(Collection, proof.Id, JsonSerializer.SerializeToElement(entry), TerraBasePrecondition.Absent, cancellationToken); }
-            catch (TerraBasePreconditionFailedException)
+            try { await state.PutAsync(Collection, proof.Id, JsonSerializer.SerializeToElement(entry), StatePrecondition.Absent, cancellationToken); }
+            catch (StateConflictException)
             {
                 return Match(await state.GetAsync(Collection, proof.Id, cancellationToken) ?? throw new IOException("Cleanup journal disappeared."), proof);
             }
             return entry;
         }
 
-        public async Task<Entry> ReadAsync(TerraBaseDocument document, CancellationToken cancellationToken)
+        public async Task<Entry> ReadAsync(StateRecord document, CancellationToken cancellationToken)
         {
             var entry = AccountService.Read<Entry>(document);
             if (entry.Proof is null || !TerraScaleIds.IsValid(entry.Proof.Id) || entry.ProjectIds is null || entry.CustomerIds is null ||
@@ -85,7 +83,7 @@ namespace TerraScale.Dashboard.Features.Profile
             return Match(stored, entry.Proof);
         }
 
-        private static Entry Match(TerraBaseDocument document, TsAuthDeletionProof proof)
+        private static Entry Match(StateRecord document, TsAuthDeletionProof proof)
         {
             var entry = AccountService.Read<Entry>(document);
             if (document.Id != proof.Id || entry.Proof is null || entry.Proof.Id != proof.Id || entry.Proof.Scope != proof.Scope || entry.Proof.SubjectId != proof.SubjectId || entry.Proof.OrganizationId != proof.OrganizationId || entry.ProjectIds is null || entry.CustomerIds is null)

@@ -5,8 +5,6 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.E2E
 {
@@ -69,7 +67,7 @@ namespace TerraScale.Dashboard.E2E
                     ? (await scenario.OrganizationAsync(scenario.Other)).Id
                     : (await scenario.ReferencesAsync(scenario.Other)).First(reference => reference.Collection == collection).RecordId;
                 await scenario.State.PutAsync(AccountEnrollment.Collection, AccountService.NewId(),
-                    JsonSerializer.SerializeToElement(new AccountEnrollment.Reference(scenario.User, collection, target)), TerraBasePrecondition.Absent, default);
+                    JsonSerializer.SerializeToElement(new AccountEnrollment.Reference(scenario.User, collection, target)), StatePrecondition.Absent, default);
                 return Results.NoContent();
             });
             await scenario.app.StartAsync();
@@ -100,7 +98,7 @@ namespace TerraScale.Dashboard.E2E
             pausedCollection = collection;
         }
 
-        public Task<TerraBaseDocument?> GetAsync(string collection, string id)
+        public Task<StateRecord?> GetAsync(string collection, string id)
         {
             return State.GetAsync(collection, id, default);
         }
@@ -110,12 +108,12 @@ namespace TerraScale.Dashboard.E2E
             return AccountEnrollment.ListAsync(State, user, default);
         }
 
-        public Task<IReadOnlyList<TerraBaseDocument>> ReferenceDocumentsAsync()
+        public Task<IReadOnlyList<StateRecord>> ReferenceDocumentsAsync()
         {
             return State.ListAsync(AccountEnrollment.Collection, default);
         }
 
-        public async Task<TerraBaseDocument> OrganizationAsync(string user)
+        public async Task<StateRecord> OrganizationAsync(string user)
         {
             var account = AccountService.Read<AccountRecord>((await GetAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(user)))!);
             return (await GetAsync(AccountService.OrganizationsCollection, account.PersonalOrganizationId))!;
@@ -141,29 +139,19 @@ namespace TerraScale.Dashboard.E2E
                 return inner.CheckReadyAsync(ct);
             }
 
-            public Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken ct)
+            public Task<StateRecord?> GetAsync(string collection, string id, CancellationToken ct)
             {
                 return inner.GetAsync(collection, id, ct);
             }
 
-            Task<TerraBaseDocumentPage> IDashboardState.ReadPageAsync(string collection, JsonElement? filter, int limit, string? cursor, CancellationToken ct)
-            {
-                return inner.ReadPageAsync(collection, filter, limit, cursor, ct);
-            }
-
-            Task<TerraBaseTransactionResult> IDashboardState.TransactAsync(IReadOnlyList<DashboardStateOperation> operations, CancellationToken ct)
-            {
-                return inner.TransactAsync(operations, ct);
-            }
-
-            public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken ct)
+            public Task<IReadOnlyList<StateRecord>> ListAsync(string collection, CancellationToken ct)
             {
                 return inner.ListAsync(collection, ct);
             }
 
-            public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken ct)
+            public Task<StatePage> PageAsync(string collection, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken ct)
             {
-                return inner.QueryPageAsync(collection, query, ct);
+                return inner.PageAsync(collection, scope, fields, limit, cursor, ct);
             }
 
             public Task DeleteAsync(string collection, string id, string version, CancellationToken ct)
@@ -171,7 +159,7 @@ namespace TerraScale.Dashboard.E2E
                 return inner.DeleteAsync(collection, id, version, ct);
             }
 
-            public async Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken ct)
+            public async Task PutAsync(string collection, string id, JsonElement document, StatePrecondition precondition, CancellationToken ct)
             {
                 if (collection == scenario.pausedCollection && Interlocked.CompareExchange(ref scenario.paused, 1, 0) == 0)
                 {

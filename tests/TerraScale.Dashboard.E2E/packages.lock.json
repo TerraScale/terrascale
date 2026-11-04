@@ -261,6 +261,21 @@
           "TerraScale.TerraBase.Contracts": "[1.0.0, )"
         }
       },
+      "turso.data": {
+        "type": "Project",
+        "dependencies": {
+          "Turso.Raw": "[0.8.2, )"
+        }
+      },
+      "turso.data.sqlite": {
+        "type": "Project",
+        "dependencies": {
+          "Turso.Data": "[0.8.2, )"
+        }
+      },
+      "turso.raw": {
+        "type": "Project"
+      },
       "Cronos": {
         "type": "CentralTransitive",
         "requested": "[0.13.0, )",

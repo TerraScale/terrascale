@@ -4,8 +4,6 @@ using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
@@ -119,7 +117,7 @@ namespace TerraScale.Dashboard.Features.Auth
             // token set must still contain the token on every request.
             await AccountEnrollment.RememberAsync(state, userId, IndexCollection, stored.SecretHash, cancellationToken);
             await AccountEnrollment.RememberAsync(state, userId, Collection, AccountService.AccountId(userId), cancellationToken);
-            await state.PutAsync(IndexCollection, stored.SecretHash, JsonSerializer.SerializeToElement(new TokenOwner(userId, token.Id)), TerraBasePrecondition.Absent, cancellationToken);
+            await state.PutAsync(IndexCollection, stored.SecretHash, JsonSerializer.SerializeToElement(new TokenOwner(userId, token.Id)), StatePrecondition.Absent, cancellationToken);
             await UpdateAsync(userId, set =>
             {
                 if (set.Tokens.Count(item => item.RevokedAt is null && item.Token.ExpiresAt > time.GetUtcNow()) >= 25)
@@ -288,8 +286,8 @@ namespace TerraScale.Dashboard.Features.Auth
                 }
 
                 update(set);
-                try { await state.PutAsync(Collection, id, JsonSerializer.SerializeToElement(set), document is null ? TerraBasePrecondition.Absent : TerraBasePrecondition.Matches(document.Version), cancellationToken); return; }
-                catch (TerraBasePreconditionFailedException) when (attempt < 3) { }
+                try { await state.PutAsync(Collection, id, JsonSerializer.SerializeToElement(set), document is null ? StatePrecondition.Absent : StatePrecondition.Matches(document.Version), cancellationToken); return; }
+                catch (StateConflictException) when (attempt < 3) { }
             }
         }
 

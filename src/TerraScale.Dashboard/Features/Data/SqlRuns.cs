@@ -1,8 +1,6 @@
 using System.Text;
 using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Data
 {
@@ -49,10 +47,10 @@ namespace TerraScale.Dashboard.Features.Data
                 try
                 {
                     await state.PutAsync(SqlWorkspace.Collection, key, JsonSerializer.SerializeToElement(record),
-                        current is null ? TerraBasePrecondition.Absent : TerraBasePrecondition.Matches(current.Version), cancellationToken);
+                        current is null ? StatePrecondition.Absent : StatePrecondition.Matches(current.Version), cancellationToken);
                     return receipt.Id;
                 }
-                catch (TerraBasePreconditionFailedException)
+                catch (StateConflictException)
                 {
                     if (attempt >= 3)
                     {

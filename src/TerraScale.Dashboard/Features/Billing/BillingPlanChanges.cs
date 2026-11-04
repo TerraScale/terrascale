@@ -1,9 +1,9 @@
+using TerraScale.Dashboard.Platform.Persistence;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.ComponentModel;
 using Stripe;
 using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 
 namespace TerraScale.Dashboard.Features.Billing
@@ -375,8 +375,8 @@ namespace TerraScale.Dashboard.Features.Billing
                     PeriodEnd = snapshot.Item.CurrentPeriodEnd,
                     Revision = checked((previous?.Revision ?? 0) + 1)
                 };
-                try { await state.PutAsync(ChangesCollection, context.Organization.Id, JsonSerializer.SerializeToElement(receipt), document is null ? TerraBasePrecondition.Absent : TerraBasePrecondition.Matches(document.Version), cancellationToken); return receipt; }
-                catch (TerraBasePreconditionFailedException) when (attempt < 3) { }
+                try { await state.PutAsync(ChangesCollection, context.Organization.Id, JsonSerializer.SerializeToElement(receipt), document is null ? StatePrecondition.Absent : StatePrecondition.Matches(document.Version), cancellationToken); return receipt; }
+                catch (StateConflictException) when (attempt < 3) { }
             }
             throw Conflict("Billing changed concurrently. Retry the change.");
         }
@@ -401,8 +401,8 @@ namespace TerraScale.Dashboard.Features.Billing
             }
 
             current.Status = "applying";
-            try { await state.PutAsync(ChangesCollection, orgId, JsonSerializer.SerializeToElement(current), TerraBasePrecondition.Matches(document.Version), cancellationToken); }
-            catch (TerraBasePreconditionFailedException)
+            try { await state.PutAsync(ChangesCollection, orgId, JsonSerializer.SerializeToElement(current), StatePrecondition.Matches(document.Version), cancellationToken); }
+            catch (StateConflictException)
             {
                 var latest = await state.GetAsync(ChangesCollection, orgId, cancellationToken);
                 if (latest is null || AccountService.Read<BillingChangeReceipt>(latest) is not { Status: "applying" } applying || applying.RequestId != receipt.RequestId)
@@ -448,11 +448,11 @@ namespace TerraScale.Dashboard.Features.Billing
                 current.TargetPriceId = candidate.Id;
                 try
                 {
-                    await state.PutAsync(ChangesCollection, context.Organization.Id, JsonSerializer.SerializeToElement(current), TerraBasePrecondition.Matches(document.Version), cancellationToken);
+                    await state.PutAsync(ChangesCollection, context.Organization.Id, JsonSerializer.SerializeToElement(current), StatePrecondition.Matches(document.Version), cancellationToken);
                     receipt.TargetPriceId = candidate.Id;
                     return candidate;
                 }
-                catch (TerraBasePreconditionFailedException) when (attempt < 3) { }
+                catch (StateConflictException) when (attempt < 3) { }
             }
             throw Conflict("Billing changed concurrently. Retry the change.");
         }
@@ -474,8 +474,8 @@ namespace TerraScale.Dashboard.Features.Billing
             }
 
             current.Status = "abandoned";
-            try { await state.PutAsync(ChangesCollection, orgId, JsonSerializer.SerializeToElement(current), TerraBasePrecondition.Matches(document.Version), cleanup.Token); }
-            catch (TerraBasePreconditionFailedException) { }
+            try { await state.PutAsync(ChangesCollection, orgId, JsonSerializer.SerializeToElement(current), StatePrecondition.Matches(document.Version), cleanup.Token); }
+            catch (StateConflictException) { }
         }
         private async Task SettleChangeAsync(AccountContext context, BillingChangeReceipt receipt)
         {
@@ -513,8 +513,8 @@ namespace TerraScale.Dashboard.Features.Billing
             }
 
             current.Status = "applied";
-            try { await state.PutAsync(ChangesCollection, orgId, JsonSerializer.SerializeToElement(current), TerraBasePrecondition.Matches(document.Version), cancellationToken); }
-            catch (TerraBasePreconditionFailedException)
+            try { await state.PutAsync(ChangesCollection, orgId, JsonSerializer.SerializeToElement(current), StatePrecondition.Matches(document.Version), cancellationToken); }
+            catch (StateConflictException)
             {
                 var latest = await state.GetAsync(ChangesCollection, orgId, cancellationToken); if (latest is null || AccountService.Read<BillingChangeReceipt>(latest) is not { Status: "applied" } applied || applied.RequestId != receipt.RequestId)
                 {

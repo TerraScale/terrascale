@@ -2,8 +2,6 @@ using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
@@ -231,10 +229,10 @@ namespace TerraScale.Dashboard.Features.Organizations
                 org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, deleted ? "organization.deleted" : "member.left", deleted ? org.Name : context.UserId, "organization", time.GetUtcNow(), Ip: accounts.ClientIp));
                 try
                 {
-                    await state.PutAsync(AccountService.OrganizationsCollection, org.Id, JsonSerializer.SerializeToElement(org), TerraBasePrecondition.Matches(document.Version), cancellationToken);
+                    await state.PutAsync(AccountService.OrganizationsCollection, org.Id, JsonSerializer.SerializeToElement(org), StatePrecondition.Matches(document.Version), cancellationToken);
                     return;
                 }
-                catch (TerraBasePreconditionFailedException) when (attempt < 3) { }
+                catch (StateConflictException) when (attempt < 3) { }
             }
         }
     }

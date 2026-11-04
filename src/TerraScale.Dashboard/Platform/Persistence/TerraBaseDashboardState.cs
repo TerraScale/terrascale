@@ -1,227 +1,160 @@
-using System.Security.Cryptography;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Text.Encodings.Web;
 using NUlid;
-using TerraScale.TerraBase.Contracts;
 using TerraScale.Dashboard.Platform.Rpc;
-using TerraScale.TerraBase.Contracts.Documents;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Management;
 
 namespace TerraScale.Dashboard.Platform.Persistence
 {
-    // The dashboard's own dogfood database, reached over MagicOnion on TerraBase's private
-    // listener with the shared peer credential. No customer key or token ever reaches it.
     public sealed class TerraBaseDashboardState(TerraBaseRpcClient rpc) : IDashboardState
     {
+        private const int ListPageSize = 200;
+        private static readonly HashSet<string> Tables = [.. DashboardStateSchema.Tables];
+
         public async Task InitializeAsync(CancellationToken cancellationToken)
         {
-            // The database is seeded by TerraBase; a missing one fails here instead of being created.
-            var database = Database();
-            foreach (var name in DashboardStateSchema.Collections)
-            {
-                TerraBaseCollectionInfo collection;
-                try { collection = await database.GetCollectionAsync(name, cancellationToken); }
-                catch (TerraBaseNotFoundException error) when (error.ErrorCode == "unknown_collection")
-                {
-                    try { collection = await database.CreateCollectionAsync(name, cancellationToken); }
-                    catch (TerraBaseConflictException conflict) when (conflict.ErrorCode == "name_taken")
-                    {
-                        collection = await database.GetCollectionAsync(name, cancellationToken);
-                    }
-                }
-                ValidateCollection(collection, name);
-            }
+            await ExecuteAsync([.. DashboardStateSchema.Statements.Select(sql => new StateStatement(sql))], cancellationToken);
+            await CheckReadyAsync(cancellationToken);
         }
 
         public async Task CheckReadyAsync(CancellationToken cancellationToken)
         {
-            var database = Database();
-            // One metadata page covers the fixed schema, rather than 27 concurrent point reads per probe.
-            // Read it afresh every time: a dropped collection still fails the next readiness check.
-            var missing = DashboardStateSchema.Collections.ToHashSet(StringComparer.Ordinal);
-            var seen = new HashSet<string>(StringComparer.Ordinal);
-            string? cursor = null;
-            do
+            var result = (await ExecuteAsync([new("SELECT name FROM sqlite_master WHERE type = 'table'")], cancellationToken))[0];
+            var present = result.Rows.Select(row => row[0].GetString()).ToHashSet(StringComparer.Ordinal);
+            if (DashboardStateSchema.Tables.Any(table => !present.Contains(table)))
             {
-                var page = await database.ListCollectionsAsync(200, cursor, cancellationToken);
-                foreach (var collection in page.Items)
-                {
-                    missing.Remove(collection.Name);
-                }
-
-                cursor = page.NextCursor;
-                if (!string.IsNullOrEmpty(cursor) && !seen.Add(cursor))
-                {
-                    throw new IOException("State schema pagination did not advance.");
-                }
-            } while (missing.Count > 0 && !string.IsNullOrEmpty(cursor));
-            if (missing.Count > 0)
-            {
-                throw new IOException("Required dashboard state collections are unavailable.");
+                throw new IOException("Required dashboard state tables are unavailable.");
             }
         }
 
-        public async Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken)
+        public async Task<StateRecord?> GetAsync(string table, string id, CancellationToken cancellationToken)
         {
-            // Coordination, account and billing rereads must observe other requests' writes too.
-            return await GetDocumentAsync(collection, id, cancellationToken);
+            var result = (await ExecuteAsync([new($"SELECT id, version, body FROM {Table(table)} WHERE id = ?", [id])], cancellationToken))[0];
+            return result.Rows.Count switch
+            {
+                0 => null,
+                1 => Record(result.Rows[0]),
+                _ => throw new IOException("Dashboard state returned duplicate rows."),
+            };
         }
 
-        private async Task<TerraBaseDocument?> GetDocumentAsync(string collection, string id, CancellationToken cancellationToken)
+        public async Task<IReadOnlyList<StateRecord>> ListAsync(string table, CancellationToken cancellationToken)
         {
-            var key = DocumentId(collection, id);
-            var document = await Database().GetDocumentAsync(collection, key, cancellationToken);
-            // Callers verify identity against their own key, so a mismatched reply stays mismatched.
-            return document?.Id == key ? document with { Id = id } : document;
-        }
-
-        public async Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken cancellationToken)
-        {
-            var database = Database();
-            var documents = new List<TerraBaseDocument>();
+            var records = new List<StateRecord>();
             string? cursor = null;
             do
             {
-                var page = await database.ListDocumentsAsync(collection, 1000, cursor, cancellationToken);
-                documents.AddRange(page.Items);
+                var page = await PageAsync(table, new Dictionary<string, string>(), null, ListPageSize, cursor, cancellationToken);
+                records.AddRange(page.Items);
                 cursor = page.NextCursor;
             } while (cursor is not null);
-            return documents;
+            return records;
         }
 
-        public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken cancellationToken)
+        public async Task<StatePage> PageAsync(string table, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor,
+            CancellationToken cancellationToken)
         {
-            return Database().QueryAsync(collection, query, cancellationToken);
-        }
-
-        async Task<TerraBaseDocumentPage> IDashboardState.ReadPageAsync(string collection, JsonElement? filter, int limit, string? cursor, CancellationToken cancellationToken)
-        {
-            // SDK contract: 1..1000 rows, additionally bounded by the producer's 8 MiB page ceiling.
-            if (limit is < 1 or > 1000)
+            ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, 1000);
+            var sql = new StringBuilder("SELECT id, version, ");
+            sql.Append(fields is null ? "body" : "json_object(" + string.Join(", ", fields.Select(field => $"'{Field(field)}', json_extract(body, '$.{Field(field)}')")) + ")");
+            sql.Append(" FROM ").Append(Table(table)).Append(" WHERE id > ?");
+            var args = new List<string?> { cursor ?? "" };
+            foreach (var (field, value) in scope)
             {
-                throw new ArgumentOutOfRangeException(nameof(limit));
+                sql.Append(" AND json_extract(body, '$.").Append(Field(field)).Append("') = ?");
+                args.Add(value);
             }
 
-            return filter is null ? await Database().ListDocumentsAsync(collection, limit, cursor, cancellationToken)
-                : await QueryPageAsync(collection, new TerraBaseQuery(Filter: filter, Limit: limit, Cursor: cursor), cancellationToken);
+            sql.Append(" ORDER BY id LIMIT ").Append((limit + 1).ToString(CultureInfo.InvariantCulture));
+            var rows = (await ExecuteAsync([new(sql.ToString(), args)], cancellationToken))[0].Rows;
+            var items = rows.Take(limit).Select(Record).ToArray();
+            return new(items, rows.Count > limit ? items[^1].Id : null);
         }
 
-        Task<TerraBaseTransactionResult> IDashboardState.TransactAsync(IReadOnlyList<DashboardStateOperation> operations, CancellationToken cancellationToken)
+        public async Task PutAsync(string table, string id, JsonElement body, StatePrecondition precondition, CancellationToken cancellationToken)
         {
-            // Pinned SDK documents 1..1024 operations and forbids duplicate document targets, including assertions.
-            if (operations.Count is < 1 or > 1024)
+            ArgumentNullException.ThrowIfNull(precondition);
+            var version = Ulid.NewUlid().ToString();
+            if (precondition.Version is not { } expected)
             {
-                throw new ArgumentOutOfRangeException(nameof(operations));
-            }
-
-            var targets = new HashSet<(string, string)>();
-            foreach (var operation in operations)
-            {
-                if (operation.Value.Id is { } id && !targets.Add((operation.Value.Collection, id)))
+                try
                 {
-                    throw new ArgumentException("A transaction cannot target a document twice.", nameof(operations));
+                    await ExecuteAsync([new($"INSERT INTO {Table(table)} (id, version, body) VALUES (?, ?, ?)", [id, version, body.GetRawText()])], cancellationToken);
                 }
+                catch (TerraBaseException error) when (error.Fault.SqliteCode?.StartsWith("SQLITE_CONSTRAINT", StringComparison.Ordinal) == true)
+                {
+                    throw new StateConflictException();
+                }
+
+                return;
             }
 
-            var mapped = operations.Select(operation => operation.Value).ToArray();
-            // TransactionEndpoint documents at most 16 count assertions; DocumentRoute.MaxRequestBytes is 4 MiB.
-            if (mapped.Count(operation => operation.Op == "assert_count") > 16)
+            var updated = await ExecuteAsync([new($"UPDATE {Table(table)} SET version = ?, body = ? WHERE id = ? AND version = ?", [version, body.GetRawText(), id, expected])],
+                cancellationToken);
+            if (updated[0].RowsAffected != 1)
             {
-                throw new ArgumentException("At most 16 count assertions are allowed.", nameof(operations));
+                throw new StateConflictException();
             }
-
-            using var size = new TransactionRequestSize();
-            JsonSerializer.Serialize(size, new DashboardStateTransaction(mapped), DashboardStateTransactionJson.Wire.DashboardStateTransaction);
-            // Producer alone can bound captured changes (2 MiB), including deleted bodies; it must reject atomically.
-            // Never split or retry an ambiguous transaction, and never change the private origin to obtain support.
-            return Database().TransactAsync(mapped, cancellationToken);
         }
 
-        public async Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken cancellationToken)
+        public async Task DeleteAsync(string table, string id, string version, CancellationToken cancellationToken)
         {
-            await Database().PutDocumentAsync(collection, DocumentId(collection, id), document, precondition, cancellationToken);
-        }
-
-        public async Task DeleteAsync(string collection, string id, string version, CancellationToken cancellationToken)
-        {
-            await Database().DeleteDocumentAsync(collection, DocumentId(collection, id), TerraBasePrecondition.Matches(version), cancellationToken);
-        }
-
-        public async Task DeleteListedAsync(string collection, TerraBaseDocument document, CancellationToken cancellationToken)
-        {
-            await Database().DeleteDocumentAsync(collection, document.Id, TerraBasePrecondition.Matches(document.Version), cancellationToken);
-        }
-
-        // TerraBase document ids are ULIDs. Callers key state by natural names (hashes, emails, Stripe ids, ULIDs), so
-        // every key becomes a name-based ULID: the first 16 bytes of SHA-256 over "collection\0key". Nothing reads it back.
-        public static string DocumentId(string collection, string key)
-        {
-            return new Ulid(SHA256.HashData(Encoding.UTF8.GetBytes(collection + "\0" + key)).AsSpan(0, 16).ToArray()).ToString();
-        }
-
-        private DocumentDatabase Database()
-        {
-            return new(rpc.Platform<IDocumentsService>(), DashboardStateSchema.ProjectId, DashboardStateSchema.Database);
-        }
-
-        private static void ValidateCollection(TerraBaseCollectionInfo collection, string name)
-        {
-            if (collection.Name != name)
+            var deleted = await ExecuteAsync([new($"DELETE FROM {Table(table)} WHERE id = ? AND version = ?", [id, version])], cancellationToken);
+            if (deleted[0].RowsAffected != 1)
             {
-                throw new IOException("Dashboard state collection identity is invalid.");
+                throw new StateConflictException();
             }
+        }
+
+        private async Task<IReadOnlyList<StateResult>> ExecuteAsync(IReadOnlyList<StateStatement> statements, CancellationToken cancellationToken)
+        {
+            var answer = await rpc.Platform<IManagementService>().WithCancellationToken(cancellationToken).ExecuteSqlAsync(DashboardStateSchema.ProjectId,
+                DashboardStateSchema.Database, JsonSerializer.SerializeToElement(new StateRequest(statements), StateJson.Default.StateRequest));
+            var results = answer.Deserialize(StateJson.Default.StateResponse)?.Results;
+            if (results is null || results.Count != statements.Count || results.Any(result => result is null || result.Rows is null || result.Rows.Any(row => row is null)))
+            {
+                throw new IOException("TerraBase returned an invalid dashboard state result.");
+            }
+
+            return results;
+        }
+
+        private static StateRecord Record(IReadOnlyList<JsonElement> row)
+        {
+            if (row.Count != 3 || row[0].GetString() is not { Length: > 0 } id || row[1].GetString() is not { Length: > 0 } version || row[2].GetString() is not { } body)
+            {
+                throw new IOException("Dashboard state row is invalid.");
+            }
+
+            using var json = JsonDocument.Parse(body);
+            return new(id, version, json.RootElement.Clone());
+        }
+
+        private static string Table(string table)
+        {
+            return Tables.Contains(table) ? table : throw new ArgumentException("Unknown dashboard state table.", nameof(table));
+        }
+
+        private static string Field(string field)
+        {
+            return field.Length is > 0 and <= 64 && field.All(char.IsAsciiLetterOrDigit) ? field : throw new ArgumentException("Invalid dashboard state field.", nameof(field));
         }
     }
 
-    internal sealed record DashboardStateTransaction(IReadOnlyList<TerraBaseTransactionOperation> Ops);
+    internal sealed record StateStatement(string Sql, IReadOnlyList<string?>? Args = null);
 
-    // Match the pinned SDK's wire JSON when measuring; null operation members are omitted.
+    internal sealed record StateRequest(IReadOnlyList<StateStatement> Statements);
+
+    internal sealed record StateResponse(IReadOnlyList<StateResult>? Results);
+
+    internal sealed record StateResult(IReadOnlyList<IReadOnlyList<JsonElement>> Rows, [property: JsonPropertyName("rows_affected")] long RowsAffected);
+
     [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
-    [JsonSerializable(typeof(DashboardStateTransaction))]
-    internal sealed partial class DashboardStateTransactionJson : JsonSerializerContext
-    {
-        internal static DashboardStateTransactionJson Wire { get; } = new(new JsonSerializerOptions(JsonSerializerDefaults.Web)
-        { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
-    }
-
-    // Count serialized UTF-8 without retaining another transaction body in memory.
-    internal sealed class TransactionRequestSize : Stream
-    {
-        public override bool CanRead => false;
-        public override bool CanSeek => false;
-        public override bool CanWrite => true;
-        public override long Length => Position;
-        public override long Position { get; set; }
-        public override void Flush() { }
-        public override int Read(byte[] buffer, int offset, int count)
-        {
-            throw new NotSupportedException();
-        }
-
-        public override long Seek(long offset, SeekOrigin origin)
-        {
-            throw new NotSupportedException();
-        }
-
-        public override void SetLength(long value)
-        {
-            throw new NotSupportedException();
-        }
-
-        public override void Write(byte[] buffer, int offset, int count)
-        {
-            Write(buffer.AsSpan(offset, count));
-        }
-
-        public override void Write(ReadOnlySpan<byte> buffer)
-        {
-            if (Position + buffer.Length > 4 * 1024 * 1024)
-            {
-                throw new ArgumentException("Transaction request exceeds the producer's 4 MiB limit.");
-            }
-
-            Position += buffer.Length;
-        }
-    }
+    [JsonSerializable(typeof(StateRequest))]
+    [JsonSerializable(typeof(StateResponse))]
+    internal sealed partial class StateJson : JsonSerializerContext;
 }

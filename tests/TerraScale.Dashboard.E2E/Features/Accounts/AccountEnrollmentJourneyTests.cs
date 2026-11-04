@@ -33,8 +33,8 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
                 await Assert.That(await scenario.GetAsync(reference.Collection, reference.RecordId)).IsNotNull();
             }
 
-            await Assert.That((await scenario.GetAsync(AccountService.OrganizationsCollection, organization.Id))!.Document.GetRawText())
-                .IsEqualTo(organization.Document.GetRawText());
+            await Assert.That((await scenario.GetAsync(AccountService.OrganizationsCollection, organization.Id))!.Body.GetRawText())
+                .IsEqualTo(organization.Body.GetRawText());
             using var retained = await other.GetAsync("/api/v1/auth/me");
             await Assert.That(retained.StatusCode).IsEqualTo(HttpStatusCode.OK);
             var profile = await HttpJourney.McpAsync(other, secret, "tools/call", new { name = "get_profile", arguments = new { } });

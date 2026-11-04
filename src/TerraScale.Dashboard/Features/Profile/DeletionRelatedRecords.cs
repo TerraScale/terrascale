@@ -4,8 +4,6 @@ using TerraScale.Dashboard.Features.Billing.Internal;
 using TerraScale.Dashboard.Features.Notifications;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Profile
 {
@@ -16,23 +14,18 @@ namespace TerraScale.Dashboard.Features.Profile
             await Features.Data.SqlWorkspace.EraseAsync(state, new Dictionary<string, string> { ["UserId"] = subject }, cancellationToken);
             foreach (var document in await state.ListAsync(McpOAuth.CodeCollection, cancellationToken))
             {
-                if (document.State != "value")
-                {
-                    throw new IOException("Pending MCP authorization has a causal conflict.");
-                }
-
-                if (!document.Document.TryGetProperty("UserId", out var owner) || owner.GetString() != subject)
+                if (!document.Body.TryGetProperty("UserId", out var owner) || owner.GetString() != subject)
                 {
                     continue;
                 }
 
-                if (!document.Document.TryGetProperty("CredentialId", out var credential) || credential.GetString() is not { } id)
+                if (!document.Body.TryGetProperty("CredentialId", out var credential) || credential.GetString() is not { } id)
                 {
                     throw new IOException("Pending MCP credential reference is invalid.");
                 }
 
                 await sessions.DeleteCredentialAsync(id, subject, cancellationToken);
-                await state.DeleteListedAsync(McpOAuth.CodeCollection, document, cancellationToken);
+                await state.DeleteAsync(McpOAuth.CodeCollection, document.Id, document.Version, cancellationToken);
             }
         }
 
@@ -98,10 +91,10 @@ namespace TerraScale.Dashboard.Features.Profile
 
                     try
                     {
-                        await state.PutAsync(AccountService.AccountsCollection, key, JsonSerializer.SerializeToElement(account), TerraBasePrecondition.Matches(document.Version), cancellationToken);
+                        await state.PutAsync(AccountService.AccountsCollection, key, JsonSerializer.SerializeToElement(account), StatePrecondition.Matches(document.Version), cancellationToken);
                         break;
                     }
-                    catch (TerraBasePreconditionFailedException) when (attempt < 3) { }
+                    catch (StateConflictException) when (attempt < 3) { }
                 }
             }
         }

@@ -5,7 +5,6 @@ using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.Rpc;
 using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 using TerraScale.Dashboard.Platform.TsAuth;
 
 using TerraScale.Dashboard.Features.Auth;
@@ -38,11 +37,10 @@ namespace TerraScale.Dashboard.Common.Accounts
             return Ids.NewId();
         }
 
-        public static bool IsDeletionFence(TerraBaseDocument document)
+        public static bool IsDeletionFence(StateRecord document)
         {
-            return document.State == "value" &&
-            document.Document.ValueKind == JsonValueKind.Object && document.Document.EnumerateObject().Count() == 1 &&
-            document.Document.TryGetProperty(nameof(DeletionFence.ErasureId), out var id) && id.ValueKind == JsonValueKind.String && TerraScaleIds.IsValid(id.GetString());
+            return document.Body.ValueKind == JsonValueKind.Object && document.Body.EnumerateObject().Count() == 1 &&
+            document.Body.TryGetProperty(nameof(DeletionFence.ErasureId), out var id) && id.ValueKind == JsonValueKind.String && TerraScaleIds.IsValid(id.GetString());
         }
 
         public static async Task FenceDeletionAsync(IDashboardState state, string subject, string erasureId, CancellationToken cancellationToken)
@@ -63,7 +61,7 @@ namespace TerraScale.Dashboard.Common.Accounts
         }
 
         public static async Task FenceRecordAsync(IDashboardState state, string collection, string key, string erasureId,
-            Func<TerraBaseDocument, bool> owns, CancellationToken cancellationToken)
+            Func<StateRecord, bool> owns, CancellationToken cancellationToken)
         {
             if (!TerraScaleIds.IsValid(erasureId))
             {
@@ -93,10 +91,10 @@ namespace TerraScale.Dashboard.Common.Accounts
                 try
                 {
                     await state.PutAsync(collection, key, JsonSerializer.SerializeToElement(new DeletionFence(erasureId)),
-                        document is null ? TerraBasePrecondition.Absent : TerraBasePrecondition.Matches(document.Version), cancellationToken);
+                        document is null ? StatePrecondition.Absent : StatePrecondition.Matches(document.Version), cancellationToken);
                     return;
                 }
-                catch (TerraBasePreconditionFailedException) when (attempt < 3) { }
+                catch (StateConflictException) when (attempt < 3) { }
             }
         }
 
@@ -115,8 +113,8 @@ namespace TerraScale.Dashboard.Common.Accounts
                     // account also holds the claim to create its Personal organization.
                     var identity = await ReserveIdentityAsync(session.UserId, null, cancellationToken);
                     var created = new AccountRecord { Id = identity.AccountId, UserId = session.UserId, Name = session.Name, Email = session.Email, CreatedAt = now, PersonalClaimUntil = now.AddMinutes(1) };
-                    try { await state.PutAsync(AccountsCollection, id, JsonSerializer.SerializeToElement(created), TerraBasePrecondition.Absent, cancellationToken); }
-                    catch (TerraBasePreconditionFailedException) { continue; }
+                    try { await state.PutAsync(AccountsCollection, id, JsonSerializer.SerializeToElement(created), StatePrecondition.Absent, cancellationToken); }
+                    catch (StateConflictException) { continue; }
                 }
                 else
                 {
@@ -145,8 +143,8 @@ namespace TerraScale.Dashboard.Common.Accounts
                         continue;
                     }
                     account.PersonalClaimUntil = now.AddMinutes(1);
-                    try { await state.PutAsync(AccountsCollection, id, JsonSerializer.SerializeToElement(account), TerraBasePrecondition.Matches(document.Version), cancellationToken); }
-                    catch (TerraBasePreconditionFailedException) { continue; }
+                    try { await state.PutAsync(AccountsCollection, id, JsonSerializer.SerializeToElement(account), StatePrecondition.Matches(document.Version), cancellationToken); }
+                    catch (StateConflictException) { continue; }
                 }
                 OrganizationRecord personal;
                 try { personal = await CreatePersonalAsync(session, cancellationToken); }
@@ -203,8 +201,8 @@ namespace TerraScale.Dashboard.Common.Accounts
                 Members = new() { [session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = "owner", CreatedAt = live.CreatedAt } },
                 Projects = new() { [project.Id] = new() { Id = project.Id, OrganizationId = live.Id, Name = project.Name, Slug = Slug(project.Name), IsDefault = true, CreatedAt = project.CreatedAt } }
             };
-            try { await state.PutAsync(OrganizationsCollection, org.Id, JsonSerializer.SerializeToElement(org), TerraBasePrecondition.Absent, cancellationToken); }
-            catch (TerraBasePreconditionFailedException)
+            try { await state.PutAsync(OrganizationsCollection, org.Id, JsonSerializer.SerializeToElement(org), StatePrecondition.Absent, cancellationToken); }
+            catch (StateConflictException)
             {
                 var stored = await state.GetAsync(OrganizationsCollection, org.Id, cancellationToken) ?? throw new IOException("Personal organization state did not persist.");
                 org = Read<OrganizationRecord>(stored);
@@ -406,10 +404,10 @@ namespace TerraScale.Dashboard.Common.Accounts
 
                 try
                 {
-                    await state.PutAsync(OrganizationsCollection, live.Id, JsonSerializer.SerializeToElement(created), TerraBasePrecondition.Absent, cancellationToken);
+                    await state.PutAsync(OrganizationsCollection, live.Id, JsonSerializer.SerializeToElement(created), StatePrecondition.Absent, cancellationToken);
                     return created;
                 }
-                catch (TerraBasePreconditionFailedException)
+                catch (StateConflictException)
                 {
                     document = await state.GetAsync(OrganizationsCollection, live.Id, cancellationToken) ?? throw new IOException("Organization state did not persist.");
                 }
@@ -570,10 +568,10 @@ namespace TerraScale.Dashboard.Common.Accounts
 
                 try
                 {
-                    await state.PutAsync(AccountsCollection, id, JsonSerializer.SerializeToElement(account), TerraBasePrecondition.Matches(document.Version), cancellationToken);
+                    await state.PutAsync(AccountsCollection, id, JsonSerializer.SerializeToElement(account), StatePrecondition.Matches(document.Version), cancellationToken);
                     return;
                 }
-                catch (TerraBasePreconditionFailedException) when (attempt < 3) { }
+                catch (StateConflictException) when (attempt < 3) { }
             }
         }
 
@@ -639,10 +637,10 @@ namespace TerraScale.Dashboard.Common.Accounts
 
                 try
                 {
-                    await state.PutAsync(OrganizationsCollection, id, JsonSerializer.SerializeToElement(org), TerraBasePrecondition.Matches(document.Version), cancellationToken);
+                    await state.PutAsync(OrganizationsCollection, id, JsonSerializer.SerializeToElement(org), StatePrecondition.Matches(document.Version), cancellationToken);
                     return;
                 }
-                catch (TerraBasePreconditionFailedException) when (attempt < 3) { }
+                catch (StateConflictException) when (attempt < 3) { }
             }
         }
 
@@ -726,8 +724,8 @@ namespace TerraScale.Dashboard.Common.Accounts
                 Members = new() { [session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = "owner", CreatedAt = live.CreatedAt } }
             };
             // A context read between creation and this write stores the default business state; keep it.
-            try { await state.PutAsync(OrganizationsCollection, org.Id, JsonSerializer.SerializeToElement(org), TerraBasePrecondition.Absent, cancellationToken); }
-            catch (TerraBasePreconditionFailedException)
+            try { await state.PutAsync(OrganizationsCollection, org.Id, JsonSerializer.SerializeToElement(org), StatePrecondition.Absent, cancellationToken); }
+            catch (StateConflictException)
             {
                 var current = await state.GetAsync(OrganizationsCollection, org.Id, cancellationToken);
                 if (current is null || IsDeletionFence(current))
@@ -755,19 +753,14 @@ namespace TerraScale.Dashboard.Common.Accounts
             return string.Join('-', name.ToLowerInvariant().Split(name.Where(character => !char.IsAsciiLetterOrDigit(character)).Distinct().ToArray(), StringSplitOptions.RemoveEmptyEntries));
         }
 
-        public static T Read<T>(TerraBaseDocument document)
+        public static T Read<T>(StateRecord document)
         {
-            if (document.State != "value")
-            {
-                throw new IOException("Dashboard record has a causal conflict.");
-            }
-
             if (IsDeletionFence(document))
             {
                 throw new IOException("Dashboard record was erased.");
             }
 
-            var value = document.Document.Deserialize<T>() ?? throw new JsonException("Dashboard record is invalid.");
+            var value = document.Body.Deserialize<T>() ?? throw new JsonException("Dashboard record is invalid.");
             if (value is AccountRecord account && (account.OrganizationIds is null || account.Notifications is null || account.Name is null || account.Email is null || account.ActiveOrganizationId is null || account.ActiveProjectId is null || account.PersonalOrganizationId is null))
             {
                 throw new JsonException("Dashboard account structure is invalid.");
@@ -781,7 +774,7 @@ namespace TerraScale.Dashboard.Common.Accounts
             return value;
         }
 
-        private async Task<AccountRecord> ReadAccountAsync(TerraBaseDocument document, string subject, CancellationToken cancellationToken)
+        private async Task<AccountRecord> ReadAccountAsync(StateRecord document, string subject, CancellationToken cancellationToken)
         {
             if (IsDeletionFence(document))
             {
@@ -837,17 +830,17 @@ namespace TerraScale.Dashboard.Common.Accounts
             var candidate = new AccountIdentityBinding(subject, validatedLegacyId ?? NewId());
             try
             {
-                await state.PutAsync(IdentitiesCollection, key, JsonSerializer.SerializeToElement(candidate), TerraBasePrecondition.Absent, cancellationToken);
+                await state.PutAsync(IdentitiesCollection, key, JsonSerializer.SerializeToElement(candidate), StatePrecondition.Absent, cancellationToken);
                 return candidate;
             }
-            catch (TerraBasePreconditionFailedException)
+            catch (StateConflictException)
             {
                 var winner = await state.GetAsync(IdentitiesCollection, key, cancellationToken) ?? throw new IOException("Account identity reservation did not persist.");
                 return ReadIdentity(winner, subject);
             }
         }
 
-        private static AccountIdentityBinding ReadIdentity(TerraBaseDocument document, string subject)
+        private static AccountIdentityBinding ReadIdentity(StateRecord document, string subject)
         {
             if (IsDeletionFence(document))
             {

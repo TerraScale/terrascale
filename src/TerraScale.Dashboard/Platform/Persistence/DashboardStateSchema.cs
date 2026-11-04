@@ -1,13 +1,11 @@
 namespace TerraScale.Dashboard.Platform.Persistence
 {
-    // TerraBase seeds this database under the ts-dashboard project at startup.
-    // ts-auth owns the matching TerraScale organization, owner and project identities.
     public static class DashboardStateSchema
     {
         public const string ProjectId = "00000000000000000000000005";
         public const string Database = "ts-dashboard";
 
-        public static IReadOnlyList<string> Collections { get; } = Array.AsReadOnly(
+        public static IReadOnlyList<string> Tables { get; } = Array.AsReadOnly(
         [
             "sessions",
             "account_deletions",
@@ -15,7 +13,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
             "dashboard_account_enrollments",
             "auth_credentials",
             "session_indexes",
-            "auth-flows",
+            "dashboard_auth_flows",
             "dashboard_accounts",
             "dashboard_account_identities",
             "dashboard_organizations",
@@ -36,6 +34,13 @@ namespace TerraScale.Dashboard.Platform.Persistence
             "dashboard_alert_projects",
             "dashboard_log_drains",
             "dashboard_log_drain_projects"
+        ]);
+
+        public static IReadOnlyList<string> Statements { get; } = Array.AsReadOnly(
+        [
+            .. Tables.Select(table => $"CREATE TABLE IF NOT EXISTS {table} (id TEXT PRIMARY KEY NOT NULL, version TEXT NOT NULL, body TEXT NOT NULL)"),
+            "CREATE INDEX IF NOT EXISTS dashboard_sql_workspaces_owner ON dashboard_sql_workspaces (json_extract(body, '$.OrganizationId'), json_extract(body, '$.ProjectId'), json_extract(body, '$.DatabaseId'))",
+            "CREATE INDEX IF NOT EXISTS dashboard_sql_database_deletions_owner ON dashboard_sql_database_deletions (json_extract(body, '$.OrganizationId'), json_extract(body, '$.ProjectId'))"
         ]);
     }
 }

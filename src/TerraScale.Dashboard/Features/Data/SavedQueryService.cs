@@ -2,8 +2,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Data
 {
@@ -116,13 +114,13 @@ namespace TerraScale.Dashboard.Features.Data
                 mutate(queries);
                 try
                 {
-                    await state.PutAsync(Collection, key, JsonSerializer.SerializeToElement(new SavedQueryRecord(context.Organization!.Id, context.Project!.Id, queries)), current is null ? TerraBasePrecondition.Absent : TerraBasePrecondition.Matches(current.Version), cancellationToken);
+                    await state.PutAsync(Collection, key, JsonSerializer.SerializeToElement(new SavedQueryRecord(context.Organization!.Id, context.Project!.Id, queries)), current is null ? StatePrecondition.Absent : StatePrecondition.Matches(current.Version), cancellationToken);
                     return;
                 }
-                catch (TerraBasePreconditionFailedException) when (attempt < 3) { }
+                catch (StateConflictException) when (attempt < 3) { }
             }
         }
-        private static SavedQueryRecord Read(AccountContext context, TerraBaseDocument document)
+        private static SavedQueryRecord Read(AccountContext context, StateRecord document)
         {
             var record = AccountService.Read<SavedQueryRecord>(document);
             if (record.OrganizationId != context.Organization!.Id || record.ProjectId != context.Project!.Id)

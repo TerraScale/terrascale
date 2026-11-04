@@ -11,8 +11,6 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Stripe;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness
@@ -135,32 +133,22 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
             return underlying.CheckReadyAsync(cancellationToken);
         }
 
-        public Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken)
+        public Task<StateRecord?> GetAsync(string collection, string id, CancellationToken cancellationToken)
         {
             return underlying.GetAsync(collection, id, cancellationToken);
         }
 
-        Task<TerraBaseDocumentPage> IDashboardState.ReadPageAsync(string collection, JsonElement? filter, int limit, string? cursor, CancellationToken ct)
-        {
-            return underlying.ReadPageAsync(collection, filter, limit, cursor, ct);
-        }
-
-        Task<TerraBaseTransactionResult> IDashboardState.TransactAsync(IReadOnlyList<DashboardStateOperation> operations, CancellationToken ct)
-        {
-            return underlying.TransactAsync(operations, ct);
-        }
-
-        public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken cancellationToken)
+        public Task<IReadOnlyList<StateRecord>> ListAsync(string collection, CancellationToken cancellationToken)
         {
             return underlying.ListAsync(collection, cancellationToken);
         }
 
-        public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken cancellationToken)
+        public Task<StatePage> PageAsync(string collection, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken cancellationToken)
         {
-            return underlying.QueryPageAsync(collection, query, cancellationToken);
+            return underlying.PageAsync(collection, scope, fields, limit, cursor, cancellationToken);
         }
 
-        public async Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken cancellationToken)
+        public async Task PutAsync(string collection, string id, JsonElement document, StatePrecondition precondition, CancellationToken cancellationToken)
         {
             if (collection == AccountService.OrganizationsCollection && id == Billing?.OrganizationId && FailNextOrganizationWrite)
             {
@@ -190,7 +178,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
             var document = await underlying.GetAsync(StripeBilling.Collection, binding.OrganizationId, default)
                 ?? throw new InvalidOperationException("Missing fixture binding.");
             binding.StartedAt = DateTimeOffset.UtcNow.AddHours(-2);
-            await PutAsync(StripeBilling.Collection, binding.OrganizationId, JsonSerializer.SerializeToElement(binding), TerraBasePrecondition.Matches(document.Version), default);
+            await PutAsync(StripeBilling.Collection, binding.OrganizationId, JsonSerializer.SerializeToElement(binding), StatePrecondition.Matches(document.Version), default);
         }
     }
 

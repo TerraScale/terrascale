@@ -1,8 +1,5 @@
 using System.Collections.Concurrent;
-using System.Globalization;
 using System.Net;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -10,7 +7,6 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
-using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -22,13 +18,12 @@ using TerraScale.TerraBase.Rpc;
 using System.Diagnostics.Metrics;
 using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.E2E
 {
     // A test-only REST producer behind the real MagicOnion services for the production state adapter. The producer-seeded platform database is
     // fixture-owned; this does not qualify OCI Vault secret delivery or a live deployment.
-    public sealed partial class StateSdkScenario : IAsyncDisposable
+    public sealed class StateSdkScenario : IAsyncDisposable
     {
         private readonly string root;
         private readonly DemoEnvironment environment = new();
@@ -158,75 +153,6 @@ namespace TerraScale.Dashboard.E2E
         private WebApplication Host()
         {
             var app = environment.CreateTestHost(root, 0, "http://127.0.0.1", builder => ConfigureState(builder));
-            MapSqlCleanupRoutes(app);
-            // Test-binary-only admission harness; exercises the running hosts' real persistence adapter over HTTP.
-            app.MapPost("/__test/state-admission", async (HttpContext context, IDashboardState state) =>
-            {
-                using var json = await JsonDocument.ParseAsync(context.Request.Body);
-                var body = json.RootElement; var command = body.GetProperty("command").GetString();
-                const string clients = "dashboard_mcp_oauth_clients", grants = "dashboard_mcp_oauth_codes";
-                var ct = context.RequestAborted;
-                var filter = JsonSerializer.SerializeToElement(new { eq = new object[] { "/kind", "client" } });
-                var budget = await state.GetAsync(grants, "budget", ct);
-                var value = JsonSerializer.SerializeToElement(new { count = (budget?.Document.GetProperty("count").GetInt32() ?? -1) + 1 });
-                var key = body.TryGetProperty("key", out var named) ? named.GetString()! : "";
-                try
-                {
-                    if (command == "page")
-                    {
-                        return Results.Json(await state.ReadPageAsync(clients, body.GetProperty("filtered").GetBoolean() ? filter : null,
-                        1, body.TryGetProperty("cursor", out var cursor) ? cursor.GetString() : null, ct));
-                    }
-
-                    if (command == "read")
-                    {
-                        return Results.Json(new { client = await state.GetAsync(clients, key, ct), budget });
-                    }
-
-                    if (command == "read-capacity")
-                    {
-                        return Results.Json(new
-                        {
-                            client = await state.GetAsync(clients, key, ct),
-                            grants = await Task.WhenAll(Enumerable.Range(0, 3).Select(index => state.GetAsync(grants, key + "/" + index, ct)))
-                        });
-                    }
-
-                    if (command == "remove")
-                    {
-                        var page = await state.ReadPageAsync(clients, filter, 1, null, ct);
-                        return Results.Json(await state.TransactAsync([DashboardStateOperation.DeleteListed(clients, page.Items.Single())], ct));
-                    }
-                    if (command == "delete")
-                    {
-                        return Results.Json(await state.TransactAsync([DashboardStateOperation.Delete(grants, "budget", budget!.Version)], ct));
-                    }
-
-                    var client = JsonSerializer.SerializeToElement(new { kind = "client", key });
-                    IReadOnlyList<DashboardStateOperation> operations = command switch
-                    {
-                        "too-many" => Enumerable.Repeat(DashboardStateOperation.AssertAbsent(clients, "missing"), 1025).ToArray(),
-                        "too-many-counts" => Enumerable.Repeat(DashboardStateOperation.AssertCount(clients, null, null, 2), 17).ToArray(),
-                        "too-large" => [DashboardStateOperation.Create(clients, key, JsonSerializer.SerializeToElement(new { text = new string('é', 2 * 1024 * 1024) }))],
-                        "wildcard" => [DashboardStateOperation.Replace(grants, "budget", value, "*")],
-                        "capacity" => new[] { DashboardStateOperation.Create(clients, key, client) }.Concat(Enumerable.Range(0, 3)
-                            .Select(index => DashboardStateOperation.Create(grants, key + "/" + index, JsonSerializer.SerializeToElement(new { text = new string('x', 800 * 1024) })))).ToArray(),
-                        "noise" => [DashboardStateOperation.Create(clients, key, JsonSerializer.SerializeToElement(new { kind = "unrelated", key }))],
-                        "absent-conflict" => [DashboardStateOperation.Create(clients, key, client), DashboardStateOperation.AssertAbsent(clients, "natural-seed")],
-                        "stale-delete" => [DashboardStateOperation.Delete(grants, "budget", "stale")],
-                        "seed" => [DashboardStateOperation.Create(grants, "budget", value), DashboardStateOperation.Create(clients, key, client)],
-                        "assert" => [DashboardStateOperation.Assert(clients, key, filter), DashboardStateOperation.AssertAbsent(clients, "missing"), DashboardStateOperation.AssertCount(clients, filter, 1, 2)],
-                        "duplicate" => [DashboardStateOperation.Assert(clients, key, filter), DashboardStateOperation.Delete(clients, key, "stale")],
-                        "rollback" => [DashboardStateOperation.Create(clients, key, client), DashboardStateOperation.Replace(grants, "budget", value, "stale")],
-                        "admit" => [DashboardStateOperation.AssertCount(clients, null, null, 1), DashboardStateOperation.Create(clients, key, client),
-                            DashboardStateOperation.Replace(grants, "budget", value, budget!.Version), DashboardStateOperation.Create(grants, key, client)],
-                        _ => throw new InvalidOperationException("Unknown admission harness command.")
-                    };
-                    return Results.Json(await state.TransactAsync(operations, ct));
-                }
-                catch (TerraBaseException error) { return Results.Json(new { error.ErrorCode, error.OperationIndex }, statusCode: (int)error.StatusCode!.Value); }
-                catch (ArgumentException) { return Results.BadRequest(); }
-            });
             return app;
         }
 
@@ -262,7 +188,7 @@ namespace TerraScale.Dashboard.E2E
             organization.PlanId = planId;
             organization.BillingStatus = "active";
             await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization),
-                TerraBasePrecondition.Matches(stored.Version), default);
+                StatePrecondition.Matches(stored.Version), default);
             return organization.Id;
         }
 
@@ -390,42 +316,34 @@ namespace TerraScale.Dashboard.E2E
             }
         }
 
-        private sealed partial class StateProducer
+        private sealed class StateProducer
         {
             public const string Project = "00000000000000000000000005";
             private readonly object gate = new();
-            private readonly TerraScaleIdGenerator ids = new();
-            private readonly Dictionary<string, Collection> collections = new(StringComparer.Ordinal);
+            private readonly TestSqlEngine engine = new();
+            private readonly List<string> statementLog = [];
             private readonly ConcurrentQueue<string> failures = new();
-            private readonly Dictionary<string, (string Collection, string? Filter, string Last)> cursors = [];
             private readonly Dictionary<string, string> organizationPlans = new(StringComparer.Ordinal);
             private int planPublishes;
             private TaskCompletionSource? collectionGate;
             private TaskCompletionSource? planGate;
             private TaskCompletionSource? documentGate;
-            private TaskCompletionSource? transactionGate;
             private TaskCompletionSource? registrationGate;
             private TaskCompletionSource registrationPaused = new(TaskCreationOptions.RunContinuationsAsynchronously);
             public Task PauseRegistrationCompletion()
             { registrationGate = new(TaskCreationOptions.RunContinuationsAsynchronously); return registrationPaused.Task; }
             public void ReleaseRegistrationCompletion() { registrationGate?.TrySetResult(); registrationGate = null; }
-            private int pausedTransactions;
             private int pausedCreates;
             private int pausedWrites;
-            private int databasePuts;
-            private int databaseCreates;
-            private int collectionPosts;
-            private int collectionLists;
-            private int collectionConflicts;
-            private int documentWrites;
-            private int preconditionFailures;
+            private int schemaReads;
+            private int schemaWrites;
+            private int rowWrites;
+            private int conflicts;
             private int privateRequests;
             private int redirectTargetRequests;
-            private long offset;
-            private readonly string? databaseId = "00000000000000000000000004";
             private string mode = "";
             public string Mode { get { lock (gate) { return mode; } } }
-            public void Release() { ReleaseRegistrationCompletion(); planGate?.TrySetResult(); collectionGate?.TrySetResult(); documentGate?.TrySetResult(); transactionGate?.TrySetResult(); }
+            public void Release() { ReleaseRegistrationCompletion(); planGate?.TrySetResult(); collectionGate?.TrySetResult(); documentGate?.TrySetResult(); engine.Dispose(); }
 
             public async Task<IResult> DispatchAsync(HttpContext http)
             {
@@ -434,7 +352,7 @@ namespace TerraScale.Dashboard.E2E
                     var path = http.Request.Path.Value!;
                     if (path == "/__test/observations")
                     {
-                        return Observe();
+                        return await ObserveAsync();
                     }
 
                     if (path == "/__test/control")
@@ -466,11 +384,6 @@ namespace TerraScale.Dashboard.E2E
 
                     Require(!http.Request.Headers.ContainsKey("Authorization"), "The private listener takes no credential.");
                     Interlocked.Increment(ref privateRequests);
-                    if (Mode == "forbidden" && http.Request.Method != "GET")
-                    {
-                        return Error(403, "forbidden");
-                    }
-
                     var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
                     // TerraBasePlanSync publishes each organization's plan on the same private listener, and each project's while
                     // TerraBase may not serve the organization route yet.
@@ -503,309 +416,126 @@ namespace TerraScale.Dashboard.E2E
 
                         return Results.Json(new { plan = tier });
                     }
-                    Require(parts.Length >= 5 && parts[0] == "v1" && parts[1] == "projects" && parts[2] == Project &&
-                        parts[3] == "databases" && parts[4] == "ts-dashboard", "State namespace must use only its delivered canonical project and fixed database.");
-                    // TerraBase seeds ts-dashboard itself; the dashboard never creates it.
-                    if (parts.Length == 5) { Interlocked.Increment(ref databasePuts); Interlocked.Increment(ref databaseCreates); Require(false, "The dashboard must not create or replace its seeded database."); }
+                    Require(parts is ["v1", "projects", Project, "databases", "ts-dashboard", "sql", "execute"] && http.Request.Method == "POST",
+                        "State uses only SQL on its delivered canonical project and fixed seeded database.");
                     if (Mode == "project-missing")
                     {
                         return Error(404, "unknown_database");
                     }
 
-                    if (parts is [_, _, _, _, _, "transactions"] && http.Request.Method == "POST")
-                    {
-                        return await TransactAsync(http);
-                    }
-
-                    if (parts is [_, _, _, _, _, "collections", var queryCollection, "query"] && http.Request.Method == "POST")
-                    {
-                        if (queryCollection is "dashboard_sql_workspaces" or "dashboard_sql_database_deletions")
-                        {
-                            return await QueryAsync(queryCollection, http);
-                        }
-
-                        using var query = await JsonDocument.ParseAsync(http.Request.Body);
-                        var q = query.RootElement;
-                        lock (gate)
-                        {
-                            return Page(queryCollection, q.GetProperty("limit").GetInt32(), q.TryGetProperty("cursor", out var c) ? c.GetString() : null,
-                            q.TryGetProperty("filter", out var f) ? f : null);
-                        }
-                    }
-                    Require(parts.Length >= 6 && parts[5] == "collections", "Only genuine collection and by-key document routes are admitted.");
-                    if (parts.Length == 6 && http.Request.Method == "POST")
-                    {
-                        return await CreateCollectionAsync(http);
-                    }
-
-                    if (parts.Length == 6 && http.Request.Method == "GET")
-                    {
-                        Interlocked.Increment(ref collectionLists);
-                        var offset = int.TryParse(http.Request.Query["cursor"], out var parsed) ? parsed : 0;
-                        var size = Mode == "paged-collections" ? 10 : 200;
-                        lock (gate)
-                        {
-                            var items = collections.OrderBy(item => item.Key, StringComparer.Ordinal).Skip(offset).Take(size).ToArray();
-                            return Results.Json(new
-                            {
-                                items = items.Select(item => CollectionBody(item.Key, item.Value)),
-                                next_cursor = offset + items.Length < collections.Count ? (offset + items.Length).ToString(CultureInfo.InvariantCulture) : null
-                            });
-                        }
-                    }
-                    Require(parts.Length >= 7, "A collection name is required.");
-                    if (parts.Length == 7 && http.Request.Method == "GET")
-                    {
-                        if (Mode == "wrong-missing-code")
-                        {
-                            return Error(404, "unknown_database");
-                        }
-
-                        lock (gate)
-                        {
-                            return collections.TryGetValue(parts[6], out var collection)
-                            ? Results.Json(CollectionBody(parts[6], collection)) : Error(404, "unknown_collection");
-                        }
-                    }
-                    if (parts.Length == 8 && parts[7] == "documents" && parts[6] == "dashboard_sql_workspaces")
-                    {
-                        Interlocked.Increment(ref sqlWorkspaceLists);
-                    }
-
-                    if (parts.Length == 8 && parts[7] == "documents" && http.Request.Method == "GET")
-                    {
-                        lock (gate)
-                        {
-                            return Page(parts[6], int.TryParse(http.Request.Query["limit"], out var limit) ? limit : 50, http.Request.Query["cursor"].FirstOrDefault(), null);
-                        }
-                    }
-
-                    Require(parts.Length == 9 && parts[7] == "documents" && parts[8] == "by-key" && http.Request.Query.Keys.SequenceEqual(new[] { "id" }),
-                        "The official state SDK must use the genuine by-key point route and one opaque id parameter.");
-                    var id = http.Request.Query["id"].ToString();
-                    Require(TerraScaleIds.IsValid(id), "State document ids are canonical ULIDs.");
-                    if (http.Request.Method == "PUT" && parts[6] == "dashboard_accounts" && documentGate is { } held)
-                    { Interlocked.Increment(ref pausedWrites); await held.Task.WaitAsync(http.RequestAborted); }
-                    JsonElement? body = null;
-                    if (http.Request.Method == "PUT")
-                    {
-                        using var json = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
-                        Require(json.RootElement.ValueKind == JsonValueKind.Object, "A document write contains the actual JSON object.");
-                        body = json.RootElement.Clone();
-                    }
-                    if (http.Request.Method == "PUT" && parts[6] == McpOAuth.ClientCollection && body is { } candidate &&
-                        candidate.TryGetProperty("FirstSignInCompletedAt", out var completed) && completed.ValueKind != JsonValueKind.Null && registrationGate is { } pending)
-                    { registrationPaused.TrySetResult(); await pending.Task.WaitAsync(http.RequestAborted); }
-                    lock (gate)
-                    {
-                        if (!collections.TryGetValue(parts[6], out var collection))
-                        {
-                            return Error(404, "unknown_collection");
-                        }
-
-                        var existing = collection.Documents.GetValueOrDefault(id);
-                        if (http.Request.Method == "GET")
-                        {
-                            if (existing is null || existing.Deleted)
-                            {
-                                return Error(404, "not_found");
-                            }
-
-                            http.Response.Headers.ETag = '"' + existing.Version + '"';
-                            return Results.Json(new { id, version = existing.Version, state = "value", document = existing.Value });
-                        }
-                        Require(http.Request.Method is "PUT" or "DELETE", "Only production state point read/write/delete operations are admitted.");
-                        if (http.Request.Method == "DELETE" && parts[6] == "dashboard_sql_workspaces" && Mode == "sql-delete-unavailable")
-                        {
-                            return Error(503, "unavailable");
-                        }
-                        // Test-only competing committed lifecycle transition between fresh read and delete.
-                        if (http.Request.Method == "DELETE" && parts[6] == McpOAuth.ClientCollection && Mode == "complete-mcp-before-delete" && existing is { Deleted: false })
-                        {
-                            var row = existing.Value.Deserialize<McpRegistration>()!;
-                            collection.Documents[id] = existing = new("tbv2-completed-race", JsonSerializer.SerializeToElement(row with
-                            { FirstSignInCompletedAt = row.CreatedAt.AddHours(23), LastActivityAt = row.CreatedAt.AddHours(23) }), false);
-                        }
-                        var absent = http.Request.Headers.IfNoneMatch == "*";
-                        var match = http.Request.Headers.IfMatch.ToString();
-                        Require(absent != (match.Length > 0), "Every state mutation requires exactly one producer precondition.");
-                        if (absent && existing is { Deleted: false } || match.Length > 0 && (existing is null || match != '"' + existing.Version + '"'))
-                        { preconditionFailures++; return Error(412, "precondition_failed"); }
-                        if (http.Request.Method == "DELETE" && existing is null)
-                        {
-                            return Error(404, "not_found");
-                        }
-
-                        var version = "tbv2-" + WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
-                        var deleted = http.Request.Method == "DELETE";
-                        collection.Documents[id] = new(version, body ?? existing!.Value, deleted);
-                        documentWrites++;
-                        http.Response.Headers.ETag = '"' + version + '"';
-                        return Results.Json(new { id, version, offset = (++offset).ToString(CultureInfo.InvariantCulture), durability = "local_durable" },
-                            statusCode: !deleted && (existing is null || existing.Deleted) ? 201 : 200);
-                    }
+                    return await ExecuteAsync(http);
                 }
                 catch (Exception error) when (error is InvalidOperationException or JsonException)
                 { failures.Enqueue(error.Message); return Error(500, "test_contract_failure"); }
             }
 
-            // Protocol fixture: evaluate every predicate against pre-write state, commit only after every operation succeeds.
-            private async Task<IResult> TransactAsync(HttpContext http)
-            {
-                using var json = await JsonDocument.ParseAsync(http.Request.Body);
-                var operations = json.RootElement.GetProperty("ops").EnumerateArray().ToArray();
-                if (transactionGate is { } held) { Interlocked.Increment(ref pausedTransactions); await held.Task.WaitAsync(http.RequestAborted); }
-                Require(operations.Length is >= 1 and <= 1024, "SDK operation-count contract.");
-                lock (gate)
-                {
-                    var writes = new List<(Collection Collection, string Id, Document Document)>();
-                    var results = new List<object>(); var targets = new HashSet<(string, string)>(); var capturedBytes = 0;
-                    for (var index = 0; index < operations.Length; index++)
-                    {
-                        var op = operations[index]; var kind = op.GetProperty("op").GetString(); var name = op.GetProperty("collection").GetString()!;
-                        if (!collections.TryGetValue(name, out var collection))
-                        {
-                            return Error(404, "unknown_collection", index);
-                        }
-
-                        var filter = op.TryGetProperty("filter", out var f) ? (JsonElement?)f : null;
-                        if (kind == "assert_count")
-                        {
-                            var count = collection.Documents.Values.Count(d => !d.Deleted && Matches(d.Value, filter));
-                            if (op.TryGetProperty("gte", out var gte) && count < gte.GetInt64() || op.TryGetProperty("lte", out var lte) && count > lte.GetInt64())
-                            {
-                                return Error(412, "precondition_failed", index);
-                            }
-
-                            results.Add(new { asserted = true, count }); continue;
-                        }
-                        var id = op.GetProperty("id").GetString()!;
-                        Require(TerraScaleIds.IsValid(id) && targets.Add((name, id)), "Canonical IDs and unique transaction targets.");
-                        var existing = collection.Documents.GetValueOrDefault(id); var live = existing is { Deleted: false };
-                        if (kind == "assert")
-                        {
-                            if (op.TryGetProperty("absent", out var absent) && absent.GetBoolean() ? live : !live || !Matches(existing!.Value, filter))
-                            {
-                                return Error(412, "precondition_failed", index);
-                            }
-
-                            results.Add(new { asserted = true }); continue;
-                        }
-                        Require(kind is "create" or "put" or "delete", "Only the narrow adapter's mutation operations are supported.");
-                        if (kind == "create" ? live : !op.TryGetProperty("if_match", out var match) || !live || match.GetString() != existing!.Version)
-                        {
-                            return Error(412, "precondition_failed", index);
-                        }
-
-                        var version = "tbv2-" + WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
-                        var value = kind == "delete" ? existing!.Value : op.GetProperty("document").Clone();
-                        var documentBytes = Encoding.UTF8.GetByteCount(value.GetRawText());
-                        Require(documentBytes <= 1024 * 1024, "Each staged document satisfies the producer's 1 MiB document limit.");
-                        capturedBytes += Encoding.UTF8.GetByteCount(name) + Encoding.UTF8.GetByteCount(id) + documentBytes;
-                        if (capturedBytes > 2 * 1024 * 1024)
-                        {
-                            return Error(503, "capacity", index);
-                        }
-
-                        writes.Add((collection, id, new(version, value, kind == "delete")));
-                        results.Add(new { id, version });
-                    }
-                    foreach (var write in writes)
-                    {
-                        write.Collection.Documents[write.Id] = write.Document;
-                    }
-
-                    documentWrites += writes.Count;
-                    return Results.Json(new { offset = ++offset, durability = "local_durable", results });
-                }
-            }
-
-            private static bool Matches(JsonElement document, JsonElement? filter)
-            {
-                if (filter is null)
-                {
-                    return true;
-                }
-                // Deliberately support only the fixture's eq grammar; never silently accept an unmodeled predicate.
-                var eq = filter.Value.GetProperty("eq"); var path = eq[0].GetString()!;
-                Require(path.StartsWith('/') && !path[1..].Contains('/'), "Fixture uses a top-level JSON Pointer.");
-                return document.TryGetProperty(path[1..], out var value) && JsonElement.DeepEquals(value, eq[1]);
-            }
-
-            private IResult Page(string name, int limit, string? cursor, JsonElement? filter)
-            {
-                if (!collections.TryGetValue(name, out var collection))
-                {
-                    return Error(404, "unknown_collection");
-                }
-
-                string? last = null;
-                if (cursor is not null)
-                {
-                    if (!cursors.TryGetValue(cursor, out var position) || position.Collection != name || position.Filter != filter?.GetRawText())
-                    {
-                        return Error(400, "invalid_cursor");
-                    }
-
-                    last = position.Last;
-                }
-                var remaining = collection.Documents.Where(d => !d.Value.Deleted && Matches(d.Value.Value, filter) && string.CompareOrdinal(d.Key, last) > 0).OrderBy(d => d.Key, StringComparer.Ordinal).Take(limit + 1).ToArray();
-                string? next = null;
-                if (remaining.Length > limit) { next = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32)); cursors[next] = (name, filter?.GetRawText(), remaining[limit - 1].Key); }
-                return Results.Json(new { items = remaining.Take(limit).Select(d => new { id = d.Key, version = d.Value.Version, state = "value", document = d.Value.Value }), next_cursor = next });
-            }
-
-            private async Task<IResult> CreateCollectionAsync(HttpContext http)
+            private async Task<IResult> ExecuteAsync(HttpContext http)
             {
                 using var json = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
-                Require(json.RootElement.EnumerateObject().Count() == 1 && json.RootElement.TryGetProperty("name", out _), "Collection creation accepts only name.");
-                var name = json.RootElement.GetProperty("name").GetString()!;
-                Require(name.Length is > 0 and <= 63 && name[0] is >= 'a' and <= 'z' && name.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '_' or '-'), "Collection names obey the producer grammar.");
-                Interlocked.Increment(ref collectionPosts);
-                if (collectionGate is { } held && name == "sessions")
-                { Interlocked.Increment(ref pausedCreates); await held.Task.WaitAsync(http.RequestAborted); }
+                var statements = json.RootElement.GetProperty("statements").EnumerateArray().Select(statement => new TestSqlStatement(statement.GetProperty("sql").GetString()!,
+                    statement.TryGetProperty("args", out var args) ? [.. args.EnumerateArray().Select(arg => arg.ValueKind == JsonValueKind.Null ? null : arg.GetString())] : [])).ToArray();
+                Require(statements.Length is >= 1 and <= 256, "One SQL request holds 1 to 256 statements.");
+                var schema = statements.Any(statement => statement.Sql.StartsWith("CREATE ", StringComparison.Ordinal));
+                var writes = statements.Where(statement => statement.Sql.Split(' ')[0] is "INSERT" or "UPDATE" or "DELETE").ToArray();
                 lock (gate)
                 {
-                    if (Mode == "interrupted" && name == "auth-flows")
+                    statementLog.AddRange(statements.Select(statement => statement.Sql));
+                    if (statements.Any(statement => statement.Sql.StartsWith("SELECT name FROM sqlite_master", StringComparison.Ordinal)))
+                    {
+                        schemaReads++;
+                    }
+                }
+
+                if (Mode == "forbidden" && (schema || writes.Length > 0))
+                {
+                    return SqlError(403, "forbidden_scope", "SQLITE_AUTH", 0);
+                }
+
+                if (schema)
+                {
+                    Interlocked.Increment(ref schemaWrites);
+                    if (collectionGate is { } held) { Interlocked.Increment(ref pausedCreates); await held.Task.WaitAsync(http.RequestAborted); }
+                    if (Mode == "interrupted")
                     {
                         return Error(503, "unavailable");
                     }
+                }
 
-                    if (Mode == "other-conflict")
+                if (writes.Any(statement => Writes(statement, "dashboard_accounts")) && documentGate is { } accounts)
+                { Interlocked.Increment(ref pausedWrites); await accounts.Task.WaitAsync(http.RequestAborted); }
+                if (writes.Any(statement => Writes(statement, McpOAuth.ClientCollection) && statement.Args.Any(arg => arg?.Contains("\"FirstSignInCompletedAt\":\"", StringComparison.Ordinal) == true))
+                    && registrationGate is { } pending)
+                { registrationPaused.TrySetResult(); await pending.Task.WaitAsync(http.RequestAborted); }
+                if (Mode == "sql-delete-unavailable" && writes.Any(statement => statement.Sql.StartsWith("DELETE FROM dashboard_sql_workspaces", StringComparison.Ordinal)))
+                {
+                    return Error(503, "unavailable");
+                }
+
+                if (Mode == "complete-mcp-before-delete" && writes.FirstOrDefault(statement => statement.Sql.StartsWith("DELETE FROM " + McpOAuth.ClientCollection, StringComparison.Ordinal)) is { } removal)
+                {
+                    var row = (await engine.ExecuteAsync([new("SELECT body FROM " + McpOAuth.ClientCollection + " WHERE id = ?", [removal.Args[0]])], http.RequestAborted))[0].Rows;
+                    if (row.Count == 1 && JsonSerializer.Deserialize<McpRegistration>((string)row[0][0]!) is { } registration)
                     {
-                        return Error(409, "schema_requires_empty_collection");
+                        await engine.ExecuteAsync([new("UPDATE " + McpOAuth.ClientCollection + " SET version = ?, body = ? WHERE id = ?", ["completed-race",
+                            JsonSerializer.Serialize(registration with { FirstSignInCompletedAt = registration.CreatedAt.AddHours(23), LastActivityAt = registration.CreatedAt.AddHours(23) }),
+                            removal.Args[0]])], http.RequestAborted);
+                    }
+                }
+
+                try
+                {
+                    var results = await engine.ExecuteAsync(statements, http.RequestAborted);
+                    lock (gate)
+                    {
+                        for (var index = 0; index < statements.Length; index++)
+                        {
+                            if (writes.Contains(statements[index]))
+                            {
+                                if (results[index].RowsAffected == 0) { conflicts++; } else { rowWrites += (int)results[index].RowsAffected; }
+                            }
+                        }
                     }
 
-                    if (collections.ContainsKey(name)) { collectionConflicts++; return Error(409, "name_taken"); }
-                    var collection = new Collection(ids.NewId(), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                    collections[name] = collection;
-                    if (Mode == "bad-conflict-reread") { collectionConflicts++; return Error(409, "name_taken"); }
-                    return Results.Json(CollectionBody(name, collection), statusCode: 201);
+                    return Results.Json(TestSqlEngine.Body(results));
+                }
+                catch (TestSqlFailure failure)
+                {
+                    if (failure.SqliteCode.StartsWith("SQLITE_CONSTRAINT", StringComparison.Ordinal)) { Interlocked.Increment(ref conflicts); }
+                    else if (!failure.Message.Contains("no such table", StringComparison.Ordinal)) { failures.Enqueue(failure.Message); }
+                    return SqlError(400, failure.Code, failure.SqliteCode, failure.Statement);
                 }
             }
 
-            private object CollectionBody(string name, Collection collection)
+            private static bool Writes(TestSqlStatement statement, string table)
             {
-                return new
-                { id = collection.Id, name = Mode is "wrong-collection" or "bad-conflict-reread" ? "foreign_collection" : name, created_at = collection.CreatedAt.ToString(CultureInfo.InvariantCulture) };
+                return statement.Sql.StartsWith("INSERT INTO " + table + " ", StringComparison.Ordinal) || statement.Sql.StartsWith("UPDATE " + table + " ", StringComparison.Ordinal);
+            }
+
+            private static IResult SqlError(int status, string code, string sqliteCode, int statement)
+            {
+                return Results.Json(new { error = new { code, message = "Test-only state producer refusal.", statement, sqlite_code = sqliteCode } }, statusCode: status);
             }
 
             private async Task<IResult> ControlAsync(HttpContext http)
             {
                 using var document = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
                 var body = document.RootElement;
+                var command = body.GetProperty("command").GetString();
+                if (command == "drop-table")
+                {
+                    await engine.ExecuteAsync([new("DROP TABLE " + body.GetProperty("name").GetString(), [])], http.RequestAborted);
+                    return Results.NoContent();
+                }
+
                 lock (gate)
                 {
-                    switch (body.GetProperty("command").GetString())
+                    switch (command)
                     {
                         case "mode": mode = body.GetProperty("value").GetString()!; break;
-                        case "pause-transactions": pausedTransactions = 0; transactionGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
-                        case "release-transactions": transactionGate?.TrySetResult(); transactionGate = null; break;
-                        case "pause-collections": collectionGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
-                        case "release-collections": collectionGate?.TrySetResult(); collectionGate = null; break;
+                        case "pause-schema": collectionGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
+                        case "release-schema": collectionGate?.TrySetResult(); collectionGate = null; break;
                         case "pause-account-writes": pausedWrites = 0; documentGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
                         case "release-account-writes": documentGate?.TrySetResult(); documentGate = null; break;
-                        case "drop-collection": collections.Remove(body.GetProperty("name").GetString()!); break;
                         case "wipe-plans": organizationPlans.Clear(); break;
                         case "pause-plans": planGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
                         case "release-plans": planGate?.TrySetResult(); planGate = null; break;
@@ -815,42 +545,35 @@ namespace TerraScale.Dashboard.E2E
                 return Results.NoContent();
             }
 
-            private IResult Observe()
+            private async Task<IResult> ObserveAsync()
             {
+                var tables = await engine.TablesAsync();
+                var digest = await engine.DigestAsync();
                 lock (gate)
                 {
                     return Results.Json(new
                     {
-                        databaseId,
-                        databasePuts,
-                        databaseCreates,
-                        collectionPosts,
-                        collectionConflicts,
-                        documentWrites,
-                        preconditionFailures,
+                        schemaReads,
+                        schemaWrites,
+                        rowWrites,
+                        conflicts,
                         pausedCreates,
                         pausedWrites,
-                        collectionLists,
                         privateRequests,
-                        pausedTransactions,
                         redirectTargetRequests,
-                        cleanupQueries = cleanupQueries.ToArray(),
-                        sqlWorkspaceLists,
+                        statements = statementLog.ToArray(),
                         failures = failures.ToArray(),
                         organizationPlans = organizationPlans.ToDictionary(),
                         planPublishes = Volatile.Read(ref planPublishes),
-                        collections = collections.OrderBy(item => item.Key, StringComparer.Ordinal).Select(item => new
-                        { name = item.Key, id = item.Value.Id, createdAt = item.Value.CreatedAt, documents = item.Value.Documents.Count(entry => !entry.Value.Deleted) }).ToArray(),
-                        documentDigest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', collections.OrderBy(item => item.Key, StringComparer.Ordinal)
-                        .SelectMany(collection => collection.Value.Documents.OrderBy(document => document.Key, StringComparer.Ordinal)
-                            .Select(document => collection.Key + "/" + document.Key + ":" + document.Value.Version + ":" + document.Value.Deleted + ":" + document.Value.Value.GetRawText()))))))
+                        tables = tables.Select(table => new { name = table.Name, rows = table.Rows }).ToArray(),
+                        rowDigest = digest
                     });
                 }
             }
 
-            private static IResult Error(int status, string code, int? index = null)
+            private static IResult Error(int status, string code)
             {
-                return Results.Json(new { error = new { code, message = "Test-only state producer refusal.", op = index } }, statusCode: status);
+                return Results.Json(new { error = new { code, message = "Test-only state producer refusal." } }, statusCode: status);
             }
 
             private static void Require(bool condition, string message)
@@ -859,13 +582,6 @@ namespace TerraScale.Dashboard.E2E
                 {
                     throw new InvalidOperationException(message);
                 }
-            }
-            private sealed record Document(string Version, JsonElement Value, bool Deleted);
-            private sealed class Collection(string id, long createdAt)
-            {
-                public string Id { get; } = id;
-                public long CreatedAt { get; } = createdAt;
-                public Dictionary<string, Document> Documents { get; } = new(StringComparer.Ordinal);
             }
         }
     }

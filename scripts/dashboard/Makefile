@@ -6,9 +6,12 @@ SOLUTION = scripts/dashboard/TerraScale.Dashboard.slnx
 E2E = $(DOTNET) run --configuration Release --project tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj --
 RESULTS = --report-trx --results-directory "$(CURDIR)/test-results/tunit"
 
-.PHONY: build lint security check css check-css js dev demo test-e2e test-fast test-slow test-live-readiness check-e2e-shards
+.PHONY: turso-native build lint security check css check-css js dev demo test-e2e test-fast test-slow test-live-readiness check-e2e-shards
 
-build:
+turso-native:
+	scripts/vendor/verify-turso-native.sh src/vendor/Turso.Data.Sqlite/native >/dev/null 2>&1 || scripts/vendor/download-turso-native.sh src/vendor/Turso.Data.Sqlite/native
+
+build: turso-native
 	$(DOTNET) build $(SOLUTION) --configuration Release -p:RestoreLockedMode=true
 
 lint: check-css
@@ -54,7 +57,7 @@ test-e2e:
 test-fast:
 	$(E2E) --treenode-filter '/*/*/*/*[Category!=Slow]' $(RESULTS) --report-trx-filename fast.trx
 
-test-slow:
+test-slow: turso-native
 	$(E2E) --treenode-filter '/*/*/*/*[Category=Slow]' $(RESULTS) --report-trx-filename slow.trx
 
 test-live-readiness:

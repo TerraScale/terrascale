@@ -26,7 +26,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             await gate.WaitAsync(cancellationToken);
             try
             {
-                var page = await state.ReadPageAsync(McpOAuth.ClientCollection, null, 32, cursor, cancellationToken);
+                var page = await state.PageAsync(McpOAuth.ClientCollection, new Dictionary<string, string>(), null, 32, cursor, cancellationToken);
                 foreach (var document in page.Items)
                 {
                     cancellationToken.ThrowIfCancellationRequested();

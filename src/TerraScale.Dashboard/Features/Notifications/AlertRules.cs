@@ -5,7 +5,6 @@ using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
@@ -305,7 +304,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             return "alert-webhook/" + projectId + "/" + ruleId;
         }
 
-        public static AlertRuleSet Read(TerraBaseDocument document, string projectId)
+        public static AlertRuleSet Read(StateRecord document, string projectId)
         {
             var saved = AccountService.Read<AlertRuleSet>(document);
             if (document.Id != projectId || saved.ProjectId != projectId || saved.Rules is null || saved.Rules.Count > 20 ||

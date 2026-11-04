@@ -4,8 +4,6 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.E2E.Demo
 {
@@ -107,19 +105,19 @@ namespace TerraScale.Dashboard.E2E.Demo
             return underlying.CheckReadyAsync(cancellationToken);
         }
 
-        public async Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken)
+        public async Task<StateRecord?> GetAsync(string collection, string id, CancellationToken cancellationToken)
         {
             var document = await underlying.GetAsync(collection, id, cancellationToken);
             if (collection == StripeBilling.CheckoutsCollection && document is not null && corruptReads.ContainsKey(id))
             {
-                return new("foreign-checkout-document", document.Version, "value", document.Document.Clone());
+                return new("foreign-checkout-document", document.Version, document.Body.Clone());
             }
 
             return document;
         }
-        public Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken cancellationToken)
+        public Task PutAsync(string collection, string id, JsonElement document, StatePrecondition precondition, CancellationToken cancellationToken)
         {
-            if (collection == StripeBilling.CheckoutsCollection && ReferenceEquals(precondition, TerraBasePrecondition.Absent))
+            if (collection == StripeBilling.CheckoutsCollection && ReferenceEquals(precondition, StatePrecondition.Absent))
             {
                 var binding = document.Deserialize<CheckoutBinding>() ?? throw new IOException("Invalid checkout index fixture write.");
                 if (binding.CheckoutId != id)
@@ -135,24 +133,14 @@ namespace TerraScale.Dashboard.E2E.Demo
             }
             return underlying.PutAsync(collection, id, document, precondition, cancellationToken);
         }
-        Task<TerraBaseDocumentPage> IDashboardState.ReadPageAsync(string collection, JsonElement? filter, int limit, string? cursor, CancellationToken ct)
-        {
-            return underlying.ReadPageAsync(collection, filter, limit, cursor, ct);
-        }
-
-        Task<TerraBaseTransactionResult> IDashboardState.TransactAsync(IReadOnlyList<DashboardStateOperation> operations, CancellationToken ct)
-        {
-            return underlying.TransactAsync(operations, ct);
-        }
-
-        public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken cancellationToken)
+        public Task<IReadOnlyList<StateRecord>> ListAsync(string collection, CancellationToken cancellationToken)
         {
             return underlying.ListAsync(collection, cancellationToken);
         }
 
-        public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken cancellationToken)
+        public Task<StatePage> PageAsync(string collection, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken cancellationToken)
         {
-            return underlying.QueryPageAsync(collection, query, cancellationToken);
+            return underlying.PageAsync(collection, scope, fields, limit, cursor, cancellationToken);
         }
 
         public Task DeleteAsync(string collection, string id, string version, CancellationToken cancellationToken)

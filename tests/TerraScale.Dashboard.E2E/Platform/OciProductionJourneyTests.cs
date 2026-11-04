@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -24,7 +23,6 @@ namespace TerraScale.Dashboard.E2E.Platform
         {
             var peerSecret = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
             var credentialed = 0;
-            var ids = new TerraScaleIdGenerator();
             var terraBasePort = FreePort();
             var builder = WebApplication.CreateBuilder();
             // The private listener speaks HTTP/2 with prior knowledge, like TerraBase's.
@@ -36,33 +34,24 @@ namespace TerraScale.Dashboard.E2E.Platform
             terraBase.UseTerraBaseRestPipeline();
             terraBase.UseRouting();
             terraBase.MapTerraBaseRestRpc();
-            // Test-only HTTP fake of TerraBase's private listener: every seeded collection exists.
-            terraBase.MapGet("/v1/projects/{project}/databases/ts-dashboard/collections", (HttpContext http) =>
+            terraBase.MapPost("/v1/projects/{project}/databases/ts-dashboard/sql/execute", async (HttpContext http) =>
             {
                 if (http.Request.Headers["X-TerraBase-Peer-Credential"] == peerSecret)
                 {
                     Interlocked.Increment(ref credentialed);
                 }
 
+                using var request = await JsonDocument.ParseAsync(http.Request.Body);
                 return Results.Json(new
                 {
-                    items = DashboardStateSchema.Collections.Select(name => new
+                    results = request.RootElement.GetProperty("statements").EnumerateArray().Select(statement => new
                     {
-                        id = ids.NewId(),
-                        name,
-                        created_at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture)
-                    }),
-                    next_cursor = (string?)null
+                        columns = Array.Empty<object>(),
+                        rows = statement.GetProperty("sql").GetString()!.StartsWith("SELECT name FROM sqlite_master", StringComparison.Ordinal)
+                            ? DashboardStateSchema.Tables.Select(name => new object[] { name }).ToArray() : [],
+                        rows_affected = 0
+                    }).ToArray()
                 });
-            });
-            terraBase.MapGet("/v1/projects/{project}/databases/ts-dashboard/collections/{name}", (HttpContext http, string name) =>
-            {
-                if (http.Request.Headers["X-TerraBase-Peer-Credential"] == peerSecret)
-                {
-                    Interlocked.Increment(ref credentialed);
-                }
-
-                return Results.Json(new { id = ids.NewId(), name, created_at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture) });
             });
             await terraBase.StartAsync();
 

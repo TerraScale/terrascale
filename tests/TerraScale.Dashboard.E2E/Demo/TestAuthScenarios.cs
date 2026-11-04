@@ -17,8 +17,6 @@ using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Usage;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.E2E
 {
@@ -1108,10 +1106,10 @@ namespace TerraScale.Dashboard.E2E
                     case "spoof-stored-admin":
                         foreach (var entry in state.Items.Where(entry => entry.Key.StartsWith("dashboard_accounts/", StringComparison.Ordinal)))
                         {
-                            var document = JsonSerializer.Deserialize<Dictionary<string, object>>(entry.Value.Document.GetRawText())!;
+                            var document = JsonSerializer.Deserialize<Dictionary<string, object>>(entry.Value.Body.GetRawText())!;
                             document["PlatformAdmin"] = true;
                             document["platform_admin"] = true;
-                            state.Items[entry.Key] = entry.Value with { Document = JsonSerializer.SerializeToElement(document) };
+                            state.Items[entry.Key] = entry.Value with { Body = JsonSerializer.SerializeToElement(document) };
                         }
                         storedClaimSpoof = true;
                         break;
@@ -1148,13 +1146,13 @@ namespace TerraScale.Dashboard.E2E
                     ActiveOrganizationId = organization.Id,
                     ActiveProjectId = organization.Projects.Keys.Single()
                 };
-                await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization), TerraBasePrecondition.Absent, default);
+                await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization), StatePrecondition.Absent, default);
                 if (publicId != key)
                 {
-                    await state.PutAsync(AccountService.IdentitiesCollection, key, JsonSerializer.SerializeToElement(new AccountIdentityBinding(subject, publicId)), TerraBasePrecondition.Absent, default);
+                    await state.PutAsync(AccountService.IdentitiesCollection, key, JsonSerializer.SerializeToElement(new AccountIdentityBinding(subject, publicId)), StatePrecondition.Absent, default);
                 }
 
-                await state.PutAsync(AccountService.AccountsCollection, key, JsonSerializer.SerializeToElement(account), TerraBasePrecondition.Absent, default);
+                await state.PutAsync(AccountService.AccountsCollection, key, JsonSerializer.SerializeToElement(account), StatePrecondition.Absent, default);
                 return Results.Ok(new { subject, storageKey = key, accountId = publicId });
             }
 
@@ -1172,7 +1170,7 @@ namespace TerraScale.Dashboard.E2E
                 }
                 else
                 {
-                    var value = JsonSerializer.Deserialize<Dictionary<string, object>>(document.Document.GetRawText())!;
+                    var value = JsonSerializer.Deserialize<Dictionary<string, object>>(document.Body.GetRawText())!;
                     if (kind.EndsWith("user", StringComparison.Ordinal))
                     {
                         value["UserId"] = new TerraScaleIdGenerator().NewId();
@@ -1186,13 +1184,13 @@ namespace TerraScale.Dashboard.E2E
                         value[target == identityKey ? "AccountId" : "Id"] = new TerraScaleIdGenerator().NewId();
                     }
 
-                    state.Items[target] = document with { Document = JsonSerializer.SerializeToElement(value) };
+                    state.Items[target] = document with { Body = JsonSerializer.SerializeToElement(value) };
                 }
             }
 
             private IResult Observations()
             {
-                var plaintext = state.Items.Values.Select(item => item.Document.GetRawText()).ToArray();
+                var plaintext = state.Items.Values.Select(item => item.Body.GetRawText()).ToArray();
                 return Results.Json(new
                 {
                     refreshes,
@@ -1226,9 +1224,9 @@ namespace TerraScale.Dashboard.E2E
                     encryptedCredentialRecords = state.Items.Keys.Count(key => key.StartsWith("auth_credentials/", StringComparison.Ordinal)),
                     accessTokenHashRecords = state.Items.Keys.Count(key => key.StartsWith("dashboard_access_token_hashes/", StringComparison.Ordinal)),
                     identities = state.Items.Where(entry => entry.Key.StartsWith(AccountService.IdentitiesCollection + "/", StringComparison.Ordinal))
-                        .Select(entry => new { storageKey = entry.Value.Id, publicId = entry.Value.Document.GetProperty("AccountId").GetString() }).ToArray(),
+                        .Select(entry => new { storageKey = entry.Value.Id, publicId = entry.Value.Body.GetProperty("AccountId").GetString() }).ToArray(),
                     accounts = state.Items.Where(entry => entry.Key.StartsWith(AccountService.AccountsCollection + "/", StringComparison.Ordinal))
-                        .Select(entry => new { storageKey = entry.Value.Id, publicId = entry.Value.Document.GetProperty("Id").GetString() }).ToArray(),
+                        .Select(entry => new { storageKey = entry.Value.Id, publicId = entry.Value.Body.GetProperty("Id").GetString() }).ToArray(),
                     credentialsEncrypted = access.Keys.Concat(refresh.Keys).All(token => plaintext.All(body => !body.Contains(token, StringComparison.Ordinal)))
                 });
             }

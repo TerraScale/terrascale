@@ -29,7 +29,7 @@ namespace TerraScale.Dashboard.Features.Billing
             {
                 try
                 {
-                    if (document.State == "value" && document.Document.Deserialize<BillingBinding>() is { } binding)
+                    if (document.Body.Deserialize<BillingBinding>() is { } binding)
                     {
                         await billing.ReconcilePendingCheckoutAsync(binding, cancellationToken);
                     }

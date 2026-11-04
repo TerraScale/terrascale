@@ -311,7 +311,7 @@ namespace TerraScale.Dashboard.E2E
                 return inner.CheckReadyAsync(ct);
             }
 
-            public async Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken ct)
+            public async Task<StateRecord?> GetAsync(string collection, string id, CancellationToken ct)
             {
                 var value = await inner.GetAsync(collection, id, ct);
                 if (collection != Credentials)
@@ -320,9 +320,9 @@ namespace TerraScale.Dashboard.E2E
                 }
 
                 Interlocked.Increment(ref credentialReads);
-                return ConflictCredentials && value is not null ? value with { State = "conflict" } : value;
+                return ConflictCredentials && value is not null ? throw new IOException("Synthetic credential read conflict.") : value;
             }
-            public async Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition condition, CancellationToken ct)
+            public async Task PutAsync(string collection, string id, JsonElement document, StatePrecondition condition, CancellationToken ct)
             {
                 var databaseCommit = collection == AccountService.OrganizationsCollection &&
                     document.GetProperty("Projects").EnumerateObject().Any(project => project.Value.GetProperty("Databases").EnumerateObject().Any());
@@ -336,7 +336,7 @@ namespace TerraScale.Dashboard.E2E
                     databaseProject.GetProperty("Databases").EnumerateObject().Any(database => database.Value.GetProperty("Name").GetString() == targetDatabaseName))
                 {
                     var prior = await inner.GetAsync(collection, id, ct);
-                    if (prior is not null && prior.Document.GetProperty("Projects").TryGetProperty(targetDatabaseProject, out var priorProject) &&
+                    if (prior is not null && prior.Body.GetProperty("Projects").TryGetProperty(targetDatabaseProject, out var priorProject) &&
                         !priorProject.GetProperty("Databases").EnumerateObject().Any(database => database.Value.GetProperty("Name").GetString() == targetDatabaseName) &&
                         Interlocked.CompareExchange(ref databaseMetadataArmed, 0, 1) == 1)
                     {
@@ -350,7 +350,7 @@ namespace TerraScale.Dashboard.E2E
                     document.GetProperty("Projects").TryGetProperty(targetProject, out _))
                 {
                     var prior = await inner.GetAsync(collection, id, ct);
-                    if (prior is not null && !prior.Document.GetProperty("Projects").TryGetProperty(targetProject, out _) &&
+                    if (prior is not null && !prior.Body.GetProperty("Projects").TryGetProperty(targetProject, out _) &&
                         Interlocked.CompareExchange(ref projectMetadataArmed, 0, 1) == 1)
                     {
                         Interlocked.Increment(ref failedProjectMetadataWrites);
@@ -361,7 +361,7 @@ namespace TerraScale.Dashboard.E2E
                     Volatile.Read(ref projectDeletionMetadataArmed) == 1 && !document.GetProperty("Projects").TryGetProperty(targetDeletionProject, out _))
                 {
                     var prior = await inner.GetAsync(collection, id, ct);
-                    if (prior is not null && prior.Document.GetProperty("Projects").TryGetProperty(targetDeletionProject, out var project) &&
+                    if (prior is not null && prior.Body.GetProperty("Projects").TryGetProperty(targetDeletionProject, out var project) &&
                         project.GetProperty("Id").GetString() == targetDeletionProject &&
                         Interlocked.CompareExchange(ref projectDeletionMetadataArmed, 0, 1) == 1)
                     {
@@ -370,31 +370,21 @@ namespace TerraScale.Dashboard.E2E
                     }
                 }
                 try { await inner.PutAsync(collection, id, document, condition, ct); }
-                catch (TerraBasePreconditionFailedException) when (databaseCommit)
+                catch (StateConflictException) when (databaseCommit)
                 { Interlocked.Increment(ref quotaCasFailures); throw; }
                 if (collection == Credentials)
                 {
                     encrypted.Enqueue(document.GetRawText());
                 }
             }
-            Task<TerraBaseDocumentPage> IDashboardState.ReadPageAsync(string collection, JsonElement? filter, int limit, string? cursor, CancellationToken ct)
-            {
-                return inner.ReadPageAsync(collection, filter, limit, cursor, ct);
-            }
-
-            Task<TerraBaseTransactionResult> IDashboardState.TransactAsync(IReadOnlyList<DashboardStateOperation> operations, CancellationToken ct)
-            {
-                return inner.TransactAsync(operations, ct);
-            }
-
-            public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken ct)
+            public Task<IReadOnlyList<StateRecord>> ListAsync(string collection, CancellationToken ct)
             {
                 return inner.ListAsync(collection, ct);
             }
 
-            public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken ct)
+            public Task<StatePage> PageAsync(string collection, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken ct)
             {
-                return inner.QueryPageAsync(collection, query, ct);
+                return inner.PageAsync(collection, scope, fields, limit, cursor, ct);
             }
 
             public Task DeleteAsync(string collection, string id, string version, CancellationToken ct)
@@ -706,7 +696,7 @@ namespace TerraScale.Dashboard.E2E
                         var databaseProjectId = body.GetProperty("projectId").GetString()!;
                         var databaseValue = await State.GetAsync(AccountService.OrganizationsCollection, databaseOrgId, http.RequestAborted)
                             ?? throw new InvalidOperationException("Database fixture control targets a canonical organization");
-                        var databaseOrg = databaseValue.Document.Deserialize<OrganizationRecord>()!;
+                        var databaseOrg = databaseValue.Body.Deserialize<OrganizationRecord>()!;
                         databaseOrg.Projects.TryGetValue(databaseProjectId, out var fixtureProject);
                         Require(Workspace.Role == "owner" && databaseValue.Id == databaseOrg.Id && databaseOrg.Id == databaseOrgId && databaseOrg.Status == "active" &&
                             Owner(databaseOrgId).Length > 0 && fixtureProject is not null,
@@ -734,7 +724,7 @@ namespace TerraScale.Dashboard.E2E
 
                             fixtureDatabase!.Status = status;
                             await State.PutAsync(AccountService.OrganizationsCollection, databaseOrgId, JsonSerializer.SerializeToElement(databaseOrg),
-                                TerraBasePrecondition.Matches(databaseValue.Version), http.RequestAborted);
+                                StatePrecondition.Matches(databaseValue.Version), http.RequestAborted);
                         }
                         break;
                     case "fail-project-metadata":
@@ -742,7 +732,7 @@ namespace TerraScale.Dashboard.E2E
                         var faultName = body.GetProperty("name").GetString()!.Trim();
                         var faultValue = await State.GetAsync(AccountService.OrganizationsCollection, faultOrganizationId, http.RequestAborted)
                             ?? throw new InvalidOperationException("Project metadata failure targets an existing organization");
-                        var faultOrg = faultValue.Document.Deserialize<OrganizationRecord>()!;
+                        var faultOrg = faultValue.Body.Deserialize<OrganizationRecord>()!;
                         bool faultNameTaken;
                         lock (Workspace.Gate)
                         {
@@ -759,7 +749,7 @@ namespace TerraScale.Dashboard.E2E
                         var deletionProjectId = body.GetProperty("projectId").GetString()!;
                         var deletionValue = await State.GetAsync(AccountService.OrganizationsCollection, deletionOrgId, http.RequestAborted)
                             ?? throw new InvalidOperationException("Project deletion metadata failure targets an existing organization");
-                        var deletionOrg = deletionValue.Document.Deserialize<OrganizationRecord>()!;
+                        var deletionOrg = deletionValue.Body.Deserialize<OrganizationRecord>()!;
                         Require(TerraScaleIds.IsValid(deletionOrgId) && TerraScaleIds.IsValid(deletionProjectId) &&
                             deletionValue.Id == deletionOrgId && deletionOrg.Id == deletionOrgId && deletionOrg.Status == "active" &&
                             Owner(deletionOrgId).Length > 0 && deletionOrg.Projects.Count > 1 &&
@@ -773,10 +763,10 @@ namespace TerraScale.Dashboard.E2E
                         var organizationId = body.GetProperty("organizationId").GetString()!;
                         var current = await State.GetAsync(AccountService.OrganizationsCollection, organizationId, http.RequestAborted)
                             ?? throw new InvalidOperationException("The fixture plan targets an existing organization");
-                        var organization = current.Document.Deserialize<OrganizationRecord>()!;
+                        var organization = current.Body.Deserialize<OrganizationRecord>()!;
                         organization.PlanId = body.GetProperty("value").GetString()!;
                         await State.PutAsync(AccountService.OrganizationsCollection, organizationId, JsonSerializer.SerializeToElement(organization),
-                            TerraBasePrecondition.Matches(current.Version), http.RequestAborted);
+                            StatePrecondition.Matches(current.Version), http.RequestAborted);
                         break;
                     default: throw new InvalidOperationException("Unknown test producer control");
                 }

@@ -5,8 +5,6 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 using TUnit.Core.Interfaces;
 
 namespace TerraScale.Dashboard.E2E
@@ -61,10 +59,10 @@ namespace TerraScale.Dashboard.E2E
             var state = first!.Services.GetRequiredService<IDashboardState>();
             var current = await state.GetAsync(AccountService.OrganizationsCollection, organizationId, default)
                 ?? throw new InvalidOperationException("The fixture plan targets an existing organization");
-            var organization = current.Document.Deserialize<OrganizationRecord>()!;
+            var organization = current.Body.Deserialize<OrganizationRecord>()!;
             organization.PlanId = planId;
             await state.PutAsync(AccountService.OrganizationsCollection, organizationId, JsonSerializer.SerializeToElement(organization),
-                TerraBasePrecondition.Matches(current.Version), default);
+                StatePrecondition.Matches(current.Version), default);
         }
 
         public async ValueTask DisposeAsync()

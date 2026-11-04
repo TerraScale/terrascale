@@ -2,8 +2,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
@@ -11,7 +9,7 @@ namespace TerraScale.Dashboard.Features.Auth
     // are encrypted in TerraBase, shared across replicas, and never logged.
     public sealed partial class AuthFlows(IDashboardState state, IDashboardIdentity identity, TimeProvider time)
     {
-        private const string Collection = "auth-flows";
+        private const string Collection = "dashboard_auth_flows";
         private const string OidcCookie = "ts-dashboard-oidc";
 
         public async Task<OidcFlow> StartOidcAsync(HttpContext context, string returnTo, string tokenName = "", int tokenDays = 0, TerraScale.Dashboard.Platform.Mcp.McpAuthorization? mcp = null, StepUpIntent? stepUp = null)
@@ -43,7 +41,7 @@ namespace TerraScale.Dashboard.Features.Auth
         {
             var token = Random();
             var credentials = await identity.ReadAsync(context.RequestAborted);
-            await state.PutAsync(Collection, Key(token), Seal(value, credentials.SessionEncryptionKey, cookie), TerraBasePrecondition.Absent, context.RequestAborted);
+            await state.PutAsync(Collection, Key(token), Seal(value, credentials.SessionEncryptionKey, cookie), StatePrecondition.Absent, context.RequestAborted);
             var options = Options(context);
             options.Expires = expires;
             context.Response.Cookies.Append(cookie, token, options);
@@ -64,7 +62,7 @@ namespace TerraScale.Dashboard.Features.Auth
             }
 
             var credentials = await identity.ReadAsync(context.RequestAborted);
-            try { return new(document.Id, document.Version, Open<T>(document.Document, credentials.SessionEncryptionKey, cookie)); }
+            try { return new(document.Id, document.Version, Open<T>(document.Body, credentials.SessionEncryptionKey, cookie)); }
             catch (Exception error) when (error is CryptographicException or FormatException or JsonException)
             { throw new IOException("Authentication flow is invalid."); }
         }

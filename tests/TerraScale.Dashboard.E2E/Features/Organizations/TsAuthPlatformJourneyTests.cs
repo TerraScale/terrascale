@@ -10,8 +10,6 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Documents;
 
 namespace TerraScale.Dashboard.E2E.Features.Organizations
 {
@@ -592,7 +590,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             public Task StoreAsync(OrganizationRecord org)
             {
                 return state!.PutAsync(AccountService.OrganizationsCollection, org.Id,
-                            JsonSerializer.SerializeToElement(org), TerraBasePrecondition.Absent, default);
+                            JsonSerializer.SerializeToElement(org), StatePrecondition.Absent, default);
             }
 
             public async Task<string?> VersionAsync(string org)
@@ -604,9 +602,9 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             {
                 var key = AccountService.AccountStorageKey(user);
                 var stored = (await state!.GetAsync(AccountService.AccountsCollection, key, default))!;
-                var account = stored.Document.Deserialize<AccountRecord>()!;
+                var account = stored.Body.Deserialize<AccountRecord>()!;
                 change(account);
-                await state.PutAsync(AccountService.AccountsCollection, key, JsonSerializer.SerializeToElement(account), TerraBasePrecondition.Matches(stored.Version), default);
+                await state.PutAsync(AccountService.AccountsCollection, key, JsonSerializer.SerializeToElement(account), StatePrecondition.Matches(stored.Version), default);
             }
             public Task FenceAsync(string org)
             {
@@ -637,7 +635,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             {
                 var current = await state!.GetAsync(AccountService.OrganizationsCollection, organizationId, default)
                     ?? throw new InvalidOperationException("The fixture targets an existing organization");
-                var organization = current.Document.Deserialize<OrganizationRecord>()!;
+                var organization = current.Body.Deserialize<OrganizationRecord>()!;
                 if (change is null)
                 {
                     return organization;
@@ -645,7 +643,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
 
                 change(organization);
                 await state.PutAsync(AccountService.OrganizationsCollection, organizationId, JsonSerializer.SerializeToElement(organization),
-                    TerraBasePrecondition.Matches(current.Version), default);
+                    StatePrecondition.Matches(current.Version), default);
                 return organization;
             }
 

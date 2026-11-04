@@ -28,17 +28,17 @@ namespace TerraScale.Dashboard.Features.Data
             }
 
             await foreach (var document in DashboardStatePages.ReadAsync(state, Collection, scope,
-                ["/OrganizationId", "/ProjectId", "/DatabaseId", "/UserId"], cancellationToken))
+                ["OrganizationId", "ProjectId", "DatabaseId", "UserId"], cancellationToken))
             {
                 var owner = AccountService.Read<WorkspaceOwner>(document);
                 var ids = new[] { owner.OrganizationId, owner.ProjectId, owner.DatabaseId, owner.UserId };
                 var key = string.Join("/", ids);
-                if (ids.Any(id => !TerraScaleIds.IsValid(id)) || document.Id != key && document.Id != TerraBaseDashboardState.DocumentId(Collection, key))
+                if (ids.Any(id => !TerraScaleIds.IsValid(id)) || document.Id != key)
                 {
                     throw new IOException("SQL workspace deletion identity is invalid.");
                 }
 
-                await state.DeleteListedAsync(Collection, document, cancellationToken);
+                await state.DeleteAsync(Collection, document.Id, document.Version, cancellationToken);
             }
         }
         private sealed record WorkspaceOwner(string OrganizationId, string ProjectId, string DatabaseId, string UserId);
