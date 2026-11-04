@@ -132,16 +132,26 @@ namespace TerraScale.Dashboard.Features.Databases
     }
 
     public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Database, string Tab, IReadOnlyList<DatabaseRegion> Choices,
-        IReadOnlyList<CollectionStats> Contents, string Error = "", bool OpenDelete = false, bool Created = false, TerraScale.Dashboard.Features.Backups.BackupPage? Backups = null,
-        bool ContentsAvailable = false, TerraScale.Dashboard.Features.Usage.UsageReplication? Measurements = null, string Range = "24h", DatabaseActivity? Activity = null)
+        string Error = "", bool OpenDelete = false, bool Created = false, TerraScale.Dashboard.Features.Backups.BackupPage? Backups = null,
+        string Range = "24h", DatabaseActivity? Activity = null)
     {
         public string? BranchName { get; init; }
+        public DatabaseTables? Tables { get; init; }
+        // The table shown on the Tables tab and its first rows.
+        public string Table { get; init; } = "";
+        public DatabaseSqlResult? Preview { get; init; }
+        public long? StorageBytes { get; init; }
         public bool OpenBranch => Tab == "branches" && BranchName is not null && Error.Length > 0 && Context.CanManage && Database.Status == "ready";
         // Each activity card keeps its own range; changing one keeps the others as they are.
         public string RangePath(string key, string range)
         {
             return DatabaseService.Path(Database.Id) + "?" +
             string.Join('&', Activity!.Cards.Select(card => card.Key + "=" + (card.Key == key ? range : card.Range))) + "#activity";
+        }
+
+        public string TablePath(string table)
+        {
+            return DatabaseService.Path(Database.Id, "tables") + "?table=" + Uri.EscapeDataString(table);
         }
 
         public AccountContext Context => Shell.Context;
@@ -152,9 +162,7 @@ namespace TerraScale.Dashboard.Features.Databases
             : string.Join(", ", Serving.Select(DatabasesPage.RegionDisplay));
         public (string Tone, string Title, string Body) CreatedState => DatabasesPage.Tone(Database.Status) switch
         {
-            "success" => ("success", Database.Name + " is ready", Serving.Count == 1 || Database.AllRegions
-                ? "It serves " + Placement + ". " + (Serving.Count > 1 ? "Replica progress is shown in Replication. " : "") + "Add a collection in Documents, or connect with an API key."
-                : "Its home region is ready. Replica progress is shown in Replication. Add a collection in Documents, or connect with an API key."),
+            "success" => ("success", Database.Name + " is ready", "It serves " + Placement + ". Create a table in the SQL editor, or connect with psql."),
             "danger" => ("danger", Database.Name + " could not be created", "The data plane did not finish creating it. Delete it and create it again, or contact support if it keeps failing."),
             _ => ("info", Database.Name + " is being created", "The data plane is still placing it in " + Placement + ". Its status changes to ready when it can take requests.")
         };
@@ -236,28 +244,5 @@ namespace TerraScale.Dashboard.Features.Databases
                 _ => point.P95Ms is { } ms ? (decimal)ms : null,
             };
         }
-    }
-
-    public sealed record DatabaseReplicationModel(TerraScale.Dashboard.Features.Usage.UsageReplication Reading, string ProjectId, string DatabaseId, string Range, DatabaseRecord? Database = null, DatabaseActivity? Activity = null)
-    {
-        // Map hubs exist only where overlays.css positions a node; other regions stay in the cards and tables.
-        public static readonly IReadOnlyDictionary<string, (double X, double Y)> Hubs = new Dictionary<string, (double, double)>(StringComparer.OrdinalIgnoreCase) { ["gru"] = (50.00, 59.76), ["fra"] = (71.16, 20.32), ["sjc"] = (21.21, 28.83), ["sfo"] = (21.00, 28.58) };
-        public IReadOnlyList<TerraScale.Dashboard.Features.Usage.UsageReplica> Replicas => [.. Reading.Regions.Where(row => row.DatabaseId == DatabaseId).OrderBy(row => Regions.Rank(row.Region))];
-        public static string Tone(string status)
-        {
-            return status switch { "healthy" or "operational" => "success", "lagging" or "degraded" or "starting" or "pending" => "warning", "diverged" or "stopped" or "down" => "danger", _ => "neutral" };
-        }
-
-        public string Arc(string to)
-        {
-            var (x1, y1) = Hubs[Database!.Region]; var (x2, y2) = Hubs[to];
-            return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"M {x1:0.00} {y1:0.00} Q {(x1 + x2) / 2:0.00} {Math.Min(y1, y2) - 12:0.00} {x2:0.00} {y2:0.00}");
-        }
-        public double? P95(string region)
-        {
-            return Activity?.Regions.FirstOrDefault(row => row.Code.Equals(region, StringComparison.OrdinalIgnoreCase))?.WorstP95Ms;
-        }
-
-        public string AnalyticsPath => "/analytics?database=" + Uri.EscapeDataString(DatabaseId) + "&project=" + Uri.EscapeDataString(ProjectId) + "&range=" + Range;
     }
 }
