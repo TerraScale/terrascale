@@ -69,7 +69,9 @@ builder.Services.Configure<HostOptions>(host => host.ShutdownTimeout = Shutdown.
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton(internalCredential);
 builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddSingleton<IHlcClock, NodeHlcClock>();
+builder.Services.AddSingleton<NodeHlcClock>();
+builder.Services.AddSingleton<IHlcClock>(provider => provider.GetRequiredService<NodeHlcClock>());
+builder.Services.AddSingleton<IHlcState>(provider => provider.GetRequiredService<NodeHlcClock>());
 builder.Services.ConfigureHttpClientDefaults(http => http
     .SetHandlerLifetime(Timeout.InfiniteTimeSpan)
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(2) }));
@@ -88,6 +90,7 @@ builder.Services.AddTerraBaseRegionOpenApi();
 builder.Services.AddTerraBaseRequestBodies("v1");
 builder.Services.AddTerraBaseApiExamples("v1");
 builder.Services.AddTerraBaseTelemetry();
+builder.Services.AddTerraBaseClock();
 builder.Services.AddTerraBaseMemory(options);
 builder.Services.AddTerraBaseQos();
 builder.Services.AddTerraBaseEngine(options);
@@ -166,6 +169,7 @@ try
     app.MapTerraScaleEndpoints();
     app.MapTerraScaleOpenApi().WithMetadata(new ListenerMetadata(TerraBaseListener.Client));
     app.MapTerraBaseMetrics();
+    app.MapTerraBaseClock();
     app.MapTerraBaseRestRpc();
     await ApplicationRunCompletion.RunAsync(app);
     return 0;
