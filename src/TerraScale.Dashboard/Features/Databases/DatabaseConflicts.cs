@@ -28,7 +28,10 @@ public sealed class DatabaseConflicts(DataService data)
         if (start is { } from) { conditions.Add("julianday(created_at) >= julianday(" + Literal(from.ToString("O", CultureInfo.InvariantCulture)) + ")"); }
         if (end is { } to) { conditions.Add("julianday(created_at) < julianday(" + Literal(to.ToString("O", CultureInfo.InvariantCulture)) + ")"); }
         if (before.Length > 0) { conditions.Add("id < " + Literal(before)); }
-        var sql = "SELECT * FROM terrascale.conflicts" + (conditions.Count == 0 ? "" : " WHERE " + string.Join(" AND ", conditions))
+        var sql = "SELECT id, kind, table_name, row_key, column_name, winner_value, loser_value, "
+            + "winner_region, winner_node, winner_hlc, winner_transaction_id, winner_state, "
+            + "loser_region, loser_node, loser_hlc, loser_transaction_id, loser_state, message, created_at FROM terrascale.conflicts"
+            + (conditions.Count == 0 ? "" : " WHERE " + string.Join(" AND ", conditions))
             + " ORDER BY id DESC LIMIT " + (limit + 1).ToString(CultureInfo.InvariantCulture);
         var result = await data.SqlAsync(context, databaseId, sql, false, cancellationToken);
         var indexes = result.Columns.Select((column, index) => (column.Name, index)).ToDictionary(item => item.Name, item => item.index, StringComparer.Ordinal);
