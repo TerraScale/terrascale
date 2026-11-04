@@ -12,7 +12,7 @@ public sealed class ShapeFlightTests
     [Test]
     public async Task Tail_readers_share_one_flight_and_one_answer_when_a_reader_disconnects()
     {
-        await using var db = await StartAsync();
+        await using var db = await StartIsolatedAsync();
         await db.OkAsync("CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT)");
         var shape = new TableShapeClient(db.Reader, db.Database.Data, "items");
         await shape.SyncAsync();
@@ -74,7 +74,7 @@ public sealed class ShapeFlightTests
     [Test]
     public async Task A_tenant_over_its_shape_flight_cap_gets_429_and_retry_after()
     {
-        await using var db = await StartAsync();
+        await using var db = await StartIsolatedAsync();
         await db.OkAsync("CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT)");
         var shapes = Enumerable.Range(0, 9).Select(index => new TableShapeClient(db.Reader, db.Database.Data, "items", $"&where=id%3E{index}")).ToArray();
         foreach (var shape in shapes)
