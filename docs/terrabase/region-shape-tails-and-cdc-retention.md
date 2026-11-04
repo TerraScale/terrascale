@@ -1,0 +1,13 @@
+# Region shape tails and CDC retention
+
+Shape snapshots and sealed chunks come from the database's home. Once a client has a snapshot's decimal offset, `live=true` reads in a region holding a replica use that replica's encrypted Turso database. Each read transaction sees the replicated table generation, incarnation, retention floor, and CDC commit boundaries together. The shared CDC projector preserves the home path's row operations, filters, column projections, and whole commits without writing the replica.
+
+A waiting request releases its read transaction between local checks. At most 128 replica shape requests wait on a node, each with a memory reservation. Checks run every 50 ms and a request returns after 20 seconds without a change. Normal page replication and notices bring updates to the replica; a shape request does not call home for updates. An offset the replica has not reached waits for catch-up, then returns retryable unavailability instead of incorrectly declaring the client's offset invalid. Unavailable replicas keep reads retryable. A changed lineage or expired offset requires a new snapshot.
+
+The backup reader's existing CDC deletion now uses the minimum of its backup position, any rewrite position, and the slowest persisted shape floor. A shape's initial floor is its earliest stored snapshot or chunk offset. Its persisted retention sentinel can advance that floor. CDC deletion keeps the boundary at the cut and removes only earlier rows, in batches of at most 16,384 rows and 64 MiB of before/after images. Shape history is derived and is not captured back into CDC.
+
+The existing minute shape sweeper advances expired shape floors after seven days, even when readers have disconnected and no new chunks are sealed. It raises the floor in the same transaction as deleting expired shape objects. CDC cleanup after shape maintenance is capped by the backup/rewrite position; a stalled backup continues to pin unbacked changes. The newest complete snapshot remains available, and a bootstrap refreshes an old snapshot before returning it. Readers below the raised floor receive `409 must_refetch`.
+
+CDC storage is bounded by the retained shape and backup windows at a sustained write rate. A consumer that stops advancing pins its required history; retention must not discard it to meet a target size. Database storage admission remains responsible for refusing writes when available storage is exhausted.
+
+Integration coverage: `RegionShapeTailTests` exercises an sjc tail of a gru table, including filtered moves and a read after home disconnects. `CdcRetentionTests` exercises the slowest shape, a lagging backup position, expiration, and repeated load/cleanup rounds.

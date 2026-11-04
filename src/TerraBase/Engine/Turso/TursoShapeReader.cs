@@ -58,6 +58,7 @@ internal sealed partial class TursoShapeReader(
                 return filter;
             default:
                 throw new System.Diagnostics.UnreachableException();
+        }
     }
 
     private SqliteCommand ShapeMatcher(string[] columns, string where)
