@@ -51,6 +51,8 @@ home: `commit=home`. Nothing is configured; the router reads these facts on each
   home's, with the statements' rows (`RETURNING` included) and two headers:
   `TerraScale-Write-Route: route=<local|home>; reason=<reason>; commit=<local|home>` and
   `Server-Timing: home;dur=<ms>;desc="<home region>"`. An unreachable home answers `421 wrong_region` naming it.
+- **421 retry URL**: every `421 wrong_region` carries `https://<home>.api.terrascale.tech<path>?<query>` (the same
+  path and query) in `error.url` and in `Location`; clients retry there.
 - **WebSocket**: an `execute` frame with a write (or any frame inside a transaction open at the home) runs at the home
   as one `batch` call on the session's home session: one round trip for the whole frame.
 - **Postgres wire**: the connection is pinned to one home session for every write and transaction. A transaction
