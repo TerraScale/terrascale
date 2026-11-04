@@ -1,4 +1,5 @@
 using TerraScale.Endpoints;
+using RequestIdentity = TerraScale.Dashboard.Platform.Http.RequestIdentity;
 using TerraScale.Dashboard.Platform.Observability;
 using System.Security.Cryptography;
 using System.Text.Json;
