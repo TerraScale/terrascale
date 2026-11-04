@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -25,14 +24,14 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
     [Test]
     public async Task Viewers_read_admins_disable_and_outsiders_see_nothing()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
         var (owner, ownerToken, project, root) = await this.ProjectAsync(oidc);
-        var (viewer, viewerToken) = await oidc.CreateUserTokenAsync(this.Email(2));
-        var (_, outsiderToken) = await oidc.CreateUserTokenAsync(this.Email(3));
+        var (viewer, viewerToken) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("person2"));
+        var (_, outsiderToken) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("person3"));
         await Assert.That(await oidc.GrantAsync(project, viewer.Id, "viewer")).IsTrue();
         var users = oidc.Server.App.Services.GetRequiredService<Users>();
         var sessions = oidc.Server.App.Services.GetRequiredService<Sessions>();
-        var endUser = (await users.CreateAsync(project, this.Email(4)))!;
+        var endUser = (await users.CreateAsync(project, oidc.UniqueEmail("person4")))!;
         var session = await sessions.CreateAsync(endUser);
 
         var found = await oidc.OkAsync(HttpMethod.Get, $"{root}/users?q={Uri.EscapeDataString(endUser.Email[..3])}", viewerToken);
@@ -68,7 +67,7 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
     [Test]
     public async Task Admins_register_clients_whose_secret_is_answered_once_and_change_settings()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
         var (_, token, project, root) = await this.ProjectAsync(oidc);
         var body = new { name = this.faker.Company.CompanyName(), type = "confidential", redirect_uris = new[] { "https://app.example.test/callback", "http://localhost:3000/cb", "http://127.0.0.1:3000/cb", "http://[::1]:3000/cb" } };
         var created = await oidc.OkAsync(HttpMethod.Post, $"{root}/clients", token, body, HttpStatusCode.Created);
@@ -98,13 +97,10 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         await Assert.That((await oidc.OkAsync(HttpMethod.Get, $"{root}/clients", token)).GetProperty("items").GetArrayLength()).IsEqualTo(0);
     }
 
-    private string Email(int index) =>
-        this.faker.Internet.Email(provider: "example.test", uniqueSuffix: index.ToString(CultureInfo.InvariantCulture)).ToLowerInvariant();
-
     // An owner signed in, with its sign-in token, an organization and a project.
     private async Task<(UserRecord Owner, string Token, string Project, string Root)> ProjectAsync(OidcHarness oidc)
     {
-        var (owner, token) = await oidc.CreateUserTokenAsync(this.Email(1));
+        var (owner, token) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("person1"));
         var organization = await oidc.CreateOrganizationAsync(token, this.faker.Company.CompanyName());
         var project = await oidc.CreateProjectAsync(token, organization, this.faker.Commerce.ProductName());
         return (owner, token, project, $"/v1/{project}");

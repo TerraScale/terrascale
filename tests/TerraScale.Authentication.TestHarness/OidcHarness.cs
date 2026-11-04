@@ -121,8 +121,10 @@ public sealed partial class OidcHarness : IAsyncDisposable
 
     private readonly TerraBaseFixture? fixture;
     private readonly string masterKey;
+    private readonly bool ownsServer;
+    private readonly string prefix = TerraScale.Authentication.Store.AuthStore.NewId().ToLowerInvariant();
 
-    private OidcHarness(TerraBaseFixture? fixture, TerraBaseTestTenant tenant, string masterKey, AuthTestServer server, TerraBaseSqlDatabase database, CapturingEmailSender email)
+    private OidcHarness(TerraBaseFixture? fixture, TerraBaseTestTenant tenant, string masterKey, AuthTestServer server, TerraBaseSqlDatabase database, CapturingEmailSender email, bool ownsServer = true)
     {
         this.fixture = fixture;
         this.Tenant = tenant;
@@ -130,6 +132,7 @@ public sealed partial class OidcHarness : IAsyncDisposable
         this.Server = server;
         this.Database = database;
         this.Email = email;
+        this.ownsServer = ownsServer;
     }
 
     public TerraBaseTestTenant Tenant { get; }
@@ -141,6 +144,17 @@ public sealed partial class OidcHarness : IAsyncDisposable
     public CapturingEmailSender Email { get; }
 
     public HttpClient Client => this.Server.Client;
+
+    /// <summary>A management journey owns its users, organizations, projects and database names on the fixture host.</summary>
+    public static async Task<OidcHarness> StartSharedManagementAsync(TerraBaseFixture fixture)
+    {
+        var shared = await fixture.ManagementAsync();
+        return new(fixture, shared.Tenant, shared.masterKey, shared.Server, shared.Database, shared.Email, ownsServer: false);
+    }
+
+    public string UniqueName(string name) => name + "-" + this.prefix;
+
+    public string UniqueEmail(string name) => this.UniqueName(name) + "@example.test";
 
     public static async Task<OidcHarness> StartAsync(TerraBaseFixture fixture, Action<Dictionary<string, string>>? settings = null, CapturingEmailSender? email = null,
         CapturingLogs? logs = null, TimeProvider? clock = null, Action<IServiceCollection>? services = null, bool runClosureWorker = true,
@@ -363,5 +377,5 @@ public sealed partial class OidcHarness : IAsyncDisposable
 
     private static string Base64Url(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
-    public ValueTask DisposeAsync() => this.Server.DisposeAsync();
+    public ValueTask DisposeAsync() => this.ownsServer ? this.Server.DisposeAsync() : ValueTask.CompletedTask;
 }

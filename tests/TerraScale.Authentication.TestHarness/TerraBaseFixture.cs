@@ -13,8 +13,20 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
 {
     private TerraBaseTestServer? server;
     private TerraBaseTestTenant? owner;
+    private readonly Lazy<Task<OidcHarness>> management;
+
+    public TerraBaseFixture() => this.management = new(this.StartManagementAsync);
 
     public TerraBaseTestServer Server => this.server ?? throw new InvalidOperationException("TerraBase fixture has not started.");
+
+    internal Task<OidcHarness> ManagementAsync() => this.management.Value;
+
+    private Task<OidcHarness> StartManagementAsync()
+    {
+        // The shared host belongs to the fixture, independently of the first borrowing test.
+        using var flow = ExecutionContext.SuppressFlow();
+        return Task.Run(() => OidcHarness.StartAsync(this));
+    }
 
     public async Task InitializeAsync()
     {
@@ -101,9 +113,19 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (this.server is not null)
+        try
         {
-            await this.server.DisposeAsync();
+            if (this.management.IsValueCreated)
+            {
+                await (await this.management.Value).DisposeAsync();
+            }
+        }
+        finally
+        {
+            if (this.server is not null)
+            {
+                await this.server.DisposeAsync();
+            }
         }
     }
 }
