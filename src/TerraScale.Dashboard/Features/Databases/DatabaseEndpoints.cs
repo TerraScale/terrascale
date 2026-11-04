@@ -236,6 +236,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 return tab != "tables" || shown is null ? (tables, "", null) : (tables, shown.Name, await DatabaseTables.PreviewAsync(backend, scope, home, database.Id, shown.Name, http.RequestAborted));
             }
 
+            var replicationRead = tab == "replication" ? DatabaseReplication.LoadAsync(http, context, database, databases) : null;
             var tablesRead = tab is "overview" or "tables" ? TablesAsync() : null;
             // An all-regions database serves every catalog region; without the catalog it shows its recorded regions.
             if (tab == "overview" && database.AllRegions)
@@ -264,6 +265,7 @@ namespace TerraScale.Dashboard.Features.Databases
             var backups = backupsRead is null ? null : (await backupsRead) with { Error = error };
             var result = DatabaseDetailView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, error, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, range, activity)
             {
+                Replication = replicationRead is null ? null : await replicationRead,
                 BranchName = branchName,
                 Tables = tables,
                 Table = shownTable,
