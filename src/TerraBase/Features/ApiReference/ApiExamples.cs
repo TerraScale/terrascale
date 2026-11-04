@@ -88,6 +88,7 @@ internal static class ApiExamples
         "restoreBackup" => """{"name":"restored"}""",
         "planPointInTime" => """{"pointInTime":"2026-10-07T12:00:13Z","destination":"platform"}""",
         "restorePointInTime" => """{"pointInTime":"2026-10-07T12:00:13Z","name":"restored","destination":"customer","ttlSeconds":3600}""",
+        "rewindPointInTime" => """{"pointInTime":"2026-10-07T12:00:13Z","destination":"platform"}""",
         "setBackupDestination" => """{"endpoint":"https://s3.example.com","region":"us-east-1","bucket":"customer-backups","accessKeyId":"YOUR_ACCESS_KEY","secretKey":"YOUR_SECRET_KEY","mode":"both"}""",
         "setBackupPolicy" => """{"fullBackupCron":"0 2 * * *","retentionDays":7,"disabled":false}""",
         "deployFunction" => """{"source":"function handler(event) { return event.body; }","cron":null}""",
