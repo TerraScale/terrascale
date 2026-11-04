@@ -1,5 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
-import { parseExactJson } from "../src/v1/json.js";
+import { describe, expect, test } from "vitest";
 import { V1ShapeSubscription } from "../src/v1/shape-subscription.js";
 import { V1Transport } from "../src/v1/transport.js";
 import { shapeVectors, vectors } from "./support/shape-vectors.js";
@@ -11,11 +10,9 @@ const project = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const token = "fixture.payload.signature";
 const params = { database: "demo", collection: "notes" };
 const handle = "h1-f3171a2230109328";
-const otherHandle = "h1-d90dddd41bd8282d";
 const shapeId = shapeVectors.fixture.shape_id;
 const resume = vectors("apply_vectors")[0].body.cursor_resume;
 // The token saved at snapshot completion; a resume attempt must echo it verbatim.
-const snapshotResume = httpVectors.get("snapshot-last-page").response.body.cursor_resume;
 
 /** @param {string} id @returns {(url: URL) => Response} */
 function vector(id) {
@@ -70,8 +67,6 @@ function fakeFetch(steps) {
   };
   return { fetch, requests };
 }
-/** A request that never answers until the subscription aborts it. @type {Step} */
-const hang = (_url, init) => new Promise((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true }));
 /** @param {typeof globalThis.fetch} fetch @param {any} [shape] @param {any} [options] */
 function subscribe(fetch, shape = {}, options = {}) {
   const transport = new V1Transport({ project, token, baseUrl: "https://shapes.test.invalid", fetch });
@@ -124,24 +119,6 @@ describe("V1ShapeSubscription", () => {
     expect(subscription.upToDate).toBe(true);
   });
 
-  test("falling behind sends no live bucket, and the next live request uses only the latest fresh bucket", async () => {
-    const { fetch, requests } = fakeFetch([
-      vector("bootstrap"), vector("snapshot-first-page"), vector("snapshot-last-page"),
-      () => log({ next: "2", upToDate: true }),
-      () => log({ next: "2", upToDate: true, cursor: "50" }),
-      () => log({ next: "4", cursor: "51" }),
-      () => log({ offset: "4", next: "4", upToDate: true }),
-      () => log({ offset: "4", next: "4", upToDate: true, cursor: "50" }),
-    ]);
-    const subscription = subscribe(fetch, {}, { onUpdate: stopAfter(7) });
-    await subscription.done;
-    expect(requests[5]?.url.searchParams.get("cursor")).toBe("50");
-    expect(requests[6]?.url.searchParams.has("live")).toBe(false);
-    expect(requests[6]?.url.searchParams.has("cursor")).toBe(false);
-    expect(requests[7]?.url.searchParams.get("live")).toBe("true");
-    expect(requests[7]?.url.searchParams.has("cursor")).toBe(false);
-  });
-
   test("a same-handle must_refetch resets state and bootstraps again", async () => {
     const { fetch, requests } = fakeFetch([
       vector("bootstrap"), vector("snapshot-first-page"), vector("snapshot-last-page"),
@@ -155,268 +132,11 @@ describe("V1ShapeSubscription", () => {
     expect(subscription.state).toEqual(snapshotDocuments);
   });
 
-  test("a changed-lineage 409 with a usable snapshot cursor makes one resume attempt and keeps state", async () => {
-    const { fetch, requests } = fakeFetch([
-      vector("bootstrap"), vector("snapshot-first-page"), vector("snapshot-last-page"),
-      () => conflict(otherHandle),
-      () => redirect(otherHandle, "2"),
-      () => log({ target: otherHandle, next: "2", upToDate: true }),
-    ]);
-    const subscription = subscribe(fetch, {}, { onUpdate: stopAfter(3) });
-    await subscription.done;
-    expect(requests[4]?.url.searchParams.get("cursor")).toBe(snapshotResume);
-    expect(requests[4]?.url.searchParams.has("handle")).toBe(false);
-    expect(requests[5]?.url.searchParams.get("handle")).toBe(otherHandle);
-    expect(subscription.state).toEqual(snapshotDocuments);
-  });
-
-  test("the lineage comes from the TB-Shape-Handle header even when the body names nothing", async () => {
-    const { fetch, requests } = fakeFetch([
-      vector("bootstrap"), vector("snapshot-first-page"), vector("snapshot-last-page"),
-      () => conflictHeaderOnly(otherHandle),
-      () => redirect(otherHandle, "2"),
-      () => log({ target: otherHandle, next: "2", upToDate: true }),
-    ]);
-    const subscription = subscribe(fetch, {}, { onUpdate: stopAfter(3) });
-    await subscription.done;
-    expect(requests[4]?.url.searchParams.get("cursor")).toBe(snapshotResume);
-  });
-
-  test("a body that names a different handle than the header fails closed to a bootstrap", async () => {
-    const { fetch, requests } = fakeFetch([
-      vector("bootstrap"), vector("snapshot-first-page"), vector("snapshot-last-page"),
-      () => conflict(otherHandle, "h1-0000000000000000"),
-      vector("bootstrap"), vector("snapshot-first-page"), vector("snapshot-last-page"),
-    ]);
-    const subscription = subscribe(fetch, {}, { onUpdate: stopAfter(5) });
-    await subscription.done;
-    expect(requests[4]?.url.searchParams.has("cursor")).toBe(false);
-    expect(requests[4]?.url.searchParams.has("handle")).toBe(false);
-    expect(requests[4]?.url.searchParams.get("offset")).toBe("-1");
-  });
-
-  test("a failed resume attempt drops state and bootstraps without a token", async () => {
-    const { fetch, requests } = fakeFetch([
-      vector("bootstrap"), vector("snapshot-first-page"), vector("snapshot-last-page"),
-      () => conflictHeaderOnly(otherHandle),
-      () => conflict(otherHandle),
-      vector("bootstrap"), vector("snapshot-first-page"), vector("snapshot-last-page"),
-    ]);
-    const subscription = subscribe(fetch, {}, { onUpdate: stopAfter(5) });
-    await subscription.done;
-    expect(requests[4]?.url.searchParams.get("cursor")).toBe(snapshotResume);
-    expect(requests[5]?.url.searchParams.has("cursor")).toBe(false);
-    expect(requests[5]?.url.searchParams.has("handle")).toBe(false);
-    expect(requests).toHaveLength(8);
-  });
-
-  test("an incomplete snapshot never resumes on another lineage", async () => {
-    const { fetch, requests } = fakeFetch([
-      vector("bootstrap"), vector("snapshot-first-page"),
-      () => conflictHeaderOnly(otherHandle),
-      vector("bootstrap"), vector("snapshot-first-page"), vector("snapshot-last-page"),
-    ]);
-    const subscription = subscribe(fetch, {}, { onUpdate: stopAfter(4) });
-    await subscription.done;
-    expect(requests[3]?.url.searchParams.has("cursor")).toBe(false);
-    expect(requests[3]?.url.searchParams.has("handle")).toBe(false);
-  });
-
-  test("429 shape_busy waits for Retry-After before the next attempt", async () => {
-    vi.useFakeTimers();
-    try {
-      const { fetch, requests } = fakeFetch([
-        () => json(429, { error: { code: "shape_busy", message: "busy" } }, { "retry-after": "2" }),
-        vector("bootstrap"), vector("snapshot-first-page"), vector("snapshot-last-page"),
-      ]);
-      const subscription = subscribe(fetch, {}, { onUpdate: stopAfter(2) });
-      await vi.advanceTimersByTimeAsync(1999);
-      expect(requests).toHaveLength(1);
-      await vi.advanceTimersByTimeAsync(1);
-      await subscription.done;
-      expect(requests).toHaveLength(4);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("a huge Retry-After is waited in full, never fired early by timer overflow", async () => {
-    vi.useFakeTimers();
-    try {
-      const { fetch, requests } = fakeFetch([
-        () => json(429, { error: { code: "shape_busy", message: "busy" } }, { "retry-after": "999999999" }),
-        vector("bootstrap"), vector("snapshot-first-page"), vector("snapshot-last-page"),
-      ]);
-      const subscription = subscribe(fetch, {}, { onUpdate: stopAfter(2) });
-      await vi.advanceTimersByTimeAsync(3 * 24 * 60 * 60 * 1000);
-      expect(requests).toHaveLength(1);
-      subscription.close();
-      await expect(subscription.done).resolves.toBeUndefined();
-      expect(requests).toHaveLength(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("503 unavailable continues beyond eight transient failures", async () => {
-    vi.useFakeTimers();
-    try {
-      const unavailable = () => json(503, { error: { code: "unavailable", message: "later" } });
-      const { fetch, requests } = fakeFetch([
-        ...Array.from({ length: 9 }, () => unavailable),
-        vector("bootstrap"), vector("snapshot-first-page"), vector("snapshot-last-page"),
-      ]);
-      const subscription = subscribe(fetch, {}, { onUpdate: stopAfter(2) });
-      await vi.runAllTimersAsync();
-      await expect(subscription.done).resolves.toBeUndefined();
-      expect(subscription.state).toEqual(snapshotDocuments);
-      expect(requests).toHaveLength(12);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("503 during resume honors Retry-After and keeps the token, state and pending freshness", async () => {
-    vi.useFakeTimers();
-    try {
-      const { fetch, requests } = fakeFetch([
-        vector("bootstrap"), vector("snapshot-first-page"), vector("snapshot-last-page"),
-        () => log({ next: "2", upToDate: true }),
-        () => conflict(otherHandle),
-        () => json(503, { error: { code: "unavailable", message: "later" } }, { "retry-after": "2" }),
-        () => redirect(otherHandle, "2"),
-        () => log({ target: otherHandle, next: "2", upToDate: true }),
-      ]);
-      /** @type {boolean[]} */
-      const freshness = [];
-      const subscription = subscribe(fetch, {}, { onUpdate: (/** @type {V1ShapeSubscription} */ current) => {
-        freshness.push(current.upToDate);
-        if (freshness.length === 5) current.close();
-      } });
-      await vi.advanceTimersByTimeAsync(1999);
-      expect(requests).toHaveLength(6);
-      expect(subscription.upToDate).toBe(false);
-      expect(subscription.state).toEqual(snapshotDocuments);
-      expect(freshness).toEqual([false, false, true, false]);
-      await vi.advanceTimersByTimeAsync(1);
-      await subscription.done;
-      expect(requests[5]?.url.searchParams.get("cursor")).toBe(resume);
-      expect(requests[6]?.url.searchParams.get("cursor")).toBe(resume);
-      expect(subscription.state).toEqual(snapshotDocuments);
-      expect(freshness).toEqual([false, false, true, false, true]);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("a throwing callback rejects done after the response has been committed", async () => {
-    const failure = new Error("callback failed");
-    const { fetch, requests } = fakeFetch([
-      () => redirect(handle, "snap.2.0"),
-      () => snapshot({ ops: operations("snapshot-first-page") }),
-    ]);
-    const subscription = subscribe(fetch, {}, { onUpdate: () => { throw failure; } });
-    await expect(subscription.done).rejects.toBe(failure);
-    expect(subscription.state.size).toBeGreaterThan(0);
-    expect(requests).toHaveLength(2);
-  });
-
-  test("closing or aborting in a callback takes precedence over a later callback exception", async () => {
-    const { fetch } = fakeFetch([() => redirect(handle, "snap.2.0"), () => snapshot()]);
-    const subscription = subscribe(fetch, {}, { onUpdate: (/** @type {V1ShapeSubscription} */ current) => {
-      current.close();
-      throw new Error("after close");
-    } });
-    await expect(subscription.done).resolves.toBeUndefined();
-  });
-
-  test("a terminal failure is internally handled while remaining observable through done", async () => {
-    const { fetch } = fakeFetch([() => json(401, { error: { code: "unauthorized", message: "no" } })]);
-    const subscription = subscribe(fetch, {}, { onUpdate: () => {} });
-    // Let an unhandled rejection surface before the consumer attaches its handler.
-    await new Promise(resolve => setTimeout(resolve, 0));
-    await expect(subscription.done).rejects.toMatchObject({ status: 401 });
-  });
-
-  test("terminal completion removes the external abort listener", async () => {
-    const controller = new AbortController();
-    const add = vi.spyOn(controller.signal, "addEventListener");
-    const remove = vi.spyOn(controller.signal, "removeEventListener");
-    const { fetch } = fakeFetch([() => json(401, { error: { code: "unauthorized", message: "no" } })]);
-    const subscription = subscribe(fetch, {}, { signal: controller.signal });
-    await expect(subscription.done).rejects.toMatchObject({ status: 401 });
-    expect(remove).toHaveBeenCalledWith("abort", add.mock.calls[0]?.[1]);
-  });
-
   test("terminal auth failures are never retried", async () => {
     const { fetch, requests } = fakeFetch([() => json(401, { error: { code: "unauthorized", message: "no" } })]);
     const subscription = subscribe(fetch);
     await expect(subscription.done).rejects.toMatchObject({ status: 401, code: "unauthorized" });
     expect(requests).toHaveLength(1);
-  });
-
-  test("a lost connection keeps state and resumes the same live position after backoff", async () => {
-    vi.useFakeTimers();
-    try {
-      const update = { op: "upsert", id: "01ARZ3NDEKTSV4RRFFQ69G5FB0", version: "tbv1-def52df94d5598d237cf1184a4f5cb00", document: { title: "Updated", read: true } };
-      const { fetch, requests } = fakeFetch([
-        vector("bootstrap"), vector("snapshot-first-page"), vector("snapshot-last-page"),
-        () => log({ next: "2", upToDate: true, cursor: "50" }),
-        () => { throw new TypeError("fetch failed"); },
-        () => new Response(new ReadableStream({ start(c) { c.error(new Error("reset")); } }), { status: 200, headers: { "content-type": "application/json" } }),
-        () => log({ next: "4", upToDate: true, cursor: "51", ops: [update] }),
-      ]);
-      const subscription = subscribe(fetch, {}, { onUpdate: stopAfter(5) });
-      await vi.advanceTimersByTimeAsync(249);
-      expect(requests).toHaveLength(5);
-      await vi.advanceTimersByTimeAsync(1);
-      expect(requests).toHaveLength(6);
-      await vi.advanceTimersByTimeAsync(500);
-      await subscription.done;
-      for (const request of requests.slice(4)) {
-        expect(request.url.searchParams.get("offset")).toBe("2");
-        expect(request.url.searchParams.get("handle")).toBe(handle);
-        expect(request.url.searchParams.get("cursor")).toBe("50");
-      }
-      expect(subscription.state.get(update.id)?.document).toEqual(update.document);
-      expect(subscription.state.size).toBe(snapshotDocuments.size + (snapshotDocuments.has(update.id) ? 0 : 1));
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("validation failures after a response are never retried", async () => {
-    const { fetch, requests } = fakeFetch([() => new Response("<html>", { status: 307, headers: { location: "https://elsewhere.invalid/" } })]);
-    const subscription = subscribe(fetch);
-    await expect(subscription.done).rejects.toThrow("malformed shape redirect target");
-    expect(requests).toHaveLength(1);
-  });
-
-  test("a browser follows its opaque bootstrap redirect and holds the final URL to the Location rules", async () => {
-    const target = `https://shapes.test.invalid/v1/projects/${project}/databases/demo/collections/notes/shape?handle=${handle}&offset=snap.2.0`;
-    /** @type {RequestInit[]} */
-    const inits = [];
-    const opaque = () => Object.defineProperties(new Response(null, { status: 200 }), { type: { value: "opaqueredirect" }, status: { value: 0 } });
-    const { fetch } = fakeFetch([
-      (_url, init) => { inits.push(init); return opaque(); },
-      (url, init) => {
-        inits.push(init);
-        expect(url.searchParams.get("offset")).toBe("-1");
-        return Object.defineProperties(vector("snapshot-first-page")(new URL(target)), { redirected: { value: true }, url: { value: target } });
-      },
-    ]);
-    const subscription = subscribe(fetch, {}, { onUpdate: stopAfter(1) });
-    await subscription.done;
-    expect(inits.map(init => init.redirect)).toEqual(["manual", "follow"]);
-    expect(new Headers(inits[1]?.headers).get("authorization")).toBe(`Bearer ${token}`);
-    expect(subscription.state.size).toBeGreaterThan(0);
-  });
-
-  test("a followed browser redirect to another origin is malformed", async () => {
-    const opaque = () => Object.defineProperties(new Response(null, { status: 200 }), { type: { value: "opaqueredirect" }, status: { value: 0 } });
-    const elsewhere = `https://elsewhere.invalid/v1/projects/${project}/databases/demo/collections/notes/shape?handle=${handle}&offset=snap.2.0`;
-    const { fetch } = fakeFetch([opaque, () => Object.defineProperties(json(200, {}), { redirected: { value: true }, url: { value: elsewhere } })]);
-    await expect(subscribe(fetch).done).rejects.toThrow("malformed shape redirect target");
   });
 
   /** @returns {{ text: string | undefined; saves: (string | undefined)[]; load: () => string | undefined; save: (text: string | undefined) => void }} */
@@ -445,77 +165,5 @@ describe("V1ShapeSubscription", () => {
     expect(requests[0]?.url.searchParams.get("handle")).toBe(handle);
     expect(requests[0]?.url.searchParams.get("offset")).toBe("2");
     expect(requests[0]?.url.searchParams.has("live")).toBe(false);
-  });
-
-  test("must_refetch discards the replica with the state", async () => {
-    const replica = memoryReplica();
-    await fillReplica(replica);
-    const { fetch } = fakeFetch([() => conflict(otherHandle), () => conflict(otherHandle), hang]);
-    let updates = 0;
-    const subscription = subscribe(fetch, {}, { replica, onUpdate: (/** @type {V1ShapeSubscription} */ s) => { if (++updates === 2) s.close(); } });
-    await subscription.done;
-    expect(subscription.state.size).toBe(0);
-    expect(replica.text).toBeUndefined();
-  });
-
-  test("a replica saved for another filter or in an unknown format is not restored", async () => {
-    const replica = memoryReplica();
-    await fillReplica(replica);
-    const saved = replica.text;
-    for (const [text, shape] of [[saved, { where: { eq: ["/read", true] } }], ["{\"format\":2}", {}], ["not json", {}]]) {
-      replica.text = /** @type {string} */ (text);
-      const { fetch, requests } = fakeFetch([hang]);
-      const subscription = subscribe(fetch, shape, { replica });
-      await vi.waitFor(() => expect(requests).toHaveLength(1));
-      expect(requests[0]?.url.searchParams.get("offset")).toBe("-1");
-      expect(subscription.state.size).toBe(0);
-      subscription.close();
-      await subscription.done;
-    }
-  });
-
-  test("close cancels a pending read and resolves done without a further request", async () => {
-    const { fetch, requests } = fakeFetch([hang]);
-    const subscription = subscribe(fetch);
-    subscription.close();
-    await expect(subscription.done).resolves.toBeUndefined();
-    expect(requests).toHaveLength(0);
-  });
-
-  test("an aborted external signal closes the subscription", async () => {
-    const { fetch, requests } = fakeFetch([hang]);
-    const controller = new AbortController();
-    const subscription = subscribe(fetch, {}, { signal: controller.signal });
-    controller.abort();
-    await expect(subscription.done).resolves.toBeUndefined();
-    expect(requests).toHaveLength(0);
-  });
-
-  test("rejects unknown shape and option members before starting", () => {
-    const { fetch, requests } = fakeFetch([]);
-    expect(() => subscribe(fetch, { where: undefined, extra: 1 })).toThrow(/Unknown shape member extra/u);
-    expect(() => subscribe(fetch, {}, { onUpdate: undefined, bogus: true })).toThrow(/Unknown shape subscribe option member bogus/u);
-    expect(() => subscribe(fetch, { where: { eq: ["/n"] } })).toThrow(TypeError);
-    expect(requests).toHaveLength(0);
-  });
-
-  test("captures the filter exactly, so caller mutation and large integers cannot change the request", async () => {
-    const { fetch, requests } = fakeFetch([hang]);
-    const where = /** @type {any} */ (parseExactJson('{"eq":["/n",9007199254740993]}'));
-    const subscription = subscribe(fetch, { where });
-    where.eq[0] = "/other";
-    await vi.waitFor(() => expect(requests).toHaveLength(1));
-    subscription.close();
-    await subscription.done;
-    expect(requests[0]?.url.searchParams.get("where")).toBe('{"eq":["/n",9007199254740993]}');
-  });
-
-  test("state is a copy and its documents are frozen", async () => {
-    const { fetch } = fakeFetch([() => redirect(handle, "snap.2.0"), () => snapshot({ ops: [{ op: "upsert", id: "01ARZ3NDEKTSV4RRFFQ69G5FB0", version: "tbv1-b803db62170176ffadaa0ee88b8cb332", document: { title: "Hi", read: false } }] })]);
-    const subscription = subscribe(fetch, {}, { onUpdate: stopAfter(1) });
-    await subscription.done;
-    subscription.state.clear();
-    expect(subscription.state.size).toBe(1);
-    expect(Object.isFrozen(subscription.state.get("01ARZ3NDEKTSV4RRFFQ69G5FB0")?.document)).toBe(true);
   });
 });

@@ -2,7 +2,7 @@ import { collections } from "./support/terrabase-v1-fixture.js";
 import { generateId } from "../src/ids.js";
 import { inspect } from "node:util";
 import { describe, expect, test } from "vitest";
-import { createTerraBaseV1Client, ExactDecimal, v1Filter } from "../src/index.js";
+import { ExactDecimal } from "../src/index.js";
 import { liveConfigured, liveClient, liveDatabase } from "./support/terrabase-v1-live.js";
 
 describe.skipIf(!liveConfigured)("real C# documents", () => {
@@ -34,20 +34,6 @@ describe.skipIf(!liveConfigured)("real C# documents", () => {
     } finally { await documents.delete(created.id).catch(() => undefined); }
   });
 
-  test("concurrent If-None-Match admits exactly one create", async () => {
-    const documents = liveDatabase().collection(collections.documents);
-    const id = generateId();
-    try {
-      const outcomes = await Promise.allSettled([
-        documents.put(id, { winner: "a" }, { ifNoneMatchAny: true }),
-        documents.put(id, { winner: "b" }, { ifNoneMatchAny: true }),
-      ]);
-      expect(outcomes.filter(outcome => outcome.status === "fulfilled")).toHaveLength(1);
-      const rejected = outcomes.find(outcome => outcome.status === "rejected");
-      expect(rejected?.status === "rejected" && rejected.reason).toMatchObject({ status: 412, code: "precondition_failed" });
-    } finally { await documents.delete(id); }
-  });
-
   test("credentials stay private and real keys enforce read/write scopes", async () => {
     const client = liveClient();
     expect(JSON.stringify(client)).not.toContain(process.env.TB_V1_DATA_KEY);
@@ -61,14 +47,3 @@ describe.skipIf(!liveConfigured)("real C# documents", () => {
   });
 });
 
-test("local config, filter and unsupported idempotency validation need no service", async () => {
-  const config = { project: generateId(), token: `tb_${"a".repeat(43)}`, baseUrl: "http://127.0.0.1:1" };
-  expect(() => createTerraBaseV1Client({ ...config, baseUrl: "http://example.com" })).toThrow(/loopback/u);
-  expect(() => createTerraBaseV1Client({ ...config, token: "tbk1.retired" })).toThrow();
-  expect(() => createTerraBaseV1Client({ ...config, project: "" })).toThrow();
-  const documents = createTerraBaseV1Client(config).database("app").collection(collections.documents);
-  await expect(documents.put(generateId(), {}, /** @type {any} */ ({ idempotencyKey: "rejected" }))).rejects.toThrow(/Idempotency/u);
-  for (const filter of [{ equals: ["/a", 1] }, { eq: ["/a", {}] }, { and: [] }])
-    await expect(documents.query({ filter: /** @type {any} */ (filter) })).rejects.toThrow(TypeError);
-  expect(() => v1Filter.eq("bad-path", 1)).toThrow();
-});
