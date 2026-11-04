@@ -63,6 +63,32 @@ internal interface IDatabaseReplicas
     /// started after <paramref name="position"/>; <see langword="null"/> otherwise.
     /// </summary>
     ValueTask<IReplicaReader?> BeginReadAsync(TenantContext database, long position, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// A local write transaction on an open replica that holds at least one pull, or <see langword="null"/>
+    /// (docs/terrabase/local-overlay.md). Writes and pulls of one replica run one at a time; the writer holds the replica
+    /// until it is disposed, so its caller publishes the transaction before a pull can revert it.
+    /// </summary>
+    ValueTask<IReplicaWriter?> BeginWriteAsync(TenantContext database, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Runs after every pull that changed a replica, before any later read starts, with a writer whose statements fire no
+    /// triggers and capture nothing. It answers whether to commit what it wrote.
+    /// </summary>
+    ReplicaOverlay? Overlay { get; set; }
+}
+
+internal delegate ValueTask<bool> ReplicaOverlay(TenantContext database, DatabaseRevision? pulled, IReplicaWriter writer, CancellationToken cancellationToken);
+
+/// <summary>One write transaction on a replica. Disposing it rolls back what was not committed.</summary>
+internal interface IReplicaWriter : IAsyncDisposable
+{
+    ValueTask<SqlStatementResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken);
+
+    /// <summary>The changes the transaction made since the last call, in order, without internal tables.</summary>
+    ValueTask<IReadOnlyList<CapturedRowChange>> CaptureAsync(CancellationToken cancellationToken);
+
+    ValueTask CommitAsync(CancellationToken cancellationToken);
 }
 
 /// <summary>One read transaction on a replica. Disposing it rolls back.</summary>
