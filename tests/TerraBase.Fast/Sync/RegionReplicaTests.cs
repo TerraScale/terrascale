@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -18,8 +17,6 @@ namespace TerraBase.Fast.Sync;
 public sealed class RegionReplicaTests
 {
     private static readonly string[] Sjc = ["sjc"];
-    private static readonly string[] Fra = ["fra"];
-    private static readonly string[] Home = ["test-region"];
 
     private readonly Faker _faker = new();
 
@@ -91,7 +88,7 @@ public sealed class RegionReplicaTests
     }
 
     [Test]
-    public async Task AHomeListsTheDatabasesItPlacesInAReplicaRegionOnlyToPeers()
+    public async Task AHomeListsTheDatabasesItPlacesInAReplicaRegionOnlyToPeersAndTheApiRefusesReplicasUntilEncrypted()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var api = await ManagementApi.StartAsync(services: collection =>
@@ -99,15 +96,16 @@ public sealed class RegionReplicaTests
         var organization = await api.CreateOrganizationAsync("Org " + _faker.Random.AlphaNumeric(8));
         var project = await api.CreateProjectAsync(organization, "Project");
         var databases = $"/v1/management/organizations/{organization}/projects/{project}/databases";
-        using var replicated = await api.Client.PostAsJsonAsync(ManagementApi.Uri(databases), new { name = "replicated", replicaRegions = Sjc }, token);
-        await Assert.That(replicated.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        var replicatedId = (await replicated.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!;
+        // Replica placement waits for replicas encrypted at rest like their home (Q-ENC).
+        using var refused = await api.Client.PostAsJsonAsync(ManagementApi.Uri(databases), new { name = "refused", replicaRegions = Sjc }, token);
+        await ErrorAssert.ErrorAsync(refused, HttpStatusCode.BadRequest, "replicas_unavailable");
         using var local = await api.Client.PostAsJsonAsync(ManagementApi.Uri(databases), new { name = "local" }, token);
         await Assert.That(local.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        using var unserved = await api.Client.PostAsJsonAsync(ManagementApi.Uri(databases), new { name = "unserved", replicaRegions = Fra }, token);
-        await Assert.That(unserved.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        using var home = await api.Client.PostAsJsonAsync(ManagementApi.Uri(databases), new { name = "home", replicaRegions = Home }, token);
-        await Assert.That(home.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        var replicated = new TenantContext(
+            Primitives.EntityIds.New().ToString(), PlanTier.Hobby, Primitives.EntityIds.New().ToString(), Primitives.EntityIds.New().ToString());
+        await CatalogFixture.RegisterAsync(api, api.User, replicated, "replicated", Sjc, token);
+        var replicatedId = replicated.DatabaseId!;
+        (organization, project) = (replicated.OrganizationId, replicated.ProjectId!);
 
         var peer = api.Server.Client;
         var page = (await peer.GetFromJsonAsync<ReplicaCatalogPage>("/v1/sync/regions/sjc/databases", TerraBaseJsonContext.Default.Options, token))!;
@@ -128,8 +126,8 @@ public sealed class RegionReplicaTests
         await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
 
         using var forged = PeerTls.CreateClient(api.Server.BaseAddress, credential: new InternalCredential(PeerTls.NewSecret()));
-        using var refused = await forged.GetAsync("/v1/sync/regions/sjc/databases", token);
-        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        using var unauthorized = await forged.GetAsync("/v1/sync/regions/sjc/databases", token);
+        await Assert.That(unauthorized.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         using var data = api.DataClient();
         using var hidden = await data.GetAsync("/v1/sync/regions/sjc/databases", token);
         await Assert.That(hidden.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
