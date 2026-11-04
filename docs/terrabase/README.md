@@ -7,6 +7,7 @@ Hosting: [OCI and ts-orch](../oci.md); node discovery: [TerraBase on ts-orch](ts
 Local processes: [TerraBase local host](local-host.md).
 Recovery: [Copy placement and snapshot routing](recovery-copy-placement.md).
 Transport security: [TLS and authentication on every SQL surface](transport-security.md).
+Erasure: [Crypto-shredding of deleted databases](crypto-shredding.md).
 
 TerraBase is TerraScale's database, moving to SQL only on Turso. The leaderless
 replication engine is removed; each database serves from one region until region
