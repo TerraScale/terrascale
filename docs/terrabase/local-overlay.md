@@ -22,13 +22,14 @@ unconfirmed local write lives outside it, in the push stream.
    capture a pull reverts the local transaction without replaying it.
 2. Before commit, the transaction's captured changes become one `RegionTransaction`
    ([format](home-apply.md#regiontransaction)): a new ULID id, the origin region and a commit stamp from the
-   node's HLC (`IHlcClock`, [HLC](hlc-clock.md)). A node whose clock is not admitted (`ILocalWriteClock.Allowed`
-   false) refuses the local transaction and the router forwards it home.
-3. The node commits the replica transaction and publishes the `RegionTransaction` to its own region's push stream,
-   with the transaction id as `Nats-Msg-Id`. The write is acknowledged to the client only after JetStream
-   acknowledges storing the message. A publish that fails leaves nothing acknowledged: the node pulls the replica,
-   which removes the local copy, and the client gets an error. Commits and publishes of one database are serialized,
-   so stream order is commit order.
+   node's durable HLC (`IHlcClock`, [HLC](hlc-clock.md)). Clock admission is the router's: a node whose
+   `ILocalWriteClock.Allowed` is false also refuses the local transaction here, and the write goes home.
+3. Inside the still-open transaction, the node publishes the `RegionTransaction` to its own region's push stream
+   with the transaction id as `Nats-Msg-Id`, then commits the replica transaction. The write is acknowledged to the
+   client only after JetStream acknowledged storing the message and the commit succeeded. A publish that fails rolls
+   the transaction back and the write goes home. A commit that fails after the publish answers an unknown outcome:
+   the home applies the transaction and the overlay shows it locally. Commits and publishes of one database are
+   serialized, so stream order is commit order.
 4. The home applies the transaction (R6) and answers with an `applied` notice. With `durability=home` the client's
    acknowledgement waits for that notice instead of step 3.
 
