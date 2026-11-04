@@ -13,6 +13,7 @@ namespace TerraScale.Dashboard.Common.Databases
     public sealed record DatabaseScope(string UserId, string AccessToken, string OrganizationId, string OrganizationName, string ProjectId, string ProjectName)
     {
         public SessionRecord? Session { get; init; }
+        internal bool IsApiKey { get; init; }
         public override string ToString()
         {
             return $"Database scope {OrganizationId}/{ProjectId} [REDACTED]";
@@ -268,8 +269,9 @@ namespace TerraScale.Dashboard.Common.Databases
             }
 
             var name = await NameAsync(scope, home, databaseId, cancellationToken);
-            var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
-            var token = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, write ? ["sql:read", "sql:write"] : ["sql:read"], cancellationToken);
+            var token = scope.IsApiKey ? scope.AccessToken : await tokens.GetAsync(
+                scope.Session ?? throw new HttpRequestException("Current user authorization is required."),
+                scope.OrganizationId, scope.ProjectId, write ? ["sql:read", "sql:write"] : ["sql:read"], cancellationToken);
             if (!write)
             {
                 return await ExecuteSqlAsync(home, scope.ProjectId, name, token, statements, cancellationToken);
@@ -362,6 +364,11 @@ namespace TerraScale.Dashboard.Common.Databases
                 throw PlatformDatabases.ReadOnly();
             }
 
+            if (scope.IsApiKey)
+            {
+                return rpc.User<IManagementService>(scope.AccessToken, home.Id).WithCancellationToken(cancellationToken);
+            }
+
             var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
             var token = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, [permission], cancellationToken);
             return rpc.User<IManagementService>(token, home.Id).WithCancellationToken(cancellationToken);
@@ -370,6 +377,7 @@ namespace TerraScale.Dashboard.Common.Databases
         // UI URLs use database IDs; the authoritative database list resolves those IDs to canonical route names.
         private async Task<string> NameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
+            if (scope.IsApiKey) return databaseId;
             return (await ListAsync(scope, home, cancellationToken)).SingleOrDefault(item => item.Id == databaseId)?.Name
                 ?? throw new DatabaseProviderException(HttpStatusCode.NotFound);
         }
