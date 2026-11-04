@@ -69,6 +69,12 @@ def main_head():
     return gh('api', f'repos/{REPO}/git/ref/heads/main')['object']['sha']
 
 
+def images_runs(sha):
+    runs = gh('run', 'list', '--repo', REPO, '--workflow', WORKFLOW, '--branch', 'main', '--commit', sha,
+              '--limit', '100', '--json', 'databaseId,event,status,attempt')
+    return [run for run in runs if run['event'] in ('push', 'workflow_dispatch')]
+
+
 def live():
     try:
         with urllib.request.urlopen('https://dash.terrascale.tech/readyz', timeout=30) as response:
@@ -80,6 +86,7 @@ def live():
 def target():
     """Newest qualified main commit newer than live whose CI has not failed."""
     deployed = live()
+    head = main_head()
     for page in range(1, 4):
         commits = gh('api', f'repos/{REPO}/commits?sha=main&per_page=50&page={page}')
         for commit in commits:
@@ -87,6 +94,12 @@ def target():
             if sha == deployed:
                 return None, deployed
             if qualified(sha):
+                # A head dispatch cannot sign an older SHA. Do not let an
+                # orphaned qualification strand every later recovery run.
+                # The current head remains eligible so heal can create its run.
+                if sha != head and not images_runs(sha):
+                    print(f'Skipping {sha}: main advanced and no signed Images run exists', file=sys.stderr)
+                    continue
                 state = ci(sha)
                 if state != 'failed':
                     return (sha, state), deployed
@@ -130,9 +143,7 @@ def heal():
         print(f'Nothing to heal ({found}, live {deployed})')
         return
     sha = found[0]
-    runs = gh('run', 'list', '--repo', REPO, '--workflow', WORKFLOW, '--branch', 'main', '--commit', sha,
-              '--limit', '100', '--json', 'databaseId,event,status,attempt')
-    runs = [run for run in runs if run['event'] in ('push', 'workflow_dispatch')]
+    runs = images_runs(sha)
     if not runs:
         if main_head() != sha:
             print(f'{sha} has no Images run and main advanced; qualify the current head on a dev host',

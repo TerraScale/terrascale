@@ -37,6 +37,14 @@ push run does. Images rechecks CI, newest qualification and deployed ancestry
 immediately before release, so a newer qualified revision still supersedes it.
 When the missing run belongs to an older commit, qualify the current head on a
 dev host and recover that head; a head dispatch cannot sign an older image.
+Older qualifications with no push or dispatch Images run are skipped during
+selection, so they cannot strand a newer recovery. A qualified current head
+stays eligible: heal can create its missing dispatch. Existing signed main
+runs remain eligible after unrelated pushes.
+
+`ts-ship/<area>` is a Fast proof. After a rebase carries that proof across
+unrelated changes, also verify the exact head has `dashboard-release/dashboard`
+and its qualified archive. A carried Fast status alone cannot deploy it.
 
 For a manually recovered head whose CI completed before this heal was available:
 

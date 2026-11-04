@@ -79,6 +79,34 @@ class RecoveryTests(unittest.TestCase):
             gate.heal()
             command.assert_called_once_with(['gh', 'run', 'rerun', '42', '--repo', gate.REPO])
 
+    def test_orphaned_older_qualification_does_not_block_a_signed_candidate(self):
+        orphan, candidate = 'c' * 40, 'd' * 40
+        commits = [{'sha': sha} for sha in (HEAD, orphan, candidate, LIVE)]
+        for event in ('push', 'workflow_dispatch'):
+            with (patch.object(gate, 'live', return_value=LIVE),
+                  patch.object(gate, 'main_head', return_value=HEAD),
+                  patch.object(gate, 'gh', return_value=commits),
+                  patch.object(gate, 'qualified', side_effect=lambda sha: sha in (orphan, candidate)),
+                  patch.object(gate, 'images_runs', side_effect=lambda sha: (
+                      [{'event': event}] if sha == candidate else [])),
+                  patch.object(gate, 'ci', return_value='green') as ci):
+                self.assertEqual(((candidate, 'green'), LIVE), gate.target())
+                ci.assert_called_once_with(candidate)
+
+    def test_qualified_head_without_images_remains_recoverable(self):
+        with (patch.object(gate, 'live', return_value=LIVE),
+              patch.object(gate, 'main_head', return_value=HEAD),
+              patch.object(gate, 'gh', return_value=[{'sha': HEAD}, {'sha': LIVE}]),
+              patch.object(gate, 'qualified', return_value=True),
+              patch.object(gate, 'images_runs') as runs,
+              patch.object(gate, 'ci', return_value='green')):
+            self.assertEqual(((HEAD, 'green'), LIVE), gate.target())
+            runs.assert_not_called()
+
+    def test_workflow_run_cannot_make_an_orphan_deliverable(self):
+        with patch.object(gate, 'gh', return_value=[{'event': 'workflow_run'}]):
+            self.assertEqual([], gate.images_runs(HEAD))
+
     def test_images_rechecks_gate_immediately_before_release(self):
         root = Path(__file__).resolve().parents[3]
         workflow = (root / '.github/workflows/images-ghcr.yml').read_text()
