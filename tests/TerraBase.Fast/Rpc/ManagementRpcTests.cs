@@ -29,6 +29,7 @@ public sealed class ManagementRpcTests
         var usage = Client<IUsageService>(channel, token);
         var project = api.Tenant.ProjectId;
         var source = await management.GetDatabaseAsync(project, DocumentApi.Database);
+        var regions = await management.GetDatabaseRegionsAsync(project, DocumentApi.Database);
         var page = await management.ListDatabasesAsync(project, null, 1);
         var created = await management.CreateDatabaseAsync(project, new(Name: "created"));
         var renamed = await management.SetDatabaseAsync(project, created.Id, new(Name: "renamed"));
@@ -56,6 +57,8 @@ public sealed class ManagementRpcTests
         var readback = await management.GetDatabaseAsync(project, "restored");
         await management.DeleteDatabaseAsync(project, readback.Id);
 
+        await Assert.That(regions.DatabaseId).IsEqualTo(source.Id);
+        await Assert.That(regions.HomeRegion).IsEqualTo(source.HomeRegion);
         await Assert.That(page.Items.Single().Id).IsEqualTo(source.Id);
         await Assert.That(renamed.Id).IsEqualTo(created.Id);
         await Assert.That(placed.Name).IsEqualTo("renamed");

@@ -7,7 +7,7 @@ namespace TerraScale.Dashboard.Features.Home
 {
     public sealed record HomeAnalytics(long Requests, long Errors, double? WorstP95Ms, long? StorageBytes, long Operations, long ClientBytes);
     public sealed record HomeDirection(string FromRegion, string ToRegion, long WireBytes);
-    public sealed record HomeReplication(int Healthy, int Lagging, int Diverged, int Stopped, int Starting, double? WorstLagMs, long SentBytes, long ReceivedBytes, IReadOnlyList<HomeDirection> Directions)
+    public sealed record HomeReplication(int Healthy, int Lagging, int Diverged, int Stopped, int Unobserved, double? WorstLagMs, long SentBytes, long ReceivedBytes, IReadOnlyList<HomeDirection> Directions)
     {
         public long WireBytes => Directions.Aggregate(0L, (sum, direction) => checked(sum + direction.WireBytes));
     }
@@ -81,8 +81,8 @@ namespace TerraScale.Dashboard.Features.Home
                     report.Regions.Count(region => string.Equals(region.Status, "healthy", StringComparison.OrdinalIgnoreCase)),
                     report.Regions.Count(region => string.Equals(region.Status, "lagging", StringComparison.OrdinalIgnoreCase)),
                     report.Regions.Count(region => string.Equals(region.Status, "diverged", StringComparison.OrdinalIgnoreCase)),
-                    report.Regions.Count(region => string.Equals(region.Status, "stopped", StringComparison.OrdinalIgnoreCase) && !region.Starting),
-                    report.Regions.Count(region => region.Starting),
+                    report.Regions.Count(region => string.Equals(region.Status, "stopped", StringComparison.OrdinalIgnoreCase) && !region.Unobserved),
+                    report.Regions.Count(region => region.Unobserved),
                     report.WorstLagMs,
                     report.SentBytes,
                     report.ReceivedBytes,

@@ -23,6 +23,13 @@ namespace TerraScale.TerraBase.Rpc.Management
         }
 
         /// <inheritdoc />
+        public async UnaryResult<TerraBaseDatabaseRegions> GetDatabaseRegionsAsync(string projectId, string database)
+        {
+            var answer = await api.SendAsync(Context, "GET", RestPaths.Database(projectId, database) + "/regions");
+            return RestApi.Read(answer, ManagementJson.Default.TerraBaseDatabaseRegions);
+        }
+
+        /// <inheritdoc />
         public async UnaryResult<TerraBaseManagedDatabase> CreateDatabaseAsync(string projectId, TerraBaseDatabasePlacement request)
         {
             var answer = await api.SendAsync(Context, "POST", RestPaths.Project(projectId) + "/databases", RestApi.Json(request, ManagementJson.Default.TerraBaseDatabasePlacement));

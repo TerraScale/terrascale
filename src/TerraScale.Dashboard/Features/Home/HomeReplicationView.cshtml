@@ -6,7 +6,7 @@
 else if (Model.Measurement.Replication is not { } data) { <div class="ts-empty" role="status"><span class="ts-icon-tile" aria-hidden="true">@Icons.Render("Network", 16)</span><p class="ts-empty-title">@Model.Measurement.ReplicationEmpty</p></div> }
 else
 {
-    <dl class="ts-stats" aria-label="Replication health by database region">@foreach (var stat in new[] { ("Healthy", data.Healthy), ("Lagging", data.Lagging), ("Diverged", data.Diverged), ("Stopped", data.Stopped), ("Starting", data.Starting) }) { <div class="ts-stat"><dt class="ts-stat-label">@stat.Item1</dt><dd class="ts-stat-value">@stat.Item2</dd></div> }</dl>
+    <dl class="ts-stats" aria-label="Replication health by database region">@foreach (var stat in new[] { ("Healthy", data.Healthy), ("Lagging", data.Lagging), ("Diverged", data.Diverged), ("Stopped", data.Stopped), ("Unobserved", data.Unobserved) }) { <div class="ts-stat"><dt class="ts-stat-label">@stat.Item1</dt><dd class="ts-stat-value">@stat.Item2</dd></div> }</dl>
     <dl class="ts-stats" aria-label="Replication bandwidth and lag">@foreach (var stat in new[] { ("Worst lag", MetricFormat.Latency(data.WorstLagMs)), ("Replication bandwidth", MetricFormat.Bytes(data.WireBytes)), ("Received", MetricFormat.Bytes(data.ReceivedBytes)) }) { <div class="ts-stat"><dt class="ts-stat-label">@stat.Item1</dt><dd class="ts-stat-value">@stat.Item2</dd></div> }</dl>
     <dl class="ts-stats" aria-label="Replication bandwidth by direction">@foreach (var pair in data.Directions) { <div class="ts-stat"><dt class="ts-stat-label">@pair.FromRegion → @pair.ToRegion</dt><dd class="ts-stat-value">@MetricFormat.Bytes(pair.WireBytes)</dd></div> }</dl>
 }
