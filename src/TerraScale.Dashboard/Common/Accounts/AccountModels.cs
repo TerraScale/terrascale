@@ -134,6 +134,7 @@ namespace TerraScale.Dashboard.Common.Accounts
 
     public sealed class DatabaseRecord
     {
+        public DateTimeOffset? ExpiresAt { get; set; }
         public string Id { get; set; } = "";
         public string ProjectId { get; set; } = "";
         public string Name { get; set; } = "";
