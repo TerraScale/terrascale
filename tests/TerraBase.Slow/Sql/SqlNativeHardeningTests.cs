@@ -32,10 +32,12 @@ public sealed class SqlNativeHardeningTests
         var commaJoin = await db.RefusedAsync("SELECT count(*) FROM sqlite_schema, 'turso_cdc'");
         var trigger = await db.RefusedAsync("CREATE TRIGGER wipe AFTER INSERT ON audit BEGIN DELETE FROM _tb_state; END");
 
-        foreach (var refused in new[] { offset, quotedStats, commaJoin, trigger })
+        foreach (var refused in new[] { offset, quotedStats, commaJoin })
         {
             await Assert.That((refused.Status, refused.Code)).IsEqualTo((HttpStatusCode.BadRequest, "SQLITE_ERROR"));
         }
+
+        await Assert.That((trigger.Status, trigger.Code)).IsEqualTo((HttpStatusCode.Forbidden, "SQLITE_AUTH"));
 
         await Assert.That((await db.OkAsync("SELECT count(*) FROM sqlite_schema WHERE name = 'wipe'"))[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(0);
     }

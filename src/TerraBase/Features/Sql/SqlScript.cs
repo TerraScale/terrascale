@@ -29,6 +29,10 @@ internal sealed record SqlStatementPlan(
     string Sql, SqlStatementKind Kind, SqlWriteVerb Verb, bool ReadsTables, bool IsExplain, bool ReadOnly, IReadOnlyList<string?> Params, IReadOnlyList<string> Names,
     string? Savepoint)
 {
+    public string Run { get => field ?? Sql; init; }
+
+    public IReadOnlyList<int> HiddenColumns { get; init; } = [];
+
     public bool IsControl => Kind is SqlStatementKind.Begin or SqlStatementKind.Commit or SqlStatementKind.Rollback;
 
     public bool IsSavepoint => Kind is SqlStatementKind.Savepoint or SqlStatementKind.Release or SqlStatementKind.RollbackTo;
@@ -45,8 +49,6 @@ internal static class SqlScript
         with(StringComparer.OrdinalIgnoreCase), "table_info", "table_xinfo", "table_list", "index_list", "index_info", "index_xinfo", "foreign_key_list",
         "foreign_key_check",
     ];
-
-    private static readonly SqlError Reserved = SqlErrors.Error("names starting with _tb_ or turso_, and the engine's own tables, are reserved");
 
     public static bool IsReservedName(string name) => TerraBaseSqlNames.IsInternalTable(name);
 
@@ -99,6 +101,8 @@ internal static class SqlScript
         }
 
         var tokens = all[start..(all.FindLastIndex(token => token.Kind != SqlTokenKind.Semicolon) + 1)];
+        var first = tokens[0];
+        var verb = first.Kind == SqlTokenKind.Word ? first.Value.ToUpperInvariant() : "";
         var names = new List<string>();
         foreach (var token in tokens)
         {
@@ -107,36 +111,39 @@ internal static class SqlScript
                 continue;
             }
 
-            if (IsReservedTable(token.Value))
+            if (SqlSandbox.IsHidden(token.Value))
             {
-                return Reserved;
+                return verb is "CREATE" or "ALTER" ? SqlSandbox.Reserved : SqlSandbox.Hidden(token.Value);
             }
 
             names.Add(token.Value.ToLowerInvariant());
         }
 
+        if (SqlSandbox.Check(tokens) is { } denied)
+        {
+            return denied;
+        }
+
         var text = sql[tokens[0].Start..tokens[^1].End];
         var savepoint = tokens[^1].IsName ? tokens[^1].Value : null;
         var parameters = Parameters(tokens);
-        var first = tokens[0];
-        var verb = first.Kind == SqlTokenKind.Word ? first.Value.ToUpperInvariant() : "";
         SqlStatementPlan Plan(SqlStatementKind kind, SqlWriteVerb write = SqlWriteVerb.None, bool readsTables = false, bool explain = false, bool readOnly = false)
         {
             return new(text, kind, write, readsTables, explain, readOnly, parameters, names, savepoint);
         }
 
-        return verb switch
+        var outcome = verb switch
         {
             "SELECT" or "VALUES" => Plan(SqlStatementKind.Read, readsTables: tokens.Exists(token => token.Is("FROM"))),
-            "EXPLAIN" => Plan(SqlStatementKind.Read, explain: true),
+            "EXPLAIN" => Explained(sql, tokens) is { } refused ? refused : Plan(SqlStatementKind.Read, explain: true),
             "WITH" => TopLevelWrite(tokens) is { } dml
                 ? Plan(SqlStatementKind.Write, Verb(dml))
                 : Plan(SqlStatementKind.Read, readsTables: tokens.Exists(token => token.Is("FROM"))),
             "INSERT" or "REPLACE" or "UPDATE" or "DELETE" => Plan(SqlStatementKind.Write, Verb(verb)),
-            "CREATE" when tokens.Count > 1 && (tokens[1].Is("TEMP") || tokens[1].Is("TEMPORARY")) => SqlErrors.Error("temporary tables, views and triggers are not supported"),
-            "CREATE" when tokens.Count > 1 && tokens[1].Is("VIRTUAL") => SqlErrors.Error("virtual tables are not supported"),
+            "CREATE" when tokens.Count > 1 && (tokens[1].Is("TEMP") || tokens[1].Is("TEMPORARY")) => SqlSandbox.Denied("temporary tables, views and triggers are not supported"),
+            "CREATE" when tokens.Count > 1 && tokens[1].Is("VIRTUAL") => SqlSandbox.Denied("virtual tables are not supported"),
             "CREATE" or "DROP" or "ALTER" or "REINDEX" => Plan(SqlStatementKind.Write, SqlWriteVerb.Schema),
-            "ATTACH" or "DETACH" or "VACUUM" or "ANALYZE" => SqlErrors.Error($"{verb} is not supported"),
+            "ATTACH" or "DETACH" or "VACUUM" or "ANALYZE" => SqlSandbox.Denied($"{verb} is not supported"),
             "BEGIN" => Begin(tokens, 1, Plan),
             "START" when tokens.Count > 1 && tokens[1].Is("TRANSACTION") => Begin(tokens, 2, Plan),
             "COMMIT" or "END" when Only(tokens, 1, "TRANSACTION") => Plan(SqlStatementKind.Commit),
@@ -148,9 +155,25 @@ internal static class SqlScript
             "COMMIT" or "END" or "ROLLBACK" or "START" => SqlErrors.Error("SQL syntax error in a transaction statement"),
             _ => Plan(SqlStatementKind.Read),
         };
+        if (verb == "PRAGMA" || outcome is not SqlStatementPlan { Kind: SqlStatementKind.Read or SqlStatementKind.Write } plan)
+        {
+            return outcome;
+        }
+
+        var rewritten = SqlSandbox.RewriteSchema(sql, tokens, out var schemaDenied);
+        return schemaDenied ?? (rewritten is var (original, run) ? plan with { Sql = original, Run = run } : plan);
     }
 
-    private static bool IsReservedTable(string name) => TerraBaseSqlNames.IsReserved(name);
+    private static SqlError? Explained(string sql, List<SqlToken> tokens)
+    {
+        var body = 1;
+        while (body < tokens.Count && (tokens[body].Is("QUERY") || tokens[body].Is("PLAN")))
+        {
+            body++;
+        }
+
+        return body < tokens.Count && Classify(sql[tokens[body].Start..tokens[^1].End], bounded: false) is SqlError refused ? refused : null;
+    }
 
     private static SqlWriteVerb Verb(string verb) => verb switch
     {
@@ -197,7 +220,7 @@ internal static class SqlScript
         {
             if (!tokens[1].Is("main"))
             {
-                return SqlErrors.Error("PRAGMA reads only the main schema");
+                return SqlSandbox.Denied("PRAGMA reads only the main schema");
             }
 
             at = 3;
@@ -217,9 +240,9 @@ internal static class SqlScript
             [{ Kind: SqlTokenKind.Open }, var argument, { Kind: SqlTokenKind.Close }] => argument.Value,
             _ => "",
         };
-        if (value is not null && IsReservedTable(value))
+        if (value is not null && SqlSandbox.IsHidden(value))
         {
-            return Reserved;
+            return SqlSandbox.Hidden(value);
         }
 
         if (name.Equals("foreign_keys", StringComparison.OrdinalIgnoreCase))
@@ -228,19 +251,28 @@ internal static class SqlScript
             {
                 null => plan(SqlStatementKind.Read, SqlWriteVerb.None, false, false, false),
                 _ when value.ToUpperInvariant() is "ON" or "1" or "TRUE" or "YES" => plan(SqlStatementKind.Noop, SqlWriteVerb.None, false, false, false),
-                _ when value.ToUpperInvariant() is "OFF" or "0" or "FALSE" or "NO" => SqlErrors.Error("foreign keys are always enforced"),
+                _ when value.ToUpperInvariant() is "OFF" or "0" or "FALSE" or "NO" => SqlSandbox.Denied("foreign keys are always enforced"),
                 _ => SqlErrors.Error("PRAGMA foreign_keys takes ON or OFF"),
             };
         }
 
         if (!ReadPragmas.Contains(name))
         {
-            return SqlErrors.Error("this PRAGMA is not supported");
+            return SqlSandbox.Denied("this PRAGMA is not supported");
         }
 
-        return rest is [{ Kind: SqlTokenKind.Symbol, Value: "=" }, ..] || value == ""
-            ? SqlErrors.Error("this PRAGMA only reads")
-            : plan(SqlStatementKind.Read, SqlWriteVerb.None, false, false, false);
+        if (rest is [{ Kind: SqlTokenKind.Symbol, Value: "=" }, ..] || value == "")
+        {
+            return SqlSandbox.Denied("this PRAGMA only reads");
+        }
+
+        var read = plan(SqlStatementKind.Read, SqlWriteVerb.None, false, false, false);
+        return name.ToLowerInvariant() switch
+        {
+            "table_list" => read with { HiddenColumns = [1] },
+            "foreign_key_check" when value is null => read with { HiddenColumns = [0, 2] },
+            _ => read,
+        };
     }
 
     private static List<string?> Parameters(List<SqlToken> tokens)

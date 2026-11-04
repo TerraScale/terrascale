@@ -119,6 +119,7 @@ public sealed class SqlNativeRestTests
     public async Task Engine_tables_attach_and_disabling_foreign_keys_are_refused()
     {
         await using var db = await StartAsync();
+        await db.OkAsync("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)");
 
         var state = await db.RefusedAsync("SELECT * FROM _tb_state");
         var quoted = await db.RefusedAsync("SELECT * FROM \"_TB_STATE\"");
@@ -129,9 +130,14 @@ public sealed class SqlNativeRestTests
         var unsupported = await db.RefusedAsync("PRAGMA writable_schema = 1");
         var schema = await db.OkAsync("SELECT count(*) FROM sqlite_schema");
 
-        foreach (var refused in new[] { state, quoted, info, catalog, attach, off, unsupported })
+        foreach (var refused in new[] { state, quoted, info, catalog })
         {
             await Assert.That((refused.Status, refused.Code)).IsEqualTo((HttpStatusCode.BadRequest, "SQLITE_ERROR"));
+        }
+
+        foreach (var refused in new[] { attach, off, unsupported })
+        {
+            await Assert.That((refused.Status, refused.Code)).IsEqualTo((HttpStatusCode.Forbidden, "SQLITE_AUTH"));
         }
 
         await Assert.That(schema[0].GetProperty("rows")[0][0].GetInt64()).IsGreaterThan(0);
