@@ -2,16 +2,18 @@
 """Select the dashboard revision to release: the newest qualified main commit.
 
 The release token's sha claim must equal the image's revision label, so a
-revision can only be released by its own push run (or a rerun of it). Later
-pushes outside the dashboard therefore never block it:
+revision can only be released by a push run of that revision, or a dispatch
+started while it is the real main head. Later unrelated pushes do not block
+push or dispatch releases:
 
   release <sha>  exit 0 and print true when <sha> is the newest qualified,
                  not-failed main commit, its CI passed and it is newer than live.
-  heal           after CI completes, rerun the push run of that commit when it
-                 ended without releasing it.
+  heal           after CI completes, rerun its Images run, or dispatch Images
+                 on main if GitHub missed the push and it is still the head.
 """
 import functools
 import json
+import os
 import subprocess
 import sys
 import time
@@ -37,12 +39,34 @@ def qualified(sha):
 
 def ci(sha):
     runs = gh('run', 'list', '--repo', REPO, '--workflow', 'ci.yml', '--branch', 'main', '--commit', sha,
-              '--event', 'push', '--limit', '100', '--json', 'status,conclusion')
-    if any(item['status'] == 'completed' and item['conclusion'] != 'success' for item in runs):
-        return 'failed'
-    if runs and all(item['status'] == 'completed' for item in runs):
+              '--limit', '100', '--json', 'databaseId,event,status,conclusion')
+    qualifying = []
+    for run in runs:
+        if run['event'] not in ('push', 'workflow_dispatch'):
+            continue
+        if run['status'] == 'completed':
+            pages = gh('api', '--paginate', '--slurp',
+                       f'repos/{REPO}/actions/runs/{run["databaseId"]}/jobs?filter=latest&per_page=100')
+            jobs = {job['name']: job['conclusion'] for page in pages for job in page['jobs']}
+            test = jobs.get('test')
+            # Native maintenance deliberately has no qualifying test job. It cannot turn CI green.
+            if run['event'] == 'workflow_dispatch' and test is None:
+                continue
+            if run['conclusion'] != 'success' or test != 'success':
+                return 'failed'
+            # Normal recovery selects both core services. Their jobs can succeed only
+            # for refs/heads/main, so a branch/tag dispatch cannot qualify as main CI.
+            if run['event'] == 'workflow_dispatch' and any(
+                    jobs.get(name) != 'success' for name in ('main', 'main-auth')):
+                return 'failed'
+        qualifying.append(run)
+    if qualifying and all(item['status'] == 'completed' for item in qualifying):
         return 'green'
     return 'pending'
+
+
+def main_head():
+    return gh('api', f'repos/{REPO}/git/ref/heads/main')['object']['sha']
 
 
 def live():
@@ -80,6 +104,13 @@ def newer_than(base, head):
 def release(revision):
     deadline = time.monotonic() + 25 * 60
     while True:
+        # GitHub binds a main dispatch to the head at creation. Like a push run,
+        # it keeps signing that SHA after unrelated main pushes; target() still
+        # rejects it if a newer qualified revision exists.
+        if (os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch'
+                and os.environ.get('GITHUB_REF') != 'refs/heads/main'):
+            print(f'Recovery dispatch {revision} is not a main-ref run', file=sys.stderr)
+            return False
         found, deployed = target()
         if found is None or found[0] != revision:
             print(f'{revision} is not the newest qualified unreleased main commit ({found}, live {deployed})',
@@ -99,10 +130,16 @@ def heal():
         print(f'Nothing to heal ({found}, live {deployed})')
         return
     sha = found[0]
-    runs = gh('run', 'list', '--repo', REPO, '--workflow', WORKFLOW, '--commit', sha, '--event', 'push',
-              '--limit', '10', '--json', 'databaseId,status,attempt')
+    runs = gh('run', 'list', '--repo', REPO, '--workflow', WORKFLOW, '--branch', 'main', '--commit', sha,
+              '--limit', '100', '--json', 'databaseId,event,status,attempt')
+    runs = [run for run in runs if run['event'] in ('push', 'workflow_dispatch')]
     if not runs:
-        print(f'{sha} has no push run of {WORKFLOW}; dispatch cannot sign it', file=sys.stderr)
+        if main_head() != sha:
+            print(f'{sha} has no Images run and main advanced; qualify the current head on a dev host',
+                  file=sys.stderr)
+            return
+        subprocess.check_call(['gh', 'workflow', 'run', WORKFLOW, '--repo', REPO, '--ref', 'main'])
+        print(f'Dispatched {WORKFLOW} on main to release {sha} (live {deployed})')
         return
     run = max(runs, key=lambda item: item['databaseId'])
     if run['status'] != 'completed':

@@ -75,7 +75,10 @@ pushes outside the dashboard move main: `scripts/dashboard/ci/release-gate.py` a
 the newest qualified main commit whose CI passed and that is newer than live. The
 regions' release verifier accepts a run's GitHub OIDC token only from push and dispatch
 events, so the workflow_run-triggered run never deploys; after each CI completion it
-reruns the push run of that commit if it ended without releasing it. Slow failures remain visible and
+reruns an existing push/dispatch Images run if it ended without releasing it, or dispatches
+Images when the qualified revision is still main head and its push event was missed.
+Normal main CI dispatches qualify through the same required quality gate; native
+maintenance cannot qualify. See [CI recovery](../dev/ci-recovery.md). Slow failures remain visible and
 create or update a matching GitHub issue.
 CI does not run the explicit hot-reload journey. For changes to `scripts/dashboard/demo.sh`, `scripts/dashboard/dev.sh`, the asset scripts or the demo host,
 use `nice -n 19 make -f scripts/dashboard/Makefile test-hot-reload` on a tailnet machine when investigating hot reload locally.

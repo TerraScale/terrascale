@@ -25,3 +25,5 @@ production deploy. Slow suites remain independent of the Fast shipping gate.
 
 Fast batches and `ts-heavy-any` jobs wait for dev host capacity instead of
 overloading a host; see [Dev host capacity](dev-host-capacity.md).
+
+For a missing GitHub push event, see [CI recovery](ci-recovery.md).
