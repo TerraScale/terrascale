@@ -95,7 +95,7 @@ async function egress(region) {
   return { agent, async close() { await agent.destroy(); tunnel.kill(); server.stdin.end(); server.kill(); } };
 }
 
-async function main({ readerCounts = [1, 10, 100, 1000], regions = ["gru", "sjc", "fra"], holdMs = 0, flightMetrics = false } = {}) {
+async function main({ readerCounts = [1, 10, 100, 1000], regions = ["gru", "sjc", "fra"], holdMs = 0, flightMetrics = false, tailOnly = false, shapes = ["table", "where_columns"] } = {}) {
   const input = [];
   for await (const part of process.stdin) input.push(part);
   const credentials = JSON.parse(Buffer.concat(input).toString("utf8"));
@@ -124,7 +124,7 @@ async function main({ readerCounts = [1, 10, 100, 1000], regions = ["gru", "sjc"
   const writer = createTerraBaseClient(config);
   const sha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   emit({ type: "method", sha, host: hostname(), node: process.version, resumed_cohorts: [...completed],
-    rows: 16, body_bytes: 128, repeats: 3, readers: readerCounts, regions, transport_sharing: "Identical subscriptions on one SDK client share one upstream stream", hold_ms: holdMs, cpu_limit_percent: 70, cohort_deadline_seconds: 180,
+    rows: 16, body_bytes: 128, repeats: 3, readers: readerCounts, regions, tail_only: tailOnly, transport_sharing: tailOnly ? "Independent WebSocket tail connections; one authenticated bootstrap supplies the common handle" : "Identical subscriptions on one SDK client share one upstream stream", hold_ms: holdMs, cpu_limit_percent: 70, cohort_deadline_seconds: 180,
     cpu: "Process CPU ticks divided by the minimum of affinity and cgroup v2 ancestor quotas; stop on process or capacity change",
     latency: "Dev-host SDK through regional SSH CONNECT egress; includes tunnel and write request latency; nearest-rank percentiles per repeat" });
   await monitor();
@@ -147,7 +147,7 @@ async function main({ readerCounts = [1, 10, 100, 1000], regions = ["gru", "sjc"
       phase = `egress_${region}_${readers}`;
       const route = await egress(region);
       try {
-        for (const shape of ["table", "where_columns"]) for (let repeat = 1; repeat <= 3; repeat++) {
+        for (const shape of shapes) for (let repeat = 1; repeat <= 3; repeat++) {
           controller.signal.throwIfAborted();
           phase = `setup_${region}_${shape}_${readers}_${repeat}`;
           const table = `f10_${region}_${shape}_${readers}_${repeat}`;
@@ -232,7 +232,42 @@ async function main({ readerCounts = [1, 10, 100, 1000], regions = ["gru", "sjc"
           const reader = createTerraBaseClient({ ...config, fetch: measuredFetch, WebSocket: MeasuredSocket }).database(catalog.id);
           const deadline = AbortSignal.any([controller.signal, AbortSignal.timeout(180_000)]);
           try {
-            for (let index = 0; index < readers; index++) {
+            if (tailOnly) {
+              refreshAt = 0;
+              const bearer = await accessToken();
+              for (let index = 0; index < readers; index++) {
+                deadline.throwIfAborted();
+                const connected = performance.now();
+                let readyResolve;
+                let tailResolve;
+                const readyPromise = new Promise(resolve => { readyResolve = resolve; });
+                const tailPromise = new Promise(resolve => { tailResolve = resolve; });
+                const url = new URL(`${shapePath}/ws?${query(offset)}`);
+                url.protocol = "wss:";
+                const socket = new MeasuredSocket(url, { protocols: ["terrascale.shape.v1"], headers: { authorization: `Bearer ${bearer}` } });
+                let delivered = false;
+                socket.addEventListener("message", event => {
+                  const frame = JSON.parse(event.data);
+                  if (frame.type === "ready") { caughtUp.push(performance.now() - connected); readyResolve(); }
+                  if (frame.type === "new_data" && tailStarted && !delivered) {
+                    if (frame.handle !== handle || frame.offset !== offset || frame.next_offset === offset || "changes" in frame)
+                      return rejectReader(new Error("HINT_BINDING_INVALID"));
+                    delivered = true;
+                    tail.push(performance.now() - tailStarted);
+                    tailResolve();
+                    socket.close();
+                  }
+                  if (frame.type === "error") rejectReader(new Error("TAIL_REFUSED"));
+                });
+                socket.addEventListener("error", () => rejectReader(new Error("TAIL_SOCKET_ERROR")));
+                socket.addEventListener("close", () => { if (!delivered && !deadline.aborted) rejectReader(new Error("TAIL_SOCKET_CLOSED")); });
+                const close = () => socket.close();
+                deadline.addEventListener("abort", close, { once: true });
+                subscriptions.push({ close: () => { deadline.removeEventListener("abort", close); socket.close(); }, done: Promise.resolve() });
+                waiters.push({ ready: readyPromise, tail: tailPromise });
+                await delay(25);
+              }
+            } else for (let index = 0; index < readers; index++) {
               const begin = performance.now();
               let snapped = false;
               let ready = false;
@@ -274,14 +309,14 @@ async function main({ readerCounts = [1, 10, 100, 1000], regions = ["gru", "sjc"
           emit({ type: "cell", sha, outcome, region, shape, readers, repeat, start: new Date(started).toISOString(), end: new Date(ended).toISOString(),
             shared_flights_started: flightBefore === undefined ? undefined : flightAfter - flightBefore,
             snapshot: stats(snapshot, readers), catchup: stats(caughtUp, readers), tail: stats(tail, readers), requests, statuses, origin_statuses: originStatuses, colos,
-            cdn_hit_ratio: (statuses.HIT ?? 0) / requests.cdn,
+            tail_only: tailOnly, cdn_hit_ratio: requests.cdn ? (statuses.HIT ?? 0) / requests.cdn : null,
             cpu_samples: samples.length, cpu_max_percent: samples.length ? Math.max(...samples.map(sample => sample.cpu_percent)) : null,
             usage_reads_before: before.reads, usage_reads_after: after.reads,
             month_before: monthBefore, month_after: monthAfter, sql_read_units: monthAfter.readUnits - monthBefore.readUnits,
             billed_read_units_before: monthBefore.units - monthBefore.writeUnits, billed_read_units_after: monthAfter.units - monthAfter.writeUnits });
-          if ((outcome === "complete" && (snapshot.length !== readers || tail.length !== readers)) || after.reads !== before.reads || monthAfter.readUnits !== monthBefore.readUnits
+          if ((outcome === "complete" && ((!tailOnly && snapshot.length !== readers) || tail.length !== readers)) || after.reads !== before.reads || monthAfter.readUnits !== monthBefore.readUnits
             || monthAfter.units !== monthAfter.writeUnits) throw new Error("MEASUREMENT_INCOMPLETE");
-          if (readers === 1 && (requests.snapshot_payload || requests.catchup_payload || requests.cdn < 2)) throw new Error("CDN_UNVERIFIED");
+          if (!tailOnly && readers === 1 && (requests.snapshot_payload || requests.catchup_payload || requests.cdn < 2)) throw new Error("CDN_UNVERIFIED");
         }
       } finally { await route.close(); }
     }
