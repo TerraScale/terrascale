@@ -51,7 +51,7 @@ public sealed class OrganizationSsoTests(TerraBaseFixture fixture)
     // The owner's organization with a connection whose domain the DNS proves, after a refused first verification.
     private static async Task<(string Organization, string Token)> ConnectAsync(OidcHarness oidc, FakeSsoIdp idp)
     {
-        var (_, token) = await oidc.SignInUserAsync("owner@acme.test");
+        var (_, token) = await oidc.CreateUserTokenAsync("owner@acme.test");
         var organization = await oidc.CreateOrganizationAsync(token);
         var path = $"{PlatformCalls.Organizations}/{organization}/sso";
         var connection = await oidc.OkAsync(HttpMethod.Put, path, token, Request());

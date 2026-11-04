@@ -24,7 +24,7 @@ public sealed partial class EmailChangeTests(TerraBaseFixture fixture)
     {
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
-        var (user, token) = await oidc.SignInUserAsync("erin@example.test");
+        var (user, token) = await oidc.CreateUserTokenAsync("erin@example.test");
 
         var pending = await oidc.OkAsync(HttpMethod.Post, Change, token, new { new_email = " Erin.New@Example.test " }, HttpStatusCode.Accepted);
         await Assert.That(pending.GetProperty("new_email").GetString()).IsEqualTo("erin.new@example.test");

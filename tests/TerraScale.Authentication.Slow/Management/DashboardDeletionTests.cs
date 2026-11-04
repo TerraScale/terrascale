@@ -11,7 +11,7 @@ using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 using TerraScale.DotNet.TerraBase;
 
-namespace TerraScale.Authentication.Fast.Management;
+namespace TerraScale.Authentication.Slow.Management;
 
 /// <summary>Real HTTP and SDK persistence for the durable dashboard deletion handoff.</summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]

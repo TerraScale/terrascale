@@ -27,7 +27,9 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         var clock = new ManualClock(DateTimeOffset.UtcNow);
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
         var owner = faker.Internet.Email().ToLowerInvariant();
-        var (_, ownerToken) = await oidc.SignInUserAsync(owner);
+        var ownerUser = await oidc.CreateUserAsync(owner);
+        var (ownerSession, ownerTokens) = await oidc.CreateSessionAndRedeemAsync(ownerUser);
+        var ownerToken = ownerTokens.GetProperty("access_token").GetString()!;
         var project = await oidc.CreateProjectAsync(ownerToken, await oidc.CreateOrganizationAsync(ownerToken), faker.Commerce.ProductName());
         var application = await oidc.OkAsync(HttpMethod.Post, $"/v1/{project}/clients", ownerToken,
             new { name = "Example app", type = "public", redirect_uris = new[] { Callback } }, HttpStatusCode.Created);
@@ -44,7 +46,7 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         var (verifier, challenge) = OidcHarness.Pkce();
         var authorize = OidcHarness.AuthorizePath(challenge, redirectUri: Callback, clientId: clientId).Replace($"/{OidcIssuer.Slug}/", $"/{project}/", StringComparison.Ordinal);
         clock.Advance(HostedAuth.MailCooldown);
-        using var anonymous = await oidc.AuthorizeAsync(authorize, await oidc.SignInAsync(owner));
+        using var anonymous = await oidc.AuthorizeAsync(authorize, ownerSession);
         await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
         await Assert.That(anonymous.Headers.Location!.OriginalString).StartsWith($"/ui/{project}/sign-in?next=");
         using var signUpPage = await oidc.Client.GetAsync($"/ui/{project}/sign-up");

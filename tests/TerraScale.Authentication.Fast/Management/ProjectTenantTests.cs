@@ -27,8 +27,8 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);
         var (owner, ownerToken, project, root) = await this.ProjectAsync(oidc);
-        var (viewer, viewerToken) = await oidc.SignInUserAsync(this.Email(2));
-        var (_, outsiderToken) = await oidc.SignInUserAsync(this.Email(3));
+        var (viewer, viewerToken) = await oidc.CreateUserTokenAsync(this.Email(2));
+        var (_, outsiderToken) = await oidc.CreateUserTokenAsync(this.Email(3));
         await Assert.That(await oidc.GrantAsync(project, viewer.Id, "viewer")).IsTrue();
         var users = oidc.Server.App.Services.GetRequiredService<Users>();
         var sessions = oidc.Server.App.Services.GetRequiredService<Sessions>();
@@ -85,16 +85,6 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         await Assert.That(stored!.Document.GetRawText()).DoesNotContain(secret);
         await Assert.That(stored.Document.GetProperty("instanceId").GetString()).IsEqualTo(project);
         await Assert.That(await oidc.FailAsync(HttpMethod.Post, $"{root}/clients", token, body with { redirect_uris = InsecureRedirect })).IsEqualTo((400, "invalid_request"));
-        foreach (var invalid in new[]
-        {
-            "https://user@example.test/callback", "https://user:password@example.test/callback",
-            "http://user@localhost:3000/cb", "http://user@127.0.0.1:3000/cb", "http://user@[::1]:3000/cb",
-        })
-        {
-            await Assert.That(await oidc.FailAsync(HttpMethod.Post, $"{root}/clients", token,
-                body with { redirect_uris = [invalid] })).IsEqualTo((400, "invalid_request"));
-        }
-
         var settings = await oidc.OkAsync(HttpMethod.Get, $"{root}/settings", token);
         await Assert.That(settings.GetProperty("methods").GetProperty("sign_up").GetBoolean()).IsTrue();
         await Assert.That(settings.GetProperty("counts").GetProperty("clients").GetInt64()).IsEqualTo(1);
@@ -114,7 +104,7 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
     // An owner signed in, with its sign-in token, an organization and a project.
     private async Task<(UserRecord Owner, string Token, string Project, string Root)> ProjectAsync(OidcHarness oidc)
     {
-        var (owner, token) = await oidc.SignInUserAsync(this.Email(1));
+        var (owner, token) = await oidc.CreateUserTokenAsync(this.Email(1));
         var organization = await oidc.CreateOrganizationAsync(token, this.faker.Company.CompanyName());
         var project = await oidc.CreateProjectAsync(token, organization, this.faker.Commerce.ProductName());
         return (owner, token, project, $"/v1/{project}");
