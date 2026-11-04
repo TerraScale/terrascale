@@ -7,6 +7,7 @@ using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -18,11 +19,11 @@ public static class FunctionsExtensions
 {
     /// <summary>Registers the always-on function store and runtime.</summary>
     public static IServiceCollection AddTerraBaseFunctions(this IServiceCollection services) =>
-        services.AddSingleton<FunctionWriter>().AddSingleton<FunctionService>().AddSingleton<IFunctions>(provider => provider.GetRequiredService<FunctionService>())
+        services.AddSingleton<FunctionService>().AddSingleton<IFunctions>(provider => provider.GetRequiredService<FunctionService>())
             .AddSingleton<FunctionScheduler>().AddHostedService(provider => provider.GetRequiredService<FunctionScheduler>());
 }
 
-internal sealed class FunctionService(SystemCatalog catalog, FunctionWriter writer, IUsageMeter usage, IMemoryBudget memory,
+internal sealed class FunctionService(SystemCatalog catalog, ISqlService sql, IUsageMeter usage, IMemoryBudget memory,
     TerraBaseOptions options, TimeProvider time) : IFunctions
 {
     public const string Schedules = "function_schedules";
@@ -142,13 +143,16 @@ internal sealed class FunctionService(SystemCatalog catalog, FunctionWriter writ
 
         var started = time.GetUtcNow();
         var clock = Stopwatch.StartNew();
-        var run = await Task.Run(() => FunctionRunner.Run(source, eventJson, cancellationToken), cancellationToken).ConfigureAwait(false);
-        var error = run.Error;
-        if (error is null && run.Writes.Count > 0
-            && await writer.WriteAsync(tenant, run.Writes, cancellationToken).ConfigureAwait(false) is { } refused)
+        FunctionRun run;
+        var session = sql.Open(tenant, canWrite: true);
+        await using (session.ConfigureAwait(false))
         {
-            error = "the writes were refused: " + refused;
+            session.BeginRequest();
+            run = await Task.Run(() => FunctionRunner.RunAsync(source, eventJson, new FunctionSql(session), cancellationToken), cancellationToken)
+                .ConfigureAwait(false);
         }
+
+        var error = run.Error;
 
         usage.RecordOperation(tenant, "invoke", 1);
         var log = new FunctionLogBody(EntityIds.New().ToString(), started, trigger, error is null ? "ok" : "error", clock.ElapsedMilliseconds,
