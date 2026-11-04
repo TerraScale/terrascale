@@ -1,5 +1,5 @@
 {
-  "contract": "sdk/SQL-API.md#databases-for-agents at ff77902c3; equivalent fixtures while shared .NET fixtures are absent",
+  "contract": "sdk/SQL-API.md#databases-for-agents at 923bd4934; equivalent fixtures while shared .NET fixtures are absent",
   "project": "01JAAAAAAAAAAAAAAAAAAAAAAA",
   "database": "01JBBBBBBBBBBBBBBBBBBBBBBB",
   "cases": [
@@ -160,10 +160,10 @@
         "body": {
           "key": "01JDDDDDDDDDDDDDDDDDDDDDDD_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "id": "01JDDDDDDDDDDDDDDDDDDDDDDD",
-          "projectId": "01JAAAAAAAAAAAAAAAAAAAAAAA",
           "database": "01JBBBBBBBBBBBBBBBBBBBBBBB",
           "access": "read_write",
-          "expiresAt": "2026-11-04T00:10:00Z"
+          "project_id": "01JAAAAAAAAAAAAAAAAAAAAAAA",
+          "expires_at": "2026-11-04T00:10:00Z"
         }
       }
     },
@@ -183,10 +183,10 @@
         "body": {
           "key": "01JDDDDDDDDDDDDDDDDDDDDDDD_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "id": "01JDDDDDDDDDDDDDDDDDDDDDDD",
-          "projectId": "01JAAAAAAAAAAAAAAAAAAAAAAA",
           "database": "01JBBBBBBBBBBBBBBBBBBBBBBB",
           "access": "read",
-          "expiresAt": "2026-11-04T01:00:00Z"
+          "project_id": "01JAAAAAAAAAAAAAAAAAAAAAAA",
+          "expires_at": "2026-11-04T01:00:00Z"
         }
       }
     },

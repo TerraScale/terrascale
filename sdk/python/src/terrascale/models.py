@@ -59,12 +59,12 @@ class ScopedKey:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ScopedKey:
-        if any(not isinstance(body[k], str) or not body[k] for k in ("key", "expiresAt")):
+        if any(not isinstance(body[k], str) or not body[k] for k in ("key", "expires_at")):
             raise ValueError("invalid scoped key metadata")
         if body["access"] not in ("read", "read_write"):
             raise ValueError("invalid scoped key access")
-        return cls(key=body["key"], id=validate_id(body["id"]), project_id=validate_id(body["projectId"]),
-                   database=validate_id(body["database"]), access=body["access"], expires_at=body["expiresAt"])
+        return cls(key=body["key"], id=validate_id(body["id"]), project_id=validate_id(body["project_id"]),
+                   database=validate_id(body["database"]), access=body["access"], expires_at=body["expires_at"])
 
 
 @dataclass(frozen=True)

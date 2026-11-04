@@ -64,8 +64,8 @@ async def test_agent_database_lifecycle_matches_contract(sdk: Any) -> None:
             assert req.headers["authorization"] == "Basic " + base64.b64encode(f"{API_KEY[:26]}:{API_KEY}".encode()).decode()
             assert not {"cookie", "x-unrelated-credential", "x-terrascale-region-pin"} & set(req.headers)
             assert (result.key, result.id, result.project_id, result.database, result.access, result.expires_at) == (
-                response["body"]["key"], response["body"]["id"], PROJECT, DATABASE,
-                response["body"]["access"], response["body"]["expiresAt"])
+                response["body"]["key"], response["body"]["id"], response["body"]["project_id"], DATABASE,
+                response["body"]["access"], response["body"]["expires_at"])
             assert result.key not in repr(result)
         else:
             assert req.url.host == "api.terrascale.tech"
