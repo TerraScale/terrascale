@@ -41,7 +41,7 @@ func sqlShell(ctx context.Context, db *v1.Database, input commandInput, out io.W
 	file, terminal := input.in.(*os.File)
 	if !input.tty || !terminal {
 		scanner := bufio.NewScanner(input.in)
-		scanner.Buffer(make([]byte, 4096), sqlInputLimit("document")+1)
+		scanner.Buffer(make([]byte, 4096), v1.MaxSQLRequestBytes+1)
 		stop := context.AfterFunc(ctx, func() {
 			if closer, ok := input.in.(io.Closer); ok {
 				closer.Close()

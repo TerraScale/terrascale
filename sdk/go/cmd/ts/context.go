@@ -202,13 +202,13 @@ func selectCLIContext(ctx context.Context, u *tsauth.User, token string, operand
 }
 
 func usesDatabaseOperand(name string) bool {
-	if name == "db create" || name == "db list" || name == "import" || name == "migrate new" || name == "backup destination" {
+	if name == "db create" || name == "db list" || name == "migrate new" || name == "backup destination" {
 		return false
 	}
-	for _, prefix := range []string{"db ", "databases ", "backup ", "collection ", "doc ", "schema ", "ttl ", "index ", "migrate ", "functions "} {
+	for _, prefix := range []string{"db ", "databases ", "backup ", "migrate ", "functions "} {
 		if strings.HasPrefix(name, prefix) {
 			return true
 		}
 	}
-	return name == "sql" || name == "exec" || name == "shell" || name == "export" || name == "usage"
+	return name == "sql" || name == "shell" || name == "usage"
 }

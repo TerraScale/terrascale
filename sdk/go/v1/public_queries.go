@@ -22,18 +22,6 @@ type SavedQueryRequest struct {
 	SQL  string `json:"sql"`
 }
 
-// QueryShapeStats is an observed query with its literal values removed.
-type QueryShapeStats struct {
-	ID             string    `json:"id"`
-	Collection     string    `json:"collection"`
-	Shape          string    `json:"shape"`
-	Queries        int64     `json:"queries"`
-	TotalLatencyMS float64   `json:"totalLatencyMs"`
-	MaxLatencyMS   float64   `json:"maxLatencyMs"`
-	RowsScanned    int64     `json:"rowsScanned"`
-	LastSeenAt     time.Time `json:"lastSeenAt"`
-}
-
 func projectCall[T any](ctx context.Context, c *Client, method, project string, query url.Values, in any, extra ...string) (*T, error) {
 	req, err := projectRequest(method, project, query, extra...)
 	if err != nil {
@@ -79,15 +67,4 @@ func (c *Client) DeleteSavedQuery(ctx context.Context, project, id string) error
 	}
 	_, err = c.call(ctx, req, nil, nil)
 	return err
-}
-
-// QueryShapes lists the producer's bounded workload statistics.
-func (d *Database) QueryShapes(ctx context.Context) ([]QueryShapeStats, error) {
-	out, err := databaseCall[struct {
-		Items []QueryShapeStats `json:"items"`
-	}](ctx, d, http.MethodGet, nil, nil, "query-shapes")
-	if err != nil {
-		return nil, err
-	}
-	return out.Items, nil
 }

@@ -13,41 +13,6 @@ import (
 // are plain SQL identifiers.
 type SQLParameters = map[string]any
 
-// MetadataFields are immutable columns exposed on every collection table.
-var metadataFieldNames = [...]string{"_id", "_rev", "_hlc", "_created", "_updated"}
-
-// MetadataField returns a schema descriptor for one immutable metadata
-// column. Metadata columns are available to typed projections and ordering,
-// but cannot be declared as user fields.
-func MetadataField(name string) (*FieldDef, error) {
-	typ := FieldString
-	switch name {
-	case "_id", "_rev", "_hlc":
-	case "_created", "_updated":
-		typ = FieldTimestamp
-	default:
-		return nil, fmt.Errorf("sdk: unknown metadata field %q", name)
-	}
-	return &FieldDef{Name: name, Type: typ, Required: true, Indexed: true}, nil
-}
-
-// MetadataFieldsForQuery returns descriptors for all immutable metadata
-// columns in their canonical contract order.
-func MetadataFieldsForQuery() ([]FieldDef, error) {
-	fields := make([]FieldDef, 0, len(metadataFieldNames))
-	for _, name := range metadataFieldNames {
-		field, err := MetadataField(name)
-		if err != nil {
-			return nil, err
-		}
-		fields = append(fields, *field)
-	}
-	return fields, nil
-}
-
-// MetadataFields returns descriptors for all immutable metadata columns.
-func MetadataFields() ([]FieldDef, error) { return MetadataFieldsForQuery() }
-
 // ValidateSQL checks a read-only statement and its positional or named bindings.
 // Values are validated as parameters and are never parsed as SQL.
 func ValidateSQL(statement string, params any) error {
@@ -417,52 +382,23 @@ const (
 	OrderDesc = Desc
 )
 
-// QueryBuilder builds a parameterized SELECT over one collection.
+// QueryBuilder builds a parameterized SELECT over one table.
 type QueryBuilder struct {
-	collection string
-	columns    []string
-	where      *Condition
-	orderBy    []string
-	limit      int
-	hasLimit   bool
-	offset     int
-	hasOffset  bool
-	schema     *CollectionSchema
-	buildErr   error
+	table     string
+	columns   []string
+	where     *Condition
+	orderBy   []string
+	limit     int
+	hasLimit  bool
+	offset    int
+	hasOffset bool
+	buildErr  error
 }
 
-// Select starts a query over collection; empty cols selects *.
-func Select(collection string, cols ...string) *QueryBuilder {
-	return &QueryBuilder{collection: collection, columns: append([]string(nil), cols...)}
+// Select starts a query over table; empty cols selects *.
+func Select(table string, cols ...string) *QueryBuilder {
+	return &QueryBuilder{table: table, columns: append([]string(nil), cols...)}
 }
-
-// SelectSchema starts a SELECT bound to a declared collection schema. A
-// schema-bound builder only accepts its declared fields as columns, filters,
-// and order keys.
-func SelectSchema(schema *CollectionSchema) (*QueryBuilder, error) {
-	if schema == nil {
-		return nil, fmt.Errorf("sdk: schema cannot be nil")
-	}
-	if !validSQLIdentifier(schema.Name) {
-		return nil, fmt.Errorf("sdk: invalid schema collection name %q", schema.Name)
-	}
-	seen := map[string]bool{}
-	for _, field := range schema.Fields {
-		if !validSQLIdentifier(field.Name) || strings.HasPrefix(field.Name, "_") || seen[field.Name] {
-			return nil, fmt.Errorf("sdk: invalid or duplicate schema field %q", field.Name)
-		}
-		seen[field.Name] = true
-	}
-	copySchema := *schema
-	copySchema.Fields = append([]FieldDef(nil), schema.Fields...)
-	return &QueryBuilder{collection: schema.Name, schema: &copySchema}, nil
-}
-
-// FromSchema is an alias for SelectSchema.
-func FromSchema(schema *CollectionSchema) (*QueryBuilder, error) { return SelectSchema(schema) }
-
-// SelectFromSchema is a descriptive alias for SelectSchema.
-func SelectFromSchema(schema *CollectionSchema) (*QueryBuilder, error) { return SelectSchema(schema) }
 
 func (q *QueryBuilder) setError(err error) *QueryBuilder {
 	if q != nil && q.buildErr == nil {
@@ -470,192 +406,6 @@ func (q *QueryBuilder) setError(err error) *QueryBuilder {
 	}
 	return q
 }
-
-// Column adds a declared schema field to the projection.
-func (q *QueryBuilder) Column(field *FieldDef) *QueryBuilder {
-	if q == nil {
-		return q
-	}
-	if err := q.checkField(field, "column"); err != nil {
-		return q.setError(err)
-	}
-	if len(q.columns) == 0 || (len(q.columns) == 1 && q.columns[0] == "*") {
-		q.columns = nil
-	}
-	q.columns = append(q.columns, field.Name)
-	return q
-}
-
-// Columns adds several declared schema fields to the projection.
-func (q *QueryBuilder) Columns(fields ...*FieldDef) *QueryBuilder {
-	for _, field := range fields {
-		q = q.Column(field)
-	}
-	return q
-}
-
-func (q *QueryBuilder) typedWhere(field *FieldDef, op string, value any) *QueryBuilder {
-	if q == nil {
-		return q
-	}
-	if err := q.checkField(field, "predicate"); err != nil {
-		return q.setError(err)
-	}
-	return q.Where(fieldCond(field.Name, op, value))
-}
-
-// WhereEq adds a parameterized equality predicate over a declared field.
-func (q *QueryBuilder) WhereEq(field *FieldDef, value any) *QueryBuilder {
-	return q.typedWhere(field, "=", value)
-}
-
-// WhereNe adds a parameterized inequality predicate over a declared field.
-func (q *QueryBuilder) WhereNe(field *FieldDef, value any) *QueryBuilder {
-	return q.typedWhere(field, "<>", value)
-}
-
-// WhereGt adds a parameterized greater-than predicate over a declared field.
-func (q *QueryBuilder) WhereGt(field *FieldDef, value any) *QueryBuilder {
-	return q.typedWhere(field, ">", value)
-}
-
-// WhereGte adds a parameterized greater-than-or-equal predicate.
-func (q *QueryBuilder) WhereGte(field *FieldDef, value any) *QueryBuilder {
-	return q.typedWhere(field, ">=", value)
-}
-
-// WhereLt adds a parameterized less-than predicate.
-func (q *QueryBuilder) WhereLt(field *FieldDef, value any) *QueryBuilder {
-	return q.typedWhere(field, "<", value)
-}
-
-// WhereLte adds a parameterized less-than-or-equal predicate.
-func (q *QueryBuilder) WhereLte(field *FieldDef, value any) *QueryBuilder {
-	return q.typedWhere(field, "<=", value)
-}
-
-// WhereLike adds a parameterized LIKE predicate over a declared field.
-func (q *QueryBuilder) WhereLike(field *FieldDef, value any) *QueryBuilder {
-	return q.typedWhere(field, "LIKE", value)
-}
-
-// WhereMatch adds an FTS5 MATCH predicate over a declared string/text field.
-func (q *QueryBuilder) WhereMatch(field *FieldDef, query string) *QueryBuilder {
-	if q == nil {
-		return q
-	}
-	if err := q.checkField(field, "match"); err != nil {
-		return q.setError(err)
-	}
-	if field.Type != FieldString && field.Type != FieldText {
-		return q.setError(fmt.Errorf("sdk: FTS MATCH requires a string or text field"))
-	}
-	return q.Where(Match(field.Name, query))
-}
-
-// MatchField is an alias for WhereMatch.
-func (q *QueryBuilder) MatchField(field *FieldDef, query string) *QueryBuilder {
-	return q.WhereMatch(field, query)
-}
-
-// WhereJSON adds a body JSON-path predicate. The supported call forms are
-// WhereJSON("$.customer.name", ">", value) and
-// WhereJSON(field, "$.nested", ">", value), where field is *FieldDef.
-func (q *QueryBuilder) WhereJSON(args ...any) *QueryBuilder {
-	if q == nil {
-		return q
-	}
-	var root, path, op string
-	var value any
-	switch len(args) {
-	case 3:
-		var ok bool
-		path, ok = args[0].(string)
-		if !ok {
-			return q.setError(fmt.Errorf("sdk: JSON path must be a string"))
-		}
-		root = "body"
-		op, ok = args[1].(string)
-		if !ok {
-			return q.setError(fmt.Errorf("sdk: JSON operator must be a string"))
-		}
-		value = args[2]
-	case 4:
-		switch field := args[0].(type) {
-		case *FieldDef:
-			if err := q.checkField(field, "JSON predicate"); err != nil {
-				return q.setError(err)
-			}
-			if field.Type != FieldJSON {
-				return q.setError(fmt.Errorf("sdk: JSON path predicates require a JSON field"))
-			}
-			root = field.Name
-		case string:
-			if !validSQLIdentifier(field) || (q.schema != nil && field != "body" && (!q.hasSchemaField(field) || q.schemaFieldType(field) != FieldJSON)) {
-				return q.setError(fmt.Errorf("sdk: invalid or undeclared JSON root field %q", field))
-			}
-			root = field
-		default:
-			return q.setError(fmt.Errorf("sdk: JSON root field must be a schema field or identifier"))
-		}
-		var okPath, okOp bool
-		path, okPath = args[1].(string)
-		op, okOp = args[2].(string)
-		if !okPath || !okOp {
-			return q.setError(fmt.Errorf("sdk: JSON path and operator must be strings"))
-		}
-		value = args[3]
-	default:
-		return q.setError(fmt.Errorf("sdk: WhereJSON expects path, operator, value"))
-	}
-	if !validJSONPath(path) {
-		return q.setError(fmt.Errorf("sdk: invalid JSON path %q", path))
-	}
-	if !validComparisonOperator(op) {
-		return q.setError(fmt.Errorf("sdk: invalid SQL comparison operator %q", op))
-	}
-	return q.Where(Condition{expr: jsonRootExpr(root) + " ->> '" + strings.ReplaceAll(path, "'", "''") + "' " + strings.ToUpper(strings.TrimSpace(op)) + " ?", args: []any{value}})
-}
-
-// WhereJSONPath is the explicit body-root spelling of WhereJSON.
-func (q *QueryBuilder) WhereJSONPath(path, op string, value any) *QueryBuilder {
-	return q.WhereJSON(path, op, value)
-}
-
-// WhereJSONField adds a JSON path predicate rooted at a declared JSON field.
-func (q *QueryBuilder) WhereJSONField(field *FieldDef, path, op string, value any) *QueryBuilder {
-	return q.WhereJSON(field, path, op, value)
-}
-
-func (q *QueryBuilder) whereJSONOperator(op string, args ...any) *QueryBuilder {
-	switch len(args) {
-	case 2:
-		return q.WhereJSON(args[0], op, args[1])
-	case 3:
-		return q.WhereJSON(args[0], args[1], op, args[2])
-	default:
-		return q.setError(fmt.Errorf("sdk: JSON comparison expects path, value or field, path, value"))
-	}
-}
-
-// JSONEq adds body->>path equality. A schema-field root may optionally be
-// supplied as the first argument.
-func (q *QueryBuilder) JSONEq(args ...any) *QueryBuilder { return q.whereJSONOperator("=", args...) }
-
-// JSONNe adds body->>path inequality.
-func (q *QueryBuilder) JSONNe(args ...any) *QueryBuilder { return q.whereJSONOperator("<>", args...) }
-
-// JSONGt adds body->>path greater-than comparison.
-func (q *QueryBuilder) JSONGt(args ...any) *QueryBuilder { return q.whereJSONOperator(">", args...) }
-
-// JSONGte adds body->>path greater-than-or-equal comparison.
-func (q *QueryBuilder) JSONGte(args ...any) *QueryBuilder { return q.whereJSONOperator(">=", args...) }
-
-// JSONLt adds body->>path less-than comparison.
-func (q *QueryBuilder) JSONLt(args ...any) *QueryBuilder { return q.whereJSONOperator("<", args...) }
-
-// JSONLte adds body->>path less-than-or-equal comparison.
-func (q *QueryBuilder) JSONLte(args ...any) *QueryBuilder { return q.whereJSONOperator("<=", args...) }
 
 // Where AND-combines cond into the query predicate.
 func (q *QueryBuilder) Where(cond Condition) *QueryBuilder {
@@ -683,106 +433,9 @@ func (q *QueryBuilder) OrderBy(exprs ...string) *QueryBuilder {
 			q.setError(fmt.Errorf("sdk: invalid ORDER BY expression %q", expr))
 			continue
 		}
-		if q.schema != nil {
-			field := strings.Fields(expr)[0]
-			if !q.hasSchemaField(field) {
-				q.setError(fmt.Errorf("sdk: ORDER BY field %q is not declared by this collection", field))
-				continue
-			}
-		}
 		q.orderBy = append(q.orderBy, normalizeOrderExpression(expr))
 	}
 	return q
-}
-
-// OrderByField appends an ORDER BY key from a declared field.
-func (q *QueryBuilder) OrderByField(field *FieldDef, direction Direction) *QueryBuilder {
-	if q == nil {
-		return q
-	}
-	if err := q.checkField(field, "order_by"); err != nil {
-		return q.setError(err)
-	}
-	if direction != Asc && direction != Desc {
-		return q.setError(fmt.Errorf("sdk: invalid ORDER BY direction"))
-	}
-	dir := "ASC"
-	if direction == Desc {
-		dir = "DESC"
-	}
-	q.orderBy = append(q.orderBy, quoteIdent(field.Name)+" "+dir)
-	return q
-}
-
-// OrderByJSON appends a safe ORDER BY key for a body JSON path. It accepts
-// (path, direction), or (jsonField, path, direction) for a schema field root.
-func (q *QueryBuilder) OrderByJSON(args ...any) *QueryBuilder {
-	if q == nil {
-		return q
-	}
-	root, path := "body", ""
-	var direction Direction
-	switch len(args) {
-	case 2:
-		var ok bool
-		path, ok = args[0].(string)
-		if !ok {
-			return q.setError(fmt.Errorf("sdk: JSON path must be a string"))
-		}
-		direction, ok = args[1].(Direction)
-		if !ok {
-			return q.setError(fmt.Errorf("sdk: ORDER BY direction has an invalid type"))
-		}
-	case 3:
-		switch field := args[0].(type) {
-		case *FieldDef:
-			if err := q.checkField(field, "JSON order"); err != nil {
-				return q.setError(err)
-			}
-			if field.Type != FieldJSON {
-				return q.setError(fmt.Errorf("sdk: JSON path ordering requires a JSON field"))
-			}
-			root = field.Name
-		case string:
-			if !validSQLIdentifier(field) || (q.schema != nil && field != "body" && (!q.hasSchemaField(field) || q.schemaFieldType(field) != FieldJSON)) {
-				return q.setError(fmt.Errorf("sdk: invalid or undeclared JSON root field %q", field))
-			}
-			root = field
-		default:
-			return q.setError(fmt.Errorf("sdk: JSON root field must be a schema field or identifier"))
-		}
-		var okPath bool
-		path, okPath = args[1].(string)
-		if !okPath {
-			return q.setError(fmt.Errorf("sdk: JSON path must be a string"))
-		}
-		var okDirection bool
-		direction, okDirection = args[2].(Direction)
-		if !okDirection {
-			return q.setError(fmt.Errorf("sdk: ORDER BY direction has an invalid type"))
-		}
-	default:
-		return q.setError(fmt.Errorf("sdk: OrderByJSON expects path, direction"))
-	}
-	if !validJSONPath(path) {
-		return q.setError(fmt.Errorf("sdk: invalid JSON path %q", path))
-	}
-	if direction != Asc && direction != Desc {
-		return q.setError(fmt.Errorf("sdk: invalid ORDER BY direction"))
-	}
-	dir := "ASC"
-	if direction == Desc {
-		dir = "DESC"
-	}
-	q.orderBy = append(q.orderBy, jsonRootExpr(root)+" ->> '"+strings.ReplaceAll(path, "'", "''")+"' "+dir)
-	return q
-}
-
-func jsonRootExpr(root string) string {
-	if root == "body" {
-		return root
-	}
-	return quoteIdent(root)
 }
 
 // Limit caps result rows.
@@ -809,54 +462,8 @@ func (q *QueryBuilder) Paginate(offset, limit int) *QueryBuilder {
 	return q.Offset(offset).Limit(limit)
 }
 
-func (q *QueryBuilder) checkField(field *FieldDef, context string) error {
-	if q.schema == nil {
-		return fmt.Errorf("sdk: schema-bound field required; use SelectSchema first")
-	}
-	if field == nil {
-		return fmt.Errorf("sdk: %s field cannot be nil", context)
-	}
-	if !validSQLIdentifier(field.Name) {
-		return fmt.Errorf("sdk: invalid %s field %q", context, field.Name)
-	}
-	if strings.HasPrefix(field.Name, "_") {
-		metadata, err := MetadataField(field.Name)
-		if err == nil && metadata.Type == field.Type {
-			return nil
-		}
-		return fmt.Errorf("sdk: unknown metadata %s field %q", context, field.Name)
-	}
-	for _, declared := range q.schema.Fields {
-		if declared == *field {
-			return nil
-		}
-	}
-	return fmt.Errorf("sdk: %s field %q is not declared by this collection", context, field.Name)
-}
-
-func (q *QueryBuilder) hasSchemaField(name string) bool {
-	if _, err := MetadataField(name); err == nil {
-		return true
-	}
-	for _, field := range q.schema.Fields {
-		if field.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-func (q *QueryBuilder) schemaFieldType(name string) FieldType {
-	for _, field := range q.schema.Fields {
-		if field.Name == name {
-			return field.Type
-		}
-	}
-	return ""
-}
-
 // Build renders the parameterized statement and its parameters. Values are
-// always placeholders; identifiers and validated JSON paths are structural.
+// always placeholders; identifiers are structural.
 func (q *QueryBuilder) Build() (string, []any, error) {
 	if q == nil {
 		return "", nil, fmt.Errorf("sdk: query builder cannot be nil")
@@ -864,11 +471,8 @@ func (q *QueryBuilder) Build() (string, []any, error) {
 	if q.buildErr != nil {
 		return "", nil, q.buildErr
 	}
-	if !validSQLIdentifier(q.collection) {
-		return "", nil, fmt.Errorf("sdk: query collection must match [A-Za-z_][A-Za-z0-9_]*")
-	}
-	if strings.TrimSpace(q.collection) == "" {
-		return "", nil, fmt.Errorf("sdk: query collection cannot be empty")
+	if !validSQLIdentifier(q.table) {
+		return "", nil, fmt.Errorf("sdk: query table must match [A-Za-z_][A-Za-z0-9_]*")
 	}
 	if q.hasLimit && q.limit < 0 {
 		return "", nil, fmt.Errorf("sdk: limit cannot be negative")
@@ -886,9 +490,6 @@ func (q *QueryBuilder) Build() (string, []any, error) {
 			if col != "*" && !validSQLIdentifier(col) {
 				return "", nil, fmt.Errorf("sdk: selected columns must be valid identifiers")
 			}
-			if q.schema != nil && col != "*" && !q.hasSchemaField(col) {
-				return "", nil, fmt.Errorf("sdk: selected column %q is not declared by this collection", col)
-			}
 			if col == "*" {
 				quoted = append(quoted, col)
 				continue
@@ -898,7 +499,7 @@ func (q *QueryBuilder) Build() (string, []any, error) {
 		cols = strings.Join(quoted, ", ")
 	}
 	var sb strings.Builder
-	sb.WriteString("SELECT " + cols + " FROM " + quoteIdent(q.collection))
+	sb.WriteString("SELECT " + cols + " FROM " + quoteIdent(q.table))
 	var params []any
 	if q.where != nil && q.where.expr != "" {
 		sb.WriteString(" WHERE " + q.where.expr)
@@ -933,15 +534,6 @@ func validSQLIdentifier(value string) bool {
 	return true
 }
 
-func validComparisonOperator(value string) bool {
-	switch strings.ToUpper(strings.TrimSpace(value)) {
-	case "=", "<>", "!=", ">", ">=", "<", "<=", "LIKE", "MATCH":
-		return true
-	default:
-		return false
-	}
-}
-
 func validOrderExpression(value string) bool {
 	parts := strings.Fields(value)
 	if len(parts) == 0 || len(parts) > 2 || !validSQLIdentifier(parts[0]) {
@@ -954,16 +546,4 @@ func normalizeOrderExpression(value string) string {
 	// Keep the original spelling for compatibility with the original builder;
 	// validOrderExpression has already excluded SQL fragments and operators.
 	return strings.TrimSpace(value)
-}
-
-func validJSONPath(path string) bool {
-	if !strings.HasPrefix(path, "$.") || len(path) <= 2 {
-		return false
-	}
-	for _, segment := range strings.Split(path[2:], ".") {
-		if !validSQLIdentifier(segment) {
-			return false
-		}
-	}
-	return true
 }

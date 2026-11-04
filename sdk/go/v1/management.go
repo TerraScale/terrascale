@@ -132,114 +132,16 @@ type ManagedDatabase struct {
 	Region string `json:"region"`
 	// HomeRegion is null when catalog placement has not been assigned.
 	HomeRegion *string `json:"homeRegion"`
-	// ReplicaRegions are the region ids that replicate the database.
-	ReplicaRegions []string `json:"replicaRegions"`
-	// AllRegions means every serving region holds a full copy, including
-	// regions that join later; ReplicaRegions is then empty.
-	AllRegions bool `json:"allRegions"`
-	// PlacementVersion and Replicas are included in catalog restore results.
-	PlacementVersion int64    `json:"placementVersion"`
-	Replicas         []string `json:"replicas"`
-}
-
-// Placement places a new database. Regions are region ids such as
-// gru-1, not RegionCode values. An empty HomeRegion is the called region,
-// where the database is managed, not a request for single-region placement.
-// A writable database requires at least two regions. Omitted ReplicaRegions
-// uses every other current serving region; an explicit list must include at
-// least one region other than the home. An explicitly empty list on create
-// returns 400 placement_needs_two_regions.
-// AllRegions places a full copy in every serving region, including regions
-// that join later; it cannot be combined with ReplicaRegions.
-type Placement struct {
-	HomeRegion     string   `json:"homeRegion,omitempty"`
-	ReplicaRegions []string `json:"replicaRegions,omitempty"`
-	AllRegions     bool     `json:"allRegions,omitempty"`
-}
-
-// CollectionStats is a collection with its live documents (tombstones are
-// not counted) and their total JSON bytes.
-type CollectionStats struct {
-	Name      string `json:"name"`
-	Documents int64  `json:"documents"`
-	Bytes     int64  `json:"bytes"`
+	// PlacementVersion is included in catalog restore results.
+	PlacementVersion int64 `json:"placementVersion"`
 }
 
 // DatabaseUsage is a database's storage and its metered reads and writes.
 type DatabaseUsage struct {
 	DatabaseID   string `json:"databaseId" ulid:"required"`
 	StorageBytes int64  `json:"storageBytes"`
-	Collections  int64  `json:"collections"`
-	Documents    int64  `json:"documents"`
 	Reads        int64  `json:"reads"`
 	Writes       int64  `json:"writes"`
-}
-
-// SQLResult is the rows a dashboard SQL statement selected.
-type SQLResult struct {
-	Matched int `json:"matched"`
-	// Truncated reports that the statement's LIMIT or the 8 MiB bound cut
-	// the rows short.
-	Truncated bool     `json:"truncated"`
-	Rows      []SQLRow `json:"rows"`
-}
-
-// SQLRow is one selected document: all of it for SELECT *, otherwise one
-// member per selected field.
-type SQLRow struct {
-	ID    string          `json:"id" storedkey:"required"`
-	Value json.RawMessage `json:"value"`
-}
-
-// UnmarshalJSON requires the server's object-valued SQL row envelope.
-func (r *SQLRow) UnmarshalJSON(data []byte) error {
-	if err := requiredResponseMembers(data, "id", "value"); err != nil {
-		return err
-	}
-	type wire SQLRow
-	var decoded wire
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
-	if err := checkResponseObject(decoded.Value); err != nil {
-		return err
-	}
-	*r = SQLRow(decoded)
-	return nil
-}
-
-// IndexKind identifies a secondary index's search strategy.
-type IndexKind string
-
-const (
-	IndexBTree  IndexKind = "btree"
-	IndexText   IndexKind = "text"
-	IndexVector IndexKind = "vector"
-)
-
-// Index is a secondary index of a database's collection.
-type Index struct {
-	Name       string `json:"name"`
-	Collection string `json:"collection"`
-	// Fields are the key fields in order, as dotted member paths.
-	Fields []string `json:"fields"`
-	// State is active, or building while a vector index adds existing documents.
-	State string    `json:"state"`
-	Kind  IndexKind `json:"kind,omitempty"`
-	// Dimensions is the vector length; absent for other index kinds.
-	Dimensions *int `json:"dimensions,omitempty"`
-}
-
-// IndexRequest describes an index to create: Fields are 1-4 distinct dotted
-// member paths. An empty Name is derived from the collection and fields.
-type IndexRequest struct {
-	Collection string   `json:"collection"`
-	Fields     []string `json:"fields"`
-	Name       string   `json:"name,omitempty"`
-	// Kind defaults to IndexBTree when omitted.
-	Kind IndexKind `json:"kind,omitempty"`
-	// Dimensions is required for IndexVector (1-4096, exactly one field); absent for other kinds.
-	Dimensions *int `json:"dimensions,omitempty"`
 }
 
 // ProjectAPIKey is a project's data API key (tb_…) without its secret.
@@ -544,44 +446,21 @@ func (u *ManagementUser) PrepareProjectRegistration(ctx context.Context, org Org
 	return registration, nil
 }
 
-// CreateDatabase creates an empty database in a project, homed in the
-// called region, with copies in every other current serving region.
-// A writable database requires at least two regions.
+// CreateDatabase creates an empty database in a project, served from the
+// called region.
 func (u *ManagementUser) CreateDatabase(ctx context.Context, org, project, name string) (*ManagedDatabase, error) {
-	return u.CreateDatabaseIn(ctx, org, project, name, Placement{})
+	return u.CreateDatabaseIn(ctx, org, project, name, "")
 }
 
-// CreateDatabaseIn creates an empty database in a project with a placement.
-func (u *ManagementUser) CreateDatabaseIn(ctx context.Context, org, project, name string, placement Placement) (*ManagedDatabase, error) {
+// CreateDatabaseIn creates an empty database in a project served from region,
+// a region id such as gru-1; empty means the called region.
+func (u *ManagementUser) CreateDatabaseIn(ctx context.Context, org, project, name, region string) (*ManagedDatabase, error) {
 	body := struct {
-		nameBody
-		Placement
-	}{nameBody{name}, placement}
+		Name       string `json:"name"`
+		HomeRegion string `json:"homeRegion,omitempty"`
+	}{name, region}
 	return send[ManagedDatabase](ctx, u, http.MethodPost, projectPath(org, project, "databases"), body)
 }
-
-// SetDatabaseRegions replaces a database's replica regions with
-// replicaRegions, the complete new list of region ids; its home region
-// never changes. A writable database needs at least one replica besides the home.
-// An empty list can temporarily make document writes return 409 placement_needs_two_regions;
-// it is not required for deletion and does not provide supported single-region placement.
-func (u *ManagementUser) SetDatabaseRegions(ctx context.Context, org, project, databaseID string, replicaRegions []string) (*ManagedDatabase, error) {
-	body := struct {
-		ReplicaRegions []string `json:"replicaRegions"`
-	}{append([]string{}, replicaRegions...)} // [] rather than null
-	return send[ManagedDatabase](ctx, u, http.MethodPatch, databasePath(org, project, databaseID), body)
-}
-
-// SetDatabaseAllRegions places a full copy of a database in every serving
-// region, including regions that join later. SetDatabaseRegions turns it off.
-func (u *ManagementUser) SetDatabaseAllRegions(ctx context.Context, org, project, databaseID string) (*ManagedDatabase, error) {
-	return send[ManagedDatabase](ctx, u, http.MethodPatch, databasePath(org, project, databaseID), allRegionsBody)
-}
-
-// allRegionsBody is the PATCH body that turns allRegions on.
-var allRegionsBody = struct {
-	AllRegions bool `json:"allRegions"`
-}{true}
 
 // Databases lists a project's databases.
 func (u *ManagementUser) Databases(ctx context.Context, org, project string, opts PageOptions) (*Page[ManagedDatabase], error) {
@@ -593,71 +472,20 @@ func (u *ManagementUser) Database(ctx context.Context, org, project, databaseID 
 	return get[ManagedDatabase](ctx, u, databasePath(org, project, databaseID), nil)
 }
 
-// DeleteDatabase deletes a database, by id, and its data directly in its home
-// region without a preceding placement update. Permanent purge authority removes
-// every replica, including all-regions placement; its branches stay. A 204 response
-// records logical deletion and local cleanup; remote erasure is retried durably,
-// not guaranteed synchronous.
+// DeleteDatabase deletes a database, by id, and its data; its branches stay.
 func (u *ManagementUser) DeleteDatabase(ctx context.Context, org, project, databaseID string) error {
 	return u.call(ctx, http.MethodDelete, databasePath(org, project, databaseID), nil, nil, nil)
 }
 
-// Collections lists every collection of a database, in name order, with its
-// live document count and bytes.
-func (u *ManagementUser) Collections(ctx context.Context, org, project, databaseID string) ([]CollectionStats, error) {
-	out, err := get[struct {
-		Items []CollectionStats `json:"items"`
-	}](ctx, u, databasePath(org, project, databaseID, "collections"), nil)
-	if err != nil {
-		return nil, err
-	}
-	return out.Items, nil
-}
-
-// DatabaseUsage reads a database's storage, documents, reads and writes.
+// DatabaseUsage reads a database's storage, reads and writes.
 func (u *ManagementUser) DatabaseUsage(ctx context.Context, org, project, databaseID string) (*DatabaseUsage, error) {
 	return get[DatabaseUsage](ctx, u, databasePath(org, project, databaseID, "usage"), nil)
-}
-
-// SQL runs a read-only statement of the dashboard SQL subset (SELECT … FROM
-// collection [WHERE …] [ORDER BY …] [LIMIT 1 to 1000]) against a database.
-// Invalid SQL fails with ErrInvalidRequest.
-func (u *ManagementUser) SQL(ctx context.Context, org, project, databaseID, statement string) (*SQLResult, error) {
-	return send[SQLResult](ctx, u, http.MethodPost, databasePath(org, project, databaseID, "sql"), struct {
-		SQL string `json:"sql"`
-	}{statement})
 }
 
 // BranchDatabase creates the database name in the same project, holding a
 // consistent snapshot copy of the database databaseID.
 func (u *ManagementUser) BranchDatabase(ctx context.Context, org, project, databaseID, name string) (*ManagedDatabase, error) {
 	return send[ManagedDatabase](ctx, u, http.MethodPost, databasePath(org, project, databaseID, "branches"), nameBody{name})
-}
-
-// CreateIndex creates a secondary index; vector builds may return state building. A viewer cannot. An
-// index with the name, or on the same fields of the collection, fails with
-// ErrIndexExists.
-func (u *ManagementUser) CreateIndex(ctx context.Context, org, project, databaseID string, req IndexRequest) (*Index, error) {
-	if err := req.validate(); err != nil {
-		return nil, err
-	}
-	return send[Index](ctx, u, http.MethodPost, databasePath(org, project, databaseID, "indexes"), req)
-}
-
-// Indexes lists every secondary index of a database, in name order.
-func (u *ManagementUser) Indexes(ctx context.Context, org, project, databaseID string) ([]Index, error) {
-	out, err := get[struct {
-		Items []Index `json:"items"`
-	}](ctx, u, databasePath(org, project, databaseID, "indexes"), nil)
-	if err != nil {
-		return nil, err
-	}
-	return out.Items, nil
-}
-
-// DropIndex drops a secondary index by name; a viewer cannot.
-func (u *ManagementUser) DropIndex(ctx context.Context, org, project, databaseID, name string) error {
-	return u.call(ctx, http.MethodDelete, databasePath(org, project, databaseID, "indexes", name), nil, nil, nil)
 }
 
 // CreateProjectAPIKey issues a data API key of a project, a Config.Token for

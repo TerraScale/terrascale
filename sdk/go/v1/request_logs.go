@@ -13,7 +13,7 @@ import (
 )
 
 // DatabaseRequestLog is a completed authorized request. Route is a redacted
-// route template, never a URL, document key, query text or credential.
+// route template, never a URL, key, query text or credential.
 type DatabaseRequestLog struct {
 	ID         string    `json:"id"`
 	Time       time.Time `json:"time"`

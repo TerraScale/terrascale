@@ -28,6 +28,7 @@ const (
 	ErrUndefinedColumn       ErrorCode = "undefined_column"
 	ErrDuplicateObject       ErrorCode = "duplicate_object"
 	ErrPrimaryKeyViolation   ErrorCode = "primary_key_violation"
+	ErrUniqueViolation       ErrorCode = "unique_violation"
 	ErrNotNullViolation      ErrorCode = "not_null_violation"
 	ErrCheckViolation        ErrorCode = "check_violation"
 	ErrForeignKeyViolation   ErrorCode = "foreign_key_violation"
@@ -40,6 +41,7 @@ const (
 	ErrReadOnlyTransaction   ErrorCode = "read_only_transaction"
 	ErrTransactionState      ErrorCode = "transaction_state"
 	ErrUnauthorized          ErrorCode = "unauthorized"
+	ErrUnavailable           ErrorCode = "unavailable"
 )
 
 type Statement struct {

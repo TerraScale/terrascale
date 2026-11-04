@@ -12,7 +12,7 @@ import (
 	v1 "terrascale.tech/sdk/v1"
 )
 
-// Read the full credential-bearing document only from stdin. Decoder errors
+// Read the full credential-bearing JSON only from stdin. Decoder errors
 // can quote values, so none of their text or input bytes are returned to callers.
 func readBackupDestination(in io.Reader) (v1.ProjectBackupDestinationRequest, error) {
 	var req v1.ProjectBackupDestinationRequest

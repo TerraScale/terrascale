@@ -52,21 +52,6 @@ func (p *ProbeStatus) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// ReplicationHealth is the anonymous regional lag summary.
-type ReplicationHealth struct {
-	Region        string                  `json:"region"`
-	Status        string                  `json:"status"`
-	MaxLagSeconds *float64                `json:"maxLagSeconds"`
-	Peers         []ReplicationPeerHealth `json:"peers"`
-}
-
-// ReplicationPeerHealth preserves unknown lag separately from measured zero.
-type ReplicationPeerHealth struct {
-	Region     string   `json:"region"`
-	Status     string   `json:"status"`
-	LagSeconds *float64 `json:"lagSeconds"`
-}
-
 // Health reads process liveness.
 func (p *Probes) Health(ctx context.Context) (*ProbeStatus, error) { return p.status(ctx, "healthz") }
 
@@ -85,9 +70,4 @@ func (p *Probes) status(ctx context.Context, endpoint string) (*ProbeStatus, err
 		}
 	}
 	return &out, err
-}
-
-// Replication reads the regional lag summary; degraded state still returns 200.
-func (p *Probes) Replication(ctx context.Context) (*ReplicationHealth, error) {
-	return publicCall[ReplicationHealth](ctx, p.c, request{method: http.MethodGet, path: []string{"health", "replication"}, replaySafe: true}, nil)
 }

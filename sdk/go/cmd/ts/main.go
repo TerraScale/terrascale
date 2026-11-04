@@ -1,6 +1,6 @@
 // Command ts is the TerraScale CLI: device sign-in, projects, databases,
-// collections, documents, SQL, functions and API keys against the production API, as
-// the signed-in user. Run ts help for every command.
+// SQL, functions and API keys against the production API, as the signed-in
+// user. Run ts help for every command.
 //
 // Project commands act in the user's only project; -project <name or id>
 // picks one when the user reaches several, and -org <name or id> restricts
@@ -8,7 +8,6 @@
 package main
 
 import (
-	"bufio"
 	"cmp"
 	"context"
 	"encoding/base64"
@@ -59,9 +58,8 @@ Options go before or after the command and its operands; -- ends options.
   completion bash | zsh | fish            print a shell completion script
 
   db list | create <db> | delete <db>     manage the project's databases
-                                          create placement: -home-region <region>,
-                                          -replica-regions <region>,...|none,
-                                          or -placement all (before command)
+                                          create in a region: -home-region <region>
+                                          (before command)
                                           delete requires typing the database
                                           name; -yes before db delete consents
                                           explicitly for unattended use
@@ -69,9 +67,6 @@ Options go before or after the command and its operands; -- ends options.
   databases rename <database> <new-name>  rename by name or immutable ULID
                                           alias: db rename
   db info <db>                            print a database's metadata as JSON
-  db regions <db> <region>... | none      set the replica regions (gru, sjc,
-                                          fra) besides the home region, or
-                                          remove every replica
   backup list | create <db>               list or take a database's backups
   backup policy <db>                      read the snapshot schedule and retention
   backup policy-set <db> <cron|none> <days> set five-field UTC cron and 1..35 days
@@ -82,64 +77,28 @@ Options go before or after the command and its operands; -- ends options.
   backup restore <db> <backup id> <new db> restore a backup into a new database
   backup restore-at <db> <time> <new db> [platform|customer]
                                           restore an RFC3339 instant (default platform)
-  shell <db>                              multiline SQL; .run submits, .mode selects
-                                          relational or document; session history
-  export <db>                             stream all live documents (NDJSON);
-                                          excludes relational tables and metadata
-  recovery preview <db> <time> <selection.json>
-                                          print historical/current records and
-                                          a short-lived approval token as JSON
-  recovery apply <db> <preview.json> <approved.json>
-                                          recover only explicitly approved IDs
-                                          into the original database
-  db changes <db> [<collection>...]       print committed changes as JSON lines
-                                          until interrupted; at most64 filters;
-                                          -cursor <cursor|now|empty> resumes
-  collection list <db>                    list a database's collections
-  collection create | drop <db> <name>    create or drop a collection
-  doc list <db> <collection>              print every document as JSON lines
-  doc get <db> <collection> <id>          print one document
-  doc put <db> <collection> [<id>] <json> write a document; - reads stdin,
-                                          no id creates one with a new id
-  doc delete <db> <collection> <id>       delete a document
-  doc import <db> <collection>            put the JSON lines doc list prints,
-                                          read from stdin, creating the collection
-  schema get | delete <db> <collection>   print or remove a collection's schema
-  schema set <db> <collection> <json>     declare a JSON Schema; - reads stdin
-  ttl get | delete <db> <collection>      print or remove a collection's TTL
-  ttl set <db> <collection> <pointer>     expire documents whose member at the
-                                          JSON Pointer (/expiresAt) is past
-  index list <db> [<collection>]          list secondary indexes
-  index create <db> <collection> <field>... index 1 to 4 dotted member paths
-  index drop <db> <name>                  drop an index
-  import <db> <format> <file>             import a postgres_plain, sqlite or
-                                          ndjson file into a new database;
-                                          for plain document NDJSON, pass
-                                          -collection <name> before import
-  import status | cancel <db>             print or cancel the database's import
+  shell <db>                              multiline SQL; .run submits; session history
   functions deploy <db> <file.js | dir>   deploy or replace a JavaScript function
                                           (a dir deploys its index.js); the file
                                           is a plain script, not an ES module
                                           (no import or export), that defines
                                           function handler(event); flags:
                                           -name <name> (default: file or dir
-                                          name), -trigger-collection <name>,
-                                          -events upsert,delete, -cron <expr>
+                                          name), -cron <expr>
   functions list <db>                     list the database's functions
   functions invoke <db> <name>            run a function and print its response;
                                           -data <json> sends a body, - stdin
   functions logs <db> <name>              print recent invocations as JSON
                                           lines, newest first; -limit 1..100
   functions delete <db> <name>            delete a function and its logs
-  sql <db> <query>                        run a read-only SQL query on collections
-  exec <db> <statement>                   run one relational SQL statement in its
-                                          own transaction; rows print as JSON lines
+  sql <db> <statement>                    run one SQL statement in its own
+                                          transaction; rows print as JSON lines
   migrate new <name>                      add the next migrations/NNNN_<name>.sql
   migrate up | status <db>                apply pending migrations in order, each
                                           in one transaction recorded in the
                                           ts_migrations table, or list them
-  migrate diff <db> [<base>]              print the tables, collections and indexes
-                                          a database adds, drops or changes
+  migrate diff <db> [<base>]              print the tables, indexes, views and
+                                          triggers a database adds, drops or changes
                                           against base, by default the database
                                           it branched from
   keys list                               list the project's API keys
@@ -219,29 +178,13 @@ var commands = map[string][]int{
 	"projects create":    {1},
 	"usage":              {0, 1},
 	"completion":         {1},
-	"db changes":         changesOperandCounts(),
-	"export":             {1},
 	"shell":              {1},
 	"backup restore-at":  {3, 4},
-	"recovery preview":   {3},
-	"recovery apply":     {3},
 	"backup policy":      {1},
 	"backup policy-set":  {3},
 	"backup window":      {1, 2},
 	"backup plan":        {2, 3},
 	"backup destination": {1},
-	"schema get":         {2},
-	"schema set":         {3},
-	"schema delete":      {2},
-	"ttl get":            {2},
-	"ttl set":            {3},
-	"ttl delete":         {2},
-	"index list":         {1, 2},
-	"index create":       {3, 4, 5, 6},
-	"index drop":         {2},
-	"import":             {3},
-	"import status":      {1},
-	"import cancel":      {1},
 	"db rename":          {2},
 	"databases rename":   {2},
 	"db list":            {0},
@@ -249,25 +192,15 @@ var commands = map[string][]int{
 	"db delete":          {1},
 	"db branch":          {2},
 	"db info":            {1},
-	"db regions":         {2, 3, 4},
 	"backup list":        {1},
 	"backup create":      {1},
 	"backup restore":     {3},
-	"collection list":    {1},
-	"collection create":  {2},
-	"collection drop":    {2},
-	"doc list":           {2},
-	"doc get":            {3},
-	"doc put":            {3, 4},
-	"doc delete":         {3},
-	"doc import":         {2},
 	"sql":                {2},
 	"functions deploy":   {2},
 	"functions list":     {1},
 	"functions invoke":   {2},
 	"functions logs":     {2},
 	"functions delete":   {2},
-	"exec":               {2},
 	"migrate new":        {1},
 	"migrate up":         {1},
 	"migrate status":     {1},
@@ -324,11 +257,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	expires := fs.String("expires", "", "keys create: 30d, 90d, 365d or never")
 	allowCIDR := fs.String("allow-cidr", "", "keys create: comma-separated CIDRs")
 	scope := fs.String("scope", "", "keys create: read or read-write")
-	collection := fs.String("collection", "", "ndjson import: destination collection")
 	homeRegion := fs.String("home-region", "", "db create: requested home region")
-	replicaRegions := fs.String("replica-regions", "", "db create: comma-separated replicas, or none")
-	placementMode := fs.String("placement", "", "db create: all for every serving region")
-	cursor := fs.String("cursor", "now", "db changes: server cursor, now, or empty for retained history")
 	expectedID := fs.String("expected-id", "", "db branch/delete: require the server to match this immutable database ULID")
 	args, err := parseOptions(fs, args)
 	if err != nil {
@@ -340,7 +269,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			name, operands = strings.Join(args[:n], " "), args[n:]
 		}
 	}
-	if slices.Contains([]string{"db changes", "doc list", "export", "shell"}, name) {
+	if name == "shell" {
 		beginJSONStream(out)
 	}
 	var fn functionFlags
@@ -365,29 +294,21 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			return err
 		}
 	}
-	var collectionSet, yesSet, scopeSet, keyOptionsSet bool
-	var placementSet, replicasSet, cursorSet, expectedIDSet bool
+	var yesSet, scopeSet, keyOptionsSet, placementSet, expectedIDSet bool
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "expected-id":
 			expectedIDSet = true
 		case "expires", "allow-cidr":
 			keyOptionsSet = true
-		case "cursor":
-			cursorSet = true
-		case "home-region", "placement":
+		case "home-region":
 			placementSet = true
-		case "replica-regions":
-			placementSet, replicasSet = true, true
 		}
 		if f.Name == "scope" {
 			scopeSet = true
 		}
 		if f.Name == "yes" {
 			yesSet = true
-		}
-		if f.Name == "collection" {
-			collectionSet = true
 		}
 	})
 	if expectedIDSet && ((name != "db delete" && name != "db branch") || entityid.Check(*expectedID) != nil) {
@@ -396,15 +317,8 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if name == "db branch" && operands[0] == operands[1] {
 		return fmt.Errorf("branch source and target names must differ: %w", errUsage)
 	}
-	if cursorSet && name != "db changes" {
-		return fmt.Errorf("-cursor is only accepted for db changes: %w", errUsage)
-	}
-	if placementSet && name != "db create" {
-		return fmt.Errorf("placement options are only accepted for db create: %w", errUsage)
-	}
-	requestedPlacement, err := placementRequest(*homeRegion, *replicaRegions, *placementMode, replicasSet)
-	if err != nil {
-		return err
+	if placementSet && (name != "db create" || !validRegion(*homeRegion)) {
+		return fmt.Errorf("-home-region needs db create and a region name: %w", errUsage)
 	}
 	if scopeSet && name != "keys create" {
 		return fmt.Errorf("-scope is only accepted for keys create: %w", errUsage)
@@ -417,9 +331,6 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			return err
 		}
 	}
-	if collectionSet && (name != "import" || operands[1] != "ndjson" || strings.TrimSpace(*collection) == "") {
-		return fmt.Errorf("-collection needs a nonempty name and an ndjson import: %w", errUsage)
-	}
 	if name == "backup destination" {
 		if !slices.Contains([]string{"get", "set", "delete"}, operands[0]) {
 			return fmt.Errorf("backup destination operation must be get, set or delete: %w", errUsage)
@@ -431,7 +342,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			return consentRequired("backup destination changes require explicit consent: pass -yes; set reads its JSON only from stdin")
 		}
 	}
-	if yesSet && !slices.Contains([]string{"db delete", "orgs delete", "projects delete", "backup destination", "collection drop", "functions delete", "keys revoke", "import"}, name) {
+	if yesSet && !slices.Contains([]string{"db delete", "orgs delete", "projects delete", "backup destination", "functions delete", "keys revoke"}, name) {
 		return fmt.Errorf("-yes is only accepted for destructive commands: %w", errUsage)
 	}
 	if (name == "orgs delete" || name == "projects delete") && !tty && !*yes {
@@ -442,7 +353,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			return err
 		}
 	}
-	if (name == "collection drop" || name == "functions delete") && !tty && !*yes {
+	if name == "functions delete" && !tty && !*yes {
 		return consentRequired("resource deletion requires a terminal: pass -yes to explicitly consent")
 	}
 	if name == "keys revoke" {
@@ -487,13 +398,10 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 				return confirmManagementTarget(action, label, id, *yes, in, prompt, tty)
 			}, out)
 		}
-		if name == "db changes" {
-			return tailChangesFrom(ctx, s.tb.Database(s.project, operands[0]), *cursor, operands[1:], out)
-		}
 		if placementSet {
-			return createPlacedDatabase(ctx, s.tb.Database(s.project, operands[0]), requestedPlacement, out)
+			return createDatabaseIn(ctx, s.tb.Database(s.project, operands[0]), *homeRegion, out)
 		}
-		return placementError(s.dispatch(ctx, name, fn, *collection, operands, commandInput{in: in, prompt: prompt, tty: tty, yes: *yes}, out))
+		return s.dispatch(ctx, name, fn, operands, commandInput{in: in, prompt: prompt, tty: tty, yes: *yes}, out)
 	}
 	if key := os.Getenv("TERRASCALE_API_KEY"); key != "" {
 		if strings.HasPrefix(name, "auth ") || strings.HasPrefix(name, "keys ") || strings.HasPrefix(name, "projects") || name == "whoami" || strings.HasPrefix(name, "orgs") || name == "context set" {
@@ -617,34 +525,20 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 }
 
 // dispatch runs a project command.
-func (s *session) dispatch(ctx context.Context, name string, fn functionFlags, collection string, operands []string, input commandInput, out io.Writer) error {
+func (s *session) dispatch(ctx context.Context, name string, fn functionFlags, operands []string, input commandInput, out io.Writer) error {
 	if name == "shell" {
 		return sqlShell(ctx, s.tb.Database(s.project, operands[0]), input, out)
 	}
-	if name == "sql" || name == "exec" {
-		mode := "document"
-		if name == "exec" {
-			mode = "relational"
-		}
-		return runSQL(ctx, s.tb.Database(s.project, operands[0]), mode, operands[1], input.in, out)
+	if name == "sql" {
+		return runSQL(ctx, s.tb.Database(s.project, operands[0]), operands[1], input.in, out)
 	}
-	if name == "collection drop" || name == "functions delete" {
-		kind := "collection"
-		if name == "functions delete" {
-			kind = "function"
-		}
-		if err := confirmResourceDelete(kind, operands[0], operands[1], s.project, input.yes, input.in, input.prompt, input.tty); err != nil {
+	if name == "functions delete" {
+		if err := confirmResourceDelete("function", operands[0], operands[1], s.project, input.yes, input.in, input.prompt, input.tty); err != nil {
 			return err
 		}
 	}
 	if strings.HasPrefix(name, "functions ") {
 		return functions(ctx, s.tb.Database(s.project, operands[0]), name, fn, operands[1:], out)
-	}
-	if name == "import" {
-		confirm := func(job *v1.ImportJob) error {
-			return confirmImport(job, input.yes, input.in, input.prompt, input.tty)
-		}
-		return importFile(ctx, s.tb.Database(s.project, operands[0]), operands[1], operands[2], collection, confirm, out)
 	}
 	if name == "keys revoke" {
 		message := fmt.Sprintf("Revoke API key %s in project %s; clients using it stop authenticating.", operands[0], s.project)
@@ -999,15 +893,11 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		db = s.tb.Database(s.project, args[0])
 	}
 	switch name {
-	case "recovery preview", "recovery apply":
-		return recovery(ctx, db, name, args[1:], out)
-	case "sql":
-		return runSQL(ctx, db, "document", args[1], nil, out)
 	case "db list":
 		items := []v1.ManagedDatabase{}
 		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 		if !jsonMode(out) {
-			fmt.Fprintln(w, "NAME\tID\tHOME REGION\tREPLICAS")
+			fmt.Fprintln(w, "NAME\tID\tREGION")
 		}
 		for db, err := range projectDatabases(ctx, s.tb, s.project, 100) {
 			if err != nil {
@@ -1021,11 +911,7 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 			if db.HomeRegion != nil {
 				home = *db.HomeRegion
 			}
-			replicas := strings.Join(db.ReplicaRegions, ",")
-			if db.AllRegions {
-				replicas = "all"
-			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", db.Name, db.ID, home, replicas)
+			fmt.Fprintf(w, "%s\t%s\t%s\n", db.Name, db.ID, home)
 		}
 		if jsonMode(out) {
 			return emitJSON(out, items)
@@ -1042,7 +928,6 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		fmt.Fprintf(out, "Created %s (%s)\n", args[0], m.ID)
 		return nil
 	case "db delete":
-		// DELETE purges every replica; clearing placement first would stop writes if DELETE then failed.
 		if err := db.Delete(ctx); err != nil {
 			return err
 		}
@@ -1088,20 +973,6 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		}
 		_, err = fmt.Fprintf(out, "Renamed %s to %s (%s)\n", args[0], m.Name, m.ID)
 		return err
-	case "db regions":
-		regions := args[1:]
-		if slices.Equal(regions, []string{"none"}) {
-			regions = nil
-		}
-		m, err := db.SetRegions(ctx, regions)
-		if err != nil {
-			return err
-		}
-		if jsonMode(out) {
-			return emitJSON(out, m)
-		}
-		fmt.Fprintf(out, "%s replicates to [%s]\n", args[0], strings.Join(m.ReplicaRegions, " "))
-		return nil
 	case "backup list":
 		items := []v1.DatabaseBackup{}
 		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
@@ -1146,12 +1017,6 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		return nil
 	case "backup policy", "backup policy-set", "backup window", "backup plan", "backup restore-at":
 		return backupSettings(ctx, db, name, args[1:], out)
-	case "export":
-		return exportDatabase(ctx, db, out)
-	case "db changes":
-		return tailChangesFrom(ctx, db, "now", args[1:], out)
-	case "exec":
-		return runSQL(ctx, db, "relational", args[1], nil, out)
 	case "migrate up":
 		return migrateUp(ctx, db, out)
 	case "migrate status":
@@ -1170,215 +1035,6 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 			return err
 		}
 		return emitJSON(out, u)
-	case "schema get", "schema set", "schema delete":
-		col := db.Collection(args[1])
-		var schema *v1.DeclaredCollectionSchema
-		var err error
-		switch name {
-		case "schema get":
-			schema, err = col.Schema(ctx)
-		case "schema delete":
-			schema, err = col.DeleteSchema(ctx)
-		default:
-			var body []byte
-			if body, err = jsonOperand(args[2]); err == nil {
-				schema, err = col.SetSchema(ctx, json.RawMessage(body))
-			}
-		}
-		if err != nil {
-			return err
-		}
-		return emitJSON(out, schema)
-	case "ttl get":
-		path, err := db.Collection(args[1]).TTL(ctx)
-		if err != nil {
-			return err
-		}
-		if jsonMode(out) {
-			return emitJSON(out, struct {
-				Path string `json:"path"`
-			}{path})
-		}
-		_, err = fmt.Fprintln(out, cmp.Or(path, "none"))
-		return err
-	case "ttl set":
-		if err := db.Collection(args[1]).SetTTL(ctx, args[2]); err != nil {
-			return err
-		}
-		if jsonMode(out) {
-			return emitJSON(out, struct {
-				Collection string `json:"collection"`
-				Path       string `json:"path"`
-			}{args[1], args[2]})
-		}
-		fmt.Fprintf(out, "%s expires documents at %s\n", args[1], args[2])
-		return nil
-	case "ttl delete":
-		if err := db.Collection(args[1]).DeleteTTL(ctx); err != nil {
-			return err
-		}
-		if jsonMode(out) {
-			return emitJSON(out, struct {
-				Collection string `json:"collection"`
-				Path       string `json:"path"`
-			}{args[1], ""})
-		}
-		fmt.Fprintf(out, "%s no longer expires documents\n", args[1])
-		return nil
-	case "index list":
-		var opts []v1.IndexListOptions
-		if len(args) == 2 {
-			opts = append(opts, v1.IndexListOptions{Collection: args[1]})
-		}
-		indexes, err := db.Indexes(ctx, opts...)
-		if err != nil {
-			return err
-		}
-		if jsonMode(out) {
-			if indexes == nil {
-				indexes = []v1.Index{}
-			}
-			return emitJSON(out, indexes)
-		}
-		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tCOLLECTION\tFIELDS\tSTATE")
-		for _, ix := range indexes {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", ix.Name, ix.Collection, strings.Join(ix.Fields, ","), ix.State)
-		}
-		return w.Flush()
-	case "index create":
-		ix, err := db.CreateIndex(ctx, v1.IndexRequest{Collection: args[1], Fields: args[2:]})
-		if err != nil {
-			return err
-		}
-		if jsonMode(out) {
-			return emitJSON(out, ix)
-		}
-		fmt.Fprintf(out, "Created index %s\n", ix.Name)
-		return nil
-	case "index drop":
-		if err := db.DropIndex(ctx, args[1]); err != nil {
-			return err
-		}
-		if jsonMode(out) {
-			return emitJSON(out, struct {
-				Name    string `json:"name"`
-				Dropped bool   `json:"dropped"`
-			}{args[1], true})
-		}
-		fmt.Fprintf(out, "Dropped index %s\n", args[1])
-		return nil
-	case "import status", "import cancel":
-		read := db.Import
-		if name == "import cancel" {
-			read = db.CancelImport
-		}
-		job, err := read(ctx)
-		if err != nil {
-			return err
-		}
-		return emitJSON(out, job)
-	case "collection list":
-		items := []v1.CollectionInfo{}
-		for cursor := ""; ; {
-			page, err := db.Collections(ctx, v1.ListOptions{Limit: 200, Cursor: cursor})
-			if err != nil {
-				return err
-			}
-			for _, c := range page.Items {
-				if jsonMode(out) {
-					items = append(items, c)
-					continue
-				}
-				fmt.Fprintln(out, c.Name)
-			}
-			if cursor = page.NextCursor; cursor == "" {
-				if jsonMode(out) {
-					return emitJSON(out, items)
-				}
-				return nil
-			}
-		}
-	case "collection create":
-		c, err := db.CreateCollection(ctx, args[1])
-		if err != nil {
-			return err
-		}
-		if jsonMode(out) {
-			return emitJSON(out, c)
-		}
-		fmt.Fprintf(out, "Created collection %s\n", args[1])
-		return nil
-	case "collection drop":
-		c, err := db.Collection(args[1]).Drop(ctx)
-		if err != nil {
-			return err
-		}
-		if jsonMode(out) {
-			return emitJSON(out, c)
-		}
-		fmt.Fprintf(out, "Dropped collection %s\n", args[1])
-		return nil
-	case "doc list":
-		beginJSONStream(out)
-		for cursor := ""; ; {
-			page, err := db.Collection(args[1]).List(ctx, v1.ListOptions{Limit: 1000, Cursor: cursor})
-			if err != nil {
-				return err
-			}
-			for _, d := range page.Items {
-				if err := emitJSONRecord(out, d); err != nil {
-					return err
-				}
-			}
-			if cursor = page.NextCursor; cursor == "" {
-				if jsonMode(out) && ctx.Err() != nil {
-					return ctx.Err()
-				}
-				return finishJSONStream(out)
-			}
-		}
-	case "doc get":
-		d, err := db.Collection(args[1]).Get(ctx, args[2])
-		if err != nil {
-			return err
-		}
-		return emitJSON(out, d)
-	case "doc put":
-		body, err := jsonOperand(args[len(args)-1])
-		if err != nil {
-			return err
-		}
-		col := db.Collection(args[1])
-		var res *v1.WriteResult
-		if len(args) == 4 {
-			res, err = col.Put(ctx, args[2], json.RawMessage(body))
-		} else {
-			res, err = col.Create(ctx, json.RawMessage(body))
-		}
-		if err != nil {
-			return err
-		}
-		if jsonMode(out) {
-			return emitJSON(out, res)
-		}
-		fmt.Fprintf(out, "Wrote %s (version %s)\n", res.ID, res.Version)
-		return nil
-	case "doc delete":
-		res, err := db.Collection(args[1]).Delete(ctx, args[2])
-		if err != nil {
-			return err
-		}
-		if jsonMode(out) {
-			return emitJSON(out, res)
-		}
-		fmt.Fprintf(out, "Deleted %s\n", args[2])
-		return nil
-	case "doc import":
-		if _, err := db.CreateCollection(ctx, args[1]); err != nil && !errors.Is(err, v1.ErrNameTaken) {
-			return err
-		}
-		return importDocuments(ctx, db.Collection(args[1]), os.Stdin, out)
 	case "keys list":
 		return listKeyMetadata(ctx, s, out)
 	case "keys revoke":
@@ -1395,53 +1051,4 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		return nil
 	}
 	return errUsage
-}
-
-// jsonOperand returns a JSON operand, read from stdin when it is -.
-func jsonOperand(arg string) ([]byte, error) {
-	body := []byte(arg)
-	if arg == "-" {
-		var err error
-		if body, err = io.ReadAll(os.Stdin); err != nil {
-			return nil, err
-		}
-	}
-	if !json.Valid(body) {
-		return nil, errors.New("operand is not valid JSON")
-	}
-	return body, nil
-}
-
-// importDocuments puts each JSON line of in, in the shape doc list prints:
-// an object with the document's id and body.
-func importDocuments(ctx context.Context, col *v1.Collection, in io.Reader, out io.Writer) error {
-	lines := bufio.NewScanner(in)
-	lines.Buffer(nil, 8<<20)
-	n := 0
-	for line := 1; lines.Scan(); line++ {
-		if strings.TrimSpace(lines.Text()) == "" {
-			continue
-		}
-		var d struct {
-			ID       string          `json:"id"`
-			Document json.RawMessage `json:"document"`
-		}
-		if err := json.Unmarshal(lines.Bytes(), &d); err != nil || d.ID == "" || len(d.Document) == 0 {
-			return fmt.Errorf("line %d: want {\"id\": ..., \"document\": {...}}", line)
-		}
-		if _, err := col.Put(ctx, d.ID, d.Document); err != nil {
-			return fmt.Errorf("line %d: %w", line, err)
-		}
-		n++
-	}
-	if err := lines.Err(); err != nil {
-		return err
-	}
-	if jsonMode(out) {
-		return emitJSON(out, struct {
-			Imported int `json:"imported"`
-		}{n})
-	}
-	fmt.Fprintf(out, "Imported %d documents\n", n)
-	return nil
 }

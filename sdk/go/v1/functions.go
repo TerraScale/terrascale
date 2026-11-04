@@ -9,33 +9,24 @@ import (
 	"time"
 )
 
-// FunctionTrigger runs a function on committed changes to Collection.
-// Events is upsert and/or delete; empty means both.
-type FunctionTrigger struct {
-	Collection string   `json:"collection"`
-	Events     []string `json:"events,omitempty"`
-}
-
 // Function is a deployed JavaScript function. Lists leave Source empty.
 type Function struct {
-	Name      string           `json:"name"`
-	Source    string           `json:"source"`
-	Trigger   *FunctionTrigger `json:"trigger"`
-	Cron      *string          `json:"cron"`
-	CreatedAt time.Time        `json:"createdAt"`
-	UpdatedAt time.Time        `json:"updatedAt"`
+	Name      string    `json:"name"`
+	Source    string    `json:"source"`
+	Cron      *string   `json:"cron"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // FunctionRequest deploys a function. Cron is a five-field UTC expression;
-// empty means no schedule. A nil Trigger means no change trigger.
+// empty means no schedule.
 type FunctionRequest struct {
-	Source  string
-	Trigger *FunctionTrigger
-	Cron    string
+	Source string
+	Cron   string
 }
 
-// FunctionLog is one retained invocation, newest first. Trigger is http,
-// change or cron; Status is ok or error.
+// FunctionLog is one retained invocation, newest first. Trigger is http or
+// cron; Status is ok or error.
 type FunctionLog struct {
 	ID         string    `json:"id" ulid:"required"`
 	At         time.Time `json:"at"`
@@ -47,28 +38,22 @@ type FunctionLog struct {
 }
 
 // DeployFunction creates or replaces the named function.
-// Needs both documents:read and documents:write.
+// Needs read and write access.
 func (d *Database) DeployFunction(ctx context.Context, name string, in FunctionRequest) (*Function, error) {
 	if err := checkName("function", name); err != nil {
 		return nil, err
 	}
-	if in.Trigger != nil {
-		if err := checkName("collection", in.Trigger.Collection); err != nil {
-			return nil, err
-		}
-	}
 	body := struct {
-		Source  string           `json:"source"`
-		Trigger *FunctionTrigger `json:"trigger"`
-		Cron    *string          `json:"cron"`
-	}{Source: in.Source, Trigger: in.Trigger}
+		Source string  `json:"source"`
+		Cron   *string `json:"cron"`
+	}{Source: in.Source}
 	if in.Cron != "" {
 		body.Cron = &in.Cron
 	}
 	return databaseCall[Function](ctx, d, http.MethodPut, nil, body, "functions", name)
 }
 
-// Functions lists functions without their source. Needs documents:read and documents:write.
+// Functions lists functions without their source. Needs read and write access.
 func (d *Database) Functions(ctx context.Context) ([]Function, error) {
 	out, err := databaseCall[[]Function](ctx, d, http.MethodGet, nil, nil, "functions")
 	if err != nil {
@@ -77,7 +62,7 @@ func (d *Database) Functions(ctx context.Context) ([]Function, error) {
 	return *out, nil
 }
 
-// Function reads one function with its source. Needs documents:read and documents:write.
+// Function reads one function with its source. Needs read and write access.
 func (d *Database) Function(ctx context.Context, name string) (*Function, error) {
 	if err := checkName("function", name); err != nil {
 		return nil, err
@@ -85,8 +70,8 @@ func (d *Database) Function(ctx context.Context, name string) (*Function, error)
 	return databaseCall[Function](ctx, d, http.MethodGet, nil, nil, "functions", name)
 }
 
-// DeleteFunction deletes the function with its trigger, schedule and logs.
-// Needs both documents:read and documents:write.
+// DeleteFunction deletes the function with its schedule and logs.
+// Needs read and write access.
 func (d *Database) DeleteFunction(ctx context.Context, name string) error {
 	if err := checkName("function", name); err != nil {
 		return err
@@ -111,7 +96,7 @@ type FunctionResponse struct {
 // and URL-escaped query values as event.query. Repeated query values become a
 // comma-joined string in the handler. The result preserves status, media and body;
 // a status outside 2xx is an *APIError preserving those fields in Status, Header
-// and Body. Invocations may write documents and are never retried. Needs documents:read.
+// and Body. Invocations may write data and are never retried. Needs read access.
 func (d *Database) InvokeFunction(ctx context.Context, name string, body []byte, query url.Values) (*FunctionResponse, error) {
 	if err := checkName("function", name); err != nil {
 		return nil, err
@@ -139,7 +124,7 @@ func (d *Database) InvokeFunction(ctx context.Context, name string, body []byte,
 }
 
 // FunctionLogs lists the newest invocations, newest first. Limit is 1..100;
-// zero uses the server default. Needs documents:read and documents:write.
+// zero uses the server default. Needs read and write access.
 func (d *Database) FunctionLogs(ctx context.Context, name string, limit int) ([]FunctionLog, error) {
 	if err := checkName("function", name); err != nil {
 		return nil, err
@@ -152,19 +137,6 @@ func (d *Database) FunctionLogs(ctx context.Context, name string, limit int) ([]
 		q.Set("limit", strconv.Itoa(limit))
 	}
 	out, err := databaseCall[[]FunctionLog](ctx, d, http.MethodGet, q, nil, "functions", name, "logs")
-	if err != nil {
-		return nil, err
-	}
-	return *out, nil
-}
-
-// FunctionDeliveries lists the retained change-trigger deliveries to the
-// function. Needs documents:read and documents:write.
-func (d *Database) FunctionDeliveries(ctx context.Context, name string) ([]WebhookDelivery, error) {
-	if err := checkName("function", name); err != nil {
-		return nil, err
-	}
-	out, err := databaseCall[[]WebhookDelivery](ctx, d, http.MethodGet, nil, nil, "functions", name, "deliveries")
 	if err != nil {
 		return nil, err
 	}

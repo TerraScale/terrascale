@@ -20,7 +20,7 @@ func TestP2BConformanceCoreSurfaceHasNoSyntheticTransport(t *testing.T) {
 		t.Fatalf("region parsing is not case-insensitive: %v", err)
 	}
 	if _, _, err := sdk.Select("", "id").Build(); err == nil {
-		t.Fatal("empty collection must fail closed")
+		t.Fatal("empty table must fail closed")
 	}
 	if _, _, err := sdk.Select("users", "id").Limit(-1).Build(); err == nil {
 		t.Fatal("negative SQL limit must fail closed")

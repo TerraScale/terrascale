@@ -281,7 +281,7 @@ func errorFromResponse(route, method, path string, status int, headers http.Head
 		Status: status,
 		Code:   defaultErrorCode(status),
 	}
-	var doc errorDocument
+	var doc errorBody
 	if err := json.Unmarshal(body, &doc); err == nil {
 		sourceCode, sourceMessage, sourceFix := doc.Code, doc.Message, doc.Fix
 		var nested errorDetail
@@ -351,10 +351,10 @@ func responseReadError(route, method, path string, status int, headers http.Head
 	return apiErr
 }
 
-// errorDocument deliberately models only bounded diagnostic fields. The
+// errorBody deliberately models only bounded diagnostic fields. The
 // response itself has already been capped by roundTrip before this decoder is
 // called, and unknown fields are ignored for forward compatibility.
-type errorDocument struct {
+type errorBody struct {
 	Code             string          `json:"code,omitempty"`
 	ErrorCode        string          `json:"errorCode,omitempty"`
 	Error_Code       string          `json:"error_code,omitempty"`

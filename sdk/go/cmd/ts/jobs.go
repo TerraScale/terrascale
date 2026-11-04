@@ -2,17 +2,11 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"maps"
-	"os"
 	"slices"
 	"strings"
-	"text/tabwriter"
-	"time"
 
 	"terrascale.tech/sdk/tsauth"
 	v1 "terrascale.tech/sdk/v1"
@@ -64,124 +58,6 @@ func createProject(ctx context.Context, u *tsauth.User, org, name string, out io
 	return err
 }
 
-// importPoll is how often import waits for the job's next state.
-const importPoll = 2 * time.Second
-
-// importFile creates db and stages the file before preview-bound consent. Only
-// StartImport confirms copying documents; already confirmed jobs reattach.
-func importFile(ctx context.Context, db *v1.Database, format, path, collection string, confirm func(*v1.ImportJob) error, out io.Writer) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	h := sha256.New()
-	size, err := io.Copy(h, f)
-	if err != nil {
-		return err
-	}
-	// A rerun resumes: TerraBase answers an identical import request with the same job.
-	if _, err := db.Create(ctx); err != nil && !errors.Is(err, v1.ErrNameTaken) {
-		return err
-	}
-	req := v1.CreateImportRequest{Format: format, SourceBytes: size, SourceSHA256: hex.EncodeToString(h.Sum(nil))}
-	if collection != "" {
-		req.Options = &v1.ImportOptions{Collection: collection}
-	}
-	job, err := db.CreateImport(ctx, req)
-	if err != nil {
-		return err
-	}
-	// Completed jobs release their source; active jobs already confirmed it.
-	part := make([]byte, 4<<20)
-	for slices.Contains([]string{"awaiting_source", "failed", "cancelled"}, job.State) && job.Source.ReceivedBytes < size {
-		n, err := f.ReadAt(part, job.Source.ReceivedBytes)
-		if err != nil && !errors.Is(err, io.EOF) {
-			return err
-		}
-		if job, err = db.UploadImportSource(ctx, job.Source.ReceivedBytes, part[:n]); err != nil {
-			return err
-		}
-	}
-	if job.State == "failed" || job.State == "cancelled" {
-		if job, err = db.ResumeImport(ctx); err != nil {
-			return err
-		}
-	}
-	if job.State == "awaiting_source" || job.State == "analyzing" {
-		if job, err = waitImport(ctx, db, "awaiting_source", "analyzing"); err != nil {
-			return err
-		}
-	}
-	if job.State == "ready" {
-		if job.Preview == nil {
-			return importFailed(job)
-		}
-		w := tabwriter.NewWriter(progressOutput(out), 0, 0, 2, ' ', 0)
-		if _, err := fmt.Fprintln(w, "SOURCE\tCOLLECTION\tROWS\tISSUES"); err != nil {
-			return err
-		}
-		for _, t := range job.Preview.Tables {
-			if !t.Excluded {
-				if _, err := fmt.Fprintf(w, "%s\t%s\t%d\t%d\n", t.Source, t.Collection, t.Rows, len(t.Issues)); err != nil {
-					return err
-				}
-			}
-		}
-		if err := w.Flush(); err != nil {
-			return err
-		}
-		if job.Preview.Blocking > 0 {
-			return fmt.Errorf("import has %d blocking issues: ts import status %s prints them", job.Preview.Blocking, job.Database)
-		}
-		previewID := job.Preview.ID
-		if confirm == nil {
-			return errors.New("import requires explicit preview confirmation")
-		}
-		if err := confirm(job); err != nil {
-			return err
-		}
-		if _, err := db.StartImport(ctx, previewID); err != nil {
-			return err
-		}
-	}
-	if slices.Contains([]string{"ready", "queued", "running", "validating"}, job.State) {
-		if job, err = waitImport(ctx, db, "ready", "queued", "running", "validating"); err != nil {
-			return err
-		}
-	}
-	if job.State != "completed" || job.Progress == nil {
-		return importFailed(job)
-	}
-	if jsonMode(out) {
-		return emitJSON(out, job)
-	}
-	_, err = fmt.Fprintf(out, "Imported %d rows into %s\n", job.Progress.RowsWritten, job.Database)
-	return err
-}
-
-// waitImport reads the import job until its state leaves pending.
-func waitImport(ctx context.Context, db *v1.Database, pending ...string) (*v1.ImportJob, error) {
-	for {
-		job, err := db.Import(ctx)
-		if err != nil || !slices.Contains(pending, job.State) {
-			return job, err
-		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(importPoll):
-		}
-	}
-}
-
-func importFailed(job *v1.ImportJob) error {
-	if job.Error != nil {
-		return fmt.Errorf("import %s: %s: %s", job.State, job.Error.Code, job.Error.Message)
-	}
-	return fmt.Errorf("import %s", job.State)
-}
-
 // completion prints a completion script that offers each command's words.
 func completion(shell string, out io.Writer) error {
 	words := map[string][]string{"": {"help", "version"}}
@@ -198,7 +74,7 @@ func completion(shell string, out io.Writer) error {
 	}
 	words["completion"] = []string{"bash", "fish", "zsh"}
 	words["backup destination"] = []string{"get", "set", "delete"}
-	valueFlags := []string{"project", "org", "expected-id", "scope", "expires", "allow-cidr", "collection", "home-region", "replica-regions", "placement", "cursor"}
+	valueFlags := []string{"project", "org", "expected-id", "scope", "expires", "allow-cidr", "home-region"}
 	var valuePatterns []string
 	flags := "-h -help --help -yes --yes"
 	for _, flag := range valueFlags {

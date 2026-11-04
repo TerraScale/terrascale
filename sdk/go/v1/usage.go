@@ -22,10 +22,8 @@ type Usage struct {
 	ProjectID    string       `json:"projectId,omitempty" ulid:"optional"`
 	DatabaseID   string       `json:"databaseId,omitempty" ulid:"optional"`
 	Databases    int64        `json:"databases"`
-	Collections  int64        `json:"collections"`
 	StorageBytes int64        `json:"storageBytes"`
 	LogicalBytes int64        `json:"logicalBytes"`
-	Documents    int64        `json:"documents"`
 	Reads        int64        `json:"reads"`
 	Writes       int64        `json:"writes"`
 	Period       *UsagePeriod `json:"period"`
@@ -111,7 +109,6 @@ func (c *Client) usage(ctx context.Context, path []string, opts UsageOptions) (*
 	var out struct {
 		Usage
 		StorageBytes *int64 `json:"storageBytes"`
-		Documents    *int64 `json:"documents"`
 		Reads        *int64 `json:"reads"`
 		Writes       *int64 `json:"writes"`
 	}
@@ -119,10 +116,10 @@ func (c *Client) usage(ctx context.Context, path []string, opts UsageOptions) (*
 	if err != nil {
 		return nil, err
 	}
-	if out.StorageBytes == nil || out.Documents == nil || out.Reads == nil || out.Writes == nil {
-		return nil, errors.New("terrabase: usage response requires storageBytes, documents, reads and writes counters")
+	if out.StorageBytes == nil || out.Reads == nil || out.Writes == nil {
+		return nil, errors.New("terrabase: usage response requires storageBytes, reads and writes counters")
 	}
-	out.Usage.StorageBytes, out.Usage.Documents = *out.StorageBytes, *out.Documents
+	out.Usage.StorageBytes = *out.StorageBytes
 	out.Usage.Reads, out.Usage.Writes = *out.Reads, *out.Writes
 	return &out.Usage, nil
 }

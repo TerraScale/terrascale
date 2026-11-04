@@ -55,7 +55,7 @@ func TestContract401And403AreDistinct(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = c.Database(testProject, "main").Collection("users").Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FAV")
+			_, err = c.Database(testProject, "main").Info(t.Context())
 			var apiErr *v1.APIError
 			if !errors.As(err, &apiErr) || apiErr.Status != tc.status || !errors.Is(err, tc.code) {
 				t.Fatalf("error = %v", err)
@@ -82,7 +82,7 @@ func TestKeyRefusalStopsCachedExchangeAndAuthorityOutageRetries(t *testing.T) {
 				}
 				n := requests.Add(1)
 				if code == v1.ErrAuthUnavailable && n > 1 {
-					fmt.Fprint(w, `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","version":"v1","state":"live","document":{}}`)
+					fmt.Fprint(w, `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FAV","name":"main"}`)
 					return
 				}
 				w.Header().Set("Retry-After", "0")
@@ -103,7 +103,7 @@ func TestKeyRefusalStopsCachedExchangeAndAuthorityOutageRetries(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = c.Database(testProject, "main").Collection("users").Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FAV")
+			_, err = c.Database(testProject, "main").Info(t.Context())
 			if code == v1.ErrAuthUnavailable {
 				if err != nil || requests.Load() != 2 {
 					t.Fatalf("requests=%d error=%v", requests.Load(), err)

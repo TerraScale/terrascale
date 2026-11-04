@@ -19,32 +19,18 @@ var commandSyntax = map[string]string{
 	"db branch": "db branch <source> <new-database>", "db info": "db info <database>",
 	"db rename":        "db rename <database> <new-name>",
 	"databases rename": "databases rename <database> <new-name>",
-	"db regions":       "db regions <database> <region>...|none", "db changes": "db changes <database> [<collection>...]",
-	"export": "export <database>", "shell": "shell <database>",
-	"backup list": "backup list <database>", "backup create": "backup create <database>",
+	"shell":            "shell <database>",
+	"backup list":      "backup list <database>", "backup create": "backup create <database>",
 	"backup restore":    "backup restore <database> <backup-id> <new-database>",
 	"backup restore-at": "backup restore-at <database> <RFC3339-time> <new-database> [platform|customer]",
 	"backup policy":     "backup policy <database>", "backup policy-set": "backup policy-set <database> <five-field-UTC-cron|none> <days:1..35>",
 	"backup window": "backup window <database> [platform|customer]", "backup plan": "backup plan <database> <RFC3339-time> [platform|customer]",
 	"backup destination": "backup destination get|set|delete",
-	"recovery preview":   "recovery preview <database> <RFC3339-time> <selection.json>",
-	"recovery apply":     "recovery apply <database> <preview.json> <approved.json>",
-	"collection list":    "collection list <database>", "collection create": "collection create <database> <name>",
-	"collection drop": "collection drop <database> <name>",
-	"doc list":        "doc list <database> <collection>", "doc get": "doc get <database> <collection> <id>",
-	"doc put": "doc put <database> <collection> [<id>] <json|->", "doc delete": "doc delete <database> <collection> <id>",
-	"doc import": "doc import <database> <collection> < input.jsonl",
-	"schema get": "schema get <database> <collection>", "schema set": "schema set <database> <collection> <json|->",
-	"schema delete": "schema delete <database> <collection>", "ttl get": "ttl get <database> <collection>",
-	"ttl set": "ttl set <database> <collection> <JSON-pointer>", "ttl delete": "ttl delete <database> <collection>",
-	"index list": "index list <database> [<collection>]", "index create": "index create <database> <collection> <field>...",
-	"index drop": "index drop <database> <name>", "import": "import <database> postgres_plain|sqlite|ndjson <file>",
-	"import status": "import status <database>", "import cancel": "import cancel <database>",
-	"functions deploy": "functions deploy <database> <file.js|directory>", "functions list": "functions list <database>",
+	"functions deploy":   "functions deploy <database> <file.js|directory>", "functions list": "functions list <database>",
 	"functions invoke": "functions invoke <database> <name>", "functions logs": "functions logs <database> <name>",
-	"functions delete": "functions delete <database> <name>", "sql": "sql <database> <query|->",
-	"exec": "exec <database> <statement|->", "migrate new": "migrate new <name>",
-	"migrate up": "migrate up <database>", "migrate status": "migrate status <database>",
+	"functions delete": "functions delete <database> <name>", "sql": "sql <database> <statement|->",
+	"migrate new": "migrate new <name>",
+	"migrate up":  "migrate up <database>", "migrate status": "migrate status <database>",
 	"migrate diff": "migrate diff <database> [<base-database>]", "keys list": "keys list",
 	"keys create": "keys create <name> [<database-ULID>]", "keys revoke": "keys revoke <id>", "keys rotate": "keys rotate <id> <grace>",
 	"context show": "context show", "context clear": "context clear", "context set": "context set <org> <project> [<database>]",
@@ -79,7 +65,7 @@ func requestedHelp(args []string, out io.Writer) (bool, error) {
 		if strings.HasPrefix(a, "-") {
 			name, _, equal := strings.Cut(strings.TrimLeft(a, "-"), "=")
 			switch name {
-			case "project", "org", "expected-id", "scope", "expires", "allow-cidr", "collection", "name", "trigger-collection", "events", "cron", "data", "limit", "cursor", "home-region", "replica-regions", "placement":
+			case "project", "org", "expected-id", "scope", "expires", "allow-cidr", "name", "cron", "data", "limit", "home-region":
 				if !equal {
 					i++
 				}
@@ -164,7 +150,6 @@ func helpOptions(name string) map[string]string {
 	options := make(map[string]string, len(helpFlags)+4)
 	if name == "shell" {
 		options[".run / .reset"] = "submit the full multiline buffer or discard it"
-		options[".mode relational|document"] = "SQL tables (default) or read-only collection SELECT"
 		options[".quit / .help"] = "exit with an empty buffer or show shell help; history is session-only"
 	}
 	for flag, text := range helpFlags {
@@ -178,26 +163,18 @@ func helpOptions(name string) map[string]string {
 		options["-yes"] = "explicit consent to permanent deletion; otherwise type the target in a terminal"
 	case name == "backup destination":
 		options["-yes"] = "required for set (credential JSON only on stdin); delete otherwise types the project ID"
-	case name == "db changes":
-		options["-cursor <cursor|now|empty>"] = "resume the same database/filter set; default now; accepts at most64 collection filters"
 	case name == "db create":
-		options["-home-region <region>"] = "requested home; server validates serving placement"
-		options["-replica-regions <region>,...|none"] = "explicit replicas; none may be rejected by minimum-copy policy"
-		options["-placement all"] = "every serving region; cannot combine with -replica-regions"
+		options["-home-region <region>"] = "region that serves the database; default the called region"
 	case name == "keys rotate":
 		options["<grace>"] = "required whole-second duration from 0s to 24h; previous secret remains valid for this grace; new secret appears once on stdout"
 	case strings.HasPrefix(name, "keys create"):
 		options["-scope read|read-write"] = "requested grants; default read-write, server permissions still apply"
 		options["-expires 30d|90d|365d|never"] = "key expiry; default never"
 		options["-allow-cidr <CIDR>,..."] = "restrict source networks; default any address"
-	case name == "import":
-		options["-collection <name>"] = "destination collection for plain document NDJSON"
-		options["-yes"] = "consent to the inspected preview; database creation/upload happen before consent"
-	case name == "db delete" || name == "collection drop" || name == "functions delete" || name == "orgs delete" || name == "projects delete" || name == "keys revoke":
+	case name == "db delete" || name == "functions delete" || name == "orgs delete" || name == "projects delete" || name == "keys revoke":
 		options["-yes"] = "explicit consent to permanent deletion; otherwise type the target in a terminal"
 	case name == "functions deploy":
 		options["-name <name>"] = "function name, default file/directory name"
-		options["-trigger-collection <name> -events upsert,delete"] = "collection event trigger"
 		options["-cron <expression>"] = "function schedule"
 		options["<file.js>"] = "plain script defining function handler(event); ES module syntax (import, export) is rejected"
 	case name == "functions invoke":

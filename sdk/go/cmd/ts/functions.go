@@ -22,9 +22,9 @@ import (
 // functionFlags are the flags of the functions commands, accepted anywhere
 // after the command name.
 type functionFlags struct {
-	name, collection, events, cron, data string
-	limit                                int
-	limitSet                             bool
+	name, cron, data string
+	limit            int
+	limitSet         bool
 }
 
 // parse returns the operands left after the command's flags.
@@ -34,8 +34,6 @@ func (f *functionFlags) parse(cmd string, args []string) ([]string, error) {
 	switch cmd {
 	case "functions deploy":
 		fs.StringVar(&f.name, "name", "", "")
-		fs.StringVar(&f.collection, "trigger-collection", "", "")
-		fs.StringVar(&f.events, "events", "", "")
 		fs.StringVar(&f.cron, "cron", "", "")
 	case "functions invoke":
 		fs.StringVar(&f.data, "data", "", "")
@@ -53,9 +51,6 @@ func (f *functionFlags) parse(cmd string, args []string) ([]string, error) {
 		operands, args = append(operands, args[0]), args[1:]
 	}
 	fs.Visit(func(fl *flag.Flag) { f.limitSet = f.limitSet || fl.Name == "limit" })
-	if f.events != "" && f.collection == "" {
-		return nil, fmt.Errorf("-events needs -trigger-collection: %w", errUsage)
-	}
 	if f.limitSet && (f.limit < 1 || f.limit > 100) {
 		return nil, &cliError{code: "invalid_arguments", message: "-limit must be from 1 to 100", err: errUsage}
 	}
@@ -75,12 +70,6 @@ func functions(ctx context.Context, db *v1.Database, cmd string, f functionFlags
 			return err
 		}
 		req := v1.FunctionRequest{Source: string(source), Cron: f.cron}
-		if f.collection != "" {
-			req.Trigger = &v1.FunctionTrigger{Collection: f.collection}
-			if f.events != "" {
-				req.Trigger.Events = strings.Split(f.events, ",")
-			}
-		}
 		fn, err := db.DeployFunction(ctx, cmp.Or(f.name, name), req)
 		if err != nil {
 			return err
@@ -102,18 +91,15 @@ func functions(ctx context.Context, db *v1.Database, cmd string, f functionFlags
 			return emitJSON(out, list)
 		}
 		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		if _, err := fmt.Fprintln(w, "NAME\tTRIGGER\tCRON\tUPDATED"); err != nil {
+		if _, err := fmt.Fprintln(w, "NAME\tCRON\tUPDATED"); err != nil {
 			return err
 		}
 		for _, fn := range list {
-			trigger, cron := "none", "none"
-			if fn.Trigger != nil {
-				trigger = fn.Trigger.Collection + ":" + cmp.Or(strings.Join(fn.Trigger.Events, ","), "upsert,delete")
-			}
+			cron := "none"
 			if fn.Cron != nil {
 				cron = *fn.Cron
 			}
-			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", fn.Name, trigger, cron, fn.UpdatedAt.Format(time.RFC3339)); err != nil {
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\n", fn.Name, cron, fn.UpdatedAt.Format(time.RFC3339)); err != nil {
 				return err
 			}
 		}
@@ -222,4 +208,19 @@ func functionSource(arg string) (path, name string, err error) {
 		return filepath.Join(abs, "index.js"), filepath.Base(abs), nil
 	}
 	return abs, strings.TrimSuffix(filepath.Base(abs), ".js"), nil
+}
+
+// jsonOperand returns a JSON operand, read from stdin when it is -.
+func jsonOperand(arg string) ([]byte, error) {
+	body := []byte(arg)
+	if arg == "-" {
+		var err error
+		if body, err = io.ReadAll(os.Stdin); err != nil {
+			return nil, err
+		}
+	}
+	if !json.Valid(body) {
+		return nil, errors.New("operand is not valid JSON")
+	}
+	return body, nil
 }

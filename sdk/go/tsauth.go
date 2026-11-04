@@ -267,9 +267,9 @@ func tsAuthErrorFromResponse(route, method, path string, status int, headers htt
 	return apiErr
 }
 
-// OIDC provider documents and responses (snake_case).
+// OIDC provider metadata and responses (snake_case).
 
-type TSAuthDiscoveryDocument struct {
+type TSAuthDiscovery struct {
 	Issuer                            string   `json:"issuer"`
 	AuthorizationEndpoint             string   `json:"authorization_endpoint"`
 	TokenEndpoint                     string   `json:"token_endpoint"`
@@ -322,8 +322,8 @@ type TSAuthUserInfo struct {
 
 type TSAuthOIDCClient struct{ i *TSAuthInstanceClient }
 
-func (o *TSAuthOIDCClient) GetDiscoveryDocument(ctx context.Context) (*TSAuthDiscoveryDocument, error) {
-	var out TSAuthDiscoveryDocument
+func (o *TSAuthOIDCClient) GetDiscovery(ctx context.Context) (*TSAuthDiscovery, error) {
+	var out TSAuthDiscovery
 	if err := o.i.tsAuthSend(ctx, http.MethodGet, o.i.oidc(".well-known/openid-configuration"), nil, nil, "", "", &out, "tsauth.oidc.discovery"); err != nil {
 		return nil, err
 	}

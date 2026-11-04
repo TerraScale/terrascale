@@ -1,21 +1,17 @@
 // Package v1 is the name-based TerraBase v1 client (terrascale.tech/sdk/v1).
 //
-// It talks to the C# TerraBase server: the Documents API v1 (databases,
-// collections, documents, queries and transactions under
-// /v1/projects/{project}/databases/{database}) with a ts-auth project access
-// token. SQL and database tooling use the same hierarchy. The legacy
-// Management API (/v1/management) acts as a ts-auth user.
+// It talks to the C# TerraBase server: databases and SQL under
+// /v1/projects/{project}/databases/{database} with a ts-auth project access
+// token. The Management API (/v1/management) acts as a ts-auth user.
 //
-// Document values are never decoded through float64: documents are returned
-// as json.RawMessage, and Decode helpers use json.Decoder.UseNumber, so
-// numbers keep their exact decimal text as json.Number.
+// Numbers are never decoded through float64: JSON decoding uses
+// json.Decoder.UseNumber, so numbers keep their exact decimal text.
 //
 // A public client is created with New and a project token or TokenSource; the Management API
 // uses NewManagement and a user's ts-auth access token:
 //
 //	c, err := v1.New(v1.Config{Token: projectAccessToken})
-//	users := c.Database(projectID, "main").Collection("users")
-//	doc, err := users.Get(ctx, id)
+//	rows, err := c.Database(projectID, "main").Query(ctx, "SELECT id, name FROM users WHERE id = ?", id)
 package v1
 
 import (
@@ -85,7 +81,6 @@ type Client struct {
 	hc          *http.Client
 	maxRetries  int
 	maxResponse int64
-	shapeKeys   shapeKeyCache
 }
 
 // TokenSource supplies access tokens; TerraBase validates their claims.
@@ -242,7 +237,7 @@ type response struct {
 	body   []byte
 }
 
-// url escapes protocol path segments; document IDs travel in the query.
+// url escapes protocol path segments.
 func (c *Client) url(ctx context.Context, segments []string, query url.Values) (string, error) {
 	for _, s := range segments {
 		if s == "" || s == "." || s == ".." || strings.Contains(s, "/") {

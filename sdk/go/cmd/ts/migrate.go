@@ -129,8 +129,7 @@ func applied(ctx context.Context, db *v1.Database) (map[string]string, error) {
 	return out, nil
 }
 
-// noTable reports TerraBase's answer for a missing table, also given for a
-// collection without one.
+// noTable reports TerraBase's answer for a missing table.
 func noTable(err error) bool {
 	sqlErr := (*v1.SQLError)(nil)
 	return errors.Is(err, v1.ErrUndefinedTable) || errors.As(err, &sqlErr) && strings.Contains(sqlErr.Message, "no such table")
@@ -244,51 +243,39 @@ func migrationStatus(ctx context.Context, db *v1.Database, ms []migration, out i
 	return w.Flush()
 }
 
-// schema describes each table with its declared column types, each
-// collection without a SQL table and each index, keyed by kind and name.
-// TerraBase reserves sqlite_schema, so it reads the collection and index
-// lists and each table's result columns instead.
+// schemaEntity is one sqlite_schema object: a table, index, view or trigger
+// with the SQL that defines it.
 type schemaEntity struct {
-	Kind       string      `json:"kind"`
-	Name       string      `json:"name"`
-	Columns    []v1.Column `json:"columns,omitempty"`
-	Collection string      `json:"collection,omitempty"`
-	Fields     []string    `json:"fields,omitempty"`
+	Kind  string `json:"kind"`
+	Name  string `json:"name"`
+	Table string `json:"table"`
+	SQL   string `json:"sql"`
 }
 
+// schema reads a database's tables, indexes, views and triggers, keyed by kind
+// and name. SQLite's internal objects are left out.
 func schema(ctx context.Context, db *v1.Database) (map[string]schemaEntity, error) {
-	out := map[string]schemaEntity{}
-	for cursor := ""; ; {
-		page, err := db.Collections(ctx, v1.ListOptions{Limit: 200, Cursor: cursor})
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", db.Name(), err)
-		}
-		for _, c := range page.Items {
-			res, err := db.Execute(ctx, `SELECT * FROM "`+c.Name+`" LIMIT 0`)
-			if noTable(err) {
-				out["collection "+c.Name] = schemaEntity{Kind: "collection", Name: c.Name}
-				continue
-			}
-			if err != nil {
-				return nil, fmt.Errorf("%s: %s: %w", db.Name(), c.Name, err)
-			}
-			out["table "+c.Name] = schemaEntity{Kind: "table", Name: c.Name, Columns: res.Columns}
-		}
-		if cursor = page.NextCursor; cursor == "" {
-			break
-		}
-	}
-	indexes, err := db.Indexes(ctx)
+	rows, err := db.Query(ctx, "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL")
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", db.Name(), err)
 	}
-	for _, ix := range indexes {
-		out["index "+ix.Name] = schemaEntity{Kind: "index", Name: ix.Name, Collection: ix.Collection, Fields: ix.Fields}
+	out := map[string]schemaEntity{}
+	for _, r := range rows {
+		var e schemaEntity
+		for _, f := range []struct {
+			column string
+			value  *string
+		}{{"type", &e.Kind}, {"name", &e.Name}, {"tbl_name", &e.Table}, {"sql", &e.SQL}} {
+			if *f.value, err = r.String(f.column); err != nil {
+				return nil, fmt.Errorf("%s: sqlite_schema.%s: %w", db.Name(), f.column, err)
+			}
+		}
+		out[e.Kind+" "+e.Name] = e
 	}
 	return out, nil
 }
 
-// migrateDiff prints the tables, collections and indexes branch adds (+),
+// migrateDiff prints the tables, indexes, views and triggers branch adds (+),
 // drops (-) or changes against base, its parent when base is empty.
 func (s *session) migrateDiff(ctx context.Context, branch, base string, out io.Writer) error {
 	if base == "" {
@@ -367,24 +354,11 @@ func schemaChanges(from, to map[string]schemaEntity) []schemaChange {
 	return changes
 }
 
-// Human output is rendered from the same typed SDK metadata as JSON.
+// Human output is rendered from the same typed metadata as JSON.
 func schemaDescriptions(items map[string]schemaEntity) map[string]string {
-	out := map[string]string{}
+	out := make(map[string]string, len(items))
 	for key, item := range items {
-		switch item.Kind {
-		case "collection":
-			out[key] = "collection " + item.Name
-		case "index":
-			out[key] = fmt.Sprintf("index %s ON %s (%s)", item.Name, item.Collection, strings.Join(item.Fields, ", "))
-		case "table":
-			var cols []string
-			for _, col := range item.Columns {
-				if col.DeclType != nil {
-					cols = append(cols, strings.TrimSpace(col.Name+" "+*col.DeclType))
-				}
-			}
-			out[key] = fmt.Sprintf("table %s (%s)", item.Name, strings.Join(cols, ", "))
-		}
+		out[key] = item.SQL
 	}
 	return out
 }

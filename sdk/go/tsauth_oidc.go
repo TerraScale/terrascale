@@ -133,14 +133,14 @@ func (o *TSAuthOIDCClient) NewApplication(config TSAuthOIDCApplicationConfig) (*
 
 // Discover validates issuer and every endpoint against fixed provider paths.
 // Endpoint URLs never become arbitrary request destinations.
-func (a *TSAuthOIDCApplication) Discover(ctx context.Context) (*TSAuthDiscoveryDocument, error) {
+func (a *TSAuthOIDCApplication) Discover(ctx context.Context) (*TSAuthDiscovery, error) {
 	if ctx == nil {
 		return nil, oidcError("invalid_context", "discovery", false, nil)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, oidcError("request_cancelled", "discovery", false, err)
 	}
-	doc, err := a.oidc.GetDiscoveryDocument(ctx)
+	doc, err := a.oidc.GetDiscovery(ctx)
 	if err != nil {
 		return nil, oidcError("discovery_unavailable", "discovery", false, err)
 	}
@@ -251,7 +251,7 @@ func (a *TSAuthOIDCApplication) BeginAuthorizationWithOptions(ctx context.Contex
 	if err := options.validate(); err != nil {
 		return nil, err
 	}
-	document, err := a.Discover(ctx)
+	discovery, err := a.Discover(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +275,7 @@ func (a *TSAuthOIDCApplication) BeginAuthorizationWithOptions(ctx context.Contex
 	if err != nil {
 		return nil, err
 	}
-	endpoint, err := url.Parse(document.AuthorizationEndpoint)
+	endpoint, err := url.Parse(discovery.AuthorizationEndpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -411,11 +411,11 @@ func (a *TSAuthOIDCApplication) EndSessionURL(ctx context.Context, redirectURI, 
 	if !slices.Contains(a.config.PostLogoutRedirectURIs, redirectURI) || state == "" || strings.ContainsFunc(state, unicode.IsControl) {
 		return "", oidcError("unregistered_logout_redirect", "logout", false, nil)
 	}
-	document, err := a.Discover(ctx)
+	discovery, err := a.Discover(ctx)
 	if err != nil {
 		return "", err
 	}
-	endpoint, err := url.Parse(document.EndSessionEndpoint)
+	endpoint, err := url.Parse(discovery.EndSessionEndpoint)
 	if err != nil {
 		return "", err
 	}
@@ -730,7 +730,7 @@ func oidcDecodeExactJSON(data []byte, target any, allowed []string) error {
 	return json.Unmarshal(canonical, target)
 }
 
-func (d *TSAuthDiscoveryDocument) decodeHTTPResponse(status int, body []byte) error {
+func (d *TSAuthDiscovery) decodeHTTPResponse(status int, body []byte) error {
 	if status != http.StatusOK {
 		return oidcError("unexpected_status", "response", false, nil)
 	}

@@ -47,21 +47,15 @@ func TestValidateSQLReadOnlyAllowListAndBindings(t *testing.T) {
 	}
 }
 
-func TestJSONPathAndRawValuesDoNotPermitSQLInjection(t *testing.T) {
-	query := sdk.Select("users").JSONEq("$.customer", "x' OR 1=1 --")
-	statement, params, err := query.Build()
+func TestBuilderValuesDoNotPermitSQLInjection(t *testing.T) {
+	statement, params, err := sdk.Select("users").Where(sdk.Eq("customer", "x' OR 1=1 --")).OrderBy("name DESC").Build()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(statement, "1=1") || !reflect.DeepEqual(params, []any{"x' OR 1=1 --"}) {
-		t.Fatalf("unsafe JSON query: %q %#v", statement, params)
+		t.Fatalf("unsafe query: %q %#v", statement, params)
 	}
-	if _, _, err := sdk.Select("users").JSONEq("$.customer-name", "x").Build(); err == nil {
-		t.Fatal("expected invalid JSON path to be rejected")
-	}
-	if statement, _, err := sdk.Select("users").OrderByJSON("$.customer", sdk.Desc).Build(); err != nil {
-		t.Fatal(err)
-	} else if want := `SELECT * FROM "users" ORDER BY body ->> '$.customer' DESC`; statement != want {
-		t.Fatalf("JSON order statement = %q, want %q", statement, want)
+	if _, _, err := sdk.Select("users").OrderBy("name; DROP TABLE users").Build(); err == nil {
+		t.Fatal("expected an invalid ORDER BY to be rejected")
 	}
 }

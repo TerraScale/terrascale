@@ -7,7 +7,6 @@ import (
 
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -37,10 +36,10 @@ func TestTokenSourceExchangeToPublicAPI(t *testing.T) {
 	t.Cleanup(issuer.Close)
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		if r.Header.Get("Authorization") != "Bearer "+token || r.URL.Path != "/v1/projects/"+testProject+"/databases/main/collections/users/documents/by-key" || r.URL.Query().Get("id") != "01ARZ3NDEKTSV4RRFFQ69G5FD2" {
+		if r.Header.Get("Authorization") != "Bearer "+token || r.URL.Path != "/v1/projects/"+testProject+"/databases/main/sql/execute" {
 			t.Error("wrong resource request or credential boundary")
 		}
-		fmt.Fprint(w, `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD2","version":"tbv1-fixture","state":"value","document":{"id":"application","n":9007199254740993}}`)
+		fmt.Fprint(w, `{"results":[{"columns":[{"name":"n","decltype":"INTEGER"}],"rows":[[9007199254740993]],"rows_affected":0,"last_insert_rowid":null}]}`)
 	}))
 	t.Cleanup(api.Close)
 	source, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Issuer: issuer.URL + "/terrascale", Key: key, Project: testProject, Scopes: []string{tsauth.ScopeDocumentsRead}})
@@ -52,9 +51,12 @@ func TestTokenSourceExchangeToPublicAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		doc, err := c.Database(testProject, "main").Collection("users").Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD2")
-		if err != nil || !strings.Contains(string(doc.Document), "9007199254740993") {
-			t.Fatalf("document=%+v error=%v", doc, err)
+		rows, err := c.Database(testProject, "main").Query(t.Context(), "SELECT n FROM t")
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("rows=%v error=%v", rows, err)
+		}
+		if n, err := rows[0].Int64("n"); err != nil || n != 9007199254740993 {
+			t.Fatalf("n=%d error=%v", n, err)
 		}
 	}
 	if exchanges.Load() != 1 || requests.Load() != 2 {
@@ -71,37 +73,26 @@ func (s *rejectedContractSource) Token(context.Context) (string, error) {
 func (s *rejectedContractSource) Invalidate(string) { s.invalidations++ }
 
 func TestTokenSource401RefreshesOnceWithoutPermissionFallback(t *testing.T) {
-	for _, stream := range []bool{false, true} {
-		t.Run(fmt.Sprint(stream), func(t *testing.T) {
-			source := &rejectedContractSource{}
-			var hits atomic.Int64
-			peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				hits.Add(1)
-				if r.Header.Get("Authorization") != "Bearer fixture.jwt.signature" {
-					t.Error("credential fallback")
-				}
-				w.Header().Set("X-Request-ID", "final-denial")
-				w.WriteHeader(http.StatusUnauthorized)
-				fmt.Fprint(w, `{"error":{"code":"invalid_key"}}`)
-			}))
-			t.Cleanup(peer.Close)
-			c, err := v1.New(v1.Config{BaseURL: peer.URL, TokenSource: source})
-			if err != nil {
-				t.Fatal(err)
-			}
-			db := c.Database(testProject, "main")
-			if stream {
-				for _, e := range db.Changes(t.Context(), v1.ChangesOptions{}) {
-					err = e
-				}
-			} else {
-				_, err = db.Collection("users").Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD2")
-			}
-			var apiErr *v1.APIError
-			if !errors.Is(err, v1.ErrInvalidKey) || !errors.As(err, &apiErr) || apiErr.RequestID != "final-denial" || hits.Load() != 2 || source.calls != 2 || source.invalidations != 1 {
-				t.Fatalf("denial=%v hits=%d calls=%d invalidations=%d", err, hits.Load(), source.calls, source.invalidations)
-			}
-		})
+	source := &rejectedContractSource{}
+	var hits atomic.Int64
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if r.Header.Get("Authorization") != "Bearer fixture.jwt.signature" {
+			t.Error("credential fallback")
+		}
+		w.Header().Set("X-Request-ID", "final-denial")
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"error":{"code":"invalid_key"}}`)
+	}))
+	t.Cleanup(peer.Close)
+	c, err := v1.New(v1.Config{BaseURL: peer.URL, TokenSource: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Database(testProject, "main").Info(t.Context())
+	var apiErr *v1.APIError
+	if !errors.Is(err, v1.ErrInvalidKey) || !errors.As(err, &apiErr) || apiErr.RequestID != "final-denial" || hits.Load() != 2 || source.calls != 2 || source.invalidations != 1 {
+		t.Fatalf("denial=%v hits=%d calls=%d invalidations=%d", err, hits.Load(), source.calls, source.invalidations)
 	}
 }
 
@@ -128,7 +119,7 @@ func TestUnsupportedScopeAndRevokedCredentialExchangeStopsBeforeResource(t *test
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = c.Database(testProject, "main").Collection("users").Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD2")
+			_, err = c.Database(testProject, "main").Info(t.Context())
 			var oauthErr *tsauth.Error
 			if !errors.As(err, &oauthErr) || oauthErr.Code != code || oauthErr.Status != status {
 				t.Fatalf("exchange=%v", err)
@@ -147,7 +138,7 @@ func TestCancellationBeforeTokenOrHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.Database(testProject, "main").Collection("users").Put(ctx, "01ARZ3NDEKTSV4RRFFQ69G5FD2", map[string]any{})
+	_, err = c.Database(testProject, "main").Execute(ctx, "INSERT INTO t (id) VALUES (?)", "01ARZ3NDEKTSV4RRFFQ69G5FD2")
 	if !errors.Is(err, context.Canceled) || errors.Is(err, v1.ErrCommitUncertain) {
 		t.Fatalf("cancel=%v", err)
 	}

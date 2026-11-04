@@ -5,11 +5,9 @@ import (
 	"net/http"
 	"os"
 	"testing"
-
-	tb "terrascale.tech/sdk/v1"
 )
 
-func TestPinnedSQLAndExplainContractFixtures(t *testing.T) {
+func TestPinnedSQLContractFixture(t *testing.T) {
 	data, err := os.ReadFile("testdata/p10-contract-provenance.json")
 	if err != nil {
 		t.Fatal(err)
@@ -17,7 +15,6 @@ func TestPinnedSQLAndExplainContractFixtures(t *testing.T) {
 	var fixture struct {
 		Revision string
 		SQL      struct{ Success json.RawMessage }
-		Query    struct{ Request, Success json.RawMessage }
 	}
 	if err := json.Unmarshal(data, &fixture); err != nil {
 		t.Fatal(err)
@@ -29,10 +26,5 @@ func TestPinnedSQLAndExplainContractFixtures(t *testing.T) {
 	rows, err := db.Query(t.Context(), "SELECT id FROM t")
 	if err != nil || len(rows) != 1 || rows[0].Map()["id"] != "customer/chosen" {
 		t.Fatalf("rows=%v error=%v", rows, err)
-	}
-	col := parityClient(t, http.MethodPost, parityDatabase+"/collections/articles/query", "", string(fixture.Query.Request), string(fixture.Query.Success), http.StatusOK).Database(parityProject, "main").Collection("articles")
-	page, err := col.Query(t.Context(), tb.Query{Explain: true})
-	if err != nil || page.Explain == nil || page.Explain.RowsScanned != 9007199254740993 {
-		t.Fatalf("page=%v error=%v", page, err)
 	}
 }

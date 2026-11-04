@@ -15,8 +15,8 @@ func (f pinningRoundTripperFunc) RoundTrip(r *http.Request) (*http.Response, err
 func TestErrorFromResponseDecodesBoundedNestedDiagnostic(t *testing.T) {
 	headers := make(http.Header)
 	headers.Set("X-Request-ID", "request-1")
-	err := errorFromResponse("documents.get", http.MethodGet, "/api/v1/documents/1", http.StatusConflict, headers, []byte(`{"error":{"code":"conflict","message":"document changed","fix":"refresh and retry"}}`))
-	if err.Code != "conflict" || err.Message != "document changed" || err.Fix != "refresh and retry" || err.RequestID != "request-1" {
+	err := errorFromResponse("databases.get", http.MethodGet, "/v1/projects/p/databases/main", http.StatusConflict, headers, []byte(`{"error":{"code":"conflict","message":"database changed","fix":"refresh and retry"}}`))
+	if err.Code != "conflict" || err.Message != "database changed" || err.Fix != "refresh and retry" || err.RequestID != "request-1" {
 		t.Fatalf("decoded error = %+v", err)
 	}
 }

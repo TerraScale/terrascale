@@ -4,25 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	v1 "terrascale.tech/sdk/v1"
 )
 
-func sqlInputLimit(mode string) int {
-	if mode == "document" {
-		return 64 << 10
-	}
-	return v1.MaxSQLRequestBytes
-}
-
-// runSQL submits one complete statement; it does not split SQL or maintain a
-// transaction across requests. Document mode uses the server's read-only subset.
-func runSQL(ctx context.Context, db *v1.Database, mode, statement string, input io.Reader, out io.Writer) error {
-	if mode != "document" && mode != "relational" {
-		return fmt.Errorf("SQL mode must be document or relational: %w", errUsage)
-	}
+// runSQL submits one complete statement in its own transaction; it does not
+// split SQL or maintain a transaction across requests.
+func runSQL(ctx context.Context, db *v1.Database, statement string, input io.Reader, out io.Writer) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -36,7 +25,7 @@ func runSQL(ctx context.Context, db *v1.Database, mode, statement string, input 
 				closer.Close()
 			}
 		})
-		data, err := io.ReadAll(io.LimitReader(input, int64(sqlInputLimit(mode))+1))
+		data, err := io.ReadAll(io.LimitReader(input, int64(v1.MaxSQLRequestBytes)+1))
 		stop()
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -46,55 +35,32 @@ func runSQL(ctx context.Context, db *v1.Database, mode, statement string, input 
 		}
 		statement = string(data)
 	}
-	res, err := executeSQL(ctx, db, mode, statement)
+	res, err := executeSQL(ctx, db, statement)
 	if err != nil {
 		return err
 	}
-	return writeSQLResult(out, res, os.Stderr)
+	return writeSQLResult(out, res)
 }
 
-func executeSQL(ctx context.Context, db *v1.Database, mode, statement string) (any, error) {
-	if strings.TrimSpace(statement) == "" || len(statement) > sqlInputLimit(mode) {
+func executeSQL(ctx context.Context, db *v1.Database, statement string) (*v1.Result, error) {
+	if strings.TrimSpace(statement) == "" || len(statement) > v1.MaxSQLRequestBytes {
 		return nil, fmt.Errorf("SQL input must be nonempty and within the server statement limit: %w", errUsage)
 	}
-	switch mode {
-	case "document":
-		return db.SQL(ctx, statement)
-	case "relational":
-		return db.Execute(ctx, statement)
-	default:
-		return nil, fmt.Errorf("SQL mode must be document or relational: %w", errUsage)
-	}
+	return db.Execute(ctx, statement)
 }
 
-func writeSQLResult(out io.Writer, result any, diagnostics io.Writer) error {
+func writeSQLResult(out io.Writer, res *v1.Result) error {
 	if jsonMode(out) {
-		return emitJSON(out, result)
+		return emitJSON(out, res)
 	}
-	switch res := result.(type) {
-	case *v1.SQLResult:
-		for _, row := range res.Rows {
-			if err := emitJSON(out, row.Value); err != nil {
-				return err
-			}
-		}
-		if res.Truncated {
-			_, err := fmt.Fprintf(diagnostics, "ts: truncated: %d rows matched\n", res.Matched)
+	if len(res.Columns) == 0 {
+		_, err := fmt.Fprintf(out, "%d rows affected\n", res.RowsAffected)
+		return err
+	}
+	for _, row := range res.Rows {
+		if err := emitJSON(out, row.Map()); err != nil {
 			return err
 		}
-		return nil
-	case *v1.Result:
-		if len(res.Columns) == 0 {
-			_, err := fmt.Fprintf(out, "%d rows affected\n", res.RowsAffected)
-			return err
-		}
-		for _, row := range res.Rows {
-			if err := emitJSON(out, row.Map()); err != nil {
-				return err
-			}
-		}
-		return nil
-	default:
-		return fmt.Errorf("unexpected SQL result type %T", result)
 	}
+	return nil
 }
