@@ -50,6 +50,10 @@ public interface IStorageTransaction : IAsyncDisposable
 
     internal void InterruptStatement();
 
+    internal ValueTask SuspendForeignKeysAsync(CancellationToken cancellationToken);
+
+    internal ValueTask<IReadOnlyList<CapturedRowChange>> ReadCapturedChangesAsync(CancellationToken cancellationToken);
+
     internal ValueTask<long> MeasureSqlStorageAsync(CancellationToken cancellationToken);
 
     internal ValueTask AddSqlStorageAsync(long delta, CancellationToken cancellationToken);

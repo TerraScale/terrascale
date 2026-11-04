@@ -2,6 +2,7 @@ using System.Text;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.HomeApply;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replicas;
@@ -12,14 +13,14 @@ namespace TerraBase.Features.Sql;
 internal sealed class SqlService(
     IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time,
     [FromKeyedServices(SqlLimits.TransactionClock)] TimeProvider transactionTime,
-    IDatabaseReplicas replicas, IReplicaCatalog placements, HomeSessions homes, RegionReplication replication, TerraBaseOptions options) : ISqlService
+    IDatabaseReplicas replicas, IReplicaCatalog placements, HomeSessions homes, RegionReplication replication, TerraBaseOptions options, IHomeApply apply) : ISqlService
 {
     private const int MaxTables = 10_000;
 
     public ISqlSession Open(TenantContext database, bool canWrite)
     {
         ArgumentNullException.ThrowIfNull(database);
-        ISqlSession Local() => new SqlSession(engine, quota, usage, allowance, time, transactionTime, database, canWrite);
+        ISqlSession Local() => new SqlSession(engine, quota, usage, allowance, time, transactionTime, database, canWrite, apply);
         // Only a region holding a replica of the database serves it from one; its home always holds the file.
         return replicas.Holds(database)
             ? new ReplicaSqlSession(this, replicas, placements, homes, replication, options, transactionTime, database, canWrite, Local)
@@ -57,7 +58,7 @@ internal sealed class SqlService(
             try
             {
                 raw = await reader.ExecuteAsync(
-                    new SqlStatement(plan.Run, [.. command.Args.Select(SqlSession.Bound)],
+                    new SqlStatement(await SqlSession.RunTextAsync(plan, statement => reader.ExecuteAsync(statement, cancellationToken)).ConfigureAwait(false), [.. command.Args.Select(SqlSession.Bound)],
                         command.Named.ToDictionary(pair => pair.Key, pair => SqlSession.Bound(pair.Value), StringComparer.Ordinal),
                         SqlSession.MaxRows, SqlSession.MaxBytes, SqlLimits.MaxRequestTime),
                     cancellationToken).ConfigureAwait(false);
@@ -158,7 +159,7 @@ internal sealed class SqlService(
 
 internal sealed class SqlSession(
     IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time, TimeProvider transactionTime,
-    TenantContext database, bool canWrite)
+    TenantContext database, bool canWrite, IHomeApply apply)
     : ISqlSession
 {
     private const int MaxStatements = 256;
@@ -256,7 +257,8 @@ internal sealed class SqlSession(
                     last = await ExecuteLockedAsync(plan, new SqlCommand(plan.Sql, [], new Dictionary<string, SqlValue>()), admit: null, first: true, cancellationToken)
                         .ConfigureAwait(false);
                     consumed = remaining.IndexOf(plan.Sql, StringComparison.Ordinal)
-                        + (!ReferenceEquals(plan.Run, plan.Sql) ? plan.Sql.Length : _consumed > 0 ? _consumed : SqlScript.SimpleLength(plan.Sql));
+                        + (plan.GuardsTrigger && _consumed > 0 ? _consumed - (plan.Run.Length - plan.Sql.Length)
+                            : !ReferenceEquals(plan.Run, plan.Sql) ? plan.Sql.Length : _consumed > 0 ? _consumed : SqlScript.SimpleLength(plan.Sql));
                 }
                 finally
                 {
@@ -352,6 +354,17 @@ internal sealed class SqlSession(
     }
 
     internal static SqlStatement Internal(string sql) => new(sql, [], NoNamed, MaxRows, MaxBytes, SqlLimits.MaxRequestTime);
+
+    internal static async ValueTask<string> RunTextAsync(SqlStatementPlan plan, Func<SqlStatement, ValueTask<SqlStatementResult>> run)
+    {
+        if (plan.RunWithoutConflicts is not { } without)
+        {
+            return plan.Run;
+        }
+
+        var found = await run(Internal("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_ts_conflicts'")).ConfigureAwait(false);
+        return found.Rows.Count > 0 ? plan.Run : without;
+    }
 
     private int _consumed;
 
@@ -636,7 +649,8 @@ internal sealed class SqlSession(
         try
         {
             raw = await transaction.ExecuteStatementAsync(
-                new SqlStatement(plan.Run, [.. command.Args.Select(Bound)], command.Named.ToDictionary(pair => pair.Key, pair => Bound(pair.Value), StringComparer.Ordinal),
+                new SqlStatement(await RunTextAsync(plan, statement => transaction.ExecuteStatementAsync(statement, cancellationToken)).ConfigureAwait(false),
+                    [.. command.Args.Select(Bound)], command.Named.ToDictionary(pair => pair.Key, pair => Bound(pair.Value), StringComparer.Ordinal),
                     MaxRows, MaxBytes, StatementTimeout(), first),
                 cancellationToken).ConfigureAwait(false);
         }
@@ -692,7 +706,8 @@ internal sealed class SqlSession(
     {
         try
         {
-            var shape = await transaction.DescribeStatementAsync(plan.Run, cancellationToken).ConfigureAwait(false);
+            var run = await RunTextAsync(plan, statement => transaction.ExecuteStatementAsync(statement, cancellationToken)).ConfigureAwait(false);
+            var shape = await transaction.DescribeStatementAsync(run, cancellationToken).ConfigureAwait(false);
             return new SqlDescription(shape.Parameters, [.. shape.Columns.Select(column => new SqlColumn(column.Name, column.DeclType))],
                 plan.IsExplain, plan.Kind != SqlStatementKind.Write);
         }
@@ -736,6 +751,7 @@ internal sealed class SqlSession(
     {
         try
         {
+            await apply.StampHomeWritesAsync(transaction, cancellationToken).ConfigureAwait(false);
             if (await MeasureAsync(transaction, cancellationToken).ConfigureAwait(false) is not long after)
             {
                 return SqlErrors.Busy("the database is busy; retry");

@@ -33,6 +33,10 @@ internal sealed record SqlStatementPlan(
 
     public IReadOnlyList<int> HiddenColumns { get; init; } = [];
 
+    public string? RunWithoutConflicts { get; init; }
+
+    public bool GuardsTrigger { get; init; }
+
     public bool IsControl => Kind is SqlStatementKind.Begin or SqlStatementKind.Commit or SqlStatementKind.Rollback;
 
     public bool IsSavepoint => Kind is SqlStatementKind.Savepoint or SqlStatementKind.Release or SqlStatementKind.RollbackTo;
@@ -166,7 +170,12 @@ internal static class SqlScript
             return schemaDenied;
         }
 
-        return rewritten is var (original, run) ? plan with { Sql = original, Run = run } : plan;
+        if (rewritten is var (original, run, withoutConflicts))
+        {
+            return plan with { Sql = original, Run = run, RunWithoutConflicts = withoutConflicts };
+        }
+
+        return verb == "CREATE" && SqlSandbox.GuardTrigger(sql, tokens) is { } guarded ? plan with { Run = guarded, GuardsTrigger = true } : plan;
     }
 
     private static SqlError? Explained(string sql, List<SqlToken> tokens)

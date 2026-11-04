@@ -2,6 +2,7 @@ using System.Diagnostics;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.HomeApply;
 using TerraBase.Features.Regions;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
@@ -10,7 +11,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 /// <summary><c>POST …/projects/{project}/databases</c>: creates an empty database in a project.</summary>
-internal sealed class CreateManagedDatabaseEndpoint(IManagementService management, IProjectCatalog catalog, TerraBaseOptions options, IRegionCatalog regions)
+internal sealed class CreateManagedDatabaseEndpoint(IManagementService management, IProjectCatalog catalog, TerraBaseOptions options, IRegionCatalog regions, IHomeApply apply)
     : Endpoint<DatabaseRegionsRequest, IResult>
 {
     internal const string OperationName = "createDatabase";
@@ -131,8 +132,10 @@ internal sealed class CreateManagedDatabaseEndpoint(IManagementService managemen
 
     private async ValueTask<IResult> CreateAsync(string name, IReadOnlyList<string> replicas, bool all, long? ttlSeconds, CancellationToken cancellationToken)
     {
-        return await management.CreateDatabaseAsync(
-            ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), name, cancellationToken, replicas, all, ttlSeconds) switch
+        var organization = ManagementRoute.OrganizationId(HttpContext);
+        return await apply.PrepareReplicatedAsync(organization, options.Region, await management.CreateDatabaseAsync(
+            ManagementRoute.UserId(HttpContext), organization, ManagementRoute.Value(HttpContext, "project"), name, cancellationToken, replicas, all, ttlSeconds),
+            cancellationToken) switch
         {
             ManagedDatabase value => TypedResults.Created(ManagementRoute.CreatedDatabasePath(HttpContext, value), ManagedDatabaseBody.From(value, Listeners.RegionOf(HttpContext))),
             NotFound error => ManagementRoute.DatabaseNotFound(error),

@@ -3,13 +3,14 @@ using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Catalog;
+using TerraBase.Features.HomeApply;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
 /// <summary><c>PATCH …/databases/{database}</c>: renames a database or sets its replica regions (docs/cross-region.md).</summary>
-internal sealed class UpdateManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options, IRegionCatalog regions) : Endpoint<DatabaseRegionsRequest, IResult>
+internal sealed class UpdateManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options, IRegionCatalog regions, IHomeApply apply) : Endpoint<DatabaseRegionsRequest, IResult>
 {
     public override void Configure()
     {
@@ -76,7 +77,8 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
         return checkedRegions switch
         {
             Validation error => ErrorResponse.From(error),
-            IReadOnlyList<string> accepted => Answer(await management.SetDatabaseRegionsAsync(user, organization, project, id, accepted, cancellationToken, request.AllRegions == true)),
+            IReadOnlyList<string> accepted => Answer(await apply.PrepareReplicatedAsync(organization, options.Region,
+                await management.SetDatabaseRegionsAsync(user, organization, project, id, accepted, cancellationToken, request.AllRegions == true), cancellationToken)),
         };
     }
 

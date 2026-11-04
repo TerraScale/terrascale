@@ -193,7 +193,8 @@ internal sealed class ReplicaSqlSession(
     {
         try
         {
-            var shape = await reader.DescribeAsync(plan.Run, cancellationToken).ConfigureAwait(false);
+            var run = await SqlSession.RunTextAsync(plan, statement => reader.ExecuteAsync(statement, cancellationToken)).ConfigureAwait(false);
+            var shape = await reader.DescribeAsync(run, cancellationToken).ConfigureAwait(false);
             return new SqlDescription(shape.Parameters, [.. shape.Columns.Select(column => new SqlColumn(column.Name, column.DeclType))],
                 plan.IsExplain, plan.Kind != SqlStatementKind.Write);
         }

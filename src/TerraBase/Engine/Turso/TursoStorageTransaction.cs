@@ -503,6 +503,8 @@ internal sealed partial class TursoStorageTransaction(
                         capture.ExecuteNonQuery();
                     }
 
+                    RestoreForeignKeys();
+
                     if (!write && store.Tenant is { } readingTenant)
                     {
 

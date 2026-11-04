@@ -59,7 +59,7 @@ JetStream message after `ApplyAsync` returns, whatever its state.
 Internal listener only, behind the peer credential; 404 on the public listener.
 
 - `POST /v1/sync/organizations/{organization}/projects/{project}/databases/{database}/apply`: body is one
-  `RegionTransaction`, at most 8 MiB; answer `200` with a `HomeApplyResult`. `404` when the database is not homed
+  `RegionTransaction`, at most 8 MiB, sent with `Content-Length`; answer `200` with a `HomeApplyResult`. `404` when the database is not homed
   here or its placement does not name the origin region; `400` for a malformed transaction; `503` when the home is
   unavailable (retry).
 - `GET …/databases/{database}/apply/{transaction}`: the transaction's `HomeApplyResult`, or
