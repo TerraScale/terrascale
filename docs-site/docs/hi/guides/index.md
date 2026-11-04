@@ -27,6 +27,7 @@ Use the [quickstart](/hi/getting-started/) to establish one working application 
 - [File storage](/hi/guides/file-storage): project files in buckets with owner, role and public read and write rules.
 - [Schema migrations](/hi/guides/migrations): versioned SQL table migrations with `ts migrate`.
 - [Branches](/hi/guides/branches) (being updated for SQL).
+- [Multi-region writes and conflicts](/hi/guides/multi-region-writes-and-conflicts): column winners, transaction states and the conflict log.
 - [Dashboard usage](/hi/guides/dashboard): customer account and database workflow.
 - [Connect an AI assistant with MCP](/hi/guides/mcp): sign in or use a personal access token to connect an assistant.
 - [Single sign-on](/hi/guides/single-sign-on): connect your identity provider over OIDC for a verified email domain (Team and Enterprise).
