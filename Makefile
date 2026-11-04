@@ -134,8 +134,8 @@ auth-mail-delivery-check:
 	python3 scripts/auth/signup-mail-check.py
 
 # Self-contained ts-auth (JIT): $(PUBLISH_DIR)/ts-auth
-auth-publish:
-	dotnet publish src/TerraScale.Authentication --configuration Release --runtime $(RUNTIME) --self-contained --output "$(PUBLISH_DIR)"
+auth-publish: restore
+	dotnet publish src/TerraScale.Authentication --configuration Release --runtime $(RUNTIME) --self-contained --no-restore --output "$(PUBLISH_DIR)"
 
 auth-dev:
 	scripts/auth/dev.sh
@@ -197,8 +197,8 @@ terrabase-run: turso-native
 	dotnet run --project src/TerraBase --configuration $(CONFIGURATION)
 
 # Self-contained single-file binary (JIT): $(PUBLISH_DIR)/terrabase
-terrabase-publish: turso-native
-	dotnet publish src/TerraBase --configuration Release --runtime $(RUNTIME) --self-contained --output "$(PUBLISH_DIR)"
+terrabase-publish: restore turso-native
+	dotnet publish src/TerraBase --configuration Release --runtime $(RUNTIME) --self-contained --no-restore --output "$(PUBLISH_DIR)"
 
 # ts-benchmark (Go) plus the BenchmarkDotNet projects for ts-libs.
 benchmark-build: restore
