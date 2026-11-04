@@ -8,6 +8,7 @@ public static class QosContext
 {
     private static readonly AsyncLocal<TenantContext?> Tenant = new();
     private static readonly AsyncLocal<ResultMemory?> Results = new();
+    private static readonly AsyncLocal<IQosAdmission?> Admission = new();
 
     /// <summary>The request's current plan; null for system and background work.</summary>
     public static TenantContext? Current => Tenant.Value;
@@ -18,32 +19,44 @@ public static class QosContext
     /// <summary>Admits against the explicit tenant, or only the process when null, retaining the current result owner.</summary>
     public static void ReserveResult(long bytes, TenantContext? tenant) => Results.Value?.Reserve(bytes, tenant);
 
-    internal readonly record struct Snapshot(TenantContext? Tenant, ResultMemory? Results);
+    /// <summary>Charges SQL statement execution time to the current organization's engine budget.</summary>
+    public static void ChargeEngine(TimeSpan spent)
+    {
+        if (Tenant.Value is { } tenant && Admission.Value is { } admission)
+        {
+            admission.ChargeEngine(tenant, spent);
+        }
+    }
 
-    internal static Snapshot Capture() => new(Tenant.Value, Results.Value);
+    internal readonly record struct Snapshot(TenantContext? Tenant, ResultMemory? Results, IQosAdmission? Admission);
+
+    internal static Snapshot Capture() => new(Tenant.Value, Results.Value, Admission.Value);
 
     internal static IDisposable Restore(Snapshot snapshot)
     {
-        var scope = new Scope(Tenant.Value, Results.Value, null);
+        var scope = new Scope(Tenant.Value, Results.Value, null, Admission.Value);
         Tenant.Value = snapshot.Tenant;
         Results.Value = snapshot.Results;
+        Admission.Value = snapshot.Admission;
         return scope;
     }
 
-    internal static IDisposable Enter(TenantContext? tenant, IMemoryBudget? budget = null)
+    internal static IDisposable Enter(TenantContext? tenant, IMemoryBudget? budget = null, IQosAdmission? admission = null)
     {
         var previous = Tenant.Value;
         var previousResults = Results.Value;
+        var previousAdmission = Admission.Value;
         var owned = budget is not null ? new ResultMemory(budget) : null;
         Tenant.Value = tenant;
         Results.Value = owned ?? previousResults;
-        return new Scope(previous, previousResults, owned);
+        Admission.Value = admission ?? previousAdmission;
+        return new Scope(previous, previousResults, owned, previousAdmission);
     }
 
     /// <summary>Uses independently owned admission for a shared read.</summary>
     public static IDisposable EnterFlight(TenantContext tenant, ResultMemory memory)
     {
-        var scope = new Scope(Tenant.Value, Results.Value, null);
+        var scope = new Scope(Tenant.Value, Results.Value, null, Admission.Value);
         Tenant.Value = tenant;
         Results.Value = memory;
         return scope;
@@ -52,13 +65,14 @@ public static class QosContext
     /// <summary>Retains shared read admission through this consumer's response serialization.</summary>
     public static void AttachResults(ResultMemory memory) => Results.Value?.Attach(memory);
 
-    private sealed class Scope(TenantContext? previous, ResultMemory? previousResults, ResultMemory? owned) : IDisposable
+    private sealed class Scope(TenantContext? previous, ResultMemory? previousResults, ResultMemory? owned, IQosAdmission? previousAdmission) : IDisposable
     {
         public void Dispose()
         {
             owned?.Dispose();
             Results.Value = previousResults;
             Tenant.Value = previous;
+            Admission.Value = previousAdmission;
         }
     }
 

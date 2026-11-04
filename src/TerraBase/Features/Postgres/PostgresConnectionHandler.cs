@@ -798,13 +798,14 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             session.Exchange?.Database = database;
             authorized(database);
             var tenant = new TenantContext(database.OrganizationId, database.Plan);
-            using var lease = services.GetRequiredService<IQosAdmission>().TryEnter(tenant, out var retryAfter);
+            var admission = services.GetRequiredService<IQosAdmission>();
+            using var lease = admission.TryEnter(tenant, out var retryAfter);
             if (lease is null)
             {
                 return new PgError("53300", $"tenant busy, retry after {retryAfter}s");
             }
 
-            using var scope = QosContext.Enter(tenant, Memory);
+            using var scope = QosContext.Enter(tenant, Memory, admission);
             return await run(database, running.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (running.IsCancellationRequested && !cancellationToken.IsCancellationRequested)

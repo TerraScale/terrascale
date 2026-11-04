@@ -30,7 +30,8 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
                         var existing = pair.Value;
                         var existingPolicy = QosPolicy.For(existing.Plan);
                         var replenished = existing.Tokens + Math.Max(0, time.GetElapsedTime(existing.LastSeen, now).TotalSeconds) * existingPolicy.RequestsPerSecond;
-                        if (existing.Active == 0 && (existingPolicy.RequestsPerSecond == 0 || replenished >= existingPolicy.Burst))
+                        if (existing.Active == 0 && (existingPolicy.RequestsPerSecond == 0 || replenished >= existingPolicy.Burst)
+                            && (existingPolicy.EngineSeconds == 0 || Engine(existing, existingPolicy, now) >= existingPolicy.EngineBurst))
                         {
                             _lanes.Remove(pair.Key);
                         }
@@ -43,20 +44,29 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
                     return null;
                 }
 
-                lane = new Lane { Tokens = policy.Burst, LastSeen = now, Plan = tenant.Plan };
+                lane = new Lane { Tokens = policy.Burst, Engine = policy.EngineBurst, LastSeen = now, Plan = tenant.Plan };
                 _lanes.Add(tenant.OrganizationId, lane);
             }
 
             lane.Tokens = Math.Min(policy.Burst, lane.Tokens + Math.Max(0, time.GetElapsedTime(lane.LastSeen, now).TotalSeconds) * policy.RequestsPerSecond);
+            lane.Engine = Engine(lane, policy, now);
             if (lane.Plan != tenant.Plan)
             {
                 // An unlimited plan has no token balance. Starting a finite bucket must not lock out its first request.
-                lane.Tokens = lane.Plan < tenant.Plan || lane.Plan == PlanTier.Enterprise
-                    ? policy.Burst : Math.Min(lane.Tokens, policy.Burst);
+                var upgraded = lane.Plan < tenant.Plan || lane.Plan == PlanTier.Enterprise;
+                lane.Tokens = upgraded ? policy.Burst : Math.Min(lane.Tokens, policy.Burst);
+                lane.Engine = upgraded ? policy.EngineBurst : Math.Min(lane.Engine, policy.EngineBurst);
                 lane.Plan = tenant.Plan;
             }
 
             lane.LastSeen = Math.Max(lane.LastSeen, now);
+            if (policy.EngineSeconds > 0 && lane.Engine <= 0)
+            {
+                retryAfter = Math.Max(1, (int)Math.Ceiling(-lane.Engine / policy.EngineSeconds));
+                Reject(tenant, "engine");
+                return null;
+            }
+
             if (policy.Concurrency > 0 && lane.Active >= policy.Concurrency)
             {
                 Reject(tenant, "concurrency");
@@ -80,6 +90,32 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
         }
     }
 
+    public void ChargeEngine(TenantContext tenant, TimeSpan spent)
+    {
+        ArgumentNullException.ThrowIfNull(tenant);
+        lock (_gate)
+        {
+            if (!_lanes.TryGetValue(tenant.OrganizationId, out var lane))
+            {
+                return;
+            }
+
+            var policy = QosPolicy.For(lane.Plan);
+            if (policy.EngineSeconds == 0)
+            {
+                return;
+            }
+
+            var now = time.GetTimestamp();
+            lane.Tokens = Math.Min(policy.Burst, lane.Tokens + Math.Max(0, time.GetElapsedTime(lane.LastSeen, now).TotalSeconds) * policy.RequestsPerSecond);
+            lane.Engine = Engine(lane, policy, now) - Math.Max(0, spent.TotalSeconds);
+            lane.LastSeen = Math.Max(lane.LastSeen, now);
+        }
+    }
+
+    private double Engine(Lane lane, QosPolicy policy, long now) =>
+        Math.Min(policy.EngineBurst, lane.Engine + Math.Max(0, time.GetElapsedTime(lane.LastSeen, now).TotalSeconds) * policy.EngineSeconds);
+
     // 64 stable buckets, deliberately shared on collisions; raw organization IDs never become labels.
     private static int Bucket(TenantContext tenant)
     {
@@ -101,6 +137,7 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
     private sealed class Lane
     {
         public double Tokens { get; set; }
+        public double Engine { get; set; }
         public long LastSeen { get; set; }
         public int Active { get; set; }
         public PlanTier Plan { get; set; }

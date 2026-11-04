@@ -21,8 +21,8 @@ namespace TerraBase.Engine.Turso;
 /// bounded by admission; beyond that callers get <see cref="StorageBusyException"/>. One long call
 /// (<c>VACUUM INTO</c> for a branch, a wait on another process's lock) holds a thread for its whole
 /// duration. Scheduling weights apply to calls, not elapsed time: long calls are not preempted. With at least two
-/// workers, Hobby can occupy at most all but one, and so can bulk work (<see cref="StorageWork.Bulk"/>); a one-worker pool cannot
-/// isolate running calls.
+/// workers, Hobby can occupy at most all but one, and so can bulk work (<see cref="StorageWork.Bulk"/>); one organization can occupy
+/// at most half of them, so a runaway tenant leaves workers to the others; a one-worker pool cannot isolate running calls.
 /// </remarks>
 internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
 {
@@ -82,6 +82,9 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
     // Bulk calls running (StorageWork.Bulk); capped as Hobby's are.
     private int _runningBulk;
 
+    private readonly int _maxTenantRunning;
+    private readonly Dictionary<string, int> _runningByTenant = [];
+
     private sealed record WorkItem(string? Organization, long Finish, bool Hobby, bool Bulk, Action Run);
 
     // ponytail: one short queue lock across storage threads; per-worker queues if contention is measured.
@@ -108,6 +111,7 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxAdmitted);
         AdmissionCapacity = maxAdmitted;
         _maxHobbyRunning = Math.Max(1, threads - 1);
+        _maxTenantRunning = Math.Max(1, Math.Min(threads / 2, threads - 2));
         _disposal = new(DrainAsync);
         meter.CreateObservableGauge(
             "terrabase.storage.admitted", () => Volatile.Read(ref _admitted), description: "Storage transactions and maintenance calls admitted.");
@@ -384,7 +388,8 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
                     for (var candidate = _work.First; candidate is not null; candidate = candidate.Next)
                     {
                         if (candidate.Value.Hobby && _runningHobby >= _maxHobbyRunning
-                            || candidate.Value.Bulk && _runningBulk >= _maxHobbyRunning)
+                            || candidate.Value.Bulk && _runningBulk >= _maxHobbyRunning
+                            || candidate.Value.Organization is { } organization && _runningByTenant.GetValueOrDefault(organization) >= _maxTenantRunning)
                         {
                             continue;
                         }
@@ -413,6 +418,10 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
                 _work.Remove(chosen);
                 _runningHobby += item.Hobby ? 1 : 0;
                 _runningBulk += item.Bulk ? 1 : 0;
+                if (item.Organization is { } started)
+                {
+                    _runningByTenant[started] = _runningByTenant.GetValueOrDefault(started) + 1;
+                }
             }
 
             try
@@ -421,12 +430,17 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
             }
             finally
             {
-                if (item.Hobby || item.Bulk)
+                if (item.Hobby || item.Bulk || item.Organization is not null)
                 {
                     lock (_queueGate)
                     {
                         _runningHobby -= item.Hobby ? 1 : 0;
                         _runningBulk -= item.Bulk ? 1 : 0;
+                        if (item.Organization is { } finished && --_runningByTenant[finished] == 0)
+                        {
+                            _runningByTenant.Remove(finished);
+                        }
+
                         Monitor.PulseAll(_queueGate);
                     }
                 }

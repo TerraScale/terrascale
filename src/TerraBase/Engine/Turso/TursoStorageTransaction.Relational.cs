@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using TerraBase.Features.Qos;
 using Turso.Raw.Public;
@@ -96,6 +97,7 @@ internal sealed partial class TursoStorageTransaction
         var changed = write;
         _queryBudget!.Charge(statement.Sql);
         CountRead("query");
+        var started = Stopwatch.GetTimestamp();
         try
         {
             var pages = write ? Counter(native, "PRAGMA page_count;") : 0L;
@@ -132,6 +134,10 @@ internal sealed partial class TursoStorageTransaction
         finally
         {
             _sqlChanged |= changed;
+            if (!store.IsSystem)
+            {
+                QosContext.ChargeEngine(Stopwatch.GetElapsedTime(started));
+            }
         }
     }
 

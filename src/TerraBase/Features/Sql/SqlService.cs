@@ -299,6 +299,11 @@ internal sealed class SqlSession(
     private TimeSpan StatementTimeout()
     {
         var timeout = SqlLimits.MaxRequestTime;
+        if (QosContext.Current is { } tenant && QosPolicy.For(tenant.Plan).QueryTimeout is var limit && limit != Timeout.InfiniteTimeSpan)
+        {
+            timeout = Min(timeout, limit);
+        }
+
         if (Math.Min(_transportStarted ?? long.MaxValue, _scriptStarted ?? long.MaxValue) is var started && started != long.MaxValue)
         {
             timeout = Min(timeout, SqlLimits.MaxRequestTime - time.GetElapsedTime(started));

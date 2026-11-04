@@ -79,8 +79,8 @@ internal static class QosExtensions
         };
 
         var retryAfter = 1;
-        using var lease = tenant is not null
-            ? context.RequestServices.GetRequiredService<IQosAdmission>().TryEnter(tenant, out retryAfter) : null;
+        var admission = context.RequestServices.GetRequiredService<IQosAdmission>();
+        using var lease = tenant is not null ? admission.TryEnter(tenant, out retryAfter) : null;
         if (tenant is not null && lease is null)
         {
             context.Response.Headers.RetryAfter = retryAfter.ToString(CultureInfo.InvariantCulture);
@@ -110,7 +110,7 @@ internal static class QosExtensions
             context.RequestServices.GetRequiredService<IDocumentCacheQuota>().Reconcile(tenant);
         }
 
-        using var scope = QosContext.Enter(tenant);
+        using var scope = QosContext.Enter(tenant, admission: admission);
         // Known lengths reserve before decoding; chunked bodies reserve before each bounded read.
         var bodyBytes = context.Request.ContentLength ?? 0;
         using var body = budget.TryReserve(MemoryLane.Foreground, 16 * 1024 + bodyBytes * 3);
