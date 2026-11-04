@@ -3,7 +3,8 @@ import { createTerraBaseClient } from "../src/index.js";
 import { RequestTransportError } from "../src/v1/transport.js";
 import { entity, fixture, json, project, token } from "./helpers/v1-http.js";
 
-const document = { id: entity, version: "opaque", state: "value", document: { value: 1 } };
+const database = { id: entity, projectId: project, name: "app", branchedFrom: null,
+  createdAt: "2026-10-13T12:00:00+00:00", region: "gru", homeRegion: "gru" };
 const busy = { error: { code: "tenant_busy", message: "organization request budget exceeded" } };
 
 afterEach(() => { vi.useRealTimers(); });
@@ -15,10 +16,10 @@ describe("replay-safe reads retry transient refusals", () => {
       if (++calls === 1) {
         response.setHeader("retry-after", "1");
         json(response, busy, 429);
-      } else json(response, document);
+      } else json(response, database);
     });
     const started = performance.now();
-    await expect(client.database("app").collection("users").get(entity)).resolves.toEqual(document);
+    await expect(client.databases.get("app")).resolves.toEqual(database);
     expect(performance.now() - started).toBeGreaterThanOrEqual(990);
     expect(requests).toHaveLength(2);
   });
@@ -30,9 +31,9 @@ describe("replay-safe reads retry transient refusals", () => {
       if (++calls === 1) throw new TypeError("fetch failed", { cause: new Error("ECONNRESET") });
       return globalThis.fetch(input, init);
     };
-    const { baseUrl, requests } = await fixture((_request, response) => json(response, document));
-    const docs = createTerraBaseClient({ project, token, baseUrl, fetch }).database("app").collection("users");
-    await expect(docs.get(entity)).resolves.toEqual(document);
+    const { baseUrl, requests } = await fixture((_request, response) => json(response, database));
+    const databases = createTerraBaseClient({ project, token, baseUrl, fetch }).databases;
+    await expect(databases.get("app")).resolves.toEqual(database);
     expect(calls).toBe(2);
     expect(requests).toHaveLength(1);
   });
@@ -43,9 +44,8 @@ describe("mutations stay single-attempt", () => {
     let calls = 0;
     /** @type {import("../src/config.js").FetchLike} */
     const fetch = async () => { calls++; throw new TypeError("fetch failed"); };
-    const docs = createTerraBaseClient({ project, token, baseUrl: "http://127.0.0.1:9", fetch }).database("app").collection("users");
-    await expect(docs.put(entity, { value: 2 })).rejects.toBeInstanceOf(RequestTransportError);
+    const db = createTerraBaseClient({ project, token, baseUrl: "http://127.0.0.1:9", fetch }).database("app");
+    await expect(db.execute("INSERT INTO users (id) VALUES (2)")).rejects.toBeInstanceOf(RequestTransportError);
     expect(calls).toBe(1);
   });
 });
-

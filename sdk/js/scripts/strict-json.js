@@ -3,7 +3,7 @@ const whitespace = new Set([" ", "\t", "\r", "\n"]);
 
 /**
  * Parses JSON after rejecting duplicate keys, invalid UTF-8, trailing data, and
- * documents that exceed the size or nesting limits.
+ * values that exceed the size or nesting limits.
  *
  * @param {Uint8Array | string} bytes
  * @param {string} name

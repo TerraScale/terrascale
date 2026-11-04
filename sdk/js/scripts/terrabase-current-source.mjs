@@ -36,7 +36,7 @@ export function verifyCurrentSourceRoutes(routes) {
   const evidence = [];
   for (const route of routes) {
     const sourcePath = currentSourcePin.routes[route.operation];
-    assert.ok(sourcePath, `${route.operation}: no current source-backed route; historical shape is separately inventoried.`);
+    assert.ok(sourcePath, `${route.operation}: no current source-backed route.`);
     const source = sources.get(sourcePath);
     const owner = sourcePath.split("/").at(-1).replace(/\.cs$/u, "");
     const registration = source.match(/\n\s+(Get|Put|Post|Patch|Delete)\(([^;]+)\);/u);

@@ -8,7 +8,7 @@ Run area commands from `sdk/js` in the monorepo.
 - Source is JavaScript ES modules with JSDoc in `src/`; `npm run build` generates TypeScript declarations in `types/`. Use native Node/npm tools, not a TypeScript source rewrite.
 - Use Node 22 or 24 and the npm version in `packageManager`. Install with `npm ci`.
 - Fast: `npm test`; build: `npm run build`; static checks: `npm run typecheck` and `npm run check:v1-route-manifest`; browser tests: `npm run test:browser`.
-- Current exports are root, `admin`, `management`, `ts-auth`, `react`, `svelte` and Node-only `codegen`. Keep credentials and server-only operations out of browser bundles. Do not add Dashboard-named or generic request entrypoints.
+- Current exports are root, `admin`, `management`, `ts-auth`, `react` and `svelte`. Keep credentials and server-only operations out of browser bundles. Do not add Dashboard-named or generic request entrypoints.
 
 ## Public API
 

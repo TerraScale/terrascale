@@ -1,4 +1,4 @@
-// Lossless JSON for the TerraBase v1 Documents API.
+// Lossless JSON for the TerraBase v1 API.
 //
 // TerraBase numbers are exact decimals with up to 128 significant digits
 // (api-v1.md). Responses are parsed with JSON.parse source text access, so a
@@ -241,7 +241,7 @@ function requireProducerNumber(text, where) {
 }
 
 /**
- * Validates a document, merge patch or patch operand against C# RequestJson limits.
+ * Validates a request JSON value against C# RequestJson limits.
  * @param {unknown} value
  * @param {string} where
  * @returns {void}
@@ -254,7 +254,7 @@ export function assertJsonValue(value, where) {
  * @param {unknown} value
  * @param {number} depth
  * @param {string} where
- * @param {{ nodes: number }} [budget] Document limits; request envelopes are validated separately.
+ * @param {{ nodes: number }} [budget] Value limits; request envelopes are validated separately.
  * @returns {void}
  */
 function assertJsonInput(value, depth, where, budget) {

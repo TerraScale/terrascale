@@ -6,10 +6,7 @@ import { isJsonObject, parseExactJson } from "./json.js";
  * @property {number} status
  * @property {string} code
  * @property {string | undefined} [message]
- * @property {number | undefined} [op]
- * @property {string | undefined} [handle]
  * @property {number | undefined} [retryAfter]
- * @property {string | undefined} [etag]
  * @property {JsonObject | undefined} [details]
  * @property {JsonValue | undefined} [body]
  * @property {string | undefined} [responseText]
@@ -18,21 +15,15 @@ import { isJsonObject, parseExactJson } from "./json.js";
 
 /**
  * A non-2xx TerraBase v1 response. `code` is the contract's `error.code`, or
- * `not_modified` for a 304 and `http_<status>` when the body carried no code.
+ * `http_<status>` when the body carried no code.
  */
 export class TerraBaseV1Error extends Error {
   /** @type {number} HTTP status. */
   status;
   /** @type {string} */
   code;
-  /** @type {number | undefined} Failing transaction op index. */
-  op;
-  /** @type {string | undefined} New shape handle for `must_refetch`. */
-  handle;
   /** @type {number | undefined} Parsed `Retry-After`, in seconds. */
   retryAfter;
-  /** @type {string | undefined} Unquoted `ETag`; a deleted document's 404 carries its tombstone version. */
-  etag;
   /** @type {JsonObject | undefined} The raw error object, for route-specific metadata. */
   details;
   /** @type {JsonValue | undefined} Complete parsed response body, including unknown fields. */
@@ -46,18 +37,11 @@ export class TerraBaseV1Error extends Error {
 
   /** @param {TerraBaseV1ErrorInit} init */
   constructor(init) {
-    const suffix = [
-      init.message === undefined ? "" : `: ${init.message}`,
-      init.op === undefined ? "" : ` (op ${init.op})`,
-    ].join("");
-    super(`TerraBase ${init.status} ${init.code}${suffix}`);
+    super(`TerraBase ${init.status} ${init.code}${init.message === undefined ? "" : `: ${init.message}`}`);
     this.name = "TerraBaseV1Error";
     this.status = init.status;
     this.code = init.code;
-    this.op = init.op;
-    this.handle = init.handle;
     this.retryAfter = init.retryAfter;
-    this.etag = init.etag;
     this.details = init.details;
     this.body = init.body;
     this.responseText = init.responseText ?? "";
@@ -66,27 +50,17 @@ export class TerraBaseV1Error extends Error {
   }
 }
 
-/** Current document, collection and shape producer codes, plus client not_modified. */
+/** Current producer codes outside SQL statement errors. */
 export const V1ErrorCode = Object.freeze({
-  invalidRequest: "invalid_request", invalidQuery: "invalid_query", invalidCursor: "invalid_cursor",
-  invalidPatch: "invalid_patch", sortRequiresIndex: "sort_requires_index", assertRequiresIndex: "assert_requires_index",
+  invalidRequest: "invalid_request", invalidCursor: "invalid_cursor",
   keyRevoked: "key_revoked", keyExpired: "key_expired", authUnavailable: "auth_unavailable",
   invalidKey: "invalid_key", forbiddenScope: "forbidden_scope", notFound: "not_found",
-  unknownDatabase: "unknown_database", unknownCollection: "unknown_collection", unknownRoute: "unknown_route",
-  methodNotAllowed: "method_not_allowed", patchConflict: "patch_conflict", nameTaken: "name_taken",
-  mustRefetch: "must_refetch", preconditionFailed: "precondition_failed", payloadTooLarge: "payload_too_large",
+  unknownDatabase: "unknown_database", unknownTable: "unknown_table", unknownRoute: "unknown_route",
+  methodNotAllowed: "method_not_allowed", nameTaken: "name_taken",
+  mustRefetch: "must_refetch", payloadTooLarge: "payload_too_large",
   unsupportedMediaType: "unsupported_media_type", uriTooLong: "uri_too_long", shapeBusy: "shape_busy",
-  internalError: "internal_error", capacity: "capacity", notModified: "not_modified",
+  internalError: "internal_error", capacity: "capacity",
 });
-
-/** `412 precondition_failed`: an If-Match, If-None-Match, assert or assert_count failed. */
-export class V1PreconditionFailedError extends TerraBaseV1Error {
-  /** @param {TerraBaseV1ErrorInit} init */
-  constructor(init) {
-    super(init);
-    this.name = "V1PreconditionFailedError";
-  }
-}
 
 /** `401 invalid_key`: the API key is unknown or revoked. */
 export class V1InvalidKeyError extends TerraBaseV1Error {
@@ -118,7 +92,7 @@ export class V1ForbiddenScopeError extends TerraBaseV1Error {
   }
 }
 
-/** `404 not_found`: absent or deleted; `etag` carries a tombstone version. */
+/** `404 not_found`: the addressed resource does not exist. */
 export class V1NotFoundError extends TerraBaseV1Error {
   /** @param {TerraBaseV1ErrorInit} init */
   constructor(init) {
@@ -176,7 +150,6 @@ function typedError(init) {
     if (typeof sqlstate === "string" && /^[0-9A-Z]{5}$/u.test(sqlstate)) return new SqlError({ ...init, statement, sqlstate });
   }
   switch (init.code) {
-    case "precondition_failed": return new V1PreconditionFailedError(init);
     case "key_revoked": return new V1KeyRevokedError(init);
     case "key_expired": return new V1KeyExpiredError(init);
     case "invalid_key": return new V1InvalidKeyError(init);
@@ -193,18 +166,6 @@ function typedError(init) {
  */
 export function isTerraBaseV1Error(error, code) {
   return error instanceof TerraBaseV1Error && (code === undefined || error.code === code);
-}
-
-/**
- * @param {string | null} value
- * @returns {string | undefined}
- */
-export function unquoteEtag(value) {
-  if (value === null) return undefined;
-  const trimmed = value.trim().replace(/^W\//u, "");
-  return trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')
-    ? trimmed.slice(1, -1)
-    : trimmed;
 }
 
 /**
@@ -244,17 +205,12 @@ export function parseV1Error(status, headers, text) {
     const value = details?.[name];
     return typeof value === "string" ? value : undefined;
   };
-  const op = details?.op;
-  const code =
-    text_("code") ?? (status === 304 ? "not_modified" : `http_${status}`);
+  const code = text_("code") ?? `http_${status}`;
   return typedError({
     status,
     code,
     message: text_("message"),
-    op: typeof op === "number" && Number.isInteger(op) ? op : undefined,
-    handle: text_("handle"),
     retryAfter: parseRetryAfter(headers),
-    etag: unquoteEtag(headers.get("etag")),
     details,
     body,
     responseText: text,

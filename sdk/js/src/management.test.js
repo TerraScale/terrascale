@@ -20,9 +20,6 @@ test("management entrypoints construct the existing project-scoped named clients
     const database = client.database;
     expect(database("app")).toBeInstanceOf(V1Database);
     expect(database("app").backups).toBeDefined();
-    expect(database("app").imports).toBeDefined();
-    expect(database("app").schema).toBeDefined();
-    expect(database("app").indexes).toBeDefined();
     expect(Object.isFrozen(client)).toBe(true);
     expect(JSON.stringify(client)).not.toContain(config.token);
     expect(Object.keys(client).sort()).toEqual([

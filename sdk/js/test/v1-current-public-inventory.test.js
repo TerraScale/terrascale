@@ -1,18 +1,18 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
-import { v1Routes, shapeV1Routes } from "../src/v1/routes.js";
+import { v1Routes } from "../src/v1/routes.js";
 import { managementV1Routes } from "../src/v1/management-routes.js";
 import { fixture, json } from "./helpers/v1-http.js";
 const contract = JSON.parse(readFileSync(new URL("../sdk-public-v1-route-manifest.json", import.meta.url), "utf8"));
-const current = [...v1Routes.filter(r => r.operation !== "readShape"), ...shapeV1Routes, ...managementV1Routes];
+const current = [...v1Routes, ...managementV1Routes];
 /** @param {{method: string; path: string}} route */
 const key = route => `${route.method} ${route.path}`;
 
-test("all 86 inventoried public routes are inventoried once, including routes absent from the baseline SDK", () => {
+test("all 33 inventoried public routes are inventoried once, including routes absent from the baseline SDK", () => {
   expect(contract.producerRevision).toBe("e7fa366ddb289f5612c93d316b316fb92c568151");
-  expect(contract.routes).toHaveLength(86);
-  expect(current).toHaveLength(86);
-  expect(new Set(current.map(r => `${r.method} ${r.pathTemplate}`)).size).toBe(86);
+  expect(contract.routes).toHaveLength(33);
+  expect(current).toHaveLength(33);
+  expect(new Set(current.map(r => `${r.method} ${r.pathTemplate}`)).size).toBe(33);
   expect(current.map(r => `${r.method} ${r.pathTemplate}`).sort()).toEqual(contract.routes.map(key).sort());
   for (const route of current) {
     const expected = contract.routes.find(/** @param {{method: string; path: string}} r */ r => key(r) === `${route.method} ${route.pathTemplate}`);
@@ -28,7 +28,7 @@ test("unknown write outcomes retain region/machine metadata and are never replay
   const { client, requests } = await fixture((_r, response) => json(response, {
     error: { code: "write_outcome_unknown", message: "Confirmation not received", region: "gru", machine: "fixture" },
   }, 503));
-  const error = await client.database("app").collection("users").put("01ARZ3NDEKTSV4RRFFQ69G5FA2", {}).catch(error => error);
+  const error = await client.database("app").execute("INSERT INTO users (id) VALUES (1)").catch(/** @param {unknown} error */ error => error);
   expect(error).toMatchObject({ status: 503, code: "write_outcome_unknown", retryAfter: undefined, details: { region: "gru", machine: "fixture" } });
   expect(requests).toHaveLength(1);
 });

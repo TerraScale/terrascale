@@ -16,7 +16,7 @@ export { createTerraScaleIdentityManagementClient, createTerraScaleAccountDeleti
 
 /**
  * Creates the published project-scoped management operations using the root SDK.
- * Database handles expose backups, imports, indexes, schema, usage and exports.
+ * Database handles expose SQL, backups and usage.
  * The producer enforces project/database scope and permissions on every request.
  * Credentials stay private; cancellation, pagination and errors retain root semantics.
  * Mutations are never automatically retried: these routes have no idempotency contract.

@@ -13,14 +13,14 @@ const token = "fixture.payload.signature";
 const dispatcher = new Agent({ allowH2: true, connections: 1 });
 setGlobalDispatcher(dispatcher);
 // Two clients and native fetch must share the application-owned connection.
-const documents = Array.from({ length: 2 }, () => createTerraBaseV1Client({ project, token, baseUrl: origin }).database("app").collection("users"));
+const databases = Array.from({ length: 2 }, () => createTerraBaseV1Client({ project, token, baseUrl: origin }).databases);
 const auth = Array.from({ length: 2 }, () => createTsAuthClient({ apiBaseUrl: origin, instanceSlug: "acme", accessToken: token }));
 /** @param {number} index */
 async function read(index) {
-  if (surface === "documents") {
-    const client = documents[index % 2];
+  if (surface === "databases") {
+    const client = databases[index % 2];
     assert.ok(client);
-    assert.equal((await client.get(project)).document?.value, 1);
+    assert.equal((await client.get("app")).name, "app");
   } else {
     const client = auth[index % 2];
     assert.ok(client);

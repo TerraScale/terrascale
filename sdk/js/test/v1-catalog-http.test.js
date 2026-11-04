@@ -8,7 +8,7 @@ const id = "01ARZ3NDEKTSV4RRFFQ69G5FA2";
 const token = "fixture.payload.signature";
 const prefix = `/v1/projects/${project}/databases`;
 const database = { id, projectId: project, name: "app", branchedFrom: null,
-  createdAt: "2026-10-13T12:00:00+00:00", region: "region-123", homeRegion: "region-123", replicaRegions: ["other-region"], allRegions: false };
+  createdAt: "2026-10-13T12:00:00+00:00", region: "region-123", homeRegion: "region-123" };
 /** @typedef {{ method: string | undefined; url: URL; headers: import("node:http").IncomingHttpHeaders; body: string }} WireRequest */
 /** @type {import("node:http").Server[]} */
 const servers = [];
@@ -59,14 +59,14 @@ describe("public database catalog HTTP contracts", () => {
     expect(await databases.create({ name: "app" })).toEqual(database);
     expect(await databases.list({ after: "opaque+cursor", limit: 100 })).toEqual({ items: [database], next: null });
     expect(await databases.get("app")).toEqual(database);
-    expect(await databases.update("app", { replicaRegions: ["other-region"] })).toEqual(database);
+    expect(await databases.rename("app", "app")).toEqual(database);
     expect(await databases.branch("app", { name: "branch" })).toEqual(database);
     expect(await databases.delete("app")).toBeUndefined();
     expect(requests.map(request => [request.method, request.url.pathname])).toEqual([
       ["POST", prefix], ["GET", prefix], ["GET", `${prefix}/app`], ["PATCH", `${prefix}/app`],
       ["POST", `${prefix}/app/branches`], ["DELETE", `${prefix}/app`],
     ]);
-    expect(requests.map(request => request.body)).toEqual(['{"name":"app"}', "", "", '{"replicaRegions":["other-region"]}', '{"name":"branch"}', ""]);
+    expect(requests.map(request => request.body)).toEqual(['{"name":"app"}', "", "", '{"name":"app"}', '{"name":"branch"}', ""]);
     expect([...(requests[1]?.url.searchParams ?? [])]).toEqual([["after", "opaque+cursor"], ["limit", "100"]]);
     for (const request of requests) {
       expect(request.headers.authorization).toBe(`Bearer ${token}`);

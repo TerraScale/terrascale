@@ -9,7 +9,7 @@ The SDK issues one fetch call. Chrome154.0.8037.57 and Edge154.0.4258.37 each re
 3. [Chromium network source](https://chromium.googlesource.com/chromium/src/+/main/net/http/http_network_transaction.cc): the421 branch checks `!has_body_with_null_source`, disables IP pooling/alternative services and calls `ResetConnectionAndRequestForResend(RetryReason::kHttpMisdirectedRequest)`. This independently corroborates the specification and observed real browser requests; the moving source URL is not claimed as the exact installed binary revision.
 4. [Chrome request-stream documentation](https://developer.chrome.com/docs/capabilities/web-apis/fetch-streaming-requests) requires `duplex: "half"` and says “The fetch will be rejected if the connection is HTTP/1.x.” Streams also need CORS preflight and cannot follow ordinary redirects. [MDN Request.duplex](https://developer.mozilla.org/en-US/docs/Web/API/Request/duplex) marks the feature limited/experimental across browsers. It is not a portable replacement for this SDK's supported Node/browser fetch contract.
 
-These documents were retrieved during this audit. The real-browser fixture uses native globalThis.fetch; its counting wrapper delegates directly to that function and cannot suppress network retries.
+These sources were retrieved during this audit. The real-browser fixture uses native globalThis.fetch; its counting wrapper delegates directly to that function and cannot suppress network retries.
 
 ## Standards-supported prevention assessed
 
@@ -29,10 +29,10 @@ At server `e30ffdc287530551b161b0130220be53d3c0475e`:
 
 - `DatabaseRegions.cs` placement middleware returns WrongRegion before `next(context)` for databases not served in this region. `Program.cs` registers it after authentication/authorization and before endpoint mapping.
 - `CreateManagedDatabaseEndpoint.cs`, `UpdateManagedDatabaseEndpoint.cs`, `BranchManagedDatabaseEndpoint.cs` and `DeleteManagedDatabaseEndpoint.cs` reject wrong home/placement before management mutation calls.
-- `DocumentRoute.CheckIdempotencyKey` rejects the header; no stable general mutation identity/result replay contract is exposed.
+- The producer rejects `Idempotency-Key`; no stable general mutation identity/result replay contract is exposed.
 
 The source-backed requirement is **all421 misdirected writes must be rejected before any mutation**, including forwarding/edge paths. Under that invariant transport retransmission produces repeated rejection, not duplicate effects. The current source supports that ordering in the inspected paths; actual deployment/runtime proof remains open.
 
-Affected browser mutations are document PUT/POST/PATCH/DELETE, bounded transaction POST, collection POST/DELETE, declared-schema PUT/DELETE and database create/update/delete/branch. The fixture directly demonstrates PATCH and bodyless DELETE; Fetch's rule establishes buffered/absent-body eligibility for the rest.
+Affected browser mutations are SQL execute POSTs and database create/update/delete/branch. The fixture directly demonstrates PATCH and bodyless DELETE; Fetch's rule establishes buffered/absent-body eligibility for the rest.
 
-Ambiguous errors after commit are a separate problem. Automatic recovery would need a producer-published stable operation identifier, scoped atomic deduplication, request-fingerprint conflict behavior, original-result replay, retention boundaries and a reconciliation operation. The SDK cannot invent these fields or silently retry. Existing client-generated PUT keys identify an address; CAS protects a condition. Neither provides general exactly-once result semantics. Status changes or new idempotency APIs remain with the producer owner.
+Ambiguous errors after commit are a separate problem. Automatic recovery would need a producer-published stable operation identifier, scoped atomic deduplication, request-fingerprint conflict behavior, original-result replay, retention boundaries and a reconciliation operation. The SDK cannot invent these fields or silently retry. Client-generated primary keys identify a row; they do not provide general exactly-once result semantics. Status changes or new idempotency APIs remain with the producer owner.

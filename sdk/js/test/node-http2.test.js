@@ -11,7 +11,7 @@ const run = promisify(execFile);
 const runner = fileURLToPath(new URL("./support/node-http2-client.js", import.meta.url));
 const project = "01ARZ3NDEKTSV4RRFFQ69G5FA1";
 // Isolated synthetic TLS transport fixtures; not TerraBase/ts-auth qualification.
-for (const surface of ["documents", "auth"]) {
+for (const surface of ["databases", "auth"]) {
   for (const protocol of ["h2", "http/1.1"]) {
     test(`${surface}: ${protocol} application policy, credentials and shared connection reuse`, async () => {
       const directory = await mkdtemp(path.join(tmpdir(), "ts-js-http2-"));
@@ -37,8 +37,8 @@ for (const surface of ["documents", "auth"]) {
         });
         server.on("request", (request, response) => {
           requests.push({ version: request.httpVersion, authorization: request.headers.authorization, path: request.url });
-          response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(surface === "documents"
-            ? { id: project, version: "opaque", state: "value", document: { value: 1 } }
+          response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(surface === "databases"
+            ? { id: project, projectId: project, name: "app", branchedFrom: null, createdAt: "2026-10-13T12:00:00+00:00", region: "gru", homeRegion: "gru" }
             : { data: [] }));
         });
         await new Promise((resolve, reject) => {
@@ -57,8 +57,8 @@ for (const surface of ["documents", "auth"]) {
         for (const request of requests.slice(1)) {
           expect(request.version).toBe(protocol === "h2" ? "2.0" : "1.1");
           expect(request.authorization).toBe("Bearer fixture.payload.signature");
-          expect(request.path).toBe(surface === "documents"
-            ? `/v1/projects/${project}/databases/app/collections/users/documents/by-key?id=${project}`
+          expect(request.path).toBe(surface === "databases"
+            ? `/v1/projects/${project}/databases/app`
             : "/v1/acme/users");
         }
       } finally {

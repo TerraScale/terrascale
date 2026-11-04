@@ -5,7 +5,7 @@ const at = "2026-10-22T10:00:00Z";
 const backup = { id: entity, databaseId: entity, status: "succeeded", trigger: "manual", sizeBytes: 123, createdAt: at };
 const policy = { fullBackupCron: null, retentionDays: 7, disabled: false, updatedAt: null };
 const window = { earliest: at, latest: at };
-const restored = { id: entity, projectId: project, name: "restored", branchedFrom: entity, createdAt: at, homeRegion: null, replicaRegions: null, placementVersion: 0, replicas: [] };
+const restored = { id: entity, projectId: project, name: "restored", branchedFrom: entity, createdAt: at, homeRegion: null };
 const destination = { endpoint: "https://bucket.example.invalid", region: "gru", bucket: "fixture", mode: "both", updatedAt: at };
 test("all eleven backup routes retain source selectors, pagination and producer DTOs", async () => {
   const replies = [backup, { items: [backup], next: "opaque+after" }, restored, policy, policy, window,
@@ -37,14 +37,4 @@ test("all eleven backup routes retain source selectors, pagination and producer 
   ]);
   expect(requests[5]?.url.searchParams.get("destination")).toBe("customer");
   expect(JSON.stringify(client)).toBe("{}");
-});
-test("restore retains assigned replicas and exact placement versions", async () => {
-  const body = { ...restored, homeRegion: "gru", replicaRegions: ["fra"], replicas: ["fra"] };
-  const { client } = await fixture((_r, response) => {
-    response.writeHead(201, { "content-type": "application/json" });
-    response.end(JSON.stringify(body).replace('"placementVersion":0', '"placementVersion":9007199254740993'));
-  });
-  const result = await client.database("app").backups.restore(entity);
-  expect(result.replicas).toEqual(["fra"]);
-  expect(result.placementVersion?.toString()).toBe("9007199254740993");
 });

@@ -1,6 +1,6 @@
 # SDK qualification reconciliation — 2026-10-26
 
-Historical snapshot: 2026-10-26 05:04 UTC; current additive update below records 05:11–05:34 UTC evidence. TS-1154 remains incomplete. This document reconciles saved evidence and the separately executed role run; it is not a blanket product qualification receipt. TS-1154/P04 owns qualification; TS-1173 owns Q02/orchestrator closure only. Missing authorized fixtures are PENDING, never Done. Private ledgers, credentials and cookies are excluded from this document.
+Historical snapshot: 2026-10-26 05:04 UTC; current additive update below records 05:11–05:34 UTC evidence. TS-1154 remains incomplete. This snapshot reconciles saved evidence and the separately executed role run; it is not a blanket product qualification receipt. TS-1154/P04 owns qualification; TS-1173 owns Q02/orchestrator closure only. Missing authorized fixtures are PENDING, never Done. Private ledgers, credentials and cookies are excluded from this snapshot.
 
 ## Versioned evidence anchors
 
@@ -8,8 +8,6 @@ Historical snapshot: 2026-10-26 05:04 UTC; current additive update below records
 |---|---|---|
 | Q11 | `reconciled-results.json` / `.md`, inventory 0.0.13, `ce9a644b`, generated 2026-10-26 04:26:47 | Historical 441 operations: 211 PASS / 3 FAIL / 227 PENDING; 30 independent gates. These are historical inventory counts, not current 0.0.16 counts. Baseline installed evidence spans 0.0.9–0.0.11 and local/browser checks. |
 | P04 | `FINAL-REPORT.md`, `final-live-evidence.json`, `final-identity-coverage-results.json`; registry 0.0.12, `b8352ac`, finished 04:23:11.783 | 31 distinct identity operations exercised; 17 successful mutation checks across identity and management. Expected absence/denial does not prove positive admission. Installation integrity is recorded in the artifact. |
-| Import | Q11 `import-installed-live-results.json`; installed 0.0.13, 04:37:44.500–04:38:03.283 | 22 scenario checks PASS; existing owned job lifecycle, no create/delete calls in this run. Independent of P04 destination-create 409. |
-| NDJSON | Q11 `ndjson-installed-live-results.json`; installed 0.0.13, 04:39:33.220–04:39:58.867 | 13 checks PASS: owned database deletion/404 and recreation with automatic default placement; NDJSON import create 201/upload/preview/start/completion, two-row checksum and generated ULIDs. Separate allocation from P04 quota refusal. |
 | Userinfo | Q11 `userinfo-installed-live-results.json`; installed 0.0.11, 04:29:38.008 | Named `oidc.userinfo` 200 with own-email/subject checks; no originating-client introspection/revocation or tenant-admin admission implied. |
 | Current | Repository package 0.0.16 | 0.0.14 removed Better Auth public entrypoint; 0.0.15 cancellation proof is local; 0.0.16 source removes legacy entrypoints. Source removal merged as `15fc1af`; tag pushed; registry removal qualification was pending at 05:04 and passed at 05:11:30.872 (additive update below). No automatic promotion of old evidence to this version. |
 
@@ -17,11 +15,10 @@ Artifacts Q11 reside in the sibling `qa-q11-sdk-js/.qa-q11/`; P04 artifacts resi
 
 ## Independent positive and denial evidence
 
-P04 proves the listed scenarios for the credentialed management factory and current identity factory; current identity methods are not equivalent evidence for tenant `TsAuth*` APIs. Management positive calls: `databases.get/list`, `database().collection().put/get/list`, project/database usage reads, `backups.list/getPolicy/setPolicy` (preserve existing values), `schema.list/infer`, `indexes.list/getAutoPolicy/recommendations`, and `previewSchema`. Default placement was observed on a retained allocation, not newly proven database creation.
+P04 proves the listed scenarios for the credentialed management factory and current identity factory; current identity methods are not equivalent evidence for tenant `TsAuth*` APIs. Management positive calls: `databases.get/list`, project/database usage reads and `backups.list/getPolicy/setPolicy` (preserve existing values); the retired data API calls of that run are omitted. Default placement was observed on a retained allocation, not newly proven database creation.
 
-Ordinary-customer `admin.databases` returned 403 `forbidden_scope`: denial-only PASS, privileged success PENDING. Restricted project-key document write also returned 403 and full-key read returned 404; rotated/revoked project secrets returned 401 `invalid_client`. These prove the specified denial/issuance boundaries, not expiry of previously issued tokens. P04 import-destination create returned 409 `database_limit` and exact read 404: no allocation and no import success in that fixture.
+Ordinary-customer `admin.databases` returned 403 `forbidden_scope`: denial-only PASS, privileged success PENDING. Restricted project-key data write also returned 403 and full-key read returned 404; rotated/revoked project secrets returned 401 `invalid_client`. These prove the specified denial/issuance boundaries, not expiry of previously issued tokens.
 
-Import independently proves `V1Imports.get/uploadSource/update/cancel/resume/start` on the Q11 owned existing job: range replay, 409 `offset_mismatch` without advancement, preview exclusions, cancellation, resumed preview confirmation, completion and count/checksum match. `V1Imports.create` is not executed in the 22-check PostgreSQL artifact; its separate NDJSON artifact supplies an actual create 201, upload/preview/start/completion and generated-ULID proof.
 
 ## Remaining method matrix
 
@@ -31,13 +28,10 @@ Names below are exact Q11 export/member groups; constructor/factory rows mean ad
 |---|---|---|
 | `.` `V1BackupDestinationClient.{set, delete}` | owned object-store backup destination and project configuration authority | PENDING; Q11 OP018, OP019 |
 | `.` `V1Backups.{restore, restorePointInTime}` | owned backup/restore destination, restore capacity and retention authority | PENDING; Q11 OP022, OP027; policy-preserving setPolicy has P04 positive evidence |
-| `.` `V1ChangeWebhooks.{create, delete, deliveries}` | owned registered webhook callback and delivery fixture | PENDING; Q11 OP028, OP030, OP031 |
-| `.` `V1Collection.{decryptShapeObject}` | owned shape object/key and current producer contract | PENDING; Q11 OP051 |
-| `.` `V1Databases.{update, branch}` | isolated project/database owner; exact ledger and capacity | PENDING; Q11 OP069, OP071 |
+| `.` `V1Databases.{branch}` | isolated project/database owner; exact ledger and capacity | PENDING; Q11 OP069, OP071 |
 | `.` `V1FileBucket.{delete, createUpload, upload}` | owned storage bucket/object and admitted object-store service (TS-962) | Historical FAIL (0.0.9); current PENDING; Q11 OP080, OP081, OP086 |
 | `.` `V1FileBucket.{completeUpload, downloadUrl, deleteFile, download}` | owned storage bucket/object and admitted object-store service (TS-962) | PENDING; Q11 OP082, OP084, OP085, OP087 |
-| `.` `V1Indexes.{setAutoPolicy, applyRecommendation}` | isolated project/database owner; exact ledger and capacity | PENDING; Q11 OP123, OP125 |
-| `.` `V1Platform.{databases, collections, documents, document}` | separately authorized platform administrator; ordinary account denial insufficient | PENDING; Q11 OP126, OP127, OP128, OP129 |
+| `.` `V1Platform.{databases}` | separately authorized platform administrator; ordinary account denial insufficient | PENDING; Q11 OP126 |
 | `./ts-auth` `TsAuthApiKeysClient.{create, list, delete}` | registered tenant/app/resource; tenant administrator and disposable owned users/resources | PENDING; Q11 OP195, OP196, OP197 |
 | `./ts-auth` `TsAuthAuditEventsClient.{list}` | registered tenant/app/resource; tenant administrator and disposable owned users/resources | PENDING; Q11 OP198 |
 | `./ts-auth` `TsAuthBillingClient.{get, checkout, portal, enforceCheck, reconcileQuota}` | registered tenant/app/resource; tenant administrator and disposable owned users/resources | PENDING; Q11 OP199, OP200, OP201, OP202, OP203 |
@@ -115,7 +109,7 @@ Only canonical sources `docs/guides/realtime.md` and `docs/guides/sdks.md` are i
 | `docs/guides/sdks.md` `0dd05c6adefb1030df984680811fcc1c1268b31b6345ff42f4202928d0ba6b20` | shell workflow requires environment and preceding steps | PENDING |
 | `docs/guides/sdks.md` `2004a581a3012e0ffc676868c8a8298f357a65086d97991e916bd128302cb990` | request response or literal data | PENDING |
 
-Completion requires a current registry-installed per-method run with owned active fixture, explicit registered tenant/app/resource roles, separately authorized administrator, backup destination/webhook, and sufficient allocation limits; attach exact version/time/status/type, bounded cleanup and published-contract parity. Current evidence does not satisfy those gates.
+Completion requires a current registry-installed per-method run with owned active fixture, explicit registered tenant/app/resource roles, separately authorized administrator, backup destination, and sufficient allocation limits; attach exact version/time/status/type, bounded cleanup and published-contract parity. Current evidence does not satisfy those gates.
 
 ## Additive update — 2026-10-26 05:11–05:34 UTC
 

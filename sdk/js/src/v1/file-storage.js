@@ -59,7 +59,7 @@ function pageQuery(options) {
   return query;
 }
 
-/** Project file buckets, authenticated by the same token as documents. */
+/** Project file buckets, authenticated by the same token as SQL. */
 export class V1FileStorage {
   /** @type {V1Transport} */ #transport;
   /** @type {FetchLike} */ #fetch;

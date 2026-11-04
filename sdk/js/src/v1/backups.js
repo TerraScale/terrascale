@@ -12,7 +12,7 @@ const policy = record({ fullBackupCron: nullable(text), retentionDays: numeric, 
 const window = record({ earliest: text, latest: text });
 const plan = record({ window, pointInTime: text, snapshotAt: text, latestSegmentAt: nullable(text), segmentCount: numeric, historyCheck: text });
 const restored = record({ id: requireId, projectId: requireId, name: text, branchedFrom: nullable(requireId), createdAt: text,
-  homeRegion: optional(nullable(text)), replicaRegions: optional(nullable(list(text))), placementVersion: optional(numeric), replicas: list(text) });
+  homeRegion: optional(nullable(text)) });
 const destination = record({ endpoint: text, region: text, bucket: text, mode: text, updatedAt: text });
 /** @typedef {ReturnType<typeof backup>} V1Backup */
 /** @typedef {ReturnType<typeof backupPage>} V1BackupPage */

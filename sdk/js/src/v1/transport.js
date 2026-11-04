@@ -27,7 +27,7 @@ const tokenPattern = /^(?!tbk1\.)(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-
 /** A fresh access token for each authenticated request, including stream reconnects. @typedef {() => string | Promise<string>} V1TokenProvider */
 /** @typedef {new (url: string, init: string[] | { protocols: string[]; headers: Record<string, string> }) => import("./sql-socket.js").SqlSocketLike} SqlSocketConstructor */
 /**
- * Project-scoped C# Documents API client. Supply exactly one of baseUrl or endpointResolver.
+ * Project-scoped TerraBase v1 API client. Supply exactly one of baseUrl or endpointResolver.
  * URLs must use HTTPS or loopback HTTP. Mutations are never automatically replayed.
  * @typedef {object} TerraBaseV1ClientConfig
  * @property {string} project
@@ -46,8 +46,7 @@ const tokenPattern = /^(?!tbk1\.)(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-
  * @property {Readonly<Record<string, string>>} [headers] Contract headers only (If-Match, If-None-Match).
  * @property {URLSearchParams | undefined} [query]
  * @property {AbortSignal | undefined} [signal]
- * @property {"no-store" | undefined} [cache] Authenticated shape epoch keys must bypass caches.
- * @property {"follow" | undefined} [redirect] Only shape bootstraps.
+ * @property {"follow" | undefined} [redirect] Only table shape reads.
  */
 
 /**
@@ -154,10 +153,10 @@ export class RequestTransportError extends TypeError {
   }
 }
 
-/** A browser hid a 307 behind an opaque redirect; only the shape bootstrap may follow it. */
+/** A browser hid a 307 behind an opaque redirect; only a table shape read may follow it. */
 export class OpaqueRedirectError extends TypeError {
   constructor() {
-    super("Fresh shape bootstrap requires server fetch; obtain a handle and snapshot offset with collection.shape() on your server.");
+    super("TerraBase answered with a redirect this runtime cannot follow.");
     this.name = "OpaqueRedirectError";
   }
 }
@@ -405,40 +404,11 @@ export class V1Transport {
     try {
       const scoped = { ...options, signal: deadline.signal };
       const response = await this.#send(operation, params, scoped, deadline.expiresAt);
-      if (response.status === 307) {
-        await response.body?.cancel();
-        return { status: response.status, headers: response.headers, value: undefined };
-      }
       return { status: response.status, headers: response.headers, value: await this.readJson(response, scoped.signal),
         ...(response.redirected ? { redirectedTo: response.url } : {}) };
     } finally {
       deadline.clear();
     }
-  }
-
-  /**
-   * The read deadline lasts until response headers; the open stream then ends only by the caller's signal.
-   * @param {"streamDatabaseChanges" | "exportDatabase"} operation
-   * @param {Readonly<Record<string, string>>} params
-   * @param {V1CallOptions} [options]
-   * @returns {Promise<Response>}
-   */
-  async openStream(operation, params, options = {}) {
-    const deadline = operationDeadline(operation, options.signal);
-    /** @type {Response} */
-    let response;
-    try {
-      response = await this.#send(operation, params, { ...options, signal: deadline.signal }, deadline.expiresAt);
-    } finally {
-      deadline.clear();
-    }
-    const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-    const expected = v1Route(operation).responseMediaType;
-    if (mediaType !== expected || response.body === null) {
-      void response.body?.cancel().catch(() => undefined);
-      throw new TypeError(`TerraBase ${operation} requires a ${expected} response body.`);
-    }
-    return response;
   }
 
   /**
@@ -465,10 +435,8 @@ export class V1Transport {
       if (options.body !== undefined) headers.set("content-type", options.contentType ?? "application/json");
       /** @type {RequestInit & { duplex?: "half" }} */
       const init = { method: route.method, headers, redirect: options.redirect ?? "manual" };
-      if (options.cache !== undefined) init.cache = options.cache;
       if (route.permission.endsWith(":write") && typeof process !== "undefined" && process.release?.name === "node") {
         // Node fetch replays buffered or absent bodies on 421; use a one-shot stream, including DELETE.
-        if (operation === "uploadImportSource" && bytes !== undefined) headers.set("content-length", String(bytes.byteLength));
         init.body = new ReadableStream({ start(controller) { if (bytes !== undefined && bytes.byteLength > 0) controller.enqueue(bytes); controller.close(); } });
         init.duplex = "half";
       } else if (options.body !== undefined) init.body = typeof options.body === "string" ? options.body : options.body.slice().buffer;
@@ -509,9 +477,7 @@ const readDeadlineMs = 60_000;
 /** Resends after the first attempt, for replay-safe requests only. */
 const maximumReadRetries = 3;
 /** Shape reads with their own stale-state publication and resume. */
-const selfRecovering = new Set(["readFreeShape", "readShape", "getShapeKey", "readTableShape"]);
-/** Read-only POST operations; every other non-GET operation may mutate and is sent once. */
-const readOnlyPosts = new Set(["queryDocuments", "runSql", "checkSql", "explainSql"]);
+const selfRecovering = new Set(["readTableShape"]);
 /** Producer refusals before execution that clear on their own (429 budgets, 503 busy/unavailable). */
 const transientCodes = new Map([
   [429, new Set(["tenant_busy", "tenant_memory", "shape_busy"])],
@@ -534,7 +500,7 @@ function backoff(attempt) {
 
 /** @param {V1Operation} operation @returns {boolean} */
 function isReplaySafe(operation) {
-  return v1Route(operation).method === "GET" || readOnlyPosts.has(operation);
+  return v1Route(operation).method === "GET";
 }
 
 /**

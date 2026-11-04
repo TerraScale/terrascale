@@ -1,6 +1,7 @@
 // Optional HTTP qualification uses an independently configured service; this repo never starts TerraBase.
 import { createTerraBaseV1Client } from "../../src/index.js";
-import { database } from "./terrabase-v1-fixture.js";
+// The fixed database name shared by isolated provisioning and the real-producer suites.
+const database = "app";
 const names = ["TB_V1_URL", "TB_V1_PROJECT", "TB_V1_DATA_KEY"];
 export const liveConfigured = names.every(name => Boolean(process.env[name]));
 if ((process.env.TB_V1_REQUIRED === "1" || names.some(name => process.env[name])) && !liveConfigured)

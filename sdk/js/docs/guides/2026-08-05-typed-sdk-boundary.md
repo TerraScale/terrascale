@@ -1,12 +1,11 @@
 # Typed SDK boundary
 
-Use `createTerraBaseClient` for native documents and the separate `ts-auth`
-entrypoint for hosted identity. Native operations accept canonical scoped UUIDs,
-bigint quantities and discriminated values. Keep complete conflicts and causal
-context. Prepare a mutation once and resolve uncertain outcomes through status.
+Use `createTerraBaseClient` for SQL and the separate `ts-auth` entrypoint for
+hosted identity. SQL arguments accept exact bigint integers; integers beyond 2^53
+arrive as `ExactDecimal`. Send a mutation once and reconcile uncertain outcomes
+before retrying it yourself.
 
-Schema declarations and parameterized SQL descriptors are pure local builders.
-They neither provision server schemas nor imply listener capabilities. Management,
+Management,
 administration and production Better Auth remain explicit blocked capabilities
 until their owning service contracts are admitted. The local SQLite entrypoint
 is restricted to test code and test binaries by the TS-795 operating contract.
