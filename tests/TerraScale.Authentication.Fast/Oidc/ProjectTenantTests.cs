@@ -109,8 +109,11 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         var code = OidcHarness.Query(authorized.Headers.Location!)["code"]!;
         using var redeemed = await oidc.PostTokenAsync(new()
         {
-            ["grant_type"] = "authorization_code", ["code"] = code, ["redirect_uri"] = Callback,
-            ["code_verifier"] = verifier, ["client_id"] = clientId,
+            ["grant_type"] = "authorization_code",
+            ["code"] = code,
+            ["redirect_uri"] = Callback,
+            ["code_verifier"] = verifier,
+            ["client_id"] = clientId,
         }, null, null, tenant: project);
         await Assert.That(redeemed.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var tokens = await OidcHarness.JsonAsync(redeemed);
