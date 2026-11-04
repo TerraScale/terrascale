@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.Features.Usage
     public sealed record UsageReplica(string DatabaseId, string DatabaseName, string Region, string Status,
         long ReplicatedOps, double? LagMs, bool? Divergence, double? ConvergenceMs, DateTimeOffset? LastApplied)
     {
-        public bool Starting => Status is "starting" or "pending" || LagMs is null && Divergence is null && LastApplied is null;
+        public bool Unobserved => Status == "unknown";
     }
     public sealed record UsageReplicationPair(string DatabaseId, string DatabaseName, string FromRegion, string ToRegion,
         long SentBytes, long ReceivedBytes)
@@ -144,6 +144,11 @@ namespace TerraScale.Dashboard.Features.Usage
                 var divergence = OptionalBoolean(row, "divergence");
                 var convergence = OptionalNonnegativeDouble(row, "convergenceMs");
                 var lastApplied = OptionalTimestamp(row, "lastApplied");
+                if (status is "starting" or "pending" || lag is null && divergence is null && lastApplied is null)
+                {
+                    status = "unknown";
+                }
+
                 operations = checked(operations + replicatedOps);
                 if (lag is not null)
                 {

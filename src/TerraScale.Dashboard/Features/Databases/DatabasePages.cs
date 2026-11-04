@@ -135,6 +135,7 @@ namespace TerraScale.Dashboard.Features.Databases
         string Error = "", bool OpenDelete = false, bool Created = false, TerraScale.Dashboard.Features.Backups.BackupPage? Backups = null,
         string Range = "24h", DatabaseActivity? Activity = null)
     {
+        public DatabaseReplication? Replication { get; init; }
         public string? BranchName { get; init; }
         public DatabaseTables? Tables { get; init; }
         // The table shown on the Tables tab and its first rows.
