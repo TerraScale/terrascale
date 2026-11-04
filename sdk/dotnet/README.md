@@ -107,6 +107,19 @@ and `ExpiresAt`. HTTP refusals use the existing `TerraBaseException` types and s
 The [shared HTTP fixtures](contracts/terrabase/agent/) record the [published API contract](../SQL-API.md#databases-for-agents)
 with synthetic values. Both supported .NET frameworks replay them; live producer qualification is separate.
 
+## Placement
+
+```csharp
+var db = await client.CreateDatabaseAsync(project, "orders", homeRegion: "gru", replicaRegions: ["sjc"]);
+await client.SetDatabasePlacementAsync(project, db.Id, allRegions: true);
+await client.MoveDatabaseHomeAsync(project, db.Id, "sjc");
+```
+
+`TerraBaseManagedDatabase` carries `HomeRegion`, `ReplicaRegions` and `AllRegions`. `SetDatabasePlacementAsync` takes
+exactly one of `replicaRegions` or `allRegions`. `MoveDatabaseHomeAsync` waits up to 10 minutes (set the caller's
+`HttpClient.Timeout` to at least that) and resends only on `503 move_unresolved`, at most 5 times after `Retry-After` or
+1 s. Tests replay `contracts/terrabase/placement/`; live producer qualification has not run.
+
 ## Database request observations
 
 Read recent authorized request observations with `await database.ListRequestLogsAsync(status: "2xx", cancellationToken: ct)`.
