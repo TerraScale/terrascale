@@ -19,12 +19,12 @@ public sealed class PlatformRoleTests(TerraBaseFixture fixture)
     [Test]
     public async Task Only_a_stored_platform_admin_gets_the_claim_and_losing_the_role_removes_it_at_refresh()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
-        var admin = await oidc.CreateUserAsync("ops@example.test");
+        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
+        var admin = await oidc.CreateUserAsync(oidc.UniqueEmail("ops"));
         await SetRoleAsync(oidc.Database, admin.Id, "admin");
 
         var (_, adminTokens) = await oidc.CreateSessionAndRedeemAsync(admin);
-        var user = await oidc.CreateUserAsync("someone@example.test");
+        var user = await oidc.CreateUserAsync(oidc.UniqueEmail("someone"));
         var (_, userTokens) = await oidc.CreateSessionAndRedeemAsync(user);
 
         await Assert.That(Role(adminTokens)).IsEqualTo(OidcResults.PlatformRoleAdmin);
