@@ -22,7 +22,7 @@ namespace TerraBase.Features.Replicas;
 /// </summary>
 internal sealed class RegionReplication(
     TerraBaseOptions options, IReplicaPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas,
-    IDatabaseRevisions revisions, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<RegionReplication> logger) : BackgroundService
+    IDatabaseRevisions revisions, ReplicaHolds holds, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<RegionReplication> logger) : BackgroundService
 {
     /// <summary>How often every replica pulls and every home's catalog is read again without a notice.</summary>
     internal static readonly TimeSpan Sweep = TimeSpan.FromSeconds(30);
@@ -70,22 +70,19 @@ internal sealed class RegionReplication(
     public override async Task StartAsync(CancellationToken cancellationToken)
     {
         _peers = await peers.ListAsync(cancellationToken).ConfigureAwait(false);
-        if (_peers.Count > 0)
-        {
-            _lag = _meter.CreateHistogram<double>("terrabase.replica.lag", "ms",
-                "Time from a home's commit, on its clock, to the replica holding it after the notice's pull.");
-            _pullCount = _meter.CreateCounter<long>("terrabase.replica.pulls", "{pull}", "Replica pulls by result (changed, unchanged, failed).");
-            _verifications = _meter.CreateCounter<long>("terrabase.replica.verifications", "{round}",
-                "Replica checksum rounds against the home by result (equal, diverged, skipped, failed).");
-            _rebootstraps = _meter.CreateCounter<long>("terrabase.replica.rebootstraps", "{rebootstrap}", "Replicas deleted and bootstrapped again after a divergence.");
-            _ = _meter.CreateObservableGauge("terrabase.replica.max_lag", () => _followers.Values.Select(follower => follower.LagMs ?? 0).DefaultIfEmpty(0).Max(), "ms",
-                "The largest lag of this node's replicas behind their homes.");
-            _ = _meter.CreateObservableGauge("terrabase.replica.max_verification_age", () => _followers.Values.Select(follower => follower.VerificationAge.TotalSeconds)
-                .DefaultIfEmpty(0).Max(), "s", "The longest time any of this node's replicas went without a completed verification against its home.");
-            _verifier = new ReplicaVerifier(replicas, _http);
-        }
+        _lag = _meter.CreateHistogram<double>("terrabase.replica.lag", "ms",
+            "Time from a home's commit, on its clock, to the replica holding it after the notice's pull.");
+        _pullCount = _meter.CreateCounter<long>("terrabase.replica.pulls", "{pull}", "Replica pulls by result (changed, unchanged, failed).");
+        _verifications = _meter.CreateCounter<long>("terrabase.replica.verifications", "{round}",
+            "Replica checksum rounds against the home by result (equal, diverged, skipped, failed).");
+        _rebootstraps = _meter.CreateCounter<long>("terrabase.replica.rebootstraps", "{rebootstrap}", "Replicas deleted and bootstrapped again after a divergence.");
+        _ = _meter.CreateObservableGauge("terrabase.replica.max_lag", () => _followers.Values.Select(follower => follower.LagMs ?? 0).DefaultIfEmpty(0).Max(), "ms",
+            "The largest lag of this node's replicas behind their homes.");
+        _ = _meter.CreateObservableGauge("terrabase.replica.max_verification_age", () => _followers.Values.Select(follower => follower.VerificationAge.TotalSeconds)
+            .DefaultIfEmpty(0).Max(), "s", "The longest time any of this node's replicas went without a completed verification against its home.");
+        _verifier = new ReplicaVerifier(replicas, _http);
 
-        if (_peers.Count > 0 && options is { NatsUrl: { } natsUrl, NatsToken: { } natsToken })
+        if (options is { NatsUrl: { } natsUrl, NatsToken: { } natsToken })
         {
             _nats = new NatsConnection(new NatsOpts
             {
@@ -135,6 +132,15 @@ internal sealed class RegionReplication(
     /// <summary>Reads every home's catalog once and reconciles this region's replicas with it.</summary>
     internal async Task SyncCatalogsAsync(CancellationToken cancellationToken)
     {
+        try
+        {
+            _peers = await peers.ListAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is TerraBaseConfigurationException)
+        {
+            logger.ZLogWarning($"The peers file could not be read; replicas keep the regions they know: {error.GetType().Name:@Error}");
+        }
+
         foreach (var peer in _peers)
         {
             try
@@ -164,13 +170,9 @@ internal sealed class RegionReplication(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (_peers.Count == 0)
-        {
-            return;
-        }
-
         await (_nats is { } nats
-            ? Task.WhenAll(PublishAsync(nats, stoppingToken), SubscribeAsync(nats, stoppingToken), WatchConnectionAsync(nats, stoppingToken), CatalogAsync(stoppingToken))
+            ? Task.WhenAll(PublishAsync(nats, stoppingToken), SubscribeAsync(nats, stoppingToken), HoldsAsync(nats, stoppingToken), WatchConnectionAsync(nats, stoppingToken),
+                CatalogAsync(stoppingToken))
             : CatalogAsync(stoppingToken)).ConfigureAwait(false);
     }
 
@@ -227,6 +229,57 @@ internal sealed class RegionReplication(
                 logger.ZLogInformation($"The revision subscription restarts: {error.GetType().Name:@Error}");
                 await Task.Delay(MaxBackoff, time, cancellationToken).ConfigureAwait(false);
             }
+        }
+    }
+
+    private async Task HoldsAsync(NatsConnection nats, CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await foreach (var message in nats.SubscribeAsync<byte[]>(ReplicaSubjects.HeldAt(options.Region), cancellationToken: cancellationToken).ConfigureAwait(false))
+                {
+                    try
+                    {
+                        if (message.Data is { } data && JsonSerializer.Deserialize(data, TerraBaseJsonContext.Default.ReplicaHeldNotice) is { } notice)
+                        {
+                            holds.Held(notice);
+                        }
+                    }
+                    catch (JsonException)
+                    {
+                    }
+                }
+            }
+            catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                logger.ZLogInformation($"The held-revision subscription restarts: {error.GetType().Name:@Error}");
+                await Task.Delay(MaxBackoff, time, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private void PublishHeld(TenantContext database, string home)
+    {
+        if (_nats is not { } nats || replicas.HeldRevision(database) is not { } held)
+        {
+            return;
+        }
+
+        var notice = new ReplicaHeldNotice(database.OrganizationId, database.ProjectId!, database.DatabaseId!, options.Region, held.ToString());
+        _ = PublishHeldAsync(nats, ReplicaSubjects.Held(home, database.DatabaseId!), JsonSerializer.SerializeToUtf8Bytes(notice, TerraBaseJsonContext.Default.ReplicaHeldNotice));
+    }
+
+    private async Task PublishHeldAsync(NatsConnection nats, string subject, byte[] data)
+    {
+        try
+        {
+            await nats.PublishAsync(subject, data).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is NatsException or OperationCanceledException)
+        {
+            logger.ZLogInformation($"A held-revision notice was not published: {error.GetType().Name:@Error}");
         }
     }
 
@@ -592,6 +645,7 @@ internal sealed class RegionReplication(
 
                 Volatile.Write(ref _pullStartedAt, started.ToUnixTimeMilliseconds());
                 _syncedAt = _owner.Time.GetUtcNow();
+                _owner.PublishHeld(Database, _home.Region);
                 await VerifyAsync(cancellationToken).ConfigureAwait(false);
                 await ReportAsync(cancellationToken).ConfigureAwait(false);
                 completing.TrySetResult();
