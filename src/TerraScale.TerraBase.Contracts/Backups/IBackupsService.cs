@@ -51,5 +51,8 @@ namespace TerraScale.TerraBase.Contracts.Backups
         /// <summary><c>POST /v1/projects/{project}/databases/{database}/point-in-time/restore</c>.</summary>
         UnaryResult<JsonElement> RestorePointInTimeAsync(string projectId, string database, TerraBasePointInTimeRequest request);
 
+        /// <summary><c>POST /v1/projects/{project}/databases/{database}/point-in-time/rewind</c>.</summary>
+        UnaryResult<JsonElement> RewindPointInTimeAsync(string projectId, string database, TerraBasePointInTimeRequest request);
+
     }
 }

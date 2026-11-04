@@ -63,6 +63,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(PlatformDatabaseListBody))]
 [JsonSerializable(typeof(IReadOnlyList<JsonElement>))]
 [JsonSerializable(typeof(PointInTimeRestoreRequest))]
+[JsonSerializable(typeof(PointInTimeRewindRequest))]
 [JsonSerializable(typeof(PointInTimePlanRequest))]
 [JsonSerializable(typeof(PointInTimePlan))]
 [JsonSerializable(typeof(JsonElement))]
