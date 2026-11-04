@@ -48,7 +48,7 @@ internal sealed class TenantReplicaCatalog(ITenantDirectory tenants, IProjectCat
         }
 
         var database = new TenantContext(entry.OrganizationId, PlanTier.Hobby, entry.ProjectId, entry.DatabaseId);
-        var placement = new DatabasePlacement(entry.HomeRegion, entry.ReplicaRegions, entry.PlacementVersion);
+        var placement = new DatabasePlacement(entry.HomeRegion, entry.ReplicaRegions, entry.PlacementVersion, entry.AllRegions);
         return await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false) switch
         {
             NotFound => await tenants.AdoptDatabaseAsync(database, entry.Name, placement, cancellationToken).ConfigureAwait(false) is Done,
