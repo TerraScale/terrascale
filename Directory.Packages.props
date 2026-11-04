@@ -95,6 +95,8 @@
   <!-- Revision notifications between regions for region replicas (Features/Replicas). -->
   <ItemGroup Label="Messaging">
     <PackageVersion Include="NATS.Client.Core" Version="3.3.2" />
+    <PackageVersion Include="NATS.Client.JetStream" Version="3.3.2" />
+    <PackageVersion Include="NATS.Client.KeyValueStore" Version="3.3.2" />
   </ItemGroup>
   <!-- Cron expressions for scheduled backups (Features/Management/Backups). -->
   <ItemGroup Label="Scheduling">
