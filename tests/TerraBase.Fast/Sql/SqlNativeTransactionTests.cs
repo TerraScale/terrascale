@@ -11,7 +11,7 @@ public sealed class SqlNativeTransactionTests
     [Test]
     public async Task A_transaction_spans_round_trips_and_stays_invisible_to_other_connections_until_it_commits()
     {
-        await using var db = await StartAsync();
+        await using var db = await StartSharedAsync();
         await using var writer = await db.Postgres.OpenConnectionAsync();
         await using var other = await db.Postgres.OpenConnectionAsync();
         await PostgresSql.ExecuteAsync(writer, "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)");
