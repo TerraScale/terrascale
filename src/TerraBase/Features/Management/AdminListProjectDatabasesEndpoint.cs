@@ -31,20 +31,20 @@ internal sealed class AdminListProjectDatabasesEndpoint(IManagementService manag
     }
 
     /// <inheritdoc />
-    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var project = ManagementRoute.Value(HttpContext, "project");
         if (!EntityIds.IsValid(project))
         {
-            return ValueTask.FromResult(ErrorResponse.From(new Validation("project must be a canonical uppercase ULID")));
+            return ErrorResponse.From(new Validation("project must be a canonical uppercase ULID"));
         }
 
-        return ValueTask.FromResult(ManagementRoute.CheckPage(HttpContext) switch
+        return ManagementRoute.CheckPage(HttpContext) switch
         {
             Validation error => ErrorResponse.From(error),
-            PageQuery page => PageAsync(project, page, cancellationToken).AsTask(),
+            PageQuery page => await PageAsync(project, page, cancellationToken).ConfigureAwait(false),
             _ => throw new UnreachableException(),
-        });
+        };
     }
 
     private async ValueTask<IResult> PageAsync(string project, PageQuery page, CancellationToken cancellationToken) =>
