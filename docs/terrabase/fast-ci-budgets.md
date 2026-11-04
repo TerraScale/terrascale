@@ -13,3 +13,5 @@ CI requires both the latest successful `ts-ship/<area>` status within the curren
 The three Fast verification jobs have two-minute job deadlines. Four TerraBase shards and the duplicate hosted builds and packaging jobs are removed. Deployment publishes the checked runtime payload and keeps the existing regional release safeguards. `CI timing budget` fails a normal run exceeding six minutes, including setup and deployment, or any Fast job exceeding two minutes. Slow and explicit native maintenance remain independent.
 
 To reproduce a budget rejection, use a disposable branch, add an 11-second delay to a retained Fast test, commit and run `ts-ship`. It must report `RED` for the test budget and leave main unchanged. Restore the test before shipping the actual change.
+
+The 120-second suite budget rejects overruns. Individual tests over 10 seconds currently emit named warnings until the fixture fixes in issue #1084 land; then the per-test check returns to rejection.
