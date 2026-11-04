@@ -11,18 +11,20 @@ internal sealed class RejectedException(Rejection rejection) : Exception(rejecti
     public Rejection Rejection { get; } = rejection;
 }
 
-internal sealed record ConflictRecord(string Kind, string State, string? Table, string? Key, string? Change, string Message)
+internal sealed record ConflictRecord(
+    string Kind, string LoserState, string? Table, string? Key, string? Column, Writer? Winner, string? WinnerValue, string? LoserValue, string Message)
 {
     public HomeApplyConflict Public => new(Kind, Table, Key is null ? null : JsonElement.Parse(Key), Message);
 }
 
 internal sealed record ForeignKey(string Child, IReadOnlyList<string> From, string Parent, IReadOnlyList<string>? To);
 
-internal sealed class ApplyRun(IStorageTransaction transaction, HlcTimestamp stamp, CancellationToken cancellationToken)
+internal sealed class ApplyRun(IStorageTransaction transaction, Writer origin, CancellationToken cancellationToken)
 {
     private readonly Dictionary<string, TableShape?> _shapes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, (TableShape Shape, object?[] Key, object?[]? Before)> _touched = new(StringComparer.Ordinal);
     private List<ForeignKey>? _foreignKeys;
+    private readonly HlcTimestamp _stamp = origin.Stamp;
 
     public List<ConflictRecord> Superseded { get; } = [];
 
@@ -83,9 +85,9 @@ internal sealed class ApplyRun(IStorageTransaction transaction, HlcTimestamp sta
         switch (change.Op)
         {
             case "insert" when row is null:
-                if (stamps.Deleted is { } deleted && deleted > stamp)
+                if (stamps.Deleted is { } deleted && deleted.Stamp > _stamp)
                 {
-                    Supersede(shape, rowKey, change.Op, values, "a newer delete of the row is kept");
+                    Supersede(shape, rowKey, null, deleted, null, ApplySql.Shown(ValuesJson(values)), "a newer delete of the row is kept");
                     return;
                 }
 
@@ -96,7 +98,7 @@ internal sealed class ApplyRun(IStorageTransaction transaction, HlcTimestamp sta
                 stamps.Columns.Clear();
                 foreach (var column in columns)
                 {
-                    stamps.Columns[column] = stamp;
+                    stamps.Columns[column] = origin;
                 }
 
                 stamps.Deleted = null;
@@ -104,27 +106,27 @@ internal sealed class ApplyRun(IStorageTransaction transaction, HlcTimestamp sta
             case "insert":
                 throw Reject("primary_key", shape.Name, rowKey, "UNIQUE constraint failed: the row already exists at the home");
             case "update" when row is not null:
-                await MergeAsync(shape, key, rowKey, change.Op, values, stamps).ConfigureAwait(false);
+                await MergeAsync(shape, key, row, rowKey, values, stamps).ConfigureAwait(false);
                 break;
-            case "update" when stamps.Deleted is not null:
-                Supersede(shape, rowKey, change.Op, values, "the row was deleted at the home");
+            case "update" when stamps.Deleted is { } tombstone:
+                Supersede(shape, rowKey, null, tombstone, null, ApplySql.Shown(ValuesJson(values)), "the row was deleted at the home");
                 return;
             case "update":
                 throw Reject("missing_row", shape.Name, rowKey, "the row does not exist at the home");
             case "delete" when row is not null:
-                if (stamps.Newest is { } newest && newest > stamp)
+                if (stamps.Newest is { } newest && newest.Stamp > _stamp)
                 {
-                    Supersede(shape, rowKey, change.Op, values, "a newer write of the row is kept");
+                    Supersede(shape, rowKey, null, newest, ApplySql.Shown(ApplySql.Object(shape.Columns, row)), null, "a newer write of the row is kept");
                     return;
                 }
 
                 _ = await transaction.ExecuteStatementAsync(ApplySql.Statement($"DELETE FROM {ApplySql.Quote(shape.Name)} WHERE {shape.KeyWhere}", key), cancellationToken)
                     .ConfigureAwait(false);
                 stamps.Columns.Clear();
-                stamps.Deleted = stamp;
+                stamps.Deleted = origin;
                 break;
             default:
-                stamps.Deleted = stamps.Deleted is { } tombstone && tombstone > stamp ? tombstone : stamp;
+                stamps.Deleted = stamps.Deleted is { } older && older.Stamp > _stamp ? older : origin;
                 break;
         }
 
@@ -165,10 +167,9 @@ internal sealed class ApplyRun(IStorageTransaction transaction, HlcTimestamp sta
         return values;
     }
 
-    private async ValueTask MergeAsync(TableShape shape, object?[] key, string rowKey, string op, Dictionary<string, object?> values, RowStamps stamps)
+    private async ValueTask MergeAsync(TableShape shape, object?[] key, object?[] row, string rowKey, Dictionary<string, object?> values, RowStamps stamps)
     {
         var won = new List<string>();
-        var lost = new Dictionary<string, object?>(StringComparer.Ordinal);
         foreach (var (column, value) in values)
         {
             if (shape.Keys.Contains(column, StringComparer.OrdinalIgnoreCase))
@@ -176,20 +177,16 @@ internal sealed class ApplyRun(IStorageTransaction transaction, HlcTimestamp sta
                 continue;
             }
 
-            if (stamps.Columns.TryGetValue(column, out var current) && current > stamp)
+            if (stamps.Columns.TryGetValue(column, out var current) && current.Stamp > _stamp)
             {
-                lost[column] = value;
+                var at = shape.Columns.ToList().FindIndex(name => name.Equals(column, StringComparison.OrdinalIgnoreCase));
+                Supersede(shape, rowKey, column, current, ApplySql.ValueJson(row[at]), ApplySql.ValueJson(value), "a newer write of the column is kept");
             }
             else
             {
                 won.Add(column);
-                stamps.Columns[column] = stamp;
+                stamps.Columns[column] = origin;
             }
-        }
-
-        if (lost.Count > 0)
-        {
-            Supersede(shape, rowKey, op, lost, "a newer write of these columns is kept");
         }
 
         if (won.Count > 0)
@@ -202,24 +199,10 @@ internal sealed class ApplyRun(IStorageTransaction transaction, HlcTimestamp sta
         stamps.Deleted = null;
     }
 
-    private void Supersede(TableShape shape, string rowKey, string op, Dictionary<string, object?> values, string message)
-    {
-        var change = ApplySql.Json(writer =>
-        {
-            writer.WriteStartObject();
-            writer.WriteString("op", op);
-            writer.WriteStartObject("values");
-            foreach (var (column, value) in values)
-            {
-                writer.WritePropertyName(column);
-                ApplySql.WriteValue(writer, value);
-            }
+    private static string ValuesJson(Dictionary<string, object?> values) => ApplySql.Object([.. values.Keys], [.. values.Values]);
 
-            writer.WriteEndObject();
-            writer.WriteEndObject();
-        });
-        Superseded.Add(new ConflictRecord(WriteStates.Superseded, WriteStates.Superseded, shape.Name, rowKey, change, message));
-    }
+    private void Supersede(TableShape shape, string rowKey, string? column, Writer winner, string? winnerValue, string? loserValue, string message) =>
+        Superseded.Add(new ConflictRecord(WriteStates.Superseded, WriteStates.Superseded, shape.Name, rowKey, column, winner, winnerValue, loserValue, message));
 
     public async ValueTask CheckForeignKeysAsync()
     {

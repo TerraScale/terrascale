@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Clock;
 using TerraBase.Hosting;
@@ -9,11 +10,12 @@ using ZLogger;
 
 namespace TerraBase.Features.HomeApply;
 
-internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock, TimeProvider time, ILogger<HomeApplier> logger)
+internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock, TerraBaseOptions options, TimeProvider time, ILogger<HomeApplier> logger)
     : IHomeApply
 {
     internal const int MaxChanges = 1024;
     internal const int KeptConflicts = 10_000;
+    private static readonly TimeSpan KeptConflictAge = TimeSpan.FromDays(30);
     private static readonly TimeSpan MaxAhead = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan KeptApplied = TimeSpan.FromDays(7);
 
@@ -21,8 +23,10 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
     [
         "CREATE TABLE IF NOT EXISTS _ts_rows (tbl TEXT NOT NULL, pk TEXT NOT NULL, stamps TEXT NOT NULL, deleted TEXT, PRIMARY KEY (tbl, pk))",
         "CREATE TABLE IF NOT EXISTS _ts_applied (id TEXT PRIMARY KEY, region TEXT NOT NULL, state TEXT NOT NULL, result TEXT NOT NULL, applied_at INTEGER NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS _ts_conflicts (id TEXT PRIMARY KEY, transaction_id TEXT NOT NULL, region TEXT NOT NULL, state TEXT NOT NULL, kind TEXT NOT NULL, "
-            + "table_name TEXT, row_key TEXT, change TEXT, message TEXT NOT NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS _ts_conflicts (id TEXT PRIMARY KEY, kind TEXT NOT NULL, table_name TEXT, row_key TEXT, column_name TEXT, "
+            + "winner_value TEXT, loser_value TEXT, winner_region TEXT, winner_node TEXT, winner_hlc TEXT, winner_transaction_id TEXT, winner_state TEXT, "
+            + "loser_region TEXT NOT NULL, loser_node TEXT NOT NULL, loser_hlc TEXT NOT NULL, loser_transaction_id TEXT NOT NULL, loser_state TEXT NOT NULL, "
+            + "message TEXT NOT NULL, created_at TEXT NOT NULL)",
     ];
 
     public async ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, CancellationToken cancellationToken)
@@ -61,7 +65,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
             {
                 var before = await applying.MeasureSqlStorageAsync(cancellationToken).ConfigureAwait(false);
                 await applying.SuspendForeignKeysAsync(cancellationToken).ConfigureAwait(false);
-                var run = new ApplyRun(applying, stamp, cancellationToken);
+                var run = new ApplyRun(applying, new Writer(stamp, region, id), cancellationToken);
                 try
                 {
                     foreach (var change in transaction.Changes!)
@@ -144,7 +148,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
             return;
         }
 
-        var stamp = await clock.NextAsync(cancellationToken).ConfigureAwait(false);
+        var stamp = new Writer(await clock.NextAsync(cancellationToken).ConfigureAwait(false), options.Region, EntityIds.New(time).ToString());
         var shapes = new Dictionary<string, TableShape?>(StringComparer.OrdinalIgnoreCase);
         foreach (var change in changes)
         {
@@ -226,8 +230,10 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
             }
 
             var rows = await HomeRowsAsync(recording, transaction, cancellationToken).ConfigureAwait(false);
-            var conflict = new ConflictRecord(rejection.Kind, WriteStates.Reverted, rejection.Table, rejection.Key, ChangesJson(transaction), rejection.Message);
-            var result = new HomeApplyResult(transaction.Id!, WriteStates.Reverted, [conflict.Public], rows);
+            var winner = rows.FirstOrDefault(row => row.Row.Table.Equals(rejection.Table, StringComparison.OrdinalIgnoreCase) && row.Row.Key.GetRawText() == rejection.Key);
+            var conflict = new ConflictRecord(rejection.Kind, WriteStates.Reverted, rejection.Table, rejection.Key, null, winner.Newest,
+                winner.Row?.Values is { } image ? ApplySql.Shown(image.GetRawText()) : null, ApplySql.Shown(ChangesJson(transaction)), rejection.Message);
+            var result = new HomeApplyResult(transaction.Id!, WriteStates.Reverted, [conflict.Public], [.. rows.Select(row => row.Row)]);
             await RecordAsync(recording, transaction, result, [conflict], cancellationToken).ConfigureAwait(false);
             _ = await recording.CommitAsync(cancellationToken).ConfigureAwait(false);
             logger.ZLogWarning($"Reverted region transaction {transaction.Id:@Transaction} from {transaction.Region:@Region}: {rejection.Kind:@Kind}");
@@ -235,9 +241,9 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         }
     }
 
-    private static async ValueTask<List<HomeApplyRow>> HomeRowsAsync(IStorageTransaction transaction, RegionTransaction region, CancellationToken cancellationToken)
+    private static async ValueTask<List<(HomeApplyRow Row, Writer? Newest)>> HomeRowsAsync(IStorageTransaction transaction, RegionTransaction region, CancellationToken cancellationToken)
     {
-        var rows = new List<HomeApplyRow>();
+        var rows = new List<(HomeApplyRow Row, Writer? Newest)>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var shapes = new Dictionary<string, TableShape?>(StringComparer.OrdinalIgnoreCase);
         foreach (var change in region.Changes!)
@@ -253,14 +259,16 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
                 continue;
             }
 
-            if (!seen.Add(shape.Name + "\n" + ApplySql.KeyText(key)))
+            var keyText = ApplySql.KeyText(key);
+            if (!seen.Add(shape.Name + "\n" + keyText))
             {
                 continue;
             }
 
             var image = await ApplySql.ReadRowAsync(transaction, shape, key, cancellationToken).ConfigureAwait(false);
-            rows.Add(new HomeApplyRow(shape.Name, JsonElement.Parse(ApplySql.Object(shape.Keys, key)),
-                image is null ? null : JsonElement.Parse(ApplySql.Object(shape.Columns, image))));
+            var stamps = await ApplySql.ReadStampsAsync(transaction, shape.Name, keyText, cancellationToken).ConfigureAwait(false);
+            rows.Add((new HomeApplyRow(shape.Name, JsonElement.Parse(ApplySql.Object(shape.Keys, key)),
+                image is null ? null : JsonElement.Parse(ApplySql.Object(shape.Columns, image))), image is null ? stamps.Deleted : stamps.Newest));
         }
 
         return rows;
@@ -328,12 +336,24 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         _ = await transaction.RunAsync("DELETE FROM _ts_applied WHERE id IN (SELECT id FROM _ts_applied WHERE id < ? LIMIT 16)", [FloorId(now - KeptApplied)], cancellationToken).ConfigureAwait(false);
         foreach (var conflict in conflicts)
         {
-            _ = await transaction.RunAsync("INSERT INTO _ts_conflicts (id, transaction_id, region, state, kind, table_name, row_key, change, message, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [EntityIds.New(time).ToString(), region.Id, region.Region, conflict.State, conflict.Kind, conflict.Table, conflict.Key, conflict.Change, conflict.Message, now.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture)], cancellationToken).ConfigureAwait(false);
+            var winner = conflict.Winner;
+            _ = await transaction.RunAsync(
+                "INSERT INTO _ts_conflicts (id, kind, table_name, row_key, column_name, winner_value, loser_value, winner_region, winner_node, winner_hlc, "
+                + "winner_transaction_id, winner_state, loser_region, loser_node, loser_hlc, loser_transaction_id, loser_state, message, created_at) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [EntityIds.New(time).ToString(), conflict.Kind, conflict.Table, conflict.Key, conflict.Column, conflict.WinnerValue, conflict.LoserValue,
+                    winner?.Region, winner?.Stamp.NodeId, winner is null ? null : StampText.Format(winner.Stamp), winner?.Transaction,
+                    winner is null ? null : WriteStates.Confirmed, region.Region, region.Hlc!.Value.NodeId, StampText.Format(region.Hlc.Value), region.Id,
+                    conflict.LoserState, conflict.Message, now.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture)],
+                cancellationToken).ConfigureAwait(false);
         }
 
         if (conflicts.Count > 0)
         {
-            _ = await transaction.RunAsync("DELETE FROM _ts_conflicts WHERE id IN (SELECT id FROM _ts_conflicts ORDER BY id DESC LIMIT -1 OFFSET ?)", [(long)KeptConflicts], cancellationToken).ConfigureAwait(false);
+            _ = await transaction.RunAsync("DELETE FROM _ts_conflicts WHERE id IN (SELECT id FROM _ts_conflicts WHERE id < ? LIMIT 64)",
+                [FloorId(now - KeptConflictAge)], cancellationToken).ConfigureAwait(false);
+            _ = await transaction.RunAsync("DELETE FROM _ts_conflicts WHERE id IN (SELECT id FROM _ts_conflicts ORDER BY id DESC LIMIT -1 OFFSET ?)",
+                [(long)KeptConflicts], cancellationToken).ConfigureAwait(false);
         }
     }
 

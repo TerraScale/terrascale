@@ -16,7 +16,7 @@ public sealed class HomeApplyTests
     private static readonly Faker Faker = new();
     private static readonly string[] Replicas = ["sjc", "fra"];
 
-    private sealed record Sent(string Region, long At, object[] Changes, string State, string? Conflict = null);
+    private sealed record Sent(string Region, long At, object[] Changes, string State, string? Conflict = null, string? Detail = null);
 
     private sealed record Case(string Name, string[] Setup, Sent[] Transactions, string Check, string Expected);
 
@@ -41,9 +41,19 @@ public sealed class HomeApplyTests
             [
                 new("sjc", 0, [Insert("settings", new { id = "s1", theme = "light" })], "confirmed"),
                 new("fra", 30, [Update("settings", new { id = "s1" }, new { theme = "dark" })], "confirmed"),
-                new("sjc", 20, [Update("settings", new { id = "s1" }, new { theme = "blue" })], "confirmed", "superseded"),
+                new("sjc", 20, [Update("settings", new { id = "s1" }, new { theme = "blue" })], "confirmed", "superseded",
+                    """[["theme","\"dark\"","\"blue\"","fra","fra-1","sjc","sjc-1","confirmed","superseded",1,1]]"""),
             ],
             "SELECT theme FROM settings", """[["dark"]]""");
+        yield return new Case("a large losing value is recorded as its hash and size",
+            ["CREATE TABLE pages (id TEXT PRIMARY KEY, body TEXT)"],
+            [
+                new("sjc", 0, [Insert("pages", new { id = "g1", body = "draft" })], "confirmed"),
+                new("fra", 30, [Update("pages", new { id = "g1" }, new { body = "final" })], "confirmed"),
+                new("sjc", 20, [Update("pages", new { id = "g1" }, new { body = new string('x', 5000) })], "confirmed", "superseded",
+                    """[["body","\"final\"",null,"fra","fra-1","sjc","sjc-1","confirmed","superseded",1,1]]"""),
+            ],
+            "SELECT body FROM pages", """[["final"]]""");
         yield return new Case("UNIQUE collision: the losing transaction applies nothing and is recorded",
             ["CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE)", "CREATE TABLE events (id TEXT PRIMARY KEY, what TEXT)"],
             [
@@ -115,12 +125,20 @@ public sealed class HomeApplyTests
                 var at = sent.At < 0 ? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + sent.At : start + sent.At;
                 var (id, result) = await home.ApplyAsync(sent.Region, at, sent.Changes);
                 await Assert.That(result.GetProperty("state").GetString()).IsEqualTo(sent.State).Because(spike.Name);
-                var kinds = (await home.SqlAsync("SELECT kind, state, change FROM terrascale.conflicts WHERE transaction_id = ?", id)).EnumerateArray().ToList();
+                var kinds = (await home.SqlAsync("SELECT kind, loser_state, loser_value FROM terrascale.conflicts WHERE loser_transaction_id = ?", id)).EnumerateArray().ToList();
                 await Assert.That(kinds.Select(row => row[0].GetString()).ToList()).IsEquivalentTo(sent.Conflict is null ? [] : new List<string?> { sent.Conflict })
                     .Because(spike.Name);
                 if (sent.Conflict is not null)
                 {
                     await Assert.That(kinds[0][2].GetString()).IsNotNull().Because($"{spike.Name}: the losing values are kept");
+                }
+
+                if (sent.Detail is not null)
+                {
+                    var detail = await home.SqlAsync(
+                        "SELECT column_name, winner_value, CASE WHEN json_extract(loser_value, '$.bytes') IS NULL THEN loser_value END, winner_region, winner_node, loser_region, loser_node, winner_state, loser_state, "
+                        + "length(winner_transaction_id) = 26 AND winner_hlc IS NOT NULL AND loser_hlc IS NOT NULL, coalesce(json_extract(loser_value, '$.bytes') = 5002, 1) FROM terrascale.conflicts WHERE loser_transaction_id = ?", id);
+                    await Assert.That(JsonSerializer.Serialize(detail)).IsEqualTo(JsonSerializer.Serialize(JsonElement.Parse(sent.Detail))).Because(spike.Name);
                 }
 
                 var again = await home.ApplyAsync(sent.Region, at, sent.Changes, id);
@@ -159,7 +177,7 @@ public sealed class HomeApplyTests
 
         await Assert.That(result.GetProperty("state").GetString()).IsEqualTo("reverted");
         await Assert.That(result.GetProperty("rows")[0].GetProperty("values").GetProperty("name").GetString()).IsEqualTo("docs");
-        await Assert.That((await home.SqlAsync("SELECT kind, table_name FROM terrascale.conflicts WHERE transaction_id = ?", id)).GetRawText())
+        await Assert.That((await home.SqlAsync("SELECT kind, table_name FROM terrascale.conflicts WHERE loser_transaction_id = ?", id)).GetRawText())
             .IsEqualTo("""[["foreign_key","folders"]]""");
         await Assert.That((await home.SqlAsync("SELECT (SELECT count(*) FROM folders), (SELECT count(*) FROM files)")).GetRawText()).IsEqualTo("[[1,1]]");
     }

@@ -113,26 +113,45 @@ Internal listener only, behind the peer credential; 404 on the public listener.
 ## `terrascale.conflicts`
 
 Every database has a read-only `terrascale.conflicts` table, readable with SQL on every surface (REST, WebSocket,
-Postgres wire) in every region:
+Postgres wire) in every region. One record per losing column of a `superseded` change, one per row for a row-level
+loss (a delete, or a write against a newer delete), and one per `reverted` transaction. The winner is the write the
+home kept; the loser is the region transaction that lost.
 
 | Column | Type | Meaning |
 | --- | --- | --- |
 | `id` | TEXT | ULID of the record, in record order. |
-| `transaction_id` | TEXT | The region transaction's id. |
-| `region` | TEXT | The region the transaction committed in. |
-| `state` | TEXT | `superseded` (the transaction applied, these columns lost) or `reverted` (nothing applied). |
 | `kind` | TEXT | `superseded`, `unique`, `primary_key`, `not_null`, `check`, `foreign_key`, `constraint`, `missing_row`, `schema`, `clock`. |
 | `table_name` | TEXT | The table, or null when the rejection is not about one row. |
 | `row_key` | TEXT | JSON object of the row's primary key, or null. |
-| `change` | TEXT | JSON of the losing values: the losing columns for `superseded`, the whole transaction's changes for `reverted`. |
+| `column_name` | TEXT | The losing column, or null for a row-level loss and for `reverted`. |
+| `winner_value` | TEXT | JSON of the value the home kept: the column's value, the row (`{"column": value, …}`), or null when the row is deleted or unknown. |
+| `loser_value` | TEXT | JSON of the losing value: the column's value, the row's changed values, null for a losing delete, or the whole transaction's changes for `reverted`. |
+| `winner_region` | TEXT | Region of the kept write, or null when no write of the row is recorded. |
+| `winner_node` | TEXT | Node that stamped the kept write. |
+| `winner_hlc` | TEXT | HLC of the kept write. |
+| `winner_transaction_id` | TEXT | ULID of the kept write's transaction (a region transaction, or a home transaction's id). |
+| `winner_state` | TEXT | `confirmed`, or null with no winner. |
+| `loser_region` | TEXT | Region the losing transaction committed in. |
+| `loser_node` | TEXT | Node that stamped it. |
+| `loser_hlc` | TEXT | Its commit HLC. |
+| `loser_transaction_id` | TEXT | Its id. |
+| `loser_state` | TEXT | `superseded` (the transaction applied, this part lost) or `reverted` (nothing applied). |
 | `message` | TEXT | Why, without engine names. |
 | `created_at` | TEXT | When the home recorded it (UTC, ISO 8601). |
 
+- **Values.** A value whose JSON is longer than 4 KiB is recorded as `{"sha256": "<hex of its JSON>", "bytes": <length>}`
+  instead, so `terrascale.conflicts` never holds a copy of a large value.
+- **HLCs** are fixed width and sort in HLC order: 12 hex digits of Unix milliseconds, `.`, 8 hex digits of the logical
+  counter, `:`, the node id (`019a50c1e2f3.00000000:sjc-1`).
+- **Retention.** The home keeps at most the newest 10,000 records per database, none older than 30 days; each
+  transaction that records a conflict trims the rest.
+
 ```sql
-SELECT transaction_id, kind, table_name, row_key, change FROM terrascale.conflicts WHERE state = 'reverted' ORDER BY id DESC LIMIT 20;
+SELECT loser_transaction_id, kind, table_name, row_key, column_name, winner_value, loser_value
+FROM terrascale.conflicts WHERE loser_state = 'reverted' ORDER BY id DESC LIMIT 20;
 ```
 
-Writes to it are refused with `sql_sandbox`. The home keeps the newest 10,000 records per database.
+Writes to it are refused with `sql_sandbox`.
 
 ## Triggers
 
@@ -144,7 +163,7 @@ was written.
 ## Storage
 
 Per database, internal and invisible to customers, created when the database is created with replica regions, gains
-them, or first applies a transaction: `_ts_rows` (column stamps and tombstones per row), `_ts_applied` (each applied or
+them, or first applies a transaction: `_ts_rows` (per column and per tombstone: the write's HLC, region and transaction id), `_ts_applied` (each applied or
 reverted transaction with its result, kept 7 days, so a transaction is exactly once within that window) and
 `_ts_conflicts`. A database without them stamps nothing and reads an empty `terrascale.conflicts`. Rows written at the
 home before the database had replica regions carry no stamp and lose to any region write, which can only be newer.

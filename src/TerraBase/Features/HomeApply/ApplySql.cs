@@ -21,47 +21,62 @@ internal static class StampText
             : null;
 }
 
+internal sealed record Writer(HlcTimestamp Stamp, string Region, string Transaction)
+{
+    public void WriteTo(Utf8JsonWriter writer)
+    {
+        writer.WriteStartArray();
+        writer.WriteStringValue(StampText.Format(Stamp));
+        writer.WriteStringValue(Region);
+        writer.WriteStringValue(Transaction);
+        writer.WriteEndArray();
+    }
+
+    public static Writer Read(JsonElement element) =>
+        element is { ValueKind: JsonValueKind.Array } && element.GetArrayLength() == 3 && StampText.Parse(element[0].GetString()) is { } stamp
+            ? new Writer(stamp, element[1].GetString()!, element[2].GetString()!)
+            : throw new InvalidDataException("a row stamp is damaged");
+}
+
 internal sealed class RowStamps
 {
-    public Dictionary<string, HlcTimestamp> Columns { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, Writer> Columns { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    public HlcTimestamp? Deleted { get; set; }
+    public Writer? Deleted { get; set; }
 
-    public bool Stored { get; init; }
-
-    public HlcTimestamp? Newest => Columns.Count == 0 ? null : Columns.Values.Max();
+    public Writer? Newest => Columns.Count == 0 ? null : Columns.Values.MaxBy(writer => writer.Stamp);
 
     public static RowStamps Read(string stamps, string? deleted)
     {
-        var row = new RowStamps { Stored = true, Deleted = StampText.Parse(deleted) };
+        var row = new RowStamps();
+        if (deleted is not null)
+        {
+            using var tombstone = JsonDocument.Parse(deleted);
+            row.Deleted = Writer.Read(tombstone.RootElement);
+        }
+
         using var document = JsonDocument.Parse(stamps);
         foreach (var column in document.RootElement.EnumerateObject())
         {
-            if (StampText.Parse(column.Value.GetString()) is { } stamp)
-            {
-                row.Columns[column.Name] = stamp;
-            }
+            row.Columns[column.Name] = Writer.Read(column.Value);
         }
 
         return row;
     }
 
-    public string Write()
+    public string Write() => ApplySql.Json(writer =>
     {
-        var buffer = new ArrayBufferWriter<byte>();
-        using (var writer = new Utf8JsonWriter(buffer))
+        writer.WriteStartObject();
+        foreach (var (column, stamp) in Columns.OrderBy(pair => pair.Key, StringComparer.Ordinal))
         {
-            writer.WriteStartObject();
-            foreach (var (column, stamp) in Columns.OrderBy(pair => pair.Key, StringComparer.Ordinal))
-            {
-                writer.WriteString(column, StampText.Format(stamp));
-            }
-
-            writer.WriteEndObject();
+            writer.WritePropertyName(column);
+            stamp.WriteTo(writer);
         }
 
-        return Encoding.UTF8.GetString(buffer.WrittenSpan);
-    }
+        writer.WriteEndObject();
+    });
+
+    public string? WriteDeleted() => Deleted is { } deleted ? ApplySql.Json(deleted.WriteTo) : null;
 }
 
 internal sealed record TableShape(string Name, IReadOnlyList<string> Columns, IReadOnlyList<string> Keys)
@@ -115,7 +130,7 @@ internal static class ApplySql
     }
 
     public static ValueTask<SqlStatementResult> WriteStampsAsync(IStorageTransaction transaction, string table, string key, RowStamps stamps, CancellationToken cancellationToken) =>
-        transaction.RunAsync("INSERT INTO _ts_rows (tbl, pk, stamps, deleted) VALUES (?, ?, ?, ?) ON CONFLICT (tbl, pk) DO UPDATE SET stamps = excluded.stamps, deleted = excluded.deleted", [table, key, stamps.Write(), stamps.Deleted is { } deleted ? StampText.Format(deleted) : null], cancellationToken);
+        transaction.RunAsync("INSERT INTO _ts_rows (tbl, pk, stamps, deleted) VALUES (?, ?, ?, ?) ON CONFLICT (tbl, pk) DO UPDATE SET stamps = excluded.stamps, deleted = excluded.deleted", [table, key, stamps.Write(), stamps.WriteDeleted()], cancellationToken);
 
     public static string KeyText(IEnumerable<object?> values) => Json(writer =>
     {
@@ -176,6 +191,22 @@ internal static class ApplySql
                 break;
         }
     }
+
+    internal const int MaxShownBytes = 4096;
+
+    public static string Shown(string json)
+    {
+        var bytes = Encoding.UTF8.GetByteCount(json);
+        return bytes <= MaxShownBytes ? json : Json(writer =>
+        {
+            writer.WriteStartObject();
+            writer.WriteString("sha256", Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(json))));
+            writer.WriteNumber("bytes", bytes);
+            writer.WriteEndObject();
+        });
+    }
+
+    public static string ValueJson(object? value) => Shown(Json(writer => WriteValue(writer, value)));
 
     public static object? Value(JsonElement value) => SqlJson.Value(value) switch
     {

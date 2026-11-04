@@ -19,13 +19,14 @@ internal static class SqlSandbox
 
     private const string ShownSql = $"replace(replace(sql, 'WHEN {TriggerGuard} AND (', 'WHEN ('), ' WHEN {TriggerGuard} BEGIN', ' BEGIN')";
 
-    private const string ConflictColumns = "id, transaction_id, region, state, kind, table_name, row_key, change, message, created_at";
+    private const string ConflictColumns =
+        "id, kind, table_name, row_key, column_name, winner_value, loser_value, winner_region, winner_node, winner_hlc, winner_transaction_id, winner_state, "
+        + "loser_region, loser_node, loser_hlc, loser_transaction_id, loser_state, message, created_at";
 
     private const string ConflictsView = $"(SELECT {ConflictColumns} FROM _ts_conflicts)";
 
     private const string NoConflictsView =
-        "(SELECT NULL AS id, NULL AS transaction_id, NULL AS region, NULL AS state, NULL AS kind, NULL AS table_name, NULL AS row_key, "
-        + "NULL AS change, NULL AS message, NULL AS created_at WHERE 0)";
+        "(SELECT " + "NULL AS id, NULL AS kind, NULL AS table_name, NULL AS row_key, NULL AS column_name, NULL AS winner_value, NULL AS loser_value, NULL AS winner_region, NULL AS winner_node, NULL AS winner_hlc, NULL AS winner_transaction_id, NULL AS winner_state, NULL AS loser_region, NULL AS loser_node, NULL AS loser_hlc, NULL AS loser_transaction_id, NULL AS loser_state, NULL AS message, NULL AS created_at WHERE 0)";
 
     private static readonly Dictionary<string, string> SchemaTables = new(StringComparer.OrdinalIgnoreCase)
     {
