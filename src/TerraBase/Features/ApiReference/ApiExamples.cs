@@ -216,6 +216,7 @@ internal static class ApiExamples
         "401" => "invalid_key",
         "403" when id is "createDatabase" or "branchDatabase" or "branchDatabaseIfId" or "updateDatabase" or "deleteDatabase" or "deleteDatabaseIfId" or "restoreBackup" or "setBackupPolicy" or "setExportSchedule" or "createIndex" or "dropIndex" or "applyIndexRecommendation" or "createSavedQuery" or "updateSavedQuery" or "deleteSavedQuery" or "declareCollectionSchema" => "forbidden_scope, forbidden_role",
         "403" when id == "previewCollectionSchema" => "forbidden_scope, forbidden",
+        "403" when id == "executeSql" => "forbidden_scope, sql_sandbox",
         "403" => "forbidden_scope",
         "404" when id is "createCollection" or "listCollections" => "unknown_database",
         "404" when id is "getDocument" or "patchDocument" or "deleteDocument" or "runTransaction" => "unknown_database, unknown_collection, not_found",
