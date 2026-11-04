@@ -106,7 +106,7 @@ namespace TerraScale.Dashboard.E2E
         // Starts both replicas and reports whether their bounded startup attempt alone initialized the state.
         public async Task<bool> StartHostsWithoutWaitingAsync(bool simultaneous = false)
         {
-            first = Host(); second = Host(); StartupError = null;
+            first = await HostAsync(); second = await HostAsync(); StartupError = null;
             try
             {
                 if (simultaneous)
@@ -150,9 +150,9 @@ namespace TerraScale.Dashboard.E2E
             return await StartHostsAsync();
         }
 
-        private WebApplication Host()
+        private async Task<WebApplication> HostAsync()
         {
-            var app = environment.CreateTestHost(root, 0, "http://127.0.0.1", builder => ConfigureState(builder));
+            var app = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1", builder => ConfigureState(builder));
             return app;
         }
 

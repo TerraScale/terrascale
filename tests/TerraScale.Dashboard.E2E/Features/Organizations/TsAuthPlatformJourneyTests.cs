@@ -524,7 +524,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
 
             private async Task<Uri> HostAsync(string publicOrigin, Action<WebApplicationBuilder>? configure, Action<WebApplication>? map)
             {
-                var app = environment.CreateTestHost(Root, 0, publicOrigin, builder =>
+                var app = await environment.CreateTestHostAsync(Root, 0, publicOrigin, builder =>
                 {
                     auth ??= (TestAuth)builder.Services.Last(service => service.ServiceType == typeof(IAuthGateway)).ImplementationInstance!;
                     state ??= (IDashboardState)builder.Services.Last(service => service.ServiceType == typeof(IDashboardState)).ImplementationInstance!;

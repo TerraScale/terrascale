@@ -21,12 +21,12 @@ namespace TerraScale.Dashboard.E2E
         {
             var environment = new DemoEnvironment();
             await environment.InitializeAsync();
-            first = environment.CreateTestHost(Root, 0, "http://127.0.0.1");
+            first = await environment.CreateTestHostAsync(Root, 0, "http://127.0.0.1");
             try
             {
                 await first.StartAsync();
                 Origin = Address(first);
-                second = environment.CreateTestHost(Root, 0, Origin.ToString().TrimEnd('/'));
+                second = await environment.CreateTestHostAsync(Root, 0, Origin.ToString().TrimEnd('/'));
                 await second.StartAsync();
                 ReplicaOrigin = Address(second);
                 await Task.WhenAll(TestDeadline.StateInitializedAsync(first), TestDeadline.StateInitializedAsync(second));

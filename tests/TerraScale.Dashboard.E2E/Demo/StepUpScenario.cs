@@ -32,7 +32,7 @@ namespace TerraScale.Dashboard.E2E
             var environment = new DemoEnvironment();
             await environment.InitializeAsync();
             environment.Auth.RegisterFixturePrincipal(new(new TerraScale.Dashboard.Common.Accounts.TerraScaleIdGenerator().NewId(), "Existing other account", "other@example.com", "test-password"));
-            var app = environment.CreateTestHost(root, 0, "http://127.0.0.1", builder => { builder.Services.AddSingleton<TimeProvider>(new TestClock()); configure?.Invoke(builder); });
+            var app = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1", builder => { builder.Services.AddSingleton<TimeProvider>(new TestClock()); configure?.Invoke(builder); });
             await app.StartAsync();
             var cookies = new CookieContainer();
             var browser = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = cookies }) { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };

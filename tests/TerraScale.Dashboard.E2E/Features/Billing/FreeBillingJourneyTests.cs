@@ -16,13 +16,11 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await environment.InitializeAsync();
             RejectVendorCalls vendor = null!;
             TestTerraBasePlans plans = null!;
-            await using var app = environment.CreateTestHost(new DashboardE2EFixture().Root, 0, "http://127.0.0.1", builder =>
+            await using var app = await environment.CreateTestHostAsync(new DashboardE2EFixture().Root, 0, "http://127.0.0.1", builder =>
             {
                 var original = (IHttpClientFactory)builder.Services.Last(service => service.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
                 plans = new(original, environment.Databases, new Uri("http://127.0.0.1:8081"));
-                builder.Services.Replace(ServiceDescriptor.Singleton<TestRestRpcHost>(_ => TestRestRpcHost.StartAsync(
-                    plans, "http://127.0.0.1:8081", "terrabase-state").GetAwaiter().GetResult()));
-                TestRestRpcHost.UseRegisteredHost(builder.Services);
+                builder.Services.AddSingleton(new TestRestRpcHost.Target(plans, "http://127.0.0.1:8081", "terrabase-state"));
                 vendor = new(plans);
                 builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(vendor));
             });
