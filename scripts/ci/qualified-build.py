@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Retain and restore source-bound dev-host CI builds. No compiled code runs on Actions."""
+"""Retain and restore source-bound dev-host CI builds. Compilation stays on dev hosts; CI restores private checked payloads."""
 import hashlib
 import json
 import os
@@ -8,6 +8,8 @@ import re
 import subprocess
 import sys
 import shutil
+import gzip
+import tarfile
 import tempfile
 import urllib.request
 
@@ -73,9 +75,10 @@ def verify(area, sha, directory, require_fast=True):
     if manifest['schema'] != 'terrascale.ci-build/v1' or manifest['revision'] != sha or manifest['area'] != area:
         raise ValueError('Checked build belongs to another revision or area')
     if area != 'libs':
-        registry = 'ghcr.io/terrascale/' + ('ts-auth' if area == 'auth' else 'terrabase')
-        if not re.fullmatch(re.escape(registry) + r'@sha256:[0-9a-f]{64}', manifest.get('image', '')):
-            raise ValueError('Invalid checked runtime image')
+        payload = manifest.get('payload') or {}
+        if (payload.get('key') != f'fast-ci/{sha}/{area}/image-payloads.tar.gz'
+                or not re.fullmatch(r'[0-9a-f]{64}', payload.get('sha256', ''))):
+            raise ValueError('Invalid checked runtime payload')
     return manifest
 
 
@@ -88,55 +91,42 @@ def restore(area, sha, directory):
            '--pattern', name, '--dir', str(directory))
         if digest(directory / name) != checksum:
             raise ValueError('Artifact checksum mismatch: ' + name)
+    if area != 'libs':
+        archive = directory / 'image-payloads.tar.gz'
+        with archive.open('wb') as output:
+            subprocess.run([*cf_command(), 'r2', 'objects', 'get', manifest['payload']['key'],
+                            '--bucket-name', 'ts-terrabase-ci'], stdout=output, check=True)
+        if digest(archive) != manifest['payload']['sha256']:
+            raise ValueError('Runtime payload checksum mismatch')
+        runtime = directory / 'image-payloads'
+        runtime.mkdir()
+        with tarfile.open(archive) as package:
+            for member in package.getmembers():
+                if Path(member.name).parts[0] not in {'amd64', 'arm64'}:
+                    raise ValueError('Unexpected runtime payload path')
+            package.extractall(runtime, filter='data')
+        with (runtime / 'Dockerfile').open('w') as output:
+            subprocess.run(['bash', 'scripts/ci/image-payloads.sh', 'runtime-dockerfile', area],
+                           stdout=output, check=True)
     print(f'Restored checked {area} build for {sha}', flush=True)
 
 
-def publish_image(area, sha, directory, env):
-    engine = shutil.which('podman')
-    if not engine:
-        raise ValueError('Podman is required for dev-host runtime packaging')
-    registry = 'ghcr.io/terrascale/' + ('ts-auth' if area == 'auth' else 'terrabase')
-    authfile = directory / 'registry-auth.json'
-    # Existing gh credentials are delivered over stdin, never through arguments or logs.
-    token = subprocess.Popen(['gh', 'auth', 'token'], stdout=subprocess.PIPE)
-    try:
-        subprocess.run([engine, 'login', '--authfile', str(authfile), '--username', 'MarioGK',
-                        '--password-stdin', 'ghcr.io'], stdin=token.stdout, check=True)
-    finally:
-        token.stdout.close()
-        if token.wait():
-            raise ValueError('Could not read existing gh credential')
-    runtime = directory / 'image-payloads'
-    dockerfile = runtime / 'Dockerfile'
-    with dockerfile.open('w') as output:
-        subprocess.run(['bash', 'scripts/ci/image-payloads.sh', 'runtime-dockerfile', area],
-                       stdout=output, check=True, env=env)
-    index = 'localhost/ci-' + area + ':' + sha + '-' + directory.name
-    images = []
-    try:
-        subprocess.run([engine, 'manifest', 'create', index], check=True)
-        for arch in ('amd64', 'arm64'):
-            name = index + '-' + arch
-            subprocess.run([engine, 'build', '--platform', 'linux/' + arch,
-                            '--build-arg', 'TARGETARCH=' + arch,
-                            '--label', 'org.opencontainers.image.revision=' + sha,
-                            '--label', 'org.opencontainers.image.source=https://github.com/' + REPO,
-                            '--tag', name, str(runtime)], check=True)
-            images.append(name)
-            subprocess.run([engine, 'manifest', 'add', index, 'containers-storage:' + name], check=True)
-        digestfile = directory / 'image-digest'
-        subprocess.run([engine, 'manifest', 'push', '--all', '--authfile', str(authfile),
-                        '--digestfile', str(digestfile), index,
-                        'docker://' + registry + ':qualified-' + sha], check=True)
-        value = digestfile.read_text().strip()
-        if not re.fullmatch(r'sha256:[0-9a-f]{64}', value):
-            raise ValueError('Invalid published OCI digest')
-        return registry + '@' + value
-    finally:
-        subprocess.run([engine, 'manifest', 'rm', index], check=False)
-        for name in images:
-            subprocess.run([engine, 'image', 'rm', name], check=False)
-        authfile.unlink(missing_ok=True)
+def cf_command():
+    executable = shutil.which('cf')
+    return [executable] if executable else ['npx', '--yes', '--package=cf@1.0.0-beta.20', '--', 'cf']
+
+
+def retain_payload(area, sha, directory, env):
+    subprocess.run(['bash', 'scripts/ci/image-payloads.sh', 'pack', area], check=True, env=env)
+    archive = directory / 'image-payloads.tar.gz'
+    with (directory / f'image-payloads-{area}.tar').open('rb') as source, gzip.open(archive, 'wb', compresslevel=1) as output:
+        shutil.copyfileobj(source, output)
+    if archive.stat().st_size > 300 * 1024 * 1024:
+        raise ValueError('Checked payload exceeds the R2 API upload limit')
+    key = f'fast-ci/{sha}/{area}/image-payloads.tar.gz'
+    subprocess.run([*cf_command(), 'r2', 'objects', 'put', key, '--bucket-name', 'ts-terrabase-ci',
+                    '--file', str(archive), '--content-type', 'application/gzip'], check=True)
+    return {'key': key, 'sha256': digest(archive)}
 
 
 def prepare(area, sha, directory):
@@ -165,12 +155,12 @@ def prepare(area, sha, directory):
     print(log.read_text(), end='', flush=True)
     if result.returncode:
         raise ValueError(f'{area} checked build failed (exit {result.returncode})')
-    image = None
+    payload = None
     if area != 'libs':
-        image = publish_image(area, sha, directory, env)
+        payload = retain_payload(area, sha, directory, env)
     files = [log]
     manifest = {'schema': 'terrascale.ci-build/v1', 'revision': sha, 'area': area,
-                'files': {path.name: digest(path) for path in files}, 'image': image}
+                'files': {path.name: digest(path) for path in files}, 'payload': payload}
     path = directory / 'manifest.json'
     path.write_text(json.dumps(manifest, sort_keys=True) + '\n')
     tag = f'ci/qualified-{sha}-{area}'
