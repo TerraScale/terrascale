@@ -36,7 +36,12 @@ internal sealed class SqlNativeDatabase : IAsyncDisposable
     public static Task<SqlNativeDatabase> StartAsync(Action<IServiceCollection>? services = null, Action<Dictionary<string, string>>? configure = null) =>
         StartCoreAsync(ManagementApi.StartAsync(configure, services));
 
-    public static Task<SqlNativeDatabase> StartSharedAsync() => StartCoreAsync(ManagementApi.StartSharedAsync());
+    public static async Task<SqlNativeDatabase> StartSharedAsync()
+    {
+        var shared = await SqlTenantFixture.GetAsync();
+        var (api, database) = await shared.CreateDatabaseAsync();
+        return new(api, database, shared.Writer, shared.Reader);
+    }
 
     private static async Task<SqlNativeDatabase> StartCoreAsync(Task<ManagementApi> start)
     {
