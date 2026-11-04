@@ -92,6 +92,8 @@ namespace TerraScale.Dashboard.Common.Databases
                 throw new AccountAccessException("A database with this name already exists in another home region.", 409);
             }
 
+            if (ttlSeconds is not null && remote.ExpiresAt is null)
+                throw new HttpRequestException("Database provisioning did not confirm the requested TTL.");
             var placement = await RemotePlacementAsync(remote, cancellationToken);
             if (!recovered && placement[0].Id != home.Id)
             {
@@ -149,6 +151,8 @@ namespace TerraScale.Dashboard.Common.Databases
                 throw new AccountAccessException("A branch with this name has a different home region.", 409);
             }
 
+            if (ttlSeconds is not null && remote.ExpiresAt is null)
+                throw new HttpRequestException("Database provisioning did not confirm the requested TTL.");
             var placement = await RemotePlacementAsync(remote, cancellationToken);
             var record = Record(remote, placement, "ready");
             await accounts.UpdateOrganizationAsync(context, org =>
@@ -296,7 +300,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 var seen = project.Databases.Values.ToArray();
                 // Copy placement before awaiting the provider; mutable record references are not a concurrency snapshot.
                 var observed = seen.ToDictionary(record => record.Id, record =>
-                    (record.Name, record.ProjectId, record.PreviousName, record.ConflictOf, record.Region, Regions: Regions(record).ToArray(), record.AllRegions, record.PlacementRevision));
+                    (record.Name, record.ProjectId, record.PreviousName, record.ConflictOf, record.Region, Regions: Regions(record).ToArray(), record.AllRegions, record.PlacementRevision, record.ExpiresAt));
                 // TerraBase homes a database in whichever region accepted its creation, whatever created it: a project's
                 // preferred region is only a preference, and a project made outside the dashboard has none. Listing every
                 // serving region is the complete catalog; the regions answer in parallel and converge on the same list.
@@ -325,7 +329,7 @@ namespace TerraScale.Dashboard.Common.Databases
                         }
                         // Existing identity and immutable home must match; refresh configuration, never inferred health/status.
                         else if (record.Name == before.Name && record.ProjectId == before.ProjectId && record.Region.Equals(before.Region, StringComparison.OrdinalIgnoreCase) &&
-                            (record.AllRegions != before.AllRegions || !Regions(record).SequenceEqual(before.Regions, StringComparer.OrdinalIgnoreCase)))
+                            (record.ExpiresAt != before.ExpiresAt || record.AllRegions != before.AllRegions || !Regions(record).SequenceEqual(before.Regions, StringComparer.OrdinalIgnoreCase)))
                         {
                             refreshed.Add(record);
                         }
@@ -343,7 +347,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 {
                     return observed.TryGetValue(record.Id, out var before) && record.Name == before.Name && record.ProjectId == before.ProjectId &&
                     record.PreviousName == before.PreviousName && record.ConflictOf == before.ConflictOf &&
-                    record.PlacementRevision == before.PlacementRevision && record.Region == before.Region && record.AllRegions == before.AllRegions && Regions(record).SequenceEqual(before.Regions, StringComparer.OrdinalIgnoreCase);
+                    record.ExpiresAt == before.ExpiresAt && record.PlacementRevision == before.PlacementRevision && record.Region == before.Region && record.AllRegions == before.AllRegions && Regions(record).SequenceEqual(before.Regions, StringComparer.OrdinalIgnoreCase);
                 }
 
                 void Apply(ProjectRecord target)
@@ -361,6 +365,7 @@ namespace TerraScale.Dashboard.Common.Databases
                     {
                         if (target.Databases.TryGetValue(record.Id, out var current) && Unchanged(current))
                         {
+                            current.ExpiresAt = record.ExpiresAt;
                             current.Regions = [.. record.Regions];
                             current.AllRegions = record.AllRegions;
                             current.Endpoint = record.Endpoint;
