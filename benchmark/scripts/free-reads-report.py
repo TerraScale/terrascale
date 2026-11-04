@@ -56,6 +56,19 @@ if audit:
     if over:
         first = over[0]
         print(f"The first recorded window above the two-core equivalent threshold was `{first['start']}`–`{first['end']}` ({first['region']}, {first['shape']}, N={first['readers']}, repeat {first['repeat']}). The incorrect denominator let subsequent cohorts continue until the explicit stop. Those records remain visible and carry no safety qualification.\n")
+    peak = max((row for row in cells if row["cpu_max_percent"] is not None), key=lambda row: row["cpu_max_percent"])
+    origin = sum(value for key, value in peak["requests"].items() if key != "cdn")
+    print("## Peak CPU cohort\n")
+    print("| Egress | Shape | N | Repeat | CPU max % (2 cgroup CPUs; conditional) | CDN HIT / GET attempts | CDN HIT % | Total origin requests |")
+    print("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+    print(f"| {peak['region']} | {peak['shape']} | {peak['readers']} | {peak['repeat']} | {peak['cpu_max_percent'] * factor:.1f} | {peak['statuses'].get('HIT', 0)} / {peak['requests']['cdn']} | {peak['cdn_hit_ratio'] * 100:.2f} | {origin:,} |\n")
+    print(f"This is the whole cohort window `{peak['start']}`–`{peak['end']}`, not request counts for the exact CPU sampling interval. The maximum came from {peak['cpu_samples']} CPU samples. Correcting the denominator gives `{peak['cpu_max_percent']:.8f}% × {audit['reported_processors']:g} / {audit['quota_cores']:g} = {peak['cpu_max_percent'] * factor:.8f}%` of the two-core quota. Raw cohort records retain the original four-processor value; the corrected basis is primary in the tables. Historical quota uncertainty still applies.\n")
+    print("| Origin request category | Attempts in peak cohort |")
+    print("| --- | ---: |")
+    for key, label in [("bootstrap", "Bootstrap"), ("manifest", "Manifest"), ("keys", "Epoch keys"), ("head", "Head probes"), ("tail", "Live tail"), ("snapshot_payload", "Snapshot payload fallback"), ("catchup_payload", "Catch-up payload fallback")]:
+        print(f"| {label} | {peak['requests'][key]:,} |")
+    print(f"\nOf {origin:,} origin attempts, {peak['origin_statuses'].get('429', 0):,} returned HTTP 429; these refusals are already included in the category counts. There were {peak['statuses'].get('MISS', 0)} CDN MISS responses. Sealed catch-up payloads had no origin fallback in this cohort. Bootstrap, manifest, key and live-tail/head work still reached origin despite the high CDN HIT ratio. This establishes a remaining origin fan-out gap; shared-service CPU and cohort totals do not attribute the CPU peak to a particular endpoint or prove that CPU scales with N.\n")
+    print("Recommended next task: prioritize F12 to bound live-tail resource use and coalesce upstream tail/head work per authorized shape, with authorization-scoped sharing of repeated bootstrap/manifest/key work. Preserve tenant/filter isolation, authorization and revocation. Tail-only coalescing leaves the bootstrap/manifest/key amplification visible above. Longer catch-up CDN TTLs are not the first fix supported by this cohort: its catch-up payload fallback count was zero and there were only two CDN misses. Keep reader load stopped pending the parent's decision and implementation qualification.\n")
 print("## Findings\n")
 populated = [group for _, _, _, group in groups if group]
 print(f"- {len(cells)} recorded cohorts delivered {sum(row['tail']['count'] for row in cells):,} reader updates. {sum(len(group) == 3 for group in populated)}/{len(populated)} populated groups have three repeats; missing groups and the 1,000-reader pilot remain unqualified.")
@@ -78,7 +91,7 @@ print("- A cohort that hits its deadline is recorded and the next cohort proceed
 print(f"- Target: three measured repeats for every shape/region/N; the repeats column records completed cohorts. Nearest-rank p50/p99 within each repeat; tables show the median and min–max of completed repeat percentiles; fewer than three repeats remain unqualified. N=1 supplies one latency sample per repeat, so its p99 is not a statistically useful tail estimate. Cohort deadline: {method.get('cohort_deadline_seconds', 60)} seconds.")
 print("- The authenticated bootstrap, manifests, keys, empty head probes and live tail remain origin requests. Counts include retries and refusals, exclude setup, usage observations and OAuth exchanges, and are separated from immutable payload requests. A shared token provider refreshes the synthetic account's 60-second access token before expiry.")
 if audit:
-    print("- These cohorts sampled TerraBase runtime CPU-time counters once per second and normalized them using the runtime processor count. This denominator was wrong for the allocated service quota. The table preserves the reported values and supplies a conditional two-core equivalent; it does not retroactively qualify the guard. The corrected guard identifies the `terrabase` process, reads `/proc` CPU ticks and uses the minimum of CPU affinity and all ancestor cgroup v2 quotas; it stops on missing data, process/capacity changes or utilization above 70%. CPU includes other concurrent TerraBase work, with no idle-baseline subtraction.")
+    print("- These cohorts sampled TerraBase runtime CPU-time counters once per second and normalized them using the runtime processor count. This denominator was wrong for the allocated service quota. The primary CPU column uses the observed two-core cgroup quota: original percentage × 4 / 2. The invalid four-processor values remain alongside it for auditability. The correction is conditional on that quota holding during the historical windows and does not retroactively qualify the guard. The corrected guard identifies the `terrabase` process, reads `/proc` CPU ticks and uses the minimum of CPU affinity and all ancestor cgroup v2 quotas; it stops on missing data, process/capacity changes or utilization above 70%. CPU includes other concurrent TerraBase work, with no idle-baseline subtraction.")
 else:
     print("- CPU is sampled every second from the identified TerraBase process and normalized against the minimum of affinity and ancestor cgroup v2 quotas. Every phase stops above 70%, or if the process, capacity or telemetry changes. Table values are the highest sampled one-second mean, not instantaneous CPU, and include other concurrent TerraBase work without idle-baseline subtraction.")
 print("- Usage observations include the database's best-effort operation counter and the project's monthly ledger. SQL read-unit deltas are fair-use units; the billed read component is `month.units - month.writeUnits`. This is ledger evidence, not a Stripe invoice or an infrastructure-dollar estimate.")
@@ -106,7 +119,8 @@ for region, shape, readers, group in groups:
     full = sum(row["snapshot"]["count"] == readers and row["tail"]["count"] == readers for row in group)
     print(f"| {region} | {shape} | {readers} | {full}/{len(group)} | " + " | ".join(values) + " |")
 print("\n## Requests, read units and CPU\n")
-print("| Egress | Shape | N | CDN GET attempts | CDN HIT % | Origin immutable requests | Origin control/tail requests | Total origin requests | Origin requests / reader | R2 GetObject (r1/r2/r3) | CPU max % (reported) | CPU max % (2-core equivalent) | SQL read units | Billed read component |")
+cpu_headers = "CPU max % (2 cgroup CPUs; conditional) | CPU max % (original 4-CPU basis; invalid)" if audit else "CPU max % (allocated capacity) | CPU max % (original basis)"
+print("| Egress | Shape | N | CDN GET attempts | CDN HIT % | Origin immutable requests | Origin control/tail requests | Total origin requests | Origin requests / reader | R2 GetObject (r1/r2/r3) | " + cpu_headers + " | SQL read units | Billed read component |")
 print("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: |")
 for region, shape, readers, group in groups:
     r2 = [lookup.get((region, shape, readers, repeat), {}).get("get_object") for repeat in [1, 2, 3]]
@@ -116,8 +130,8 @@ for region, shape, readers, group in groups:
               span([sum(value for key, value in row["requests"].items() if key != "cdn") for row in group]),
               span([sum(value for key, value in row["requests"].items() if key != "cdn") / readers for row in group], 2),
               "/".join("—" if count is None else str(count) for count in r2),
-              span([max((row["cpu_max_percent"] for row in group if row["cpu_max_percent"] is not None), default=None)], 1),
-              span([max((row["cpu_max_percent"] * audit["reported_processors"] / audit["quota_cores"] for row in group if row["cpu_max_percent"] is not None), default=None)], 1) if audit else "—",
+              span([max((row["cpu_max_percent"] * (audit["reported_processors"] / audit["quota_cores"] if audit else 1) for row in group if row["cpu_max_percent"] is not None), default=None)], 1),
+              span([max((row["cpu_max_percent"] for row in group if row["cpu_max_percent"] is not None), default=None)], 1) if audit else "—",
               span([row["sql_read_units"] for row in group]), span([row["billed_read_units_after"] for row in group])]
     print(f"| {region} | {shape} | {readers} | " + " | ".join(counts) + " |")
 timeouts = [row for row in cells if row.get("outcome") == "timeout"]
