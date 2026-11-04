@@ -57,6 +57,21 @@ print("- The authenticated bootstrap, manifests, keys, empty head probes and liv
 print("- CPU is sampled every second from TerraBase's runtime CPU-time counters in gru, divided by its reported processor count. Every phase stops if the sample exceeds 70%, telemetry disappears or the process restarts. Table values are the highest sampled one-second mean, not instantaneous CPU.")
 print("- Usage observations include the database's best-effort operation counter and the project's monthly ledger. SQL read-unit deltas are fair-use units; the billed read component is `month.units - month.writeUnits`. This is ledger evidence, not a Stripe invoice or an infrastructure-dollar estimate.")
 print("- R2 counts are Cloudflare `r2OperationsAdaptiveGroups` results for `ts-terrabase-shapes-prod`, rounded outward to whole-second reader windows. They are bucket-wide adaptive analytics, may include unrelated traffic/adjacent setup, and are not per-object attribution. An empty analytics result is unavailable, not zero. Client MISS counts are not substituted for R2 GetObject counts.\n")
+print("- This is a small two-object workload. It does not establish latency or origin cost for larger snapshots, longer catch-up histories or browser bootstrap behavior.\n")
+print("## Observed CDN locations\n")
+print("| Regional egress | CF-Ray location | Responses |")
+print("| --- | --- | ---: |")
+for region in ["gru", "sjc", "fra"]:
+    colos = {}
+    for row in cells:
+        if row["region"] == region:
+            for colo, count in row["colos"].items():
+                colos[colo] = colos.get(colo, 0) + count
+    for colo, count in sorted(colos.items()):
+        print(f"| {region} | {colo} | {count:,} |")
+    if not colos:
+        print(f"| {region} | — | — |")
+print()
 print("## Latency (milliseconds)\n")
 print("| Egress | Shape | N | Repeats | Snapshot p50 | Snapshot p99 | Catch-up p50 | Catch-up p99 | Tail p50 | Tail p99 |")
 print("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
