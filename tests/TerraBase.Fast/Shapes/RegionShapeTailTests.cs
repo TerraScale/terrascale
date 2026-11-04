@@ -13,6 +13,9 @@ namespace TerraBase.Fast.Shapes;
 
 public sealed class RegionShapeTailTests
 {
+    private static readonly string[] Projected = ["name", "score"];
+    private static readonly string[] Tables = ["items"];
+
     [Test]
     public async Task A_shape_in_sjc_reads_gru_updates_and_filtered_moves_from_its_replica_even_after_home_disconnects()
     {
@@ -36,7 +39,7 @@ public sealed class RegionShapeTailTests
             new { statements = new object[] { new { sql = "CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT, score INTEGER)" }, new { sql = "INSERT INTO items VALUES (1, 'first', 0), (2, 'second', 20)" } } }, token);
         seeded.EnsureSuccessStatusCode();
         using var grant = await home.PutAsJsonAsync(ManagementApi.Uri(database.Data + "/tables/items/read-grant"),
-            new { where = "score >= 10", columns = new[] { "name", "score" } }, token);
+            new { where = "score >= 10", columns = Projected }, token);
         grant.EnsureSuccessStatusCode();
         using var browser = sjc.WithToken(issuer.Mint(EntityIds.New().ToString(), claims =>
         {
@@ -45,7 +48,7 @@ public sealed class RegionShapeTailTests
             claims.Claims["instance_id"] = project;
             claims.Claims["database"] = database.Id;
             claims.Claims["roles"] = Array.Empty<string>();
-            claims.Claims["tables"] = new[] { "items" };
+            claims.Claims["tables"] = Tables;
         }));
         var replication = sjc.Server.Services.GetRequiredService<RegionReplication>();
         await replication.SyncCatalogsAsync(token);
