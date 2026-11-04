@@ -12,6 +12,6 @@ The vs-engine benchmark retains local raw-engine, engine-service and HTTP lanes.
 
 The feed benchmark retains local feed-prefix and reader measurements. Anti-entropy digest and pull modes have been removed. PITR clock sampling uses the health endpoint; no backup command depends on a replication status endpoint.
 
-`make terrabase-e2e-local` runs the three retained local-only integration scenarios: two backup qualification scenarios and the local shape cache scenario. Its exact-count and pass-only result checks remain required in the native and container CI lanes.
+`make terrabase-e2e-local` runs the two retained local-only integration scenarios, both backup qualification scenarios. Its exact-count and pass-only result checks remain required in the native and container CI lanes.
 
 No new benchmark measurements are supplied by this refactor. Future results must use three repeats and describe the local process and test-boundary costs they include.
