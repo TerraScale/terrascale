@@ -75,6 +75,17 @@ cases = [
     ({"parser.rs": "use std::collections::{hash_map::RandomState, BTreeSet}; collections::HashMap"}, "fail", 0, set()),
     ({"parser.rs": "use std::collections::HashMap; DocumentKey"}, "fail", 1, {"documents"}),
     ({"Hrana.txt": "SQL rows"}, "fail", 1, {"hrana"}),
+    ({"LICENSE": "Sections 1 through 9 of this document.", "fonts/OFL-geist.txt": "the collection of Font Software"}, "fail", 0, set()),
+    ({"LICENSE": "documents; Hrana"}, "fail", 1, {"hrana"}),
+    ({"guide.md": "Use the discovery document; the OpenAPI document; Legal documents; GetDiscoveryDocumentAsync"}, "fail", 0, set()),
+    ({"guide.md": "the discovery document lists documents"}, "fail", 1, {"documents"}),
+    ({"Auth.cs": "TerraScaleAuthServiceCollectionExtensions CreateCollectionAsync"}, "fail", 1, {"collections"}),
+    ({"docs-site/docs/public/_redirects": "/ar/guides/libsql-clients /ar/concepts/sql 301"}, "fail", 0, set()),
+    ({"docs-site/docs/public/_redirects": "/libsql/v1 /concepts/sql 301"}, "fail", 1, {"libsql"}),
+    ({"landing-site/scripts/icons-manifest.mjs": "activity: { collection: 'lucide' }"}, "fail", 0, set()),
+    ({"landing-site/src/app.html": "document.documentElement.lang = bcp47; syncDocumentLang()"}, "fail", 0, set()),
+    ({"sdk/rust/Cargo.lock": 'name = "icu_collections"'}, "fail", 0, set()),
+    ({"sdk/js/test/forbidden-surface.test.js": "/documents|collections/; createDocument"}, "fail", 1, {"documents"}),
 ]
 for name in ["src/TerraScale.Endpoints/RequestBinder.cs", "src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Properties/Resources.cs", "src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/SqliteConnection.cs"]:
     source = Path(__file__).resolve().parents[2] / name
