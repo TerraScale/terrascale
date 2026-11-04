@@ -318,9 +318,9 @@ jobs:
         run: python3 scripts/ci/qualified-build.py verify terrabase
 
   main:
-    needs: [changes, native, terrabase]
+    needs: [changes, native, terrabase, test]
     if: >-
-      !cancelled() && needs.terrabase.result == 'success'
+      !cancelled() && needs.terrabase.result == 'success' && needs.test.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'terrabase')
     concurrency:
@@ -409,9 +409,9 @@ jobs:
           exit "$status"
 
   main-auth:
-    needs: [changes, native, auth]
+    needs: [changes, native, auth, test]
     if: >-
-      !cancelled() && needs.auth.result == 'success'
+      !cancelled() && needs.auth.result == 'success' && needs.test.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'auth')
     concurrency:

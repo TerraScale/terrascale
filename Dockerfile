@@ -9,11 +9,7 @@
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0.100-rc.3-resolute@sha256:3a9175b6c54b2f076817af1360f691c9994447b192faa48a1a1f112a516844c7 AS sdk
 
 FROM sdk AS base
-# Test hosts retain the eight-CPU .NET budget across runner types.
-# Publish/runtime stages have their own base and retain automatic CPU discovery.
-ARG DOTNET_PROCESSOR_COUNT=8
-ARG DOTNET_GCHeapCount=8
-ENV DOTNET_PROCESSOR_COUNT=$DOTNET_PROCESSOR_COUNT DOTNET_GCHeapCount=$DOTNET_GCHeapCount
+# Test processes use automatic CPU and GC discovery, with TUnit default parallelism.
 # The SDK image's ASPNETCORE_HTTP_PORTS=8080 makes Kestrel warn "Overriding address(es)", which tests that assert
 # on warnings see; the services choose their own listeners.
 # DOTNET_ROOT lets the framework-dependent `terrabase` apphost that ts-auth's tests start find the runtime.
