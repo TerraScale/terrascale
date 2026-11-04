@@ -257,7 +257,9 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             }
             catch (TsAuthException error) when (error.ErrorCode == "rotation_pending")
             {
-                throw new AccountAccessException("This key's previous secret is still in its grace period. Rotate again after it expires.", 409);
+                throw new AccountAccessException(current.PreviousSecretExpiresAt is { } grace
+                    ? $"This key's previous secret still works until {Format(grace)}. Rotate again after that."
+                    : "This key's previous secret is still in its grace period. Rotate again after it expires.", 409);
             }
             var key = Map(context, result.ApiKey);
             if (key.Id != keyId || key.Name != current.Name || key.DatabaseId != current.DatabaseId ||
@@ -332,7 +334,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         {
             return new(key.Id, key.ProjectId, key.Name, key.Id + "_", "", key.Scopes,
             key.DatabaseId ?? "", key.CreatedByEmail, Format(key.CreatedAt), key.ExpiresAt is { } expires ? Format(expires) : "", key.LastUsedAt is { } used ? Format(used) : "", "", key.IsActive)
-            { CreatedByUserId = key.CreatedByUserId, DatabaseName = key.DatabaseName, AllowedCidrs = key.AllowedCidrs };
+            { CreatedByUserId = key.CreatedByUserId, DatabaseName = key.DatabaseName, AllowedCidrs = key.AllowedCidrs, PreviousSecretExpiresAt = key.PreviousSecretExpiresAt is { } grace ? Format(grace) : "" };
         }
 
         public static ProjectCredentialMetadata CredentialMetadata(ProjectCredential key)
@@ -340,7 +342,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             var value = Metadata(key);
             return new(value.KeyId, value.ProjectId, value.Name, value.Prefix, value.LastFour, value.Scopes, value.DatabaseId,
                 value.CreatedByEmail, value.CreatedAt, value.ExpiresAt, value.LastUsedAt, value.RevokedAt, value.IsActive, "api-key")
-            { CreatedByUserId = value.CreatedByUserId, DatabaseName = value.DatabaseName, AllowedCidrs = value.AllowedCidrs };
+            { CreatedByUserId = value.CreatedByUserId, DatabaseName = value.DatabaseName, AllowedCidrs = value.AllowedCidrs, PreviousSecretExpiresAt = value.PreviousSecretExpiresAt };
         }
 
         private TsAuthPlatformClient Client()
@@ -446,6 +448,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 AllowedCidrs = ValidCidrs(key.AllowedCidrs),
                 ExpiresAt = key.ExpiresAt,
                 LastUsedAt = key.LastUsedAt,
+                PreviousSecretExpiresAt = key.PreviousSecretExpiresAt,
                 IsActive = key.ExpiresAt is null || key.ExpiresAt > time.GetUtcNow()
             };
         }
