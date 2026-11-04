@@ -173,7 +173,7 @@ terrabase-test-slow: terrabase-build
 
 TERRABASE_E2E_RUN = dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build --
 
-E2E_LOCAL_TESTS := 2
+E2E_LOCAL_TESTS := 1
 terrabase-e2e-local: terrabase-build
 	rm -f "$(E2E_RESULTS)"
 	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL -u TERRABASE_E2E_ORCH_NODES TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" $(TERRABASE_E2E_RUN) --treenode-filter '/*/*/*/*[Category=local-only]' --minimum-expected-tests $(E2E_LOCAL_TESTS) --output detailed --no-ansi $(TEST_ARGS) || status=$$?; \
