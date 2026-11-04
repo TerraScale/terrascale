@@ -79,6 +79,15 @@ test.each([
   expect(error).toMatchObject({ name: "SqlError", status, code, message: expect.stringContaining("refused"), statement: 1, sqliteCode });
 });
 
+test("sends blobs as base64 and decodes blob values as Uint8Array", async () => {
+  const { client, requests } = await fixture((_request, response) => json(response, { results: [{ columns: [{ name: "b", decltype: "BLOB" }], rows: [[{ base64: "AAH/" }]], rows_affected: 0, last_insert_rowid: null }] }));
+  const [row] = await client.database("app").query("SELECT ? AS b", [new Uint8Array([0, 1, 255])]);
+  expect(JSON.parse(requests[0]?.body ?? "").statements[0].args).toEqual([{ base64: "AAH/" }]);
+  expect(row).toEqual({ b: new Uint8Array([0, 1, 255]) });
+  const bad = await fixture((_request, response) => json(response, { results: [{ columns: [{ name: "b", decltype: null }], rows: [[{ base64: "%%" }]], rows_affected: 0, last_insert_rowid: null }] }));
+  await expect(bad.client.database("app").execute("SELECT 1")).rejects.toThrow(/blob/u);
+});
+
 test("keeps generic errors outside SqlError", async () => {
   const { client } = await fixture((_request, response) => json(response, { error: { code: "forbidden_scope", message: "missing scope" } }, 403));
   const error = await client.database("app").execute("SELECT 1").catch(error => error);

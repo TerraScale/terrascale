@@ -8,8 +8,8 @@ import { ExactDecimal, stringifyExactJson } from "./json.js";
  */
 
 /**
- * An argument: null, a finite number, an int64 `bigint` or ExactDecimal, a boolean (stored as 1 or 0) or a string.
- * @typedef {null | boolean | number | bigint | ExactDecimal | string} V1SqlArgument
+ * An argument: null, a finite number, an int64 `bigint` or ExactDecimal, a boolean (stored as 1 or 0), a string or a blob.
+ * @typedef {null | boolean | number | bigint | ExactDecimal | string | Uint8Array} V1SqlArgument
  */
 /** @typedef {readonly V1SqlArgument[] | Readonly<Record<string, V1SqlArgument>>} V1SqlArguments Positional array, or named values keyed without their `:`, `@` or `$` prefix. */
 /**
@@ -20,7 +20,8 @@ import { ExactDecimal, stringifyExactJson } from "./json.js";
  */
 /**
  * A result value. Integers beyond 2^53 decode as ExactDecimal, keeping every digit; `BigInt(String(value))` converts one.
- * @typedef {null | number | ExactDecimal | string} V1SqlValue
+ * Blobs decode as Uint8Array.
+ * @typedef {null | number | ExactDecimal | string | Uint8Array} V1SqlValue
  */
 /** @typedef {{ readonly name: string; readonly decltype: string | null }} V1SqlColumn A column; `decltype` is null for an expression. */
 /**
@@ -39,23 +40,32 @@ function requireArgument(value, where) {
   if (value === null || typeof value === "boolean" || typeof value === "string" || value instanceof ExactDecimal) return;
   if (typeof value === "number" && Number.isFinite(value)) return;
   if (typeof value === "bigint" && BigInt.asIntN(64, value) === value) return;
-  throw new TypeError(`SQL ${where} is null, a finite number, an int64 bigint, a boolean or a string.`);
+  if (value instanceof Uint8Array) return;
+  throw new TypeError(`SQL ${where} is null, a finite number, an int64 bigint, a boolean, a string or a Uint8Array.`);
+}
+
+/** @param {V1SqlArgument} value @returns {Exclude<V1SqlArgument, Uint8Array> | { base64: string }} */
+function encodeArgument(value) {
+  if (!(value instanceof Uint8Array)) return value;
+  let binary = "";
+  for (let start = 0; start < value.length; start += 0x8000) binary += String.fromCharCode(...value.subarray(start, start + 0x8000));
+  return { base64: btoa(binary) };
 }
 
 /** @param {unknown} statement @param {number} index */
-function encodeStatement(statement, index) {
+export function encodeStatement(statement, index) {
   if (typeof statement !== "string" && (typeof statement !== "object" || statement === null || Array.isArray(statement)))
     throw new TypeError(`SQL statement ${index} is a string or { sql, args, named }.`);
   const { sql, args, named, ...extra } = /** @type {V1SqlStatement} */ (typeof statement === "string" ? { sql: statement } : statement);
   for (const member of Object.keys(extra)) throw new TypeError(`Unknown SQL statement member ${member}.`);
   if (typeof sql !== "string" || sql.length === 0 || sql.length > maximumSqlLength)
     throw new TypeError(`SQL statement ${index} is a non-empty string of at most ${maximumSqlLength} UTF-16 code units.`);
-  /** @type {{ sql: string; args?: V1SqlArgument[]; named?: Record<string, V1SqlArgument> }} */
+  /** @type {{ sql: string; args?: unknown[]; named?: Record<string, unknown> }} */
   const encoded = { sql };
   if (args !== undefined) {
     if (!Array.isArray(args)) throw new TypeError(`SQL statement ${index} args is an array.`);
     args.forEach((arg, position) => requireArgument(arg, `argument ${position}`));
-    encoded.args = [...args];
+    encoded.args = args.map(encodeArgument);
   }
   if (named !== undefined) {
     if (named === null || typeof named !== "object" || Array.isArray(named)) throw new TypeError(`SQL statement ${index} named is an object.`);
@@ -63,7 +73,7 @@ function encodeStatement(statement, index) {
       if (/^[:@$]/u.test(name)) throw new TypeError(`SQL named argument ${name} is keyed without its prefix.`);
       requireArgument(value, `named argument ${name}`);
     }
-    encoded.named = { ...named };
+    encoded.named = Object.fromEntries(Object.entries(named).map(([name, value]) => [name, encodeArgument(value)]));
   }
   return encoded;
 }
@@ -77,11 +87,18 @@ export function sqlStatement(sql, args) {
 /** @param {JsonValue | undefined} value @returns {V1SqlValue} */
 function decodeValue(value) {
   if (value === null || typeof value === "number" || typeof value === "string" || value instanceof ExactDecimal) return value;
+  if (typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 1 && typeof value.base64 === "string") {
+    try {
+      return Uint8Array.from(atob(value.base64), c => c.charCodeAt(0));
+    } catch {
+      return malformed("SQL blob");
+    }
+  }
   return malformed("SQL value");
 }
 
 /** @param {JsonValue | undefined} value @returns {V1SqlExecuteResult} */
-function decodeResult(value) {
+export function decodeSqlResult(value) {
   const raw = object(value, "SQL statement result");
   const columns = array(raw.columns, "SQL columns").map(entry => {
     const column = object(entry, "SQL column");
@@ -116,7 +133,7 @@ export async function executeSql(transport, database, statements, options = {}) 
   for (const member of Object.keys(options)) if (member !== "signal") throw new TypeError(`Unknown SQL request option ${member}.`);
   const body = stringifyExactJson({ statements: statements.map(encodeStatement) }, "SQL statements");
   const response = await transport.call("executeSql", { database: requireDatabaseSelector(database) }, { body, signal: options.signal });
-  const results = array(object(response.value, "SQL execute response").results, "SQL results").map(decodeResult);
+  const results = array(object(response.value, "SQL execute response").results, "SQL results").map(decodeSqlResult);
   if (results.length !== statements.length) malformed("SQL result count");
   return Object.freeze(results);
 }

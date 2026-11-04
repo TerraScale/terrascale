@@ -203,7 +203,7 @@ objects keyed by column name, and `batch` sends 1 to 256 statements as one
 transaction: all commit or none do. `BEGIN`, `COMMIT` and `ROLLBACK` are
 refused. Arguments are positional (`?`) or named (`:name`, `@name`, `$name`,
 passed without the prefix). Each is `null`, a number, an int64 `bigint`, a
-boolean (stored as 1 or 0) or a string. Reads need `documents:read`; writes and
+boolean (stored as 1 or 0), a string or a `Uint8Array` blob (sent and returned as `{"base64":"…"}`, decoded to `Uint8Array`). Reads need `documents:read`; writes and
 DDL also need `documents:write`.
 
 ```js
