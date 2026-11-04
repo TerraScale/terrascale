@@ -9,7 +9,6 @@ using static OpenIddict.Abstractions.OpenIddictConstants;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
-using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Store;
