@@ -1,7 +1,0 @@
-<Project>
-  <Import Project="../../Directory.Build.targets" />
-  <ItemGroup>
-    <Compile Include="../TerraBase.E2E/WalFaults/WalSyncFaults.cs" Link="Replication/WalSyncFaults.cs" />
-    <None Include="../TerraBase.E2E/WalFaults/walfaults.c" Link="WalFaults/walfaults.c" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
-</Project>
