@@ -21,12 +21,12 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
     public async Task A_project_key_is_shown_once_and_exchanged_for_a_project_token_with_the_contract_claims()
     {
         await using var oidc = await StartAsync();
-        var (alice, token) = await oidc.CreateUserTokenAsync("alice@example.test");
+        var (alice, token) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("alice"));
         var organization = await oidc.CreateOrganizationAsync(token);
         var project = await oidc.CreateProjectAsync(token, organization, "Production");
         var keys = $"{Organizations}/{organization}/projects/{project}/api-keys";
 
-        var database = await oidc.CreateDatabaseIdAsync("app");
+        var database = await oidc.CreateDatabaseIdAsync(oidc.UniqueName("app"));
         var created = await oidc.OkAsync(HttpMethod.Post, keys, token, new { name = "backend", scopes = ReadWrite, database }, HttpStatusCode.Created);
         var key = created.GetProperty("key").GetString()!;
         var id = created.GetProperty("api_key").GetProperty("id").GetString()!;
@@ -150,7 +150,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(scopes).IsNotEmpty();
 
         await using var oidc = await StartAsync();
-        var (_, token) = await oidc.SignInUserAsync("dana@example.test");
+        var (_, token) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("dana"));
         var organization = await oidc.CreateOrganizationAsync(token);
         var project = await oidc.CreateProjectAsync(token, organization, "Production");
         var created = await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{organization}/projects/{project}/api-keys", token,
@@ -161,7 +161,8 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(scopes);
     }
 
-    private Task<OidcHarness> StartAsync(TimeProvider? clock = null) => OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience, clock: clock);
+    private Task<OidcHarness> StartAsync(TimeProvider? clock = null) =>
+        clock is null ? OidcHarness.StartSharedManagementAsync(fixture) : OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience, clock: clock);
 
     private static async Task<(int Status, string? Error)> TokenErrorAsync(Task<HttpResponseMessage> call)
     {
