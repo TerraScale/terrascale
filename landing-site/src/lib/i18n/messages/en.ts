@@ -154,7 +154,7 @@ export const en = {
       },
       {
         q: 'What does it cost to start?',
-        a: 'Free requires no card. Starter, Pro, and Team are billed monthly or yearly. Operation units over a paid allowance go on the next invoice; storage and client egress overages are not billed yet.',
+        a: 'Free requires no card. Starter, Pro, and Team are billed monthly or yearly. Operation units over a paid allowance go on the next invoice and storage over it is billed per GB-month; client egress overage is not billed yet.',
       },
       {
         q: 'Can I export my data and leave?',
@@ -244,7 +244,7 @@ export const en = {
       },
       {
         title: 'Allowances then usage',
-        text: 'Operation units over a paid allowance go on the next invoice; storage and client egress overages are not billed yet',
+        text: 'Operation units over a paid allowance go on the next invoice and storage over it is billed per GB-month; client egress overage is not billed yet',
       },
     ],
     compare: {
@@ -282,7 +282,7 @@ export const en = {
     detailed: {
       titleLead: 'Approved',
       titleAccent: 'usage rates',
-      text: 'Paid plans include the allowances. Operation units over the allowance are added to the next subscription invoice at the rate below; storage and client egress overages are not billed yet. Free stops new writes at its operation allowance and has no overage charges.',
+      text: 'Paid plans include the allowances. Operation units over the allowance are added to the next subscription invoice at the rate below and storage over it is billed per GB-month; client egress overage is not billed yet. Free stops new writes at its operation allowance and has no overage charges.',
       headItem: 'Item',
       headPricing: 'Pricing',
       headDetails: 'Details',
@@ -315,7 +315,7 @@ export const en = {
         },
         {
           q: 'What if I need more operations, storage, or egress?',
-          a: 'Paid plans include monthly allowances. Operation units over the allowance are added to the next subscription invoice at the overage rate; storage and client egress overages are not billed yet. Free stops new writes at its operation allowance and has no overage charges.',
+          a: 'Paid plans include monthly allowances. Operation units over the allowance are added to the next subscription invoice at the overage rate and storage over it is billed per GB-month; client egress overage is not billed yet. Free stops new writes at its operation allowance and has no overage charges.',
         },
         {
           q: 'How are subscriptions billed?',
@@ -369,7 +369,7 @@ export const en = {
       },
       {
         title: 'Usage-aware billing',
-        text: 'Free requires no card. Paid plans bill operation units over the allowance on the next invoice; storage and client egress overages are not billed yet.',
+        text: 'Free requires no card. Paid plans bill operation units over the allowance on the next invoice and storage over it is billed per GB-month; client egress overage is not billed yet.',
       },
     ],
     bandTitle: 'Flat regional pricing, metered by real use.',

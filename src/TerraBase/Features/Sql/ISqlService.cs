@@ -47,6 +47,7 @@ internal sealed record SqlError(string Code, string Message)
         "SQLITE_AUTH" => "auth",
         "SQLITE_BUSY" => "conflict",
         "SQLITE_TOOBIG" => "too_big",
+        "SQLITE_QUOTA" => "quota",
         "SQLITE_INTERRUPT" => "interrupt",
         _ when Code.StartsWith("SQLITE_CONSTRAINT", StringComparison.Ordinal) => "constraint",
         _ when Message.StartsWith("no such table", StringComparison.Ordinal) => "no_such_table",

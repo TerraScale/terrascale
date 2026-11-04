@@ -3,14 +3,20 @@ using Stripe;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
-    // Stripe is the record of billed overage: invoice items tagged with the organization and month.
-    // Invoiced items are final; one pending item carries the rest of the month to the next subscription invoice.
+    internal sealed record OverageKind(string Kind, decimal UnitAmountCents, Func<long, DateTimeOffset, string> Describe);
+
     public sealed partial class StripeBilling
     {
-        internal async Task ReportOperationUnitOverageAsync(BillingBinding binding, BillingPlan plan, long overage, DateTimeOffset month, CancellationToken cancellationToken)
+        internal static OverageKind OperationUnits(BillingPlan plan) => new(OperationUnitOverage.Kind, OperationUnitOverage.UnitAmountCents,
+            (quantity, month) => string.Create(CultureInfo.InvariantCulture, $"Operation units over the {plan.Name} allowance, {month:MMMM yyyy}: {quantity:N0} × {OperationUnitOverage.Rate}"));
+
+        internal static OverageKind Storage(BillingPlan plan) => new(StorageOverage.Kind, StorageOverage.UnitAmountCents,
+            (quantity, month) => string.Create(CultureInfo.InvariantCulture, $"Storage over the {plan.Name} allowance, {month:MMMM yyyy}: {quantity:N0} MB-months"));
+
+        internal async Task ReportOverageAsync(BillingBinding binding, OverageKind kind, long overage, DateTimeOffset month, CancellationToken cancellationToken)
         {
             var client = await ClientAsync(cancellationToken);
-            var (invoiced, pending) = await OverageItemsAsync(client, binding, month, cancellationToken);
+            var (invoiced, pending) = await OverageItemsAsync(client, binding, kind.Kind, month, cancellationToken);
             var remaining = Math.Max(0, overage - invoiced);
             var keep = remaining > 0 ? pending.FirstOrDefault(item => item.Parent?.SubscriptionDetails?.Subscription == binding.SubscriptionId) : null;
             foreach (var item in pending.Where(item => item != keep))
@@ -23,11 +29,9 @@ namespace TerraScale.Dashboard.Features.Billing
                 return;
             }
 
-            var description = string.Create(CultureInfo.InvariantCulture,
-                $"Operation units over the {plan.Name} allowance, {month:MMMM yyyy}: {remaining:N0} × {OperationUnitOverage.Rate}");
+            var description = kind.Describe(remaining, month);
             if (keep is null)
             {
-                // A yearly subscription would hold pending items until its renewal; invoice them every month instead.
                 if (binding.EffectiveInterval == "annual")
                 {
                     await client.V1.Subscriptions.UpdateAsync(binding.SubscriptionId, new()
@@ -41,34 +45,32 @@ namespace TerraScale.Dashboard.Features.Billing
                     Subscription = binding.SubscriptionId,
                     Currency = "usd",
                     Quantity = remaining,
-                    UnitAmountDecimal = OperationUnitOverage.UnitAmountCents,
+                    UnitAmountDecimal = kind.UnitAmountCents,
                     Description = description,
-                    Metadata = new() { ["terrascale_kind"] = OperationUnitOverage.Kind, ["terrascale_month"] = monthKey, ["terrascale_org"] = binding.OrganizationId }
-                }, Idempotent($"overage-{binding.OrganizationId}-{monthKey}-{binding.SubscriptionId}-{invoiced}-{remaining}"), cancellationToken);
+                    Metadata = new() { ["terrascale_kind"] = kind.Kind, ["terrascale_month"] = monthKey, ["terrascale_org"] = binding.OrganizationId }
+                }, Idempotent($"{kind.Kind}-{binding.OrganizationId}-{monthKey}-{binding.SubscriptionId}-{invoiced}-{remaining}"), cancellationToken);
             }
             else if (keep.Quantity != remaining || keep.Description != description)
             {
-                await client.V1.InvoiceItems.UpdateAsync(keep.Id, new() { Quantity = remaining, UnitAmountDecimal = OperationUnitOverage.UnitAmountCents, Description = description }, cancellationToken: cancellationToken);
+                await client.V1.InvoiceItems.UpdateAsync(keep.Id, new() { Quantity = remaining, UnitAmountDecimal = kind.UnitAmountCents, Description = description }, cancellationToken: cancellationToken);
             }
         }
 
-        // Overage units already on Stripe for this month, invoiced or pending, for the billing page.
         public async Task<long> OperationUnitOverageAsync(BillingBinding binding, DateTimeOffset now, CancellationToken cancellationToken)
         {
-            var (invoiced, pending) = await OverageItemsAsync(await ClientAsync(cancellationToken), binding, new(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero), cancellationToken);
+            var (invoiced, pending) = await OverageItemsAsync(await ClientAsync(cancellationToken), binding, OperationUnitOverage.Kind, new(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero), cancellationToken);
             return invoiced + pending.Sum(item => item.Quantity);
         }
 
-        private static async Task<(long Invoiced, List<InvoiceItem> Pending)> OverageItemsAsync(StripeClient client, BillingBinding binding, DateTimeOffset month, CancellationToken cancellationToken)
+        private static async Task<(long Invoiced, List<InvoiceItem> Pending)> OverageItemsAsync(StripeClient client, BillingBinding binding, string kind, DateTimeOffset month, CancellationToken cancellationToken)
         {
             var monthKey = month.ToString("yyyy-MM", CultureInfo.InvariantCulture);
             long invoiced = 0;
             var pending = new List<InvoiceItem>();
-            // Items for a month are only created during that month.
             await foreach (var item in client.V1.InvoiceItems.ListAutoPagingAsync(new()
             { Customer = binding.CustomerId, Created = new DateRangeOptions { GreaterThanOrEqual = month.UtcDateTime }, Limit = 100 }, cancellationToken: cancellationToken))
             {
-                if (item.Metadata?.GetValueOrDefault("terrascale_kind") != OperationUnitOverage.Kind || item.Metadata.GetValueOrDefault("terrascale_month") != monthKey ||
+                if (item.Metadata?.GetValueOrDefault("terrascale_kind") != kind || item.Metadata.GetValueOrDefault("terrascale_month") != monthKey ||
                     item.Metadata.GetValueOrDefault("terrascale_org") != binding.OrganizationId)
                 {
                     continue;

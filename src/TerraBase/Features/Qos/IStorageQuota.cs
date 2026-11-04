@@ -27,7 +27,13 @@ public interface IStorageQuota
 
     /// <summary>Measures an exact staged copy before its catalog registration.</summary>
     ValueTask<long> ReadBytesAsync(TenantContext database, CancellationToken cancellationToken);
+
+    /// <summary>Stored bytes of every organization's registered databases on this node, or why they cannot be read now.</summary>
+    ValueTask<OrganizationBytesResult> ReadOrganizationsAsync(CancellationToken cancellationToken);
 }
+
+/// <summary>Stored bytes per organization, or unavailable catalog accounting.</summary>
+public readonly union OrganizationBytesResult(IReadOnlyDictionary<string, long>, Unavailable);
 
 /// <summary>A measured organization write, held through its database commit. It does not reserve durable quota.</summary>
 public sealed class StorageQuotaLease : IDisposable
