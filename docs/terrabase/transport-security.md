@@ -28,6 +28,8 @@ loopback peer, the co-located edge. Any other peer, such as a host on the mesh, 
 
 Only the edge's PROXY v2 header and `X-Forwarded-For` name the real client for IP allowlists.
 
+Service-to-service MagicOnion RPC (the dashboard) is not edge traffic: it arrives on the private internal listener over the NetBird mesh with the peer credential, and TerraBase serves its in-process REST replay from any mesh address. The same calls on the public client listener without the edge stay refused.
+
 ## Authentication
 
 PostgreSQL clients authenticate with an API key as the password (any user name). The key is sent only

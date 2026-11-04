@@ -33,6 +33,7 @@ public sealed record AnsweringRegion(string Region);
 public static class Listeners
 {
     private static readonly object ListenerKey = typeof(TerraBaseListener);
+    private static readonly object InternalCallKey = typeof(AcceptedConnection);
     public static TerraBaseListener? ArrivedOn(HttpContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -220,6 +221,7 @@ public static class Listeners
             if (arrivedOn == TerraBaseListener.Client)
             {
                 if (!IpAllowlists.IsEdge(context.Connection.RemoteIpAddress)
+                    && context.Features.Get<IConnectionItemsFeature>()?.Items.ContainsKey(InternalCallKey) != true
                     && !ReferenceEquals(context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>(), ListenerMetadata.Probe))
                 {
                     await BadRequests.WriteAsync(context, StatusCodes.Status403Forbidden, "tls_required", "TLS is required: use https://api.terrascale.tech", op: null);
@@ -297,6 +299,6 @@ public static class Listeners
 
     private sealed class AcceptedConnection(TerraBaseListener listener) : IConnectionItemsFeature
     {
-        public IDictionary<object, object?> Items { get; set; } = new Dictionary<object, object?> { [ListenerKey] = listener };
+        public IDictionary<object, object?> Items { get; set; } = new Dictionary<object, object?> { [ListenerKey] = listener, [InternalCallKey] = true };
     }
 }
