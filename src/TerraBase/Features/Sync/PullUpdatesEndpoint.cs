@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO.Pipelines;
 using System.Net;
 using TerraBase.Features.Replicas;
@@ -151,6 +152,7 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
         response.ContentType = MediaType;
         response.Headers.CacheControl = "no-store";
         response.Headers[DatabaseRevision.Header] = start.Revision.ToString();
+        response.Headers[RevisionPullStart.CdcHeader] = start.CdcPosition.ToString(CultureInfo.InvariantCulture);
         PullAnswer.WriteHeader(response.BodyWriter, start);
         await FlushAsync(response.BodyWriter, cancellationToken).ConfigureAwait(false);
         return true;

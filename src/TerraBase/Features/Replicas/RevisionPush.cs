@@ -40,7 +40,7 @@ internal sealed class RevisionPush(IMemoryBudget memory, TenantContext database)
 
             push.Result = result;
             push.Notice = new ReplicaRevisionNotice(database.OrganizationId, database.ProjectId!, database.DatabaseId!, committedAt, result.Revision.ToString(),
-                push.HasPages ? from : null);
+                push.HasPages ? from : null) { CdcPosition = result.CdcPosition };
             push.Payload = push.Seal(push.Notice);
             return push;
         }

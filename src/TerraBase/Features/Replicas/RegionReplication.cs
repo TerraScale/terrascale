@@ -272,7 +272,7 @@ internal sealed class RegionReplication(
 
             if (known && answer.Length > 0 && DatabaseRevision.TryParse(notice.Base, out var from))
             {
-                _ = replicas.Offer(follower.Database, from, to, answer);
+                _ = replicas.Offer(follower.Database, from, to, answer, notice.CdcPosition);
             }
 
             follower.Signal(notice.CommittedAt, fromHome: false);

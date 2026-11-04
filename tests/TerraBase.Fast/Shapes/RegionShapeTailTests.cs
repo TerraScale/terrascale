@@ -116,6 +116,19 @@ public sealed class RegionShapeTailTests
             await replication.PullAllAsync(token);
             await replication.PullAllAsync(token);
             await Assert.That(await ReadReplicaFloorAsync()).IsGreaterThan(replicaFloor);
+            var boundaries = await store.WithWriterAsync(writer =>
+            {
+                using var command = writer.Connection.CreateCommand();
+                command.CommandText = "SELECT change_id FROM turso_cdc WHERE change_type = 2;";
+                using var reader = command.ExecuteReader();
+                var result = new HashSet<string>(StringComparer.Ordinal);
+                while (reader.Read())
+                {
+                    result.Add(reader.GetInt64(0).ToString(CultureInfo.InvariantCulture));
+                }
+
+                return result;
+            }, "home CDC boundaries", token);
             if (round == 2)
             {
                 await gru.DisposeAsync();
@@ -124,14 +137,31 @@ public sealed class RegionShapeTailTests
             for (var index = 0; index < shapes.Length; index++)
             {
                 var reply = await parked[index].WaitAsync(TimeSpan.FromSeconds(10), token);
-                await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.OK).Because(System.Text.Encoding.UTF8.GetString(reply.Body));
-                if (round == 0 && index > 0)
+                var first = reply;
+                List<(string, string, string)> moves = [];
+                for (var attempt = 0; attempt < 8; attempt++)
                 {
-                    await Assert.That(reply.Ops.Select(op => (op.GetProperty("op").GetString()!, op.GetProperty("key").GetString()!, op.GetProperty("move").GetString()!)).ToList())
-                        .IsEquivalentTo([("insert", "1", "in"), ("delete", "2", "out")]);
+                    await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.OK).Because(System.Text.Encoding.UTF8.GetString(reply.Body));
+                    await Assert.That(boundaries.Contains(reply.NextOffset!)).IsTrue().Because("replicas advertise only home commit boundaries");
+                    if (round == 0 && index > 0)
+                    {
+                        moves.AddRange(reply.Ops.Select(op => (op.GetProperty("op").GetString()!, op.GetProperty("key").GetString()!, op.GetProperty("move").GetString()!)));
+                    }
+
+                    shapes[index].Apply(reply);
+                    if (shapes[index].State.TryGetValue("1", out var row) && row["name"]!.GetValue<string>() == $"round-{round}")
+                    {
+                        break;
+                    }
+
+                    reply = await shapes[index].LiveAsync(shapes[index].NextOffset).WaitAsync(TimeSpan.FromSeconds(10), token);
                 }
 
-                shapes[index].Apply(reply);
+                if (round == 0 && index > 0)
+                {
+                    await Assert.That(moves).IsEquivalentTo([("insert", "1", "in"), ("delete", "2", "out")]);
+                }
+
                 await Assert.That(shapes[index].State["1"]["name"]!.GetValue<string>()).IsEqualTo($"round-{round}");
                 if (index > 0)
                 {
@@ -140,7 +170,7 @@ public sealed class RegionShapeTailTests
                 }
 
                 var repeated = await shapes[index].GetAsync(targets[index]);
-                await Assert.That(repeated.Body).IsEquivalentTo(reply.Body);
+                await Assert.That(repeated.Body).IsEquivalentTo(first.Body);
             }
         }
     }

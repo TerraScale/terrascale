@@ -21,7 +21,7 @@ internal interface IDatabaseReplicas
 
     ValueTask<ReplicaPullResult?> PullAsync(TenantContext database, bool fromHome, CancellationToken cancellationToken);
 
-    bool Offer(TenantContext database, DatabaseRevision from, DatabaseRevision to, ReadOnlyMemory<byte> answer);
+    bool Offer(TenantContext database, DatabaseRevision from, DatabaseRevision to, ReadOnlyMemory<byte> answer, long? cdcPosition = null);
 
     ValueTask<bool> DeleteAsync(TenantContext database, CancellationToken cancellationToken);
 

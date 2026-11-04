@@ -15,7 +15,7 @@ internal sealed class TursoReplicaShapeReader : IReplicaShapeReader
     private readonly List<SqliteCommand> _commands = [];
     private readonly TursoShapeReader _reader;
 
-    private TursoReplicaShapeReader(TursoConnection connection, TenantContext database, TursoReplicaShapeSchema schema)
+    private TursoReplicaShapeReader(TursoConnection connection, TenantContext database, TursoReplicaShapeSchema schema, long head)
     {
         _database = database;
         _connection = new SqliteConnection(connection, ownsConnection: true);
@@ -26,14 +26,15 @@ internal sealed class TursoReplicaShapeReader : IReplicaShapeReader
         }
 
         _transaction = _connection.BeginTransaction(deferred: true);
-        _reader = new TursoShapeReader(Command, Command, database, _ => { }, schema);
+        _reader = new TursoShapeReader(Command, Command, database, _ => { }, schema, head);
+        _ = _reader.ShapeHead();
     }
 
-    internal static async ValueTask<IReplicaShapeReader> OpenAsync(TursoConnection connection, TenantContext database, TursoReplicaShapeSchema schema, CancellationToken cancellationToken)
+    internal static async ValueTask<IReplicaShapeReader> OpenAsync(TursoConnection connection, TenantContext database, TursoReplicaShapeSchema schema, long head, CancellationToken cancellationToken)
     {
         try
         {
-            return await Task.Run(() => new TursoReplicaShapeReader(connection, database, schema), cancellationToken).ConfigureAwait(false);
+            return await Task.Run(() => new TursoReplicaShapeReader(connection, database, schema, head), cancellationToken).ConfigureAwait(false);
         }
         catch
         {

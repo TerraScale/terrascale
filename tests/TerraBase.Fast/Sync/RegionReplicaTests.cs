@@ -63,7 +63,7 @@ public sealed class RegionReplicaTests
                     await Assert.That(RevisionPush.TryRead(push!.Payload.ToArray(), out var notice, out var answer)).IsTrue();
                     await Assert.That(notice!.Base).IsEqualTo(held.ToString());
                     await Assert.That(DatabaseRevision.TryParse(notice.Revision, out var to)).IsTrue();
-                    await Assert.That(replicas.Offer(database, held, to, answer)).IsTrue();
+                    await Assert.That(replicas.Offer(database, held, to, answer, notice.CdcPosition)).IsTrue();
                 }
 
                 var applied = (await replicas.PullAsync(database, fromHome: false, token))!;

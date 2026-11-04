@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
@@ -63,7 +64,7 @@ internal sealed class TursoReplicas(
         return await replica.PullAsync(fromHome, cancellationToken).ConfigureAwait(false);
     }
 
-    public bool Offer(TenantContext database, DatabaseRevision from, DatabaseRevision to, ReadOnlyMemory<byte> answer)
+    public bool Offer(TenantContext database, DatabaseRevision from, DatabaseRevision to, ReadOnlyMemory<byte> answer, long? cdcPosition = null)
     {
         if (!_replicas.TryGetValue(Key(database), out var opening) || !opening.IsValueCreated || !opening.Value.IsCompletedSuccessfully
             || memory.TryReserve(MemoryLane.Bulk, answer.Length, database) is not { } reservation)
@@ -71,7 +72,7 @@ internal sealed class TursoReplicas(
             return false;
         }
 
-        opening.Value.Result.Offer(new PushedAnswer(from, to, answer, reservation));
+        opening.Value.Result.Offer(new PushedAnswer(from, to, answer, reservation, cdcPosition));
         return true;
     }
 
@@ -118,7 +119,7 @@ internal sealed class TursoReplicas(
 
     public async ValueTask<IReplicaShapeReader?> BeginShapeReadAsync(TenantContext database, CancellationToken cancellationToken) =>
         await FindAsync(database).ConfigureAwait(false) is { Pulled: true } replica
-            ? await TursoReplicaShapeReader.OpenAsync(await replica.ConnectShapeAsync(cancellationToken).ConfigureAwait(false), database, replica.ShapeSchema, cancellationToken).ConfigureAwait(false)
+            ? await replica.BeginShapeReadAsync(database, cancellationToken).ConfigureAwait(false)
             : null;
 
     public long Position => Volatile.Read(ref _position);
@@ -308,9 +309,11 @@ internal sealed class TursoReplicas(
         return deleted;
     }
 
-    private sealed class PushedAnswer(DatabaseRevision from, DatabaseRevision to, ReadOnlyMemory<byte> answer, IMemoryReservation reservation) : IDisposable
+    private sealed class PushedAnswer(DatabaseRevision from, DatabaseRevision to, ReadOnlyMemory<byte> answer, IMemoryReservation reservation, long? cdcPosition) : IDisposable
     {
         public DatabaseRevision To => to;
+
+        public long? CdcPosition => cdcPosition;
 
         public bool Covers(DatabaseRevision held) =>
             held.Incarnation == from.Incarnation && to.Incarnation == from.Incarnation && DatabaseRevision.Compare(from, held) <= 0 && DatabaseRevision.Compare(held, to) < 0;
@@ -324,6 +327,10 @@ internal sealed class TursoReplicas(
             content.Headers.ContentType = new MediaTypeHeaderValue(PullAnswer.MediaType);
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = content, RequestMessage = request };
             _ = response.Headers.TryAddWithoutValidation(DatabaseRevision.Header, to.ToString());
+            if (cdcPosition is { } position)
+            {
+                _ = response.Headers.TryAddWithoutValidation(RevisionPullStart.CdcHeader, position.ToString(CultureInfo.InvariantCulture));
+            }
             return response;
         }
 
@@ -348,11 +355,13 @@ internal sealed class TursoReplicas(
         private const int MaxPushes = 8;
         private readonly Lock _gate = new();
         private readonly List<PushedAnswer> _pushes = [];
-        private string? _seen;
+        private Observation? _seen;
         private bool _pushedAllowed;
         private bool _served;
 
-        public string? Take() => Interlocked.Exchange(ref _seen, null);
+        internal sealed record Observation(string Revision, long? CdcPosition);
+
+        public Observation? Take() => Interlocked.Exchange(ref _seen, null);
 
         public void Begin(bool fromHome) => (_pushedAllowed, _served) = (!fromHome, false);
 
@@ -430,7 +439,7 @@ internal sealed class TursoReplicas(
                 && DatabaseRevision.TryParse(client, out var held) && Covering(held) is { } push)
             {
                 _served = true;
-                Volatile.Write(ref _seen, push.To.ToString());
+                Volatile.Write(ref _seen, new Observation(push.To.ToString(), push.CdcPosition));
                 return push.Answer(request);
             }
 
@@ -450,7 +459,9 @@ internal sealed class TursoReplicas(
                 var response = await http.SendAsync(copy, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
                 if (response.IsSuccessStatusCode && response.Headers.TryGetValues(DatabaseRevision.Header, out var values))
                 {
-                    Volatile.Write(ref _seen, values.FirstOrDefault());
+                    var position = response.Headers.TryGetValues(RevisionPullStart.CdcHeader, out var positions)
+                        && long.TryParse(positions.FirstOrDefault(), NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) ? (long?)parsed : null;
+                    Volatile.Write(ref _seen, new Observation(values.First(), position));
                 }
 
                 return response;
@@ -476,6 +487,7 @@ internal sealed class TursoReplicas(
         public long Applied => Volatile.Read(ref _applied);
 
         private long _applied;
+        private long? _shapeHead;
 
         public DatabaseRevision? Held { get; private set; }
 
@@ -556,6 +568,7 @@ internal sealed class TursoReplicas(
                 catch
                 {
                     Held = null;
+                    _shapeHead = null;
                     throw;
                 }
                 finally
@@ -568,7 +581,9 @@ internal sealed class TursoReplicas(
                     Volatile.Write(ref _applied, position);
                 }
 
-                Held = DatabaseRevision.TryParse(observer.Take(), out var held) ? held : null;
+                var observation = observer.Take();
+                Held = DatabaseRevision.TryParse(observation?.Revision, out var held) ? held : null;
+                _shapeHead = observation?.CdcPosition;
                 Pulled = true;
                 var log = new FileInfo(path + "-wal");
                 if (log.Exists && log.Length > 4L * 1024 * 1024)
@@ -591,7 +606,20 @@ internal sealed class TursoReplicas(
             }
         }
 
-        internal Task<TursoConnection> ConnectShapeAsync(CancellationToken cancellationToken) => sync.ConnectAsync(cancellationToken);
+        internal async ValueTask<IReplicaShapeReader?> BeginShapeReadAsync(TenantContext database, CancellationToken cancellationToken)
+        {
+            await _pulls.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                return _shapeHead is { } head
+                    ? await TursoReplicaShapeReader.OpenAsync(await sync.ConnectAsync(cancellationToken).ConfigureAwait(false), database, ShapeSchema, head, cancellationToken).ConfigureAwait(false)
+                    : null;
+            }
+            finally
+            {
+                _pulls.Release();
+            }
+        }
 
         public async Task<IReplicaReader> BeginReadAsync(CancellationToken cancellationToken)
         {

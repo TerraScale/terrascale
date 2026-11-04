@@ -81,9 +81,15 @@ internal sealed partial class TursoDatabaseStore
 
     private async Task<RevisionPullResult> StreamAsync(SqliteConnection reader, RevisionPullPlan plan, IRevisionPullSink sink, CancellationToken cancellationToken)
     {
-        if (!await sink.StartAsync(new RevisionPullStart(plan.Revision, plan.Full, plan.DatabaseSize, plan.Count, plan.PageSize), cancellationToken).ConfigureAwait(false))
+        var cdcPosition = await io.RunAsync(() =>
         {
-            return new RevisionPullResult(plan.Revision, plan.Full, 0, plan.DatabaseSize);
+            using var command = reader.CreateCommand();
+            command.CommandText = "SELECT coalesce((SELECT change_id FROM turso_cdc WHERE change_type = 2 ORDER BY change_id DESC LIMIT 1), 0);";
+            return (long)command.ExecuteScalar()!;
+        }, cancellationToken).ConfigureAwait(false);
+        if (!await sink.StartAsync(new RevisionPullStart(plan.Revision, plan.Full, plan.DatabaseSize, plan.Count, plan.PageSize) { CdcPosition = cdcPosition }, cancellationToken).ConfigureAwait(false))
+        {
+            return new RevisionPullResult(plan.Revision, plan.Full, 0, plan.DatabaseSize) { CdcPosition = cdcPosition };
         }
 
         var numbers = ArrayPool<uint>.Shared.Rent(plan.BatchPages);
@@ -99,12 +105,6 @@ internal sealed partial class TursoDatabaseStore
                 sent += count;
             }
 
-            var cdcPosition = await io.RunAsync(() =>
-            {
-                using var command = reader.CreateCommand();
-                command.CommandText = "SELECT coalesce((SELECT change_id FROM turso_cdc WHERE change_type = 2 ORDER BY change_id DESC LIMIT 1), 0);";
-                return (long)command.ExecuteScalar()!;
-            }, cancellationToken).ConfigureAwait(false);
             return new RevisionPullResult(plan.Revision, plan.Full, sent, plan.DatabaseSize) { CdcPosition = cdcPosition };
         }
         finally

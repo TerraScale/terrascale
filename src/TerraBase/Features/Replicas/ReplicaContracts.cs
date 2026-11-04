@@ -16,7 +16,10 @@ public sealed record ReplicaCatalogEntry(
 /// <param name="Next">The cursor of the next page, or null once the scan ended.</param>
 public sealed record ReplicaCatalogPage(IReadOnlyList<ReplicaCatalogEntry> Databases, string? Next);
 
-internal sealed record ReplicaRevisionNotice(string OrganizationId, string ProjectId, string DatabaseId, long CommittedAt, string? Revision, string? Base);
+internal sealed record ReplicaRevisionNotice(string OrganizationId, string ProjectId, string DatabaseId, long CommittedAt, string? Revision, string? Base)
+{
+    public long? CdcPosition { get; init; }
+}
 
 internal static class ReplicaSubjects
 {

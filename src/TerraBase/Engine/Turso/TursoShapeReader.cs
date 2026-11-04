@@ -14,7 +14,7 @@ namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoShapeReader(
     Func<string, SqliteCommand> command, Func<string, SqliteCommand> tableCommand, TenantContext? tenant, Action<string> countRead,
-    TursoReplicaShapeSchema? replicaSchema = null)
+    TursoReplicaShapeSchema? replicaSchema = null, long? replicatedHead = null)
 {
     private SqliteCommand Command(string sql) => command(sql);
 
@@ -227,7 +227,7 @@ internal sealed partial class TursoShapeReader(
 
         CountRead("shape");
         return Command("SELECT coalesce((SELECT change_id FROM turso_cdc WHERE change_type = 2 ORDER BY change_id DESC LIMIT 1), 0);")
-            .ExecuteScalar() is long head ? head : 0;
+            .ExecuteScalar() is long head ? Math.Min(head, replicatedHead ?? head) : 0;
     }
 
     internal bool ShapeBoundary(long offset)
