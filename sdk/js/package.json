@@ -69,6 +69,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "npm run typecheck",
     "test": "vitest run",
+    "test:slow": "vitest run --config vitest.slow.config.js",
     "test:browser": "playwright test",
     "qualify:auth-authority": "node scripts/qualify-auth-authority.js",
     "check:frameworks": "vitest run src/react/core.test.js src/svelte/index.test.js"

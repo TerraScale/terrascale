@@ -25,6 +25,7 @@
     "src/**/*.js",
     "test/**/*.js",
     "scripts/**/*.js",
+    "slow/**/*.js",
     "browser-tests/**/*.js",
     "*.config.js"
   ],

@@ -33,4 +33,5 @@ npm run typecheck
 npm run build
 npm run check:v1-route-manifest
 npm test
+npm run test:slow
 npm pack --json --pack-destination "$output" > "$output/npm-pack.json"
