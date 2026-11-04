@@ -77,7 +77,6 @@ export const V1ErrorCode = Object.freeze({
   mustRefetch: "must_refetch", preconditionFailed: "precondition_failed", payloadTooLarge: "payload_too_large",
   unsupportedMediaType: "unsupported_media_type", uriTooLong: "uri_too_long", shapeBusy: "shape_busy",
   internalError: "internal_error", capacity: "capacity", notModified: "not_modified",
-  sqlError: "sql_error", sqlConflict: "sql_conflict", sqlTooLarge: "sql_too_large",
 });
 
 /** `412 precondition_failed`: an If-Match, If-None-Match, assert or assert_count failed. */
@@ -128,22 +127,40 @@ export class V1NotFoundError extends TerraBaseV1Error {
   }
 }
 
+/** TerraScale SQL error codes, the same on REST, the SQL WebSocket and the PostgreSQL wire. */
+export const SqlErrorCode = Object.freeze({
+  syntaxError: "syntax_error", undefinedTable: "undefined_table", undefinedColumn: "undefined_column",
+  duplicateObject: "duplicate_object", primaryKeyViolation: "primary_key_violation", uniqueViolation: "unique_violation",
+  notNullViolation: "not_null_violation", checkViolation: "check_violation", foreignKeyViolation: "foreign_key_violation",
+  constraintViolation: "constraint_violation", forbiddenScope: "forbidden_scope", serializationConflict: "serialization_conflict",
+  tooLarge: "too_large", queryCanceled: "query_canceled", transactionRolledBack: "transaction_rolled_back",
+  transactionAborted: "transaction_aborted", readOnlyTransaction: "read_only_transaction", transactionState: "transaction_state",
+  invalidRequest: "invalid_request", quotaExceeded: "quota_exceeded", tenantBusy: "tenant_busy",
+  unauthorized: "unauthorized", unavailable: "unavailable", wrongRegion: "wrong_region", internalError: "internal_error",
+  sqlError: "sql_error",
+});
+
+const retryableSqlCodes = new Set(["serialization_conflict", "tenant_busy", "unavailable"]);
+
 /**
- * A refused relational SQL statement: `sql_error` (400), `forbidden_scope` (403, writes and DDL need
- * documents:write), `sql_conflict` (409) or `sql_too_large` (413). The whole request rolled back.
+ * A refused SQL statement. `code` is a TerraScale code (see SqlErrorCode) and `sqlstate` its PostgreSQL SQLSTATE.
+ * Over REST and outside a WebSocket transaction the whole request rolled back.
  */
 export class SqlError extends TerraBaseV1Error {
   /** @type {number} Zero-based index of the failing statement. */
   statement;
-  /** @type {string | undefined} The SQLite error code, such as `SQLITE_CONSTRAINT_PRIMARYKEY`. */
-  sqliteCode;
+  /** @type {string} The PostgreSQL SQLSTATE, such as `23505`. */
+  sqlstate;
+  /** @type {boolean} True for serialization_conflict, tenant_busy and unavailable: the whole request may be sent again. */
+  retryable;
 
-  /** @param {TerraBaseV1ErrorInit & { statement: number; sqliteCode?: string | undefined }} init */
+  /** @param {TerraBaseV1ErrorInit & { statement: number; sqlstate: string }} init */
   constructor(init) {
     super(init);
     this.name = "SqlError";
     this.statement = init.statement;
-    this.sqliteCode = init.sqliteCode;
+    this.sqlstate = init.sqlstate;
+    this.retryable = retryableSqlCodes.has(init.code);
   }
 }
 
@@ -155,8 +172,8 @@ function typedError(init) {
   // Only the SQL execute route reports a statement index.
   const statement = init.details?.statement;
   if (typeof statement === "number" && Number.isInteger(statement) && statement >= 0) {
-    const sqliteCode = init.details?.sqlite_code;
-    return new SqlError({ ...init, statement, sqliteCode: typeof sqliteCode === "string" ? sqliteCode : undefined });
+    const sqlstate = init.details?.sqlstate;
+    if (typeof sqlstate === "string" && /^[0-9A-Z]{5}$/u.test(sqlstate)) return new SqlError({ ...init, statement, sqlstate });
   }
   switch (init.code) {
     case "precondition_failed": return new V1PreconditionFailedError(init);

@@ -38,16 +38,14 @@ test("batch sends every statement in one request and keeps integers beyond 2^53 
 });
 
 test.each([
-  [400, "sql_error", "SQLITE_CONSTRAINT_PRIMARYKEY"],
-  [403, "forbidden_scope", "SQLITE_AUTH"],
-  [409, "sql_conflict", "SQLITE_BUSY"],
-  [413, "sql_too_large", "SQLITE_TOOBIG"],
-])("maps %i %s to SqlError with the statement index", async (status, code, sqliteCode) => {
-  const { client } = await fixture((_request, response) => json(response, { error: { code, message: "refused", statement: 1, sqlite_code: sqliteCode } }, status));
+  [400, "primary_key_violation", "23505", false],
+  [409, "serialization_conflict", "40001", true],
+])("maps %i %s to SqlError with the statement index and SQLSTATE", async (status, code, sqlstate, retryable) => {
+  const { client } = await fixture((_request, response) => json(response, { error: { code, message: "refused", statement: 1, sqlstate } }, status));
   const error = await client.database("app").batch(["SELECT 1", "INSERT INTO t VALUES (1)"]).catch(error => error);
   expect(error).toBeInstanceOf(SqlError);
   expect(error).toBeInstanceOf(TerraBaseV1Error);
-  expect(error).toMatchObject({ name: "SqlError", status, code, message: expect.stringContaining("refused"), statement: 1, sqliteCode });
+  expect(error).toMatchObject({ name: "SqlError", status, code, message: expect.stringContaining("refused"), statement: 1, sqlstate, retryable });
 });
 
 describe.skipIf(!liveConfigured)("real C# relational SQL", () => {
@@ -63,7 +61,7 @@ describe.skipIf(!liveConfigured)("real C# relational SQL", () => {
     expect(await db.query(`SELECT id, name, score FROM ${table} ORDER BY id`)).toEqual([{ id: 1, name: "Ada", score: 1.5 }, { id: 2, name: "Grace", score: null }]);
     const error = await db.batch([`INSERT INTO ${table} (id, name) VALUES (3, 'Linus')`, `INSERT INTO ${table} (id, name) VALUES (1, 'again')`]).catch(error => error);
     expect(error).toBeInstanceOf(SqlError);
-    expect(error).toMatchObject({ status: 400, code: "sql_error", statement: 1 });
+    expect(error).toMatchObject({ status: 400, code: "primary_key_violation", sqlstate: "23505", statement: 1 });
     expect(await db.query(`SELECT id FROM ${table} WHERE id = 3`)).toEqual([]);
     await db.execute(`DROP TABLE ${table}`);
   });

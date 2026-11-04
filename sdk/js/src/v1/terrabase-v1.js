@@ -998,6 +998,15 @@ export class V1Database {
     return new V1TableShape(this.#transport, this.name, table, request);
   }
 
+  /**
+   * Opens a SQL WebSocket session: lower latency per statement and interactive transactions.
+   * @param {V1RequestOptions} [options]
+   * @returns {Promise<import("./sql-socket.js").V1SqlSocket>}
+   */
+  connect(options = {}) {
+    return this.#transport.openSqlSocket({ database: this.name }, options.signal);
+  }
+
   /** @param {import("./changes.js").V1ChangeStreamRequest} [request] @param {V1RequestOptions} [options] */
   changes(request = {}, options = {}) {
     return streamChanges(this.#transport, this.name, request, options.signal);

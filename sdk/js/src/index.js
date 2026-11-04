@@ -18,6 +18,7 @@ export {
   V1ForbiddenScopeError,
   V1NotFoundError,
   SqlError,
+  SqlErrorCode,
   V1ErrorCode,
   isTerraBaseV1Error,
 } from "./v1/errors.js";
@@ -26,6 +27,7 @@ export { V1TableShape } from "./v1/table-shape.js";
 /** @typedef {import("./v1/table-shape.js").V1TableRow} V1TableRow */
 /** @typedef {import("./v1/table-shape.js").V1TableShapeRequest} V1TableShapeRequest */
 /** @typedef {import("./v1/table-shape.js").V1TableShapeSubscribeOptions} V1TableShapeSubscribeOptions */
+export { V1SqlSocket, SqlSocketClosedError } from "./v1/sql-socket.js";
 export { V1ShapeSubscription } from "./v1/shape-subscription.js";
 export { indexedDbShapeReplica } from "./v1/shape-replica.js";
 /** @typedef {import("./v1/shape-subscription.js").V1ShapeReplicaStore} V1ShapeReplicaStore */

@@ -4,6 +4,7 @@ import { parseV1Error } from "./errors.js";
 import { requireDatabaseSelector, requireProject } from "./ids.js";
 import { parseExactJson } from "./json.js";
 import { v1Route, v1RoutePath } from "./routes.js";
+import { V1SqlSocket, sqlSocketProtocol } from "./sql-socket.js";
 /**
  * @import { FetchLike } from "../config.js"
  * @import { TerraBaseV1Error } from "./errors.js"
@@ -24,6 +25,7 @@ const tokenPattern = /^(?!tbk1\.)(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-
  */
 /** @typedef {(context: V1EndpointContext) => string | Promise<string>} V1EndpointResolver */
 /** A fresh access token for each authenticated request, including stream reconnects. @typedef {() => string | Promise<string>} V1TokenProvider */
+/** @typedef {new (url: string, init: string[] | { protocols: string[]; headers: Record<string, string> }) => import("./sql-socket.js").SqlSocketLike} SqlSocketConstructor */
 /**
  * Project-scoped C# Documents API client. Supply exactly one of baseUrl or endpointResolver.
  * URLs must use HTTPS or loopback HTTP. Mutations are never automatically replayed.
@@ -33,6 +35,7 @@ const tokenPattern = /^(?!tbk1\.)(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-
  * @property {string | undefined} [baseUrl]
  * @property {V1EndpointResolver | undefined} [endpointResolver]
  * @property {FetchLike | undefined} [fetch]
+ * @property {SqlSocketConstructor | undefined} [WebSocket] Defaults to the runtime's WebSocket.
  * @property {number | undefined} [maxResponseBytes] Default 64 MiB, including query framing and escaping.
  */
 
@@ -127,6 +130,12 @@ function requireToken(token) {
   return token;
 }
 
+/** @returns {boolean} */
+function sendsUpgradeHeaders() {
+  const runtime = /** @type {{ process?: { release?: { name?: string } }; Bun?: unknown; Deno?: unknown }} */ (globalThis);
+  return runtime.process?.release?.name === "node" || runtime.Bun !== undefined || runtime.Deno !== undefined;
+}
+
 /** A response body that failed in transit after its headers arrived. */
 export class BodyTransportError extends Error {
   /** @param {unknown} cause */
@@ -167,6 +176,8 @@ export class V1Transport {
   #fetch;
   /** @type {number} */
   #maxResponseBytes;
+  /** @type {SqlSocketConstructor | undefined} */
+  #webSocket;
 
   /** @param {TerraBaseV1ClientConfig | (import("./system.js").TerraBaseSystemClientConfig & { project?: undefined; endpointResolver?: undefined })} config */
   constructor(config) {
@@ -189,6 +200,26 @@ export class V1Transport {
     this.#token = config.token;
     this.#fetch = fetchHandler;
     this.#maxResponseBytes = maxResponseBytes;
+    const webSocket = "WebSocket" in config ? config.WebSocket : undefined;
+    if (webSocket !== undefined && typeof webSocket !== "function") throw new TypeError("WebSocket must be a constructor.");
+    this.#webSocket = webSocket ?? /** @type {SqlSocketConstructor | undefined} */ (/** @type {unknown} */ (globalThis.WebSocket));
+  }
+
+  /**
+   * Opens the SQL WebSocket. The credential goes in the upgrade's Authorization header where the runtime allows it
+   * (Node, Bun, Deno), and otherwise in the first frame (browsers); never in the URL.
+   * @param {Readonly<Record<string, string>>} params
+   * @param {AbortSignal | undefined} signal
+   * @returns {Promise<import("./sql-socket.js").V1SqlSocket>}
+   */
+  async openSqlSocket(params, signal) {
+    const WebSocketClass = this.#webSocket;
+    if (WebSocketClass === undefined) throw new TypeError("This runtime has no WebSocket; pass one as the WebSocket client option.");
+    const url = new URL(await this.url("connectSql", params, signal));
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    const token = await this.#accessToken(signal);
+    if (sendsUpgradeHeaders()) return V1SqlSocket.open(new WebSocketClass(url.href, { protocols: [sqlSocketProtocol], headers: { authorization: `Bearer ${token}` } }), signal);
+    return V1SqlSocket.open(new WebSocketClass(url.href, [sqlSocketProtocol]), signal, token);
   }
 
   /** Internal credential lifetime metadata; never exposes the bearer value. */

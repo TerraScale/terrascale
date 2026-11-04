@@ -19,9 +19,55 @@ support remains Node.js 22/24 and the browser targets listed above.
 npm install @terrascale/sdk
 ```
 
-The following shows the current API with a trusted `discoveredOrigin` supplied
-by your authorized integration. Built-in Atlas integration remains pending; see
-[endpoint selection](#atlas-and-endpoint-selection).
+## Quickstart: SQL
+
+```js
+import { createTerraBaseClient } from "@terrascale/sdk";
+
+const db = createTerraBaseClient({
+  baseUrl: "https://api.terrascale.tech",
+  project: process.env.TERRASCALE_PROJECT,
+  token: process.env.TERRASCALE_TOKEN,
+}).database("app");
+
+await db.batch([
+  "CREATE TABLE IF NOT EXISTS todos (id TEXT PRIMARY KEY, title TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0)",
+  { sql: "INSERT INTO todos (id, title) VALUES (?, ?)", args: ["01JC0000000000000000000000", "Ship it"] },
+]);
+
+/** @type {{ id: string; title: string; done: number }[]} */
+const todos = await db.query("SELECT id, title, done FROM todos WHERE done = :done", { done: 0 });
+```
+
+`query` returns rows as objects, `execute` returns `{ columns, rows, rowsAffected, lastInsertRowid }`, and `batch`
+runs 1 to 256 statements as one transaction over HTTPS.
+
+For many statements in a row, or a transaction that reads before it writes, open a WebSocket session:
+
+```js
+await using socket = await db.connect();
+await socket.transaction(async tx => {
+  const [todo] = await tx.query("SELECT done FROM todos WHERE id = ?", ["01JC0000000000000000000000"]);
+  if (todo?.done === 0) await tx.execute("UPDATE todos SET done = 1 WHERE id = ?", ["01JC0000000000000000000000"]);
+});
+```
+
+`connect()` works in Node 22+, Bun, Deno and browsers. Node, Bun and Deno send the token in the upgrade's
+`Authorization` header; browsers, which cannot set WebSocket headers, send it as the first frame. It never goes in
+the URL. In a browser use an end-user token, never a project key. A socket transaction lives at most 5 seconds,
+commits when the function resolves and rolls back when it throws.
+
+A refused statement throws `SqlError` with `code` (a `SqlErrorCode` such as `unique_violation`), `sqlstate`
+(`23505`), `statement` (its zero-based index) and `retryable` (true for `serialization_conflict`, `tenant_busy` and
+`unavailable`). A closed socket rejects pending requests with `SqlSocketClosedError` and its `closeCode`.
+Values are `null`, numbers, strings and `Uint8Array` blobs; integers beyond 2^53 arrive as `ExactDecimal`
+(`BigInt(String(value))`) and go out as `bigint`.
+
+For live data, `db.shape("todos").subscribe(({ rows }) => …)` keeps every row of a table current (see [Live SQL table shapes](#live-sql-table-shapes)).
+
+## Documents (being removed)
+
+The document API below is being removed in favor of SQL.
 
 ```js
 import { createTerraBaseV1Client, generateId, v1Filter } from "@terrascale/sdk";
@@ -38,10 +84,6 @@ const id = generateId();
 await todos.put(id, { title: "Use TerraBase", done: false }, { ifNoneMatchAny: true });
 const doc = await todos.get(id);
 await todos.patch(id, { merge: { done: true } }, { ifMatch: doc.version });
-
-for await (const page of todos.pages({ filter: v1Filter.eq("/done", true), limit: 50 })) {
-  console.log(page.items);
-}
 ```
 
 Provision the project, database and collection before using their handles.
@@ -203,7 +245,7 @@ objects keyed by column name, and `batch` sends 1 to 256 statements as one
 transaction: all commit or none do. `BEGIN`, `COMMIT` and `ROLLBACK` are
 refused. Arguments are positional (`?`) or named (`:name`, `@name`, `$name`,
 passed without the prefix). Each is `null`, a number, an int64 `bigint`, a
-boolean (stored as 1 or 0), a string or a `Uint8Array` blob (sent and returned as `{"base64":"…"}`, decoded to `Uint8Array`). Reads need `documents:read`; writes and
+boolean (stored as 1 or 0), a string or a `Uint8Array` blob. Reads need `documents:read`; writes and
 DDL also need `documents:write`.
 
 ```js
@@ -216,11 +258,8 @@ const people = await db.query("SELECT id, name FROM people WHERE id > ?", [0]);
 const { columns, rows, rowsAffected, lastInsertRowid } = await db.execute("DELETE FROM people WHERE id = :id", { id: 2 });
 ```
 
-A refused statement throws `SqlError`, a `TerraBaseV1Error` that adds
-`statement` (zero-based index) and `sqliteCode` (such as
-`SQLITE_CONSTRAINT_PRIMARYKEY`). Its `code` is `sql_error` (400),
-`forbidden_scope` (403), `sql_conflict` (409) or `sql_too_large` (413).
-Authentication, quota and availability errors keep their usual error classes.
+A refused statement throws `SqlError` (see the quickstart). Authentication, quota and availability errors keep
+their usual error classes.
 
 TerraBase sends integers as JSON numbers. A plain JavaScript number cannot hold
 an integer above 2^53 exactly, so the SDK decodes such a value (a row value or
