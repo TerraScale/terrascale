@@ -31,13 +31,13 @@ internal sealed class ListManagedDatabasesEndpoint(
     }
 
     /// <inheritdoc />
-    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        ValueTask.FromResult(ManagementRoute.CheckPage(HttpContext) switch
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        ManagementRoute.CheckPage(HttpContext) switch
         {
             Validation error => ErrorResponse.From(error),
-            PageQuery page => ListAsync(page, cancellationToken).AsTask(),
+            PageQuery page => await ListAsync(page, cancellationToken).ConfigureAwait(false),
             _ => throw new UnreachableException(),
-        });
+        };
 
     private async ValueTask<IResult> ListAsync(PageQuery page, CancellationToken cancellationToken)
     {
