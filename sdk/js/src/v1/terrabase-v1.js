@@ -5,7 +5,8 @@ import { requireId } from "../ids.js";
 import { requireDatabaseSelector, requireName } from "./ids.js";
 import { executeSql, sqlRowObjects, sqlStatement } from "./sql-execute.js";
 import { V1TableShape } from "./table-shape.js";
-import { decodeManagedDatabase, requireTtlSeconds, V1Databases } from "./catalog.js";
+import { decodeManagedDatabase, region, requirePlacement, requireTtlSeconds, V1Databases } from "./catalog.js";
+import { TerraBaseV1Error } from "./errors.js";
 import { members } from "./management-validation.js";
 import { object, string } from "./decode.js";
 import { stringifyExactJson } from "./json.js";
@@ -17,6 +18,8 @@ import { V1SavedQueries } from "./saved-queries.js";
 /** @import { TerraBaseV1ClientConfig } from "./transport.js" */
 
 /** @typedef {{ readonly ttlSeconds?: number | undefined; readonly signal?: AbortSignal | undefined }} V1AgentDatabaseOptions */
+/** @typedef {{ readonly replicaRegions?: readonly string[] | undefined; readonly allRegions?: boolean | undefined }} V1DatabasePlacement */
+/** @typedef {V1AgentDatabaseOptions & V1DatabasePlacement & { readonly homeRegion?: string | undefined }} V1CreateDatabaseOptions */
 /** @typedef {V1AgentDatabaseOptions & { readonly pointInTime?: string | undefined }} V1ForkDatabaseOptions */
 /** @typedef {{ readonly project?: string | undefined; readonly database: string; readonly access: "read" | "read_write"; readonly ttlSeconds?: number | undefined }} V1ScopedKeyRequest */
 /** @typedef {{ readonly key: string; readonly id: string; readonly projectId: string; readonly database: string; readonly access: "read" | "read_write"; readonly expiresAt: string }} V1ScopedKey */
@@ -162,12 +165,46 @@ export class TerraBaseV1Client {
     return transport;
   }
 
-  /** @param {string} project @param {string} name @param {V1AgentDatabaseOptions} [options] @returns {Promise<import("./catalog.js").V1ManagedDatabase>} */
+  /** @param {string} project @param {string} name @param {V1CreateDatabaseOptions} [options] @returns {Promise<import("./catalog.js").V1ManagedDatabase>} */
   createDatabase(project, name, options = {}) {
-    members(options, ["ttlSeconds", "signal"]);
+    members(options, ["homeRegion", "replicaRegions", "allRegions", "ttlSeconds", "signal"]);
     return new V1Databases(this.#projectTransport(project)).create({ name,
+      ...(options.homeRegion === undefined ? {} : { homeRegion: options.homeRegion }),
+      ...(options.replicaRegions === undefined ? {} : { replicaRegions: options.replicaRegions }),
+      ...(options.allRegions === undefined ? {} : { allRegions: options.allRegions }),
       ...(options.ttlSeconds === undefined ? {} : { ttlSeconds: options.ttlSeconds }),
-    }, options);
+    }, options.signal === undefined ? {} : { signal: options.signal });
+  }
+
+  /** @param {string} project @param {string} database @param {V1DatabasePlacement} placement @param {V1RequestOptions} [options] @returns {Promise<import("./catalog.js").V1ManagedDatabase>} */
+  async setDatabasePlacement(project, database, placement, options = {}) {
+    members(placement, ["replicaRegions", "allRegions"]);
+    const body = requirePlacement(placement);
+    if (Object.keys(body).length === 0) throw new TypeError("Supply replicaRegions or allRegions.");
+    const response = await this.#projectTransport(project).call("updateDatabase", { database: requireDatabaseSelector(database) }, {
+      body: stringifyExactJson(body, "database placement"), signal: options.signal,
+    });
+    return decodeManagedDatabase(response.value);
+  }
+
+  /** @param {string} project @param {string} database @param {string} homeRegion @param {V1RequestOptions} [options] @returns {Promise<import("./catalog.js").V1ManagedDatabase>} */
+  async moveDatabaseHome(project, database, homeRegion, options = {}) {
+    const transport = this.#projectTransport(project);
+    const params = { database: requireDatabaseSelector(database) };
+    const body = stringifyExactJson({ homeRegion: region(homeRegion) }, "database move");
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return decodeManagedDatabase((await transport.call("moveDatabaseHome", params, { body, signal: options.signal })).value);
+      } catch (error) {
+        if (!(error instanceof TerraBaseV1Error) || error.status !== 503 || error.code !== "move_unresolved" || attempt >= 5) throw error;
+        options.signal?.throwIfAborted();
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => { options.signal?.removeEventListener("abort", abort); resolve(undefined); }, (error.retryAfter ?? 1) * 1000);
+          const abort = () => { clearTimeout(timer); reject(options.signal?.reason); };
+          options.signal?.addEventListener("abort", abort, { once: true });
+        });
+      }
+    }
   }
 
   /** @param {string} project @param {string} source @param {string} name @param {V1ForkDatabaseOptions} [options] @returns {Promise<import("./catalog.js").V1ManagedDatabase>} */
