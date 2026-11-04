@@ -36,7 +36,7 @@ public sealed class ShapeGrantTests
     [Test]
     public async Task Ungranted_tables_and_expired_end_user_tokens_are_refused()
     {
-        await using var db = await StartSharedAsync();
+        await using var db = await StartAsync();
         var alice = EntityIds.New().ToString();
         await db.OkAsync(Notes, "CREATE TABLE audit (id INTEGER PRIMARY KEY, entry TEXT)");
         await GrantAsync(db, "notes", new { where = "owner_id = :sub" });
