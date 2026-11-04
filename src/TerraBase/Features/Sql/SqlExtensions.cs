@@ -9,6 +9,8 @@ public static class SqlExtensions
     public static IServiceCollection AddTerraBaseSql(this IServiceCollection services)
     {
         services.TryAddKeyedSingleton<TimeProvider>(SqlLimits.TransactionClock, (provider, _) => provider.GetRequiredService<TimeProvider>());
+        services.AddSingleton<Routing.SchemaFactsCache>();
+        services.AddSingleton<Routing.WriteRouter>();
         return services.AddSingleton<ISqlService, SqlService>();
     }
 }

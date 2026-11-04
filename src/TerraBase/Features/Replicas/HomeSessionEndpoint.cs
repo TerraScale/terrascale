@@ -132,7 +132,8 @@ internal sealed class HomeSessionEndpoint(
                                 SqlDescription description => new HomeSessionAnswer(session.IsAutocommit, Description: description),
                                 SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
                             },
-                            _ => new HomeSessionAnswer(session.IsAutocommit, new SqlError(SqlErrors.InvalidRequest, "op is execute or describe")),
+                            "batch" => await BatchAsync(session, call.Batch, cancellationToken).ConfigureAwait(false),
+                            _ => new HomeSessionAnswer(session.IsAutocommit, new SqlError(SqlErrors.InvalidRequest, "op is execute, describe or batch")),
                         };
                     }
                     catch (QosMemoryException)
@@ -148,6 +149,29 @@ internal sealed class HomeSessionEndpoint(
                 await AnswerAsync(output, answer, cancellationToken).ConfigureAwait(false);
             }
         }
+    }
+
+    private static async ValueTask<HomeSessionAnswer> BatchAsync(ISqlSession session, IReadOnlyList<HomeSessionCall>? batch, CancellationToken cancellationToken)
+    {
+        if (batch is not { Count: > 0 and <= SqlBatch.MaxStatements })
+        {
+            return new HomeSessionAnswer(session.IsAutocommit, SqlBatch.TooManyStatements);
+        }
+
+        var commands = batch.Select(call => new SqlCommand(call.Sql, call.Args ?? [], call.Named ?? new Dictionary<string, SqlValue>())).ToList();
+        var control = commands.FindIndex(command => SqlScript.Classify(command.Sql) is SqlStatementPlan { IsControl: true });
+        if (control >= 0)
+        {
+            return new HomeSessionAnswer(session.IsAutocommit,
+                new SqlError(SqlErrors.TransactionState, "BEGIN, COMMIT and ROLLBACK are not statements here: a batch runs as one transaction"), Statement: control);
+        }
+
+        return await SqlBatch.RunAsync(session, commands, cancellationToken).ConfigureAwait(false) switch
+        {
+            SqlExecuteBody body => new HomeSessionAnswer(session.IsAutocommit, Batch: [.. body.Results.Select(result => new HomeSessionResult(
+                [.. result.Columns.Select(column => new SqlColumn(column.Name, column.Decltype))], result.Rows, result.RowsAffected, result.LastInsertRowid))]),
+            SqlBatchFailure failure => new HomeSessionAnswer(session.IsAutocommit, failure.Error, Statement: failure.Statement),
+        };
     }
 
     // The home charges a read when it answers it: the replica region relays every answer it receives.
