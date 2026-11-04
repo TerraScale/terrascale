@@ -347,19 +347,6 @@ func dotnetRoot() (string, error) {
 	return root, nil
 }
 
-// cut partitions the peer path both ways and stops NATS; heal reverses it.
-func (c *cluster) cut() {
-	c.toA.pause()
-	c.toB.pause()
-	c.nats.stop()
-}
-
-func (c *cluster) heal(ctx context.Context) error {
-	c.toA.resume()
-	c.toB.resume()
-	return c.nats.start(ctx)
-}
-
 func (c *cluster) close() {
 	if c == nil {
 		return
