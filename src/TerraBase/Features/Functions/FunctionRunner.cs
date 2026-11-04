@@ -120,7 +120,7 @@ internal static class FunctionRunner
         {
             return new FunctionRun(null, error switch
             {
-                                MemoryLimitExceededException => "the function exceeded 32 MiB",
+                MemoryLimitExceededException => "the function exceeded 32 MiB",
                 StatementsCountOverflowException => "the function exceeded 10,000,000 statements",
                 RecursionDepthOverflowException => "the function exceeded recursion depth 256",
                 ExecutionCanceledException or OperationCanceledException => cancellationToken.IsCancellationRequested
