@@ -7,9 +7,9 @@ ever pushed, and a replica can always be deleted and pulled again.
 
 ## Placement
 
-- `POST …/databases` takes `replicaRegions` (distinct serving regions other than the home, at most 8) or `allRegions`.
-  `PATCH` changes them; the home raises the placement version on every change. `move-home` moves the home to a replica
-  region. See [placement](placement.md).
+- `POST …/databases` takes `replicaRegions`: distinct regions this cluster serves, other than the home, at most 8.
+  `PATCH` changes them; the home raises the placement version on every change. `allRegions` stays refused
+  (`replicas_unavailable`).
 - Only the home holds a database file and backs it up. A replica region records the database, with the home's name and
   placement, and keeps its replica under `<data-directory>/.replicas/<organization>/<project>/<database>.db`.
 
@@ -53,12 +53,9 @@ eventual consistency.
    they home that place this region as a replica: `GET /v1/sync/regions/{region}/databases`. It enrolls their
    organization and project as a project token would, records each database with the home's placement, and starts a
    follower. A recorded database the home no longer lists is checked with
-   `GET /v1/sync/organizations/{organization}/projects/{project}/databases/{database}/placement`, which answers the
-   placement that region records, home or not: `404` means it was deleted, so the region forgets it and deletes the
-   replica; otherwise the region takes the placement when it is newer and deletes the replica when it no longer names
-   this region. A follower whose database's home changed (a [move](placement.md#moving-the-home)) is stopped, its
-   replica deleted and pulled again from the new home. The peers file is read again on every sweep, so a region that
-   joins is replicated without a restart.
+   `GET /v1/sync/organizations/{organization}/projects/{project}/databases/{database}/placement`: `404` means it was
+   deleted, so the region forgets it and deletes the replica; otherwise the region takes the new placement and deletes
+   the replica when it no longer names this region.
 2. **Notices.** After each commit that advances a database's revision, its home publishes
    `terrabase.revision.<home>.<database>` on NATS (`TS_NATS_URL`, token from `TERRABASE_NATS_TOKEN_FILE`) with the
    organization, project, database and commit time. Notices are coalesced per database and never delay the commit.

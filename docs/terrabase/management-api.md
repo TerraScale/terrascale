@@ -248,16 +248,13 @@ placement. See [region identity](region-identity.md) for Atlas session pins and 
 
 ### Region placement
 
-A database has a home region, which commits its writes, and replica regions, which serve SQL reads
-([placement](placement.md), [database regions](cross-region.md#placement)). Region ids are the values of
-`X-TerraBase-Region` (`gru`, `sjc`, `fra`).
+A database is served only by its home region ([database regions](cross-region.md#placement)). Region ids are Atlas
+region ids (`gru-1`, `sfo-1`), the values of `X-TerraBase-Region`.
 
 - On create, `homeRegion` defaults to the called region. Another serving region answers `421 wrong_region` with
   `ts-replay` naming it; an unserved region or a value that is not a region answers `400 invalid_request`.
-- `replicaRegions` (at most 8 serving regions other than the home) or `allRegions: true` places replicas on create and
-  `PATCH`.
-- `PATCH` renames the database or sets its replica regions; `POST …/move-home` `{"homeRegion"}` moves the home to a
-  replica region.
+- `replicaRegions` with any region, or `allRegions: true`, answers `400 replicas_unavailable` on create and `PATCH`.
+- `PATCH` renames the database or confirms its unchanged placement; `homeRegion` cannot change.
 - A region outside the placement answers the database's data requests, and its database-scoped Management requests other
   than reading, updating and deleting the database, with `421 wrong_region` and the headers
   `X-TerraBase-Database-Home` and `X-TerraBase-Database-Regions`.

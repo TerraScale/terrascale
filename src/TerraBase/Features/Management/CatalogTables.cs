@@ -208,12 +208,6 @@ internal static class CatalogTables
             defaultRegion, homeRegion, after?.ProjectId ?? "", after?.ProjectId ?? "", after?.DatabaseId ?? "", (long)limit), cancellationToken).ConfigureAwait(false))
             .Select(row => new TenantContext((string)row[0]!, PlanTier.Hobby, (string)row[1]!, (string)row[2]!))];
 
-    public static async ValueTask<IReadOnlyList<(string Project, string Id)>> AllRegionDatabasesAsync(
-        IStorageTransaction transaction, string region, CancellationToken cancellationToken) =>
-        [.. (await RowsAsync(transaction, Sql(
-            $"SELECT d.project_id, d.id FROM catalog_databases d WHERE d.all_regions = 1 AND coalesce(d.home_region, ?) = ? AND {Live}", region, region), cancellationToken)
-            .ConfigureAwait(false)).Select(row => ((string)row[0]!, (string)row[1]!))];
-
     public static async ValueTask PutDatabaseAsync(IStorageTransaction transaction, ManagedDatabase database, CancellationToken cancellationToken)
     {
         _ = await ExecuteAsync(transaction, Sql(

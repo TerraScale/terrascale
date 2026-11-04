@@ -4,21 +4,22 @@ Each database is served by one region, its **home region**. TerraBase does not c
 does not replicate writes between regions. A write is acknowledged after the home region's local commit
 ([single-region decision](decisions/2026-10-29-single-region-until-sync.md)).
 
+Replica regions on Turso sync (R3) are being built in another thread; until they ship, everything below holds.
+
 The heads/pull WAN protocol, its metrics, the partition suites and `scripts/terrabase/cross-region-check.py` were
 removed with the replication engine. The former design is in the [archive](archive/README.md).
 
 ## Placement
 
 A database record carries a placement (`DatabasePlacement` in `Tenancy/ITenantDirectory.cs`): `Home`, `Replicas`,
-`Version` and `AllRegions`. Replica regions hold read replicas ([region replicas](region-replicas.md)); the placement API
-and moving the home are in [placement](placement.md).
+`Version` and `AllRegions`. On `main`, `Replicas` is always empty and `AllRegions` is always false.
 
 - **Create.** `homeRegion` defaults to the called region. A region TerraBase does not serve, or a value that is not a
   region, answers `400 invalid_request`; the message lists the serving regions for the former. Another serving region answers
   `421 wrong_region` with `ts-replay: region=<home>`, so the edge replays the create there.
-- **Replicas.** A create or `PATCH` names `replicaRegions` or `allRegions: true` ([placement](placement.md)).
-- **Update.** `PATCH` renames the database or sets its replica regions. `homeRegion` changes only through
-  `POST …/move-home`.
+- **Replicas refused.** A create or `PATCH` with a non-empty `replicaRegions` or `allRegions: true` answers
+  `400 replicas_unavailable` and changes nothing.
+- **Update.** `PATCH` renames the database or confirms its unchanged home-only placement. `homeRegion` cannot change.
 - **Home-only operations.** Database-scoped Management requests other than reading, updating and deleting the record
   are checked against the home region (`DatabaseRegions.ElsewhereAsync`).
 
@@ -66,4 +67,5 @@ are used for routing and private listener binding; discovering a region grants n
 
 ## Tests
 
-Fast covers placement and its refusals in `tests/TerraBase.Fast/Management/RegionCatalogTests.cs` and `DatabaseRegionTests.cs` (the reported region across restarts).
+Fast covers placement and its refusals in `tests/TerraBase.Fast/Management/RegionCatalogTests.cs` (including
+`replicas_unavailable`) and `DatabaseRegionTests.cs` (the reported region across restarts).
