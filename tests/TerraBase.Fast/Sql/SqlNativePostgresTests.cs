@@ -11,7 +11,7 @@ public sealed class SqlNativePostgresTests
     [Test]
     public async Task Rows_are_created_read_updated_and_deleted_with_parameters_and_json_columns()
     {
-        await using var db = await StartAsync();
+        await using var db = await StartSharedAsync();
         await using var connection = await db.Postgres.OpenConnectionAsync();
         var (name, city, renamed) = (Faker.Name.FullName(), Faker.Address.City(), Faker.Name.FullName());
         var age = Faker.Random.Int(18, 90);
@@ -37,7 +37,7 @@ public sealed class SqlNativePostgresTests
     [Test]
     public async Task Read_only_keys_and_engine_tables_are_refused()
     {
-        await using var db = await StartAsync();
+        await using var db = await StartSharedAsync();
         await using (var writer = await db.Postgres.OpenConnectionAsync())
         {
             await PostgresSql.ExecuteAsync(writer, "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)");
