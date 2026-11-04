@@ -20,6 +20,7 @@ smoke:
 	go test -race -count=1 ./cmd/bench-runner
 # Fast keeps default Go package/test parallelism and never reuses cached results.
 test-fast:
+	python3 -B scripts/free-reads-cpu-test.py
 	go test -race -count=1 -timeout=240s ./...
 # The exhaustive region/lane/payload/concurrency matrix is independent of Fast.
 test-slow:

@@ -4,8 +4,6 @@ import time
 from pathlib import Path
 
 root = Path('/sys/fs/cgroup')
-previous = None
-identity = None
 
 
 def process():
@@ -45,27 +43,34 @@ def capacity(path):
     return cores, affinity
 
 
-while True:
-    try:
-        if identity is None:
-            identity = process()
-        path, start = identity
-        fields = (path / 'stat').read_text().rsplit(')', 1)[1].split()
-        if int(fields[19]) != start:
-            raise ValueError('CPU_PROCESS_CHANGED')
-        cores, affinity = capacity(path)
-        used = (int(fields[11]) + int(fields[12])) / os.sysconf('SC_CLK_TCK')
-        now = time.monotonic()
-        if previous is not None:
-            elapsed, delta = now - previous[0], used - previous[1]
-            if delta < 0 or cores != previous[2]:
-                raise ValueError('CPU_PROCESS_OR_CAPACITY_CHANGED')
-            print(json.dumps({'at': time.time(), 'cores': cores, 'affinity_cpus': affinity,
-                              'cpu_percent': 100 * delta / elapsed / cores, 'core_percent': 100 * delta / elapsed,
-                              'pid': int(path.name), 'start_ticks': start, 'source': 'proc_cgroup_v2'}), flush=True)
-        previous = now, used, cores
-    except (OSError, ValueError) as error:
-        print(json.dumps({'error': 'CPU process or capacity unavailable or changed',
-                          'reason': str(error) if isinstance(error, ValueError) else type(error).__name__}), flush=True)
-        break
-    time.sleep(1)
+def main():
+    previous = None
+    identity = None
+    while True:
+        try:
+            if identity is None:
+                identity = process()
+            path, start = identity
+            fields = (path / 'stat').read_text().rsplit(')', 1)[1].split()
+            if int(fields[19]) != start:
+                raise ValueError('CPU_PROCESS_CHANGED')
+            cores, affinity = capacity(path)
+            used = (int(fields[11]) + int(fields[12])) / os.sysconf('SC_CLK_TCK')
+            now = time.monotonic()
+            if previous is not None:
+                elapsed, delta = now - previous[0], used - previous[1]
+                if delta < 0 or cores != previous[2]:
+                    raise ValueError('CPU_PROCESS_OR_CAPACITY_CHANGED')
+                print(json.dumps({'at': time.time(), 'cores': cores, 'affinity_cpus': affinity,
+                                  'cpu_percent': 100 * delta / elapsed / cores, 'core_percent': 100 * delta / elapsed,
+                                  'pid': int(path.name), 'start_ticks': start, 'source': 'proc_cgroup_v2'}), flush=True)
+            previous = now, used, cores
+        except (OSError, ValueError) as error:
+            print(json.dumps({'error': 'CPU process or capacity unavailable or changed',
+                              'reason': str(error) if isinstance(error, ValueError) else type(error).__name__}), flush=True)
+            break
+        time.sleep(1)
+
+
+if __name__ == "__main__":
+    main()
