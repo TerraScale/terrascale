@@ -22,36 +22,25 @@ public sealed class ManagementRpcTests
     public async Task Management_rpc_preserves_identity_placement_usage_and_backup_readback()
     {
         await using var api = await DatabaseApi.StartAsync();
-        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         using var channel = Channel(api);
         var token = Token(api, "databases:read databases:write sql:read sql:write");
         var management = Client<IManagementService>(channel, token);
         var backups = Client<IBackupsService>(channel, token);
         var usage = Client<IUsageService>(channel, token);
         var project = api.Tenant.ProjectId;
-        // These reads and the snapshot observe the unchanged source independently.
-        var sourceRead = management.GetDatabaseAsync(project, DatabaseApi.Database).ResponseAsync;
-        var regionRead = management.GetDatabaseRegionsAsync(project, DatabaseApi.Database).ResponseAsync;
-        var pageRead = management.ListDatabasesAsync(project, null, 1).ResponseAsync;
-        var totalsRead = usage.GetProjectUsageAsync(project, "hour", null, null).ResponseAsync;
-        var measuredRead = usage.GetDatabaseUsageAsync(project, DatabaseApi.Database, "hour", null, null).ResponseAsync;
-        var analyticsRead = usage.GetAnalyticsAsync(project, "1h", null, null).ResponseAsync;
-        var policyRead = backups.GetPolicyAsync(project, DatabaseApi.Database).ResponseAsync;
-        var snapshotCreate = backups.CreateAsync(project, DatabaseApi.Database).ResponseAsync;
-        await Task.WhenAll(sourceRead, regionRead, pageRead, totalsRead, measuredRead, analyticsRead, policyRead, snapshotCreate);
-        var source = await sourceRead;
-        var regions = await regionRead;
-        var page = await pageRead;
-        var totals = await totalsRead;
-        var measured = await measuredRead;
-        var analytics = await analyticsRead;
-        var policy = await policyRead;
-        var snapshot = await snapshotCreate;
+        var source = await management.GetDatabaseAsync(project, DatabaseApi.Database);
+        var regions = await management.GetDatabaseRegionsAsync(project, DatabaseApi.Database);
+        var page = await management.ListDatabasesAsync(project, null, 1);
         var created = await management.CreateDatabaseAsync(project, new(Name: "created"));
         var renamed = await management.SetDatabaseAsync(project, created.Id, new(Name: "renamed"));
         var placed = await management.SetDatabaseAsync(project, renamed.Id, new(ReplicaRegions: []));
         var branch = await management.BranchAsync(project, DatabaseApi.Database, "branched");
+        var totals = await usage.GetProjectUsageAsync(project, "hour", null, null);
+        var measured = await usage.GetDatabaseUsageAsync(project, DatabaseApi.Database, "hour", null, null);
+        var analytics = await usage.GetAnalyticsAsync(project, "1h", null, null);
+        var snapshot = await backups.CreateAsync(project, DatabaseApi.Database);
         var snapshots = await backups.ListAsync(project, DatabaseApi.Database, null, 100);
+        var policy = await backups.GetPolicyAsync(project, DatabaseApi.Database);
         using var settings = JsonDocument.Parse("""{"fullBackupCron":"0 3 * * *","retentionDays":3,"disabled":false}""");
         var savedPolicy = await backups.SetPolicyAsync(project, DatabaseApi.Database, settings.RootElement);
         await management.DeleteDatabaseAsync(project, renamed.Id);
