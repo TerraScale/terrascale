@@ -80,7 +80,7 @@ public sealed class ExplainSqlEndpoint(ITenantDirectory tenants, IQueryService q
             {
                 return ErrorResponse.From(new NotFound());
             }
-            if (!resolved.Placement.Includes(options.Region))
+            if (resolved.Placement.Home != options.Region)
             {
                 return DatabaseRegions.WrongRegion(resolved.Placement.Home, resolved.Placement.Regions);
             }
@@ -206,7 +206,7 @@ public sealed class ExplainSqlEndpoint(ITenantDirectory tenants, IQueryService q
             return ErrorResponse.From(new NotFound());
         }
 
-        return !current.Placement.Includes(options.Region)
+        return current.Placement.Home != options.Region
             ? DatabaseRegions.WrongRegion(current.Placement.Home, current.Placement.Regions)
             : null;
     }

@@ -1657,6 +1657,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             Transactions = _transactions,
             RewriteSteps = _rewriteSteps,
             WritersEvicted = _writersEvicted,
+            Revised = RaiseRevised,
         };
         var published = false;
         var admitted = false;

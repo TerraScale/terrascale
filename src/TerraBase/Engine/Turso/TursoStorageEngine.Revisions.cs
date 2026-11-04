@@ -1,10 +1,28 @@
 using TerraBase.Engine.Revisions;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoStorageEngine : IDatabaseRevisions
 {
+    public event Action<TenantContext>? Revised;
+
+    private void RaiseRevised(TenantContext database)
+    {
+        foreach (var subscriber in Delegate.EnumerateInvocationList(Revised))
+        {
+            try
+            {
+                subscriber(database);
+            }
+            catch (Exception error)
+            {
+                _logger.ZLogError(error, $"A revision notification failed; the commit itself is durable");
+            }
+        }
+    }
+
     public async ValueTask<RevisionPullResult?> PullAsync(TenantContext database, string? clientRevision, IRevisionPullSink sink, CancellationToken cancellationToken)
     {
         if (await OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not TursoDatabaseStore store)

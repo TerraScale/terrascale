@@ -41,6 +41,8 @@ public sealed class TursoSyncDatabaseConfiguration
     public bool PartialBootstrapPrefetch { get; init; }
     public string? RemoteEncryptionKey { get; init; }
     public string? RemoteEncryptionCipher { get; init; }
+    public string? LocalEncryptionHexKey { get; init; }
+    public string? LocalEncryptionCipher { get; init; }
     public nuint PushOperationsThreshold { get; init; }
     public nuint PullBytesThreshold { get; init; }
     public bool LogicalMvccPull { get; init; }
@@ -85,7 +87,14 @@ public static class TursoSyncBindings
         using var query = NativeUtf8String.From(configuration.PartialBootstrapStrategyQuery);
         using var remoteEncryptionKey = NativeUtf8String.From(configuration.RemoteEncryptionKey);
         using var remoteEncryptionCipher = NativeUtf8String.From(configuration.RemoteEncryptionCipher);
-        using var experimentalFeatures = NativeUtf8String.From(configuration.ExperimentalFeatures);
+        if ((configuration.LocalEncryptionCipher is null) != (configuration.LocalEncryptionHexKey is null))
+            throw new ArgumentException("Local encryption needs both a cipher and a key.", nameof(configuration));
+        using var localEncryptionCipher = NativeUtf8String.From(configuration.LocalEncryptionCipher);
+        using var localEncryptionHexKey = NativeUtf8String.From(configuration.LocalEncryptionHexKey);
+        var features = configuration.LocalEncryptionCipher is null
+            ? configuration.ExperimentalFeatures
+            : string.IsNullOrEmpty(configuration.ExperimentalFeatures) ? "encryption" : configuration.ExperimentalFeatures + ",encryption";
+        using var experimentalFeatures = NativeUtf8String.From(features);
 
         var databaseConfig = new TursoDatabaseConfig
         {
@@ -93,8 +102,8 @@ public static class TursoSyncBindings
             Path = path.Pointer,
             ExperimentalFeatures = experimentalFeatures.Pointer,
             Vfs = IntPtr.Zero,
-            EncryptionCipher = IntPtr.Zero,
-            EncryptionHexKey = IntPtr.Zero,
+            EncryptionCipher = localEncryptionCipher.Pointer,
+            EncryptionHexKey = localEncryptionHexKey.Pointer,
             PageCodec = IntPtr.Zero,
             OpenFlags = 0,
         };

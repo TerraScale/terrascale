@@ -282,7 +282,7 @@ public sealed class TursoSyncDatabase : IDisposable, IAsyncDisposable
             throw new InvalidOperationException("Turso sync operations cannot be reentered from the sync HTTP handler.");
     }
 
-    internal async Task<TursoDatabaseHandle> ConnectHandleAsync(CancellationToken cancellationToken)
+    public async Task<TursoDatabaseHandle> ConnectHandleAsync(CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
         await _operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -308,7 +308,7 @@ public sealed class TursoSyncDatabase : IDisposable, IAsyncDisposable
         }
     }
 
-    internal void ReleaseConnection()
+    public void ReleaseConnection()
     {
         var remaining = Interlocked.Decrement(ref _activeConnections);
         if (remaining < 0)
@@ -821,6 +821,8 @@ public sealed class TursoSyncDatabase : IDisposable, IAsyncDisposable
             PartialBootstrapPrefetch = partial?.Prefetch ?? false,
             RemoteEncryptionKey = encryption?.Key,
             RemoteEncryptionCipher = encryption?.NativeName,
+            LocalEncryptionHexKey = options.LocalEncryption?.HexKey,
+            LocalEncryptionCipher = options.LocalEncryption?.NativeName,
             PushOperationsThreshold = options.PushOperationsThreshold is null
                 ? 0
                 : (nuint)options.PushOperationsThreshold.Value,

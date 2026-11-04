@@ -159,7 +159,7 @@ internal sealed partial class TursoStorageTransaction
         TursoBindings.ClearInterrupt(native);
     }
 
-    private static (TursoStatementHandle Prepared, int Consumed) Prepare(TursoDatabaseHandle native, string sql, bool first)
+    internal static (TursoStatementHandle Prepared, int Consumed) Prepare(TursoDatabaseHandle native, string sql, bool first)
     {
         var prepared = TursoBindings.PrepareFirst(native, sql, out var tail)
             ?? throw new SqlStatementException(SqlFailure.Error, "the statement is empty", transactionEnded: false);
@@ -268,7 +268,7 @@ internal sealed partial class TursoStorageTransaction
         }
     }
 
-    private static void Bind(TursoStatementHandle prepared, SqlStatement statement)
+    internal static void Bind(TursoStatementHandle prepared, SqlStatement statement)
     {
         var count = TursoBindings.GetParameterCount(prepared);
         for (var i = 1; i <= count; i++)
@@ -290,7 +290,7 @@ internal sealed partial class TursoStorageTransaction
         }
     }
 
-    private static List<SqlStatementColumn> Columns(TursoStatementHandle prepared)
+    internal static List<SqlStatementColumn> Columns(TursoStatementHandle prepared)
     {
         var count = TursoBindings.GetFieldCount(prepared);
         var columns = new List<SqlStatementColumn>(count);
@@ -303,7 +303,7 @@ internal sealed partial class TursoStorageTransaction
         return columns;
     }
 
-    private static long Counter(TursoDatabaseHandle native, string sql)
+    internal static long Counter(TursoDatabaseHandle native, string sql)
     {
         var prepared = TursoBindings.PrepareStatement(native, sql);
         try
@@ -318,7 +318,7 @@ internal sealed partial class TursoStorageTransaction
 
     private long PageSize(TursoDatabaseHandle native) => _pageSize > 0 ? _pageSize : _pageSize = Counter(native, "PRAGMA page_size;");
 
-    private static void Release(TursoStatementHandle prepared)
+    internal static void Release(TursoStatementHandle prepared)
     {
         try
         {
@@ -347,6 +347,13 @@ internal sealed partial class TursoStorageTransaction
             return new SqlStatementException(SqlFailure.Error, "the database reported an I/O error or corruption", ended, error);
         }
 
+        var (failure, reported) = Classify(native, error);
+        return new SqlStatementException(failure, reported, ended, error);
+    }
+
+    /// <summary>The kind and client-safe message of a failed customer statement.</summary>
+    internal static (SqlFailure Failure, string Message) Classify(TursoDatabaseHandle native, TursoException error)
+    {
         var message = error.Message;
         var parse = false;
         foreach (var prefix in (ReadOnlySpan<string>)["Unable to prepare statement: ", "Parse error: ", "Extension error: "])
@@ -384,12 +391,7 @@ internal sealed partial class TursoStorageTransaction
             _ when parse => (SqlFailure.Syntax, "SQL syntax error"),
             _ => (SqlFailure.Error, "the statement failed to run"),
         };
-        if (failure == SqlFailure.Unique && IsPrimaryKey(native, message))
-        {
-            failure = SqlFailure.PrimaryKey;
-        }
-
-        return new SqlStatementException(failure, reported, ended, error);
+        return failure == SqlFailure.Unique && IsPrimaryKey(native, message) ? (SqlFailure.PrimaryKey, reported) : (failure, reported);
     }
 
     private bool EndedByFailure(TursoDatabaseHandle native)
