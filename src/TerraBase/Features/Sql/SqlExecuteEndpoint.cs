@@ -89,7 +89,9 @@ internal sealed class SqlExecuteEndpoint(
             return ErrorResponse.From(new Validation("transaction statements are not accepted: every request runs as one transaction"), control);
         }
 
-        if (await placements.FindAsync(database, cancellationToken) is TenantDatabaseRecord { Placement: var placement } && placement.Home != options.Region)
+        // Only a node holding a replica of the database reads its placement here; the home answers without another catalog read.
+        if (replicas.Holds(database)
+            && await placements.FindAsync(database, cancellationToken) is TenantDatabaseRecord { Placement: var placement } && placement.Home != options.Region)
         {
             return await ReadReplicaAsync(database, placement, commands, plans, cancellationToken);
         }
