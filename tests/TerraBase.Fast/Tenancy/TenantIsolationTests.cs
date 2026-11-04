@@ -38,7 +38,7 @@ public sealed class TenantIsolationTests
     [Test]
     public async Task A_tenant_reaches_nothing_of_another_tenant_through_any_client_route()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
         // Every client scope, so each route answers past its scope check.
         using var a = await api.CreateTenantAsync("sql:read", "sql:write");
         using var b = await api.CreateTenantAsync("sql:read", "sql:write");
@@ -105,7 +105,7 @@ public sealed class TenantIsolationTests
     [Test]
     public async Task Keys_reach_only_their_organization_and_the_project_and_database_they_are_narrowed_to()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
         using var tenant = await api.CreateTenantAsync("sql:read", "sql:write");
         using var other = await api.CreateTenantAsync("sql:read");
         using var owner = api.As(tenant.User);
