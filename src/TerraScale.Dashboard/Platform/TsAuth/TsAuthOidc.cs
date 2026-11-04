@@ -51,6 +51,14 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 cancellationToken);
         }
 
+        public Task<TsAuthTokenResponse> ExchangeApiKeyAsync(string apiKey, string? project, CancellationToken cancellationToken)
+        {
+            var form = new List<KeyValuePair<string, string>> { new("grant_type", "client_credentials") };
+            if (!string.IsNullOrEmpty(project)) form.Add(new("project", project));
+            return client.SendOAuthFormAsync(TokenRoute(), form, TsAuthCredentials.Basic(apiKey[..26], apiKey),
+                TsAuthIntegrationJsonContext.Default.TsAuthTokenResponse, cancellationToken);
+        }
+
         public Task<TsAuthTokenResponse> RefreshTokenAsync(
             string clientId,
             string clientSecret,
