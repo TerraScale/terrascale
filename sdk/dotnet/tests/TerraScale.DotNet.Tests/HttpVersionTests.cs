@@ -62,7 +62,7 @@ public sealed class HttpVersionTests
         }
         else
         {
-            var sdk = new TerraBaseDocumentsClient(http, new() { BaseAddress = address, ApiKey = "synthetic-token" });
+            var sdk = new TerraBaseClient(http, new() { BaseAddress = address, ApiKey = "synthetic-token" });
             var project = sdk.Project("01J00000000000000000000000");
             _ = await project.GetDatabaseAsync("app");
             _ = await project.GetDatabaseAsync("app");

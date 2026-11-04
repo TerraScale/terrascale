@@ -165,7 +165,7 @@ HTTPS `Uri` supplied by an authorized integration, not created by this SDK. See 
 ## TerraBase client
 
 `TerraScale.DotNet.TerraBase` talks to the C# TerraBase server over its public HTTPS client listener.
-`TerraBaseSqlClient` runs SQL; see [SQL](#sql). `TerraBaseDocumentsClient` addresses projects and databases:
+`TerraBaseSqlClient` runs SQL; see [SQL](#sql). `TerraBaseClient` addresses projects and databases:
 `Project(projectId)` creates, lists, reads, renames and deletes databases and reads usage, analytics, saved queries and
 backup destinations; `Database(projectId, name)` reads usage and analytics, branches, backs up and restores, and
 deploys and invokes functions. `TerraBaseManagementClient` covers the Management API: organizations, the current
@@ -177,7 +177,7 @@ audit events. `TerraBaseRegionsClient` reads the anonymous [serving-region catal
 using TerraScale.DotNet.TerraBase;
 
 using var httpClient = new HttpClient(TerraBaseHttp.CreateHandler());
-var client = new TerraBaseDocumentsClient(httpClient, new TerraBaseDocumentsClientOptions
+var client = new TerraBaseClient(httpClient, new TerraBaseClientOptions
 {
     BaseAddress = discoveredOrigin,
     AccessTokenProvider = token => GetProjectAccessTokenAsync(token),
@@ -219,7 +219,7 @@ OCI under ts-orch. Requests without a credential (private listener only) go out 
 `TerraBasePage<T>(Items, Next)`; pass `Next` as `after` with an optional `limit`.
 
 Both clients accept `AccessTokenProvider`
-(`Func<CancellationToken, ValueTask<string>>`); `TerraBaseDocumentsClient` also takes a static `ApiKey`. Supply at most one
+(`Func<CancellationToken, ValueTask<string>>`); `TerraBaseClient` also takes a static `ApiKey`. Supply at most one
 credential source, and none only for a private plain-HTTP origin. The provider runs
 once per request after origin validation, shares the request deadline, and must
 be thread-safe and honor cancellation. It supplies the credential accepted by

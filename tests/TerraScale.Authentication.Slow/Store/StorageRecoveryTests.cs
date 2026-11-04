@@ -33,7 +33,7 @@ public sealed class StorageRecoveryTests
         var (running, unavailable) = await TerraBaseTestServer.StartAsync();
         await using var terrabase = running ?? throw new InvalidOperationException(unavailable);
         var tenant = await terrabase.CreateTenantAsync();
-        await terrabase.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth").CreateAsync();
+        await terrabase.Client(tenant.ApiKey).Database(tenant.Project.Id, "auth").CreateAsync();
         await using var auth = await StartAuthAsync(terrabase, tenant, provision: true);
         await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, Recovery)).IsTrue();
         var before = await KeyIdAsync(auth);
@@ -80,7 +80,7 @@ public sealed class StorageRecoveryTests
         var (running, unavailable) = await TerraBaseTestServer.StartAsync();
         await using var terrabase = running ?? throw new InvalidOperationException(unavailable);
         var tenant = await terrabase.CreateTenantAsync();
-        var created = await terrabase.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth").CreateAsync();
+        var created = await terrabase.Client(tenant.ApiKey).Database(tenant.Project.Id, "auth").CreateAsync();
         var database = terrabase.Sql(tenant.ApiKey).Database(tenant.Project.Id, "auth");
         await using var auth = await StartAuthAsync(terrabase, tenant, provision: true);
         await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, Recovery)).IsTrue();

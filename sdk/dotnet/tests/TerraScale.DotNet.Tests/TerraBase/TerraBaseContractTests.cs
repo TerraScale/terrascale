@@ -34,8 +34,8 @@ public sealed class TerraBaseContractTests
 
     private static IEnumerable<(string Client, string Operation, Func<object, Task> Call)> Calls()
     {
-        static TerraBaseDatabase Db(object client) => ((TerraBaseDocumentsClient)client).Database(Project, "app");
-        static TerraBaseProjectClient ProjectClient(object client) => ((TerraBaseDocumentsClient)client).Project(Project);
+        static TerraBaseDatabase Db(object client) => ((TerraBaseClient)client).Database(Project, "app");
+        static TerraBaseProjectClient ProjectClient(object client) => ((TerraBaseClient)client).Project(Project);
         static TerraBaseManagementClient M(object client) => (TerraBaseManagementClient)client;
         yield return ("database", "invokeFunction", client => Db(client).InvokeFunctionAsync("hello"));
         yield return ("database", "listDatabaseLogs", client => Db(client).ListRequestLogsAsync());
@@ -113,7 +113,7 @@ public sealed class TerraBaseContractTests
         // Management here goes to the private listener (the platform operator, no credential), so it also proves HTTP/2.
         object sdk = client switch
         {
-            "database" or "project" => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = origin, ApiKey = "tb_test_key" }),
+            "database" or "project" => new TerraBaseClient(http, new TerraBaseClientOptions { BaseAddress = origin, ApiKey = "tb_test_key" }),
             "sql" => new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { BaseAddress = origin, AccessTokenProvider = _ => ValueTask.FromResult("tb_test_key") }),
             "platform" => new TerraBasePlatformClient(http, new TerraBasePlatformClientOptions { BaseAddress = origin, AccessTokenProvider = _ => ValueTask.FromResult("user-token") }),
             _ => new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Private }),

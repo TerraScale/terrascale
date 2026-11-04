@@ -162,7 +162,7 @@ public sealed partial class OidcHarness : IAsyncDisposable
     /// <summary>Creates a database in this test's isolated TerraBase project and returns its immutable restriction.</summary>
     public async Task<string> CreateDatabaseIdAsync(string name)
     {
-        var database = await this.fixture!.Server.Documents(this.Tenant.ApiKey).Database(this.Tenant.Project.Id, name).CreateAsync();
+        var database = await this.fixture!.Server.Client(this.Tenant.ApiKey).Database(this.Tenant.Project.Id, name).CreateAsync();
         return database.Id;
     }
 

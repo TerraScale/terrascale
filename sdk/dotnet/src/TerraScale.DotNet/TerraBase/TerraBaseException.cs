@@ -158,7 +158,7 @@ public class TerraBaseException : HttpRequestException
 /// 421: this region does not serve the request (<c>wrong_region</c>: the database is served elsewhere, or
 /// <c>misdirected_request</c>: the region pin names another region). TerraBase never forwards it, so nothing was done:
 /// send the request to <see cref="HomeRegion"/> or one of <see cref="Regions"/>, for example with
-/// <see cref="TerraBaseDocumentsClientOptions.Region"/>. <see cref="TerraBaseException.Region"/> is the region that answered.
+/// <see cref="TerraBaseClientOptions.Region"/>. <see cref="TerraBaseException.Region"/> is the region that answered.
 /// </summary>
 public sealed class TerraBaseWrongRegionException : TerraBaseException
 {
