@@ -42,5 +42,14 @@ namespace TerraScale.TerraBase.Contracts.Management
         /// <summary><c>POST /v1/projects/{project}/databases/{database}/sql/execute</c>.</summary>
         UnaryResult<JsonElement> ExecuteSqlAsync(string projectId, string database, JsonElement request);
 
+        /// <summary><c>GET /v1/projects/{project}/databases/{database}/read-grants</c>.</summary>
+        UnaryResult<TerraBaseReadGrantPage> ListReadGrantsAsync(string projectId, string database);
+
+        /// <summary><c>PUT /v1/projects/{project}/databases/{database}/tables/{table}/read-grant</c>.</summary>
+        UnaryResult<TerraBaseReadGrant> PutReadGrantAsync(string projectId, string database, string table, TerraBaseReadGrantRule request);
+
+        /// <summary><c>DELETE /v1/projects/{project}/databases/{database}/tables/{table}/read-grant</c>.</summary>
+        UnaryResult<bool> DeleteReadGrantAsync(string projectId, string database, string table);
+
     }
 }

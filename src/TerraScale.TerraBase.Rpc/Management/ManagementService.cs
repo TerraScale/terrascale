@@ -94,5 +94,28 @@ namespace TerraScale.TerraBase.Rpc.Management
             return RestApi.Read(answer, ManagementJson.Default.JsonElement);
         }
 
+        /// <inheritdoc />
+        public async UnaryResult<TerraBaseReadGrantPage> ListReadGrantsAsync(string projectId, string database)
+        {
+            var answer = await api.SendAsync(Context, "GET", RestPaths.Database(projectId, database) + "/read-grants");
+            return RestApi.Read(answer, ManagementJson.Default.TerraBaseReadGrantPage);
+        }
+
+        /// <inheritdoc />
+        public async UnaryResult<TerraBaseReadGrant> PutReadGrantAsync(string projectId, string database, string table, TerraBaseReadGrantRule request)
+        {
+            var answer = await api.SendAsync(Context, "PUT", RestPaths.Database(projectId, database) + "/tables/" + Uri.EscapeDataString(table) + "/read-grant",
+                RestApi.Json(request, ManagementJson.Default.TerraBaseReadGrantRule));
+            return RestApi.Read(answer, ManagementJson.Default.TerraBaseReadGrant);
+        }
+
+        /// <inheritdoc />
+        public async UnaryResult<bool> DeleteReadGrantAsync(string projectId, string database, string table)
+        {
+            var answer = await api.SendAsync(Context, "DELETE", RestPaths.Database(projectId, database) + "/tables/" + Uri.EscapeDataString(table) + "/read-grant");
+            RestApi.Ensure(answer);
+            return true;
+        }
+
     }
 }
