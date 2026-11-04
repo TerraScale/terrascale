@@ -94,23 +94,19 @@ const customers = await db.query(
 );`,
   csharp: `using TerraScale.DotNet.TerraBase;
 
-// Server-side: accessToken is a 60-second token exchanged from your
-// dashboard API key; the key itself as Bearer answers 401.
+// Server-side: the client exchanges your dashboard API key for
+// short-lived access tokens. Keep the key out of client apps.
 using var http = new HttpClient(TerraBaseHttp.CreateHandler());
-var client = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
-{
-    BaseAddress = new Uri("https://api.terrascale.tech"),
-    ApiKey = accessToken
-});
-TerraBaseDatabase db = client.Database(projectId, "app");
+var sql = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { ApiKey = apiKey });
+TerraBaseSqlDatabase db = sql.Database(projectId, "app");
 
 // One transaction: both statements commit or neither does.
-await db.ExecuteSqlBatchAsync([
+await db.BatchAsync([
     new("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, seats INTEGER NOT NULL)"),
     new("INSERT INTO customers (email, seats) VALUES (?, ?)", ["team@example.com", 12])
 ], cancellationToken);
 
-var customers = await db.QuerySqlAsync(
+var customers = await db.QueryAsync(
     "SELECT email, seats FROM customers WHERE seats >= ? ORDER BY seats DESC LIMIT 25",
     [10], cancellationToken);
 foreach (var row in customers)
