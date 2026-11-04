@@ -15,7 +15,7 @@ using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 using TerraScale.DotNet.TerraBase;
 
-namespace TerraScale.Authentication.Fast.Oidc;
+namespace TerraScale.Authentication.Slow.Oidc;
 
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class OidcTokenTests(TerraBaseFixture fixture)

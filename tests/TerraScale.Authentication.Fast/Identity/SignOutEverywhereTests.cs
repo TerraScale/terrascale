@@ -15,12 +15,10 @@ public sealed class SignOutEverywhereTests(TerraBaseFixture fixture)
     {
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
-        var (user, laptop, laptopTokens) = await oidc.SignInAndRedeemAsync("dana@example.test");
-        clock.UtcNow += HostedAuth.MailCooldown;
-        var phone = await oidc.SignInAsync(user.Email);
-        var (verifier, challenge) = OidcHarness.Pkce();
-        using var redeemed = await oidc.RedeemCodeAsync(await oidc.CodeAsync(phone, challenge), verifier);
-        var phoneTokens = await OidcHarness.JsonAsync(redeemed);
+        var user = await oidc.CreateUserAsync("dana@example.test");
+        var (laptop, laptopTokens) = await oidc.CreateSessionAndRedeemAsync(user);
+        var (phone, phoneTokens) = await oidc.CreateSessionAndRedeemAsync(user);
+        var (_, challenge) = OidcHarness.Pkce();
         var laptopAccess = laptopTokens.GetProperty("access_token").GetString()!;
         var phoneAccess = phoneTokens.GetProperty("access_token").GetString()!;
         await oidc.OkAsync(HttpMethod.Get, "/v1/terrascale/account/mfa", phoneAccess);
@@ -50,8 +48,8 @@ public sealed class SignOutEverywhereTests(TerraBaseFixture fixture)
         // A new sign-in works again.
         clock.UtcNow += HostedAuth.MailCooldown;
         var fresh = await oidc.SignInAsync(user.Email);
-        (verifier, challenge) = OidcHarness.Pkce();
-        using var again = await oidc.RedeemCodeAsync(await oidc.CodeAsync(fresh, challenge), verifier);
+        var (verifier, freshChallenge) = OidcHarness.Pkce();
+        using var again = await oidc.RedeemCodeAsync(await oidc.CodeAsync(fresh, freshChallenge), verifier);
         await oidc.OkAsync(HttpMethod.Get, "/v1/terrascale/account/mfa", (await OidcHarness.JsonAsync(again)).GetProperty("access_token").GetString()!);
     }
 }

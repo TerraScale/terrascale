@@ -2,6 +2,7 @@
 
 Read the [required zero-configuration operating contract](zero-configuration.md).
 Auth test coverage and the five-minute budget: [Fast suite](fast-suite.md).
+Per-test budget and fixture isolation: [Fast test budget](fast-test-budget.md).
 Current configuration paths are implementation limitations, not production activation instructions.
 
 Hosting: [OCI and ts-orch](../oci.md). Local processes: [ts-auth local host](local-host.md).
