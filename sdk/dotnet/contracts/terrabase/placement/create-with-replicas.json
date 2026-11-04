@@ -1,0 +1,34 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/projects/01JA0000000000000000000001/databases",
+    "headers": {
+      "Accept": "application/json",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "name": "orders",
+      "homeRegion": "gru",
+      "replicaRegions": [
+        "sjc"
+      ]
+    }
+  },
+  "response": {
+    "status": 201,
+    "body": {
+      "id": "01JA0000000000000000000004",
+      "projectId": "01JA0000000000000000000001",
+      "name": "orders",
+      "branchedFrom": null,
+      "createdAt": "2026-11-04T12:00:00+00:00",
+      "region": "gru",
+      "homeRegion": "gru",
+      "replicaRegions": [
+        "sjc"
+      ],
+      "allRegions": false,
+      "expiresAt": null
+    }
+  }
+}

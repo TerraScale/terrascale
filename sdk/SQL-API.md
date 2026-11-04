@@ -55,6 +55,38 @@ only that database. Server contract: `docs/terrabase/agent-databases.md`; record
 
 Durations are seconds in every SDK (`TimeSpan`/`Duration` accepted where idiomatic and sent as whole seconds).
 
+## Placement: where a database lives
+
+A database has one home region, which commits its writes, and replica regions, which hold read replicas. All-regions
+mode places a replica in every serving region, including regions that join later. A database can move its home to one
+of its replica regions. Server contract: `docs/terrabase/placement.md`; recorded fixtures:
+`sdk/dotnet/contracts/terrabase/placement/`. Routes need `databases:write`.
+
+| Method | Request | Returns |
+|---|---|---|
+| `createDatabase(project, name, { homeRegion?, replicaRegions?, allRegions?, ttlSeconds? })` | `POST /v1/projects/{project}/databases` `{"name","homeRegion","replicaRegions","allRegions","ttlSeconds"}` | `ManagedDatabase` (201) |
+| `setDatabasePlacement(project, database, { replicaRegions?, allRegions? })` | `PATCH …/databases/{database}` `{"replicaRegions"}` or `{"allRegions"}` | `ManagedDatabase` (200) |
+| `moveDatabaseHome(project, database, homeRegion)` | `POST …/databases/{database}/move-home` `{"homeRegion"}` | `ManagedDatabase` (200) |
+
+`ManagedDatabase` carries `homeRegion`, `replicaRegions` (sorted; with `allRegions` every serving region other than the
+home) and `allRegions` (boolean).
+
+- Omitted options are not sent. `replicaRegions` names at most 8 distinct serving regions other than the home and
+  turns all-regions mode off; `allRegions: true` turns it on. Sending both is refused, and `setDatabasePlacement` needs
+  one of them.
+- `moveDatabaseHome` waits until the move is done (seconds). `homeRegion` must be a replica region; the old home becomes
+  a replica. Writes pause briefly while the home switches; no acknowledged write is lost.
+- Placement requests go to the home region. Behind `api.terrascale.tech` the edge routes them; a direct regional call
+  elsewhere answers `421 wrong_region` naming the home.
+- Errors keep each SDK's HTTP error types: `400 invalid_request` (bad regions, target not a replica), `409
+  move_in_progress`, `421 wrong_region`, `503 replica_not_ready` (the target replica could not catch up; nothing
+  changed) and `503 move_unresolved` (the move outcome is being settled; retry the same call).
+
+| .NET | JS/TS | Go | Python | Rust |
+|---|---|---|---|---|
+| `client.SetDatabasePlacementAsync` | `client.setDatabasePlacement` | `client.SetDatabasePlacement` | `client.set_database_placement` | `client.set_database_placement` |
+| `client.MoveDatabaseHomeAsync` | `client.moveDatabaseHome` | `client.MoveDatabaseHome` | `client.move_database_home` | `client.move_database_home` |
+
 ## REST: one request, one transaction
 
 `POST /v1/projects/{project}/databases/{database}/sql/execute`
