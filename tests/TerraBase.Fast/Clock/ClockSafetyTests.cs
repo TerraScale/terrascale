@@ -25,6 +25,16 @@ public sealed class ClockSafetyTests
                 before = await client.NextAsync(new ClockRequest());
             }
 
+            var persisted = new HlcTimestamp(before.HlcPhysicalMilliseconds, before.HlcLogical, before.HlcNodeId);
+            var encoded = new byte[HlcTimestamp.EncodedLength];
+            persisted.WriteTo(encoded);
+            await Assert.That(HlcTimestamp.ReadFrom(encoded)).IsEqualTo(persisted);
+            var firstNode = new byte[HlcTimestamp.EncodedLength];
+            var secondNode = new byte[HlcTimestamp.EncodedLength];
+            (persisted with { NodeId = "a" }).WriteTo(firstNode);
+            (persisted with { NodeId = "aa" }).WriteTo(secondNode);
+            await Assert.That(firstNode.AsSpan().SequenceCompareTo(secondNode)).IsLessThan(0);
+
             var time = new OffsetClock(TimeSpan.FromHours(-1));
             await using var second = await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = directory,
                 services => services.Replace(ServiceDescriptor.Singleton<TimeProvider>(time)));
@@ -36,8 +46,12 @@ public sealed class ClockSafetyTests
             time.Reset();
             await ReadyAsync(clock);
             var after = await clock.NextAsync(new ClockRequest());
-            await Assert.That(new HlcTimestamp(after.HlcPhysicalMilliseconds, after.HlcLogical, after.HlcNodeId)
-                .CompareTo(new HlcTimestamp(before.HlcPhysicalMilliseconds, before.HlcLogical, before.HlcNodeId))).IsGreaterThan(0);
+            var resumed = new HlcTimestamp(after.HlcPhysicalMilliseconds, after.HlcLogical, after.HlcNodeId);
+            await Assert.That(resumed.CompareTo(persisted)).IsGreaterThan(0);
+            var afterEncoded = new byte[HlcTimestamp.EncodedLength];
+            resumed.WriteTo(afterEncoded);
+            await Assert.That(afterEncoded.AsSpan().SequenceCompareTo(encoded)).IsGreaterThan(0);
+            await Assert.That(HlcTimestamp.ReadFrom(afterEncoded)).IsEqualTo(resumed);
             await Assert.That(after.HlcNodeId).IsEqualTo(before.HlcNodeId);
         }
         finally
