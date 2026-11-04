@@ -6,6 +6,7 @@ using TerraBase.Features.ApiKeys;
 using TerraBase.Features.ApiReference;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Health;
+using TerraBase.Features.Clock;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
@@ -67,6 +68,7 @@ builder.Services.Configure<HostOptions>(host => host.ShutdownTimeout = Shutdown.
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton(internalCredential);
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<IHlcClock, NodeHlcClock>();
 builder.Services.ConfigureHttpClientDefaults(http => http
     .SetHandlerLifetime(Timeout.InfiniteTimeSpan)
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(2) }));

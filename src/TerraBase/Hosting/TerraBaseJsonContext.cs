@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using TerraBase.Engine;
+using TerraBase.Features.Clock;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Health;
@@ -144,4 +145,5 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaChecksumPage))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaStatusReport))]
 [JsonSerializable(typeof(IReadOnlyList<TerraBase.Features.Replicas.ReplicaStatusBody>))]
+[JsonSerializable(typeof(HlcState))]
 internal sealed partial class TerraBaseJsonContext : JsonSerializerContext;
