@@ -1,4 +1,5 @@
 using Cronos;
+using System.Globalization;
 using System.Net;
 using System.Diagnostics.Metrics;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
@@ -864,16 +865,25 @@ namespace TerraScale.Dashboard.E2E
                 {
                     if (http.Request.Method == "GET")
                     {
-                        Require(http.Request.Query["limit"] == "100", "Backup inventory uses bounded producer pagination");
+                        var limitText = http.Request.Query["limit"].ToString();
+                        Require(int.TryParse(limitText, out var limit) && limit is >= 1 and <= 100, "Backup inventory uses bounded producer pagination");
                         Interlocked.Increment(ref backupLists);
                         var after = http.Request.Query["after"].ToString();
                         lock (gate)
                         {
                             var items = snapshots.Values.Select(snapshot => snapshot.Backup).Where(backup => backup.DatabaseId == source.Id)
                                 .OrderBy(backup => backup.CreatedAt).ThenBy(backup => backup.Id, StringComparer.Ordinal).ToArray();
-                            var start = after.Length == 0 ? 0 : int.Parse(after["backup-cursor:".Length..]);
-                            var next = start + 1 < items.Length ? "backup-cursor:" + (start + 1) : null;
-                            return Results.Json(new { items = items.Skip(start).Take(1).ToArray(), next = backupFailure == "repeat-cursor" && after.Length > 0 ? after : next });
+                            var start = 0;
+                            if (after.Length > 0 && (after.Length <= "backup-cursor:".Length || after[.."backup-cursor:".Length] != "backup-cursor:" ||
+                                !int.TryParse(after["backup-cursor:".Length..], NumberStyles.None, CultureInfo.InvariantCulture, out start)))
+                            {
+                                return Error(400, "invalid_cursor");
+                            }
+
+                            var repeating = backupFailure == "repeat-cursor";
+                            var page = items.Skip(start).Take(repeating ? 1 : limit).ToArray();
+                            var next = start + page.Length < items.Length ? "backup-cursor:" + (start + page.Length).ToString(CultureInfo.InvariantCulture) : null;
+                            return Results.Json(new { items = page, next = repeating && after.Length > 0 ? after : next });
                         }
                     }
                     Require(http.Request.Method == "POST" && http.Request.ContentLength is null or 0, "Manual backup has no invented body");

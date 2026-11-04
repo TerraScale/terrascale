@@ -22,9 +22,8 @@ namespace TerraScale.Dashboard.Features.Backups
                 {
                     var (limit, after) = CursorPaging.Read(http.Request);
                     var id = http.Request.Query["databaseId"].ToString();
-                    var listing = await backups.ListAsync(context, id, http.RequestAborted);
-                    var page = CursorPaging.Page(listing.Backups, backup => backup.Id, CursorPaging.Scope(context, "backups", id), limit, after);
-                    return Results.Json(new BackupRestList(listing.Policy, page.Items, page.NextCursor, page.HasMore, page.Limit));
+                    var slice = await backups.ListPageAsync(context, id, after.Length == 0 ? null : after, limit, http.RequestAborted);
+                    return Results.Json(new BackupRestList(slice.Policy, slice.Items, slice.NextCursor, slice.HasMore, limit));
                 }
                 catch (Exception error) when (KnownFailure(error) &&
                     (error is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested))
