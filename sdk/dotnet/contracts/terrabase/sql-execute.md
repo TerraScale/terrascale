@@ -2,7 +2,7 @@
 
 Producer contract for `TerraBaseSqlDatabase.ExecuteAsync`, `QueryAsync` and `BatchAsync`, from
 `src/TerraBase/Features/Sql/SqlExecuteEndpoint.cs`, `SqlBatch.cs`, `SqlModels.cs` and `SqlErrors.cs` (PIVOT E3,
-`wrk/e3-sql-ws` at `8169fa185`; operation `executeSql`). Bearer API key or project access token.
+main at `2020a18ee`; operation `executeSql`). Bearer API key or project access token.
 
 `POST /v1/projects/{project}/databases/{database}/sql/execute`, `Content-Type: application/json`, body at most 1 MiB:
 
