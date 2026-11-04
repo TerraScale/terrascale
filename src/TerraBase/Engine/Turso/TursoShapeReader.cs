@@ -253,7 +253,7 @@ internal sealed partial class TursoShapeReader(
         while (!stop && after < end)
         {
             var batch = Command("""
-                SELECT change_id, change_type, table_name, id, before, after FROM turso_cdc
+                SELECT change_id, change_type, table_name, id, before, after, coalesce(octet_length(before), 0) + coalesce(octet_length(after), 0) FROM turso_cdc
                 WHERE change_id > $after AND change_id <= $end AND (change_type = 2 OR table_name = $table OR table_name = 'sqlite_schema')
                 ORDER BY change_id LIMIT $limit;
                 """);
@@ -263,74 +263,88 @@ internal sealed partial class TursoShapeReader(
             batch.Parameters.AddWithValue("$limit", ShapeScanBatch);
             CountRead("shape");
             var read = 0;
+            List<object?[]> captured = [];
             using (var reader = batch.ExecuteReader())
             {
                 while (reader.Read())
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    read++;
-                    scanned++;
-                    after = reader.GetInt64(0);
-                    var type = reader.GetInt64(1);
-                    if (type == 2)
+                    admission.Reserve(checked(reader.GetInt64(6) * 6 + 256));
+                    var row = new object?[6];
+                    for (var column = 0; column < row.Length; column++)
                     {
-                        if (commitRows > 0)
-                        {
-                            var size = envelopeBytes + changes.WrittenCount + commit.WrittenCount + 32;
-                            if (rows > 0 && (rows + commitRows > ShapeRows || size > ShapeBodyBytes))
-                            {
-                                stop = true;
-                                break;
-                            }
+                        row[column] = reader.IsDBNull(column) ? null : reader.GetValue(column);
+                    }
 
-                            AppendShapeCommit(changes, commit, after);
-                            rows += commitRows;
-                        }
+                    captured.Add(row);
+                }
+            }
 
-                        commit.ResetWrittenCount();
-                        commitRows = 0;
-                        covered = after;
-                        if (rows >= ShapeRows || envelopeBytes + changes.WrittenCount >= ShapeBodyBytes || scanned >= ShapeScanRows)
+            foreach (var row in captured)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                read++;
+                scanned++;
+                after = (long)row[0]!;
+                var type = (long)row[1]!;
+                if (type == 2)
+                {
+                    if (commitRows > 0)
+                    {
+                        var size = envelopeBytes + changes.WrittenCount + commit.WrittenCount + 32;
+                        if (rows > 0 && (rows + commitRows > ShapeRows || size > ShapeBodyBytes))
                         {
                             stop = true;
                             break;
                         }
 
-                        continue;
+                        AppendShapeCommit(changes, commit, after);
+                        rows += commitRows;
                     }
 
-                    var table = reader.IsDBNull(2) ? null : reader.GetString(2);
-                    if (table == SchemaTable && after > since && SchemaChangeNames(reader, 4, shape.Table))
+                    commit.ResetWrittenCount();
+                    commitRows = 0;
+                    covered = after;
+                    if (rows >= ShapeRows || envelopeBytes + changes.WrittenCount >= ShapeBodyBytes || scanned >= ShapeScanRows)
                     {
-                        retired = covered == offset;
                         stop = true;
                         break;
                     }
 
-                    if (table != shape.Table)
+                    continue;
+                }
+
+                var table = row[2] as string;
+                if (table == SchemaTable && after > since && SchemaChangeNames(row[4], row[5], shape.Table))
+                {
+                    retired = covered == offset;
+                    stop = true;
+                    break;
+                }
+
+                if (table != shape.Table)
+                {
+                    continue;
+                }
+
+                var written = WriteShapeOperation(commit, row, type, shape.Table, output, admission);
+                if (written is null)
+                {
+                    retired = covered == offset;
+                    stop = true;
+                    break;
+                }
+
+                commitRows += written.Value ? 1 : 0;
+                if (commit.WrittenCount > ShapeCommitBytes)
+                {
+                    if (rows == 0)
                     {
-                        continue;
+                        throw new ShapeTooLargeException();
                     }
 
-                    var written = WriteShapeOperation(commit, reader, type, shape.Table, output, admission);
-                    if (written is null)
-                    {
-                        retired = covered == offset;
-                        stop = true;
-                        break;
-                    }
-
-                    commitRows += written.Value ? 1 : 0;
-                    if (commit.WrittenCount > ShapeCommitBytes)
-                    {
-                        if (rows == 0)
-                        {
-                            throw new ShapeTooLargeException();
-                        }
-
-                        stop = true;
-                        break;
-                    }
+                    stop = true;
+                    break;
                 }
             }
 
@@ -366,11 +380,14 @@ internal sealed partial class TursoShapeReader(
         changes.Write("]}"u8);
     }
 
-    private static bool SchemaChangeNames(SqliteDataReader reader, int first, string table)
+    private static bool SchemaChangeNames(SqliteDataReader reader, int first, string table) =>
+        SchemaChangeNames(reader.IsDBNull(first) ? null : reader.GetValue(first), reader.IsDBNull(first + 1) ? null : reader.GetValue(first + 1), table);
+
+    private static bool SchemaChangeNames(object? before, object? after, string table)
     {
-        foreach (var column in (ReadOnlySpan<int>)[first, first + 1])
+        foreach (var value in (ReadOnlySpan<object?>)[before, after])
         {
-            if (!reader.IsDBNull(column) && SqliteRecord.Decode(TursoSession.Bytes(reader, column), columns: 3) is [_, _, string name]
+            if (value is byte[] image && SqliteRecord.Decode(image, columns: 3) is [_, _, string name]
                 && string.Equals(name, table, StringComparison.OrdinalIgnoreCase))
             {
                 return true;
@@ -387,9 +404,9 @@ internal sealed partial class TursoShapeReader(
             : [.. Filter.Columns.Select(column => Array.IndexOf(Columns, column))];
     }
 
-    private bool? WriteShapeOperation(ArrayBufferWriter<byte> commit, SqliteDataReader reader, long type, string table, ShapeOutput output, ShapeMemory admission)
+    private bool? WriteShapeOperation(ArrayBufferWriter<byte> commit, object?[] row, long type, string table, ShapeOutput output, ShapeMemory admission)
     {
-        if (reader.IsDBNull(3) || reader.GetValue(3) is not long key)
+        if (row[3] is not long key)
         {
             throw new InvalidDataException("a captured row change has no integer row id");
         }
@@ -402,12 +419,12 @@ internal sealed partial class TursoShapeReader(
         object?[]? after = null;
         if (type is 0 or 1)
         {
-            if (reader.IsDBNull(5))
+            if (row[5] is null)
             {
                 after = CurrentShapeRow(table, output.Columns, key, admission);
                 type = after is null ? -1 : type;
             }
-            else if (ShapeImage(reader, 5, output.Columns.Length, admission) is { } image)
+            else if (ShapeImage((byte[])row[5]!, output.Columns.Length) is { } image)
             {
                 after = image;
             }
@@ -421,9 +438,9 @@ internal sealed partial class TursoShapeReader(
         if (output.Filter is not null)
         {
             object?[]? before = null;
-            if (type is 0 or -1 && !reader.IsDBNull(4))
+            if (type is 0 or -1 && row[4] is not null)
             {
-                before = ShapeImage(reader, 4, output.Columns.Length, admission);
+                before = ShapeImage((byte[])row[4]!, output.Columns.Length);
                 if (before is null)
                 {
                     return null;
@@ -482,10 +499,8 @@ internal sealed partial class TursoShapeReader(
         return true;
     }
 
-    private static object?[]? ShapeImage(SqliteDataReader reader, int column, int columns, ShapeMemory admission)
+    private static object?[]? ShapeImage(byte[] image, int columns)
     {
-        var image = TursoSession.Bytes(reader, column);
-        admission.Reserve(checked(image.Length * 6L + 256));
         var values = SqliteRecord.Decode(image, columns: columns + 1);
         return values.Length == columns ? values : null;
     }
