@@ -167,9 +167,10 @@ internal sealed class RealAuthFixture : IAsyncDisposable
         var organization = await management.CreateOrganizationAsync(owner, "ts-auth storage", token);
         await management.SetPlanAsync(owner, organization.Id, TerraBasePlan.Enterprise, token);
         var project = await management.CreateProjectAsync(owner, organization.Id, "ts-auth", token);
-        var storage = new TerraBaseDocumentsClient(_storage.Client, new TerraBaseDocumentsClientOptions { BaseAddress = _storage.BaseAddress })
+        await new TerraBaseDocumentsClient(_storage.Client, new TerraBaseDocumentsClientOptions { BaseAddress = _storage.BaseAddress })
+            .Database(project.Id, "auth").CreateAsync(token);
+        var storage = new TerraBaseSqlClient(_storage.Client, new TerraBaseSqlClientOptions { BaseAddress = _storage.BaseAddress })
             .Database(project.Id, "auth");
-        await storage.CreateAsync(token);
 
         var options = AuthOptions.Load(new Dictionary<string, string>(StringComparer.Ordinal)
         {
