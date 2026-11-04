@@ -34,9 +34,15 @@ async conventions. The .NET SDK (`sdk/dotnet`, `TerraBaseSqlClient`) is the refe
 | `session.begin()` / `commit()` / `rollback()` | frames `begin`, `commit`, `rollback`; a transaction lasts at most 5 seconds |
 | `session.transaction(fn)` | begin, run `fn(session)`, commit; roll back and rethrow when `fn` throws |
 | `session.inTransaction` | the last answer's `transaction` flag |
-| `session.close()` | normal close; the server rolls back an open transaction |
+| `session.close()` | normal close; the server rolls back an open transaction; the session stays closed |
 
 Frames carry a client `id`; calls may overlap and answers are matched by `id`. Nothing on a session is resent.
+
+Reconnect: when the socket drops (server restart 1001, network loss, ping timeout), calls in flight fail with the
+close error and are not resent. The next call opens a new socket with a fresh credential. If a transaction was open
+when the socket dropped, the server rolled it back: every call except `rollback` fails with `transaction_rolled_back`
+(40000) until the caller calls `rollback`, which only clears the lost transaction. After `close()` the session stays
+closed. A refused reconnect raises the same HTTP error types as `connect()`.
 
 ## Values
 
