@@ -8,6 +8,7 @@ public static class UsageExtensions
     /// <summary>Registers <see cref="IUsageMeter"/>, <see cref="IUsageService"/>, <see cref="IOperationAllowance"/> and the background flush.</summary>
     public static IServiceCollection AddTerraBaseUsage(this IServiceCollection services) =>
         services
+            .AddSingleton<PeerUsage>()
             .AddSingleton<UsageMeter>()
             .AddSingleton<IUsageMeter>(provider => provider.GetRequiredService<UsageMeter>())
             .AddSingleton<IUsageService, UsageService>()

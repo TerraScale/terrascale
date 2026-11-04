@@ -10,7 +10,7 @@ namespace TerraBase.Features.Management.Usage;
 /// notices. Served only on the internal listener, which requires the shared peer credential, as
 /// <c>PUT /admin/projects/{project}/plan</c> is.
 /// </summary>
-public sealed class ListUsageAllowancesEndpoint(IUsageService usage, TimeProvider time) : EndpointWithoutRequest<IResult>
+internal sealed class ListUsageAllowancesEndpoint(IUsageService usage, PeerUsage peers, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -18,7 +18,7 @@ public sealed class ListUsageAllowancesEndpoint(IUsageService usage, TimeProvide
         Get("/v1/usage/allowances");
         Name("listUsageAllowances");
         Summary("Lists every organization's billed usage this month");
-        Description("Up to 25 organizations after the optional after (an organization id), in id order, with the write units (operations, billed over the plan allowance) and SQL read units (sqlReads, fair use, never billed) of every project, region and node in the UTC month: this month, or the previous one when month is its yyyy-MM, so a month's last units are billed after it closes. next names the last organization when more follow. storageByteHours sums every node's hourly samples of its stored bytes (storageContract stored-byte-hours-global-v1); divide by the hours of the month for average stored bytes. logicalBytes is null. periodStart and observedAt are taken before the scan; a scan that crosses into another UTC month, or runs past 30 seconds, answers 503 and should be retried. Responses are never cached.");
+        Description("Up to 25 organizations after the optional after (an organization id), in id order, with the write units (operations, billed over the plan allowance) and SQL read units (sqlReads, fair use, never billed) of every project, region and node in the UTC month (each region answers its own share and the answering region sums them; 503 when a region cannot answer): this month, or the previous one when month is its yyyy-MM, so a month's last units are billed after it closes. next names the last organization when more follow. storageByteHours sums every node's hourly samples of its stored bytes (storageContract stored-byte-hours-global-v1); divide by the hours of the month for average stored bytes. logicalBytes is null. periodStart and observedAt are taken before the scan; a scan that crosses into another UTC month, or runs past 30 seconds, answers 503 and should be retried. Responses are never cached.");
         Tags("Usage");
         Produces<AllowanceUsagePage>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -45,10 +45,30 @@ public sealed class ListUsageAllowancesEndpoint(IUsageService usage, TimeProvide
         }
 
         HttpContext.Response.Headers.CacheControl = "no-store";
-        return await usage.ListAllowanceUsageAsync(after.Length > 0 ? after : null, previous, cancellationToken) switch
+        var nodeOnly = PeerUsage.NodeOnly(HttpContext);
+        var others = nodeOnly ? Task.FromResult<List<AllowanceUsagePage>?>([]) : peers.AllowancesAsync(after.Length > 0 ? after : null, previous ? month : null, cancellationToken);
+        var local = await usage.ListAllowanceUsageAsync(after.Length > 0 ? after : null, previous, cancellationToken);
+        if (local is not AllowanceUsagePage page)
         {
-            AllowanceUsagePage page => TypedResults.Ok(page),
-            Unavailable error => ErrorResponse.From(error),
-        };
+            return local switch
+            {
+                Unavailable error => ErrorResponse.From(error),
+                AllowanceUsagePage => throw new System.Diagnostics.UnreachableException(),
+            };
+        }
+
+        if (await others is not { } remote || remote.Any(other => other.PeriodStart != page.PeriodStart))
+        {
+            return ErrorResponse.From(new Unavailable("usage of another region is unavailable; retry"));
+        }
+
+        try
+        {
+            return TypedResults.Ok(nodeOnly ? page : PeerUsage.MergeAllowances(page, remote, UsageService.AllowancePageSize));
+        }
+        catch (OverflowException)
+        {
+            return ErrorResponse.From(new Unavailable("an organization's usage exceeds the countable range"));
+        }
     }
 }

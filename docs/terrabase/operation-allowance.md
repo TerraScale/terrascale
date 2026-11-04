@@ -29,14 +29,26 @@ One unit is each started 4 KiB (4,096 bytes), `OperationUnits.Of`.
 - A SQL read of tables counts each returned row's started 4 KiB (text as UTF-8, 8 bytes per number,
   at least one unit) toward fair use. Catalog and constant reads count nothing.
 - Shape reads (`…/shape`, CDN chunks) count nothing.
-- Replication bills nothing, so a write counts once, in the region that served it.
+- Replication bills nothing, so a write counts once, at the database's home.
 
 ## One month, every region
 
-Each node adds the units it served to its own documents `yyyy-MM~node` of the replicated catalog
-collections `projects/{project}/usage-months` and `organizations/{organization}/usage-months`, in
-the usage flush (every 10 s). A month reads the sum of every node's document plus this node's
-unflushed units. Units of databases deleted since stay in the month.
+Each node meters only the work it serves, once: a write at the database's home (also when another region forwarded
+the request or relayed the session), a replica read in the replica region. It adds those units to its own documents
+`yyyy-MM~node` of `projects/{project}/usage-months` and `organizations/{organization}/usage-months` in its system
+database, in the usage flush (every 10 s). No other region holds those documents, so every total sums the regions:
+
+- **Project usage** (`GET …/projects/{project}/usage`): the answering node sends the same client request, with the
+  peer credential and `X-TerraBase-Usage-Scope: node`, to every node of the other regions (`TS_PEERS_FILE`). Each
+  answers its own share (its databases, its units of the project; `404` when it does not hold the project), and the
+  organization's units come from `GET /v1/internal/usage/months` of every region. A region that cannot answer within
+  3 seconds makes the request answer `503`, never a smaller count.
+- **Allowance feed** (`GET /v1/usage/allowances`): every region answers its own page; the merged page ends at the
+  smallest last organization of a region with more to page, so every listed organization sums every region.
+- **Plan limits:** a node adds every other region's units of the organization, asked on its first check and on every
+  usage flush tick, to its own. A region that does not answer keeps its last answer until the next tick.
+
+A month reads every node's own document plus its unflushed units. Units of databases deleted since stay in the month.
 
 `GET /v1/management/organizations/{organization}/projects/{project}/usage` returns `month`:
 

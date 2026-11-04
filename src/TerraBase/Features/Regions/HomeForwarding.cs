@@ -15,7 +15,7 @@ internal static class HomeForwarding
     {
         "Host", "Connection", "Keep-Alive", "Transfer-Encoding", "TE", "Trailer", "Upgrade", "Proxy-Connection", "Proxy-Authorization",
         "Content-Length", "Content-Type", "X-TerraScale-Region-Pin", "ts-replay-src", "ts-replay-failed", "X-Forwarded-For", "X-Forwarded-Host",
-        "X-Forwarded-Proto", "Forwarded", ForwardedForHeader, InternalCredential.HeaderName,
+        "X-Forwarded-Proto", "Forwarded", ForwardedForHeader, InternalCredential.HeaderName, Management.Usage.PeerUsage.ScopeHeader,
     };
 
     private static readonly HashSet<string> Unreturned = new(StringComparer.OrdinalIgnoreCase)
@@ -75,6 +75,25 @@ internal static class HomeForwarding
         return await services.GetRequiredService<IHomeLocator>().LocateAsync(project, database, context.RequestAborted).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Copies the client request's headers onto <paramref name="request"/> for a peer in <paramref name="region"/> and signs
+    /// it with the peer credential, so the peer serves it as the same client request.
+    /// </summary>
+    internal static void Sign(HttpContext context, HttpRequestMessage request, string region)
+    {
+        foreach (var (name, values) in context.Request.Headers)
+        {
+            if (!Unforwarded.Contains(name) && !name.StartsWith(':'))
+            {
+                request.Headers.TryAddWithoutValidation(name, (IEnumerable<string?>)values);
+            }
+        }
+
+        request.Headers.Host = Host(region);
+        request.Headers.TryAddWithoutValidation(ForwardedForHeader, (IpAllowlists.ClientOf(context) ?? IPAddress.None).ToString());
+        context.RequestServices.GetRequiredService<InternalCredential>().Sign(request.Headers);
+    }
+
     private static async Task ForwardAsync(HttpContext context, HomeNode home)
     {
         var services = context.RequestServices;
@@ -93,17 +112,7 @@ internal static class HomeForwarding
             }
         }
 
-        foreach (var (name, values) in context.Request.Headers)
-        {
-            if (!Unforwarded.Contains(name) && !name.StartsWith(':'))
-            {
-                request.Headers.TryAddWithoutValidation(name, (IEnumerable<string?>)values);
-            }
-        }
-
-        request.Headers.Host = Host(home.Region);
-        request.Headers.TryAddWithoutValidation(ForwardedForHeader, (IpAllowlists.ClientOf(context) ?? IPAddress.None).ToString());
-        services.GetRequiredService<InternalCredential>().Sign(request.Headers);
+        Sign(context, request, home.Region);
         HttpResponseMessage response;
         try
         {

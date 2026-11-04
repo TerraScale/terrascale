@@ -17,7 +17,7 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
 
     internal const string StorageContract = "stored-byte-hours-global-v1";
 
-    private const int AllowancePageSize = 25;
+    internal const int AllowancePageSize = 25;
 
     // One allowance page reads at most this long; a slower one answers 503 and the caller retries.
     private static readonly TimeSpan AllowanceScanBudget = TimeSpan.FromSeconds(30);
