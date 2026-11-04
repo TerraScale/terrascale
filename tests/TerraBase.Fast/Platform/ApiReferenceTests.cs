@@ -59,6 +59,7 @@ public sealed class ApiReferenceTests
         POST /v1/projects/{project}/databases/{database}/functions/{function}/invoke TsAuth(sql:read) invokeFunction Functions
         POST /v1/projects/{project}/databases/{database}/point-in-time/plan TsAuth(databases:read) planPointInTime Backups
         POST /v1/projects/{project}/databases/{database}/point-in-time/restore TsAuth(databases:write) restorePointInTime Backups
+        POST /v1/projects/{project}/databases/{database}/point-in-time/rewind TsAuth(databases:write) rewindPointInTime Backups
         POST /v1/projects/{project}/databases/{database}/sql/execute TsAuth(sql:read) executeSql Queries
         PUT /v1/projects/{project}/backup-destination TsAuth(databases:write) setBackupDestination Backups
         PUT /v1/projects/{project}/buckets/{bucket}/rules TsAuth(sql:write) setFileBucketRules File storage
