@@ -94,7 +94,7 @@ public sealed class ReplicaStatusTests
     [Test]
     public async Task Another_project_cannot_read_replica_observations()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
         var database = await api.CreateManagedDatabaseAsync();
         using var stranger = api.WithToken(api.Issuer.Mint(api.User, claims =>
         {
