@@ -4,7 +4,6 @@ namespace TerraBase.Fast.Platform;
 
 public sealed class ConfigurationTests
 {
-
     [Test]
     public async Task Production_trusts_only_the_one_platform_issuer_and_audience_ts_auth_issues_in_every_region()
     {
@@ -28,5 +27,4 @@ public sealed class ConfigurationTests
         var development = TerraBaseOptions.FromValues(Auth("https://127.0.0.1:5001/terrascale", "terrabase-test"));
         await Assert.That(development.AuthIssuer).IsEqualTo("https://127.0.0.1:5001/terrascale");
     }
-
 }

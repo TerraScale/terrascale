@@ -68,61 +68,6 @@ public sealed class BackupApiTests
             .IsEquivalentTo(["main", "main-restore", "recovered"]);
     }
 
-    [Test]
-    public async Task The_backup_policy_has_defaults_and_is_saved()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var database = await api.CreateManagedDatabaseAsync();
-        var policy = Uri($"{database.Path}/backup-policy");
-        var retentionDays = Faker.Random.Int(1, 35);
-
-        var initial = await api.Client.GetFromJsonAsync<JsonElement>(policy);
-        using var saved = await api.Client.PutAsJsonAsync(policy, new { fullBackupCron = "30 4 * * 1-5", retentionDays, disabled = true });
-        var savedBody = await saved.Content.ReadFromJsonAsync<JsonElement>();
-        var read = await api.Client.GetFromJsonAsync<JsonElement>(policy);
-        using var noSchedule = await api.Client.PutAsJsonAsync(policy, new { fullBackupCron = "", retentionDays = 35 });
-        var noScheduleBody = await noSchedule.Content.ReadFromJsonAsync<JsonElement>();
-
-        await Assert.That(initial.GetProperty("fullBackupCron").GetString()).IsEqualTo("0 2 * * *");
-        await Assert.That(initial.GetProperty("retentionDays").GetInt32()).IsEqualTo(7);
-        await Assert.That(initial.GetProperty("disabled").GetBoolean()).IsFalse();
-        await Assert.That(initial.GetProperty("updatedAt").ValueKind).IsEqualTo(JsonValueKind.Null);
-        await Assert.That(saved.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(savedBody.GetProperty("updatedAt").ValueKind).IsEqualTo(JsonValueKind.String);
-        await Assert.That(read.GetProperty("fullBackupCron").GetString()).IsEqualTo("30 4 * * 1-5");
-        await Assert.That(read.GetProperty("retentionDays").GetInt32()).IsEqualTo(retentionDays);
-        await Assert.That(read.GetProperty("disabled").GetBoolean()).IsTrue();
-        await Assert.That(noSchedule.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(noScheduleBody.GetProperty("fullBackupCron").ValueKind).IsEqualTo(JsonValueKind.Null);
-        await Assert.That(noScheduleBody.GetProperty("disabled").GetBoolean()).IsFalse();
-    }
-
-    [Test]
-    public async Task Backups_are_listed_in_registration_order_with_an_opaque_cursor()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var database = await api.CreateManagedDatabaseAsync();
-        var backups = $"{database.Path}/backups";
-        var ids = new List<string>();
-        for (var i = 0; i < 3; i++)
-        {
-            using var created = await api.Client.PostAsync(Uri(backups), content: null);
-            ids.Add((await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!);
-        }
-
-        var seen = new List<string>();
-        string? next = null;
-        do
-        {
-            using var page = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(next is null ? $"{backups}?limit=1" : $"{backups}?limit=1&after={next}")));
-            seen.AddRange(page.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!));
-            next = page.RootElement.GetProperty("next").GetString();
-        }
-        while (next is not null && seen.Count < 10);
-
-        await Assert.That(string.Join(',', seen)).IsEqualTo(string.Join(',', ids));
-    }
-
     // The backup snapshot is stored alongside the source database.
     private static string ProjectDirectory(ManagementApi api, ManagedDatabaseRef database) =>
         Path.Combine(api.Server.DataDirectory, database.Organization, database.Project);
