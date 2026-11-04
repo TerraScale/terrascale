@@ -276,7 +276,7 @@ func (s *sim) ts(region string, args ...string) (string, string, error) {
 
 // exec runs relational SQL through `ts exec` in region and returns the CLI's printed rows.
 func (s *sim) exec(region, sql string) (string, error) {
-	out, _, err := s.ts(region, "exec", "-project", s.project, s.db, sql)
+	out, _, err := s.ts(region, "sql", "-project", s.project, s.db, sql)
 	return out, err
 }
 
