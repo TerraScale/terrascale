@@ -174,3 +174,5 @@ Removed protocol surfaces and compatibility notes: [E4a](e4a-removal.md).
 
 Feature-sliced: `src/TerraBase/Features/<Feature>/` holds everything
 a slice needs. See `AGENTS.md` for the full structure and rules.
+
+Database region observations and dashboard lag: [`replica-status.md`](replica-status.md).

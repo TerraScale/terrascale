@@ -17,6 +17,7 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
     private const long PageNumberBytes = 8;
 
     private readonly Lock _gate = new();
+    private readonly ReplicaPullProgress _replicaProgress = new();
     private RevisionManifest? _manifest;
     private LiveGeneration _live = new();
     private SqliteConnection? _attached;
@@ -75,6 +76,7 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
             CheckpointLocked(writer);
             _manifest.DatabaseFile = Stamp(path);
             Store();
+            _replicaProgress.Reset(_manifest.Current(_live.MaxFrame));
         }
     }
 
@@ -144,6 +146,24 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
             }
 
             return CheckpointLocked(writer);
+        }
+    }
+
+    internal void RecordReplicaPull(string region, DatabaseRevision revision)
+    {
+        lock (_gate)
+        {
+            _replicaProgress.Pulled(region, revision, DateTimeOffset.UtcNow);
+            Account();
+        }
+    }
+
+    internal IReadOnlyList<ReplicaPullObservation> ReplicaStatus(IReadOnlyList<string> regions)
+    {
+        lock (_gate)
+        {
+            ThrowIfFenced();
+            return _replicaProgress.Read(_manifest!.Current(_live.MaxFrame), regions, DateTimeOffset.UtcNow);
         }
     }
 
@@ -223,7 +243,7 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
             return;
         }
 
-        var needed = BaseBytes + (IndexedPages() * IndexEntryBytes);
+        var needed = BaseBytes + (IndexedPages() * IndexEntryBytes) + _replicaProgress.Bytes;
         if (_retained is { } held && held.Bytes >= needed)
         {
             if (held.Bytes > 2 * needed)
@@ -363,6 +383,11 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
         }
 
         _live.MaxFrame = upTo;
+        if (_attached is not null)
+        {
+            _replicaProgress.Committed(_manifest!.Current(upTo), DateTimeOffset.UtcNow);
+        }
+
         Account();
     }
 
