@@ -27,6 +27,7 @@ Use the [quickstart](/zh-cn/getting-started/) to establish one working applicati
 - [File storage](/zh-cn/guides/file-storage): project files in buckets with owner, role and public read and write rules.
 - [Schema migrations](/zh-cn/guides/migrations): versioned SQL table migrations with `ts migrate`.
 - [Branches](/zh-cn/guides/branches) (being updated for SQL).
+- [Multi-region writes and conflicts](/zh-cn/guides/multi-region-writes-and-conflicts): column winners, transaction states and the conflict log.
 - [Dashboard usage](/zh-cn/guides/dashboard): customer account and database workflow.
 - [Connect an AI assistant with MCP](/zh-cn/guides/mcp): sign in or use a personal access token to connect an assistant.
 - [Single sign-on](/zh-cn/guides/single-sign-on): connect your identity provider over OIDC for a verified email domain (Team and Enterprise).
