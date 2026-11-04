@@ -72,6 +72,16 @@ public sealed class WriteRouterTests
         }
 
         await Assert.That((await cluster.HomeAsync("SELECT count(*) FROM events", token))[0].GetInt64()).IsEqualTo(3);
+
+        await cluster.StopHomeAsync();
+        using var misdirected = await cluster.ViaSjc.PostAsJsonAsync(ManagementApi.Uri(cluster.Database.Data + "/sql/execute"),
+            new { statements = new[] { new { sql = $"INSERT INTO events (id, body) VALUES ('{EntityIds.New()}', 'gone')" } } }, token);
+        var retry = "https://gru.api.terrascale.tech" + misdirected.RequestMessage!.RequestUri!.PathAndQuery;
+        await Assert.That(misdirected.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
+        await Assert.That(misdirected.Headers.Location?.ToString()).IsEqualTo(retry);
+        var error = (await misdirected.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("error");
+        await Assert.That(error.GetProperty("code").GetString()).IsEqualTo("wrong_region");
+        await Assert.That(error.GetProperty("url").GetString()).IsEqualTo(retry);
     }
 
     [Test]
@@ -177,7 +187,7 @@ public sealed class WriteRouterTests
             var bearer = issuer.Mint(gru.User, descriptor =>
             {
                 descriptor.Claims["project_id"] = project;
-                descriptor.Claims["scope"] = "databases:read documents:read documents:write";
+                descriptor.Claims["scope"] = "databases:read sql:read sql:write";
             });
             var cluster = new Cluster(issuer, gru, sjc, database, bearer, DashboardKey(issuer, project));
             using var seeded = await cluster._viaGru.PostAsJsonAsync(ManagementApi.Uri(database.Data + "/sql/execute"),
@@ -187,6 +197,12 @@ public sealed class WriteRouterTests
             await replication.SyncCatalogsAsync(token);
             await replication.PullAllAsync(token);
             return cluster;
+        }
+
+        public async Task StopHomeAsync()
+        {
+            _viaGru.Dispose();
+            await _gru.DisposeAsync();
         }
 
         public async Task<JsonElement> HomeAsync(string sql, CancellationToken token)
@@ -223,7 +239,7 @@ public sealed class WriteRouterTests
                 token.Claims["key_id"] = id;
                 token.Claims["key_gen"] = TestIssuer.KeyGeneration(key);
                 token.Claims["project_id"] = project;
-                token.Claims["scope"] = "documents:read documents:write";
+                token.Claims["scope"] = "sql:read sql:write";
             }));
             return key;
         }

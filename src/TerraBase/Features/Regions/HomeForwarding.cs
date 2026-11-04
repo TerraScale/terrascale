@@ -41,6 +41,9 @@ internal static class HomeForwarding
 
     internal static string Host(string region) => region + ".api.terrascale.tech";
 
+    internal static string RetryUrl(HttpContext context, string region) =>
+        "https://" + Host(region) + context.Request.Path.ToUriComponent() + context.Request.QueryString.ToUriComponent();
+
     private static async ValueTask<HomeNode?> HomeOfAsync(HttpContext context)
     {
         if (Listeners.ArrivedOn(context) != TerraBaseListener.Client || Listeners.IsForwarded(context) || context.GetEndpoint() is null
@@ -124,8 +127,10 @@ internal static class HomeForwarding
         {
             context.Response.Headers.CacheControl = "no-store";
             context.Response.Headers["X-TerraBase-Database-Home"] = home.Region;
+            var url = RetryUrl(context, home.Region);
+            context.Response.Headers.Location = url;
             await BadRequests.WriteAsync(context, StatusCodes.Status421MisdirectedRequest, "wrong_region",
-                $"the database is served in {home.Region}: send it to https://{Host(home.Region)}", op: null).ConfigureAwait(false);
+                $"the database is served in {home.Region}: send it to https://{Host(home.Region)}", op: null, url: url).ConfigureAwait(false);
             return;
         }
 
