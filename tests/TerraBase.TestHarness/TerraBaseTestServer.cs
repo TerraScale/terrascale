@@ -19,6 +19,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Clock;
 using TerraBase.Features.Management;
 using TerraBase.Features.Platform;
 using TerraBase.Hosting;
@@ -464,6 +465,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             builder.ConfigureTestServices(values =>
             {
                 values.Replace(ServiceDescriptor.Singleton<INativeTemporaryStorage, TestNativeTemporaryStorage>());
+                values.Replace(ServiceDescriptor.Singleton<IClockErrorSource>(new TestClockErrorSource()));
                 values.Replace(ServiceDescriptor.KeyedSingleton<IMasterKey, TestMasterKey>(EngineExtensions.DatabaseMasterKey));
                 values.Replace(ServiceDescriptor.Singleton(internalCredential));
                 values.Replace(ServiceDescriptor.Singleton(new DatabaseAllowance(_ => long.MaxValue)));

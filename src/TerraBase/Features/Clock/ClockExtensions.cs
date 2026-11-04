@@ -13,6 +13,7 @@ internal static class ClockExtensions
             options.MaxReceiveMessageSize = 4096;
             options.MaxSendMessageSize = 4096;
         });
+        services.AddSingleton<IClockErrorSource, ChronyClock>();
         services.AddSingleton<ClockGuard>();
         services.AddSingleton<ILocalWriteClock>(provider => provider.GetRequiredService<ClockGuard>());
         services.AddHostedService(provider => provider.GetRequiredService<ClockGuard>());
