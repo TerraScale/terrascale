@@ -309,5 +309,20 @@ namespace TerraScale.Dashboard.E2E
         {
             return inner.DropIndexAsync(scope, home, id, name, ct);
         }
+
+        public Task<IReadOnlyList<DatabaseReadGrant>> ReadGrantsAsync(DatabaseScope scope, DatabaseRegion home, string id, CancellationToken ct)
+        {
+            return inner.ReadGrantsAsync(scope, home, id, ct);
+        }
+
+        public Task<DatabaseReadGrant> PutReadGrantAsync(DatabaseScope scope, DatabaseRegion home, string id, string table, string? where, IReadOnlyList<string>? columns, CancellationToken ct)
+        {
+            return inner.PutReadGrantAsync(scope, home, id, table, where, columns, ct);
+        }
+
+        public Task DeleteReadGrantAsync(DatabaseScope scope, DatabaseRegion home, string id, string table, CancellationToken ct)
+        {
+            return inner.DeleteReadGrantAsync(scope, home, id, table, ct);
+        }
     }
 }

@@ -53,7 +53,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 }
                 catch (Exception error) when (KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException) { return Failure(error); }
             });
-            foreach (var tab in new[] { "overview", "tables", "replication", "backups", "branches", "import", "danger" })
+            foreach (var tab in new[] { "overview", "tables", "grants", "replication", "backups", "branches", "import", "danger" })
             {
                 var section = tab;
                 endpoints.MapGet(tab == "overview" ? "/databases/{databaseId}" : "/databases/{databaseId}/" + tab,
@@ -151,6 +151,7 @@ namespace TerraScale.Dashboard.Features.Databases
                     });
             }
             endpoints.MapDatabaseSettings();
+            endpoints.MapDatabaseGrants();
             endpoints.MapDataFeatures();
             endpoints.MapDatabaseLogs();
             endpoints.MapDatabaseFunctions();
@@ -249,7 +250,7 @@ namespace TerraScale.Dashboard.Features.Databases
             return result;
         }
 
-        internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, string? branchName = null)
+        internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, string? branchName = null, DatabaseGrantForm? grantForm = null)
         {
             DatabaseRecord database;
             try
@@ -285,7 +286,8 @@ namespace TerraScale.Dashboard.Features.Databases
                 return tab != "tables" || shown is null ? (tables, "", null) : (tables, shown.Name, await DatabaseTables.PreviewAsync(backend, scope, home, database.Id, shown.Name, http.RequestAborted));
             }
 
-            var tablesRead = tab is "overview" or "tables" ? TablesAsync() : null;
+            var tablesRead = tab is "overview" or "tables" or "grants" ? TablesAsync() : null;
+            var grantsRead = tab == "grants" ? DatabaseGrants.ListAsync(context, database, backend, databases, http.RequestAborted) : null;
             // An all-regions database serves every catalog region; without the catalog it shows its recorded regions.
             if (tab == "overview" && database.AllRegions)
             {
@@ -307,6 +309,18 @@ namespace TerraScale.Dashboard.Features.Databases
                     }
                 }
             }
+            IReadOnlyList<DatabaseReadGrant>? grants = null;
+            if (grantsRead is not null)
+            {
+                try { grants = await grantsRead; }
+                catch (Exception failure) when (failure is HttpRequestException or System.Text.Json.JsonException || KnownFailure(failure))
+                {
+                    if (error.Length == 0)
+                    {
+                        error = "Grants are unavailable. The data plane did not answer.";
+                    }
+                }
+            }
             var activity = activityRead is null ? null : await activityRead;
             var storage = storageRead is null ? null : (await storageRead).Databases.GetValueOrDefault(database.Id)?.StorageBytes;
             // The backups section shows the same page error, which the tables read above may have just set.
@@ -317,7 +331,9 @@ namespace TerraScale.Dashboard.Features.Databases
                 Tables = tables,
                 Table = shownTable,
                 Preview = preview,
-                StorageBytes = storage
+                StorageBytes = storage,
+                Grants = grants,
+                GrantForm = grantForm
             });
             result.StatusCode = status;
             return result;
