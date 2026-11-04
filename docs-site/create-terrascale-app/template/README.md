@@ -1,3 +1,9 @@
 # Application template
 
-This template is awaiting the SQL product update and is not a current API guide.
+A Next.js app that keeps posts in a `posts` table and reads and writes them with SQL on the server.
+
+```bash
+cp .env.example .env.local   # set the API key, project ID and database name
+npm install
+npm run dev
+```

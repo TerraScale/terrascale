@@ -51,7 +51,7 @@ for (const body of [{ ...token(), token_type: 'wrong' }, token('fixture.payload.
 }
 test('data requests send only exchanged bearer token', async t => {
   const f = await fixture(t, n => n === 1 ? { body: token() } : { status: 404, body: { error: { code: 'not_found' } } })
-  await assert.rejects(f.client.database('app').collection('posts').get('01ARZ3NDEKTSV4RRFFQ6000003'), error => error.status === 404)
+  await assert.rejects(f.client.database('app').query('SELECT 1'), error => error.status === 404)
   assert.equal(f.requests.length, 2); assert.equal(f.requests[1].headers.authorization, 'Bearer fixture.payload.signature')
-  assert.ok(f.requests[1].url.startsWith(`/v1/projects/${project}/databases/app/collections/posts/`))
+  assert.equal(f.requests[1].url, `/v1/projects/${project}/databases/app/sql/execute`)
 })
