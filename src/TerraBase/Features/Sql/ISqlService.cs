@@ -42,19 +42,9 @@ internal sealed class SqlReadCharge(Action accept)
 
 internal sealed record SqlError(string Code, string Message)
 {
-    public string Kind => Code switch
-    {
-        "SQLITE_AUTH" => "auth",
-        "SQLITE_BUSY" => "conflict",
-        "SQLITE_TOOBIG" => "too_big",
-        "SQLITE_INTERRUPT" => "interrupt",
-        _ when Code.StartsWith("SQLITE_CONSTRAINT", StringComparison.Ordinal) => "constraint",
-        _ when Message.StartsWith("no such table", StringComparison.Ordinal) => "no_such_table",
-        _ when Message.StartsWith("no such column", StringComparison.Ordinal) => "no_such_column",
-        _ when Message.StartsWith("already exists", StringComparison.Ordinal) => "already_exists",
-        _ when Message.StartsWith("SQL syntax error", StringComparison.Ordinal) => "syntax",
-        _ => "invalid_input",
-    };
+    public string Sqlstate => SqlErrors.Sqlstate(Code);
+
+    public int Status => SqlErrors.Status(Code);
 }
 
 internal sealed record SqlDescription(IReadOnlyList<string?> Params, IReadOnlyList<SqlColumn> Columns, bool IsExplain, bool IsReadOnly);

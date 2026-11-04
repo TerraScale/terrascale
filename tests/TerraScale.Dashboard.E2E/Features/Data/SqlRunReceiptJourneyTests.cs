@@ -33,7 +33,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 {
                     "lost" => Results.StatusCode(502),
                     "malformed" => Results.Json(new { results = Array.Empty<object>() }),
-                    "constraint" => Results.Json(new { error = new { code = "sql_error", message = "UNIQUE constraint failed: items.id", statement = 0, sqlite_code = "SQLITE_CONSTRAINT_UNIQUE" } }, statusCode: 400),
+                    "constraint" => Results.Json(new { error = new { code = "unique_violation", message = "UNIQUE constraint failed: items.id", statement = 0, sqlstate = "23505" } }, statusCode: 400),
                     "busy" => new RetryAfterResult(),
                     _ => Results.Json(new { results = new[] { new { columns = Array.Empty<object>(), rows = Array.Empty<object>(), rows_affected = 1, last_insert_rowid = 7 } } })
                 };
@@ -70,7 +70,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                         break;
                     case "constraint":
                         await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-                        await Assert.That(html).Contains("UNIQUE constraint failed: items.id (SQLITE_CONSTRAINT_UNIQUE)");
+                        await Assert.That(html).Contains("UNIQUE constraint failed: items.id (unique_violation)");
                         break;
                     default:
                         await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);

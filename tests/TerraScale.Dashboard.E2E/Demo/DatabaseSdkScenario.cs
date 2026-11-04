@@ -1259,7 +1259,7 @@ namespace TerraScale.Dashboard.E2E
                             if (statements.Any(sql => System.Text.RegularExpressions.Regex.IsMatch(sql, @"^\s*(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) &&
                                 Authorize(http, project, "documents:write") is not null)
                             {
-                                return SqlError(403, "forbidden_scope", "not authorized", "SQLITE_AUTH");
+                                return SqlError(403, "forbidden_scope", "not authorized", "42501");
                             }
 
                             try
@@ -1278,7 +1278,7 @@ namespace TerraScale.Dashboard.E2E
                             }
                             catch (TestSqlFailure failure)
                             {
-                                return Results.Json(new { error = new { code = failure.Code, message = failure.Message, statement = failure.Statement, sqlite_code = failure.SqliteCode } }, statusCode: 400);
+                                return Results.Json(new { error = new { code = failure.Code, message = failure.Message, statement = failure.Statement, sqlstate = failure.Sqlstate } }, statusCode: 400);
                             }
                         }
                         var take = match.Groups[2].Success ? int.Parse(match.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture) : 100;
@@ -1286,7 +1286,7 @@ namespace TerraScale.Dashboard.E2E
                         {
                             if (!collections.TryGetValue(project + "/" + current.Name + "/" + match.Groups[1].Value, out var rows))
                             {
-                                return SqlError(400, "sql_error", "no such table: " + match.Groups[1].Value, "SQLITE_ERROR");
+                                return SqlError(400, "undefined_table", "no such table: " + match.Groups[1].Value, "42P01");
                             }
 
                             var selected = rows.Values.OrderBy(value => value.Id, StringComparer.Ordinal).Take(take).ToArray();
@@ -1695,9 +1695,9 @@ namespace TerraScale.Dashboard.E2E
                 http.Response.Headers["X-TerraBase-Database-Regions"] = string.Join(',', (database.ReplicaRegions ?? []).Prepend(database.HomeRegion));
                 return Results.Json(new { error = new { code = "wrong_region", message = "the database is served in " + database.HomeRegion } }, statusCode: 421);
             }
-            private static IResult SqlError(int status, string code, string message, string sqliteCode)
+            private static IResult SqlError(int status, string code, string message, string sqlstate)
             {
-                return Results.Json(new { error = new { code, message, statement = 0, sqlite_code = sqliteCode } }, statusCode: status);
+                return Results.Json(new { error = new { code, message, statement = 0, sqlstate } }, statusCode: status);
             }
 
             private static IResult AnchorUnavailable()
