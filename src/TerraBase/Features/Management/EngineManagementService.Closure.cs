@@ -15,7 +15,7 @@ internal sealed partial class EngineManagementService
     public async ValueTask<CloseProjectResult> CloseProjectAsync(string projectId, string closureId, string authorityOrganizationId, int version, CancellationToken cancellationToken) =>
         await WriteAsync<CloseProjectResult>(async transaction =>
         {
-            if (await GetAsync(transaction, ProjectClosure.Collection, projectId, TerraBaseJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false) is { } existing)
+            if (await GetAsync(transaction, ProjectClosure.Kind, projectId, TerraBaseJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false) is { } existing)
             {
                 if (existing.FormatVersion is not (1 or 2) || version < existing.FormatVersion || existing.ProjectId != projectId || existing.ClosureId != closureId || existing.AuthorityOrganizationId != authorityOrganizationId)
                 {
@@ -30,7 +30,7 @@ internal sealed partial class EngineManagementService
                 if (version > existing.FormatVersion)
                 {
                     existing = existing with { FormatVersion = version };
-                    await PutAsync(transaction, ProjectClosure.Collection, projectId, existing, TerraBaseJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false);
+                    await PutAsync(transaction, ProjectClosure.Kind, projectId, existing, TerraBaseJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false);
                 }
 
                 await RefreshClosureReceiptAsync(transaction, existing, cancellationToken).ConfigureAwait(false);
@@ -49,7 +49,7 @@ internal sealed partial class EngineManagementService
 
             var record = new ProjectClosureRecord(projectId, closureId, authorityOrganizationId, time.GetUtcNow(),
                 [.. CatalogHolders(options.MachineId).Order(StringComparer.Ordinal)], version);
-            await PutAsync(transaction, ProjectClosure.Collection, projectId, record, TerraBaseJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false);
+            await PutAsync(transaction, ProjectClosure.Kind, projectId, record, TerraBaseJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false);
             await RefreshClosureReceiptAsync(transaction, record, cancellationToken).ConfigureAwait(false);
             logger.ZLogInformation($"Project {projectId:@Project} is fenced for closure {closureId:@Closure}");
             return await ClosureStatusAsync(transaction, record, cancellationToken).ConfigureAwait(false);
@@ -72,7 +72,7 @@ internal sealed partial class EngineManagementService
     private static async ValueTask<bool> IsProjectEmptyAsync(IStorageTransaction transaction, string projectId, CancellationToken cancellationToken) =>
         !await CatalogTables.HasDatabasesAsync(transaction, projectId, cancellationToken).ConfigureAwait(false)
         && !await AnyAsync(transaction, EngineApiKeyStore.ProjectKeys(projectId), cancellationToken).ConfigureAwait(false)
-        && !await AnyAsync(transaction, ProjectBackupDestinations.Collection(projectId), cancellationToken).ConfigureAwait(false)
+        && !await AnyAsync(transaction, ProjectBackupDestinations.Kind(projectId), cancellationToken).ConfigureAwait(false)
         && !await AnyAsync(transaction, Features.FileStorage.FileStorageUsage.Buckets(projectId), cancellationToken).ConfigureAwait(false);
 
     internal static HashSet<string> CatalogHolders(string machineId) =>
@@ -80,7 +80,7 @@ internal sealed partial class EngineManagementService
 
     private async ValueTask RefreshClosureReceiptAsync(IStorageTransaction transaction, ProjectClosureRecord record, CancellationToken cancellationToken)
     {
-        record = await GetAsync(transaction, ProjectClosure.Collection, record.ProjectId, TerraBaseJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false)
+        record = await GetAsync(transaction, ProjectClosure.Kind, record.ProjectId, TerraBaseJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException("a project closure fence is missing");
         var current = await OwnClosureReceiptAsync(transaction, record, cancellationToken).ConfigureAwait(false);
         var empty = record.FormatVersion == 2
@@ -100,7 +100,7 @@ internal sealed partial class EngineManagementService
     private async ValueTask<bool> IsClosureSettledAsync(IStorageTransaction transaction, ProjectClosureRecord record, CancellationToken cancellationToken)
     {
         var project = record.ProjectId;
-        return await GetAsync(transaction, ProjectClosure.Collection, project, TerraBaseJsonContext.Default.ProjectClosureRecord, cancellationToken)
+        return await GetAsync(transaction, ProjectClosure.Kind, project, TerraBaseJsonContext.Default.ProjectClosureRecord, cancellationToken)
                 .ConfigureAwait(false) is { } current
             && await OwnClosureReceiptAsync(transaction, current, cancellationToken).ConfigureAwait(false) is { EvidenceVersion: 2, Empty: true } receipt
             && receipt.ClosureId == current.ClosureId && receipt.FormatVersion == current.FormatVersion
@@ -134,19 +134,19 @@ internal sealed partial class EngineManagementService
 
     private async ValueTask ConvergeClosuresAsync(CancellationToken cancellationToken)
     {
-        var page = await ReadAsync<DocumentPage?>(async transaction => await transaction.ListAsync(ProjectClosure.Collection, _closuresAfter,
+        var page = await ReadAsync<RecordPage?>(async transaction => await transaction.ListAsync(ProjectClosure.Kind, _closuresAfter,
             CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false), static _ => null, cancellationToken).ConfigureAwait(false);
         if (page is null)
         {
             return;
         }
 
-        foreach (var document in page.Documents)
+        foreach (var stored in page.Records)
         {
             try
             {
-                var record = EntityPayload.Read(document, TerraBaseJsonContext.Default.ProjectClosureRecord);
-                if (record is not { FormatVersion: 1 or 2 } || record.ProjectId != document.Id)
+                var record = EntityPayload.Read(stored, TerraBaseJsonContext.Default.ProjectClosureRecord);
+                if (record is not { FormatVersion: 1 or 2 } || record.ProjectId != stored.Id)
                 {
                     throw new InvalidOperationException("a project closure record has unsupported identity or format");
                 }
@@ -165,10 +165,10 @@ internal sealed partial class EngineManagementService
             }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested)
             {
-                logger.ZLogWarning(error, $"Confirming project closure {document.Id:@Project} failed; the next pass tries again");
+                logger.ZLogWarning(error, $"Confirming project closure {stored.Id:@Project} failed; the next pass tries again");
             }
         }
 
-        _closuresAfter = page.HasMore ? page.Documents[^1].Id : null;
+        _closuresAfter = page.HasMore ? page.Records[^1].Id : null;
     }
 }

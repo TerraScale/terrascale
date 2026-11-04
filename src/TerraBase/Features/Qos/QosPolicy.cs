@@ -8,12 +8,12 @@ namespace TerraBase.Features.Qos;
 /// <param name="Concurrency">Simultaneous requests; zero disables the plan limit.</param>
 /// <param name="Weight">Relative Turso scheduling weight.</param>
 /// <param name="MemoryShare">Maximum fraction of the process budget reserved by one organization.</param>
-/// <param name="CacheShare">Maximum fraction of the document cache held by one organization.</param>
+/// <param name="CacheShare">Maximum fraction of the read cache held by one organization.</param>
 /// <param name="QueryTimeout">Turso execution time allowed, excluding queue and consumer waits.</param>
 /// <param name="QueryWork">Engine work limit, in units scaled like SQLite virtual machine instructions.</param>
-/// <param name="ScanRows">Maximum candidate document rows scanned.</param>
+/// <param name="ScanRows">Maximum candidate rows scanned.</param>
 /// <param name="ScanBytes">Maximum candidate JSON bytes scanned.</param>
-/// <param name="StorageBytes">Maximum live document bytes per organization, in decimal GB as pricing.json entitlements.storageLimitGb publishes it.</param>
+/// <param name="StorageBytes">Maximum stored bytes per organization, in decimal GB as pricing.json entitlements.storageLimitGb publishes it.</param>
 /// <param name="Databases">Live databases per organization, across its projects, before new ones are refused (https://terrascale.tech/pricing.json).</param>
 /// <param name="MonthlyWriteCap">Write units per organization and UTC month after which new writes stop: the hard cap of pricing.json limits.operationUnitCapPerMonth.</param>
 /// <param name="MonthlySqlReads">SQL read units per organization and UTC month after which SQL reads stop: the fair use of pricing.json limits.sqlReadUnitsPerMonth. Shape reads are never counted.</param>

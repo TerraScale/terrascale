@@ -312,7 +312,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         _dataDirectory = dataDirectory;
         Disk = diskBudget ?? new DiskBudget(dataDirectory, meter);
         _schemaMemory = schemaMemory;
-        _storageReads = meter.CreateCounter<long>("terrabase.storage.reads", description: "Instrumented document, feed and shape SELECT executions, by path (point, query, feed, shape, shape_body).");
+        _storageReads = meter.CreateCounter<long>("terrabase.storage.reads", description: "Instrumented record and shape SELECT executions, by path (point, query, shape, shape_body).");
         _writerHeld = meter.CreateHistogram<double>("terrabase.storage.writer_held", "s",
             "How long a database's writer was held, by holder kind and call site (bounded sets of names and file:line).",
             advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = WriterHeldBuckets });

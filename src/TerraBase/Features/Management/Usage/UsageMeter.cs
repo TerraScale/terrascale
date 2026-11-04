@@ -174,7 +174,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
             return !meters ? Strip(counts, meters) : filter is null ? counts : Retain(counts, filter);
         }
 
-        OpCounts Parse(StoredDocument document)
+        OpCounts Parse(StoredRecord document)
         {
             if (!meters)
             {
@@ -288,7 +288,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         }
     }
 
-    private async ValueTask<SavedRead> ReadSavedAsync(DatabaseOwner owner, UsageWindow window, Func<StoredDocument, OpCounts> parse,
+    private async ValueTask<SavedRead> ReadSavedAsync(DatabaseOwner owner, UsageWindow window, Func<StoredRecord, OpCounts> parse,
         Action? proceed, CancellationToken cancellationToken) =>
         await catalog.ReadAsync<SavedRead>(async transaction => new SavedCounts(
             new UsageCounts(
@@ -577,7 +577,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                 while (true)
                 {
                     var page = await transaction.ListAsync(collection, after, limit: 100, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-                    foreach (var document in page.Documents)
+                    foreach (var document in page.Records)
                     {
                         if (Name(document.Id) != month)
                         {
@@ -593,7 +593,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                         return units;
                     }
 
-                    after = page.Documents[^1].Id;
+                    after = page.Records[^1].Id;
                 }
             }, static error => error, cancellationToken).ConfigureAwait(false);
             if (read is not UsageTotals total)
@@ -627,13 +627,13 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         while (true)
         {
             var page = await transaction.ListAsync(collection, afterId: null, PrunePage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-            var expired = page.Documents.TakeWhile(document => string.CompareOrdinal(document.Id, oldestKept) < 0).ToList();
+            var expired = page.Records.TakeWhile(document => string.CompareOrdinal(document.Id, oldestKept) < 0).ToList();
             foreach (var document in expired)
             {
                 await transaction.DeleteAsync(collection, document.Id, cancellationToken).ConfigureAwait(false);
             }
 
-            if (expired.Count < page.Documents.Count || !page.HasMore)
+            if (expired.Count < page.Records.Count || !page.HasMore)
             {
                 return;
             }
@@ -706,14 +706,14 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     }
 
     private static async ValueTask<OpCounts> ReadLifetimeAsync(
-        IStorageTransaction transaction, string databaseId, Func<StoredDocument, OpCounts> parse, CancellationToken cancellationToken)
+        IStorageTransaction transaction, string databaseId, Func<StoredRecord, OpCounts> parse, CancellationToken cancellationToken)
     {
         var lifetime = OpCounts.Zero;
         string? after = null;
         while (true)
         {
             var page = await transaction.ListAsync(UsageCollection(databaseId), after, limit: 100, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-            foreach (var document in page.Documents.Where(document => Name(document.Id) == Ops))
+            foreach (var document in page.Records.Where(document => Name(document.Id) == Ops))
             {
                 lifetime += parse(document);
             }
@@ -723,12 +723,12 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                 return lifetime;
             }
 
-            after = page.Documents[^1].Id;
+            after = page.Records[^1].Id;
         }
     }
 
     private static async ValueTask<OpCounts[]> ReadSeriesAsync(
-        IStorageTransaction transaction, string databaseId, UsageWindow window, Func<StoredDocument, OpCounts> parse, Action? proceed,
+        IStorageTransaction transaction, string databaseId, UsageWindow window, Func<StoredRecord, OpCounts> parse, Action? proceed,
         CancellationToken cancellationToken)
     {
         var series = Enumerable.Repeat(OpCounts.Zero, window.Count).ToArray();
@@ -739,7 +739,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         {
             proceed?.Invoke();
             var page = await transaction.ListAsync(collection, after, limit: 100, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-            foreach (var document in page.Documents)
+            foreach (var document in page.Records)
             {
                 if (string.CompareOrdinal(document.Id, end) >= 0)
                 {
@@ -759,7 +759,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                 return series;
             }
 
-            after = page.Documents[^1].Id;
+            after = page.Records[^1].Id;
         }
     }
 

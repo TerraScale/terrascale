@@ -26,7 +26,7 @@ internal sealed partial class EngineManagementService(
     Lazy<ICatalogGate> catalogGate, DatabaseAllowance databaseAllowance, Lazy<IBackupKeyShredding> shredding)
     : IManagementService, ITenantDirectory, IHostedService, ICatalogGuard, IDatabaseFileCatalog
 {
-    private const string Catalog = ManagementCatalog.Collection;
+    private const string Catalog = ManagementCatalog.Kind;
     private const string CatalogVersionId = ManagementCatalog.VersionId;
 
     private const string CatalogVersion = ManagementCatalog.Version;
@@ -208,14 +208,14 @@ internal sealed partial class EngineManagementService(
 
             if (await CatalogTables.HasDatabasesAsync(transaction, project.Id, cancellationToken).ConfigureAwait(false)
                 || await AnyAsync(transaction, EngineApiKeyStore.ProjectKeys(project.Id), cancellationToken).ConfigureAwait(false)
-                || await AnyAsync(transaction, ProjectBackupDestinations.Collection(project.Id), cancellationToken).ConfigureAwait(false)
+                || await AnyAsync(transaction, ProjectBackupDestinations.Kind(project.Id), cancellationToken).ConfigureAwait(false)
                 || await AnyAsync(transaction, Features.FileStorage.FileStorageUsage.Buckets(project.Id), cancellationToken).ConfigureAwait(false))
             {
                 return ManagementErrors.NotEmpty;
             }
 
             await CatalogTables.DeleteProjectAsync(transaction, project.Id, cancellationToken).ConfigureAwait(false);
-            await transaction.DeleteCollectionsAsync(SystemCatalog.ProjectState(project.Id), cancellationToken).ConfigureAwait(false);
+            await transaction.DeleteKindsAsync(SystemCatalog.ProjectState(project.Id), cancellationToken).ConfigureAwait(false);
             return new Done();
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
@@ -520,7 +520,7 @@ internal sealed partial class EngineManagementService(
         await PutAsync(transaction, RetiredDatabases, database.Id, DatabaseOwner.Of(storage), TerraBaseJsonContext.Default.DatabaseOwner, cancellationToken)
             .ConfigureAwait(false);
 
-        await transaction.DeleteCollectionsAsync(SystemCatalog.DatabaseState(database.Id), cancellationToken).ConfigureAwait(false);
+        await transaction.DeleteKindsAsync(SystemCatalog.DatabaseState(database.Id), cancellationToken).ConfigureAwait(false);
 
         return storage;
     }
@@ -958,19 +958,19 @@ internal sealed partial class EngineManagementService(
             ? null
             : await CatalogTables.DatabaseAsync(transaction, projectId, databaseId, cancellationToken).ConfigureAwait(false);
 
-    private static async ValueTask<bool> AnyAsync(IStorageTransaction transaction, string collection, CancellationToken cancellationToken) =>
-        (await transaction.ListAsync(collection, afterId: null, limit: 1, MaxPageBytes, cancellationToken).ConfigureAwait(false)).Documents.Count > 0;
+    private static async ValueTask<bool> AnyAsync(IStorageTransaction transaction, string kind, CancellationToken cancellationToken) =>
+        (await transaction.ListAsync(kind, afterId: null, limit: 1, MaxPageBytes, cancellationToken).ConfigureAwait(false)).Records.Count > 0;
 
     private static async ValueTask<T?> GetAsync<T>(
-        IStorageTransaction transaction, string collection, string id, JsonTypeInfo<T> type, CancellationToken cancellationToken)
+        IStorageTransaction transaction, string kind, string id, JsonTypeInfo<T> type, CancellationToken cancellationToken)
         where T : class
     {
-        return await SystemCatalog.GetAsync(transaction, collection, id, type, cancellationToken).ConfigureAwait(false);
+        return await SystemCatalog.GetAsync(transaction, kind, id, type, cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask PutAsync<T>(
-        IStorageTransaction transaction, string collection, string id, T value, JsonTypeInfo<T> type, CancellationToken cancellationToken) =>
-        await transaction.PutAsync(collection, id, EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(value, type), id, nested: true), cancellationToken).ConfigureAwait(false);
+        IStorageTransaction transaction, string kind, string id, T value, JsonTypeInfo<T> type, CancellationToken cancellationToken) =>
+        await transaction.PutAsync(kind, id, EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(value, type), id, nested: true), cancellationToken).ConfigureAwait(false);
 
     // The caller's file and line name its transactions (terrabase.storage.transactions{at}), as WriteAsync's do.
     private async ValueTask<T> ReadAsync<T>(Func<IStorageTransaction, ValueTask<T>> read, Func<Unavailable, T> unavailable, CancellationToken cancellationToken,

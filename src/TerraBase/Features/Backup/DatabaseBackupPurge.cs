@@ -35,7 +35,7 @@ internal sealed class DatabaseBackupPurge(
     IMeterFactory meters, ILogger<DatabaseBackupPurge> logger) : BackgroundService, IBackupKeyShredding
 {
     private readonly CancellationTokenSource _stopping = new();
-    internal const string ProgressCollection = "backup_purge_progress";
+    internal const string ProgressKind = "backup_purge_progress";
     private readonly SemaphoreSlim _pass = new(1, 1);
     private readonly Counter<long> _failures = meters.Create(Telemetry.MeterName)
         .CreateCounter<long>("terrabase.backup.purge_failures", description: "Backup erasure attempts that remain unverified, by fixed reason.");
@@ -73,7 +73,7 @@ internal sealed class DatabaseBackupPurge(
 
             foreach (var job in page.Items.Where(job => job.BackupVerifiedAt is null))
             {
-                var progress = await catalog.ReadUncheckedAsync(transaction => SystemCatalog.GetAsync(transaction, ProgressCollection,
+                var progress = await catalog.ReadUncheckedAsync(transaction => SystemCatalog.GetAsync(transaction, ProgressKind,
                     job.Database.DatabaseId!, BackupPurgeJsonContext.Default.BackupPurgeProgress, token), token).ConfigureAwait(false)
                     ?? new BackupPurgeProgress(job.RequestedAt, null, null, null, null);
                 try
@@ -168,7 +168,7 @@ internal sealed class DatabaseBackupPurge(
         for (var page = 0; page < 64; page++)
         {
             var destinations = await catalog.ReadUncheckedAsync(transaction =>
-                SystemCatalog.ListAsync(transaction, BackupDestinationHistory.Collection(database.ProjectId!), after,
+                SystemCatalog.ListAsync(transaction, BackupDestinationHistory.Kind(database.ProjectId!), after,
                     16, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, item => item.Revision, token), token).ConfigureAwait(false);
             foreach (var destination in destinations.Items)
             {
@@ -220,7 +220,7 @@ internal sealed class DatabaseBackupPurge(
         var failed = progress.InventoryFailed;
         failed |= !await AttemptAsync(job, BackupDestinationNames.Platform, null, prefix, progress.ObjectsAbsentAt, token).ConfigureAwait(false);
         var destinations = await catalog.ReadUncheckedAsync(transaction =>
-            SystemCatalog.ListAsync(transaction, BackupDestinationHistory.Collection(job.Database.ProjectId!), progress.DestinationAfter,
+            SystemCatalog.ListAsync(transaction, BackupDestinationHistory.Kind(job.Database.ProjectId!), progress.DestinationAfter,
                 16, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, record => record.Revision, token), token).ConfigureAwait(false);
         foreach (var destination in destinations.Items)
         {
@@ -263,17 +263,17 @@ internal sealed class DatabaseBackupPurge(
         // Each destination gets its own deadline and durable cursor; an inaccessible archived credential cannot starve others.
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30), time);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(token, deadline.Token);
-        var collection = "backup_purge_destinations/" + job.Database.DatabaseId;
+        var kind = "backup_purge_destinations/" + job.Database.DatabaseId;
         try
         {
-            var cursor = await catalog.ReadUncheckedAsync(transaction => SystemCatalog.GetAsync(transaction, collection,
+            var cursor = await catalog.ReadUncheckedAsync(transaction => SystemCatalog.GetAsync(transaction, kind,
                 destinationId, BackupPurgeJsonContext.Default.PrefixPurgeProgress, stop.Token), stop.Token).ConfigureAwait(false) ?? new PrefixPurgeProgress();
             using var customer = destination is null ? null : await targets.PurgeStoreAsync(destination, stop.Token).ConfigureAwait(false);
             var store = customer ?? platform;
             var result = await store.PurgePrefixAsync(prefix, cursor, stop.Token).ConfigureAwait(false);
             var saved = await catalog.WriteDurableAsync(async transaction =>
             {
-                await SystemCatalog.PutAsync(transaction, collection, destinationId, result.Progress,
+                await SystemCatalog.PutAsync(transaction, kind, destinationId, result.Progress,
                     BackupPurgeJsonContext.Default.PrefixPurgeProgress, token).ConfigureAwait(false);
                 return true;
             }, static _ => false, token).ConfigureAwait(false);
@@ -314,7 +314,7 @@ internal sealed class DatabaseBackupPurge(
     {
         _ = await catalog.WriteDurableAsync(async transaction =>
         {
-            await SystemCatalog.PutAsync(transaction, ProgressCollection, job.Database.DatabaseId!, progress,
+            await SystemCatalog.PutAsync(transaction, ProgressKind, job.Database.DatabaseId!, progress,
                 BackupPurgeJsonContext.Default.BackupPurgeProgress, token).ConfigureAwait(false);
             return true;
         }, static _ => false, token).ConfigureAwait(false);

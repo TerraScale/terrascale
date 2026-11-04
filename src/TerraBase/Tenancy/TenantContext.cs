@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json.Serialization;
 
 namespace TerraBase.Tenancy;
@@ -42,9 +40,4 @@ public enum PlanTier
 /// <param name="DatabaseId">A database of <paramref name="ProjectId"/>, when the request addresses one.</param>
 public sealed record TenantContext(string OrganizationId, PlanTier Plan, string? ProjectId = null, string? DatabaseId = null)
 {
-    /// <summary>
-    /// The scope of the database's document versions, from its ids, which every member shares: a version read on one
-    /// member matches on another (TS-574).
-    /// </summary>
-    public Guid VersionScope() => new(SHA256.HashData(Encoding.UTF8.GetBytes($"{OrganizationId}\0{ProjectId}\0{DatabaseId}")).AsSpan(0, 16));
 }

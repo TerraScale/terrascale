@@ -184,7 +184,7 @@ internal sealed partial class EngineManagementService
 
         var authority = await ReadAsync<RecordedDeletion>(async transaction =>
         {
-            var purge = await GetAsync(transaction, DatabasePurge.Collection, storage.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
+            var purge = await GetAsync(transaction, DatabasePurge.Kind, storage.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
             if (purge is not null && (purge.FormatVersion != 1 || !DatabasePurge.SameDatabase(purge.Database, storage)))
             {
                 throw new InvalidOperationException("a database purge conflicts with its cleanup scope");

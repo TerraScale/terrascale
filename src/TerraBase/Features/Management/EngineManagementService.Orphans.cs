@@ -109,14 +109,14 @@ internal sealed partial class EngineManagementService
                 string? after = null;
                 while (true)
                 {
-                    var page = await WriteAsync<DocumentPage?>(async transaction =>
+                    var page = await WriteAsync<RecordPage?>(async transaction =>
                     {
                         var records = await transaction.ListAsync(OrphanFiles, after, CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-                        foreach (var document in records.Documents)
+                        foreach (var stored in records.Records)
                         {
-                            if (JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.OrphanDatabaseFile) is { FormatVersion: 1 } record && record.Seen != pass)
+                            if (JsonSerializer.Deserialize(stored.Json.Span, TerraBaseJsonContext.Default.OrphanDatabaseFile) is { FormatVersion: 1 } record && record.Seen != pass)
                             {
-                                await transaction.DeleteAsync(OrphanFiles, document.Id, cancellationToken).ConfigureAwait(false);
+                                await transaction.DeleteAsync(OrphanFiles, stored.Id, cancellationToken).ConfigureAwait(false);
                             }
                         }
                         return records;
@@ -126,9 +126,9 @@ internal sealed partial class EngineManagementService
                         complete = false;
                         break;
                     }
-                    foreach (var document in page.Documents)
+                    foreach (var stored in page.Records)
                     {
-                        if (JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.OrphanDatabaseFile) is not { FormatVersion: 1 } record || record.Seen != pass)
+                        if (JsonSerializer.Deserialize(stored.Json.Span, TerraBaseJsonContext.Default.OrphanDatabaseFile) is not { FormatVersion: 1 } record || record.Seen != pass)
                         {
                             continue;
                         }
@@ -145,7 +145,7 @@ internal sealed partial class EngineManagementService
                     {
                         break;
                     }
-                    after = page.Documents[^1].Id;
+                    after = page.Records[^1].Id;
                 }
             }
             if (complete && version == CatalogVersion)
@@ -221,6 +221,6 @@ internal sealed partial class EngineManagementService
     private static async ValueTask<bool> OwnedFileAsync(IStorageTransaction transaction, TenantContext database, CancellationToken token) =>
         await IsRegisteredAsync(transaction, database, token).ConfigureAwait(false)
         || await CatalogTables.PendingCleanupAsync(transaction, database.DatabaseId!, token).ConfigureAwait(false) is not null
-        || await transaction.GetAsync(DatabasePurge.Collection, database.DatabaseId!, token).ConfigureAwait(false) is not null
+        || await transaction.GetAsync(DatabasePurge.Kind, database.DatabaseId!, token).ConfigureAwait(false) is not null
         || await HasDeletionAuthorityAsync(transaction, database, token).ConfigureAwait(false);
 }

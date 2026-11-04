@@ -23,9 +23,9 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
     private static readonly Action<ILogger, Exception?> CleanupIncomplete = LoggerMessage.Define(
         LogLevel.Warning, new EventId(1, "FileCleanupIncomplete"), "File storage cleanup could not finish; it will retry");
     private static readonly Unavailable Busy = new("file storage is unavailable; retry");
-    private string? _collectionAfter;
+    private string? _kindAfter;
     private string? _fileAfter;
-    private string? _sweepCollection;
+    private string? _sweepKind;
     private static ProjectAccess Access => ProjectAccess.Current ?? throw new InvalidOperationException("verified project identity required");
     private static string Buckets => FileStorageUsage.Buckets(Access.ProjectId);
     private static string Files(string bucket) => FileStorageUsage.Files(Access.OrganizationId, Access.ProjectId, bucket);
@@ -48,7 +48,7 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             return true;
         }
         var policy = write ? bucket.Rules.Write : bucket.Rules.Read;
-        return CollectionWide(policy, Access)
+        return BucketWide(policy, Access)
             || policy?.Owner == true && bucket.Rules.Subject(JsonSerializer.SerializeToUtf8Bytes(file.Metadata, TerraBaseJsonContext.Default.JsonElement)) == Access.Actor;
     }
 
@@ -83,7 +83,6 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             }
             var bucket = new FileBucket(EntityIds.New().ToString(), request.Name!, options.Region, request.Rules);
             await SystemCatalog.PutAsync(transaction, Buckets, bucket.Id, bucket, TerraBaseJsonContext.Default.FileBucket, cancellationToken).ConfigureAwait(false);
-            _ = await transaction.CreateCollectionAsync(new CollectionInfo(Files(bucket.Id), time.GetUtcNow().ToUnixTimeMilliseconds()), cancellationToken).ConfigureAwait(false);
             return bucket;
         }, static error => error, cancellationToken);
     }
@@ -136,7 +135,7 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             {
                 return new Conflict("delete the files and wait for upload cleanup before deleting the bucket");
             }
-            _ = await transaction.DropCollectionAsync(Files(bucket), cancellationToken).ConfigureAwait(false);
+            _ = await transaction.DropKindAsync(Files(bucket), cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(Buckets, bucket, cancellationToken).ConfigureAwait(false);
             return new Done();
         }, static error => error, cancellationToken);
@@ -266,16 +265,16 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             for (var scanned = 0; scanned < MaxListScan;)
             {
                 var page = await transaction.ListAsync(Files(bucket), cursor, 100, 1024 * 1024, cancellationToken).ConfigureAwait(false);
-                foreach (var document in page.Documents)
+                foreach (var stored in page.Records)
                 {
                     scanned++;
-                    cursor = document.Id;
-                    if (EntityPayload.Read(document, TerraBaseJsonContext.Default.FileObject) is { Status: "ready" } file && Allowed(definition, file, write: false))
+                    cursor = stored.Id;
+                    if (EntityPayload.Read(stored, TerraBaseJsonContext.Default.FileObject) is { Status: "ready" } file && Allowed(definition, file, write: false))
                     {
                         items.Add(file);
                         if (items.Count == ListPage)
                         {
-                            return new FileObjectPage(items, page.HasMore || document.Id != page.Documents[^1].Id ? file.Id : null);
+                            return new FileObjectPage(items, page.HasMore || stored.Id != page.Records[^1].Id ? file.Id : null);
                         }
                     }
                 }
@@ -377,25 +376,25 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(TimeSpan.FromSeconds(20));
         var token = budget.Token;
-        if (_sweepCollection is null)
+        if (_sweepKind is null)
         {
             var database = await engine.OpenSystemDatabaseAsync(token).ConfigureAwait(false);
             await using var read = await database.BeginTransactionAsync(write: false, token).ConfigureAwait(false);
-            var (collections, hasMore) = await read.ListCollectionsAsync(_collectionAfter, 50, token).ConfigureAwait(false);
-            var found = collections.FirstOrDefault(c => c.Name.StartsWith(FileStorageUsage.Prefix, StringComparison.Ordinal));
-            _collectionAfter = found?.Name ?? (hasMore ? collections[^1].Name : null);
+            var (kinds, hasMore) = await read.ListKindsAsync(_kindAfter, 50, token).ConfigureAwait(false);
+            var found = kinds.FirstOrDefault(c => c.Name.StartsWith(FileStorageUsage.Prefix, StringComparison.Ordinal));
+            _kindAfter = found?.Name ?? (hasMore ? kinds[^1].Name : null);
             if (found is null)
             {
                 return;
             }
-            _sweepCollection = found.Name;
+            _sweepKind = found.Name;
             _fileAfter = null;
         }
-        var collection = _sweepCollection;
-        var parts = collection.Split('/');
-        if (parts.Length != 4) { _sweepCollection = null; return; }
+        var kind = _sweepKind;
+        var parts = kind.Split('/');
+        if (parts.Length != 4) { _sweepKind = null; return; }
         var pageFiles = await catalog.ReadAsync<ManagementPage<FileObject>?>(
-            async tx => await SystemCatalog.ListAsync(tx, collection, _fileAfter, 50, TerraBaseJsonContext.Default.FileObject, f => f.Id, token).ConfigureAwait(false), static _ => null, token).ConfigureAwait(false);
+            async tx => await SystemCatalog.ListAsync(tx, kind, _fileAfter, 50, TerraBaseJsonContext.Default.FileObject, f => f.Id, token).ConfigureAwait(false), static _ => null, token).ConfigureAwait(false);
         if (pageFiles is null)
         {
             return;
@@ -404,7 +403,7 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             tx => SystemCatalog.GetAsync(tx, FileStorageUsage.Buckets(parts[2]), parts[3], TerraBaseJsonContext.Default.FileBucket, token), static _ => null, token).ConfigureAwait(false);
         if (definition is null)
         {
-            _sweepCollection = null;
+            _sweepKind = null;
             return;
         }
         foreach (var file in pageFiles.Items)
@@ -418,10 +417,10 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             await objects.DeleteAsync(definition.Region, FileStorageUsage.Key(parts[1], parts[2], parts[3], file.Id), token).ConfigureAwait(false);
             await catalog.WriteAsync<bool>(async tx =>
             {
-                var current = await SystemCatalog.GetAsync(tx, collection, file.Id, TerraBaseJsonContext.Default.FileObject, token).ConfigureAwait(false);
+                var current = await SystemCatalog.GetAsync(tx, kind, file.Id, TerraBaseJsonContext.Default.FileObject, token).ConfigureAwait(false);
                 if (current is not null && current.Status == file.Status)
                 {
-                    await tx.DeleteAsync(collection, file.Id, token).ConfigureAwait(false);
+                    await tx.DeleteAsync(kind, file.Id, token).ConfigureAwait(false);
                 }
                 return true;
             }, static _ => false, token).ConfigureAwait(false);
@@ -429,15 +428,15 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
         _fileAfter = pageFiles.Next;
         if (_fileAfter is null)
         {
-            _sweepCollection = null;
+            _sweepKind = null;
         }
     }
 
     /// <summary>Whether a policy grants every end user of the access regardless of ownership.</summary>
-    private static bool CollectionWide(CollectionAccessPolicy? policy, ProjectAccess access) =>
+    private static bool BucketWide(FileAccessPolicy? policy, ProjectAccess access) =>
         policy is not null && (policy.Public || policy.Roles is { } roles && roles.Any(access.Roles.Contains));
 
     /// <summary>Whether the rules may grant the access a read or write, by role or by ownership.</summary>
-    private static bool Granted(CollectionAccessRules? rules, ProjectAccess access, bool write) =>
-        (write ? rules?.Write : rules?.Read) is { } policy && (CollectionWide(policy, access) || policy.Owner && access.Actor.Length > 0);
+    private static bool Granted(FileAccessRules? rules, ProjectAccess access, bool write) =>
+        (write ? rules?.Write : rules?.Read) is { } policy && (BucketWide(policy, access) || policy.Owner && access.Actor.Length > 0);
 }

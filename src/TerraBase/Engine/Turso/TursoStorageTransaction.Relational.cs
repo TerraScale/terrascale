@@ -90,7 +90,6 @@ internal sealed partial class TursoStorageTransaction
     private SqlStatementResult RunStatement(SqlStatement statement, CancellationToken cancellationToken)
     {
         var native = session.Native;
-        _ranPlain |= write;
         var changed = write;
         _queryBudget!.Charge(statement.Sql);
         CountRead("query");

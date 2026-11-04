@@ -24,23 +24,23 @@ internal interface ICatalogGuard
 }
 
 /// <summary>
-/// Typed JSON documents in the system database (<see cref="IStorageEngine.OpenSystemDatabaseAsync"/>), where the management
+/// Typed JSON records in the system database (<see cref="IStorageEngine.OpenSystemDatabaseAsync"/>), where the management
 /// catalog lives.
 /// Every write runs in one transaction, which the engine serializes per database, so checks and writes are atomic.
 /// </summary>
 /// <remarks>
-/// State that belongs to one managed database lives in collections under <see cref="DatabaseState"/> and state
+/// State that belongs to one managed database lives in record kinds under <see cref="DatabaseState"/> and state
 /// that belongs to one project under <see cref="ProjectState"/>; deleting the database or project deletes it.
 /// </remarks>
 internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
 {
-    // Catalog documents are small; this only bounds a page if one ever is not.
+    // Catalog records are small; this only bounds a page if one ever is not.
     private const long MaxPageBytes = 1024 * 1024;
 
-    /// <summary>Collection prefix for the state of one managed database.</summary>
+    /// <summary>Kind prefix for the state of one managed database.</summary>
     public static string DatabaseState(string databaseId) => $"databases/{databaseId}/";
 
-    /// <summary>Collection prefix for the state of one project.</summary>
+    /// <summary>Kind prefix for the state of one project.</summary>
     public static string ProjectState(string projectId) => $"projects/{projectId}/";
 
     /// <summary>
@@ -140,15 +140,15 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
     public ValueTask<ManagementPage<DatabasePurgeRecord>?> ListDatabasePurgesAsync(string? after, int limit, CancellationToken cancellationToken) =>
         ReadAsync<ManagementPage<DatabasePurgeRecord>?>(async transaction =>
         {
-            var page = await transaction.ListAsync(DatabasePurge.Collection, after, Math.Clamp(limit, 1, 100), MaxPageBytes, cancellationToken).ConfigureAwait(false);
+            var page = await transaction.ListAsync(DatabasePurge.Kind, after, Math.Clamp(limit, 1, 100), MaxPageBytes, cancellationToken).ConfigureAwait(false);
             List<DatabasePurgeRecord> items = [];
-            foreach (var document in page.Documents)
+            foreach (var stored in page.Records)
             {
-                if (document.Json.Span.TrimStart(" \t\r\n"u8) is [(byte)'{', ..])
+                if (stored.Json.Span.TrimStart(" \t\r\n"u8) is [(byte)'{', ..])
                 {
                     try
                     {
-                        if (EntityPayload.Read(document, TerraBaseJsonContext.Default.DatabasePurgeRecord) is { Database.DatabaseId: { } id } record && id == document.Id)
+                        if (EntityPayload.Read(stored, TerraBaseJsonContext.Default.DatabasePurgeRecord) is { Database.DatabaseId: { } id } record && id == stored.Id)
                         {
                             items.Add(record);
                         }
@@ -160,13 +160,13 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
                 }
             }
 
-            return new ManagementPage<DatabasePurgeRecord>(items, page.HasMore && page.Documents.Count > 0 ? page.Documents[^1].Id : null);
+            return new ManagementPage<DatabasePurgeRecord>(items, page.HasMore && page.Records.Count > 0 ? page.Records[^1].Id : null);
         }, static _ => null, cancellationToken);
 
     /// <summary>True only after every expected holder has published its own absence receipt.</summary>
     public ValueTask<bool> AreActiveCopiesAbsentAsync(TenantContext database, CancellationToken cancellationToken) =>
         ReadAsync<bool>(async transaction =>
-            await GetAsync(transaction, DatabasePurge.Collection, database.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false) is { } record
+            await GetAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false) is { } record
             && DatabasePurge.SameDatabase(record.Database, database)
             && await DatabasePurge.AreActiveCopiesAbsentAsync(transaction, record, cancellationToken).ConfigureAwait(false), static _ => false, cancellationToken);
 
@@ -174,7 +174,7 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
     public ValueTask<bool> MarkBackupVerifiedAsync(TenantContext database, DateTimeOffset verifiedAt, CancellationToken cancellationToken) =>
         WriteAsync<bool>(async transaction =>
         {
-            var record = await GetAsync(transaction, DatabasePurge.Collection, database.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
+            var record = await GetAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
             // Authority and receipts are read under this writer; verifiedAt is the verifier's clock, never compared to another node's.
             if (record is null || !DatabasePurge.SameDatabase(record.Database, database)
                 || !await DatabasePurge.AreActiveCopiesAbsentAsync(transaction, record, cancellationToken).ConfigureAwait(false))
@@ -184,14 +184,14 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
 
             if (record.BackupVerifiedAt is null)
             {
-                await PutAsync(transaction, DatabasePurge.Collection, database.DatabaseId!, record with { BackupVerifiedAt = verifiedAt },
+                await PutAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, record with { BackupVerifiedAt = verifiedAt },
                     TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
             }
             return true;
         }, static _ => false, cancellationToken);
 
     public static async ValueTask<T?> GetAsync<T>(
-        IStorageTransaction transaction, string collection, string id, JsonTypeInfo<T> type, CancellationToken cancellationToken)
+        IStorageTransaction transaction, string kind, string id, JsonTypeInfo<T> type, CancellationToken cancellationToken)
         where T : class
     {
         if (typeof(T) == typeof(ManagedDatabase) && await DatabasePurge.IsDeletedAsync(transaction, id, cancellationToken).ConfigureAwait(false))
@@ -199,38 +199,38 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
             return null;
         }
 
-        var document = await transaction.GetAsync(collection, id, cancellationToken).ConfigureAwait(false);
-        return document is null ? null : EntityPayload.Read(document, type);
+        var stored = await transaction.GetAsync(kind, id, cancellationToken).ConfigureAwait(false);
+        return stored is null ? null : EntityPayload.Read(stored, type);
     }
 
     public static async ValueTask PutAsync<T>(
-        IStorageTransaction transaction, string collection, string id, T value, JsonTypeInfo<T> type, CancellationToken cancellationToken) =>
-        await transaction.PutAsync(collection, id, EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(value, type), id, nested: true), cancellationToken).ConfigureAwait(false);
+        IStorageTransaction transaction, string kind, string id, T value, JsonTypeInfo<T> type, CancellationToken cancellationToken) =>
+        await transaction.PutAsync(kind, id, EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(value, type), id, nested: true), cancellationToken).ConfigureAwait(false);
 
-    public static async ValueTask<bool> AnyAsync(IStorageTransaction transaction, string collection, CancellationToken cancellationToken) =>
-        (await transaction.ListAsync(collection, afterId: null, limit: 1, MaxPageBytes, cancellationToken).ConfigureAwait(false)).Documents.Count > 0;
+    public static async ValueTask<bool> AnyAsync(IStorageTransaction transaction, string kind, CancellationToken cancellationToken) =>
+        (await transaction.ListAsync(kind, afterId: null, limit: 1, MaxPageBytes, cancellationToken).ConfigureAwait(false)).Records.Count > 0;
 
-    /// <summary>One page in document id order; <paramref name="id"/> gives the cursor of the last item.</summary>
+    /// <summary>One page in record id order; <paramref name="id"/> gives the cursor of the last item.</summary>
     public static async ValueTask<ManagementPage<T>> ListAsync<T>(
-        IStorageTransaction transaction, string collection, string? after, int limit, JsonTypeInfo<T> type, Func<T, string> id, CancellationToken cancellationToken)
+        IStorageTransaction transaction, string kind, string? after, int limit, JsonTypeInfo<T> type, Func<T, string> id, CancellationToken cancellationToken)
     {
-        var page = await transaction.ListAsync(collection, after, limit, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-        var items = page.Documents.Select(document => EntityPayload.Read(document, type)!).ToList();
+        var page = await transaction.ListAsync(kind, after, limit, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+        var items = page.Records.Select(stored => EntityPayload.Read(stored, type)!).ToList();
         return new ManagementPage<T>(items, page.HasMore ? id(items[^1]) : null);
     }
 
-    /// <summary>Every document of a collection, for collections small enough to read whole.</summary>
+    /// <summary>Every record of a kind, for kinds small enough to read whole.</summary>
     public static async ValueTask<List<T>> ListAllAsync<T>(
-        IStorageTransaction transaction, string collection, JsonTypeInfo<T> type, CancellationToken cancellationToken)
+        IStorageTransaction transaction, string kind, JsonTypeInfo<T> type, CancellationToken cancellationToken)
     {
         var items = new List<T>();
         string? after = null;
-        DocumentPage page;
+        RecordPage page;
         do
         {
-            page = await transaction.ListAsync(collection, after, limit: 100, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-            items.AddRange(page.Documents.Select(document => EntityPayload.Read(document, type)!));
-            after = page.Documents.Count > 0 ? page.Documents[^1].Id : after;
+            page = await transaction.ListAsync(kind, after, limit: 100, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+            items.AddRange(page.Records.Select(stored => EntityPayload.Read(stored, type)!));
+            after = page.Records.Count > 0 ? page.Records[^1].Id : after;
         }
         while (page.HasMore);
 

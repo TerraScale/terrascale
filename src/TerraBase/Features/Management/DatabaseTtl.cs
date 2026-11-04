@@ -13,7 +13,7 @@ public sealed record ForkRequest(string? Name, long? TtlSeconds = null);
 
 internal static class DatabaseTtl
 {
-    public const string Collection = "database_expiry";
+    public const string Kind = "database_expiry";
     public const long MinSeconds = 60;
     public const long MaxSeconds = 365L * 24 * 60 * 60;
 
@@ -26,21 +26,21 @@ internal static class DatabaseTtl
         seconds is { } value ? now.AddSeconds(value) : null;
 
     public static async ValueTask<DateTimeOffset?> ReadAsync(IStorageTransaction transaction, string databaseId, CancellationToken cancellationToken) =>
-        (await SystemCatalog.GetAsync(transaction, Collection, databaseId, TerraBaseJsonContext.Default.DatabaseExpiry, cancellationToken).ConfigureAwait(false))?.ExpiresAt;
+        (await SystemCatalog.GetAsync(transaction, Kind, databaseId, TerraBaseJsonContext.Default.DatabaseExpiry, cancellationToken).ConfigureAwait(false))?.ExpiresAt;
 
     public static async ValueTask WriteAsync(IStorageTransaction transaction, string databaseId, DateTimeOffset? expiresAt, CancellationToken cancellationToken)
     {
         if (expiresAt is not { } value)
         {
-            if (await transaction.GetVersionAsync(Collection, databaseId, cancellationToken).ConfigureAwait(false) is not null)
+            if (await transaction.GetVersionAsync(Kind, databaseId, cancellationToken).ConfigureAwait(false) is not null)
             {
-                _ = await transaction.DeleteAsync(Collection, databaseId, cancellationToken).ConfigureAwait(false);
+                _ = await transaction.DeleteAsync(Kind, databaseId, cancellationToken).ConfigureAwait(false);
             }
 
             return;
         }
 
-        _ = await transaction.PutAsync(Collection, databaseId,
+        _ = await transaction.PutAsync(Kind, databaseId,
             EntityPayload.WithoutId(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new DatabaseExpiry(value), TerraBaseJsonContext.Default.DatabaseExpiry), databaseId, nested: true),
             cancellationToken).ConfigureAwait(false);
     }
@@ -53,22 +53,22 @@ internal static class DatabaseTtl
         string? after = null;
         while (due.Count < limit)
         {
-            var page = await transaction.ListAsync(Collection, after, 256, 1024 * 1024, cancellationToken).ConfigureAwait(false);
-            foreach (var document in page.Documents)
+            var page = await transaction.ListAsync(Kind, after, 256, 1024 * 1024, cancellationToken).ConfigureAwait(false);
+            foreach (var stored in page.Records)
             {
-                if (due.Count < limit && EntityPayload.Read(document, TerraBaseJsonContext.Default.DatabaseExpiry) is { } expiry && expiry.ExpiresAt <= now
-                    && await resolve(document.Id).ConfigureAwait(false) is { } resolved)
+                if (due.Count < limit && EntityPayload.Read(stored, TerraBaseJsonContext.Default.DatabaseExpiry) is { } expiry && expiry.ExpiresAt <= now
+                    && await resolve(stored.Id).ConfigureAwait(false) is { } resolved)
                 {
                     due.Add(resolved);
                 }
             }
 
-            if (!page.HasMore || page.Documents.Count == 0)
+            if (!page.HasMore || page.Records.Count == 0)
             {
                 break;
             }
 
-            after = page.Documents[^1].Id;
+            after = page.Records[^1].Id;
         }
 
         return due;

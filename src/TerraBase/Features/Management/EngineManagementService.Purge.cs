@@ -32,7 +32,7 @@ internal sealed partial class EngineManagementService
     private async ValueTask RecordDatabasePurgeAsync(IStorageTransaction transaction, TenantContext storage, ManagedDatabase database, CancellationToken cancellationToken)
     {
         await PutAsync(transaction, ProjectClosure.Purges(storage.ProjectId!), database.Id, storage, TerraBaseJsonContext.Default.TenantContext, cancellationToken).ConfigureAwait(false);
-        if (await GetAsync(transaction, DatabasePurge.Collection, database.Id, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false) is { } existing)
+        if (await GetAsync(transaction, DatabasePurge.Kind, database.Id, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false) is { } existing)
         {
             if (existing.FormatVersion != 1 || !DatabasePurge.SameDatabase(existing.Database, storage))
             {
@@ -46,31 +46,31 @@ internal sealed partial class EngineManagementService
         var requested = time.GetUtcNow();
         var record = new DatabasePurgeRecord(storage, requested, requested.AddDays(30),
             requested.AddDays((options.Backup?.RetentionDays[storage.Plan] ?? 0) + 30), null, [.. holders.Order(StringComparer.Ordinal)]);
-        await PutAsync(transaction, DatabasePurge.Collection, database.Id, record, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
+        await PutAsync(transaction, DatabasePurge.Kind, database.Id, record, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask ConvergePurgesAsync(CancellationToken cancellationToken)
     {
-        var page = await ReadAsync<DocumentPage?>(async transaction => await transaction.ListAsync(DatabasePurge.Collection, _purgeAfter,
+        var page = await ReadAsync<RecordPage?>(async transaction => await transaction.ListAsync(DatabasePurge.Kind, _purgeAfter,
             CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false), static _ => null, cancellationToken).ConfigureAwait(false);
         if (page is null)
         {
             return;
         }
 
-        foreach (var document in page.Documents)
+        foreach (var stored in page.Records)
         {
             try
             {
-                var record = EntityPayload.Read(document, TerraBaseJsonContext.Default.DatabasePurgeRecord)
+                var record = EntityPayload.Read(stored, TerraBaseJsonContext.Default.DatabasePurgeRecord)
                     ?? throw new InvalidOperationException("a database purge record is invalid");
-                if (record.FormatVersion != 1 || record.Database.DatabaseId != document.Id || record.ExpectedHolders.Length is 0 or > 1024)
+                if (record.FormatVersion != 1 || record.Database.DatabaseId != stored.Id || record.ExpectedHolders.Length is 0 or > 1024)
                 {
                     throw new InvalidOperationException("a database purge record has unsupported identity or format");
                 }
 
                 var localAbsent = await ReadAsync<bool>(async transaction =>
-                    await GetAsync(transaction, DatabasePurge.Receipts(document.Id), options.MachineId, TerraBaseJsonContext.Default.DatabasePurgeReceipt, cancellationToken).ConfigureAwait(false) is { } receipt
+                    await GetAsync(transaction, DatabasePurge.Receipts(stored.Id), options.MachineId, TerraBaseJsonContext.Default.DatabasePurgeReceipt, cancellationToken).ConfigureAwait(false) is { } receipt
                     && receipt.Binds(record, options.MachineId),
                     static _ => false, cancellationToken).ConfigureAwait(false);
                 if (!localAbsent)
@@ -82,7 +82,7 @@ internal sealed partial class EngineManagementService
                     catch (Exception error) when (!cancellationToken.IsCancellationRequested)
                     {
                         _purgeErrors.Add(1, new KeyValuePair<string, object?>("reason", "active_cleanup"));
-                        logger.ZLogWarning(error, $"Applying permanent database purge {document.Id:@Database} failed; the next pass tries again");
+                        logger.ZLogWarning(error, $"Applying permanent database purge {stored.Id:@Database} failed; the next pass tries again");
                     }
                 }
 
@@ -103,13 +103,13 @@ internal sealed partial class EngineManagementService
             {
                 _purgePassPending++;
                 _purgeErrors.Add(1, new KeyValuePair<string, object?>("reason", "record"));
-                logger.ZLogWarning(error, $"Applying permanent database purge {document.Id:@Database} failed; the next pass tries again");
+                logger.ZLogWarning(error, $"Applying permanent database purge {stored.Id:@Database} failed; the next pass tries again");
             }
         }
 
         if (page.HasMore)
         {
-            _purgeAfter = page.Documents[^1].Id;
+            _purgeAfter = page.Records[^1].Id;
             return;
         }
 
@@ -122,7 +122,7 @@ internal sealed partial class EngineManagementService
 
     private static async ValueTask<bool> HasDeletionAuthorityAsync(IStorageTransaction transaction, TenantContext database, CancellationToken cancellationToken)
     {
-        var purge = await GetAsync(transaction, DatabasePurge.Collection, database.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
+        var purge = await GetAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
         return purge is not null
             ? purge.FormatVersion == 1 && DatabasePurge.SameDatabase(purge.Database, database)
             : await CatalogTables.RetiredAsync(transaction, database.DatabaseId!, cancellationToken).ConfigureAwait(false);
@@ -130,7 +130,7 @@ internal sealed partial class EngineManagementService
 
     private async ValueTask<bool> TryRecordLocalPurgeAbsenceAsync(IStorageTransaction transaction, TenantContext database, bool erasureVerified, CancellationToken cancellationToken)
     {
-        var purge = await GetAsync(transaction, DatabasePurge.Collection, database.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
+        var purge = await GetAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
         if (purge is null)
         {
             return true;

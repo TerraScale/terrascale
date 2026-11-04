@@ -38,10 +38,10 @@ internal sealed partial class EngineManagementService
         }
 
         // All database purges captured the destination before its credentials leave authorization state.
-        if (await GetAsync(transaction, ProjectBackupDestinations.Collection(project), "current", TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, token).ConfigureAwait(false) is { } destination)
+        if (await GetAsync(transaction, ProjectBackupDestinations.Kind(project), "current", TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, token).ConfigureAwait(false) is { } destination)
         {
             await BackupDestinationHistory.SaveAsync(transaction, project, destination, token).ConfigureAwait(false);
-            await transaction.DeleteAsync(ProjectBackupDestinations.Collection(project), "current", token).ConfigureAwait(false);
+            await transaction.DeleteAsync(ProjectBackupDestinations.Kind(project), "current", token).ConfigureAwait(false);
         }
 
         return await VerifyProjectPurgesAsync(transaction, project, token).ConfigureAwait(false)
@@ -57,27 +57,27 @@ internal sealed partial class EngineManagementService
         var scanned = after == "complete";
         if (!scanned)
         {
-            var history = await transaction.ListAsync(DatabasePurge.Collection, after, CatalogPage, MaxPageBytes, token).ConfigureAwait(false);
-            foreach (var document in history.Documents)
+            var history = await transaction.ListAsync(DatabasePurge.Kind, after, CatalogPage, MaxPageBytes, token).ConfigureAwait(false);
+            foreach (var stored in history.Records)
             {
-                var purge = EntityPayload.Read(document, TerraBaseJsonContext.Default.DatabasePurgeRecord)
+                var purge = EntityPayload.Read(stored, TerraBaseJsonContext.Default.DatabasePurgeRecord)
                     ?? throw new InvalidOperationException("a database purge record is invalid");
                 if (purge.Database.ProjectId == project)
                 {
-                    await PutAsync(transaction, ProjectClosure.Purges(project), document.Id, purge.Database, TerraBaseJsonContext.Default.TenantContext, token).ConfigureAwait(false);
+                    await PutAsync(transaction, ProjectClosure.Purges(project), stored.Id, purge.Database, TerraBaseJsonContext.Default.TenantContext, token).ConfigureAwait(false);
                 }
             }
 
             scanned = !history.HasMore;
-            await PutAsync(transaction, ProjectClosure.Scans(project), options.MachineId, scanned ? "complete" : history.Documents[^1].Id, Id, token).ConfigureAwait(false);
+            await PutAsync(transaction, ProjectClosure.Scans(project), options.MachineId, scanned ? "complete" : history.Records[^1].Id, Id, token).ConfigureAwait(false);
         }
 
         var purges = await transaction.ListAsync(ProjectClosure.Purges(project), null, CatalogPage, MaxPageBytes, token).ConfigureAwait(false);
         var absent = !purges.HasMore;
-        foreach (var document in purges.Documents)
+        foreach (var stored in purges.Records)
         {
-            var purge = await GetAsync(transaction, DatabasePurge.Collection, document.Id, TerraBaseJsonContext.Default.DatabasePurgeRecord, token).ConfigureAwait(false);
-            var storage = EntityPayload.Read(document, TerraBaseJsonContext.Default.TenantContext);
+            var purge = await GetAsync(transaction, DatabasePurge.Kind, stored.Id, TerraBaseJsonContext.Default.DatabasePurgeRecord, token).ConfigureAwait(false);
+            var storage = EntityPayload.Read(stored, TerraBaseJsonContext.Default.TenantContext);
             if (purge is null || storage is null || storage.ProjectId != project || !DatabasePurge.SameDatabase(purge.Database, storage)
                 || !await DatabasePurge.AreActiveCopiesAbsentAsync(transaction, purge, token).ConfigureAwait(false))
             {
@@ -85,7 +85,7 @@ internal sealed partial class EngineManagementService
                 continue;
             }
 
-            await transaction.DeleteAsync(ProjectClosure.Purges(project), document.Id, token).ConfigureAwait(false);
+            await transaction.DeleteAsync(ProjectClosure.Purges(project), stored.Id, token).ConfigureAwait(false);
         }
 
         return scanned && absent;

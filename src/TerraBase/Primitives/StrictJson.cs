@@ -4,15 +4,15 @@ using System.Text.Json;
 
 namespace TerraBase.Primitives;
 
-/// <summary>A stored document violates the shared JSON contract.</summary>
-public sealed class DocumentValidationException(string message, bool tooLarge = false) : Exception(message)
+/// <summary>A JSON value violates the shared JSON contract.</summary>
+public sealed class JsonValidationException(string message, bool tooLarge = false) : Exception(message)
 {
-    /// <summary>The document exceeds the byte limit.</summary>
+    /// <summary>The value exceeds the byte limit.</summary>
     public bool TooLarge { get; } = tooLarge;
 }
 
 /// <summary>One JSON contract for local writes and replication apply, enforced by storage.</summary>
-internal static class DocumentJson
+internal static class StrictJson
 {
     public const int MaxBytes = 1024 * 1024;
     public const int MaxStoredDepth = 1000;
@@ -42,7 +42,7 @@ internal static class DocumentJson
         }
         catch (Exception error) when (error is JsonException or DecoderFallbackException or InvalidOperationException)
         {
-            throw new InvalidDataException("a stored document is not valid UTF-8 JSON", error);
+            throw new InvalidDataException("a stored value is not valid UTF-8 JSON", error);
         }
     }
 
@@ -50,24 +50,24 @@ internal static class DocumentJson
     {
         if (json.Length > MaxBytes)
         {
-            throw new DocumentValidationException("a document is at most 1 MiB", tooLarge: true);
+            throw new JsonValidationException("a JSON value is at most 1 MiB", tooLarge: true);
         }
 
         try
         {
             var text = Utf8.GetString(json.Span);
-            using var document = JsonDocument.Parse(json, new JsonDocumentOptions { AllowDuplicateProperties = false, MaxDepth = 64 });
-            if (requireObject && document.RootElement.ValueKind != JsonValueKind.Object)
+            using var parsed = JsonDocument.Parse(json, new JsonDocumentOptions { AllowDuplicateProperties = false, MaxDepth = 64 });
+            if (requireObject && parsed.RootElement.ValueKind != JsonValueKind.Object)
             {
-                throw new DocumentValidationException("the document must be a JSON object");
+                throw new JsonValidationException("the value must be a JSON object");
             }
 
-            ValidateValue(document.RootElement);
+            ValidateValue(parsed.RootElement);
             return text;
         }
         catch (Exception error) when (error is JsonException or DecoderFallbackException or InvalidOperationException)
         {
-            throw new DocumentValidationException("the document must be valid UTF-8 JSON without duplicate members or lone surrogate escapes");
+            throw new JsonValidationException("the value must be valid UTF-8 JSON without duplicate members or lone surrogate escapes");
         }
     }
 
@@ -81,13 +81,13 @@ internal static class DocumentJson
     {
         if (++nodes > maxValues)
         {
-            throw new DocumentValidationException($"a JSON value holds at most {maxValues} values");
+            throw new JsonValidationException($"a JSON value holds at most {maxValues} values");
         }
 
         switch (value.ValueKind)
         {
             case JsonValueKind.Object or JsonValueKind.Array when depth > 16:
-                throw new DocumentValidationException("a JSON value nests at most 16 levels");
+                throw new JsonValidationException("a JSON value nests at most 16 levels");
             case JsonValueKind.Object:
                 foreach (var member in value.EnumerateObject())
                 {
@@ -107,7 +107,7 @@ internal static class DocumentJson
                 _ = value.GetString();
                 break;
             case JsonValueKind.Number when !ExactNumber.TryParse(JsonMarshal.GetRawUtf8Value(value), out _):
-                throw new DocumentValidationException("numbers have at most 128 significant digits and a magnitude of 0 or 1e-307 to below 1e308");
+                throw new JsonValidationException("numbers have at most 128 significant digits and a magnitude of 0 or 1e-307 to below 1e308");
         }
     }
 }

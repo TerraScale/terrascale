@@ -1,6 +1,6 @@
 namespace TerraBase.Engine;
 
-/// <summary>A storage write exceeded the document, identifier or transaction admission limit.</summary>
+/// <summary>A storage write exceeded the record, identifier or transaction admission limit.</summary>
 public sealed class StorageWriteLimitException : InvalidOperationException
 {
     /// <summary>Creates a storage admission error.</summary>

@@ -7,10 +7,10 @@ using TerraBase.Engine;
 
 namespace TerraBase.Primitives;
 
-/// <summary>Entity identity lives in the document key; typed responses restore it from that key.</summary>
+/// <summary>Entity identity lives in the record key; typed responses restore it from that key.</summary>
 internal static class EntityPayload
 {
-    private static readonly JsonDocumentOptions StoredOptions = new() { MaxDepth = DocumentJson.MaxStoredDepth };
+    private static readonly JsonDocumentOptions StoredOptions = new() { MaxDepth = StrictJson.MaxStoredDepth };
 
     public static ReadOnlyMemory<byte> WithoutId(ReadOnlyMemory<byte> json, string id, bool nested = false)
     {
@@ -27,15 +27,15 @@ internal static class EntityPayload
         return buffer.WrittenMemory;
     }
 
-    public static T? Read<T>(StoredDocument document, JsonTypeInfo<T> type)
+    public static T? Read<T>(StoredRecord record, JsonTypeInfo<T> type)
     {
         if (type.Kind != JsonTypeInfoKind.Object)
         {
-            return JsonSerializer.Deserialize(document.Json.Span, type);
+            return JsonSerializer.Deserialize(record.Json.Span, type);
         }
 
-        var body = JsonNode.Parse(document.Json.Span, documentOptions: StoredOptions)!.AsObject();
-        Restore(body, type, document.Id);
+        var body = JsonNode.Parse(record.Json.Span, null, StoredOptions)!.AsObject();
+        Restore(body, type, record.Id);
         return JsonSerializer.Deserialize(body, type);
     }
 

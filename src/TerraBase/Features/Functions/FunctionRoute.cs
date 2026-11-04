@@ -8,8 +8,8 @@ namespace TerraBase.Features.Functions;
 
 internal static class FunctionRoute
 {
-    public const string Collection = ProjectApiRoute.Database + "/functions";
-    public const string Item = Collection + "/{function}";
+    public const string List = ProjectApiRoute.Database + "/functions";
+    public const string Item = List + "/{function}";
     public const string Description = "Project-token database functions (docs/functions/design.md). Deploy, logs and delete require documents:read and "
         + "documents:write; invoke requires documents:read. A function is JavaScript defining handler(event); it runs with the function's authority. "
         + ProjectApiRoute.IdentityDescription;

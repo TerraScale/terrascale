@@ -24,7 +24,7 @@ internal sealed partial class TursoStorageEngine
         _ = await Io.WithAdmissionAsync(async () =>
         {
             await using var transaction = await system.BeginTransactionAsync(write: false, token).ConfigureAwait(false);
-            if (await transaction.GetAsync(DatabaseErasure.Collection, databaseId, token).ConfigureAwait(false) is not null)
+            if (await transaction.GetAsync(DatabaseErasure.Kind, databaseId, token).ConfigureAwait(false) is not null)
             {
                 throw new IOException("a permanently deleted database cannot be published");
             }

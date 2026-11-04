@@ -45,8 +45,8 @@ internal sealed partial class ContinuousBackup
     // Kept past the window, so a restore that picked a snapshot just inside it finishes before retention deletes it.
     private static readonly TimeSpan RetentionGrace = TimeSpan.FromHours(1);
 
-    /// <summary>The collection of a database's backup record in the system catalog, deleted with the database's state.</summary>
-    internal static (string Collection, string Id) RecordKey(TenantContext? database) =>
+    /// <summary>The kind of a database's backup record in the system catalog, deleted with the database's state.</summary>
+    internal static (string Kind, string Id) RecordKey(TenantContext? database) =>
         database is null ? ("backup_status", "_system") : ($"databases/{database.DatabaseId}/backup_status", "current");
 
     // Keep a restore baseline before the window, but never beyond the plan plus one day.
@@ -427,14 +427,14 @@ internal sealed partial class ContinuousBackup
     {
         var record = new BackupStatusRecord(file.Prefix, _node, file.Generation?.ToString(), file.LastShipped, Lag(file, _time.GetUtcNow()),
             file.SizeBytes, file.SizedAt == DateTimeOffset.MinValue ? null : file.SizedAt, file.RetentionDays, file.LastDrill, _time.GetUtcNow());
-        var (collection, id) = RecordKey(file.Database);
+        var (kind, id) = RecordKey(file.Database);
         try
         {
             var store = await _storage.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
             var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
             await using (transaction.ConfigureAwait(false))
             {
-                await transaction.PutAsync(collection, id, JsonSerializer.SerializeToUtf8Bytes(record, TerraBaseJsonContext.Default.BackupStatusRecord), cancellationToken)
+                await transaction.PutAsync(kind, id, JsonSerializer.SerializeToUtf8Bytes(record, TerraBaseJsonContext.Default.BackupStatusRecord), cancellationToken)
                     .ConfigureAwait(false);
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }

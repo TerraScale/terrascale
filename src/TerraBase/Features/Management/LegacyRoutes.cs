@@ -73,7 +73,7 @@ public static class LegacyRoutes
             ["backup-destination"] when HttpMethods.IsGet(method) || HttpMethods.IsPut(method) || HttpMethods.IsDelete(method) => suffix,
             ["saved-queries", ..] when suffix.Length <= 2 => suffix,
             ["databases"] when HttpMethods.IsGet(method) || HttpMethods.IsPost(method) => suffix,
-            ["databases", var id, ..] when DatabaseSuffix(suffix[2..], method) => DatabasePath(suffix, id),
+            ["databases", _, ..] when DatabaseSuffix(suffix[2..], method) => suffix,
             _ => null,
         };
         return mapped is null ? null : ($"/v1/projects/{project}/{string.Join('/', mapped)}", new LegacyManagementRoute(organization, context.Request.Path.Value!));
@@ -93,15 +93,8 @@ public static class LegacyRoutes
         ["indexes", _] => HttpMethods.IsDelete(method),
         ["index-recommendations"] => HttpMethods.IsGet(method),
         ["index-recommendations", _, "apply"] => HttpMethods.IsPost(method),
-        ["collections"] or ["collections", _, "schema"] or ["usage"] or ["query-shapes"] => HttpMethods.IsGet(method),
+        ["usage"] or ["query-shapes"] => HttpMethods.IsGet(method),
         ["sql"] or ["sql", "check"] => HttpMethods.IsPost(method),
         _ => false,
-    };
-
-    private static string[] DatabasePath(string[] suffix, string id) => suffix switch
-    {
-        ["databases", _, "collections"] => ["databases", id, "schema"],
-        ["databases", _, "collections", var collection, "schema"] => ["databases", id, "schema", collection],
-        _ => suffix,
     };
 }

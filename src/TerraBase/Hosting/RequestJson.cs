@@ -11,13 +11,13 @@ namespace TerraBase.Hosting;
 /// <summary>The boundary validator for client JSON: request bodies deserialize strictly through <see cref="Read{T}"/>.</summary>
 public static class RequestJson
 {
-    /// <summary>The read depth bound for retained legacy documents.</summary>
-    public const int StoredDocumentMaxDepth = DocumentJson.MaxStoredDepth;
+    /// <summary>The read depth bound for stored JSON.</summary>
+    public const int StoredMaxDepth = StrictJson.MaxStoredDepth;
 
-    internal static JsonDocumentOptions StoredDocumentOptions { get; } = new()
+    internal static JsonDocumentOptions StoredJsonOptions { get; } = new()
     {
         AllowDuplicateProperties = true,
-        MaxDepth = StoredDocumentMaxDepth,
+        MaxDepth = StoredMaxDepth,
     };
 
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);

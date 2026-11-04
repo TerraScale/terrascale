@@ -20,8 +20,8 @@ public sealed record Conflict(string Message, string Code = "conflict");
 /// <param name="Details">Bounded JSON Pointer paths and failed schema keywords, when applicable.</param>
 public sealed record Validation(string Message, string Code = "invalid_request", IReadOnlyList<ValidationDetail>? Details = null);
 
-/// <summary>A schema rule that failed, without the document's values.</summary>
-/// <param name="Path">JSON Pointer to the failing document location; empty for the root.</param>
+/// <summary>A schema rule that failed, without the value's contents.</summary>
+/// <param name="Path">JSON Pointer to the failing location; empty for the root.</param>
 /// <param name="Keyword">JSON Schema keyword that failed.</param>
 public sealed record ValidationDetail(string Path, string Keyword);
 
@@ -65,7 +65,7 @@ public sealed record UnsupportedMediaType(string Message, string Code = "unsuppo
 /// <param name="Code">Stable machine-readable code.</param>
 public sealed record RequestTimeout(string Message, string Code = "request_timeout");
 
-/// <summary>What the request resumes from is gone for good, such as a changes feed cursor below retention: start over.</summary>
+/// <summary>What the request resumes from is gone for good, such as a change cursor below retention: start over.</summary>
 /// <param name="Message">What is gone.</param>
 /// <param name="Code">Stable machine-readable code.</param>
 public sealed record Gone(string Message, string Code = "gone");

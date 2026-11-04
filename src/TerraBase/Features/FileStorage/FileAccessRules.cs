@@ -8,7 +8,7 @@ namespace TerraBase.Features.FileStorage;
 /// <param name="Owner">JSON Pointer of the immutable owner subject, or null.</param>
 /// <param name="Read">Read grants.</param>
 /// <param name="Write">Write grants.</param>
-public sealed record CollectionAccessRules(string? Owner, CollectionAccessPolicy? Read, CollectionAccessPolicy? Write)
+public sealed record FileAccessRules(string? Owner, FileAccessPolicy? Read, FileAccessPolicy? Write)
 {
     /// <summary>Rejects ambiguous or unbounded policies before they are stored.</summary>
     public Validation? Check()
@@ -20,7 +20,7 @@ public sealed record CollectionAccessRules(string? Owner, CollectionAccessPolicy
 
         if (Owner?.Split('/').Skip(1).FirstOrDefault()?.Replace("~1", "/", StringComparison.Ordinal).Replace("~0", "~", StringComparison.Ordinal) == "id")
         {
-            return new Validation("owner cannot address the virtual document id", "invalid_rules");
+            return new Validation("owner cannot address the virtual record id", "invalid_rules");
         }
 
         if (Read is null || Write is null || !Valid(Read) || !Valid(Write)
@@ -36,7 +36,7 @@ public sealed record CollectionAccessRules(string? Owner, CollectionAccessPolicy
         pointer.Length <= 4096 && pointer.StartsWith('/') && pointer[1..].Split('/') is { Length: <= 16 } segments
         && segments.All(segment => !segment.Replace("~0", "", StringComparison.Ordinal).Replace("~1", "", StringComparison.Ordinal).Contains('~', StringComparison.Ordinal));
 
-    private static bool Valid(CollectionAccessPolicy policy) => policy.Roles is { Count: <= 32 }
+    private static bool Valid(FileAccessPolicy policy) => policy.Roles is { Count: <= 32 }
         && policy.Roles.All(role => role is { Length: > 0 and <= 128 } && !role.Any(char.IsControl))
         && policy.Roles.Distinct(StringComparer.Ordinal).Count() == policy.Roles.Count;
 
@@ -48,8 +48,8 @@ public sealed record CollectionAccessRules(string? Owner, CollectionAccessPolicy
             return null;
         }
 
-        using var document = JsonDocument.Parse(json, RequestJson.StoredDocumentOptions);
-        var value = document.RootElement;
+        using var stored = JsonDocument.Parse(json, RequestJson.StoredJsonOptions);
+        var value = stored.RootElement;
         foreach (var segment in Owner.Split('/').Skip(1))
         {
             var member = segment.Replace("~1", "/", StringComparison.Ordinal).Replace("~0", "~", StringComparison.Ordinal);
@@ -67,4 +67,4 @@ public sealed record CollectionAccessRules(string? Owner, CollectionAccessPolicy
 /// <param name="Owner">Whether the signed subject can access its own files.</param>
 /// <param name="Public">Whether every authenticated end-user can access files.</param>
 /// <param name="Roles">Trusted, case-sensitive roles with bucket-wide access.</param>
-public sealed record CollectionAccessPolicy(bool Owner, bool Public, IReadOnlyList<string>? Roles);
+public sealed record FileAccessPolicy(bool Owner, bool Public, IReadOnlyList<string>? Roles);

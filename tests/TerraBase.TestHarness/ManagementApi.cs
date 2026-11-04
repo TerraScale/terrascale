@@ -173,24 +173,6 @@ public sealed class ManagementApi : IAsyncDisposable
     public async Task<ManagedDatabaseRef> CreateManagedDatabaseAsync(string organization, string project, string name) =>
         new(organization, project, await CreateDatabaseAsync(organization, project, name), name);
 
-    /// <summary>
-    /// The ULID whose 16 bytes are the fixture name's UTF-8, zero-padded, so ids sort like their names; a name that is
-    /// already a ULID (too long to be a fixture name) is its own id.
-    /// </summary>
-    public static string DocumentId(string name)
-    {
-        if (EntityIds.IsValid(name))
-        {
-            return name;
-        }
-
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(Encoding.UTF8.GetByteCount(name), 16);
-        Span<byte> bytes = stackalloc byte[16];
-        bytes.Clear();
-        Encoding.UTF8.GetBytes(name, bytes);
-        return new Ulid(bytes).ToString();
-    }
-
     /// <summary>Posts one SQL statement to <c>…/sql/execute</c> of the database at <paramref name="databasePath"/>.</summary>
     public static Task<HttpResponseMessage> SqlAsync(HttpClient data, string databasePath, string sql, CancellationToken cancellationToken = default)
     {

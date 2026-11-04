@@ -7,8 +7,8 @@ namespace TerraBase.Engine.Turso;
 /// Shape retention (FR-16): bounded deletes of a handle's expired or unreachable sealed chunks and superseded snapshots.
 /// A handle's floor is the highest offset retention removed, kept in a sentinel <c>_tb_shape_chunk</c> row under
 /// <c>~floor:</c> plus the handle (offset 0, empty body, sealed_at 0), raised before the deletes it covers; a canonical
-/// <c>h1-</c> handle never starts with <c>~</c>. After a maintenance pass the floor also covers the changes feed's holes.
-/// Sealers still check range density after concurrent feed GC. Retention writes this derived data uncaptured.
+/// <c>h1-</c> handle never starts with <c>~</c>. After a maintenance pass the floor also covers the change log's holes.
+/// Sealers still check range density after concurrent change-log trimming. Retention writes this derived data uncaptured.
 /// </summary>
 internal sealed partial class TursoStorageTransaction : IShapeRetentionTransaction
 {
@@ -25,7 +25,7 @@ internal sealed partial class TursoStorageTransaction : IShapeRetentionTransacti
     }
 
     // Worker-only: one bounded trim of a current handle. Raised is the floor it left when that is above the stored one, else 0,
-    // so a floor raised by the feed alone is reported too; More when a candidate did not fit the byte budget.
+    // so a floor raised by the change log alone is reported too; More when a candidate did not fit the byte budget.
     private (int Rows, long Bytes, long Raised, bool More) TrimShape(string handle, long before, int maxRows, long maxBytes, CancellationToken cancellationToken)
     {
         var stored = StoredShapeFloor(handle);

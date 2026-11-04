@@ -51,20 +51,6 @@ public interface IDatabaseStore
         }
     }
 
-    /// <summary>Whether the database has collection <paramref name="name"/>, without a storage read when the engine keeps them in memory.</summary>
-    async ValueTask<bool> HasCollectionAsync(string name, CancellationToken cancellationToken) =>
-        await FindCollectionAsync(name, cancellationToken).ConfigureAwait(false) is not null;
-
-    /// <summary>Collection <paramref name="name"/>, or null, without a storage read when the engine keeps them in memory.</summary>
-    async ValueTask<CollectionInfo?> FindCollectionAsync(string name, CancellationToken cancellationToken)
-    {
-        var transaction = await BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
-        await using (transaction.ConfigureAwait(false))
-        {
-            return await transaction.GetCollectionAsync(name, cancellationToken).ConfigureAwait(false);
-        }
-    }
-
     /// <summary>Counts this process's write commits to this database; read it before a read to wait for later commits.</summary>
     long CommitSequence { get; }
 

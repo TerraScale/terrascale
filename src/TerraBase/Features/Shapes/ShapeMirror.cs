@@ -852,7 +852,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
     private sealed record ScanCursor(string After, IMemoryReservation Admission);
 }
 
-/// <summary>Metadata contains hashes and numeric retention positions, never plaintext document identifiers.</summary>
+/// <summary>Metadata contains hashes and numeric retention positions, never plaintext row identifiers.</summary>
 internal sealed record ShapeObjectHead(string Owner, string ObjectHash, string Sha256, long Size, long Epoch,
     string KeyId, long SealedAt, long FloorOffset);
 

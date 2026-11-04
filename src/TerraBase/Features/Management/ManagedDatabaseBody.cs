@@ -3,7 +3,7 @@ namespace TerraBase.Features.Management;
 /// <summary>A managed database and the region of the node serving it; region is not persisted in the catalog.</summary>
 /// <param name="Id">Database id.</param>
 /// <param name="ProjectId">Owning project.</param>
-/// <param name="Name">Database name used by the document API.</param>
+/// <param name="Name">Database name.</param>
 /// <param name="BranchedFrom">Source database id, if branched.</param>
 /// <param name="CreatedAt">Creation time.</param>
 /// <param name="Region">The region that answered.</param>

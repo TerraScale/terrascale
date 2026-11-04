@@ -241,7 +241,7 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
         var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            var bytes = await transaction.GetStoredDocumentBytesAsync(cancellationToken).ConfigureAwait(false);
+            var bytes = await transaction.GetStoredBytesAsync(cancellationToken).ConfigureAwait(false);
             var usage = new Usage(sequence, bytes);
             if (store.CommitSequence == sequence)
             {

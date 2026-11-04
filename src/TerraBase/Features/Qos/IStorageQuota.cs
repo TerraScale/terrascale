@@ -16,7 +16,7 @@ public readonly union StorageQuotaBytesResult(long, Unavailable);
 /// <summary>Accepted growth, a storage quota refusal or unavailable accounting.</summary>
 public readonly union StorageQuotaCheck(Done, QuotaExceeded, Unavailable);
 
-/// <summary>Serializes node-local document writes and measures live JSON bytes across an organization's databases.</summary>
+/// <summary>Serializes node-local writes and measures stored bytes across an organization's databases.</summary>
 public interface IStorageQuota
 {
     /// <summary>Holds organization admission until the caller commits or rolls back; cancellation releases admission.</summary>

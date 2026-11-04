@@ -19,7 +19,7 @@ public sealed class FileStorageSettings
 
     internal static FileStorageSettings? Parse(IReadOnlyDictionary<string, string> values)
     {
-        // An absent, partial or invalid file identity must not interrupt documents or backups.
+        // An absent, partial or invalid file identity must not interrupt SQL or backups.
         if (!Keys.All(key => values.TryGetValue(key, out var value) && value.Length is > 0 and <= 512
             && !value.Any(character => char.IsWhiteSpace(character) || char.IsControl(character)))
             || !Uri.TryCreate(values["files-s3-endpoint"], UriKind.Absolute, out var endpoint)

@@ -29,7 +29,7 @@ internal sealed record ProjectClosureReceipt(string ProjectId, string ClosureId,
 internal static class ProjectClosure
 {
     // Outside projects/<id>/, which a project deletion's prefix delete tombstones.
-    public const string Collection = "project_closures";
+    public const string Kind = "project_closures";
 
     public const string Accepted = "accepted";
 
@@ -50,5 +50,5 @@ internal static class ProjectClosure
     /// destination) reads this in its committing transaction. Tombstones count, so it fails closed.
     /// </summary>
     public static async ValueTask<bool> IsClosedAsync(IStorageTransaction transaction, string projectId, CancellationToken cancellationToken) =>
-        await transaction.GetVersionAsync(Collection, projectId, cancellationToken).ConfigureAwait(false) is not null;
+        await transaction.GetVersionAsync(Kind, projectId, cancellationToken).ConfigureAwait(false) is not null;
 }

@@ -3,7 +3,7 @@ using TerraBase.Tenancy;
 namespace TerraBase.Engine;
 
 /// <summary>
-/// The database engine TerraBase stores JSON documents in. Each database is isolated; one
+/// The database engine TerraBase stores its databases in. Each database is isolated; one
 /// implementation per substrate (Turso today, or others later) lives under <c>Engine/&lt;Name&gt;/</c>.
 /// </summary>
 /// <remarks>

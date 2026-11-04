@@ -31,17 +31,17 @@ internal static class StorageSweep
     /// <summary>The registered backups of a deleted database, expired a page at a time.</summary>
     public const string DatabaseBackups = "database_backups";
 
-    private const string Collection = "storage_sweep";
+    private const string Kind = "storage_sweep";
 
     public static ValueTask AddAsync(IStorageTransaction transaction, SweepEntry entry, CancellationToken cancellationToken) =>
-        PutAsync(transaction, Collection, entry.Key, entry, TerraBaseJsonContext.Default.SweepEntry, cancellationToken);
+        PutAsync(transaction, Kind, entry.Key, entry, TerraBaseJsonContext.Default.SweepEntry, cancellationToken);
 
     public static async ValueTask RemoveAsync(IStorageTransaction transaction, SweepEntry entry, CancellationToken cancellationToken) =>
-        await transaction.DeleteAsync(Collection, entry.Key, cancellationToken).ConfigureAwait(false);
+        await transaction.DeleteAsync(Kind, entry.Key, cancellationToken).ConfigureAwait(false);
 
     /// <summary>One page of the queue after <paramref name="after"/>, in key order.</summary>
     public static ValueTask<ManagementPage<SweepEntry>> ListAsync(IStorageTransaction transaction, string? after, int limit, CancellationToken cancellationToken) =>
-        SystemCatalog.ListAsync(transaction, Collection, after, limit, TerraBaseJsonContext.Default.SweepEntry, entry => entry.Key, cancellationToken);
+        SystemCatalog.ListAsync(transaction, Kind, after, limit, TerraBaseJsonContext.Default.SweepEntry, entry => entry.Key, cancellationToken);
 
     /// <summary>
     /// Deletes the files of <paramref name="storage"/> under its tenant's directory; <see langword="true"/> once they are

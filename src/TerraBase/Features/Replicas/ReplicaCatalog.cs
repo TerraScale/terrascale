@@ -7,7 +7,7 @@ namespace TerraBase.Features.Replicas;
 
 /// <summary>
 /// Every catalog read and write region replicas make: placements, the databases a region homes, and the records a replica
-/// region keeps. One seam, so the SQL catalog (PIVOT E2) replaces the document catalog behind it without touching callers.
+/// region keeps. One seam, so the SQL catalog (PIVOT E2) replaces the record catalog behind it without touching callers.
 /// </summary>
 internal interface IReplicaCatalog
 {

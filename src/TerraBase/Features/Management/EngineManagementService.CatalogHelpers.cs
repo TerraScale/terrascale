@@ -10,12 +10,12 @@ internal readonly union AuthorizedOrganization(Organization, NotFound, Forbidden
 
 internal sealed partial class EngineManagementService
 {
-    internal static async ValueTask<long> NextSequenceAsync(IStorageTransaction transaction, string collection, string counter, CancellationToken cancellationToken)
+    internal static async ValueTask<long> NextSequenceAsync(IStorageTransaction transaction, string kind, string counter, CancellationToken cancellationToken)
     {
-        var next = await transaction.GetAsync(collection, counter, cancellationToken).ConfigureAwait(false) is { } current
+        var next = await transaction.GetAsync(kind, counter, cancellationToken).ConfigureAwait(false) is { } current
             ? JsonSerializer.Deserialize(current.Json.Span, TerraBaseJsonContext.Default.Int64) + 1
             : 0;
-        await PutAsync(transaction, collection, counter, next, TerraBaseJsonContext.Default.Int64, cancellationToken).ConfigureAwait(false);
+        await PutAsync(transaction, kind, counter, next, TerraBaseJsonContext.Default.Int64, cancellationToken).ConfigureAwait(false);
         return next;
     }
 

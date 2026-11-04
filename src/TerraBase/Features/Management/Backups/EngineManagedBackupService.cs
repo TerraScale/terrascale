@@ -34,7 +34,7 @@ internal sealed class EngineManagedBackupService(
     ILogger<EngineManagedBackupService> logger, TerraBaseOptions options)
     : IManagedBackupService
 {
-    /// <summary>Catalog collection: database id → <see cref="DatabaseOwner"/>, deleted with the database.</summary>
+    /// <summary>Catalog kind: database id → <see cref="DatabaseOwner"/>, deleted with the database.</summary>
     public const string BackedUpDatabases = "backed_up_databases";
 
     private const string Manual = "manual";
@@ -51,7 +51,7 @@ internal sealed class EngineManagedBackupService(
     // Bounds what one catalog read or write materializes (databases, list entries, sweep entries).
     private const int PageSize = 100;
 
-    // Catalog documents are small; this only bounds a page if one ever is not.
+    // Catalog records are small; this only bounds a page if one ever is not.
     private const long MaxPageBytes = 1024 * 1024;
 
     private static readonly JsonTypeInfo<string> Id = TerraBaseJsonContext.Default.String;
@@ -71,8 +71,8 @@ internal sealed class EngineManagedBackupService(
         catalog.ReadAsync<ListBackupsResult>(async transaction =>
         {
             var page = await transaction.ListAsync(BackupCatalog.List(organizationId, databaseId), after, limit, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-            var backups = new List<DatabaseBackup>(page.Documents.Count);
-            foreach (var entry in page.Documents)
+            var backups = new List<DatabaseBackup>(page.Records.Count);
+            foreach (var entry in page.Records)
             {
                 // Listed and unlisted in the same transactions as the record changes state: always registered.
                 var record = await GetRecordAsync(transaction, organizationId, JsonSerializer.Deserialize(entry.Json.Span, Id)!, cancellationToken).ConfigureAwait(false)
@@ -80,7 +80,7 @@ internal sealed class EngineManagedBackupService(
                 backups.Add(record.ToBackup());
             }
 
-            return new ManagementPage<DatabaseBackup>(backups, page.HasMore ? page.Documents[^1].Id : null);
+            return new ManagementPage<DatabaseBackup>(backups, page.HasMore ? page.Records[^1].Id : null);
         }, static error => error, cancellationToken);
 
     public async ValueTask<CreateBackupResult> CreateBackupAsync(
@@ -567,7 +567,7 @@ internal sealed class EngineManagedBackupService(
                 var cutoff = time.GetUtcNow().AddDays(-current.RetentionDays);
                 var expired = new List<BackupRecord>();
                 var page = await transaction.ListAsync(BackupCatalog.Retention(owner.OrganizationId, owner.DatabaseId), afterId: null, PageSize, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-                foreach (var entry in page.Documents)
+                foreach (var entry in page.Records)
                 {
                     // The index is in completion order, so the first unexpired backup ends the expired ones.
                     var record = await GetRecordAsync(transaction, owner.OrganizationId, JsonSerializer.Deserialize(entry.Json.Span, Id)!, cancellationToken).ConfigureAwait(false);
@@ -662,8 +662,8 @@ internal sealed class EngineManagedBackupService(
         var expiring = await catalog.WriteAsync<CatalogResult<List<BackupRecord>>>(async transaction =>
         {
             var page = await transaction.ListAsync(BackupCatalog.List(entry.OrganizationId, entry.Id), afterId: null, PageSize, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-            var expired = new List<BackupRecord>(page.Documents.Count);
-            foreach (var listed in page.Documents)
+            var expired = new List<BackupRecord>(page.Records.Count);
+            foreach (var listed in page.Records)
             {
                 if (await GetRecordAsync(transaction, entry.OrganizationId, JsonSerializer.Deserialize(listed.Json.Span, Id)!, cancellationToken).ConfigureAwait(false) is { } record)
                 {
@@ -807,9 +807,9 @@ internal sealed class EngineManagedBackupService(
     private static async ValueTask<BackupRecord?> OldestRegisteredAsync(IStorageTransaction transaction, DatabaseOwner owner, CancellationToken cancellationToken)
     {
         var first = await transaction.ListAsync(BackupCatalog.Retention(owner.OrganizationId, owner.DatabaseId), afterId: null, limit: 1, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-        return first.Documents.Count == 0
+        return first.Records.Count == 0
             ? null
-            : await GetRecordAsync(transaction, owner.OrganizationId, JsonSerializer.Deserialize(first.Documents[0].Json.Span, Id)!, cancellationToken).ConfigureAwait(false);
+            : await GetRecordAsync(transaction, owner.OrganizationId, JsonSerializer.Deserialize(first.Records[0].Json.Span, Id)!, cancellationToken).ConfigureAwait(false);
     }
 
     private static ValueTask<TenantContext?> GetDatabaseAsync(IStorageTransaction transaction, string? userId, BackupRecord record, CancellationToken cancellationToken) =>

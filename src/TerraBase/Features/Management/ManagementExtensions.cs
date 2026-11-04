@@ -29,9 +29,6 @@ internal static class ManagementExtensions
         services.AddSingleton<SystemCatalog>();
         services.AddSingleton<RemoteDatabases>();
         services.AddHttpClient(RemoteDatabases.HttpClientName);
-        services.AddSingleton<ClosureCancellation>();
-        services.AddSingleton<HistoryErasures>();
-        services.AddHostedService(provider => provider.GetRequiredService<HistoryErasures>());
         return services
             .AddTerraBaseManagementBackups()
             .AddTerraBaseUsage();

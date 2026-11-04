@@ -39,8 +39,7 @@ internal sealed partial class EngineManagementService
 
     // Every data request resolves its database here. A lookup stays valid while the catalog has not committed since it
     // was read, so a point operation reads no catalog row and a long read on the storage threads cannot hold it up.
-    // TS-647 step 5 replaces this: _system becomes a lattice database on every member, read from memory.
-    private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (long Sequence, TenantContext Tenant)> _tenants = new();
+        private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (long Sequence, TenantContext Tenant)> _tenants = new();
 
     // The same validity for the records the placement check reads on every data request (docs/cross-region.md).
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (long Sequence, ManagedDatabase? Record)> _records = new();
@@ -200,7 +199,7 @@ internal sealed partial class EngineManagementService
 
     // The catalog replicates to every region (docs/terrabase/multi-region-replication.md section 15): a database created
     // elsewhere and placed in this region gets its local file on its first request or first replicated group, and serves
-    // before its first documents arrive. A database placed elsewhere gets none (the placement check answers for it).
+    // before its first data arrives. A database placed elsewhere gets none (the placement check answers for it).
     // Recheck a file created here after initialization: a concurrent deletion may have applied before the file existed.
     private async ValueTask<EnsureLocalDatabaseResult> InitializeLocalAsync(TenantContext tenant, CancellationToken cancellationToken)
     {

@@ -29,25 +29,25 @@ internal sealed class FileStorageUsage(IStorageEngine engine) : IFileStorageUsag
         bool more;
         do
         {
-            var (collections, hasMore) = await transaction.ListCollectionsAsync(after, 100, cancellationToken).ConfigureAwait(false);
+            var (kinds, hasMore) = await transaction.ListKindsAsync(after, 100, cancellationToken).ConfigureAwait(false);
             more = hasMore;
-            foreach (var collection in collections)
+            foreach (var kind in kinds)
             {
                 if (++visited > 10_000)
                 {
-                    throw new QueryCapacityException("file storage accounting exceeded its collection budget");
+                    throw new QueryCapacityException("file storage accounting exceeded its bucket budget");
                 }
-                after = collection.Name;
-                if (!collection.Name.StartsWith(prefix, StringComparison.Ordinal))
+                after = kind.Name;
+                if (!kind.Name.StartsWith(prefix, StringComparison.Ordinal))
                 {
                     continue;
                 }
                 string? fileAfter = null;
-                DocumentPage files;
+                RecordPage files;
                 do
                 {
-                    files = await transaction.ListAsync(collection.Name, fileAfter, 100, 1024 * 1024, cancellationToken).ConfigureAwait(false);
-                    foreach (var saved in files.Documents)
+                    files = await transaction.ListAsync(kind.Name, fileAfter, 100, 1024 * 1024, cancellationToken).ConfigureAwait(false);
+                    foreach (var saved in files.Records)
                     {
                         if (++visited > 100_000)
                         {

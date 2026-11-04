@@ -1,4 +1,3 @@
-using System.Collections.Frozen;
 using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
@@ -32,22 +31,23 @@ internal sealed partial class TursoDatabaseStore(
 
     internal static readonly byte[] FormatDigest = SHA256.HashData(Encoding.UTF8.GetBytes(SystemSchemaSql + ClientSchemaSql));
 
-    // Records are plain rows: one per collection and id, stamped with the commit offset of the transaction that wrote it.
-    private const string DocumentSchemaSql = """
-        CREATE TABLE _tb_documents (
-            collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL, UNIQUE (collection, id)
-        );
-        CREATE TABLE _tb_collections (
-            name TEXT PRIMARY KEY, created_at INTEGER NOT NULL,
-            entity_id TEXT NOT NULL CHECK (length(entity_id) = 26)
-        );
+    private const string OffsetSchemaSql = """
         CREATE TABLE commit_offset (
             id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL, incarnation TEXT NOT NULL
         );
         INSERT INTO commit_offset (id, value, incarnation) VALUES (1, 0, '');
         """;
 
-    private const string SystemSchemaSql = DocumentSchemaSql + """
+    // TerraBase's own records are plain rows: one per kind and id, stamped with the commit offset of the transaction that
+    // wrote it. Only the system database keeps them.
+    private const string SystemSchemaSql = OffsetSchemaSql + """
+        CREATE TABLE _tb_records (
+            kind TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL, UNIQUE (kind, id)
+        );
+        CREATE TABLE _tb_record_kinds (
+            name TEXT PRIMARY KEY, created_at INTEGER NOT NULL,
+            entity_id TEXT NOT NULL CHECK (length(entity_id) = 26)
+        );
         CREATE TABLE _tb_fault (
             organization TEXT NOT NULL, project TEXT NOT NULL, database TEXT NOT NULL,
             incarnation TEXT NOT NULL, reason TEXT NOT NULL CHECK (length(reason) <= 256),
@@ -59,7 +59,7 @@ internal sealed partial class TursoDatabaseStore(
         );
         """;
 
-    private const string ClientSchemaSql = DocumentSchemaSql + """
+    private const string ClientSchemaSql = OffsetSchemaSql + """
         CREATE TABLE _tb_sql_storage (id INTEGER PRIMARY KEY CHECK (id = 1), bytes INTEGER NOT NULL);
         INSERT INTO _tb_sql_storage (id, bytes) VALUES (1, 0);
         CREATE TABLE _tb_shape_chunk (
@@ -136,10 +136,6 @@ internal sealed partial class TursoDatabaseStore(
     public Ulid Incarnation => _incarnation.Value;
 
     public TenantContext? Tenant { get; } = tenant;
-
-    private static readonly Guid SystemScope = new TenantContext(TursoStorageEngine.SystemName, PlanTier.Hobby).VersionScope();
-
-    internal Guid Scope { get; } = tenant?.VersionScope() ?? SystemScope;
 
     internal bool Closed
     {
@@ -996,7 +992,6 @@ internal sealed partial class TursoDatabaseStore(
 
                     if (keeps)
                     {
-                        write.Changed = transaction.SavepointHasChanges;
                         transaction.ReleaseSavepoint();
                         kept.Add(write);
                         continue;
@@ -1041,15 +1036,13 @@ internal sealed partial class TursoDatabaseStore(
         }
 
         refused.ForEach(write => write.Answer(default));
-        kept.ForEach(write => write.Answer(write.Changed ? commit : commit with { Marker = null }));
+        kept.ForEach(write => write.Answer(commit));
         return deferred;
     }
 
     private interface IBatchedWrite
     {
         bool Cancelled { get; }
-
-        bool Changed { get; set; }
 
         ValueTask<bool> RunAsync(IStorageTransaction transaction);
 
@@ -1071,8 +1064,6 @@ internal sealed partial class TursoDatabaseStore(
 
         public bool Cancelled => cancellationToken.IsCancellationRequested;
 
-        public bool Changed { get; set; }
-
         public async ValueTask<bool> RunAsync(IStorageTransaction transaction)
         {
 
@@ -1086,73 +1077,6 @@ internal sealed partial class TursoDatabaseStore(
         public void Fail(Exception error) => _done.TrySetException(error);
 
         public void Cancel() => _done.TrySetCanceled(cancellationToken);
-    }
-
-    private volatile FrozenDictionary<string, CollectionInfo>? _collections;
-    private long _collectionsVersion;
-
-    public async ValueTask<CollectionInfo?> FindCollectionAsync(string name, CancellationToken cancellationToken)
-    {
-        if (_collections is { } known)
-        {
-            return known.GetValueOrDefault(name);
-        }
-
-        var version = Interlocked.Read(ref _collectionsVersion);
-        var names = new Dictionary<string, CollectionInfo>(StringComparer.Ordinal);
-        var transaction = await BeginAsync(write: false, durable: false, cancellationToken).ConfigureAwait(false);
-        await using (transaction.ConfigureAwait(false))
-        {
-            string? after = null;
-            while (true)
-            {
-                var (page, hasMore) = await transaction.ListCollectionsAsync(after, 1000, cancellationToken).ConfigureAwait(false);
-                foreach (var collection in page)
-                {
-                    names.Add(collection.Name, collection);
-                }
-
-                if (!hasMore || page.Count == 0)
-                {
-                    break;
-                }
-
-                after = page[^1].Name;
-            }
-        }
-
-        var loaded = names.ToFrozenDictionary(StringComparer.Ordinal);
-
-        lock (_queueGate)
-        {
-            if (Interlocked.Read(ref _collectionsVersion) == version)
-            {
-                _collections = loaded;
-            }
-        }
-
-        return loaded.GetValueOrDefault(name);
-    }
-
-    internal bool TryKnownCollection(string name, out CollectionInfo? collection)
-    {
-        if (_collections is { } known)
-        {
-            collection = known.GetValueOrDefault(name);
-            return true;
-        }
-
-        collection = null;
-        return false;
-    }
-
-    internal void ForgetCollections()
-    {
-        lock (_queueGate)
-        {
-            Interlocked.Increment(ref _collectionsVersion);
-            _collections = null;
-        }
     }
 
     internal void Return(TursoSession session)

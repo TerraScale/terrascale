@@ -181,13 +181,13 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
             var previous = new List<DatabaseRequestLog>(Kept);
             var savedIds = new List<string>(MaxSaved);
             string? after = null;
-            DocumentPage page;
+            RecordPage page;
             do
             {
                 // A page may include an oversized first row; admit its actual bytes before the engine copies it.
                 using var pageAdmission = QosContext.Enter(tenant: null, budget: memory);
                 page = await transaction.ListAsync(collection, after, FlushPageEntries, FlushPageBytes, cancellationToken).ConfigureAwait(false);
-                foreach (var document in page.Documents)
+                foreach (var document in page.Records)
                 {
                     if (savedIds.Count == MaxSaved)
                     {
@@ -247,10 +247,10 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         return page.HasMore ? null : Decode(page);
     }
 
-    private static DatabaseRequestLog[]? Decode(DocumentPage page)
+    private static DatabaseRequestLog[]? Decode(RecordPage page)
     {
-        var result = new List<DatabaseRequestLog>(page.Documents.Count);
-        foreach (var document in page.Documents)
+        var result = new List<DatabaseRequestLog>(page.Records.Count);
+        foreach (var document in page.Records)
         {
             if (Decode(document) is not { } log) { return null; }
             result.Add(log);
@@ -258,7 +258,7 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         return [.. result];
     }
 
-    private static DatabaseRequestLog? Decode(StoredDocument document)
+    private static DatabaseRequestLog? Decode(StoredRecord document)
     {
         if (document.Json.Length > MaxRecordBytes) { return null; }
         RequestLogRecord? record;

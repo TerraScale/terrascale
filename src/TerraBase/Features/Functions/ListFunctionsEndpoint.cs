@@ -11,7 +11,7 @@ internal sealed class ListFunctionsEndpoint(IManagementService management, IFunc
     /// <inheritdoc />
     public override void Configure()
     {
-        Get(FunctionRoute.Collection);
+        Get(FunctionRoute.List);
         Name("listFunctions");
         Summary("Lists a database's functions");
         Description(FunctionRoute.Description + " Direct array in name order, without source.");

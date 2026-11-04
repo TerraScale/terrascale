@@ -70,13 +70,13 @@ public static class ShapesExtensions
             {
                 if (operation.OperationId == "getShape")
                 {
-                    Document(operation);
+                    DescribeResponses(operation);
                 }
                 else if (operation.OperationId is "getShapeKey" or "getShapeManifest" && operation.Responses is { } responses)
                 {
                     foreach (var response in responses.Values.OfType<OpenApiResponse>())
                     {
-                        DocumentNoStore(response);
+                        DescribeNoStore(response);
                     }
                 }
 
@@ -130,7 +130,7 @@ public static class ShapesExtensions
                 provider.GetRequiredService<TimeProvider>()));
     }
 
-    private static void Document(OpenApiOperation operation)
+    private static void DescribeResponses(OpenApiOperation operation)
     {
         if (operation.Responses is not { } responses)
         {
@@ -144,7 +144,7 @@ public static class ShapesExtensions
                 continue;
             }
 
-            DocumentNoStore(concrete);
+            DescribeNoStore(concrete);
             concrete.Description = documented.Description;
             foreach (var media in concrete.Content?.Values.OfType<OpenApiMediaType>() ?? [])
             {
@@ -159,7 +159,7 @@ public static class ShapesExtensions
         }
     }
 
-    private static void DocumentNoStore(OpenApiResponse response)
+    private static void DescribeNoStore(OpenApiResponse response)
     {
         response.Headers ??= new Dictionary<string, IOpenApiHeader>(StringComparer.Ordinal);
         response.Headers["Cache-Control"] = new OpenApiHeader

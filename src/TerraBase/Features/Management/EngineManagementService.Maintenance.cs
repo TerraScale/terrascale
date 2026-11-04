@@ -110,7 +110,7 @@ internal sealed partial class EngineManagementService
                 throw new InvalidOperationException("a database cleanup intent conflicts with the catalog");
             }
 
-            await transaction.DeleteCollectionsAsync(SystemCatalog.DatabaseState(database.DatabaseId!), token).ConfigureAwait(false);
+            await transaction.DeleteKindsAsync(SystemCatalog.DatabaseState(database.DatabaseId!), token).ConfigureAwait(false);
             return true;
         }
     }

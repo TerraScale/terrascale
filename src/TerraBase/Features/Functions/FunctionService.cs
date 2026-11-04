@@ -59,7 +59,7 @@ internal sealed class FunctionService(SystemCatalog catalog, ISqlService sql, IU
 
             var existing = await GetAsync(transaction, tenant, name, cancellationToken).ConfigureAwait(false);
             if (existing is null && (await transaction.ListAsync(Records(tenant), null, MaxFunctions, 8 * 1024 * 1024, cancellationToken)
-                .ConfigureAwait(false)).Documents.Count >= MaxFunctions)
+                .ConfigureAwait(false)).Records.Count >= MaxFunctions)
             {
                 return new Conflict($"at most {MaxFunctions} functions may be deployed per database", "function_limit");
             }
@@ -106,7 +106,7 @@ internal sealed class FunctionService(SystemCatalog catalog, ISqlService sql, IU
 
             await transaction.DeleteAsync(Records(tenant), name, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(Schedules, ScheduleId(tenant, name), cancellationToken).ConfigureAwait(false);
-            await transaction.DropCollectionAsync(Logs(tenant, name), cancellationToken).ConfigureAwait(false);
+            await transaction.DropKindAsync(Logs(tenant, name), cancellationToken).ConfigureAwait(false);
             return new Done();
         }, static error => error, cancellationToken).ConfigureAwait(false);
         return result;
@@ -173,9 +173,9 @@ internal sealed class FunctionService(SystemCatalog catalog, ISqlService sql, IU
             await SystemCatalog.PutAsync(transaction, Logs(tenant, name), log.Id, log, TerraBaseJsonContext.Default.FunctionLogBody, cancellationToken)
                 .ConfigureAwait(false);
             var kept = await transaction.ListAsync(Logs(tenant, name), null, KeptLogs + 1, 8 * 1024 * 1024, cancellationToken).ConfigureAwait(false);
-            if (kept.Documents.Count > KeptLogs)
+            if (kept.Records.Count > KeptLogs)
             {
-                await transaction.DeleteAsync(Logs(tenant, name), kept.Documents[0].Id, cancellationToken).ConfigureAwait(false);
+                await transaction.DeleteAsync(Logs(tenant, name), kept.Records[0].Id, cancellationToken).ConfigureAwait(false);
             }
 
             return true;

@@ -13,7 +13,7 @@ internal static class FileStorageRoute
     public const string File = Files + "/{file}";
     public const string Description = "Project file buckets. Bearer ts-auth project or end-user token; documents:read/write scopes. "
         + "Bucket creation, listing, rules and deletion require project credentials; database-restricted credentials cannot access files. "
-        + "Rules use the document owner JSON Pointer, read/write owner/public/roles policies, evaluated against immutable file metadata. "
+        + "Rules use the owner JSON Pointer, read/write owner/public/roles policies, evaluated against immutable file metadata. "
         + "Missing grants deny access. File IDs are server-generated ULIDs. Upload: name, contentType, size (1–100 MiB), base64 sha256, metadata; "
         + "reserve shared database/file storage, PUT the exact bytes with every returned header to the five-minute URL, then POST complete. "
         + "Files are immutable; checksum and size are verified before reads. Download capabilities expire after 60 seconds; existing capabilities remain valid until expiry. "

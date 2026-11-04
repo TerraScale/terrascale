@@ -24,16 +24,13 @@ internal sealed partial class TursoStorageTransaction(
 
     private long? _offset;
 
-    private (long ChangeBytes, int Captured, int Writes, long WrittenBytes, long? Offset, bool CollectionsChanged)?
-        _savepoint;
+    private (long? Offset, bool KindsChanged)? _savepoint;
 
     internal bool LimitsReached { get; private set; }
 
     internal CommitResult? Committed { get; private set; }
 
     internal bool ChangedReaderState { get; private set; }
-
-    private bool IsClient => !store.IsSystem;
 
     public ValueTask<long> GetOffsetAsync(CancellationToken cancellationToken) =>
         RunAsync(() => (long?)session.Command(TursoStatements.CurrentOffset, transaction).ExecuteScalar() ?? 0, cancellationToken);
@@ -254,11 +251,6 @@ internal sealed partial class TursoStorageTransaction(
                     NoteCopyFault("an error at or after COMMIT");
                 }
 
-                if (committing && ChangedReaderState)
-                {
-                    store.ForgetCollections();
-                }
-
                 if (committing && (_offset is not null || _sqlChanged))
                 {
                     store.MoveCommitCount();
@@ -267,30 +259,9 @@ internal sealed partial class TursoStorageTransaction(
                 throw;
             }
 
-            CommitResult result;
-            try
-            {
-                result = new CommitResult(offset, IsClient && _captured > 0 && !_captureSuspended ? ReadCommitMarker() : null);
-            }
-            catch
-            {
-
-                NoteCopyFault("the commit marker could not be read after COMMIT");
-                if (_offset is not null || _sqlChanged)
-                {
-                    Follow("the commit notification", committed);
-                }
-
-                throw;
-            }
-
+            var result = new CommitResult(offset);
             Committed = result;
             Follow("the after-commit hook", store.AfterTursoCommit);
-            if (ChangedReaderState)
-            {
-                Follow("forgetting the collection names", store.ForgetCollections);
-            }
-
             return result;
         }, cancellationToken).ConfigureAwait(false);
 
@@ -321,30 +292,6 @@ internal sealed partial class TursoStorageTransaction(
         }
     }
 
-    private const string CommitMarkerSql = "SELECT change_id, change_type FROM turso_cdc ORDER BY change_id DESC LIMIT 1;";
-
-    private bool _ranPlain;
-
-    private CommitMarker ReadCommitMarker()
-    {
-        if (store.Tenant is { } tenant)
-        {
-            store.Checkpoint?.Invoke("writer.marker", tenant);
-        }
-
-        var kept = _ranPlain ? null : session.AfterCommit(CommitMarkerSql, transaction);
-        using var fresh = kept is null ? session.Connection.CreateCommand() : null;
-        fresh?.CommandText = CommitMarkerSql;
-
-        using var reader = (kept ?? fresh!).ExecuteReader();
-        if (!reader.Read() || reader.GetInt64(0) <= 0 || reader.GetInt64(1) != 2)
-        {
-            throw new InvalidDataException("a client mutation has no final CDC commit row");
-        }
-
-        return new CommitMarker(store.Incarnation, reader.GetInt64(0));
-    }
-
     private Exception? _followFailure;
 
     private void Follow(string step, Action? action)
@@ -363,12 +310,10 @@ internal sealed partial class TursoStorageTransaction(
     private bool _savepointPending;
     private bool _releasePending;
 
-    internal bool SavepointHasChanges => _savepoint is { } saved && _captured > saved.Captured;
-
     internal void Savepoint()
     {
         ThrowIfReadOnly();
-        _savepoint = (_changeBytes, _captured, _writes, _writtenBytes, _offset, ChangedReaderState);
+        _savepoint = (_offset, ChangedReaderState);
         _savepointPending = true;
         LimitsReached = false;
     }
@@ -408,12 +353,10 @@ internal sealed partial class TursoStorageTransaction(
         });
     }
 
-    private void Restore(
-        (long ChangeBytes, int Captured, int Writes, long WrittenBytes, long? Offset, bool CollectionsChanged) saved)
+    private void Restore((long? Offset, bool KindsChanged) saved)
     {
-        _tables = null;
-        (_changeBytes, _captured, _writes, _writtenBytes, _offset, ChangedReaderState) =
-            (saved.ChangeBytes, saved.Captured, saved.Writes, saved.WrittenBytes, saved.Offset, saved.CollectionsChanged);
+        _kinds = null;
+        (_offset, ChangedReaderState) = (saved.Offset, saved.KindsChanged);
         _savepoint = null;
         _faulted = false;
     }
@@ -738,12 +681,12 @@ internal sealed partial class TursoStorageTransaction(
         }
     }
 
-    private SqliteCommand Command(string sql, string? collection = null)
+    private SqliteCommand Command(string sql, string? kind = null)
     {
         var command = session.Command(sql, transaction);
-        if (collection is not null)
+        if (kind is not null)
         {
-            command.Parameters.AddWithValue("$collection", collection);
+            command.Parameters.AddWithValue("$kind", kind);
         }
 
         return command;
@@ -753,8 +696,6 @@ internal sealed partial class TursoStorageTransaction(
 
     private SqliteCommand PlainCommand(string sql)
     {
-
-        _ranPlain = true;
         var command = session.Connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = sql;

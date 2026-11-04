@@ -23,12 +23,12 @@ internal sealed record DatabasePurgeReceipt(TenantContext Database, string Machi
 
 internal static class DatabasePurge
 {
-    public const string Collection = DatabaseErasure.Collection;
+    public const string Kind = DatabaseErasure.Kind;
 
     public static string Receipts(string databaseId) => $"database_purge_receipts/{databaseId}";
 
     public static async ValueTask<bool> IsDeletedAsync(IStorageTransaction transaction, string databaseId, CancellationToken cancellationToken) =>
-        await transaction.GetAsync(Collection, databaseId, cancellationToken).ConfigureAwait(false) is not null;
+        await transaction.GetAsync(Kind, databaseId, cancellationToken).ConfigureAwait(false) is not null;
 
     public static bool SameDatabase(TenantContext left, TenantContext right) =>
         left.OrganizationId == right.OrganizationId && left.ProjectId == right.ProjectId && left.DatabaseId == right.DatabaseId;
