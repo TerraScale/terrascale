@@ -5,7 +5,7 @@ using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
-namespace TerraBase.Slow.Qos;
+namespace TerraBase.Fast.Qos;
 
 public sealed class PlanAllowanceTests
 {
