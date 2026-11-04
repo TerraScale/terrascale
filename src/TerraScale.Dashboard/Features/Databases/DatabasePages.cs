@@ -144,6 +144,10 @@ namespace TerraScale.Dashboard.Features.Databases
         public string Table { get; init; } = "";
         public DatabaseSqlResult? Preview { get; init; }
         public long? StorageBytes { get; init; }
+        public IReadOnlyList<DatabaseReadGrant>? Grants { get; init; }
+        // A refused grant save reopens the grant dialog with what was submitted.
+        public DatabaseGrantForm? GrantForm { get; init; }
+        public bool OpenGrant => Tab == "grants" && GrantForm is not null && Error.Length > 0 && Context.CanManage;
         public bool ShowFork { get; init; }
         public bool OpenBranch => Tab == "branches" && (ShowFork || BranchName is not null && Error.Length > 0) && Context.CanManage && Database.Status == "ready";
         // Each activity card keeps its own range; changing one keeps the others as they are.
