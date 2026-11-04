@@ -339,7 +339,11 @@ is when its last change was read.
 
 ## Restore
 
-A restore always creates a new database, with a new incarnation, in the region that serves the source database. Backups taken before the TS-602 wipe use the old schema and do not need to restore after
+A restore always creates a new database, with a new incarnation, in the region that serves the source database.
+Native SQL tables, their indexes, views, triggers and constraints restore with their rows; a replica that pulls a
+restored database with a revision of its source rebootstraps (`OtherIncarnation`): a restore never continues a
+replica's incremental history. Proof: `tests/TerraBase.Fast/Backup/SqlTableBackupTests.cs`.
+Backups taken before the TS-602 wipe use the old schema and do not need to restore after
 it (user decision, 2026-10-07). Production backup starts right after that cutover.
 
 `GET /v1/projects/{project}/databases/{database}/point-in-time` returns the restore window: from the oldest snapshot,
@@ -361,7 +365,11 @@ restores into a new database of the same project (`branchedFrom` set, like a bac
    [Proven history](#proven-history)), before downloading anything;
 3. replays its generation's segments read by `pointInTime` in order, checking they are contiguous: one transaction per
    commit record, rows by rowid (`INSERT OR REPLACE`, `DELETE`), schema objects created from their SQL and dropped by
-   name. A log that ends inside a transaction, a malformed record or a change the file refuses fails the restore.
+   name. The log already holds every row a trigger or a foreign-key action wrote, so the replay runs with foreign keys
+   off and with the file's triggers set aside (dropped, tracked through replayed CREATE and DROP records, and created
+   again once the replay ends); a trigger never fires twice and a replayed parent row never cascades. A storage rewrite
+   replays its delta the same way. A log that ends inside a transaction, a malformed record or a change the file
+   refuses fails the restore.
    Eight segments download at once, each retried up to three times if the stream drops. Then the history must be
    proven to reach `pointInTime`, replaying the transactions of later segments that ran before it;
 4. runs `PRAGMA integrity_check`, then imports the file as a copy, so its replication starts over from a baseline.

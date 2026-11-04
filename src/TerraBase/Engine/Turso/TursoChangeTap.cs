@@ -521,6 +521,7 @@ internal sealed class TursoChangeTap : IWalTap
         var first = _anchor;
         RewriteBytes = 0;
         var replay = new ChangeLog.Replay(target);
+        replay.Suspend();
         var buffer = new ArrayBufferWriter<byte>();
         while (_anchor < end)
         {
@@ -542,6 +543,7 @@ internal sealed class TursoChangeTap : IWalTap
             throw new RewriteRefusedException("the rewrite delta ends inside a transaction");
         }
 
+        replay.Resume();
         _store.RewriteAnchor = _anchor;
         return _anchor - first;
     }
@@ -643,6 +645,7 @@ internal static class ChangeLog
         {
             await io.RunAsync(() => TursoSession.OpenExisting(connection, file), cancellationToken).ConfigureAwait(false);
             var replay = new Replay(connection);
+            await io.RunAsync(replay.Suspend, cancellationToken).ConfigureAwait(false);
             await foreach (var segment in segments.WithCancellation(cancellationToken).ConfigureAwait(false))
             {
                 await using (segment.ConfigureAwait(false))
@@ -659,6 +662,7 @@ internal static class ChangeLog
                 return false;
             }
 
+            await io.RunAsync(replay.Resume, cancellationToken).ConfigureAwait(false);
             await io.RunAsync(replay.Checkpoint, cancellationToken).ConfigureAwait(false);
             return true;
         }
@@ -794,10 +798,33 @@ internal static class ChangeLog
 
     internal sealed class Replay(TursoConnection connection)
     {
-
         private readonly Dictionary<string, (string[] Columns, int Alias)> _tables = [with(StringComparer.Ordinal)];
+        private readonly List<(string Name, string Table, string Sql)> _triggers = [];
+        private long? _foreignKeys;
 
         public bool Open { get; private set; }
+
+        public void Suspend()
+        {
+            _foreignKeys ??= Convert.ToInt64(Query("PRAGMA foreign_keys;").Single()[0], CultureInfo.InvariantCulture);
+            Execute("PRAGMA foreign_keys = OFF;");
+            StashTriggers();
+        }
+
+        public void Resume()
+        {
+            foreach (var (_, _, sql) in _triggers)
+            {
+                Execute(sql);
+            }
+
+            _triggers.Clear();
+            if (_foreignKeys is { } enforced)
+            {
+                Execute(string.Create(CultureInfo.InvariantCulture, $"PRAGMA foreign_keys = {enforced};"));
+                _foreignKeys = null;
+            }
+        }
 
         public bool Apply(Stream segment, CancellationToken cancellationToken)
         {
@@ -847,6 +874,11 @@ internal static class ChangeLog
                         case Create:
                             Execute(ReadString(segment));
                             _tables.Clear();
+                            if (_foreignKeys is not null)
+                            {
+                                StashTriggers();
+                            }
+
                             break;
                         case Drop:
                             var type = ReadString(segment);
@@ -857,6 +889,11 @@ internal static class ChangeLog
                             }
 
                             Execute($"DROP {type.ToUpperInvariant()} IF EXISTS {TableShape.Quote(name)};");
+                            if (type != "index")
+                            {
+                                _triggers.RemoveAll(trigger => string.Equals(type == "trigger" ? trigger.Name : trigger.Table, name, StringComparison.OrdinalIgnoreCase));
+                            }
+
                             _tables.Clear();
                             break;
                         default:
@@ -898,6 +935,36 @@ internal static class ChangeLog
 
             Execute($"INSERT OR REPLACE INTO {TableShape.Quote(table)} ({string.Join(", ", names)}) VALUES ({string.Join(", ", parameters.Select(p => p.Item1))});",
                 [.. parameters]);
+        }
+
+        private void StashTriggers()
+        {
+            foreach (var row in Query("SELECT name, tbl_name, sql FROM sqlite_schema WHERE type = 'trigger' AND sql IS NOT NULL ORDER BY rowid;"))
+            {
+                var trigger = ((string)row[0]!, (string)row[1]!, (string)row[2]!);
+                Execute($"DROP TRIGGER {TableShape.Quote(trigger.Item1)};");
+                _triggers.Add(trigger);
+            }
+        }
+
+        private List<object?[]> Query(string sql)
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            using var reader = command.ExecuteReader();
+            var rows = new List<object?[]>();
+            while (reader.Read())
+            {
+                var row = new object?[reader.FieldCount];
+                for (var i = 0; i < row.Length; i++)
+                {
+                    row[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                }
+
+                rows.Add(row);
+            }
+
+            return rows;
         }
 
         private (string[] Columns, int Alias) Shape(string table)
