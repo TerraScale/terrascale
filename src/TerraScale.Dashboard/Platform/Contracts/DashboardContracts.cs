@@ -1,3 +1,4 @@
+using TerraScale.Endpoints;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -54,7 +55,7 @@ namespace TerraScale.Dashboard.Platform.Contracts
 
         public static IEndpointRouteBuilder MapDashboardContracts(this IEndpointRouteBuilder endpoints)
         {
-            endpoints.MapOpenApi();
+            endpoints.MapTerraScaleOpenApi();
             endpoints.MapGet("/reference/terrascale.js", ReferenceScript)
                 .ExcludeFromDescription();
             var reference = (RouteGroupBuilder)endpoints.MapScalarApiReference("/reference", (options, http) =>

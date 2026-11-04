@@ -18,5 +18,11 @@
 <p class="ts-meta" role="status" data-on:submit__window="evt.target === el.closest('form') &amp;&amp; !evt.defaultPrevented &amp;&amp; ($_renaming ? evt.preventDefault() : ($_renaming = true))" data-text="$_renaming ? 'Renaming database. Please wait for the result.' : ''"></p>
 </form>
 }else{<p class="ts-meta" role="status">Renaming requires organization management access and a ready customer database.</p>}
+</div></section>
+<section class="ts-card ts-card-boxed" aria-labelledby="database-expiry-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="database-expiry-title">Expiry</h2></div></header><div class="ts-card-body ts-stack-lg">
+<dl class="ts-kv"><div><dt>Expires</dt><dd>@if(Model.Database.ExpiresAt is { } expiry){<time datetime="@expiry.ToString("O",System.Globalization.CultureInfo.InvariantCulture)">@expiry.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'",System.Globalization.CultureInfo.InvariantCulture)</time>}else{<span>Never</span>}</dd></div></dl>
+@if(Model.Shell.Context.CanManage && !PlatformDatabases.IsPlatform(Model.Shell.Context.Organization?.Id)){
+<form method="post" action="/v1/databases/ttl" class="ts-form" data-submit-once><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" /><div class="ts-field"><label class="ts-label" for="database-ttl">TTL (hours)</label><input class="ts-input" id="database-ttl" name="ttlHours" type="number" min="@DatabaseTtl.MinimumHours" max="8760" step="any" placeholder="24" required /></div><div class="ts-row"><button class="ts-btn ts-btn-primary" name="action" value="set" type="submit">Set TTL</button>@if(Model.Database.ExpiresAt is not null){<button class="ts-btn ts-btn-secondary" name="action" value="clear" type="submit" formnovalidate>Clear TTL</button>}</div></form>
+}
 </div></section></main>
 @functions { public ShellModel LayoutModel => Model.Shell; }
