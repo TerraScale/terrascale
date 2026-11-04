@@ -20,12 +20,13 @@ public sealed record UsagePoint(DateTimeOffset Start, long Reads, long Writes);
 /// <summary>What one database uses. Counters are best-effort dashboard usage, not billing.</summary>
 /// <param name="DatabaseId">The database.</param>
 /// <param name="StorageBytes">Bytes on disk.</param>
+/// <param name="LogicalBytes">Logical bytes metered outside the SQL storage meter: 0 for a database, whose SQL storage is metered as <see cref="AllowanceUsage.StorageByteHours"/>.</param>
 /// <param name="Reads">Reads since the database was created.</param>
 /// <param name="Writes">Writes since the database was created.</param>
 /// <param name="Period">Reads and writes over the requested period.</param>
 /// <param name="Series">One point per bucket of the period, oldest first; empty for an item of a project.</param>
 public sealed record DatabaseUsage(
-    string DatabaseId, long StorageBytes, long Reads, long Writes, UsagePeriod Period, IReadOnlyList<UsagePoint> Series);
+    string DatabaseId, long StorageBytes, long LogicalBytes, long Reads, long Writes, UsagePeriod Period, IReadOnlyList<UsagePoint> Series);
 
 /// <summary>
 /// Operation units of the current UTC month (https://terrascale.tech/pricing.json <c>metering.operationUnit</c>), summed
@@ -44,6 +45,7 @@ public sealed record UsageMonth(string Month, long ReadUnits, long WriteUnits, l
 /// <param name="ProjectId">The project.</param>
 /// <param name="Databases">Databases in the project.</param>
 /// <param name="StorageBytes">Bytes on disk.</param>
+/// <param name="LogicalBytes">The databases' <see cref="DatabaseUsage.LogicalBytes"/> plus the project's file bytes.</param>
 /// <param name="Reads">Reads since each database was created.</param>
 /// <param name="Writes">Writes since each database was created.</param>
 /// <param name="Period">Reads and writes over the requested period.</param>
@@ -51,7 +53,7 @@ public sealed record UsageMonth(string Month, long ReadUnits, long WriteUnits, l
 /// <param name="Items">Usage of each database, in creation order.</param>
 /// <param name="Month">Billed operation units this UTC month.</param>
 public sealed record ProjectUsage(
-    string ProjectId, long Databases, long StorageBytes, long Reads, long Writes, UsagePeriod Period,
+    string ProjectId, long Databases, long StorageBytes, long LogicalBytes, long Reads, long Writes, UsagePeriod Period,
     IReadOnlyList<UsagePoint> Series, IReadOnlyList<DatabaseUsage> Items, UsageMonth Month)
 {
     /// <summary>Logical file bytes and pending reservations, counted once across regions.</summary>

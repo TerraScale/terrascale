@@ -6,7 +6,7 @@ namespace TerraScale.TerraBase.Contracts.FileStorage
     /// <summary>Owner, public and trusted-role grants for one file operation.</summary>
     [MessagePackObject(true)]
     public sealed record TerraBaseFilePolicy(bool Owner, bool Public, IReadOnlyList<string> Roles);
-    /// <summary>Document-style rules evaluated against immutable file metadata. Owner is a JSON Pointer.</summary>
+    /// <summary>Rules evaluated against immutable file metadata. Owner is a JSON Pointer.</summary>
     [MessagePackObject(true)]
     public sealed record TerraBaseFileRules(string? Owner, TerraBaseFilePolicy Read, TerraBaseFilePolicy Write);
     /// <summary>A project's logical file bucket. Region identifies its object backing.</summary>

@@ -16,11 +16,11 @@ namespace TerraScale.TerraBase.Contracts.Usage
 
     /// <summary>The DatabaseUsage REST representation.</summary>
     [MessagePackObject(true)]
-    public sealed record TerraBaseDatabaseUsage(string DatabaseId, long StorageBytes, long LogicalBytes, long Collections, long Documents, long Reads, long Writes, TerraBaseUsagePeriod Period, IReadOnlyList<TerraBaseUsagePoint> Series);
+    public sealed record TerraBaseDatabaseUsage(string DatabaseId, long StorageBytes, long LogicalBytes, long Reads, long Writes, TerraBaseUsagePeriod Period, IReadOnlyList<TerraBaseUsagePoint> Series);
 
     /// <summary>The ProjectUsage REST representation.</summary>
     [MessagePackObject(true)]
-    public sealed record TerraBaseProjectUsage(string ProjectId, long Databases, long Collections, long StorageBytes, long LogicalBytes, long Documents, long Reads, long Writes, TerraBaseUsagePeriod Period, IReadOnlyList<TerraBaseUsagePoint> Series, IReadOnlyList<TerraBaseDatabaseUsage> Items, long FileBytes = 0, TerraBaseUsageMonth? Month = null);
+    public sealed record TerraBaseProjectUsage(string ProjectId, long Databases, long StorageBytes, long LogicalBytes, long Reads, long Writes, TerraBaseUsagePeriod Period, IReadOnlyList<TerraBaseUsagePoint> Series, IReadOnlyList<TerraBaseDatabaseUsage> Items, long FileBytes = 0, TerraBaseUsageMonth? Month = null);
 
 
 }
