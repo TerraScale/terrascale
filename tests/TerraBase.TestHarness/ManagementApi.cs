@@ -21,13 +21,13 @@ public sealed class ManagementApi : IAsyncDisposable
 
     private readonly Lazy<Task> _cleanup;
 
-    private ManagementApi(TerraBaseTestServer server, ClientTls tls, TestIssuer issuer, string user)
+    private ManagementApi(TerraBaseTestServer server, ClientTls tls, TestIssuer issuer, string user, bool ownsIssuer)
     {
         Server = server;
         Tls = tls;
         Issuer = issuer;
         User = user;
-        _cleanup = new(() => CleanupAssetsAsync(server.CleanupCompletion, tls, issuer));
+        _cleanup = new(() => CleanupAssetsAsync(server.CleanupCompletion, tls, ownsIssuer ? issuer : null));
         Client = As(user);
     }
 
@@ -52,10 +52,10 @@ public sealed class ManagementApi : IAsyncDisposable
     public static async Task<ManagementApi> StartAsync(
         Action<Dictionary<string, string>>? configure = null, Action<IServiceCollection>? services = null, TimeProvider? time = null,
         CancellationToken? cancellationToken = null, Action<Task>? failedStartCleanup = null, string? userId = null,
-        CancellationToken? lifetimeCancellationToken = null)
+        CancellationToken? lifetimeCancellationToken = null, TestIssuer? sharedIssuer = null)
     {
         var tls = new ClientTls();
-        var issuer = new TestIssuer();
+        var issuer = sharedIssuer ?? new TestIssuer();
         TerraBaseTestServer? server = null;
         var failedCleanup = Task.CompletedTask;
         try
@@ -79,12 +79,12 @@ public sealed class ManagementApi : IAsyncDisposable
                 collection.TryAddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
             }, cancellationToken: cancellationToken, failedStartCleanup: task => failedCleanup = task, lifetimeCancellationToken: lifetimeCancellationToken);
             // Startup waited for the issuer's keys, so tokens work from the first request.
-            return new ManagementApi(server, tls, issuer, userId ?? EntityIds.New().ToString());
+            return new ManagementApi(server, tls, issuer, userId ?? EntityIds.New().ToString(), sharedIssuer is null);
         }
         catch (Exception startupError)
         {
             server?.Client.Dispose();
-            var cleanup = CleanupAssetsAsync(server?.CleanupCompletion ?? failedCleanup, tls, issuer);
+            var cleanup = CleanupAssetsAsync(server?.CleanupCompletion ?? failedCleanup, tls, sharedIssuer is null ? issuer : null);
             try
             {
                 failedStartCleanup?.Invoke(cleanup);
@@ -289,7 +289,7 @@ public sealed class ManagementApi : IAsyncDisposable
         }
     }
 
-    private static async Task CleanupAssetsAsync(Task completion, ClientTls tls, TestIssuer issuer)
+    private static async Task CleanupAssetsAsync(Task completion, ClientTls tls, TestIssuer? issuer)
     {
         try
         {
@@ -303,7 +303,7 @@ public sealed class ManagementApi : IAsyncDisposable
             }
             finally
             {
-                issuer.Dispose();
+                issuer?.Dispose();
             }
         }
     }

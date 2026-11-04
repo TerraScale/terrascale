@@ -98,6 +98,8 @@ builder.Services.AddTerraBaseSql();
 builder.Services.AddTerraBaseUserAuth();
 builder.Services.AddTerraBaseManagement();
 builder.Services.AddTerraBaseRegions();
+builder.Services.AddSingleton<TerraBase.Features.Postgres.PostgresConnectionHandler>();
+builder.Services.AddSingleton<TerraBase.Features.Postgres.PostgresRelay>();
 builder.Services.AddTerraBasePlatform();
 builder.Services.AddTerraBasePlatformExplore();
 builder.Services.AddSingleton<IShipperLeases, LocalShipperLeases>();
@@ -125,6 +127,7 @@ try
 
     var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
     app.UseTerraBaseRestPipeline();
+    app.UseTerraBaseForwardedRequests();
     app.UseTerraScaleRequestIdentity(() => TerraBase.Primitives.EntityIds.New().ToString(),
         app.Services.GetRequiredService<InternalCredential>().CorrelationKey);
     app.UseTerraBasePrivateResponses();
@@ -152,6 +155,7 @@ try
     app.UseAuthentication();
     app.UseTerraBaseProjectCheck();
     app.UseAuthorization();
+    app.UseTerraBaseHomeForwarding();
     app.UseTerraBaseQos();
     app.UseTerraBaseProjectCatalog();
     app.UseTerraBaseDatabasePlacement();

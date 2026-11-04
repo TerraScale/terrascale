@@ -33,8 +33,29 @@ region holds the database's record and the placement does not include this regio
 - `Cache-Control: no-store`;
 - `ts-replay: region=<regions>` behind the edge ([ts-orch.md](ts-orch.md#ts-replay)).
 
-TerraBase never proxies or forwards the request. A region's catalog holds the databases homed there
-([SQL catalog](sql-catalog.md#regions)), so a region without the record answers as for any unknown database.
+A region's catalog holds the databases homed there ([SQL catalog](sql-catalog.md#regions)). A region without the record
+forwards the request to the database's home instead (below).
+
+## Forwarding to the home
+
+Any region serves any database: a request that lands in a region without the record reaches the home over the private
+mesh.
+
+- **REST.** After authentication, a project request (`/v1/projects/{project}/...` with a project token) whose project, or
+  named database, is not in this region's catalog asks the other regions' nodes on the internal listener
+  (`GET /v1/internal/home`, peer credential) which one holds it, caches the answer for 30 seconds and forwards the request
+  there over HTTP/2 with the peer credential and `X-TerraBase-Forwarded-For` (the client address the edge reported). The
+  home serves it as a client-listener request: the same token checks, IP allowlists, quotas and metering, once, at the home.
+  `X-TerraBase-Region` names the home. A forwarded request is never forwarded again. When the home cannot be reached the
+  answer is `421 wrong_region` with `X-TerraBase-Database-Home` and the home's regional host. Listing a project's
+  databases is forwarded to a region that holds the project when this one does not.
+- **Postgres wire.** A dashboard API key is exchanged at ts-auth in the region the session reached; when its project or
+  database is homed elsewhere, the session is relayed to the home for its whole life (`POST /v1/internal/postgres`, a
+  duplex HTTP/2 stream on the internal listener), and the home authenticates it again. An unreachable home answers
+  `FATAL 08001` naming the home region; a database that exists in no region answers `FATAL 3D000`. A cancel request sent
+  to the relaying region does not reach the home.
+- `X-TerraBase-Forwarded-For` and the relay are honored only on the internal listener with a matching peer credential;
+  public forwarded headers are never trusted.
 
 ## Region discovery
 

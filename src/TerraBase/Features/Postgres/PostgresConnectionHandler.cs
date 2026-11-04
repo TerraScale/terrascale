@@ -15,6 +15,7 @@ using TerraBase.Features.Management.Logs;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Regions;
 using TerraBase.Features.Sql;
 using TerraBase.Features.UserAuth;
 using TerraBase.Primitives;
@@ -34,7 +35,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
     private static readonly ReadOnlyDictionary<string, SqlValue> NoNamed = ReadOnlyDictionary<string, SqlValue>.Empty;
 
-    private readonly union Access(Authorized, PgError);
+    private readonly union Access(Authorized, PgError, HomeNode);
+
+    private sealed record Relay(HomeNode Home, byte[] Startup, IPAddress? Client);
     private IApiKeyStore Keys => services.GetRequiredService<IApiKeyStore>();
 
     private ITenantDirectory Tenants => services.GetRequiredService<ITenantDirectory>();
@@ -45,28 +48,41 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     public override async Task OnConnectedAsync(ConnectionContext connection)
     {
         ArgumentNullException.ThrowIfNull(connection);
-        var input = connection.Transport.Input;
-        var output = new PgWriter(connection.Transport.Output);
+        var peer = (connection.RemoteEndPoint as IPEndPoint)?.Address;
+        await ServeConnectionAsync(connection.Transport.Input, connection.Transport.Output, peer, IpAllowlists.IsEdge(peer), relayed: false,
+            () => connection.Abort(new ConnectionAbortedException("the API key was refused")), connection.ConnectionClosed).ConfigureAwait(false);
+    }
+
+    internal Task ServeRelayedAsync(PipeReader input, PipeWriter output, IPAddress client, Action abort, CancellationToken closed) =>
+        ServeConnectionAsync(input, output, client, edge: true, relayed: true, abort, closed);
+
+    private async Task ServeConnectionAsync(PipeReader input, PipeWriter pipe, IPAddress? peer, bool edge, bool relayed, Action abortConnection, CancellationToken closed)
+    {
+        var output = new PgWriter(pipe);
         Session? session = null;
         try
         {
-            using (var handshake = CancellationTokenSource.CreateLinkedTokenSource(connection.ConnectionClosed))
+            Relay? relay;
+            using (var handshake = CancellationTokenSource.CreateLinkedTokenSource(closed))
             {
                 handshake.CancelAfter(HandshakeTimeout);
-                var peer = (connection.RemoteEndPoint as IPEndPoint)?.Address;
-                var edge = IpAllowlists.IsEdge(peer);
-                var client = edge ? await ReadProxyHeaderAsync(input, peer, handshake.Token).ConfigureAwait(false) : peer;
-                session = await StartAsync(input, output, client, edge, handshake.Token).ConfigureAwait(false);
+                var client = edge && !relayed ? await ReadProxyHeaderAsync(input, peer, handshake.Token).ConfigureAwait(false) : peer;
+                (session, relay) = await StartAsync(input, output, client, edge, relayed, handshake.Token).ConfigureAwait(false);
+            }
+
+            if (relay is not null)
+            {
+                await services.GetRequiredService<PostgresRelay>().RunAsync(relay.Home, relay.Startup, relay.Client, input, pipe, closed).ConfigureAwait(false);
             }
 
             if (session is not null)
             {
                 using var refused = new CancellationTokenSource();
-                using var abort = refused.Token.Register(() => connection.Abort(new ConnectionAbortedException("the API key was refused")));
+                using var abort = refused.Token.Register(abortConnection);
                 using var watch = KeyWatch.Start(services.GetRequiredService<IKeyAuthority>(), session.Key is not null, session.Until,
                     async token => await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(session.ApiKey, token).ConfigureAwait(false) is TsAuthKeyGrant grant ? grant.Key : null,
                     refused, services.GetRequiredService<TimeProvider>());
-                await ServeAsync(session, input, output, connection.ConnectionClosed).ConfigureAwait(false);
+                await ServeAsync(session, input, output, closed).ConfigureAwait(false);
             }
         }
         catch (Exception error) when (error is InvalidDataException or QosMemoryException)
@@ -112,7 +128,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         };
     }
 
-    private async ValueTask<Session?> StartAsync(PipeReader input, PgWriter output, IPAddress? client, bool edge, CancellationToken cancellationToken)
+    private async ValueTask<(Session? Session, Relay? Relay)> StartAsync(PipeReader input, PgWriter output, IPAddress? client, bool edge, bool relayed, CancellationToken cancellationToken)
     {
         for (var negotiated = 0; ; negotiated++)
         {
@@ -139,21 +155,21 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     target.Cancel();
                 }
 
-                return null;
+                return default;
             }
 
             if (!edge)
             {
                 output.Error("28000", "TLS is required: use sslmode=require", fatal: true);
                 await output.FlushAsync(cancellationToken).ConfigureAwait(false);
-                return null;
+                return default;
             }
 
             if (code >> 16 != 3)
             {
                 output.Error("0A000", "unsupported frontend protocol: TerraBase speaks protocol 3.0", fatal: true);
                 await output.FlushAsync(cancellationToken).ConfigureAwait(false);
-                return null;
+                return default;
             }
 
             var parameters = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -172,11 +188,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 output.End();
             }
 
-            return await AuthenticateAsync(input, output, parameters, client, cancellationToken).ConfigureAwait(false);
+            return await AuthenticateAsync(input, output, parameters, client, relayed, cancellationToken).ConfigureAwait(false);
         }
     }
 
-    private async ValueTask<Session?> AuthenticateAsync(PipeReader input, PgWriter output, Dictionary<string, string> parameters, IPAddress? client, CancellationToken cancellationToken)
+    private async ValueTask<(Session? Session, Relay? Relay)> AuthenticateAsync(PipeReader input, PgWriter output, Dictionary<string, string> parameters, IPAddress? client, bool relayed, CancellationToken cancellationToken)
     {
         output.Begin('R');
         output.Int32(3); // AuthenticationCleartextPassword: the password is an API key.
@@ -192,12 +208,17 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
             var secret = new PgReader(body).CString();
             var database = parameters.GetValueOrDefault("database") ?? parameters.GetValueOrDefault("user") ?? "";
-            var access = await AuthorizeAsync(secret, database, client, cancellationToken).ConfigureAwait(false);
+            var access = await AuthorizeAsync(secret, database, client, relayed, cancellationToken).ConfigureAwait(false);
             if (access is PgError error)
             {
                 output.Error(error.Code, error.Message, fatal: true);
                 await output.FlushAsync(cancellationToken).ConfigureAwait(false);
-                return null;
+                return default;
+            }
+
+            if (access is HomeNode home)
+            {
+                return (null, new Relay(home, PostgresRelay.Startup(parameters, secret), client));
             }
 
             var authorized = access is Authorized granted ? granted : throw new InvalidOperationException();
@@ -225,7 +246,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 throw;
             }
 
-            return session;
+            return (session, null);
         }
     }
 
@@ -249,7 +270,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         output.Ready(session.Status);
         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
-    private async ValueTask<Access> AuthorizeAsync(string secret, string database, IPAddress? client, CancellationToken cancellationToken)
+    private async ValueTask<Access> AuthorizeAsync(string secret, string database, IPAddress? client, bool relayed, CancellationToken cancellationToken)
     {
         if (!services.GetRequiredService<TerraBase.Features.Catalog.ICatalogGate>().IsOpen)
         {
@@ -259,7 +280,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         var slash = database.IndexOf('/', StringComparison.Ordinal);
         if (TsAuthKeyExchange.IsKey(secret))
         {
-            return await AuthorizeDashboardKeyAsync(secret, database, slash, client, cancellationToken).ConfigureAwait(false);
+            return await AuthorizeDashboardKeyAsync(secret, database, slash, client, relayed, cancellationToken).ConfigureAwait(false);
         }
 
         if (await Keys.FindAsync(secret, cancellationToken).ConfigureAwait(false) is not ApiKey key
@@ -278,7 +299,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             _ => Denied,
         };
     }
-    private async ValueTask<Access> AuthorizeDashboardKeyAsync(string secret, string database, int slash, IPAddress? client, CancellationToken cancellationToken)
+    private async ValueTask<Access> AuthorizeDashboardKeyAsync(string secret, string database, int slash, IPAddress? client, bool relayed, CancellationToken cancellationToken)
     {
         var grant = await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(secret, cancellationToken).ConfigureAwait(false);
         if (grant is Unavailable)
@@ -315,6 +336,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             return new PgError("57P03", "the database is unavailable; retry");
         }
 
+        if (organization is NotFound)
+        {
+            return await ElsewhereAsync(key.ProjectId, database[(slash + 1)..], relayed, cancellationToken).ConfigureAwait(false);
+        }
+
         if (organization is not string found)
         {
             return Denied;
@@ -327,6 +353,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             {
                 return new PgError("57P03", "the database is unavailable; retry");
             }
+            if (narrowed is NotFound)
+            {
+                return await ElsewhereAsync(key.ProjectId, database[(slash + 1)..], relayed, cancellationToken).ConfigureAwait(false);
+            }
+
             if (narrowed is not TenantContext restricted)
             {
                 return Denied;
@@ -337,9 +368,15 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         {
             TenantContext tenant when restriction is null || restriction == tenant.DatabaseId => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.DocumentsWrite), key.Key, until),
             Unavailable => new PgError("57P03", "the database is unavailable; retry"),
+            NotFound => await ElsewhereAsync(key.ProjectId, database[(slash + 1)..], relayed, cancellationToken).ConfigureAwait(false),
             _ => Denied,
         };
     }
+
+    private async ValueTask<Access> ElsewhereAsync(string project, string database, bool relayed, CancellationToken cancellationToken) =>
+        !relayed && await services.GetRequiredService<IHomeLocator>().LocateAsync(project, database, cancellationToken).ConfigureAwait(false) is { } home
+            ? home
+            : new PgError("3D000", "the database does not exist in this project");
 
     private async Task ServeAsync(Session session, PipeReader input, PgWriter output, CancellationToken cancellationToken)
     {
@@ -617,7 +654,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 {
                     return new PgError("0A000", "Execute with a row limit is not supported yet");
                 }
-                if (running.Pending is not null && await AuthorizeAsync(session.ApiKey, session.Database, session.Client, cancellationToken).ConfigureAwait(false) is PgError stale)
+                if (running.Pending is not null && await AuthorizeAsync(session.ApiKey, session.Database, session.Client, relayed: true, cancellationToken).ConfigureAwait(false) is PgError stale)
                 {
                     running.Pending = null;
                     return stale.Fatal ? stale : Denied;
@@ -789,7 +826,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         session.Track(running);
         try
         {
-            var access = await AuthorizeAsync(session.ApiKey, session.Database, session.Client, running.Token).ConfigureAwait(false);
+            var access = await AuthorizeAsync(session.ApiKey, session.Database, session.Client, relayed: true, running.Token).ConfigureAwait(false);
             if (access is not Authorized { Database: var database })
             {
                 return access is PgError { Fatal: true } refusal ? refusal : Denied;

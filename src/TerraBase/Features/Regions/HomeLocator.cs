@@ -1,0 +1,81 @@
+using System.Collections.Concurrent;
+using System.Net;
+using TerraBase.Hosting;
+
+namespace TerraBase.Features.Regions;
+
+public sealed record HomeNode(string Region, Uri Address);
+
+public interface IHomeLocator
+{
+    ValueTask<HomeNode?> LocateAsync(string project, string? database, CancellationToken cancellationToken);
+}
+
+internal sealed class HomeLocator(IRegionPeers peers, IHttpClientFactory http, InternalCredential credential, TimeProvider time) : IHomeLocator
+{
+    internal const string HttpClientName = "terrabase-peers";
+    internal const string Path = "/v1/internal/home";
+    private const int MaxEntries = 4096;
+    private static readonly TimeSpan Lifetime = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan AskTimeout = TimeSpan.FromSeconds(3);
+    private readonly ConcurrentDictionary<(string Project, string? Database), (HomeNode Home, DateTimeOffset Until)> _found = new();
+
+    public async ValueTask<HomeNode?> LocateAsync(string project, string? database, CancellationToken cancellationToken)
+    {
+        var key = (project, database);
+        if (_found.TryGetValue(key, out var cached) && time.GetUtcNow() < cached.Until)
+        {
+            return cached.Home;
+        }
+
+        var others = await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false);
+        if (others.Count == 0)
+        {
+            return null;
+        }
+
+        using var ask = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        ask.CancelAfter(AskTimeout);
+        var pending = others.Select(peer => AskAsync(peer, project, database, ask.Token)).ToList();
+        while (pending.Count > 0)
+        {
+            var done = await Task.WhenAny(pending).ConfigureAwait(false);
+            pending.Remove(done);
+            if (await done.ConfigureAwait(false) is { } home)
+            {
+                await ask.CancelAsync().ConfigureAwait(false);
+                if (_found.Count >= MaxEntries)
+                {
+                    _found.Clear();
+                }
+
+                _found[key] = (home, time.GetUtcNow() + Lifetime);
+                return home;
+            }
+        }
+
+        _found.TryRemove(key, out _);
+        return null;
+    }
+
+    private async Task<HomeNode?> AskAsync(RegionPeer peer, string project, string? database, CancellationToken cancellationToken)
+    {
+        var query = "?project=" + Uri.EscapeDataString(project) + (database is null ? "" : "&database=" + Uri.EscapeDataString(database));
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(peer.Address, Path + query))
+        {
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+        };
+        credential.Sign(request.Headers);
+        try
+        {
+            using var client = http.CreateClient(HttpClientName);
+            using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            return response.StatusCode == HttpStatusCode.OK ? new HomeNode(peer.Region, peer.Address) : null;
+        }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException)
+        {
+            return null;
+        }
+    }
+}

@@ -50,4 +50,12 @@ internal sealed class InternalCredential
         return CryptographicOperations.FixedTimeEquals(_bytes, Encoding.ASCII.GetBytes(value));
     }
 
+    internal void Sign(System.Net.Http.Headers.HttpRequestHeaders headers)
+    {
+        if (CorrelationKey is not null)
+        {
+            headers.TryAddWithoutValidation(HeaderName, CorrelationKey);
+        }
+    }
+
 }

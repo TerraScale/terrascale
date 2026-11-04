@@ -1,0 +1,131 @@
+using System.Net;
+using Microsoft.AspNetCore.Http.Features;
+using TerraBase.Errors;
+using TerraBase.Features.Management;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
+
+namespace TerraBase.Features.Regions;
+
+internal static class HomeForwarding
+{
+    internal const string ForwardedForHeader = "X-TerraBase-Forwarded-For";
+
+    private static readonly HashSet<string> Unforwarded = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Host", "Connection", "Keep-Alive", "Transfer-Encoding", "TE", "Trailer", "Upgrade", "Proxy-Connection", "Proxy-Authorization",
+        "Content-Length", "Content-Type", "X-TerraScale-Region-Pin", "ts-replay-src", "ts-replay-failed", "X-Forwarded-For", "X-Forwarded-Host",
+        "X-Forwarded-Proto", "Forwarded", ForwardedForHeader, InternalCredential.HeaderName,
+    };
+
+    private static readonly HashSet<string> Unreturned = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Connection", "Keep-Alive", "Transfer-Encoding", "Trailer", "Upgrade", "Proxy-Connection",
+    };
+
+    public static WebApplication UseTerraBaseHomeForwarding(this WebApplication app)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        app.Use(async (context, next) =>
+        {
+            if (await HomeOfAsync(context).ConfigureAwait(false) is { } home)
+            {
+                await ForwardAsync(context, home).ConfigureAwait(false);
+                return;
+            }
+
+            await next(context).ConfigureAwait(false);
+        });
+        return app;
+    }
+
+    internal static string Host(string region) => region + ".api.terrascale.tech";
+
+    private static async ValueTask<HomeNode?> HomeOfAsync(HttpContext context)
+    {
+        if (Listeners.ArrivedOn(context) != TerraBaseListener.Client || Listeners.IsForwarded(context) || context.GetEndpoint() is null
+            || context.Request.RouteValues["project"] is not string project || context.Request.RouteValues.ContainsKey("organization")
+            || context.User.Identity?.IsAuthenticated != true || context.User.FindFirst("project_id")?.Value != project)
+        {
+            return null;
+        }
+
+        var database = context.Request.RouteValues["database"] as string;
+        var services = context.RequestServices;
+        var organization = await services.GetRequiredService<IProjectCatalog>().ProjectOrganizationAsync(project, context.RequestAborted).ConfigureAwait(false);
+        if (organization is string found)
+        {
+            if (database is null
+                || await services.GetRequiredService<IManagementService>().FindDatabaseRecordAsync(found, project, database, context.RequestAborted).ConfigureAwait(false) is not NotFound)
+            {
+                return null;
+            }
+        }
+        else if (organization is not NotFound)
+        {
+            return null;
+        }
+
+        return await services.GetRequiredService<IHomeLocator>().LocateAsync(project, database, context.RequestAborted).ConfigureAwait(false);
+    }
+
+    private static async Task ForwardAsync(HttpContext context, HomeNode home)
+    {
+        var services = context.RequestServices;
+        using var request = new HttpRequestMessage(new HttpMethod(context.Request.Method),
+            new Uri(home.Address, context.Request.Path.ToUriComponent() + context.Request.QueryString.ToUriComponent()))
+        {
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+        };
+        if (context.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true)
+        {
+            request.Content = new StreamContent(context.Request.Body);
+            if (context.Request.ContentType is { } contentType)
+            {
+                request.Content.Headers.TryAddWithoutValidation("Content-Type", contentType);
+            }
+        }
+
+        foreach (var (name, values) in context.Request.Headers)
+        {
+            if (!Unforwarded.Contains(name) && !name.StartsWith(':'))
+            {
+                request.Headers.TryAddWithoutValidation(name, (IEnumerable<string?>)values);
+            }
+        }
+
+        request.Headers.Host = Host(home.Region);
+        request.Headers.TryAddWithoutValidation(ForwardedForHeader, (IpAllowlists.ClientOf(context) ?? IPAddress.None).ToString());
+        services.GetRequiredService<InternalCredential>().Sign(request.Headers);
+        HttpResponseMessage response;
+        try
+        {
+            response = await services.GetRequiredService<IHttpClientFactory>().CreateClient(HomeLocator.HttpClientName)
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, context.RequestAborted).ConfigureAwait(false);
+        }
+        catch (HttpRequestException)
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.Headers["X-TerraBase-Database-Home"] = home.Region;
+            await BadRequests.WriteAsync(context, StatusCodes.Status421MisdirectedRequest, "wrong_region",
+                $"the database is served in {home.Region}: send it to https://{Host(home.Region)}", op: null).ConfigureAwait(false);
+            return;
+        }
+
+        using (response)
+        {
+            context.Response.StatusCode = (int)response.StatusCode;
+            foreach (var (name, values) in response.Headers.Concat(response.Content.Headers))
+            {
+                if (!Unreturned.Contains(name))
+                {
+                    context.Response.Headers[name] = values.ToArray();
+                }
+            }
+
+            await using var body = await response.Content.ReadAsStreamAsync(context.RequestAborted).ConfigureAwait(false);
+            await body.CopyToAsync(context.Response.Body, context.RequestAborted).ConfigureAwait(false);
+        }
+    }
+}

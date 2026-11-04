@@ -24,6 +24,12 @@ internal sealed class ServingRegionCatalog(TerraBaseOptions options) : IRegionCa
 
 public static class RegionsExtensions
 {
-    public static IServiceCollection AddTerraBaseRegions(this IServiceCollection services) =>
+    public static IServiceCollection AddTerraBaseRegions(this IServiceCollection services)
+    {
         services.AddSingleton<IRegionCatalog, ServingRegionCatalog>();
+        services.AddSingleton<IRegionPeers, PeersFileRegionPeers>();
+        services.AddSingleton<IHomeLocator, HomeLocator>();
+        services.AddHttpClient(HomeLocator.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan);
+        return services;
+    }
 }

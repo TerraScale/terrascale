@@ -34,6 +34,12 @@ public static class Listeners
 {
     private static readonly object ListenerKey = typeof(TerraBaseListener);
     private static readonly object InternalCallKey = typeof(AcceptedConnection);
+    private static readonly object ForwardedKey = typeof(HomeForwarding);
+    public static bool IsForwarded(HttpContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        return context.Features.Get<IConnectionItemsFeature>()?.Items.ContainsKey(ForwardedKey) == true;
+    }
     public static TerraBaseListener? ArrivedOn(HttpContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -199,6 +205,31 @@ public static class Listeners
             }
         }
     }
+    public static WebApplication UseTerraBaseForwardedRequests(this WebApplication app)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        app.Use(async (context, next) =>
+        {
+            if (ArrivedOn(context) == TerraBaseListener.Internal
+                && context.Request.Headers.TryGetValue(HomeForwarding.ForwardedForHeader, out var forwardedFor)
+                && context.RequestServices.GetRequiredService<InternalCredential>().Matches(context))
+            {
+                if (forwardedFor is not [{ } address] || !IPAddress.TryParse(address, out var client))
+                {
+                    context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                    return;
+                }
+
+                context.Request.Headers.Remove(HomeForwarding.ForwardedForHeader);
+                context.Request.Headers.Remove(InternalCredential.HeaderName);
+                context.Connection.RemoteIpAddress = client;
+                context.Features.Set<IConnectionItemsFeature>(new AcceptedConnection(TerraBaseListener.Client) { Items = { [ForwardedKey] = true } });
+            }
+
+            await next(context).ConfigureAwait(false);
+        });
+        return app;
+    }
     public static WebApplication UseTerraBaseListeners(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -232,8 +263,8 @@ public static class Listeners
                 var machine = context.RequestServices.GetRequiredService<TerraBaseOptions>().MachineId;
                 context.Response.OnStarting(() =>
                 {
-                    context.Response.Headers["X-TerraBase-Region"] = region;
-                    context.Response.Headers["X-TerraBase-Machine"] = machine;
+                    context.Response.Headers.TryAdd("X-TerraBase-Region", region);
+                    context.Response.Headers.TryAdd("X-TerraBase-Machine", machine);
                     return Task.CompletedTask;
                 });
                 var hasPin = context.Request.Headers.TryGetValue("X-TerraScale-Region-Pin", out var pin);
