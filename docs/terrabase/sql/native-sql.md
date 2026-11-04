@@ -64,15 +64,16 @@ the sandbox works on the statement's tokens with SQLite quoting and comments res
   `DETACH`, `VACUUM` (with or without `INTO`), `ANALYZE`, the same behind `EXPLAIN`, temporary and virtual tables,
   `load_extension`, the file functions (`readfile`, `writefile`, `edit`, `fsdir`, `lsdir`, `zipfile`, `sqlar_*`,
   `csv`, `completion`), the engine's page tables (`sqlite_dbpage`, `btree_dump`, `dbstat`, `sqlite_stmt`), the temp
-  schema, writes to `sqlite_schema`, triggers that read it, creating or renaming to an internal name, and every
+  schema, writes to `sqlite_schema` or `sqlite_sequence`, triggers that read it, creating or renaming to an internal name, and every
   `PRAGMA` except `table_info`, `table_xinfo`, `table_list`, `index_list`, `index_info`, `index_xinfo`,
   `foreign_key_list`, `foreign_key_check` and `foreign_keys` (read, or set to on). PRAGMAs read only the main schema.
 - Internal tables do not exist for customer SQL: names starting with `_tb_`, `_ts_`, `turso_` (so `turso_cdc`,
   `turso_cdc_version` and `turso_sync_cdc`), `__turso_`, `tb_index_`, `fts_dir_`, `pragma_` or `sqlite_stat`, and the
   engine tables `collections`, `commit_offset`, `_collections`, `_indexes` and `_unique`. A statement naming one, even
   as a string literal, answers `no such table` (`sql_error`, PostgreSQL `42P01`).
-- Schema listings show only customer objects: every read of `sqlite_schema` or `sqlite_master` runs on a filtered
-  subquery under the same name, so aliases, qualified columns and views over it work; `PRAGMA table_list` and
+- Schema listings show only customer objects: every read of `sqlite_schema`, `sqlite_master` or `sqlite_sequence` runs
+  on a filtered subquery under the same name, so aliases, qualified columns and views over it work; the engine's
+  `sqlite_sequence` is left out of the listings and cannot be written; `PRAGMA table_list` and
   `PRAGMA foreign_key_check` drop rows of internal tables; the PostgreSQL catalog and table listing use the same rule.
 - In a write, a name equal to one of the database's document collections is refused (`sql_error`).
 
