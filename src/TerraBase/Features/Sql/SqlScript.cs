@@ -286,6 +286,8 @@ internal static class SqlErrors
 
     public static SqlError TooBig(string message) => new("SQLITE_TOOBIG", message);
 
+    public static SqlError Quota(string message) => new("SQLITE_QUOTA", message);
+
     public static SqlError Interrupt { get; } = new("SQLITE_INTERRUPT", "query too expensive: it exceeds the work budget");
 
     public static SqlError Constraint(string kind, string message) => new("SQLITE_CONSTRAINT_" + kind, message);

@@ -109,6 +109,9 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             return await inner.EnterOrganizationsAsync(organizationIds, cancellationToken);
         }
 
+        public ValueTask<OrganizationBytesResult> ReadOrganizationsAsync(CancellationToken cancellationToken) =>
+            inner.ReadOrganizationsAsync(cancellationToken);
+
         public async ValueTask<long> ReadBytesAsync(TenantContext database, CancellationToken cancellationToken)
         {
             var bytes = await inner.ReadBytesAsync(database, cancellationToken);

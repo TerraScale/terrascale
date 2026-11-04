@@ -39,7 +39,7 @@ internal sealed record SqlColumnBody(string Name, string? Decltype);
 internal sealed record SqlErrorBody(SqlErrorDetail Error);
 
 /// <summary>Why a statement failed.</summary>
-/// <param name="Code"><c>sql_error</c>, <c>forbidden_scope</c>, <c>sql_conflict</c> or <c>sql_too_large</c>.</param>
+/// <param name="Code"><c>sql_error</c>, <c>forbidden_scope</c>, <c>sql_conflict</c>, <c>sql_too_large</c> or <c>quota_exceeded</c>.</param>
 /// <param name="Message">The rule that failed; never quotes the statement.</param>
 /// <param name="Statement">Zero-based index of the failing statement.</param>
 /// <param name="SqliteCode">The SQLite error code, such as <c>SQLITE_CONSTRAINT_PRIMARYKEY</c>.</param>

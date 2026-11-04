@@ -44,16 +44,16 @@ namespace TerraScale.Dashboard.Features.Usage
 
     public sealed class UsageService(IUsageMeasurements measurements, SpendingService spending, IUsageReplication replication, IUsageStorage storage, TimeProvider time)
     {
-        // A plan without overage billing stops new writes at its monthly operation units (TerraBase answers operation_allowance).
-        public static string WritesPaused(BillingPlan? plan, long monthlyOperations, long? units, DateTimeOffset now)
+        public static string WritesPaused(BillingPlan? plan, PlanAllowances limits, long? units, DateTimeOffset now)
         {
-            if (plan is not { PriceCents: 0 } || monthlyOperations is <= 0 or long.MaxValue || units is not { } used || used < monthlyOperations)
+            var cap = plan is { PriceCents: 0 } ? limits.MonthlyOperations : limits.MonthlyWriteCap;
+            if (plan is null || cap is <= 0 or long.MaxValue || units is not { } used || used < cap)
             {
                 return "";
             }
 
             var month = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
-            return string.Create(CultureInfo.InvariantCulture, $"Writes are paused: this organization used all {monthlyOperations:N0} operation units of the {plan.Name} plan for {month:MMMM yyyy}. Reads and deletes keep working, and writes resume on {month.AddMonths(1):MMMM d} (UTC).");
+            return string.Create(CultureInfo.InvariantCulture, $"Writes are paused: this organization used all {cap:N0} write units of the {plan.Name} plan for {month:MMMM yyyy}. Reads keep working, and writes resume on {month.AddMonths(1):MMMM d} (UTC).");
         }
 
         public async Task<UsagePage> LoadAsync(ShellModel shell, UsageSelection selection, string tab, string saved, CancellationToken cancellationToken)
@@ -100,12 +100,14 @@ namespace TerraScale.Dashboard.Features.Usage
 
             long? organizationStorage = complete ? logical : null; // Collection fallback excludes files.
             var units = complete ? result.OperationUnits(controls.Projects.Select(project => project.Id), time.GetUtcNow()) : null;
+            var sqlReads = complete ? result.SqlReadUnits(controls.Projects.Select(project => project.Id), time.GetUtcNow()) : null;
             var allowances = new[] {
-                Allowance("Operation units this month", plan?.OperationsAllowance ?? "Limit not published", limits.MonthlyOperations, units ?? 0, false, units is not null),
+                Allowance("Write units this month", plan?.OperationsAllowance ?? "Limit not published", limits.MonthlyOperations, units ?? 0, false, units is not null),
+                Allowance("SQL reads this month", "Not limited", limits.MonthlySqlReads is long.MaxValue ? 0 : limits.MonthlySqlReads, sqlReads ?? 0, false, sqlReads is not null, "read units/month"),
                 Allowance("Storage across regions", plan?.StorageAllowance ?? "Limit not published", limits.StorageBytes, 0, true, false),
                 Allowance("Client egress this month", plan?.EgressAllowance ?? "Limit not published", limits.MonthlyEgressBytes, 0, true, false)
             };
-            var writesPaused = WritesPaused(plan, limits.MonthlyOperations, units, time.GetUtcNow());
+            var writesPaused = WritesPaused(plan, limits, units, time.GetUtcNow());
             var scope = result.Scope.State == UsageSourceState.Measured ? result.Scope.Reading : null;
             if (scope is not null && (scope.ProjectId != selection.Context.Project?.Id || scope.DatabaseId != selection.DatabaseId))
             {
@@ -149,11 +151,11 @@ namespace TerraScale.Dashboard.Features.Usage
                 ? InternalBillingService.Estimate(selection.Context.Organization, result, time.GetUtcNow()) : null
             };
 
-            UsageAllowance Allowance(string title, string allowance, long limit, long used, bool bytes, bool measured)
+            UsageAllowance Allowance(string title, string allowance, long limit, long used, bool bytes, bool measured, string unit = "write units/month")
             {
-                return new(title, !bytes && limit > 0 ? ChartGeometry.Compact(limit) + " operation units/month" : allowance,
+                return new(title, !bytes && limit > 0 ? ChartGeometry.Compact(limit) + " " + unit : allowance,
                 measured ? bytes ? MetricFormat.Bytes(used) : ChartGeometry.Compact(used) : "Not metered",
-                measured && limit > 0 ? ValueFormat.Percent(used, limit) : null, name, measured && !bytes ? used.ToString("N0", CultureInfo.InvariantCulture) : null, !bytes && limit > 0 ? limit.ToString("N0", CultureInfo.InvariantCulture) + " operation units/month" : null);
+                measured && limit > 0 ? ValueFormat.Percent(used, limit) : null, name, measured && !bytes ? used.ToString("N0", CultureInfo.InvariantCulture) : null, !bytes && limit > 0 ? limit.ToString("N0", CultureInfo.InvariantCulture) + " " + unit : null);
             }
 
             async Task<UsageStorageSnapshot?> StoredAsync()

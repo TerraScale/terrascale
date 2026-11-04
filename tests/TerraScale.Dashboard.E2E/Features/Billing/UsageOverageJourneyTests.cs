@@ -9,6 +9,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
     public sealed class UsageOverageJourneyTests(DashboardE2EFixture fixture)
     {
         private const long StarterAllowance = 250_000;
+        private const long StarterStorageBytes = 1_000_000_000;
 
         [Test]
         public async Task StarterOverageBillsOnePendingSubscriptionItemAboveWhatIsInvoiced()
@@ -48,6 +49,17 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await Assert.That(items.Length).IsEqualTo(2);
             await Assert.That(items.Single(item => item.GetProperty("invoice").ValueKind == JsonValueKind.Null).GetProperty("quantity").GetInt64()).IsEqualTo(500_000);
             await Assert.That(await UsageAsync(client)).StartsWith("Usage this period: $12.50 so far, for 2,500,000 operation units");
+
+            var now = DateTimeOffset.UtcNow;
+            var month = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
+            var hours = (long)(month.AddMonths(1) - month).TotalHours;
+            var storage = (await ReportAsync(client, StarterAllowance + 2_500_000, storageByteHours: (StarterStorageBytes + 2_000_000_000) * hours))
+                .Single(item => item.GetProperty("metadata").GetProperty("terrascale_kind").GetString() == "storage_overage");
+            await Assert.That(storage.GetProperty("quantity").GetInt64()).IsEqualTo(2_000).Because("2 GB over the allowance for the whole month is 2,000 MB-months.");
+            await Assert.That(decimal.Parse(storage.GetProperty("unitAmountDecimal").GetString()!, CultureInfo.InvariantCulture)).IsEqualTo(0.05m);
+            var again = await ReportAsync(client, StarterAllowance + 2_500_000, storageByteHours: (StarterStorageBytes + 2_000_000_000) * hours);
+            await Assert.That(again.Count(item => item.GetProperty("metadata").GetProperty("terrascale_kind").GetString() == "storage_overage")).IsEqualTo(1)
+                .Because("reporting the same month again never charges twice");
         }
 
         [Test]
@@ -56,8 +68,8 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             using var client = fixture.CreateClient();
             await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
             await Assert.That((await ReportAsync(client, 10_000_000)).Length).IsEqualTo(0);
-            await Assert.That(await UsageAsync(client)).IsEqualTo("Free stops new writes at its 50,000 operation units a month; reads and deletes keep working. No usage charges.");
-            await AssertSpendingAsync(client, "Free stops new writes at its included operation allowance; reads and deletes keep working. No usage charges.");
+            await Assert.That(await UsageAsync(client)).IsEqualTo("Free stops new writes at its 50,000 operation units a month; reads keep working. No usage charges.");
+            await AssertSpendingAsync(client, "Free stops new writes at its included operation allowance; reads keep working. No usage charges.");
         }
 
         private static async Task AssertSpendingAsync(HttpClient client, string disclosure)
@@ -70,11 +82,16 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await Assert.That(html.Contains("paid overages are not supported", StringComparison.OrdinalIgnoreCase)).IsFalse();
         }
 
-        private static async Task<JsonElement[]> ReportAsync(HttpClient client, long units, bool invoice = false)
+        private static async Task<JsonElement[]> ReportAsync(HttpClient client, long units, bool invoice = false, long? storageByteHours = null)
         {
             var csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=billing");
             using var response = await HttpJourney.PostFormAsync(client, "/__test/billing/overage", new()
-            { ["_csrf"] = csrf, ["units"] = units.ToString(CultureInfo.InvariantCulture), ["invoice"] = invoice ? "1" : "" });
+            {
+                ["_csrf"] = csrf,
+                ["units"] = units.ToString(CultureInfo.InvariantCulture),
+                ["invoice"] = invoice ? "1" : "",
+                ["storageByteHours"] = storageByteHours?.ToString(CultureInfo.InvariantCulture) ?? ""
+            });
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
             using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             return body.RootElement.EnumerateArray().Select(item => item.Clone()).ToArray();

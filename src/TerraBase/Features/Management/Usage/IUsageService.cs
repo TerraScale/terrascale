@@ -31,16 +31,17 @@ public sealed record DatabaseUsage(
     string DatabaseId, long StorageBytes, long LogicalBytes, long Collections, long Documents, long Reads, long Writes, UsagePeriod Period, IReadOnlyList<UsagePoint> Series);
 
 /// <summary>
-/// Billed operation units of the current UTC month (https://terrascale.tech/pricing.json <c>metering.operationUnit</c>):
-/// each started 4 KiB of a document read or written, summed over every region and node, including databases deleted
-/// since. Replication is not billed. The plan allowance applies to <see cref="OrganizationUnits"/>.
+/// Operation units of the current UTC month (https://terrascale.tech/pricing.json <c>metering.operationUnit</c>), summed
+/// over every region and node, including databases deleted since. Writes are billed; SQL reads count against fair use and
+/// shape reads are not counted. The plan allowance and cap apply to <see cref="OrganizationUnits"/>.
 /// </summary>
 /// <param name="Month">The UTC month, <c>yyyy-MM</c>.</param>
 /// <param name="ReadUnits">Read units of the project.</param>
 /// <param name="WriteUnits">Write units of the project.</param>
-/// <param name="Units">Read plus write units of the project.</param>
-/// <param name="OrganizationUnits">Read plus write units of every project of the organization: what the monthly allowance counts.</param>
-public sealed record UsageMonth(string Month, long ReadUnits, long WriteUnits, long Units, long OrganizationUnits);
+/// <param name="Units">Billed write units of the project.</param>
+/// <param name="OrganizationUnits">Billed write units of every project of the organization: what the monthly allowance and cap count.</param>
+/// <param name="OrganizationReadUnits">Unbilled SQL read units of every project of the organization: what the monthly fair use counts.</param>
+public sealed record UsageMonth(string Month, long ReadUnits, long WriteUnits, long Units, long OrganizationUnits, long OrganizationReadUnits);
 
 /// <summary>What every database of a project uses, summed.</summary>
 /// <param name="ProjectId">The project.</param>
@@ -71,9 +72,11 @@ public readonly union ProjectUsageResult(ProjectUsage, NotFound, Validation, Una
 
 /// <summary>One organization's billed usage this UTC month.</summary>
 /// <param name="OrganizationId">The organization.</param>
-/// <param name="Operations">Read plus write operation units of every project, region and node: what the allowance counts.</param>
+/// <param name="Operations">Write units of every project, region and node: what the allowance counts and overage bills.</param>
 /// <param name="LogicalBytes">Not reported yet: null.</param>
-public sealed record AllowanceUsage(string OrganizationId, long? Operations, long? LogicalBytes);
+/// <param name="SqlReads">SQL read units of every project, region and node: counted against fair use, never billed.</param>
+/// <param name="StorageByteHours">Stored bytes times hours this month, sampled hourly on every node: the month's GB-months.</param>
+public sealed record AllowanceUsage(string OrganizationId, long? Operations, long? LogicalBytes, long? SqlReads = null, long? StorageByteHours = null);
 
 /// <summary>A page of organizations' billed usage this UTC month, in organization id order.</summary>
 /// <param name="PeriodStart">The first instant of the UTC month.</param>
@@ -81,7 +84,7 @@ public sealed record AllowanceUsage(string OrganizationId, long? Operations, lon
 /// <param name="Items">Up to 25 organizations after the requested one.</param>
 /// <param name="Next">The last organization of the page when more follow; pass it as <c>after</c>.</param>
 /// <param name="OperationsContract">What <see cref="AllowanceUsage.Operations"/> counts.</param>
-/// <param name="StorageContract">What <see cref="AllowanceUsage.LogicalBytes"/> counts; <c>none</c> while it is not reported.</param>
+/// <param name="StorageContract">What <see cref="AllowanceUsage.StorageByteHours"/> counts.</param>
 public sealed record AllowanceUsagePage(
     DateTimeOffset PeriodStart, DateTimeOffset ObservedAt, IReadOnlyList<AllowanceUsage> Items, string? Next, string OperationsContract, string StorageContract);
 
@@ -97,6 +100,6 @@ public interface IUsageService
     /// <summary>Sums the usage of every database of a project; <see cref="NotFound"/> when the project does not exist.</summary>
     ValueTask<ProjectUsageResult> GetProjectUsageAsync(string userId, string organizationId, string projectId, UsageWindow window, CancellationToken cancellationToken);
 
-    /// <summary>Every organization's billed usage this month, 25 at a time after <paramref name="after"/>.</summary>
-    ValueTask<AllowanceUsageResult> ListAllowanceUsageAsync(string? after, CancellationToken cancellationToken);
+    /// <summary>Every organization's billed usage this month, or the previous one, 25 at a time after <paramref name="after"/>.</summary>
+    ValueTask<AllowanceUsageResult> ListAllowanceUsageAsync(string? after, bool previous, CancellationToken cancellationToken);
 }

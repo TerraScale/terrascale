@@ -21,11 +21,11 @@ else
     <section class="ts-card" aria-labelledby="spending-title"><div class="ts-card-body ts-stack-sm"><h2 class="ts-card-title" id="spending-title">Spending and overages</h2>
     @if (plan is { PriceCents: > 0 })
     {
-        <p class="ts-meta">Operation units above @plan.Name's included allowance are billed at @OperationUnitOverage.Rate operation units. Overage charges are added to your invoice.</p>
+        <p class="ts-meta">Operation units above @plan.Name's included allowance are billed at @OperationUnitOverage.Rate operation units. Writes stop at @plan.Allowances.MonthlyWriteCap.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) units a month.</p>
     }
     else if (plan is { PriceCents: 0 })
     {
-        <p class="ts-meta">Free stops new writes at its included operation allowance; reads and deletes keep working. No usage charges. Paid plans bill operation units above their included allowance at @OperationUnitOverage.Rate operation units.</p>
+        <p class="ts-meta">Free stops new writes at its included operation allowance; reads keep working. No usage charges. Paid plans bill operation units above their included allowance at @OperationUnitOverage.Rate operation units.</p>
     }
     else
     {
