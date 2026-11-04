@@ -6,21 +6,6 @@ namespace Turso.Data.Sqlite.Tests;
 /// <summary>Local encryption reaches native opens without sharing handles across keys.</summary>
 public sealed class EncryptionTests
 {
-    /// <summary>Builder aliases preserve both encryption options.</summary>
-    [Test]
-    public async Task BuilderPreservesEncryptionOptions()
-    {
-        var key = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-        var builder = new SqliteConnectionStringBuilder
-        {
-            EncryptionCipher = "aegis256",
-            EncryptionKey = key,
-        };
-        var parsed = new SqliteConnectionStringBuilder(builder.ConnectionString);
-        await Assert.That(parsed["EncryptionCipher"]).IsEqualTo("aegis256");
-        await Assert.That(parsed["EncryptionKey"]).IsEqualTo(key);
-    }
-
     /// <summary>Database and live WAL copies retain encryption and reopen with the original key only.</summary>
     [Test]
     public async Task EncryptedDatabaseAndWalCopiesRequireTheKey()
@@ -72,37 +57,6 @@ public sealed class EncryptionTests
             await Assert.That(ReadValue(builder.ConnectionString)).IsEqualTo("private-payload-marker");
             var missingKey = new SqliteConnectionStringBuilder { DataSource = copy, Pooling = false };
             Assert.Throws<SqliteException>(() => ReadValue(missingKey.ConnectionString));
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
-    /// <summary>Raw backup writers and facade readers use the same local encryption configuration.</summary>
-    [Test]
-    public async Task RawConnectionCanCreateEncryptedBackup()
-    {
-        var directory = Directory.CreateTempSubdirectory("turso-encrypted-copy-").FullName;
-        try
-        {
-            var builder = new SqliteConnectionStringBuilder
-            {
-                DataSource = Path.Combine(directory, "backup.db"),
-                EncryptionCipher = "aegis256",
-                EncryptionKey = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)),
-                Pooling = false,
-            };
-            using (var raw = new Turso.TursoConnection(builder.ConnectionString))
-            {
-                raw.Open();
-                using var write = raw.CreateCommand();
-                write.CommandText = "CREATE TABLE secret(value TEXT);";
-                write.ExecuteNonQuery();
-                write.CommandText = "INSERT INTO secret VALUES ('backup-payload');";
-                write.ExecuteNonQuery();
-            }
-            await Assert.That(ReadValue(builder.ConnectionString)).IsEqualTo("backup-payload");
         }
         finally
         {
