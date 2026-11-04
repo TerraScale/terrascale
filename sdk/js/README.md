@@ -99,6 +99,19 @@ The [agent route manifest](sdk-agent-route-manifest.json) and synthetic recorded
 decoding and refusals against [the shared contract](../SQL-API.md#databases-for-agents). Live producer qualification
 for these methods has not run; this evidence does not establish deployed TTL deletion or key isolation.
 
+## Placement
+
+```js
+const db = await client.createDatabase(project, "orders", { homeRegion: "gru", replicaRegions: ["sjc"] });
+await client.setDatabasePlacement(project, db.id, { allRegions: true });
+await client.moveDatabaseHome(project, db.id, "sjc");
+```
+
+Databases carry `homeRegion`, `replicaRegions` and `allRegions`. `setDatabasePlacement` takes exactly one of
+`replicaRegions` or `allRegions`. `moveDatabaseHome` waits for the move without a client timeout and resends only on
+`503 move_unresolved` (at most 5 times, after `Retry-After` or 1 s). Encoding and decoding are covered by the
+[recorded placement fixtures](../dotnet/contracts/terrabase/placement/); live producer qualification has not run.
+
 ## Atlas and endpoint selection
 
 The [zero-configuration operating contract](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert)

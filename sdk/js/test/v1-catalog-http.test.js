@@ -8,7 +8,7 @@ const id = "01ARZ3NDEKTSV4RRFFQ69G5FA2";
 const token = "fixture.payload.signature";
 const prefix = `/v1/projects/${project}/databases`;
 const database = { id, projectId: project, name: "app", branchedFrom: null,
-  createdAt: "2026-10-13T12:00:00+00:00", region: "region-123", homeRegion: "region-123" };
+  createdAt: "2026-10-13T12:00:00+00:00", region: "region-123", homeRegion: "region-123", replicaRegions: [], allRegions: false };
 /** @typedef {{ method: string | undefined; url: URL; headers: import("node:http").IncomingHttpHeaders; body: string }} WireRequest */
 /** @type {import("node:http").Server[]} */
 const servers = [];

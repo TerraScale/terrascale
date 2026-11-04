@@ -4,7 +4,7 @@ import { RequestTransportError } from "../src/v1/transport.js";
 import { entity, fixture, json, project, token } from "./helpers/v1-http.js";
 
 const database = { id: entity, projectId: project, name: "app", branchedFrom: null,
-  createdAt: "2026-10-13T12:00:00+00:00", region: "gru", homeRegion: "gru" };
+  createdAt: "2026-10-13T12:00:00+00:00", region: "gru", homeRegion: "gru", replicaRegions: [], allRegions: false };
 const busy = { error: { code: "tenant_busy", message: "organization request budget exceeded" } };
 
 afterEach(() => { vi.useRealTimers(); });
