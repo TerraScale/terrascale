@@ -190,7 +190,7 @@ namespace TerraScale.Dashboard.E2E.Platform
                         await textarea.EvaluateAsync("(el, text) => { el.value = text; el.dispatchEvent(new Event('input', { bubbles: true })); }", value);
                         await Assert.That(await textarea.InputValueAsync()).IsEqualTo(value);
                     }
-                    Task ShotAsync(string key) => page.ScreenshotAsync(new() { Path = Path.Combine(output, $"{key}-{size}.png"), FullPage = true, Caret = ScreenshotCaret.Hide, Mask = [page.Locator(".ts-apikeys-secret-value, #access-token-secret, input[type=password]")] });
+                    Task ShotAsync(string key) => page.ScreenshotAsync(new() { Path = Path.Combine(output, $"{key}-{size}.png"), FullPage = true, Animations = ScreenshotAnimations.Disabled, Caret = ScreenshotCaret.Hide, Mask = [page.Locator(".ts-apikeys-secret-value, #access-token-secret, input[type=password]")] });
                     Task<IAPIResponse> McpAsync(object rpc) => context.APIRequest.PostAsync(origin + "/mcp", new()
                     {
                         Headers = new Dictionary<string, string> { ["Authorization"] = "Bearer " + secret, ["Accept"] = "application/json, text/event-stream" },
