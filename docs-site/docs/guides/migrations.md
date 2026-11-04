@@ -78,7 +78,7 @@ If nothing differs, it prints `<db> has the schema of <base>`. `diff` does not c
 
 ## Read tables
 
-`ts exec <db> <statement>` runs one SQL statement in its own transaction and prints each row as a JSON line, for example `ts exec app 'SELECT customer, total_cents FROM orders LIMIT 10'`.
+`ts sql <db> <statement>` runs one SQL statement in its own transaction and prints each row as a JSON line, for example `ts sql app 'SELECT customer, total_cents FROM orders LIMIT 10'`.
 
 ## Example workflow
 

@@ -167,7 +167,15 @@ ts usage example   # one database
 
 ## Run SQL
 
-SQL is described in [SQL](/concepts/sql). The CLI command for running it is not documented here yet.
+SQL is described in [SQL](/concepts/sql). Run one statement with `ts sql <db> <statement>`; rows print as JSON lines, writes print `N rows affected`:
+
+```sh
+ts sql example "CREATE TABLE people (id TEXT PRIMARY KEY, name TEXT)"
+ts sql example "INSERT INTO people (id, name) VALUES ('a1', 'ada'), ('a2', 'bob')"
+ts sql example "SELECT id, name FROM people ORDER BY id"
+```
+
+With several projects, put `-project <name>` before `sql`. For a multiline SQL shell with session history, use `ts shell <db>` (`.run` submits; each engine call runs exactly one statement).
 
 ## Schema migrations
 
@@ -176,7 +184,7 @@ ts migrate new "add orders"    # add the next migrations/NNNN_<name>.sql
 ts migrate up app              # apply pending migrations, each in one transaction
 ts migrate status app          # list each migration and whether it is applied
 ts migrate diff app-orders     # print the schema changes against the branched-from database
-ts exec app 'SELECT * FROM orders LIMIT 10'  # run one relational SQL statement
+ts sql app 'SELECT * FROM orders LIMIT 10'  # run one SQL statement
 ```
 
 See [Schema migrations](/guides/migrations) for the file format, history and workflow.

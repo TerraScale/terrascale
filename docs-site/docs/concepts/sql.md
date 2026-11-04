@@ -16,12 +16,12 @@ You need a database named `app` and an API key with read and write access to it.
 
 ```sh
 ts auth login
-ts exec app "CREATE TABLE customers (id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, seats INTEGER NOT NULL)"
-ts exec app "INSERT INTO customers (email, seats) VALUES ('team@example.com', 12)"
-ts exec app "SELECT email, seats FROM customers WHERE seats >= 10"
+ts sql app "CREATE TABLE customers (id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, seats INTEGER NOT NULL)"
+ts sql app "INSERT INTO customers (email, seats) VALUES ('team@example.com', 12)"
+ts sql app "SELECT email, seats FROM customers WHERE seats >= 10"
 ```
 
-`ts exec` runs one statement in its own transaction and prints rows as JSON lines. With several projects, put `-project <name>` before `exec`.
+`ts sql` runs one statement in its own transaction and prints rows as JSON lines. With several projects, put `-project <name>` before `sql`.
 
 ### psql
 
