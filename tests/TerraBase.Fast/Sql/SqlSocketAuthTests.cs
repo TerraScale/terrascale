@@ -13,7 +13,7 @@ public sealed class SqlSocketAuthTests
     [Test]
     public async Task A_socket_without_a_valid_credential_is_refused()
     {
-        await using var db = await StartSharedAsync();
+        await using var db = await StartAsync();
         var forged = "tb_" + Faker.Random.AlphaNumeric(40);
         await using var sqlFirst = await db.BrowserSocketAsync();
         await using var badToken = await db.BrowserSocketAsync();
