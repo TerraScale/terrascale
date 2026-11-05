@@ -28,20 +28,37 @@ internal sealed class SqlService(
             : Local();
     }
 
-    public async ValueTask<ReplicaSqlOutcome> ExecuteOnReplicaAsync(
+    public ValueTask<ReplicaSqlOutcome> ExecuteOnReplicaAsync(
         TenantContext database, IReplicaReader reader, IReadOnlyList<(SqlStatementPlan Plan, SqlCommand Command)> statements, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(database);
         ArgumentNullException.ThrowIfNull(reader);
+        return ExecuteOnCopyAsync(database, statement => reader.ExecuteAsync(statement, cancellationToken), statements, write: false, cancellationToken);
+    }
+
+    public void RecordLocalWrites(TenantContext database, long rows)
+    {
+        if (rows > 0)
+        {
+            usage.RecordWrites(database, (int)rows, rows);
+        }
+    }
+
+    public async ValueTask<ReplicaSqlOutcome> ExecuteOnCopyAsync(
+        TenantContext database, Func<SqlStatement, ValueTask<SqlStatementResult>> run, IReadOnlyList<(SqlStatementPlan Plan, SqlCommand Command)> statements,
+        bool write, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(statements);
         var results = new List<SqlResult>(statements.Count);
         long units = 0;
         for (var i = 0; i < statements.Count; i++)
         {
             var (plan, command) = statements[i];
-            if (plan.ReadsTables)
+            if (plan.ReadsTables || plan.Kind == SqlStatementKind.Write)
             {
-                switch (await allowance.CheckAsync(database, MeteredOperation.SqlRead, cancellationToken).ConfigureAwait(false))
+                switch (await allowance.CheckAsync(database, plan.Kind == SqlStatementKind.Write ? MeteredOperation.Write : MeteredOperation.SqlRead, cancellationToken)
+                    .ConfigureAwait(false))
                 {
                     case QuotaExceeded exceeded:
                         return new ReplicaSqlFailure(SqlErrors.Quota(exceeded.Message), i);
@@ -58,15 +75,14 @@ internal sealed class SqlService(
             SqlStatementResult raw;
             try
             {
-                raw = await reader.ExecuteAsync(
-                    new SqlStatement(await SqlSession.RunTextAsync(plan, statement => reader.ExecuteAsync(statement, cancellationToken)).ConfigureAwait(false), [.. command.Args.Select(SqlSession.Bound)],
+                raw = await run(
+                    new SqlStatement(await SqlSession.RunTextAsync(plan, run).ConfigureAwait(false), [.. command.Args.Select(SqlSession.Bound)],
                         command.Named.ToDictionary(pair => pair.Key, pair => SqlSession.Bound(pair.Value), StringComparer.Ordinal),
-                        SqlSession.MaxRows, SqlSession.MaxBytes, SqlLimits.MaxRequestTime),
-                    cancellationToken).ConfigureAwait(false);
+                        SqlSession.MaxRows, SqlSession.MaxBytes, SqlLimits.MaxRequestTime)).ConfigureAwait(false);
             }
             catch (SqlStatementException error)
             {
-                return new ReplicaSqlFailure(SqlSession.Map(error, canWrite: false), i);
+                return new ReplicaSqlFailure(SqlSession.Map(error, canWrite: write), i);
             }
 
             if (plan.HiddenColumns.Count > 0)
@@ -86,8 +102,9 @@ internal sealed class SqlService(
 
             var result = new SqlResult(
                 [.. raw.Columns.Select(column => new SqlColumn(column.Name, column.DeclType))],
-                [.. raw.Rows.Select(row => (IReadOnlyList<SqlValue>)Array.ConvertAll(row, SqlSession.Value))], 0, null);
-            units += plan.ReadsTables ? SqlSession.ReadUnits(result) : 0;
+                [.. raw.Rows.Select(row => (IReadOnlyList<SqlValue>)Array.ConvertAll(row, SqlSession.Value))],
+                plan.Kind == SqlStatementKind.Write ? raw.RowsAffected : 0, null);
+            units += plan.ReadsTables && plan.Kind != SqlStatementKind.Write ? SqlSession.ReadUnits(result) : 0;
             results.Add(result);
         }
 

@@ -5,6 +5,9 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Npgsql;
+using TerraBase.Configuration;
+using TerraBase.Features.Clock;
+using TerraBase.Features.HomePush;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
 using TerraBase.Primitives;
@@ -147,6 +150,27 @@ public sealed class WriteRouterTests
         await Assert.That((await cluster.HomeAsync("SELECT n FROM counters WHERE id = 'c1'", token))[0].GetInt64()).IsEqualTo(7);
     }
 
+    [Test]
+    public async Task A_home_durable_write_in_a_replica_region_commits_locally_and_answers_after_the_home_applied_it()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var nats = await JetStreamServer.StartAsync(token);
+        await using var cluster = await Cluster.StartAsync(token, nats);
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(cluster.Sjc.Server.Services.GetRequiredService<HomePush>().Started), TimeSpan.FromSeconds(30));
+        var id = EntityIds.New().ToString();
+        using var request = new HttpRequestMessage(HttpMethod.Post, ManagementApi.Uri(cluster.Database.Data + "/sql/execute"))
+        {
+            Content = JsonContent.Create(new { statements = new[] { new { sql = $"INSERT INTO events (id, body) VALUES ('{id}', 'from sjc')" } } }),
+        };
+        request.Headers.Add("TerraScale-Durability", "home");
+
+        using var response = await cluster.ViaSjc.SendAsync(request, token);
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await response.Content.ReadAsStringAsync(token));
+        await Assert.That(response.Headers.GetValues("TerraScale-Write-Route").Single()).IsEqualTo("route=local; reason=ulid_insert; commit=local");
+        await Assert.That((await cluster.HomeAsync($"SELECT body FROM events WHERE id = '{id}'", token))[0].GetString()).IsEqualTo("from sjc");
+    }
+
     private sealed class Cluster : IAsyncDisposable
     {
         private readonly TestIssuer _issuer;
@@ -170,13 +194,13 @@ public sealed class WriteRouterTests
 
         public string Key { get; }
 
-        public static async Task<Cluster> StartAsync(CancellationToken token)
+        public static async Task<Cluster> StartAsync(CancellationToken token, JetStreamServer? nats = null)
         {
             var issuer = new TestIssuer();
             var regions = new List<RegionPeer>();
-            var gru = await StartAsync("gru", issuer, regions);
+            var gru = await StartAsync("gru", issuer, regions, nats);
             regions.Add(new RegionPeer("gru", gru.Server.BaseAddress));
-            var sjc = await StartAsync("sjc", issuer, regions);
+            var sjc = await StartAsync("sjc", issuer, regions, nats);
             regions.Add(new RegionPeer("sjc", sjc.Server.BaseAddress));
             var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
             var project = await gru.CreateProjectAsync(organization, "Project");
@@ -220,13 +244,20 @@ public sealed class WriteRouterTests
             _issuer.Dispose();
         }
 
-        private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, List<RegionPeer> regions) => ManagementApi.StartAsync(
+        private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, List<RegionPeer> regions, JetStreamServer? nats) => ManagementApi.StartAsync(
             settings => settings["region"] = region,
             services =>
             {
                 services.Replace(ServiceDescriptor.Singleton<IRegionPeers>(new RegionView(region, regions)));
                 services.Replace(ServiceDescriptor.Singleton<IRegionCatalog>(new Serving()));
                 services.Replace(ServiceDescriptor.Singleton<IReplicaPeers>(new ReplicaView(region, regions)));
+                if (nats is not null)
+                {
+                    var registered = services.Single(service => service.ServiceType == typeof(TerraBaseOptions));
+                    services[services.IndexOf(registered)] = ServiceDescriptor.Singleton(
+                        (TerraBaseOptions)registered.ImplementationInstance! with { NatsUrl = nats.Url, NatsToken = nats.Token });
+                    services.AddSingleton<ILocalWriteClock>(new Admitted());
+                }
             },
             sharedIssuer: issuer);
 
@@ -243,6 +274,13 @@ public sealed class WriteRouterTests
             }));
             return key;
         }
+    }
+
+    private sealed class Admitted : ILocalWriteClock
+    {
+        public bool Allowed => true;
+
+        public double SkewMilliseconds => 0;
     }
 
     private sealed class Serving : IRegionCatalog
