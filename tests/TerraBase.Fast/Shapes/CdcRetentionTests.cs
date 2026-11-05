@@ -30,6 +30,10 @@ public sealed class CdcRetentionTests
         using var grant = await data.PutAsJsonAsync(ManagementApi.Uri(host.Database.Data + "/tables/people/read-grant"), new { where = "text IS NOT NULL" }, token);
         grant.EnsureSuccessStatusCode();
         await host.ShipAsync(TimeSpan.FromSeconds(10), token);
+        var backupService = host.Api.Server.Services.GetRequiredService<IContinuousBackup>();
+        var catalog = backupService.Status.Files.Single(file => file.File == BackupLayout.File(null, "local"));
+        await Assert.That(catalog.LastError).IsNull();
+        await Assert.That(catalog.LastShippedAt).IsNotNull();
         using var revoked = await data.DeleteAsync(ManagementApi.Uri(host.Database.Data + "/tables/people/read-grant"), token);
         await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await host.PutAsync("people", "one", "first", token);
