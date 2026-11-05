@@ -44,7 +44,7 @@ public sealed class RegionShapeStreamTests
 
         await using (var home = await world.HomeNodeAsync())
         {
-            await TerraBaseTestServer.EventuallyAsync(async _ => (await world.HomeSqlAsync("SELECT count(*) FROM items")).GetRawText() == "[[2]]", TimeSpan.FromSeconds(10));
+            await TerraBaseTestServer.EventuallyAsync(async _ => (await world.HomeSqlAsync("SELECT v FROM items WHERE id = 'p'")).GetRawText() == "[[\"sjc\"]]", TimeSpan.FromSeconds(10));
         }
 
         await fra.PullAsync(token);
