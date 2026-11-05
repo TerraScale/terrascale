@@ -142,6 +142,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(TerraBase.Features.Replicas.RegionalPrepare))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.RegionalStatus))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.RegionalDrain))]
+[JsonSerializable(typeof(TerraBase.Features.Replicas.RegionalCatalogSnapshot))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.HomeLease))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.HeldRevisionAnswer))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaHeldNotice))]
