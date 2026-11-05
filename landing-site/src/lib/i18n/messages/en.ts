@@ -124,7 +124,7 @@ export const en = {
       },
       {
         q: 'Can I use my Postgres tools?',
-        a: 'Yes, through the wire protocol. psql and Postgres drivers connect to pg.terrascale.tech with an API key as the password. Statements use the SQLite dialect, so Postgres-only syntax is refused.',
+        a: 'Yes, through the Postgres wire protocol. psql and Postgres drivers connect to pg.terrascale.tech with an API key as the password. Statements use the SQLite dialect, so Postgres-only syntax is refused.',
       },
       {
         q: 'Is there an uptime commitment?',
@@ -339,7 +339,7 @@ export const en = {
     regionsAria: 'Serving regions',
     missionTitle: 'One platform for databases, keys, and billing.',
     pillars: [
-      { title: 'SQL on Turso' },
+      { title: 'SQL databases' },
       { title: 'One write region, encrypted read replicas' },
       { title: 'Plan write caps' },
     ],
