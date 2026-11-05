@@ -184,8 +184,8 @@ public sealed partial class OidcHarness : IAsyncDisposable
         CapturingLogs? logs = null, TimeProvider? clock = null, Action<IServiceCollection>? services = null, bool runClosureWorker = true,
         Action<WebApplicationBuilder>? configure = null)
     {
-        // The real application's startup bootstrap provisions its collections.
-        // Repeating that setup here would create every collection twice for each
+        // The real application's startup bootstrap provisions its tables.
+        // Repeating that setup here would create every table twice for each
         // harness without testing another behavior.
         var (tenant, database) = await fixture.CreateDatabaseAsync(provision: false);
         email ??= new CapturingEmailSender();
@@ -201,7 +201,7 @@ public sealed partial class OidcHarness : IAsyncDisposable
     /// <summary>Creates a database in this test's isolated TerraBase project and returns its immutable restriction.</summary>
     public async Task<string> CreateDatabaseIdAsync(string name)
     {
-        var database = await this.fixture!.Server.Documents(this.Tenant.ApiKey).Database(this.Tenant.Project.Id, name).CreateAsync();
+        var database = await this.fixture!.Server.Databases(this.Tenant.ApiKey).Database(this.Tenant.Project.Id, name).CreateAsync();
         return database.Id;
     }
 
@@ -215,7 +215,7 @@ public sealed partial class OidcHarness : IAsyncDisposable
 
     /// <summary>
     /// Another replica bound to the same database, returned once its real startup
-    /// bootstrap has provisioned the collections, platform and signing ring.
+    /// bootstrap has provisioned the tables, platform and signing ring.
     /// </summary>
     public static async Task<AuthTestServer> StartServerAsync(TerraBaseFixture fixture, TerraBaseTestTenant tenant, CapturingEmailSender email, Action<Dictionary<string, string>>? settings = null,
         CapturingLogs? logs = null, TimeProvider? clock = null, Action<IServiceCollection>? replace = null, bool runClosureWorker = true,

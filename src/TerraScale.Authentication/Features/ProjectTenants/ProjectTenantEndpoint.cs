@@ -96,7 +96,7 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
         var issuer = OidcIssuer.Issuer(options, projectId).AbsoluteUri;
         return new(projectId, issuer, issuer + "/.well-known/openid-configuration", new Uri(options.PublicOrigin, $"ui/{projectId}/sign-in").AbsoluteUri,
             new(settings.Passcode, settings.Password, settings.SignUp), new(settings.Name, settings.LogoUrl, settings.ThemeColor, settings.TitleSize, settings.DefaultTheme, settings.FooterLinks, settings.BackgroundColor, settings.TextColor, settings.EmailMessage),
-            new(await store.CountAsync(AuthStore.UserCollection, projectId, cancellationToken), await store.CountAsync(AuthStore.OidcApplicationCollection, projectId, cancellationToken)),
+            new(await store.CountAsync(AuthStore.UserTable, projectId, cancellationToken), await store.CountAsync(AuthStore.OidcApplicationTable, projectId, cancellationToken)),
             [.. SocialProviders.Names.Select(name => settings.Provider(name) is { } record
                 ? new ProviderBody(name, true, record.ClientId, record.Issuer, record.TeamId, record.KeyId, SocialProviders.Callback(options, projectId, name).AbsoluteUri)
                 : new ProviderBody(name, false, null, null, null, null, SocialProviders.Callback(options, projectId, name).AbsoluteUri))], settings.Configuration ?? ConfigurationBody.Default);

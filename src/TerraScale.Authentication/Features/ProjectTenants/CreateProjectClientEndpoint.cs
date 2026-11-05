@@ -14,7 +14,7 @@ public sealed class CreateProjectClientEndpoint(TenantDirectory tenants, IOpenId
     public override void Configure()
     {
         Post(Root + "/clients");
-        this.Document("create_project_client", "Register an OAuth client", "An authorization code client with S256 PKCE, refresh tokens and logout. type is public or confidential; redirect_uris holds 1 to 10 absolute https URLs (http only on loopback hosts) without userinfo or fragments. Each URI must additionally exactly match an entry in the project's redirect allowlist when nonempty; an empty list adds no restriction. A confidential client's client_secret is answered once and never again. Needs the admin project role.", "Project tenants", typeof(CreateClientRequest), StatusCodes.Status201Created, typeof(ClientBody));
+        this.Describe("create_project_client", "Register an OAuth client", "An authorization code client with S256 PKCE, refresh tokens and logout. type is public or confidential; redirect_uris holds 1 to 10 absolute https URLs (http only on loopback hosts) without userinfo or fragments. Each URI must additionally exactly match an entry in the project's redirect allowlist when nonempty; an empty list adds no restriction. A confidential client's client_secret is answered once and never again. Needs the admin project role.", "Project tenants", typeof(CreateClientRequest), StatusCodes.Status201Created, typeof(ClientBody));
     }
 
     /// <inheritdoc />

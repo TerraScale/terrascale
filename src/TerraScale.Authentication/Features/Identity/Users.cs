@@ -51,7 +51,7 @@ public sealed class Users(AuthStore store, TimeProvider clock)
     {
         var user = new UserRecord(userId, instanceId, normalizedEmail, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthStore.NewId() };
         return (user, [AuthStore.Claim(instanceId, EmailKind, normalizedEmail, user.Id),
-            AuthStore.Create(AuthStore.UserCollection, instanceId, user.Id, JsonSerializer.SerializeToElement(user, IdentityJson.Default.UserRecord))]);
+            AuthStore.Create(AuthStore.UserTable, instanceId, user.Id, JsonSerializer.SerializeToElement(user, IdentityJson.Default.UserRecord))]);
     }
 
     internal async Task<UserRecord?> CreateAccountAsync(string instanceId, string email, string? passwordHash, string userId, CancellationToken cancellationToken)
@@ -59,7 +59,7 @@ public sealed class Users(AuthStore store, TimeProvider clock)
         var normalized = NormalizeEmail(email) ?? throw new ArgumentException("A valid email address is required.", nameof(email));
         var user = new UserRecord(userId, instanceId, normalized, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthStore.NewId() };
         var record = JsonSerializer.SerializeToElement(user, IdentityJson.Default.UserRecord);
-        return await store.CreateClaimedAsync(AuthStore.UserCollection, instanceId, user.Id, record, EmailKind, normalized, cancellationToken).ConfigureAwait(false)
+        return await store.CreateClaimedAsync(AuthStore.UserTable, instanceId, user.Id, record, EmailKind, normalized, cancellationToken).ConfigureAwait(false)
             ? BindAuthenticationState(user)
             : null;
     }
@@ -126,7 +126,7 @@ public sealed class Users(AuthStore store, TimeProvider clock)
             if (await store.TransactAsync([
                 AuthStore.Claim(tenant, ProviderKind, key, user.Id),
                 AuthStore.Claim(tenant, EmailKind, normalized, user.Id),
-                AuthStore.Create(AuthStore.UserCollection, tenant, user.Id, JsonSerializer.SerializeToElement(user, IdentityJson.Default.UserRecord)),
+                AuthStore.Create(AuthStore.UserTable, tenant, user.Id, JsonSerializer.SerializeToElement(user, IdentityJson.Default.UserRecord)),
             ], cancellationToken).ConfigureAwait(false) is null)
             {
                 return BindProvider(user, identity);
@@ -154,7 +154,7 @@ public sealed class Users(AuthStore store, TimeProvider clock)
             AuthEpoch = checked(current.User.AuthEpoch + 1),
             AuthStamp = AuthStore.NewId(),
         };
-        List<StoreOperation> operations = [AuthStore.Replace(AuthStore.UserCollection, caller.InstanceId, caller.Id,
+        List<StoreOperation> operations = [AuthStore.Replace(AuthStore.UserTable, caller.InstanceId, caller.Id,
             JsonSerializer.SerializeToElement(updated, IdentityJson.Default.UserRecord), current.Version)];
         foreach (var identity in identities)
         {
@@ -196,7 +196,7 @@ public sealed class Users(AuthStore store, TimeProvider clock)
             }
 
             var updated = JsonSerializer.SerializeToElement(current.User with { PasswordHash = passwordHash, AuthEpoch = checked(caller.AuthEpoch + 1), AuthStamp = AuthStore.NewId() }, IdentityJson.Default.UserRecord);
-            if (await store.CompareAndPutAsync(AuthStore.UserCollection, caller.InstanceId, caller.Id, updated, current.Version, cancellationToken).ConfigureAwait(false))
+            if (await store.CompareAndPutAsync(AuthStore.UserTable, caller.InstanceId, caller.Id, updated, current.Version, cancellationToken).ConfigureAwait(false))
             {
                 return true;
             }
@@ -229,16 +229,16 @@ public sealed class Users(AuthStore store, TimeProvider clock)
         var updated = current.User with { Email = newEmail, AuthEpoch = checked(authEpoch + 1), AuthStamp = AuthStore.NewId() };
         List<StoreOperation> operations =
         [
-            AuthStore.Replace(AuthStore.UserCollection, instanceId, userId, JsonSerializer.SerializeToElement(updated, IdentityJson.Default.UserRecord), current.Version),
+            AuthStore.Replace(AuthStore.UserTable, instanceId, userId, JsonSerializer.SerializeToElement(updated, IdentityJson.Default.UserRecord), current.Version),
             AuthStore.Release(instanceId, EmailKind, current.User.Email, claim.Version),
             AuthStore.Claim(instanceId, EmailKind, newEmail, userId),
             .. extra,
         ];
 
         // The user's passcode row names the old address; it would refuse every later code for the new one.
-        if (await store.GetAsync(AuthStore.PasscodeCollection, instanceId, userId, cancellationToken).ConfigureAwait(false) is { } passcode)
+        if (await store.GetAsync(AuthStore.PasscodeTable, instanceId, userId, cancellationToken).ConfigureAwait(false) is { } passcode)
         {
-            operations.Add(AuthStore.Delete(AuthStore.PasscodeCollection, instanceId, userId, passcode.Version));
+            operations.Add(AuthStore.Delete(AuthStore.PasscodeTable, instanceId, userId, passcode.Version));
         }
 
         if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null)
@@ -268,7 +268,7 @@ public sealed class Users(AuthStore store, TimeProvider clock)
             }
 
             var updated = current.User with { Disabled = disabled, AuthEpoch = checked(current.User.AuthEpoch + 1), AuthStamp = AuthStore.NewId() };
-            if (await store.CompareAndPutAsync(AuthStore.UserCollection, instanceId, userId, JsonSerializer.SerializeToElement(updated, IdentityJson.Default.UserRecord), current.Version, cancellationToken).ConfigureAwait(false))
+            if (await store.CompareAndPutAsync(AuthStore.UserTable, instanceId, userId, JsonSerializer.SerializeToElement(updated, IdentityJson.Default.UserRecord), current.Version, cancellationToken).ConfigureAwait(false))
             {
                 return BindAuthenticationState(updated);
             }
@@ -295,7 +295,7 @@ public sealed class Users(AuthStore store, TimeProvider clock)
 
             List<StoreOperation> operations =
             [
-                AuthStore.Delete(AuthStore.UserCollection, instanceId, userId, current.Version),
+                AuthStore.Delete(AuthStore.UserTable, instanceId, userId, current.Version),
                 DeletionJob.Enqueue(instanceId, "account", userId, clock, closureGeneration: closureGeneration),
             ];
             if (await store.FindUniqueAsync(instanceId, EmailKind, current.User.Email, cancellationToken).ConfigureAwait(false) is { } claim && claim.OwnerId == userId)
@@ -303,9 +303,9 @@ public sealed class Users(AuthStore store, TimeProvider clock)
                 operations.Add(AuthStore.Release(instanceId, EmailKind, current.User.Email, claim.Version));
             }
 
-            if (await store.GetAsync(AuthStore.PasscodeCollection, instanceId, Passcodes.SignUpKey + current.User.Email, cancellationToken).ConfigureAwait(false) is { } pending)
+            if (await store.GetAsync(AuthStore.PasscodeTable, instanceId, Passcodes.SignUpKey + current.User.Email, cancellationToken).ConfigureAwait(false) is { } pending)
             {
-                operations.Add(AuthStore.Delete(AuthStore.PasscodeCollection, instanceId, Passcodes.SignUpKey + current.User.Email, pending.Version));
+                operations.Add(AuthStore.Delete(AuthStore.PasscodeTable, instanceId, Passcodes.SignUpKey + current.User.Email, pending.Version));
             }
 
             if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null)
@@ -324,11 +324,11 @@ public sealed class Users(AuthStore store, TimeProvider clock)
             return null;
         }
 
-        var document = await store.GetAsync(AuthStore.UserCollection, instanceId, userId, cancellationToken).ConfigureAwait(false);
-        var user = document?.Document.Deserialize(IdentityJson.Default.UserRecord);
+        var rowData = await store.GetAsync(AuthStore.UserTable, instanceId, userId, cancellationToken).ConfigureAwait(false);
+        var user = rowData?.Body.Deserialize(IdentityJson.Default.UserRecord);
         return user is not null && user.InstanceId == instanceId && user.Id == userId
             && await store.FindUniqueOwnerAsync(instanceId, EmailKind, user.Email, cancellationToken).ConfigureAwait(false) == userId
-            ? (BindAuthenticationState(user), document!.Version) : null;
+            ? (BindAuthenticationState(user), rowData!.Version) : null;
     }
 
     internal static UserRecord BindAuthenticationState(UserRecord user) => user with

@@ -10,7 +10,7 @@ public sealed class GetSsoConnectionEndpoint(SsoConnections connections, Platfor
     public override void Configure()
     {
         Get(Connection);
-        this.Document("get_sso_connection", "Get the organization's SSO connection", "Needs the admin organization role. 404 when the organization has none. The client secret is never returned.", "Single sign-on", null, StatusCodes.Status200OK, typeof(SsoConnectionBody));
+        this.Describe("get_sso_connection", "Get the organization's SSO connection", "Needs the admin organization role. 404 when the organization has none. The client secret is never returned.", "Single sign-on", null, StatusCodes.Status200OK, typeof(SsoConnectionBody));
     }
 
     /// <inheritdoc />
