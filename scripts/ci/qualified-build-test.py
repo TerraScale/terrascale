@@ -206,3 +206,26 @@ with tempfile.TemporaryDirectory(prefix='ci-inherited-proof-test-') as scratch:
     os.chdir(original_cwd)
 print('qualified-build-test: area inputs, transitive project references and linked benchmark helpers: ok')
 print('qualified-build-test: docs-only ancestry, shallow checkout, source changes, merges and newer-result precedence: ok')
+
+# An observed HTTP500 during the 8811 ancestry lookup must not turn CI red.
+from unittest.mock import Mock, patch
+import urllib.error
+for _ in range(5):
+    for failure in (urllib.error.HTTPError('https://api.github.com/fixture', 504, 'gateway', {}, None),
+                    subprocess.CalledProcessError(1, ['gh'], stderr='gh: HTTP 500')):
+        operation = Mock(side_effect=[failure, 'trusted metadata'])
+        with patch.object(qualified.time, 'sleep') as pause, contextlib.redirect_stderr(io.StringIO()):
+            assert qualified.status_read(operation) == 'trusted metadata'
+            assert operation.call_count == 2
+            pause.assert_called_once_with(1)
+for code, count in ((503, 3), (403, 1), (404, 1)):
+    operation = Mock(side_effect=urllib.error.HTTPError('https://api.github.com/fixture', code, 'failed', {}, None))
+    with patch.object(qualified.time, 'sleep'), contextlib.redirect_stderr(io.StringIO()):
+        try:
+            qualified.status_read(operation)
+        except urllib.error.HTTPError:
+            pass
+        else:
+            raise AssertionError('Status transport failure accepted')
+    assert operation.call_count == count
+print('qualified-build-test: five HTTP/gh metadata recoveries; bounded 5xx and immediate 4xx rejection: ok')
