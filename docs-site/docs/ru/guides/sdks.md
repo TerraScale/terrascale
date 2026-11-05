@@ -18,7 +18,7 @@ Official SDKs for the TerraBase SQL API at `https://api.terrascale.tech`. Every 
 | C# / .NET | `TerraScale.DotNet` (source; NuGet pending) | `dotnet pack` from the monorepo into a local package folder | [C# quickstart](/ru/getting-started/csharp) |
 | Go | `terrascale.tech/sdk` | `go get terrascale.tech/sdk@main` (the SQL surface predates the latest tag) | [Go quickstart](/ru/getting-started/go) |
 | Python | `terrascale` (source; PyPI pending) | `pip install "git+https://github.com/TerraScale/terrascale@main#subdirectory=sdk/python"` | [Python quickstart](/ru/getting-started/python) |
-| Rust | `terrascale` (source; crates.io pending) | `terrascale = { git = "https://github.com/TerraScale/terrascale.git" }` in `Cargo.toml` | [Rust README](https://github.com/TerraScale/terrascale/blob/main/sdk/rust/README.md) |
+| Rust | `terrascale` (source; crates.io pending) | `terrascale = { git = "https://github.com/TerraScale/terrascale.git" }` in `Cargo.toml` | [Rust quickstart](/ru/getting-started/rust) |
 
 Every SDK runs SQL with the same calls: `execute`, `query` and `batch` post to `/v1/projects/{project}/databases/{database}/sql/execute`, one request and one transaction each, with positional or named arguments and typed rows. The .NET and Go SDKs also open a WebSocket session on `/sql/ws` for interactive transactions (`begin`, `commit`, `rollback`). Primary keys are ULIDs from each SDK's ID generator.
 
