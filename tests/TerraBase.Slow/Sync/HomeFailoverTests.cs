@@ -116,7 +116,7 @@ public sealed class HomeFailoverTests
                         continue;
                     }
 
-                    _ = await transaction.ExecuteAsync(ApplySql.Statement("UPDATE tally SET n = n + 1 WHERE id = 1"), token);
+                    _ = await transaction.ExecuteAsync(ApplySql.Statement("UPDATE tally SET n = n + 1 WHERE id = 'one'"), token);
                     _ = await transaction.ExecuteAsync(ApplySql.Statement("INSERT INTO acked (id) VALUES (?)", row), token);
                     _ = await transaction.CommitAsync(homeDurable: false, token);
                     pushed.Enqueue(row);
@@ -177,8 +177,8 @@ public sealed class HomeFailoverTests
             statements = new[]
             {
                 new { sql = "CREATE TABLE acked (id TEXT PRIMARY KEY)" },
-                new { sql = "CREATE TABLE tally (id INTEGER PRIMARY KEY, n INTEGER NOT NULL)" },
-                new { sql = "INSERT INTO tally (id, n) VALUES (1, 0)" },
+                new { sql = "CREATE TABLE tally (id TEXT PRIMARY KEY, n INTEGER NOT NULL)" },
+                new { sql = "INSERT INTO tally (id, n) VALUES ('one', 0)" },
             },
         }, token);
         await Assert.That(table.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await table.Content.ReadAsStringAsync(token));
@@ -195,7 +195,7 @@ public sealed class HomeFailoverTests
 
     private static async Task<long> TallyAsync(HttpClient client, Database database, CancellationToken token)
     {
-        using var read = await client.PostAsJsonAsync(database.Sql, new { statements = new[] { new { sql = "SELECT n FROM tally WHERE id = 1" } } }, token);
+        using var read = await client.PostAsJsonAsync(database.Sql, new { statements = new[] { new { sql = "SELECT n FROM tally WHERE id = 'one'" } } }, token);
         await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await read.Content.ReadAsStringAsync(token));
         return (await read.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("results")[0].GetProperty("rows")[0][0].GetInt64();
     }
