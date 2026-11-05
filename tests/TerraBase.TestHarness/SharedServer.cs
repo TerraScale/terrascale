@@ -6,22 +6,6 @@ public static class SharedServer
     private static readonly CancellationTokenSource Lifetime = new();
     private static readonly Lazy<Task<ManagementApi>> Server = new(StartAsync);
 
-    /// <summary>Starts the assembly-owned server before parallel test requests arrive.</summary>
-    public static async Task WarmAsync()
-    {
-        var api = await Server.Value;
-        var database = await api.CreateManagedDatabaseAsync();
-        using var data = api.DataClient(await api.Server.IssueAsync(database.Organization, "sql:read", "sql:write"));
-        using var query = await ManagementApi.SqlAsync(data, database, "SELECT 1");
-        query.EnsureSuccessStatusCode();
-        using var dropped = await api.Client.DeleteAsync(ManagementApi.Uri(database.Path));
-        dropped.EnsureSuccessStatusCode();
-        using var project = await api.Client.DeleteAsync(ManagementApi.Uri(database.ProjectPath));
-        project.EnsureSuccessStatusCode();
-        using var organization = await api.Client.DeleteAsync(ManagementApi.Uri($"/v1/management/organizations/{database.Organization}"));
-        organization.EnsureSuccessStatusCode();
-    }
-
     internal static async Task<ManagementApi> GetAsync(CancellationToken cancellationToken)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
@@ -33,9 +17,7 @@ public static class SharedServer
     {
         // The host belongs to the assembly, so its background work must not inherit the first test's context or timeout.
         using var flow = ExecutionContext.SuppressFlow();
-        // A shared host serves the whole suite; use the production CPU-derived worker count.
-        return Task.Run(() => ManagementApi.StartAsync(settings => settings.Remove("storage-threads"),
-            lifetimeCancellationToken: Lifetime.Token));
+        return Task.Run(() => ManagementApi.StartAsync(lifetimeCancellationToken: Lifetime.Token));
     }
 
     [After(HookType.Assembly)]

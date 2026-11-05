@@ -38,7 +38,7 @@ public sealed class SqlSandboxTests
     [Test]
     public async Task Escape_statements_are_refused_with_sql_sandbox_over_rest_and_psql()
     {
-        await using var db = await StartSharedAsync();
+        await using var db = await StartAsync();
         await db.OkAsync("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)");
         await using var psql = await PostgresWireClient.ConnectAsync(db.Api.Server.PostgresPort, db.WriterKey, db.Database.Name);
 
@@ -57,7 +57,7 @@ public sealed class SqlSandboxTests
     [Test]
     public async Task Internal_tables_are_invisible_to_queries_and_schema_listings()
     {
-        await using var db = await StartSharedAsync();
+        await using var db = await StartAsync();
         await db.OkAsync("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)", "CREATE INDEX notes_body ON notes (body)");
         await using var psql = await PostgresWireClient.ConnectAsync(db.Api.Server.PostgresPort, db.WriterKey, db.Database.Name);
 

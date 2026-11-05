@@ -21,37 +21,42 @@ assert "mode=max" not in workflow, "Published binaries and source snapshots must
 # setup-dotnet saves its NuGet cache after any successful job, pull requests included: no job may enable it.
 assert "cache: true" not in workflow
 assert not re.search(r"uses: actions/cache@", workflow), "Use explicit restore/save to restrict writers"
-assert "actions/cache/save@" not in workflow, "Checked outputs are retained in source-bound private R2 receipts"
+assert workflow.count("uses: actions/cache/save@") == 2
+nuget_writer = workflow.split("      - &save-nuget\n", 1)[1].split("\n      - ", 1)[0]
+assert "github.event_name == 'push' && github.ref == 'refs/heads/main'" in nuget_writer
+assert "steps.nuget.outputs.cache-primary-key" in nuget_writer
+assert "uses: actions/cache/restore@" in workflow
 assert "DeterministicSourcePaths: false" in workflow, "CallerFilePath fixtures need their real source path"
 assert "ContinuousIntegrationBuild: false" not in workflow
 assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workflow.split("\npermissions:", 1)[0]
-assert "terrabase-shard" not in workflow and "terrabase-build:" not in workflow
-assert "timeout-minutes: 2" in workflow
-assert "qualified-build.py" in workflow
-assert "run-budget.py" in workflow
-assert "docker/build-push-action" in workflow
-assert "runner.temp }}/image-payloads" in workflow, "CI wraps the checked runtime payload without compilation"
+assert 'bash scripts/ci/test-area.sh fast "$AREA"' in workflow
 assert "no-cache-filters: slow-${{ env.AREA }}-run" in slow_workflow
 assert "steps: *slow-steps" in slow_workflow
-qualified = (root / "scripts/ci/qualified-build.py").read_text()
-for invariant in ("--locked",):
-    assert invariant in (root / "Makefile").read_text()
-assert "'ci-build/' + area" in qualified
-assert "'ts-ship/' + area" in qualified
-assert "manifest digest mismatch" in qualified
-assert "30s warn" in qualified
-assert "['creator']['login'].lower() == 'mariogk'" in qualified
-assert "retain_payload" in qualified and "cf_command" in qualified
-assert "fast-ci/{sha}/{area}/image-payloads.tar.gz" in qualified
-assert "dotnet build tests/TerraScale.Authentication.Fast/" in (root / "scripts/ci/auth-build.sh").read_text()
-assert "terrabase-e2e-local" in qualified and "image-payloads.sh" in qualified
-for area in ("libs", "auth", "terrabase"):
-    block = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split(f"\n  {area}:\n", 1)[1], maxsplit=1)[0]
-    assert "timeout-minutes: 2" in block
-    assert f"qualified-build.py verify {area}" in block
-    assert "dotnet build" not in block
-    assert "needs: changes" in block, "Receipt checks run alongside native verification; aggregate test still gates both"
-    assert "needs.changes.outputs.fast" in block
+auth_job = workflow.split("\n  auth:\n", 1)[1].split("\n  auth-package:\n", 1)[0]
+assert "bash scripts/ci/auth-build.sh" in auth_job
+assert "docker/build-push-action" not in auth_job
+assert "*nuget-cache" in auth_job and "*locked-restore" in auth_job
+auth_fast = (root / "scripts/ci/auth-build.sh").read_text()
+assert "fmt-check SOLUTION=auth.slnf" in auth_fast
+assert "dotnet build tests/TerraScale.Authentication.Fast/" in auth_fast
+assert "-o auth-build auth-check" in auth_fast
+assert "make -o restore auth-test-fast CONFIGURATION=Release" in auth_job
+assert "statuses: read" in auth_job
+assert "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/statuses" in auth_job
+assert 'select(.context == "ts-ship/auth")' in auth_job
+assert 'max_by(.id)' in auth_job and 'ascii_downcase) == "mariogk"' in auth_job
+assert auth_job.count("if: steps.fast-proof.outputs.verified != 'true'") == 2
+assert "auth-publish" not in auth_fast
+package_job = workflow.split("\n  auth-package:\n", 1)[1].split("\n  terrabase-build:\n", 1)[0]
+assert "make auth-publish RUNTIME=linux-x64" in package_job
+assert "*nuget-cache" in package_job and "*locked-restore" in package_job
+assert "native-audit:" not in workflow, "Remove the temporary executor comparison"
+terrabase_build = workflow.split("\n  terrabase-build:\n", 1)[1].split("\n  terrabase:\n", 1)[0]
+assert 'select(.context == "ts-ship/terrabase")' in terrabase_build
+assert 'max_by(.id)' in terrabase_build and 'ascii_downcase) == "mariogk"' in terrabase_build
+assert 'statuses?per_page=100' in terrabase_build and 'statuses: read' not in terrabase_build
+assert 'make -j2 -o restore -o terrabase-build terrabase-e2e-local CONFIGURATION=Release' in terrabase_build
+assert "needs.terrabase-build.outputs.fast-verified == 'true' && '[1]' || '[1,2,3,4]'" in workflow
 
 # Guard behavior at the build graph boundary: publishing and Slow must never rerun checked Fast stages.
 stages = {
@@ -74,22 +79,22 @@ assert f"dotnet format whitespace {build_check} --verify-no-changes --no-restore
 # Imported areas qualify on dev hosts; the existing hosted jobs format their own service graphs.
 imported_projects = {p for p in all_projects if p.startswith(('sdk/', 'src/TerraScale.Dashboard', 'tests/TerraScale.Dashboard.'))}
 assert all_projects <= formatted | {build_check} | imported_projects, all_projects - formatted - {build_check} - imported_projects
-assert "needs: [changes, native, libs, auth, terrabase]" in workflow, "Native/Fast must gate required test; Slow must not delay it"
+assert "needs: [changes, native, libs, auth, auth-package, terrabase-build, terrabase, terrabase-package]" in workflow, "Native/Fast must gate required test; Slow must not delay it"
 assert "merge_group" not in workflow, "Merge queue checks are gone: pull requests and main are the only gates"
-for job in ("libs", "auth", "terrabase"):
+for job in ("libs", "auth", "terrabase-build", "terrabase"):
     block = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split(f"\n  {job}:\n", 1)[1], maxsplit=1)[0]
     assert "event_name != 'push'" not in block, f"{job} must run on pushes to main"
 test_job = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  test:\n", 1)[1], maxsplit=1)[0]
 main_job = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  main:\n", 1)[1], maxsplit=1)[0]
-assert "    needs: [changes, native, terrabase, test]\n" in main_job, "TerraBase releases must wait for their own Fast shards and production packaging"
+assert "    needs: [changes, native, terrabase, terrabase-package, test]\n" in main_job, "TerraBase releases must wait for their own Fast shards and production packaging"
 assert "!cancelled() && needs.test.result == 'success' && needs.terrabase.result == 'success'" in main_job
 main_auth = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  main-auth:\n", 1)[1], maxsplit=1)[0]
-assert "    needs: [changes, native, auth, test, main]\n" in main_auth, "Auth releases must wait for Auth Fast"
+assert "    needs: [changes, native, auth, auth-package, test, main]\n" in main_auth, "Auth releases must wait for Auth Fast"
 assert "!cancelled() && needs.test.result == 'success' && needs.auth.result == 'success'" in main_auth
 assert "(!contains(fromJSON(needs.changes.outputs.main), 'terrabase') || needs.main.result == 'success')" in main_auth, "When both services change, Auth must follow a successful TerraBase rollout"
 for release in (main_job, main_auth):
     assert "cancel-in-progress: false" in release, "A running release must finish"
-    assert "qualified-build.py restore" in workflow, "Release jobs reuse their area's checked build output"
+    assert "image-payloads-" in workflow, "Release jobs reuse their area's checked build output"
 for job in (test_job, main_job):
     assert not re.search(r"^    needs: .*slow", job, re.M), "Slow results must not gate test or main"
 assert "AREA: ${{ github.job }}" not in workflow, "github.job is unavailable in job-level env"
@@ -112,7 +117,7 @@ assert "  schedule:" in slow_events and "  workflow_dispatch:" in slow_events
 assert "  push:" not in slow_events and "  pull_request:" not in slow_events
 assert "  schedule:" not in workflow
 assert "slow-state.py" in slow_workflow and "ref: main" in slow_workflow
-assert "make restore" in dockerfile, "Dev hosts retain locked restore and package caches"
+assert "restore-keys: ${{ runner.os }}-nuget-monorepo-" in workflow
 
 inputs = dockerfile.split("FROM base AS restore-inputs\n", 1)[1].split("\nFROM base AS restored", 1)[0]
 command = inputs.split("\nRUN ", 1)[1].split("\n\n", 1)[0].replace("\\\n", " ")
