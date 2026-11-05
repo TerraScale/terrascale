@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 /// <summary><c>PUT /v1/management/organizations/{organization}/plan</c>: sets an organization's plan.</summary>
-internal sealed class SetOrganizationPlanEndpoint(IManagementService management) : Endpoint<PlanRequest, IResult>
+internal sealed class SetOrganizationPlanEndpoint(IManagementService management, PlanFanout fanout) : Endpoint<PlanRequest, IResult>
 {
     public override void Configure()
     {
@@ -55,7 +55,8 @@ internal sealed class SetOrganizationPlanEndpoint(IManagementService management)
 
         return await management.SetPlanAsync(user, organization, plan, cancellationToken).ConfigureAwait(false) switch
         {
-            Organization value => TypedResults.Ok(value),
+            Organization value => await fanout.PublishAsync(HttpContext, value.Id, plan, cancellationToken).ConfigureAwait(false) is { } error
+                ? ErrorResponse.From(error) : TypedResults.Ok(value),
             NotFound error => ErrorResponse.From(error),
             Forbidden error => ErrorResponse.From(error),
             Unavailable error => ErrorResponse.From(error),
