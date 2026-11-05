@@ -70,20 +70,21 @@
       </div>
 
       <div class="code__terminal">
-        <div class="code__head">
+        <div class="code__head sdk-tabs-header">
           <span class="code__filename">{file}</span>
-          <div class="code__tabs" role="tablist" aria-label={$dict.code.tablistLabel}>
+          <div class="sdk-tabs" role="tablist" aria-label={$dict.code.tablistLabel}>
             {#each LANG_META as l (l.id)}
               <button
                 type="button"
-                class="code__tab"
-                class:is-active={lang === l.id}
                 role="tab"
+                id={`landing-sdk-tab-${l.id}`}
+                aria-controls="landing-sdk-panel"
+                tabindex={lang === l.id ? 0 : -1}
                 aria-selected={lang === l.id}
                 on:click={() => (lang = l.id)}
               >
                 {#if l.icon}
-                  <img src={l.icon} alt="" width="14" height="14" class="code__tab-icon" />
+                  <img src={l.icon} alt="" width="16" height="16" aria-hidden="true" />
                 {/if}
                 {l.label}
               </button>
@@ -101,7 +102,7 @@
           </button>
         </div>
 
-        <pre class="code__pre" tabindex="0" role="region" aria-label={file}><code>{#each tokens as t, i (i)}{#if t.className}<span class={t.className}>{t.text}</span>{:else}{t.text}{/if}{/each}</code></pre>
+        <pre id="landing-sdk-panel" class="code__pre" tabindex="0" role="tabpanel" aria-labelledby={`landing-sdk-tab-${lang}`}><code>{#each tokens as t, i (i)}{#if t.className}<span class={t.className}>{t.text}</span>{:else}{t.text}{/if}{/each}</code></pre>
       </div>
     </div>
   </div>
@@ -259,9 +260,10 @@
 
   .code__head {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 16px;
-    height: 40px;
+    gap: 8px;
+    min-height: 48px;
     padding: 0 8px 0 16px;
     border-bottom: 1px solid var(--ts-divider);
     color: var(--ts-text-muted);
@@ -270,62 +272,8 @@
   }
 
   .code__filename {
+    display: none;
     white-space: nowrap;
-  }
-
-  .code__tabs {
-    display: flex;
-    gap: 16px;
-    margin-left: auto;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
-  .code__tab {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    height: 39px;
-    margin-bottom: -1px;
-    padding: 0;
-    background: none;
-    border: 0;
-    border-bottom: 2px solid transparent;
-    color: var(--ts-text-muted);
-    font-family: var(--ts-font-accent);
-    font-size: 13px;
-    font-weight: 500;
-    line-height: 1;
-    white-space: nowrap;
-    cursor: pointer;
-    transition:
-      color 150ms ease,
-      border-color 150ms ease;
-  }
-
-  .code__tab:hover {
-    color: var(--ts-text);
-  }
-
-  .code__tab.is-active {
-    color: var(--ts-text);
-    border-bottom-color: var(--ts-primary);
-  }
-
-  .code__tab:focus-visible {
-    outline-offset: -2px;
-  }
-
-  .code__tab-icon {
-    width: 14px;
-    height: 14px;
-    filter: grayscale(1) opacity(0.7);
-    transition: filter 150ms ease;
-  }
-
-  .code__tab[aria-selected='true'] .code__tab-icon {
-    filter: none;
-    opacity: 1;
   }
 
   .code__panel :global(.code__copy-icon) {
@@ -400,13 +348,10 @@
       padding: 0 clamp(16px, 2.5vw, 40px);
     }
     .code__head {
-      overflow-x: auto;
+      padding-inline: 8px;
     }
     .code__filename {
       display: none;
-    }
-    .code__tabs {
-      margin-left: 0;
     }
     .code__pre {
       height: 380px;
