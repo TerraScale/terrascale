@@ -200,6 +200,12 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (request.RequestUri is { Scheme: "https", Host: "api.terrascale.tech" or "gru.api.terrascale.tech", IsDefaultPort: true } uri
+                && uri.AbsolutePath.Split('/') is ["", "admin", "organizations", _, "plan"])
+            {
+                return await fallback.SendAsync(request, cancellationToken);
+            }
+
             if (request.RequestUri is not { Scheme: "https", Host: "api.stripe.com", IsDefaultPort: true })
             {
                 throw new HttpRequestException("The audit accepts only the local Stripe protocol fixture.");
