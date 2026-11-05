@@ -47,8 +47,11 @@ every 15 s, which also picks up databases that gained replica regions.
    import starts a **new incarnation** (D18): every other replica takes a full answer on its next pull.
 4. It takes the lease with the one compare-and-set that planned moves use too (`HomeLeases.TakeAsync`): `home.<databaseId>`
    goes from `{home: old, epoch}` to `{home: self, epoch: epoch + 1, session: own}`, only while the old home's node key is
-   still absent. It fails when the old home came back and confirmed the key first, or another replica took it, so two
+   still absent. The CAS must replace the exact failed home session: a restarted home's confirmation changes that
+   session even when its placement epoch stays the same. It fails when the old home came back and confirmed the key first,
+   or another replica took it, so two
    nodes never both hold the lease; the claimer then deletes the imported file and follows the winner.
+   The lease scan rechecks absent home nodes every 15 s, so a refused claim does not hide a later failure of the renewed session.
 5. Only then does it record placement `{home: self, replicas: the others plus the old home, version: epoch + 1}` and
    prepare home apply (R6).
 6. Every region watches `home.*` and takes the new placement at once, so home routing (421 `wrong_region`, Postgres and
