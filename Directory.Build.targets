@@ -30,9 +30,9 @@
   </Target>
 
 
-  <!-- Project-reference content loses AssetType; .NET's single-file publisher otherwise leaves Turso and the SQL parser
+  <!-- Project-reference content loses AssetType; .NET's single-file publisher otherwise leaves the storage engine and the SQL parser
        beside the app. -->
-  <Target Name="ClassifyTursoNativeForSingleFile" BeforeTargets="_ComputeFilesToBundle" Condition="'$(PublishSingleFile)' == 'true'">
+  <Target Name="ClassifyStorageNativeForSingleFile" BeforeTargets="_ComputeFilesToBundle" Condition="'$(PublishSingleFile)' == 'true'">
     <ItemGroup>
       <ResolvedFileToPublish Update="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == 'libturso_sdk_kit.so' Or '%(Filename)%(Extension)' == 'libterrascale_sql_parser.so'" AssetType="native" />
     </ItemGroup>
@@ -59,7 +59,7 @@
   <!-- TerraBase integration suites (Fast and Slow): TUnit executables driving the real server. -->
   <PropertyGroup Condition="'$(IsTerraBaseArea)' == 'true' and '$(IsTestProject)' == 'true'">
     <!-- Server GC, unlike the production server (one host per 512 MB machine): one test process runs up to 16 hosts at
-         once, and workstation GC ran 15x more collections there, adding 42 s of pauses to a 136 s Fast run. Nothing in
+         once, and workstation GC ran 15x more GC cycles there, adding 42 s of pauses to a 136 s Fast run. Nothing in
          TerraBase depends on the GC mode; the memory budget reads TotalAvailableMemoryBytes, the same in both. -->
     <ServerGarbageCollection>true</ServerGarbageCollection>
     <!-- Tiered PGO instrumentation costs the suite about 28% of its CPU: 15m34s to 11m12s of user time on the same binary. -->

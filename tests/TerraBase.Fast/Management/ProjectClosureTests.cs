@@ -51,9 +51,9 @@ public sealed class ProjectClosureTests
         await using (var transaction = await catalog.BeginTransactionAsync(write: false, CancellationToken.None))
         {
             await Assert.That(await transaction.GetAsync("api_keys", key.GetProperty("id").GetString()!, CancellationToken.None)).IsNull();
-            foreach (var collection in new[] { $"projects/{database.Project}/api_keys", $"projects/{database.Project}/backup_destination" })
+            foreach (var prefix in new[] { $"projects/{database.Project}/api_keys", $"projects/{database.Project}/backup_destination" })
             {
-                await Assert.That((await transaction.ListAsync(collection, null, 10, 1024 * 1024, CancellationToken.None)).Records).IsEmpty().Because(collection);
+                await Assert.That((await transaction.ListAsync(prefix, null, 10, 1024 * 1024, CancellationToken.None)).Records).IsEmpty().Because(prefix);
             }
         }
 

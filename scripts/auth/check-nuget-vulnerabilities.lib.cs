@@ -209,7 +209,7 @@ public static class CheckNugetVulnerabilities
                 Console.Error.WriteLine($"NuGet audit returned invalid JSON for {project}");
                 return 1;
             }
-            // The findings are elements of this document; dispose it only after printing them.
+            // The findings are elements of this JSON value; dispose it only after printing them.
             using (report)
             {
                 List<JsonElement> findings;
