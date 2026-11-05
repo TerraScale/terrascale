@@ -153,9 +153,9 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
             do
             {
                 var page = await transaction.ListAsync(HomeMoves, after, CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-                foreach (var document in page.Records)
+                foreach (var record in page.Records)
                 {
-                    if (EntityPayload.Read(document, TerraBaseJsonContext.Default.HomeMoveMarker) is { } marker)
+                    if (EntityPayload.Read(record, TerraBaseJsonContext.Default.HomeMoveMarker) is { } marker)
                     {
                         markers.Add(marker);
                     }
