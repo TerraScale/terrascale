@@ -70,7 +70,7 @@ on PR open, reuses it on new pushes, and deletes it on close or merge. Each prev
 name binds the repository, PR, project and source ID. Pin the action to a full
 commit SHA in your workflow; `main` below selects the current source, not a release.
 
-Store a project API key with database read/write and document read/write scopes
+Store a project API key with `databases:read`, `databases:write`, `sql:read` and `sql:write` scopes
 as the repository secret `TERRASCALE_API_KEY`.
 
 ```yaml
